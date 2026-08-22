@@ -231,6 +231,16 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("message", open_object_schema("Resolved session message.")),
         ])),
+        "complete_session_message" => Some(wrapped_output_schema(vec![
+            ("success", schema_type("boolean", "Always true on success.")),
+            ("session_id", schema_type("string", "Coordinator/business Session id.")),
+            ("message_id", schema_type("string", "Completed todo wc_msg_* id.")),
+            ("answer_message_id", schema_type("string", "Exactly one created answer wc_msg_* id.")),
+            ("completion_id", schema_type("string", "Bounded opaque durable completion identity derived from completion_key.")),
+            ("replayed", schema_type("boolean", "True when an idempotent retry returned the original completion.")),
+            ("todo", open_object_schema("Resolved todo with resolved_by_message_id correlation.")),
+            ("answer", open_object_schema("Created answer with reply_to and trusted author_session_id when available.")),
+        ])),
         "session_discussion_summary" => Some(wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success.")),
             (
@@ -264,6 +274,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 array_schema(
                     open_object_schema("Open todo message."),
                     "Bounded newest-first open todos.",
+                ),
+            ),
+            (
+                "high_priority_open_todos",
+                array_schema(
+                    open_object_schema("High-priority open todo."),
+                    "Bounded high-priority open todos.",
+                ),
+            ),
+            (
+                "recent_answers",
+                array_schema(
+                    open_object_schema("Recent answer message."),
+                    "Bounded newest-first answers.",
+                ),
+            ),
+            (
+                "recent_completions",
+                array_schema(
+                    open_object_schema("Structured todo-to-answer completion correlation."),
+                    "Bounded recent completion correlations with worker Session provenance when available.",
                 ),
             ),
             (
@@ -308,6 +339,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "hygiene_clean",
                 schema_type("boolean", "Compact summary_only hygiene cleanliness verdict."),
+            ),
+            (
+                "collaboration",
+                open_object_schema("Compact bounded collaboration state: open_todo_count, high_priority_open_todos, recent_answers, and recent_completions. Message bodies remain individually bounded and worker execution history is not copied."),
             ),
             (
                 "facts",
@@ -356,6 +391,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 array_schema(
                     open_object_schema("Bounded open todo message."),
                     "Bounded newest-first open todos.",
+                ),
+            ),
+            (
+                "high_priority_open_todos",
+                array_schema(
+                    open_object_schema("Bounded high-priority open todo message."),
+                    "Bounded newest-first high-priority open todos.",
+                ),
+            ),
+            (
+                "recent_answers",
+                array_schema(
+                    open_object_schema("Bounded recent answer message with reply_to and trusted author_session_id when available."),
+                    "Bounded newest-first recent answers.",
+                ),
+            ),
+            (
+                "recent_completions",
+                array_schema(
+                    open_object_schema("Structured todo-to-answer completion correlation."),
+                    "Bounded recent completion correlations with worker Session provenance when available.",
                 ),
             ),
             (

@@ -1,5 +1,6 @@
 use super::super::input_schemas::{
-    close_session_input_schema, current_session_input_schema, list_session_messages_input_schema,
+    close_session_input_schema, complete_session_message_input_schema,
+    current_session_input_schema, list_session_messages_input_schema,
     post_session_message_input_schema, resolve_session_message_input_schema,
     session_discussion_summary_input_schema, session_handoff_summary_input_schema,
     session_summary_input_schema, update_session_context_input_schema,
@@ -32,12 +33,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "post_session_message",
-            "Post a bounded session-local message into the recorded session ledger for collaboration, progress, user guidance, or design discussion. Metadata-only; does not modify project files. Guidance never overrides system/platform/WebCodex safety policy.",
+            "Create an ordinary bounded collaboration message such as todo, question, progress, guidance, risk, or decision. Use complete_session_message instead when a worker finishes an exact todo and must atomically answer+resolve it.",
             post_session_message_input_schema(),
         ),
         tool_spec(
             "list_session_messages",
-            "List bounded session-local messages from the recorded session ledger in stable newest-first order, optionally filtered by kind and status.",
+            "Read bounded session-local messages. Supports exact message_id and reply_to lookup plus kind/status filters with deterministic AND semantics; use it to fetch one assignment or its replies without relying on the recent-message window.",
             list_session_messages_input_schema(),
         ),
         tool_spec(
@@ -46,13 +47,18 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             resolve_session_message_input_schema(),
         ),
         tool_spec(
+            "complete_session_message",
+            "Worker completion primitive for one exact open todo: atomically creates one answer reply and resolves that todo under one Session-store mutation. completion_key makes uncertain-result retries idempotent; prefer this over separate post answer + resolve calls.",
+            complete_session_message_input_schema(),
+        ),
+        tool_spec(
             "session_discussion_summary",
             "Return a bounded structured aggregate of session-local discussion from the recorded session ledger. Does not call an LLM or generate natural-language summaries.",
             session_discussion_summary_input_schema(),
         ),
         tool_spec(
             "session_handoff_summary",
-            "Read-only handoff for multi-step tasks, explicit session_id. Returns session ledger msgs, failed tools, ledger-derived validation, workspace/checkpoints. Diagnostics need bounded tails or safe result metadata; validation.parser.available false if missing. Does not depend on current-session binding.",
+            "Read-only handoff for multi-step tasks, explicit session_id. Reads session ledger collaboration and ledger-derived validation. Diagnostics use bounded tails or safe result metadata; validation.parser.available is false if absent. Worker/coordinator read; does not depend on current-session binding.",
             session_handoff_summary_input_schema(),
         ),
         tool_spec(

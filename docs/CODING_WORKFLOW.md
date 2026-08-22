@@ -74,25 +74,26 @@ on `start_coding_task` or `work_on_project`.
 
 ## Manual multi-window collaboration
 
-For a bounded independent subtask, keep the coordinator and worker in **separate**
-Workflow Sessions. The coordinator posts a `todo` to its own Session; the worker
-starts a fresh Session, reads the coordinator's `session_handoff_summary` plus the
-relevant open todo, performs the subtask under the worker Session, then posts a
-bounded `answer` with `reply_to=<todo_id>` and resolves that exact todo.
+For a bounded independent subtask, keep coordinator `C` and worker `W` in
+**separate** Workflow Sessions. The coordinator posts a `todo` to `C`; `W` reads
+`session_handoff_summary(C)` plus that exact `message_id`, performs all tools and
+validation under `W`, then uses `complete_session_message` to atomically create one
+bounded answer and resolve the exact todo. The answer carries trusted
+`author_session_id` provenance when a current worker Session can be derived; the
+caller cannot forge that field.
 
-The first version is intentionally manual. There is no automatic claim, worker
-scheduler, shared transcript, or implicit cross-Session authority. Assign one
-worker per todo. Prefer read-oriented workers when windows share a worktree, and
-explicitly isolated worktrees/projects when independent concurrent writes are
-intentional. A `read_only` request or Session mode is useful operating context,
-not authoritative proof of what happened for the worker's whole lifetime. The
-worker should accurately report material operations or deviations, while the
-coordinator relies on recorded tool/effect evidence and current workspace state.
-Return conclusions, load-bearing evidence, and result paths instead of injecting
-the worker transcript into the coordinator.
+The coordinator can retrieve the exact todo or its replies with
+`list_session_messages(message_id=...)` / `list_session_messages(reply_to=...)`,
+then re-observe authoritative project/Git/artifact state. Worker execution history
+is never copied into `C`, and Session/message ids never grant project authority.
+The message board is collaboration metadata, not a claim, lease, filesystem lock,
+or branch lock. Use separate worktrees/WebCodex Projects for concurrent writers.
+There is no automatic worker spawning, scheduler, shared transcript, or implicit
+cross-Session/cross-owner delegation.
 
 See [Manual Multi-Window Collaboration](agent/manual-window-collaboration.md) for
-the detailed protocol and the dogfood gates for any future convenience primitive.
+coordinator/implementation, implementation/reviewer, parallel-worktree, and
+cross-host examples plus retry/idempotency semantics.
 
 ## Habits that make the workflow reliable
 

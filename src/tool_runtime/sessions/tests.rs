@@ -2759,6 +2759,8 @@ fn resolved_message_survives_restore() {
             ListSessionMessagesFilter {
                 kind: Some(SessionMessageKind::Todo),
                 status: Some(SessionMessageStatus::Resolved),
+                message_id: None,
+                reply_to: None,
                 limit: Some(10),
             },
         )
@@ -3029,6 +3031,8 @@ fn list_session_messages_filters_and_clamps_limit() {
             ListSessionMessagesFilter {
                 kind: Some(SessionMessageKind::Guidance),
                 status: None,
+                message_id: None,
+                reply_to: None,
                 limit: None,
             },
         )
@@ -3042,6 +3046,8 @@ fn list_session_messages_filters_and_clamps_limit() {
             ListSessionMessagesFilter {
                 kind: None,
                 status: Some(SessionMessageStatus::Open),
+                message_id: None,
+                reply_to: None,
                 limit: Some(usize::MAX),
             },
         )
@@ -3469,6 +3475,8 @@ fn message_post_and_resolve_round_trip_through_store() {
             ListSessionMessagesFilter {
                 kind: Some(SessionMessageKind::Todo),
                 status: Some(SessionMessageStatus::Open),
+                message_id: None,
+                reply_to: None,
                 limit: Some(10),
             },
         )
@@ -3505,6 +3513,8 @@ fn message_post_and_resolve_round_trip_through_store() {
             ListSessionMessagesFilter {
                 kind: None,
                 status: Some(SessionMessageStatus::Open),
+                message_id: None,
+                reply_to: None,
                 limit: None,
             },
         )
@@ -4247,6 +4257,8 @@ fn closed_session_denies_mutation_tools_allows_query() {
             ListSessionMessagesFilter {
                 kind: None,
                 status: None,
+                message_id: None,
+                reply_to: None,
                 limit: None,
             },
         )

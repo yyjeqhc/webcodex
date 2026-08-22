@@ -595,6 +595,114 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             );
             insert_structured_validation_target(tool_name, obj, &mut out);
         }
+        "post_session_message" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["session_id", "kind", "reply_to", "priority"],
+            );
+            out.insert(
+                "body_present".to_string(),
+                Value::Bool(obj.get("message").and_then(Value::as_str).is_some()),
+            );
+            out.insert(
+                "body_bytes".to_string(),
+                Value::from(
+                    obj.get("message")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or(0),
+                ),
+            );
+            out.insert(
+                "tags_count".to_string(),
+                Value::from(
+                    obj.get("tags")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0),
+                ),
+            );
+        }
+        "list_session_messages" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "session_id",
+                    "kind",
+                    "status",
+                    "message_id",
+                    "reply_to",
+                    "limit",
+                ],
+            );
+        }
+        "resolve_session_message" => {
+            copy_keys(obj, &mut out, &["session_id", "message_id"]);
+            out.insert(
+                "resolution_present".to_string(),
+                Value::Bool(obj.get("resolution").and_then(Value::as_str).is_some()),
+            );
+            out.insert(
+                "resolution_bytes".to_string(),
+                Value::from(
+                    obj.get("resolution")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or(0),
+                ),
+            );
+        }
+        "complete_session_message" => {
+            copy_keys(obj, &mut out, &["session_id", "message_id", "priority"]);
+            out.insert(
+                "body_present".to_string(),
+                Value::Bool(obj.get("answer").and_then(Value::as_str).is_some()),
+            );
+            out.insert(
+                "body_bytes".to_string(),
+                Value::from(
+                    obj.get("answer")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or(0),
+                ),
+            );
+            out.insert(
+                "tags_count".to_string(),
+                Value::from(
+                    obj.get("tags")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0),
+                ),
+            );
+            out.insert(
+                "completion_id".to_string(),
+                bounded_completion_key_fingerprint(
+                    obj.get("completion_key").and_then(Value::as_str),
+                ),
+            );
+        }
+        "session_discussion_summary" => {
+            copy_keys(obj, &mut out, &["session_id", "limit"]);
+        }
+        "session_handoff_summary" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "session_id",
+                    "project",
+                    "include_workspace",
+                    "include_checkpoints",
+                    "include_validation",
+                    "summary_only",
+                    "limit",
+                ],
+            );
+        }
         "workspace_checkpoint_create" => {
             copy_keys(obj, &mut out, &["title", "include_untracked"]);
             out.insert(
@@ -681,6 +789,66 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
             "reason_code": output.get("reason_code").cloned().unwrap_or(Value::Null),
             "file_count": output.get("files").and_then(Value::as_array).map(Vec::len),
+        "git_diff_hunks" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "scope": output.get("scope").cloned().unwrap_or(Value::Null),
+            "cached": output.get("cached").cloned().unwrap_or(Value::Null),
+            "hunk_count": output.get("hunk_count").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "truncation_reasons": output.get("truncation_reasons").cloned().unwrap_or(Value::Null),
+            "has_more": output.get("has_more").cloned().unwrap_or(Value::Null),
+            "exit_code": output.get("exit_code").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "reason_code": output.get("reason_code").cloned().unwrap_or(Value::Null),
+            "file_count": output.get("files").and_then(Value::as_array).map(Vec::len),
+        }),
+        "post_session_message" => serde_json::json!({
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
+            "message_id": output.get("message_id").cloned().unwrap_or(Value::Null),
+            "kind": output.pointer("/message/kind").cloned().unwrap_or(Value::Null),
+            "status": output.pointer("/message/status").cloned().unwrap_or(Value::Null),
+            "author_session_id": output.pointer("/message/author_session_id").cloned().unwrap_or(Value::Null),
+        }),
+        "list_session_messages" => serde_json::json!({
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
+            "message_count": output.get("messages").and_then(Value::as_array).map(Vec::len),
+        }),
+        "resolve_session_message" => serde_json::json!({
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
+            "message_id": output.get("message_id").cloned().unwrap_or(Value::Null),
+            "status": output.pointer("/message/status").cloned().unwrap_or(Value::Null),
+            "resolved_by_message_id": output.pointer("/message/resolved_by_message_id").cloned().unwrap_or(Value::Null),
+        }),
+        "complete_session_message" => serde_json::json!({
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
+            "message_id": output.get("message_id").cloned().unwrap_or(Value::Null),
+            "answer_message_id": output.get("answer_message_id").cloned().unwrap_or(Value::Null),
+            "completion_id": output.get("completion_id").cloned().unwrap_or(Value::Null),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "author_session_id": output.pointer("/answer/author_session_id").cloned().unwrap_or(Value::Null),
+        }),
+        "session_discussion_summary" => serde_json::json!({
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
+            "counts": output.get("counts").cloned().unwrap_or(Value::Null),
+            "open_todo_count": output.get("open_todos").and_then(Value::as_array).map(Vec::len),
+            "recent_answer_count": output.get("recent_answers").and_then(Value::as_array).map(Vec::len),
+            "recent_completion_count": output.get("recent_completions").and_then(Value::as_array).map(Vec::len),
+        }),
+        "session_handoff_summary" => serde_json::json!({
+            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "lifecycle": output.get("lifecycle").cloned().unwrap_or(Value::Null),
+            "counts": output.get("counts").cloned().unwrap_or(Value::Null),
+            "open_todo_count": output.get("open_todos").and_then(Value::as_array).map(Vec::len),
+            "recent_answer_count": output.get("recent_answers").and_then(Value::as_array).map(Vec::len),
+            "recent_completion_count": output.get("recent_completions").and_then(Value::as_array).map(Vec::len),
+            "summary_only": output.get("summary_only").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
         }),
         "computer_list_targets" => serde_json::json!({
             "count": output.get("count").cloned().unwrap_or(Value::Null),
@@ -820,6 +988,20 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
         }),
         _ => output.clone(),
     }
+}
+
+fn bounded_completion_key_fingerprint(value: Option<&str>) -> Value {
+    let Some(value) = value else {
+        return Value::Null;
+    };
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > 128 {
+        return Value::String("invalid".to_string());
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex.session-message-completion.v1\0");
+    hasher.update(value.as_bytes());
+    Value::String(format!("{:x}", hasher.finalize()))
 }
 
 fn copy_keys(
@@ -2572,14 +2754,15 @@ impl ToolCall {
             Self::PostSessionMessage {
                 session_id,
                 kind,
+                message,
                 tags,
                 reply_to,
                 priority,
-                ..
             } => serde_json::json!({
                 "session_id": session_id,
                 "kind": kind,
-                "message_present": true,
+                "body_present": !message.is_empty(),
+                "body_bytes": message.len(),
                 "tags_count": tags.len(),
                 "reply_to": reply_to,
                 "priority": priority,
@@ -2588,11 +2771,15 @@ impl ToolCall {
                 session_id,
                 kind,
                 status,
+                message_id,
+                reply_to,
                 limit,
             } => serde_json::json!({
                 "session_id": session_id,
                 "kind": kind,
                 "status": status,
+                "message_id": message_id,
+                "reply_to": reply_to,
                 "limit": limit,
             }),
             Self::ResolveSessionMessage {
@@ -2603,6 +2790,22 @@ impl ToolCall {
                 "session_id": session_id,
                 "message_id": message_id,
                 "resolution_present": resolution.as_ref().is_some_and(|v| !v.is_empty()),
+            }),
+            Self::CompleteSessionMessage {
+                session_id,
+                message_id,
+                answer,
+                completion_key,
+                tags,
+                priority,
+            } => serde_json::json!({
+                "session_id": session_id,
+                "message_id": message_id,
+                "body_present": !answer.is_empty(),
+                "body_bytes": answer.len(),
+                "tags_count": tags.len(),
+                "priority": priority,
+                "completion_id": bounded_completion_key_fingerprint(Some(completion_key)),
             }),
             Self::SessionDiscussionSummary { session_id, limit } => serde_json::json!({
                 "session_id": session_id,

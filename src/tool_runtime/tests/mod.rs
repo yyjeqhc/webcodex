@@ -6,6 +6,7 @@ mod apply_text_edits;
 mod checkpoint;
 mod coding_task;
 mod coding_task_semantic_navigation;
+mod collaboration;
 mod continuation_feedback;
 mod dispatch;
 mod edit_tool_telemetry;

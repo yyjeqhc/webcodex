@@ -65,21 +65,22 @@ role 参数。
 
 ## 手动多窗口协作
 
-需要把一个有界独立子任务交给另一个窗口时，coordinator 与 worker 应保持**不同的**
-Workflow Session。coordinator 在自己的 Session 中发布 `todo`；worker 新建独立 Session，
-读取 coordinator 的 `session_handoff_summary` 与对应 open todo，在自己的 Session 下完成
-子任务，然后向 coordinator Session 发布带 `reply_to=<todo_id>` 的有界 `answer`，最后
-resolve 精确的 todo。
+需要把一个有界独立子任务交给另一个窗口时，coordinator `C` 与 worker `W` 始终保持
+**不同的** Workflow Session。coordinator 在 `C` 发布 `todo`；`W` 读取
+`session_handoff_summary(C)` 与 exact `message_id`，所有工具调用、validation 与 review
+evidence 都保留在 `W`，完成后用 `complete_session_message` 原子创建一条 bounded answer
+并 resolve exact todo。运行时能从当前 worker Session binding 可信派生身份时，answer 会带
+`author_session_id`；caller 不能自行伪造该 provenance。
 
-第一版故意保持手动：没有自动 claim、worker scheduler、共享 transcript，也没有隐式的
-跨 Session authority。一个 todo 由人工分配给一个 worker。多个窗口共享 worktree 时优先
-让 worker 以读为主；确实需要独立并发写时优先隔离 worktree/project。`read_only` 请求或
-Session mode 是有用的执行姿态与 guard context，但不是 worker 整个生命周期实际行为的
-权威证明。worker 应如实回报 mutation、shell/process、validation、external effect 等重要
-操作或偏离预期的行为；coordinator 以记录下来的 tool/effect evidence 与当前 workspace
-状态为准。回传结论、关键 evidence 与 result path，而不是把长 transcript 注入 coordinator。
+coordinator 可用 `list_session_messages(message_id=...)` / `reply_to=...` 精确读取 todo 与
+reply，然后重新观察权威的 project/Git/artifact state。worker execution history 不会复制到
+`C`，知道 Session/message id 也不会获得项目 authority。message board 只是 collaboration
+metadata，不是 claim、lease、filesystem/worktree/branch lock。并发写应使用独立 Git
+worktree 与 WebCodex Project。此流程不增加自动 worker spawning、scheduler、共享
+transcript、隐式跨 Session authority 或 cross-owner delegation。
 
-详细协议与后续 convenience primitive 的 dogfood gate 见
+详细的 coordinator/implementation、implementation/reviewer、并行 worktree 与 cross-host
+示例，以及 uncertain-result retry/idempotency 语义见
 [Manual Multi-Window Collaboration](agent/manual-window-collaboration.md)。
 
 ## 已被 dogfood 证明重要的习惯

@@ -137,6 +137,14 @@ pub(crate) fn list_session_messages_input_schema() -> Value {
             },
             "kind": session_message_kind_schema("Optional kind filter."),
             "status": session_message_status_schema("Optional status filter."),
+            "message_id": {
+                "type": "string",
+                "description": "Optional exact wc_msg_* filter. Combined with kind/status/reply_to using deterministic AND semantics; returns exact 0/1 when this filter is supplied."
+            },
+            "reply_to": {
+                "type": "string",
+                "description": "Optional exact reply_to wc_msg_* filter, useful for finding replies to one todo. Combined with all other filters using AND semantics."
+            },
             "limit": {
                 "type": "integer",
                 "maximum": 100,
@@ -167,6 +175,43 @@ pub(crate) fn resolve_session_message_input_schema() -> Value {
             }
         },
         "required": ["session_id", "message_id"],
+        "additionalProperties": false,
+    })
+}
+
+pub(crate) fn complete_session_message_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Required coordinator/business wc_sess_* id containing the exact open todo."
+            },
+            "message_id": {
+                "type": "string",
+                "description": "Exact open todo wc_msg_* id to answer and resolve atomically."
+            },
+            "answer": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8000,
+                "description": "Bounded answer body stored once as a kind=answer message replying to the todo."
+            },
+            "completion_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "Caller-generated idempotency key for this exact completion. Same key and same answer returns the original result; conflicting reuse fails closed."
+            },
+            "tags": {
+                "type": "array",
+                "items": { "type": "string", "maxLength": 64 },
+                "maxItems": 16,
+                "description": "Optional tags on the created answer."
+            },
+            "priority": session_message_priority_schema("Optional answer priority; defaults to normal.")
+        },
+        "required": ["session_id", "message_id", "answer", "completion_key"],
         "additionalProperties": false,
     })
 }

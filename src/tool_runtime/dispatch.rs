@@ -713,7 +713,14 @@ impl ToolRuntime {
                 ..
             } if project.trim().is_empty() && !path.trim().is_empty()
         );
-        let session_id = if defer_path_work_session {
+        // session_handoff_summary.session_id is business input and remains the
+        // legacy recorder fallback for direct/internal dispatch. When the
+        // generic kernel already has an explicit outer recording Session (it
+        // passes use_current_session=false), suppress this inner fallback so a
+        // worker W reading coordinator C records the tool execution only in W.
+        let suppress_handoff_business_recorder =
+            !use_current_session && matches!(&call, ToolCall::SessionHandoffSummary { .. });
+        let session_id = if defer_path_work_session || suppress_handoff_business_recorder {
             None
         } else {
             call.session_id().map(str::to_string)
@@ -1088,6 +1095,7 @@ impl ToolRuntime {
             | ToolCall::PostSessionMessage { .. }
             | ToolCall::ListSessionMessages { .. }
             | ToolCall::ResolveSessionMessage { .. }
+            | ToolCall::CompleteSessionMessage { .. }
             | ToolCall::SessionDiscussionSummary { .. }
             | ToolCall::BindCurrentSession { .. }
             | ToolCall::CurrentSession { .. }

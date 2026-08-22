@@ -195,6 +195,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "post_session_message",
             "list_session_messages",
             "resolve_session_message",
+            "complete_session_message",
             "session_discussion_summary",
             "session_handoff_summary",
             "current_session",
@@ -336,13 +337,17 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "handoff",
-        summary: "Handoff: use session_summary / session_handoff_summary when a task spans multiple steps.",
-        manifest_purpose: "Summarize or hand off multi-step session state.",
+        summary: "Handoff: use session_summary / session_handoff_summary. Coordinator posts todo; independent worker reads handoff + exact todo, works in its own Session, then complete_session_message atomically answers+resolves; coordinator reads replies and revalidates authoritative state.",
+        manifest_purpose: "Coordinate independent Workflow Sessions through bounded todos and atomic completions without sharing execution history or authority.",
         tools: &[
-            "finish_coding_task",
             "session_summary",
+            "post_session_message",
             "session_handoff_summary",
+            "list_session_messages",
+            "complete_session_message",
+            "session_discussion_summary",
             "validation_summary",
+            "finish_coding_task",
         ],
     },
 ];

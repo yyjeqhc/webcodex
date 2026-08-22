@@ -160,6 +160,50 @@ impl ToolRuntime {
                 };
             }
         }
+        if collaboration_session_tool(&request.tool_name) {
+            if let Some(recorder_session_id) = context.session_id {
+                if let Some(Some(recorder_project)) =
+                    self.sessions.session_project(recorder_session_id)
+                {
+                    if let Err(err) = self
+                        .resolve_project_input_for_auth(&recorder_project, context.auth)
+                        .await
+                    {
+                        return ToolCallOutcome {
+                            success: false,
+                            result: Some(err.into_tool_result()),
+                            error_status: None,
+                            project: None,
+                        };
+                    }
+                }
+                if let Some(target_session_id) =
+                    collaboration_target_session_id(&request.tool_name, &concrete_arguments)
+                {
+                    if let (Some(Some(recorder_project)), Some(Some(target_project))) = (
+                        self.sessions.session_project(recorder_session_id),
+                        self.sessions.session_project(target_session_id),
+                    ) {
+                        if recorder_project != target_project {
+                            let result = session_context::session_project_mismatch_no_escape_result(
+                                target_session_id,
+                                &request.tool_name,
+                                &session_context::SessionProjectMismatch {
+                                    session_project: target_project,
+                                    request_project: recorder_project,
+                                },
+                            );
+                            return ToolCallOutcome {
+                                success: false,
+                                result: Some(result),
+                                error_status: None,
+                                project: None,
+                            };
+                        }
+                    }
+                }
+            }
+        }
         let recording_session_project_mismatch = match context.session_id {
             Some(session_id) => {
                 self.recording_session_project_mismatch(
@@ -517,6 +561,30 @@ impl ToolRuntime {
             request_project: resolved.resolved_id,
         })
     }
+}
+
+fn collaboration_session_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "post_session_message"
+            | "list_session_messages"
+            | "resolve_session_message"
+            | "complete_session_message"
+            | "session_discussion_summary"
+            | "session_handoff_summary"
+    )
+}
+
+fn collaboration_target_session_id<'a>(tool_name: &str, arguments: &'a Value) -> Option<&'a str> {
+    if !collaboration_session_tool(tool_name) {
+        return None;
+    }
+    arguments
+        .as_object()
+        .and_then(|obj| obj.get("session_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|session_id| !session_id.is_empty())
 }
 
 fn extract_bool_arg(arguments: &Value, key: &str) -> bool {

@@ -16,9 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::continuation_feedback::{continuation_feedback_value, ContinuationFeedbackInput};
 use super::handoff_brief::{build_handoff_brief, HandoffBriefInput};
 use super::permissions::permission_summary_from_events;
-use super::session_context::{
-    session_project_mismatch_warning, SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
-};
+use super::session_context::{session_project_mismatch_no_escape_result, SessionProjectMismatch};
 use super::sessions::{
     tool_failure_summary_from_events, SessionEvent, SessionSummary,
     TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
@@ -67,6 +65,39 @@ impl ToolRuntime {
         let include_checkpoints = include_checkpoints.unwrap_or(true);
         let include_validation = include_validation.unwrap_or(true);
 
+        let authorized_target = match self
+            .authorize_collaboration_session(&session_id, "session_handoff_summary", auth)
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(result) => return result,
+        };
+        if let Some(request_project) = project
+            .as_deref()
+            .map(str::trim)
+            .filter(|project| !project.is_empty())
+        {
+            let requested = match self
+                .resolve_project_input_for_auth(request_project, auth)
+                .await
+            {
+                Ok(resolved) => resolved,
+                Err(err) => return err.into_tool_result(),
+            };
+            if let Some(target) = authorized_target.as_ref() {
+                if target.resolved_id != requested.resolved_id {
+                    return session_project_mismatch_no_escape_result(
+                        &session_id,
+                        "session_handoff_summary",
+                        &SessionProjectMismatch {
+                            session_project: target.resolved_id.clone(),
+                            request_project: requested.resolved_id,
+                        },
+                    );
+                }
+            }
+        }
+
         // --- session basic info + events ---
         let summary = match self.sessions.summary(&session_id, Some(limit)) {
             Some(summary) => summary,
@@ -91,12 +122,20 @@ impl ToolRuntime {
                                 risk: 0,
                                 todo: 0,
                                 question: 0,
+                                answer: 0,
                                 decision: 0,
+                                open_guidance: 0,
+                                open_questions: 0,
+                                open_risks: 0,
+                                open_todos: 0,
                             },
                             open_guidance: Vec::new(),
                             open_questions: Vec::new(),
                             open_risks: Vec::new(),
                             open_todos: Vec::new(),
+                            high_priority_open_todos: Vec::new(),
+                            recent_answers: Vec::new(),
+                            recent_completions: Vec::new(),
                             recent_progress: Vec::new(),
                             recent_decisions: Vec::new(),
                         },
@@ -136,9 +175,18 @@ impl ToolRuntime {
             output_recent(&tool_failures, "recent_unexpected_successes");
 
         let open_todos = bound_messages(&discussion.open_todos, MAX_OPEN_ITEMS);
+        let high_priority_open_todos =
+            bound_messages(&discussion.high_priority_open_todos, MAX_OPEN_ITEMS);
         let open_risks = bound_messages(&discussion.open_risks, MAX_OPEN_ITEMS);
         let open_questions = bound_messages(&discussion.open_questions, MAX_OPEN_ITEMS);
         let open_guidance = bound_messages(&discussion.open_guidance, MAX_OPEN_ITEMS);
+        let recent_answers = bound_messages(&discussion.recent_answers, MAX_RECENT_PROGRESS);
+        let recent_completions = discussion
+            .recent_completions
+            .iter()
+            .take(MAX_RECENT_PROGRESS)
+            .cloned()
+            .collect::<Vec<_>>();
         let recent_progress = bound_messages(&discussion.recent_progress, MAX_RECENT_PROGRESS);
         let recent_decisions = bound_messages(&discussion.recent_decisions, MAX_RECENT_DECISIONS);
 
@@ -146,27 +194,13 @@ impl ToolRuntime {
             "events": summary.events.len(),
             "failed_tool_calls": failed_tool_calls,
             "messages": discussion.counts.total,
-            "open_todos": discussion.counts.todo,
-            "open_risks": discussion.counts.risk,
-            "open_questions": discussion.counts.question,
-            "open_guidance": discussion.counts.guidance,
+            "open_todos": discussion.counts.open_todos,
+            "open_risks": discussion.counts.open_risks,
+            "open_questions": discussion.counts.open_questions,
+            "open_guidance": discussion.counts.open_guidance,
         });
 
-        let session_project_mismatch = match (summary.project.as_ref(), project.as_ref()) {
-            (Some(session_project), Some(request_project))
-                if !request_project.trim().is_empty() && session_project != request_project =>
-            {
-                Some(SessionProjectMismatch {
-                    session_project: session_project.clone(),
-                    request_project: request_project.trim().to_string(),
-                })
-            }
-            _ => None,
-        };
         let mut warnings = Vec::new();
-        if let Some(mismatch) = session_project_mismatch.as_ref() {
-            warnings.push(session_project_mismatch_warning(mismatch, false));
-        }
         let jobs_project = match project
             .as_deref()
             .map(str::trim)
@@ -200,6 +234,9 @@ impl ToolRuntime {
             "counts": counts,
             "permissions": permission_summary_from_events(&summary.events, DEFAULT_HANDOFF_LIMIT),
             "open_todos": open_todos,
+            "high_priority_open_todos": high_priority_open_todos,
+            "recent_answers": recent_answers,
+            "recent_completions": recent_completions,
             "open_risks": open_risks,
             "open_questions": open_questions,
             "open_guidance": open_guidance,
@@ -215,11 +252,6 @@ impl ToolRuntime {
             "jobs": jobs,
             "warnings": warnings,
         });
-        if let Some(mismatch) = session_project_mismatch.as_ref() {
-            output["warning_kind"] = json!(SESSION_PROJECT_MISMATCH_KIND);
-            output["session_project"] = json!(mismatch.session_project);
-            output["request_project"] = json!(mismatch.request_project);
-        }
 
         // --- optional workspace summary ---
         let has_project = project
@@ -520,7 +552,10 @@ fn bound_messages(messages: &[SessionMessage], max_items: usize) -> Vec<Value> {
                 "priority": message.priority,
                 "message": bound_chars(&message.message, HANDOFF_MESSAGE_CHARS),
                 "tags": message.tags,
+                "reply_to": message.reply_to,
+                "author_session_id": message.author_session_id,
                 "resolved_at": message.resolved_at,
+                "resolved_by_message_id": message.resolved_by_message_id,
             })
         })
         .collect()
@@ -565,6 +600,12 @@ fn compact_handoff_output(output: &Value) -> Value {
         "tool_failures": compact_tool_failures(output.get("tool_failures").unwrap_or(&Value::Null)),
         "validation": compact_validation(output.get("validation").unwrap_or(&Value::Null)),
         "review_evidence": compact_review_evidence(output.get("review_evidence").unwrap_or(&Value::Null)),
+        "collaboration": {
+            "open_todo_count": output.pointer("/counts/open_todos").and_then(Value::as_u64).unwrap_or(0),
+            "high_priority_open_todos": output.get("high_priority_open_todos").cloned().unwrap_or_else(|| json!([])),
+            "recent_answers": output.get("recent_answers").cloned().unwrap_or_else(|| json!([])),
+            "recent_completions": output.get("recent_completions").cloned().unwrap_or_else(|| json!([])),
+        },
         "work_performed": output.get("work_performed").cloned().unwrap_or_else(|| json!([])),
         "changed_paths": output.get("changed_paths").cloned().unwrap_or_else(|| json!([])),
         "continuation_feedback": output

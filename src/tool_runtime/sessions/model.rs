@@ -38,6 +38,8 @@ pub(crate) const MAX_MESSAGE_CHARS: usize = 8000;
 pub(crate) const MAX_MESSAGE_TAGS: usize = 16;
 pub(crate) const MAX_MESSAGE_TAG_CHARS: usize = 64;
 pub(crate) const MAX_MESSAGE_RESOLUTION_CHARS: usize = 8000;
+pub(crate) const MAX_MESSAGE_COMPLETION_KEY_CHARS: usize = 128;
+pub(crate) const MESSAGE_COMPLETION_FINGERPRINT_HEX_CHARS: usize = 64;
 pub(super) const MAX_MESSAGE_SUMMARY_CHARS: usize = 240;
 pub(super) const SUMMARY_MESSAGE_GROUP_LIMIT: usize = 5;
 pub(crate) const TOOL_EXPECTATION_RESULT_NONE: &str = "none";
@@ -901,8 +903,14 @@ pub(crate) struct SessionMessage {
     pub(crate) message: String,
     pub(crate) tags: Vec<String>,
     pub(crate) reply_to: Option<String>,
+    #[serde(default)]
+    pub(crate) author_session_id: Option<String>,
     pub(crate) resolved_at: Option<i64>,
     pub(crate) resolution: Option<String>,
+    #[serde(default)]
+    pub(crate) resolved_by_message_id: Option<String>,
+    #[serde(default)]
+    pub(crate) completion_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -915,10 +923,30 @@ pub(crate) struct PostSessionMessageInput {
     pub(crate) priority: SessionMessagePriority,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone)]
+pub(crate) struct CompleteSessionMessageInput {
+    pub(crate) session_id: String,
+    pub(crate) message_id: String,
+    pub(crate) answer: String,
+    pub(crate) tags: Vec<String>,
+    pub(crate) priority: SessionMessagePriority,
+    pub(crate) completion_id: String,
+    pub(crate) author_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CompleteSessionMessageOutcome {
+    pub(crate) todo: SessionMessage,
+    pub(crate) answer: SessionMessage,
+    pub(crate) replayed: bool,
+}
+
+#[derive(Debug, Clone, Default)]
 pub(crate) struct ListSessionMessagesFilter {
     pub(crate) kind: Option<SessionMessageKind>,
     pub(crate) status: Option<SessionMessageStatus>,
+    pub(crate) message_id: Option<String>,
+    pub(crate) reply_to: Option<String>,
     pub(crate) limit: Option<usize>,
 }
 
@@ -950,7 +978,20 @@ pub(crate) struct SessionDiscussionCounts {
     pub(crate) risk: usize,
     pub(crate) todo: usize,
     pub(crate) question: usize,
+    pub(crate) answer: usize,
     pub(crate) decision: usize,
+    pub(crate) open_guidance: usize,
+    pub(crate) open_questions: usize,
+    pub(crate) open_risks: usize,
+    pub(crate) open_todos: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SessionMessageCompletionSummary {
+    pub(crate) todo_message_id: String,
+    pub(crate) answer_message_id: String,
+    pub(crate) author_session_id: Option<String>,
+    pub(crate) completed_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -960,6 +1001,9 @@ pub(crate) struct SessionDiscussionSummary {
     pub(crate) open_questions: Vec<SessionMessage>,
     pub(crate) open_risks: Vec<SessionMessage>,
     pub(crate) open_todos: Vec<SessionMessage>,
+    pub(crate) high_priority_open_todos: Vec<SessionMessage>,
+    pub(crate) recent_answers: Vec<SessionMessage>,
+    pub(crate) recent_completions: Vec<SessionMessageCompletionSummary>,
     pub(crate) recent_progress: Vec<SessionMessage>,
     pub(crate) recent_decisions: Vec<SessionMessage>,
 }
@@ -984,6 +1028,14 @@ pub(crate) struct SessionInboxHint {
 pub(crate) enum SessionMessageError {
     UnknownSession,
     UnknownMessage,
+    NotTodo,
+    IdempotencyConflict,
+    AlreadyCompleted {
+        answer_message_id: Option<String>,
+        completion_id: Option<String>,
+    },
+    InvalidCompletionState,
+    PersistenceUncertain,
     /// Message-board mutation denied because the workflow session is closed
     /// (or archived). Query tools remain available.
     SessionClosed {

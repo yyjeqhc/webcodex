@@ -125,6 +125,8 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "name" => json!("Private Drop"),
         "kind" => json!("note"),
         "message" => json!("hello"),
+        "answer" => json!("done"),
+        "completion_key" => json!("sample-completion-key"),
         "message_id" => json!("wc_msg_0001"),
         "execution_context" => json!({}),
         other => panic!("missing sample value for required field {other}"),

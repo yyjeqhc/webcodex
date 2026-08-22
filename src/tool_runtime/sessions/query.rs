@@ -1,9 +1,9 @@
 //! Read-only session aggregates: message summary, discussion, inbox hints.
 use super::model::{
     SessionDiscussionCounts, SessionDiscussionSummary, SessionInboxHint, SessionInboxOpenCounts,
-    SessionMessage, SessionMessageError, SessionMessageKind, SessionMessagePriority,
-    SessionMessageStatus, SessionMessagesSummary, SessionRecord, MAX_MESSAGE_CHARS,
-    MAX_MESSAGE_RESOLUTION_CHARS, MAX_MESSAGE_SUMMARY_CHARS, MAX_MESSAGE_TAGS,
+    SessionMessage, SessionMessageCompletionSummary, SessionMessageError, SessionMessageKind,
+    SessionMessagePriority, SessionMessageStatus, SessionMessagesSummary, SessionRecord,
+    MAX_MESSAGE_CHARS, MAX_MESSAGE_RESOLUTION_CHARS, MAX_MESSAGE_SUMMARY_CHARS, MAX_MESSAGE_TAGS,
     MAX_MESSAGE_TAG_CHARS, SUMMARY_MESSAGE_GROUP_LIMIT,
 };
 use super::util::bound_chars;
@@ -54,7 +54,12 @@ pub(super) fn build_discussion_counts(record: &SessionRecord) -> SessionDiscussi
         risk: count_kind(record, SessionMessageKind::Risk),
         todo: count_kind(record, SessionMessageKind::Todo),
         question: count_kind(record, SessionMessageKind::Question),
+        answer: count_kind(record, SessionMessageKind::Answer),
         decision: count_kind(record, SessionMessageKind::Decision),
+        open_guidance: count_open_kind(record, SessionMessageKind::Guidance),
+        open_questions: count_open_kind(record, SessionMessageKind::Question),
+        open_risks: count_open_kind(record, SessionMessageKind::Risk),
+        open_todos: count_open_kind(record, SessionMessageKind::Todo),
     }
 }
 
@@ -88,6 +93,22 @@ pub(super) fn build_discussion_summary(
             Some(SessionMessageStatus::Open),
             limit.min(SUMMARY_MESSAGE_GROUP_LIMIT),
         ),
+        high_priority_open_todos: take_recent_messages(
+            record,
+            limit.min(SUMMARY_MESSAGE_GROUP_LIMIT),
+            |message| {
+                message.kind == SessionMessageKind::Todo
+                    && message.status == SessionMessageStatus::Open
+                    && message.priority == SessionMessagePriority::High
+            },
+        ),
+        recent_answers: take_recent_kind(
+            record,
+            SessionMessageKind::Answer,
+            None,
+            limit.min(SUMMARY_MESSAGE_GROUP_LIMIT),
+        ),
+        recent_completions: take_recent_completions(record, limit.min(SUMMARY_MESSAGE_GROUP_LIMIT)),
         recent_progress: take_recent_kind(record, SessionMessageKind::Progress, None, limit),
         recent_decisions: take_recent_kind(record, SessionMessageKind::Decision, None, limit),
     }
@@ -148,6 +169,53 @@ pub(super) fn count_open_kind(record: &SessionRecord, kind: SessionMessageKind) 
         .count()
 }
 
+fn take_recent_messages(
+    record: &SessionRecord,
+    limit: usize,
+    predicate: impl Fn(&SessionMessage) -> bool,
+) -> Vec<SessionMessage> {
+    record
+        .messages
+        .iter()
+        .rev()
+        .filter(|message| predicate(message))
+        .take(limit)
+        .map(|message| message.as_ref().clone())
+        .map(bound_message_for_summary)
+        .collect()
+}
+
+fn take_recent_completions(
+    record: &SessionRecord,
+    limit: usize,
+) -> Vec<SessionMessageCompletionSummary> {
+    record
+        .messages
+        .iter()
+        .rev()
+        .filter(|message| {
+            message.kind == SessionMessageKind::Todo
+                && message.status == SessionMessageStatus::Resolved
+                && message.resolved_by_message_id.is_some()
+        })
+        .filter_map(|todo| {
+            let answer_message_id = todo.resolved_by_message_id.as_ref()?;
+            let answer = record.messages.iter().find(|message| {
+                message.message_id == *answer_message_id
+                    && message.kind == SessionMessageKind::Answer
+                    && message.reply_to.as_deref() == Some(todo.message_id.as_str())
+            })?;
+            Some(SessionMessageCompletionSummary {
+                todo_message_id: todo.message_id.clone(),
+                answer_message_id: answer.message_id.clone(),
+                author_session_id: answer.author_session_id.clone(),
+                completed_at: todo.resolved_at,
+            })
+        })
+        .take(limit)
+        .collect()
+}
+
 pub(super) fn take_recent_kind(
     record: &SessionRecord,
     kind: SessionMessageKind,
@@ -172,6 +240,13 @@ pub(super) fn bound_message_for_summary(mut message: SessionMessage) -> SessionM
         *resolution = bound_chars(resolution, MAX_MESSAGE_SUMMARY_CHARS);
     }
     message
+}
+
+pub(super) fn is_valid_completion_id(value: &str) -> bool {
+    value.len() == super::model::MESSAGE_COMPLETION_FINGERPRINT_HEX_CHARS
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 pub(super) fn validate_message_text(value: String) -> Result<String, SessionMessageError> {

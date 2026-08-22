@@ -21,7 +21,7 @@ use super::model::{
     MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS, MAX_MESSAGE_CHARS,
     MAX_MESSAGE_RESOLUTION_CHARS, MESSAGE_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
-use super::query::validate_message_tags;
+use super::query::{is_valid_completion_id, validate_message_tags};
 use super::util::{
     bound_chars, bound_event_error_summary, bound_summary_string, redact_and_bound_instruction,
 };
@@ -507,6 +507,24 @@ pub(super) fn sanitize_persisted_message(
             Some(reply_to)
         } else {
             None
+        }
+    });
+    message.author_session_id = message.author_session_id.and_then(|author_session_id| {
+        let author_session_id = author_session_id.trim().to_string();
+        is_valid_session_id(&author_session_id).then_some(author_session_id)
+    });
+    message.resolved_by_message_id = message.resolved_by_message_id.and_then(|message_id| {
+        let message_id = message_id.trim().to_string();
+        message_id
+            .starts_with(MESSAGE_ID_PREFIX)
+            .then_some(message_id)
+    });
+    message.completion_id = message.completion_id.and_then(|completion_id| {
+        let completion_id = completion_id.trim().to_ascii_lowercase();
+        if is_valid_completion_id(&completion_id) {
+            Some(completion_id)
+        } else {
+            Some("invalid".to_string())
         }
     });
     message.resolution = message

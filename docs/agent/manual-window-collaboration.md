@@ -1,106 +1,125 @@
 # Manual Multi-Window Collaboration
 
-This document defines the first supported pattern for manually splitting one coding task across multiple ChatGPT windows or agents. It deliberately reuses the existing Workflow Session handoff and message-board primitives. It is not a scheduler, worker pool, claim service, or shared-transcript design.
+This guide defines bounded collaboration between independent WebCodex Workflow Sessions. It reuses the Session handoff and message board; it is not a scheduler, worker pool, task queue, claim service, shared transcript, or filesystem lock.
 
-## Scope
+## Core model
 
-Use this pattern when a coordinator wants an independent worker to perform a bounded subtask such as analysis, review, investigation, or a clearly isolated deliverable.
+Assume coordinator Session `C` and worker Session `W`.
 
-The first version is manual:
+`C` owns the collaboration todo and bounded answers. `W` owns the worker's tool calls, validation, review evidence, and workspace activity. They are always independent Sessions: the worker does not resume `C`, and WebCodex does not copy `W` execution history into `C`.
 
-- a human opens the additional window or agent;
-- coordinator and worker keep separate Workflow Sessions;
-- the coordinator Session owns the ledger-backed todo and receives the bounded result;
-- the worker Session owns the worker's tool/evidence history;
-- the worker reads a bounded coordinator handoff instead of inheriting the coordinator transcript;
-- no primitive in this workflow grants filesystem authority, task ownership, or a concurrency lease.
+Knowing a `session_id`, `message_id`, worker Session id, Job id, checkpoint id, artifact ref, commit SHA, or PR number is not authority. Every read or mutation still passes the normal caller/project/owner authorization checks. Collaboration never grants filesystem, shell, Computer, artifact, credential, or other project authority.
 
-The message board does not coordinate filesystem concurrency. Prefer read-oriented workers when several windows share one worktree, and use an explicitly isolated worktree/project when independent concurrent writes are intentional. A worker may still change course when its available authority and later task state allow it; any mutation or other material deviation from the requested posture must be reported, and the coordinator must re-observe current state before consequential follow-up.
+## Canonical coordinator -> worker flow
 
-## Canonical flow
-
-Assume the coordinator has Session `C` and the worker will create Session `W`.
-
-1. **Coordinator posts one bounded todo to `C`.** Use `post_session_message(kind="todo")`. The todo should contain the objective, narrow scope, important prohibitions, and expected result shape. Include a result path only when the worker is explicitly expected to produce an isolated document or artifact.
-2. **Open the worker as a fresh Session.** The worker should normally start a new Workflow Session `W`; do not resume `C` merely to delegate work. Separate Sessions keep the worker's tool history and reasoning context independent.
-3. **Worker reads the coordinator handoff.** Call `session_handoff_summary(session_id=C, ...)`, then inspect the relevant open todo with `list_session_messages(session_id=C, kind="todo", status="open")` or the bounded discussion summary. The handoff is continuity evidence, not transcript replay.
-4. **Worker performs the subtask under `W`.** Use `W` for project reads, validation, mutation, or other worker-local evidence as the task actually requires. The coordinator todo does not widen project authority. A requested `read_only` posture or current Session guard is useful intent/safety context, but it is not authoritative proof that no later write occurred or that the Session could never change mode; actual tool/effect evidence and the worker's report remain the basis for handoff.
-5. **Worker posts a bounded answer back to `C`.** Use `post_session_message(kind="answer", reply_to=<todo_id>)`. Return the conclusion, load-bearing evidence, and any explicit result path. When useful, include the worker Session id in the answer because Session messages do not currently carry a first-class author-Session field.
-6. **Resolve the exact todo.** After the answer has been successfully recorded in the coordinator Session, call `resolve_session_message(session_id=C, message_id=<todo_id>, ...)`. Resolution means the coordination item was handled; it is not an implementation acceptance verdict.
-7. **Coordinator consumes only the bounded result.** The coordinator should use the answer, referenced artifact/document, and its own source revalidation. It should not import the worker's long transcript into its context.
-8. **Close the worker Session when appropriate.** A completed one-shot worker can be closed explicitly. The coordinator Session remains independent.
-
-A compact mental model is:
+1. **Coordinator posts one bounded todo to `C`.** Use `post_session_message(kind="todo")`. Include the objective, scope, prohibitions, exact stable identifiers, and expected answer shape.
+2. **Worker starts its own Session `W`.** Do not resume `C` just to accept the assignment.
+3. **Worker reads bounded coordinator state.** Use `session_handoff_summary(session_id=C)` and then `list_session_messages(session_id=C, message_id=<todo_id>)`. Exact lookup does not depend on the todo being in a recent-message window.
+4. **Worker performs the task under `W`.** Reads, edits, shell/process calls, validation, review evidence, Jobs, checkpoints, and other authoritative activity stay attached to `W`.
+5. **Worker completes the exact todo atomically.** Use `complete_session_message(session_id=C, message_id=<todo_id>, answer=<bounded answer>, completion_key=<caller key>)`. One Session-store mutation creates exactly one `kind=answer` reply, resolves the todo, and records the todo -> answer correlation.
+6. **Coordinator reads the result from `C`.** Use exact todo lookup, `list_session_messages(reply_to=<todo_id>)`, `session_discussion_summary`, or `session_handoff_summary`.
+7. **Coordinator re-observes authoritative state.** A message may reference `W`, a Job, checkpoint, artifact, commit, or PR, but the coordinator explicitly reads/revalidates that source before consequential follow-up.
 
 ```text
 coordinator C
-  -> post todo
-  -> human opens worker
-worker W
-  -> read handoff(C)
-  -> read open todo(C)
-  -> perform bounded work under W
-  -> post answer(C, reply_to=todo)
-  -> resolve todo(C)
+  -> post todo(C)
+
+worker W (independent Session)
+  -> handoff(C)
+  -> exact todo(C, message_id)
+  -> inspect / edit / validate / review under W
+  -> complete(C, todo, answer, completion_key)
+
 coordinator C
-  -> consume bounded answer/evidence/result path
-  -> revalidate current source before consequential follow-up
+  -> exact todo(C) + replies(todo)
+  -> discussion/handoff(C)
+  -> revalidate authoritative source/state
 ```
 
-## Todo contents
+## Atomic completion and retries
 
-A useful todo is small and explicit. Prefer fields expressed in ordinary prose:
+`complete_session_message` is preferred over separately posting an answer and then resolving a todo.
 
-- goal;
-- allowed scope;
-- prohibited actions;
-- the requested worker posture, such as read-oriented or write-capable, while recognizing that this is intent rather than completion truth;
-- expected output: conclusion, findings, evidence, or an isolated result path;
-- relevant commit/path identifiers when they are stable enough to be useful.
+A successful completion records:
 
-Do not put credentials, bearer tokens, private keys, secret values, or sensitive connection details in Session messages. The message board is ledger-backed task state, not a secret transport. Message mutations are recorded in the in-memory Session state and queued to the existing persistence path; a successful tool return does not by itself promise synchronous disk flush.
+- one answer whose `reply_to` is the exact todo id;
+- the todo as resolved;
+- `resolved_by_message_id` pointing to that exact answer;
+- a bounded completion identity derived from `completion_key`;
+- `author_session_id` when WebCodex can derive a trusted current worker Session from the caller/transport/stable-window/project binding.
 
-## Correlation and completion
+If no trusted current worker binding is available, `author_session_id` is `null`; callers cannot supply a trusted author identity themselves.
 
-`reply_to` is the correlation mechanism between an answer and the coordinator todo. It does not claim the todo, grant authority, or prove that only one worker acted on it.
+For uncertain responses, retry the same `session_id + message_id + completion_key` with the same answer metadata. WebCodex returns the original completion without creating another answer. Reusing the same key with different answer content/metadata fails with `idempotency_conflict`. A different completion after another completion already resolved the todo returns `already_completed` and bounded existing completion identity.
 
-There is no atomic claim in the first version. Manually assign one worker per todo. If several independent workers are desired, create distinct todos. Add an atomic claim primitive only after real dogfood shows workers racing for the same todo often enough that manual assignment is unreliable.
+A successful completion is fenced through the Session-ledger writer generation that contains that completion before success is returned. If durable persistence cannot be confirmed, the tool returns `completion_persistence_uncertain` with `failure_kind=outcome_unknown`; retry the same completion key and payload to reconcile the already-possible in-memory mutation instead of posting a second answer. Correlation and idempotency metadata survive restart/persistence restoration; old records without the new fields load with absent provenance. Malformed partial completion structures fail closed and never silently reopen a resolved todo.
 
-Completion is currently two explicit metadata operations: post the answer, then resolve the todo. This is acceptable while the workflow is still low-volume and manual. If repeated use shows that this pair is a persistent source of mistakes or boilerplate, prefer one narrow `complete_session_message`-style convenience over a general collaboration framework.
+## Exact assignment and reply lookup
 
-## Worktree, evidence, and result safety
+`list_session_messages` supports narrow exact filters:
 
-The Session message board is not a filesystem lock, and a task label such as `read_only` is not authoritative outcome truth.
+```text
+message_id=<wc_msg_*>
+reply_to=<wc_msg_*>
+kind=<optional>
+status=<optional>
+```
 
-- Read-oriented review/analysis workers are the lowest-conflict parallel use case when several windows share one worktree.
-- If independent concurrent writes are intended, prefer explicit isolation at the worktree/project layer; if a worker writes in a shared worktree anyway, it must report that fact and the coordinator must re-observe the resulting state rather than relying on the original todo.
-- Session mode and guards describe effective state at a point in the workflow. They can be changed only through normal accepted Session/tool paths and never widen underlying project authority, but they should not be treated as proof that a worker remained read-only for its entire lifetime.
-- Worker results should explicitly report material operations and deviations: mutations, shell/process execution, validation, external effects, or anything else that changes how the coordinator should interpret the result.
-- A result path is only a reference. The coordinator must re-read/revalidate current source or artifact state before a consequential follow-up.
-- Recorded tool/effect evidence and current workspace state are stronger evidence of what happened than the worker's requested posture alone; the worker's bounded report should accurately summarize that evidence rather than conceal or normalize deviations.
-- Worker completion does not make `finish_coding_task` or any other advisory projection authoritative completion truth.
+All supplied filters use deterministic AND semantics. `message_id` therefore gives an exact 0/1 lookup even when the Session contains many messages; `reply_to` finds bounded replies to one exact todo.
 
-## What this deliberately does not build
+## Provenance is metadata, not authority
 
-Do not add any of the following merely to make the first manual workflow look more automatic:
+A completed answer can identify the independent worker with `author_session_id`. That value is derived from trusted runtime current-Session context when available; it is not a caller-authored claim.
 
-- automatic worker spawning;
-- scheduler or worker pool;
-- generic WorkItem/lease framework;
-- automatic todo claim;
-- shared multi-window transcript;
-- implicit cross-Session authority;
-- concurrent same-worktree edit orchestration;
-- automatic injection of worker history into the coordinator.
+The coordinator may then explicitly inspect `session_handoff_summary(worker_session_id)` if it has authority to that Session. WebCodex does not copy the worker's transcript, validation, diff review, Job logs, or workspace evidence into the coordinator Session merely because the answer references `W`.
 
-Each would add a new correctness or ownership model. Introduce one only for a demonstrated repeated problem that existing Session/message primitives cannot handle cleanly.
+Session message bodies are explicit bounded collaboration payloads. Ordinary tool audit stores metadata such as target Session/message ids, body byte counts, tag counts, correlation ids, completion identity, and safe author provenance; it does not persist a second copy of the full todo/answer body or raw completion key.
 
-## Dogfood results
+## Common collaboration patterns
 
-The first protocol dogfood on 2026-08-16 exercised the intended sequence against the existing runtime: coordinator todo -> fresh worker Session -> bounded handoff -> open-todo read -> independent inspection -> answer with `reply_to` -> explicit todo resolution. It used two independent Workflow Sessions in one host interaction.
+### Coordinator -> implementation worker
 
-A second dogfood used a physically separate ChatGPT window. The coordinator supplied only the coordinator Session/todo identifiers; after the worker finished, the coordinator recovered the result entirely from the board. The answer correlated to the exact todo, the todo was resolved, the worker Session id was discoverable from the bounded answer, and direct inspection of that independent worker ledger showed read/search activity with no write-like or shell-like project operations during the task.
+`C` posts an implementation todo with exact scope. Worker `W` uses an isolated worktree/Project when writing, performs implementation and validation under `W`, then atomically completes the todo with the commit SHA and concise result. `C` reads the answer and independently re-observes the branch/commit before merge or further delegation.
 
-That run also showed why `read_only` should remain an intent/guard concept rather than completion truth: the worker followed a read-only instruction while its Session remained in normal mode. This was not a correctness problem because the recorded operation history accurately showed what actually happened. Future workers may use `read_only` mode when useful, or later change effective Session posture through normal accepted paths; coordinator acceptance should remain based on actual recorded operations, current state, and an accurate bounded worker report.
+### Implementation -> independent reviewer
 
-The existing primitives were sufficient. Minor friction remains: answer and resolution are separate calls, and worker Session identity must be carried explicitly in the bounded answer when useful. Neither currently justifies a new runtime primitive, claim/lease system, or worker scheduler.
+The implementation Session posts a review todo containing the exact commit/range and review constraints. Reviewer Session `W` stays independent, performs its own source reads/tests/review evidence, then returns findings with `complete_session_message`. A no-findings answer is still bounded collaboration metadata, not an automatic acceptance or merge decision.
+
+### Two independent worktrees in parallel
+
+If two workers may write concurrently, give them separate Git worktrees and separate WebCodex Projects/Sessions. The message board coordinates intent and results only. It does not claim a branch, lease a path, serialize edits, or prevent conflicts.
+
+### Cross-host conceptual example
+
+A coordinator on host A may post a todo in `C`; an authorized worker on host B can read the bounded handoff and exact todo, work under its own Session/Project authority, and atomically answer `C`. The same authorization rules still apply. Session/message ids do not delegate owner or project authority, and cross-owner delegation is outside this workflow.
+
+## Message board is not a lock
+
+Do not treat todo state, `reply_to`, `completion_key`, `author_session_id`, or `resolved_by_message_id` as:
+
+- a filesystem/worktree/branch mutex;
+- an automatic task claim or lease;
+- ownership transfer;
+- proof that only one worker inspected the source;
+- authority to mutate another Project.
+
+When multiple workers operate on the same source, use normal Git/WebCodex Project isolation and revalidate current state before acting on collaboration messages.
+
+## Bounded payload guidance
+
+Keep todos and answers small enough to be useful as handoff state. Prefer stable references over copied authoritative objects:
+
+- worker Session id;
+- Job id;
+- checkpoint id;
+- artifact ref;
+- commit SHA;
+- PR number.
+
+Do not put bearer tokens, OAuth secrets, private keys, credentials, sensitive connection details, full worker transcripts, or hidden reasoning in Session messages.
+
+## Explicit non-goals
+
+This workflow does not add automatic worker spawning, scheduler/worker pool behavior, generic task queues, automatic claims, work leases, filesystem locks, branch locks, shared transcripts, hidden chain-of-thought transfer, cross-owner delegation, webhook/model callbacks, automatic Job-terminal continuation, or implicit authority inheritance.
+
+The human or coordinator still chooses workers and isolated worktrees/Projects. WebCodex supplies bounded durable collaboration state and deterministic completion correlation, not a multi-agent execution scheduler.

@@ -209,6 +209,58 @@ pub(crate) fn session_message_error_result(
                 "message_id": message_id,
             }),
         ),
+        sessions::SessionMessageError::NotTodo => ToolResult::err_with_output(
+            "session_message_not_todo",
+            json!({
+                "error_kind": "session_message_not_todo",
+                "session_id": session_id,
+                "message_id": message_id,
+                "state_changed": false,
+            }),
+        ),
+        sessions::SessionMessageError::IdempotencyConflict => ToolResult::err_with_output(
+            "idempotency_conflict",
+            json!({
+                "error_kind": "idempotency_conflict",
+                "session_id": session_id,
+                "message_id": message_id,
+                "state_changed": false,
+            }),
+        ),
+        sessions::SessionMessageError::AlreadyCompleted {
+            answer_message_id,
+            completion_id,
+        } => ToolResult::err_with_output(
+            "already_completed",
+            json!({
+                "error_kind": "already_completed",
+                "session_id": session_id,
+                "message_id": message_id,
+                "answer_message_id": answer_message_id,
+                "completion_id": completion_id,
+                "state_changed": false,
+            }),
+        ),
+        sessions::SessionMessageError::InvalidCompletionState => ToolResult::err_with_output(
+            "invalid_completion_state",
+            json!({
+                "error_kind": "invalid_completion_state",
+                "session_id": session_id,
+                "message_id": message_id,
+                "state_changed": false,
+            }),
+        ),
+        sessions::SessionMessageError::PersistenceUncertain => ToolResult::err_with_output(
+            "completion_persistence_uncertain",
+            json!({
+                "error_kind": "completion_persistence_uncertain",
+                "failure_kind": "outcome_unknown",
+                "session_id": session_id,
+                "message_id": message_id,
+                "state_changed": true,
+                "retry_same_completion": true,
+            }),
+        ),
         sessions::SessionMessageError::SessionClosed { lifecycle } => {
             let error_kind = match lifecycle {
                 sessions::SessionLifecycle::Archived => "session_archived",

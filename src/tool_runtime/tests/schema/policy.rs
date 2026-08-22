@@ -237,6 +237,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
             "post_session_message",
             "list_session_messages",
             "resolve_session_message",
+            "complete_session_message",
             "session_discussion_summary",
             "session_handoff_summary",
             "open_session_shell",

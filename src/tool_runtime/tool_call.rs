@@ -429,6 +429,10 @@ pub enum ToolCall {
         #[serde(default)]
         status: Option<SessionMessageStatus>,
         #[serde(default)]
+        message_id: Option<String>,
+        #[serde(default)]
+        reply_to: Option<String>,
+        #[serde(default)]
         limit: Option<usize>,
     },
 
@@ -439,6 +443,19 @@ pub enum ToolCall {
         message_id: String,
         #[serde(default)]
         resolution: Option<String>,
+    },
+
+    /// Atomically answer and resolve one exact open todo. A bounded caller key
+    /// makes uncertain-result retries return the original completion.
+    CompleteSessionMessage {
+        session_id: String,
+        message_id: String,
+        answer: String,
+        completion_key: String,
+        #[serde(default)]
+        tags: Vec<String>,
+        #[serde(default)]
+        priority: SessionMessagePriority,
     },
 
     /// Return a bounded structured aggregate of session-local ledger discussion.
@@ -2034,6 +2051,7 @@ impl ToolCall {
             Self::PostSessionMessage { .. } => "post_session_message",
             Self::ListSessionMessages { .. } => "list_session_messages",
             Self::ResolveSessionMessage { .. } => "resolve_session_message",
+            Self::CompleteSessionMessage { .. } => "complete_session_message",
             Self::SessionDiscussionSummary { .. } => "session_discussion_summary",
             Self::SessionHandoffSummary { .. } => "session_handoff_summary",
             Self::BindCurrentSession { .. } => "bind_current_session",
@@ -2190,9 +2208,9 @@ impl ToolCall {
             | Self::WorkspaceSymbols { session_id, .. }
             | Self::GotoDefinition { session_id, .. }
             | Self::FindReferences { session_id, .. } => session_id.as_deref(),
+            Self::SessionHandoffSummary { session_id, .. } => Some(session_id.as_str()),
             Self::ImportConversationFilesToProject { session_id, .. } => session_id.as_deref(),
             Self::CallHierarchy { session_id, .. } => session_id.as_deref(),
-            Self::SessionHandoffSummary { session_id, .. } => Some(session_id.as_str()),
             Self::WorkOnProject { session_id, .. } => session_id.as_deref(),
             Self::OpenSessionShell { session_id, .. }
             | Self::SessionShellExec { session_id, .. }

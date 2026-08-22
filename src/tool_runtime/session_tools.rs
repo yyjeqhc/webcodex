@@ -9,6 +9,7 @@ use super::tool_inputs::SessionMode;
 use super::{sessions, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 impl ToolRuntime {
     pub(crate) async fn dispatch_session_tool(
@@ -72,21 +73,56 @@ impl ToolRuntime {
                 reply_to,
                 priority,
             } => {
-                self.post_session_message_tool(session_id, kind, message, tags, reply_to, priority)
+                self.post_session_message_tool(
+                    session_id, kind, message, tags, reply_to, priority, auth,
+                )
+                .await
             }
             ToolCall::ListSessionMessages {
                 session_id,
                 kind,
                 status,
+                message_id,
+                reply_to,
                 limit,
-            } => self.list_session_messages_tool(session_id, kind, status, limit),
+            } => {
+                self.list_session_messages_tool(
+                    session_id, kind, status, message_id, reply_to, limit, auth,
+                )
+                .await
+            }
             ToolCall::ResolveSessionMessage {
                 session_id,
                 message_id,
                 resolution,
-            } => self.resolve_session_message_tool(session_id, message_id, resolution),
+            } => {
+                self.resolve_session_message_tool(session_id, message_id, resolution, auth)
+                    .await
+            }
+            ToolCall::CompleteSessionMessage {
+                session_id,
+                message_id,
+                answer,
+                completion_key,
+                tags,
+                priority,
+            } => {
+                self.complete_session_message_tool(
+                    session_id,
+                    message_id,
+                    answer,
+                    completion_key,
+                    tags,
+                    priority,
+                    auth,
+                    transport,
+                    window,
+                )
+                .await
+            }
             ToolCall::SessionDiscussionSummary { session_id, limit } => {
-                self.session_discussion_summary_tool(session_id, limit)
+                self.session_discussion_summary_tool(session_id, limit, auth)
+                    .await
             }
             ToolCall::BindCurrentSession {
                 project,
@@ -293,7 +329,81 @@ impl ToolRuntime {
         }
     }
 
-    pub(crate) fn post_session_message_tool(
+    pub(crate) async fn authorize_collaboration_session(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        auth: Option<&AuthContext>,
+    ) -> Result<Option<super::project_resolution::ResolvedProject>, ToolResult> {
+        let Some(project) = self.sessions.session_project(session_id) else {
+            return Err(unknown_session_result(session_id));
+        };
+        let Some(project) = project else {
+            return Ok(None);
+        };
+        // Preserve the existing no-auth local/internal dispatcher contract.
+        // Authenticated HTTP/MCP callers are revalidated against the exact
+        // canonical project stored on the business Session below.
+        let Some(auth) = auth else {
+            return Ok(None);
+        };
+        let resolved = match self
+            .resolve_project_input_for_auth(&project, Some(auth))
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(err) => return Err(err.into_tool_result()),
+        };
+        if resolved.resolved_id != project {
+            return Err(session_project_mismatch_no_escape_result(
+                session_id,
+                tool_name,
+                &SessionProjectMismatch {
+                    session_project: project,
+                    request_project: resolved.resolved_id,
+                },
+            ));
+        }
+        Ok(Some(resolved))
+    }
+
+    fn trusted_collaboration_author_session(
+        &self,
+        resolved: Option<&super::project_resolution::ResolvedProject>,
+        auth: Option<&AuthContext>,
+        transport: sessions::SessionTransport,
+        window: Option<&crate::client_window::ClientWindow>,
+    ) -> Option<String> {
+        let resolved = resolved?;
+        let key = current_session_key(
+            auth,
+            transport,
+            &resolved.resolved_id,
+            &resolved.config.path,
+            window,
+        )
+        .ok()?;
+        self.sessions.current_session_id(&key)
+    }
+
+    fn completion_key_fingerprint(
+        completion_key: String,
+    ) -> Result<String, sessions::SessionMessageError> {
+        let completion_key = completion_key.trim();
+        if completion_key.is_empty()
+            || completion_key.chars().count() > sessions::MAX_MESSAGE_COMPLETION_KEY_CHARS
+        {
+            return Err(sessions::SessionMessageError::InvalidInput(
+                "completion_key must contain 1..=128 characters".to_string(),
+            ));
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(b"webcodex.session-message-completion.v1\0");
+        hasher.update(completion_key.as_bytes());
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+
+    pub(crate) async fn post_session_message_tool(
         &self,
         session_id: String,
         kind: sessions::SessionMessageKind,
@@ -301,7 +411,14 @@ impl ToolRuntime {
         tags: Vec<String>,
         reply_to: Option<String>,
         priority: sessions::SessionMessagePriority,
+        auth: Option<&AuthContext>,
     ) -> ToolResult {
+        if let Err(result) = self
+            .authorize_collaboration_session(&session_id, "post_session_message", auth)
+            .await
+        {
+            return result;
+        }
         match self
             .sessions
             .post_message(sessions::PostSessionMessageInput {
@@ -322,18 +439,29 @@ impl ToolRuntime {
         }
     }
 
-    pub(crate) fn list_session_messages_tool(
+    pub(crate) async fn list_session_messages_tool(
         &self,
         session_id: String,
         kind: Option<sessions::SessionMessageKind>,
         status: Option<sessions::SessionMessageStatus>,
+        message_id: Option<String>,
+        reply_to: Option<String>,
         limit: Option<usize>,
+        auth: Option<&AuthContext>,
     ) -> ToolResult {
+        if let Err(result) = self
+            .authorize_collaboration_session(&session_id, "list_session_messages", auth)
+            .await
+        {
+            return result;
+        }
         match self.sessions.list_messages(
             &session_id,
             sessions::ListSessionMessagesFilter {
                 kind,
                 status,
+                message_id,
+                reply_to,
                 limit,
             },
         ) {
@@ -346,12 +474,19 @@ impl ToolRuntime {
         }
     }
 
-    pub(crate) fn resolve_session_message_tool(
+    pub(crate) async fn resolve_session_message_tool(
         &self,
         session_id: String,
         message_id: String,
         resolution: Option<String>,
+        auth: Option<&AuthContext>,
     ) -> ToolResult {
+        if let Err(result) = self
+            .authorize_collaboration_session(&session_id, "resolve_session_message", auth)
+            .await
+        {
+            return result;
+        }
         match self
             .sessions
             .resolve_message(&session_id, &message_id, resolution)
@@ -366,11 +501,68 @@ impl ToolRuntime {
         }
     }
 
-    pub(crate) fn session_discussion_summary_tool(
+    pub(crate) async fn complete_session_message_tool(
+        &self,
+        session_id: String,
+        message_id: String,
+        answer: String,
+        completion_key: String,
+        tags: Vec<String>,
+        priority: sessions::SessionMessagePriority,
+        auth: Option<&AuthContext>,
+        transport: sessions::SessionTransport,
+        window: Option<&crate::client_window::ClientWindow>,
+    ) -> ToolResult {
+        let resolved = match self
+            .authorize_collaboration_session(&session_id, "complete_session_message", auth)
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(result) => return result,
+        };
+        let completion_id = match Self::completion_key_fingerprint(completion_key) {
+            Ok(completion_id) => completion_id,
+            Err(err) => return session_message_error_result(&session_id, Some(&message_id), err),
+        };
+        let author_session_id =
+            self.trusted_collaboration_author_session(resolved.as_ref(), auth, transport, window);
+        match self
+            .sessions
+            .complete_message(sessions::CompleteSessionMessageInput {
+                session_id: session_id.clone(),
+                message_id: message_id.clone(),
+                answer,
+                tags,
+                priority,
+                completion_id: completion_id.clone(),
+                author_session_id,
+            }) {
+            Ok(outcome) => ToolResult::ok(json!({
+                "success": true,
+                "session_id": session_id,
+                "message_id": outcome.todo.message_id,
+                "answer_message_id": outcome.answer.message_id,
+                "completion_id": completion_id,
+                "replayed": outcome.replayed,
+                "todo": outcome.todo,
+                "answer": outcome.answer,
+            })),
+            Err(err) => session_message_error_result(&session_id, Some(&message_id), err),
+        }
+    }
+
+    pub(crate) async fn session_discussion_summary_tool(
         &self,
         session_id: String,
         limit: Option<usize>,
+        auth: Option<&AuthContext>,
     ) -> ToolResult {
+        if let Err(result) = self
+            .authorize_collaboration_session(&session_id, "session_discussion_summary", auth)
+            .await
+        {
+            return result;
+        }
         match self.sessions.discussion_summary(&session_id, limit) {
             Ok(summary) => ToolResult::ok(json!({
                 "success": true,
@@ -380,6 +572,9 @@ impl ToolRuntime {
                 "open_questions": summary.open_questions,
                 "open_risks": summary.open_risks,
                 "open_todos": summary.open_todos,
+                "high_priority_open_todos": summary.high_priority_open_todos,
+                "recent_answers": summary.recent_answers,
+                "recent_completions": summary.recent_completions,
                 "recent_progress": summary.recent_progress,
                 "recent_decisions": summary.recent_decisions,
             })),

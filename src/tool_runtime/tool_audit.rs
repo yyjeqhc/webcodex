@@ -460,6 +460,8 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 &mut out,
                 &["paths", "max_hunks", "max_hunk_lines", "cached"],
             );
+            insert_exact_git_commit_audit(obj, &mut out, "base_commit");
+            insert_exact_git_commit_audit(obj, &mut out, "head_commit");
             out.insert(
                 "continuation_present".to_string(),
                 Value::Bool(
@@ -612,6 +614,19 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
             "reason_code": output.get("reason_code").cloned().unwrap_or(Value::Null),
             "signal_count": output.get("signals").and_then(Value::as_array).map(Vec::len),
+            "file_count": output.get("files").and_then(Value::as_array).map(Vec::len),
+        }),
+        "git_diff_hunks" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "scope": output.get("scope").cloned().unwrap_or(Value::Null),
+            "cached": output.get("cached").cloned().unwrap_or(Value::Null),
+            "hunk_count": output.get("hunk_count").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "truncation_reasons": output.get("truncation_reasons").cloned().unwrap_or(Value::Null),
+            "has_more": output.get("has_more").cloned().unwrap_or(Value::Null),
+            "exit_code": output.get("exit_code").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "reason_code": output.get("reason_code").cloned().unwrap_or(Value::Null),
             "file_count": output.get("files").and_then(Value::as_array).map(Vec::len),
         }),
         "computer_list_targets" => serde_json::json!({

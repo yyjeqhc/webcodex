@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::common::{object_schema, with_optional_session_id};
 
@@ -115,14 +115,58 @@ pub(crate) fn git_diff_hunks_input_schema() -> Value {
             false,
         ),
         (
+            "base_commit",
+            "string",
+            "Optional exact 40-hex Git commit object id; requires head_commit and committed-range mode.",
+            false,
+        ),
+        (
+            "head_commit",
+            "string",
+            "Optional exact 40-hex Git commit object id reviewed from the single merge-base; requires base_commit.",
+            false,
+        ),
+        (
             "continuation",
             "string",
             "Optional opaque continuation returned by a previous git_diff_hunks page.",
             false,
         ),
     ]));
+    for field in ["base_commit", "head_commit"] {
+        schema["properties"][field]["minLength"] = Value::from(40);
+        schema["properties"][field]["maxLength"] = Value::from(40);
+        schema["properties"][field]["pattern"] = Value::from("^[0-9A-Fa-f]{40}$");
+    }
     schema["properties"]["continuation"]["maxLength"] =
         Value::from(crate::tool_runtime::git::GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES);
+    schema["allOf"] = json!([
+        {
+            "if": { "required": ["base_commit"] },
+            "then": {
+                "required": ["head_commit"],
+                "not": { "required": ["cached"] }
+            }
+        },
+        {
+            "if": { "required": ["head_commit"] },
+            "then": {
+                "required": ["base_commit"],
+                "not": { "required": ["cached"] }
+            }
+        },
+        {
+            "if": { "required": ["cached"] },
+            "then": {
+                "not": {
+                    "anyOf": [
+                        { "required": ["base_commit"] },
+                        { "required": ["head_commit"] }
+                    ]
+                }
+            }
+        }
+    ]);
     schema
 }
 

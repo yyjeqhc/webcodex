@@ -7,11 +7,21 @@ use super::runtime_info::RuntimeInfo;
 use super::sessions;
 use super::SessionShellRegistry;
 use crate::shell_client::ShellClientRegistry;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+use uuid::Uuid;
+
+fn new_git_diff_hunks_continuation_mac_key() -> Arc<[u8; 32]> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex.git-diff-hunks.runtime-mac-key.v1\0");
+    hasher.update(Uuid::new_v4().as_bytes());
+    hasher.update(Uuid::new_v4().as_bytes());
+    Arc::new(hasher.finalize().into())
+}
 
 #[derive(Clone)]
 pub struct ToolRuntime {
@@ -37,6 +47,10 @@ pub struct ToolRuntime {
     /// Internal synchronous grace for typed process/script Jobs. It controls
     /// only when the existing execution is exposed, never its total timeout.
     pub(crate) structured_execution_sync_wait: Duration,
+    /// Per-runtime secret used only to authenticate opaque committed-range
+    /// git_diff_hunks continuation state. Clones share the same key; a runtime
+    /// restart intentionally invalidates old committed continuations fail-closed.
+    pub(crate) git_diff_hunks_continuation_mac_key: Arc<[u8; 32]>,
     /// Authoritative permission evaluator for this runtime instance.
     /// Resolved once at construction (`WEBCODEX_AUTHORITY_MODE`); dispatch
     /// evaluates once per tool request before mutation.
@@ -73,6 +87,7 @@ impl ToolRuntime {
             structured_execution_sync_wait: Duration::from_secs(
                 super::structured_execution::STRUCTURED_EXECUTION_SYNC_WAIT_SECS,
             ),
+            git_diff_hunks_continuation_mac_key: new_git_diff_hunks_continuation_mac_key(),
             permission_evaluator: PermissionEvaluator::from_env(),
             activity: Arc::new(NoopActivityRecorder),
             observations: Arc::new(RuntimeObservations::default()),

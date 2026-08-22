@@ -20,6 +20,7 @@ mod file_listing;
 mod file_tools;
 pub(crate) mod files;
 mod git;
+mod git_committed;
 mod git_review;
 mod git_tools;
 mod handoff;

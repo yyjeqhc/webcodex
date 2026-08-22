@@ -86,6 +86,33 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("cached", schema_type("boolean", "Whether the staged diff is inspected.")),
             (
+                "scope",
+                json!({
+                    "type": "object",
+                    "description": "Committed-range identity when base_commit/head_commit mode is used; omitted for worktree/cached mode.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": ["committed"]
+                        },
+                        "requested_base": nullable_schema("string", "Normalized exact requested base commit id, or null when input is invalid."),
+                        "requested_head": nullable_schema("string", "Normalized exact requested head commit id, or null when input is invalid."),
+                        "merge_base": nullable_schema("string", "Single exact best merge-base used for the review diff, or null before range resolution succeeds."),
+                        "base_is_ancestor": nullable_schema("boolean", "Whether requested_base is an ancestor of requested_head, or null before range resolution succeeds."),
+                        "diff_range": nullable_schema("string", "Effective merge_base..requested_head committed diff range, or null before range resolution succeeds.")
+                    },
+                    "required": [
+                        "mode",
+                        "requested_base",
+                        "requested_head",
+                        "merge_base",
+                        "base_is_ancestor",
+                        "diff_range"
+                    ]
+                }),
+            ),
+            (
                 "files",
                 array_schema(open_object_schema("File diff hunks."), "Changed files."),
             ),

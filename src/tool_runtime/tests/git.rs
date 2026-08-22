@@ -449,6 +449,8 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
         "max_hunks",
         "max_hunk_lines",
         "cached",
+        "base_commit",
+        "head_commit",
         "continuation",
     ] {
         assert!(props.contains_key(field), "missing {}", field);
@@ -457,6 +459,31 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
         props["continuation"]["maxLength"],
         GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES
     );
+    for field in ["base_commit", "head_commit"] {
+        assert_eq!(props[field]["minLength"], 40);
+        assert_eq!(props[field]["maxLength"], 40);
+        assert_eq!(props[field]["pattern"], "^[0-9A-Fa-f]{40}$");
+    }
+    assert!(spec.input_schema["allOf"].is_array());
+    let committed_call = ToolCall::from_tool_name(
+        "git_diff_hunks",
+        json!({
+            "project": "agent:oe:webcodex",
+            "base_commit": "A".repeat(40),
+            "head_commit": "b".repeat(40),
+            "paths": ["src/runtime_http.rs"]
+        }),
+    )
+    .unwrap();
+    assert!(matches!(
+        committed_call,
+        ToolCall::GitDiffHunks {
+            base_commit: Some(base),
+            head_commit: Some(head),
+            cached: None,
+            ..
+        } if base == "A".repeat(40) && head == "b".repeat(40)
+    ));
     assert!(ToolCall::from_tool_name(
         "git_diff_hunks",
         json!({
@@ -564,6 +591,59 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
     assert!(!serde_json::to_string(input_summary)
         .unwrap()
         .contains(continuation));
+
+    let base = "A".repeat(40);
+    let head = "b".repeat(40);
+    let committed_arguments = json!({
+        "project": "agent:oe:webcodex",
+        "paths": ["src/runtime_http.rs"],
+        "base_commit": base,
+        "head_commit": head,
+        "continuation": continuation,
+    });
+    let committed_summary = super::super::tool_audit::session_log_arguments_for_tool_request(
+        "git_diff_hunks",
+        &committed_arguments,
+    );
+    assert_eq!(committed_summary["base_commit"], "a".repeat(40));
+    assert_eq!(committed_summary["head_commit"], "b".repeat(40));
+    assert_eq!(committed_summary["base_commit_valid"], true);
+    assert_eq!(committed_summary["head_commit_valid"], true);
+    assert!(committed_summary.get("continuation").is_none());
+
+    let private_hunk = "PRIVATE_GIT_DIFF_HUNK_BODY_91e2";
+    let result_summary = super::super::tool_audit::session_log_result_for_tool(
+        "git_diff_hunks",
+        &json!({
+            "project": "agent:oe:webcodex",
+            "scope": {
+                "mode": "committed",
+                "requested_base": "a".repeat(40),
+                "requested_head": "b".repeat(40),
+                "merge_base": "a".repeat(40),
+                "base_is_ancestor": true,
+                "diff_range": format!("{}..{}", "a".repeat(40), "b".repeat(40))
+            },
+            "cached": false,
+            "files": [{"path": "src/runtime_http.rs", "hunks": [{"diff": private_hunk}]}],
+            "hunk_count": 1,
+            "truncated": true,
+            "truncation_reasons": ["page_hunk_limit"],
+            "has_more": true,
+            "next_continuation": continuation,
+            "exit_code": 0,
+            "stderr": "PRIVATE_STDERR",
+        }),
+    );
+    let serialized_result = serde_json::to_string(&result_summary).unwrap();
+    assert_eq!(result_summary["hunk_count"], 1);
+    assert_eq!(result_summary["file_count"], 1);
+    assert!(result_summary.get("files").is_none());
+    assert!(result_summary.get("next_continuation").is_none());
+    assert!(result_summary.get("stderr").is_none());
+    assert!(!serialized_result.contains(private_hunk));
+    assert!(!serialized_result.contains(continuation));
+    assert!(!serialized_result.contains("PRIVATE_STDERR"));
 }
 
 #[test]
@@ -662,6 +742,883 @@ async fn run_agent_git_diff_hunks_page(
     )
     .await;
     (task.await.unwrap(), stdout_bytes, script)
+}
+
+async fn run_agent_git_diff_hunks_committed_page(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    repo: &Path,
+    paths: Option<Vec<String>>,
+    max_hunks: usize,
+    max_hunk_lines: usize,
+    base_commit: String,
+    head_commit: String,
+    continuation: Option<String>,
+) -> (ToolResult, usize, Vec<String>) {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.to_string();
+        async move {
+            runtime
+                .git_diff_hunks_continued_with_range(
+                    project,
+                    paths,
+                    Some(max_hunks),
+                    Some(max_hunk_lines),
+                    None,
+                    Some(base_commit),
+                    Some(head_commit),
+                    continuation,
+                )
+                .await
+        }
+    });
+    let mut scripts = Vec::new();
+    let mut page_stdout_bytes = 0usize;
+    for _ in 0..16 {
+        if task.is_finished() {
+            break;
+        }
+        if let Some(request) = next_patch_agent_request(runtime, client_id).await {
+            assert_eq!(request.kind, "run_internal_posix_script");
+            assert_eq!(
+                request.cwd.as_deref(),
+                Some(repo.to_string_lossy().as_ref())
+            );
+            assert!(request.command.is_empty());
+            let payload = request
+                .script
+                .as_ref()
+                .expect("committed git_diff_hunks must use typed internal scripts");
+            let script = payload.script.clone();
+            assert!(script.contains("GIT_NO_REPLACE_OBJECTS=1"));
+            assert!(script.contains("GIT_NO_LAZY_FETCH=1"));
+            assert!(script.contains("GIT_OPTIONAL_LOCKS=0"));
+            assert!(script.contains("GIT_CONFIG_GLOBAL=/dev/null"));
+            assert!(script.contains("attributesFile = /dev/null"));
+            for forbidden in [
+                "git fetch",
+                "git apply",
+                "git commit",
+                "git checkout",
+                "git reset",
+                "git push",
+                "git stash",
+                "git rebase",
+                "git clean",
+                "git add ",
+            ] {
+                assert!(
+                    !script.contains(forbidden),
+                    "committed git_diff_hunks must remain read-only; found {forbidden}: {script}"
+                );
+            }
+            if script.contains(" diff ") {
+                assert!(script.contains("--no-ext-diff"));
+                assert!(script.contains("--no-textconv"));
+            }
+            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+            if script.contains("page_budget=") {
+                page_stdout_bytes = stdout.len();
+            }
+            complete_patch_agent_request(
+                runtime,
+                client_id,
+                &request.request_id,
+                exit_code,
+                &stdout,
+                &stderr,
+            )
+            .await;
+            scripts.push(script);
+        } else {
+            tokio::task::yield_now().await;
+        }
+    }
+    assert!(
+        task.is_finished(),
+        "committed git_diff_hunks did not finish after bounded agent requests"
+    );
+    (task.await.unwrap(), page_stdout_bytes, scripts)
+}
+
+#[tokio::test]
+async fn git_diff_hunks_committed_exact_range_isolated_targeted_and_head_attributed() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    write_git_review_fixture_file(tmp.path(), "src/a.rs", "pub fn a() -> u8 { 1 }\n");
+    write_git_review_fixture_file(tmp.path(), "src/b.rs", "pub fn b() -> u8 { 1 }\n");
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/space file.rs",
+        "pub fn spaced() -> u8 { 1 }\n",
+    );
+    write_git_review_fixture_file(tmp.path(), "src/你好.rs", "pub fn unicode() -> u8 { 1 }\n");
+    write_git_review_fixture_file(tmp.path(), "src/old.rs", "pub fn renamed() -> u8 { 1 }\n");
+    write_git_review_fixture_file(tmp.path(), "src/delete.rs", "pub fn deleted() {}\n");
+    fs::write(tmp.path().join("asset.bin"), [0u8, 1, 2, 3, 0, 4]).unwrap();
+    let base = commit_git_review_fixture(tmp.path(), "base");
+
+    write_git_review_fixture_file(tmp.path(), "src/a.rs", "pub fn a() -> u8 { 2 }\n");
+    write_git_review_fixture_file(tmp.path(), "src/b.rs", "pub fn b() -> u8 { 2 }\n");
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/space file.rs",
+        "pub fn spaced() -> u8 { 2 }\n",
+    );
+    write_git_review_fixture_file(tmp.path(), "src/你好.rs", "pub fn unicode() -> u8 { 2 }\n");
+    fs::rename(tmp.path().join("src/old.rs"), tmp.path().join("src/new.rs")).unwrap();
+    fs::remove_file(tmp.path().join("src/delete.rs")).unwrap();
+    write_git_review_fixture_file(tmp.path(), "src/add.rs", "pub fn added() {}\n");
+    fs::write(tmp.path().join("asset.bin"), [0u8, 255, 2, 3, 0, 4]).unwrap();
+    write_git_review_fixture_file(tmp.path(), ".gitattributes", "src/b.rs -diff\n");
+    let head = commit_git_review_fixture(tmp.path(), "head");
+
+    write_git_review_fixture_file(tmp.path(), "src/a.rs", "DIRTY_WORKTREE_MUST_NOT_APPEAR\n");
+    write_git_review_fixture_file(
+        tmp.path(),
+        ".gitattributes",
+        "src/a.rs -diff\nsrc/b.rs diff\n",
+    );
+    fs::create_dir_all(tmp.path().join(".git/info")).unwrap();
+    fs::write(
+        tmp.path().join(".git/info/attributes"),
+        "src/a.rs -diff\nsrc/b.rs diff\n",
+    )
+    .unwrap();
+    git_test_command_ok(tmp.path(), "git config diff.external false");
+    git_test_command_ok(tmp.path(), "git config diff.custom.textconv false");
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "committed-targeted", "repo", tmp.path())
+            .await;
+    let paths = vec![
+        "src/a.rs".to_string(),
+        "src/b.rs".to_string(),
+        "src/space file.rs".to_string(),
+        "src/你好.rs".to_string(),
+    ];
+    let (result, raw_bytes, scripts) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-targeted",
+        &project,
+        tmp.path(),
+        Some(paths.clone()),
+        20,
+        120,
+        base.clone(),
+        head.clone(),
+        None,
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["scope"]["mode"], "committed");
+    assert_eq!(result.output["scope"]["requested_base"], base);
+    assert_eq!(result.output["scope"]["requested_head"], head);
+    assert_eq!(result.output["scope"]["merge_base"], base);
+    assert_eq!(result.output["scope"]["base_is_ancestor"], true);
+    assert_eq!(result.output["paths"], json!(paths));
+    assert!(
+        raw_bytes < 48 * 1024,
+        "page producer output must remain bounded"
+    );
+    assert_eq!(scripts.len(), 2, "scope + page observation expected");
+    let serialized = serde_json::to_string(&result.output).unwrap();
+    assert!(!serialized.contains("DIRTY_WORKTREE_MUST_NOT_APPEAR"));
+    assert!(serialized.contains("space file.rs"));
+    assert!(serialized.contains("你好.rs"));
+    let files = result.output["files"].as_array().unwrap();
+    let a = files
+        .iter()
+        .find(|file| {
+            file["path"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("a.rs"))
+        })
+        .expect("src/a.rs committed hunk");
+    assert!(!a["hunks"].as_array().unwrap().is_empty());
+    let b = files
+        .iter()
+        .find(|file| {
+            file["path"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("b.rs"))
+        })
+        .expect("src/b.rs committed file");
+    assert_eq!(
+        b["binary"], true,
+        "reviewed-head attributes must be authoritative"
+    );
+    assert!(b["hunks"].as_array().unwrap().is_empty());
+
+    let (all_result, _, _) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-targeted",
+        &project,
+        tmp.path(),
+        None,
+        40,
+        120,
+        base,
+        head,
+        None,
+    )
+    .await;
+    assert!(all_result.success, "{:?}", all_result.error);
+    let all_files = all_result.output["files"].as_array().unwrap();
+    assert!(all_files.iter().any(|file| file["status"] == "renamed"));
+    assert!(all_files.iter().any(|file| file["status"] == "deleted"));
+    assert!(all_files.iter().any(|file| file["status"] == "added"));
+    assert!(all_files.iter().any(|file| file["binary"] == true));
+}
+
+#[tokio::test]
+async fn git_diff_hunks_committed_range_validation_and_merge_base_fail_closed() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    write_git_review_fixture_file(tmp.path(), "base.txt", "base\n");
+    let base = commit_git_review_fixture(tmp.path(), "base");
+    write_git_review_fixture_file(tmp.path(), "base.txt", "head\n");
+    let head = commit_git_review_fixture(tmp.path(), "head");
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "committed-validation", "repo", tmp.path())
+            .await;
+
+    for (base_arg, head_arg, cached, reason) in [
+        (
+            Some("HEAD".to_string()),
+            Some(head.clone()),
+            None,
+            "invalid_commit_id",
+        ),
+        (
+            Some(base.clone()),
+            None,
+            None,
+            "committed_range_requires_base_and_head",
+        ),
+        (
+            Some(base.clone()),
+            Some(head.clone()),
+            Some(false),
+            "committed_range_conflicts_with_cached",
+        ),
+    ] {
+        let result = runtime
+            .git_diff_hunks_continued_with_range(
+                project.clone(),
+                None,
+                Some(10),
+                Some(80),
+                cached,
+                base_arg,
+                head_arg,
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        assert_eq!(result.output["reason_code"], reason);
+        assert!(
+            next_patch_agent_request(&runtime, "committed-validation")
+                .await
+                .is_none(),
+            "invalid committed input must fail before Runner dispatch"
+        );
+    }
+
+    let (same, _, _) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-validation",
+        &project,
+        tmp.path(),
+        None,
+        10,
+        80,
+        base.clone(),
+        base.clone(),
+        None,
+    )
+    .await;
+    assert!(same.success, "{:?}", same.error);
+    assert_eq!(same.output["hunk_count"], 0);
+    assert_eq!(same.output["files"], json!([]));
+
+    let missing = "f".repeat(40);
+    let (missing_result, _, missing_scripts) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-validation",
+        &project,
+        tmp.path(),
+        None,
+        10,
+        80,
+        base.clone(),
+        missing.clone(),
+        None,
+    )
+    .await;
+    assert!(!missing_result.success);
+    assert_eq!(
+        missing_result.output["reason_code"],
+        "head_commit_missing_or_not_commit"
+    );
+    assert_eq!(
+        missing_scripts.len(),
+        1,
+        "missing object must stop before page diff"
+    );
+
+    let (blob_exit, blob_stdout, blob_stderr, _) =
+        run_command_sync("printf blob | git hash-object -w --stdin", tmp.path(), 30);
+    assert_eq!(blob_exit, 0, "{blob_stderr}");
+    let blob = blob_stdout.trim().to_string();
+    let (blob_result, _, blob_scripts) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-validation",
+        &project,
+        tmp.path(),
+        None,
+        10,
+        80,
+        base,
+        blob,
+        None,
+    )
+    .await;
+    assert!(!blob_result.success);
+    assert_eq!(
+        blob_result.output["reason_code"],
+        "head_commit_missing_or_not_commit"
+    );
+    assert_eq!(blob_scripts.len(), 1);
+}
+
+#[tokio::test]
+async fn git_diff_hunks_committed_nonancestor_disconnected_and_ambiguous_merge_base() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    write_git_review_fixture_file(tmp.path(), "root.txt", "root\n");
+    let root = commit_git_review_fixture(tmp.path(), "root");
+    let (_, root_branch, _, _) = run_command_sync("git branch --show-current", tmp.path(), 30);
+    let root_branch = root_branch.trim().to_string();
+    git_test_command_ok(tmp.path(), "git checkout -b feature");
+    write_git_review_fixture_file(tmp.path(), "feature.txt", "feature\n");
+    let feature = commit_git_review_fixture(tmp.path(), "feature");
+    git_test_command_ok(
+        tmp.path(),
+        &format!("git checkout {}", shell_escape_simple(&root_branch)),
+    );
+    write_git_review_fixture_file(tmp.path(), "main.txt", "main\n");
+    let requested_base = commit_git_review_fixture(tmp.path(), "main");
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "committed-merge-base", "repo", tmp.path())
+            .await;
+    let (nonancestor, _, _) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-merge-base",
+        &project,
+        tmp.path(),
+        None,
+        10,
+        80,
+        requested_base.clone(),
+        feature.clone(),
+        None,
+    )
+    .await;
+    assert!(nonancestor.success, "{:?}", nonancestor.error);
+    assert_eq!(
+        nonancestor.output["scope"]["requested_base"],
+        requested_base
+    );
+    assert_eq!(nonancestor.output["scope"]["requested_head"], feature);
+    assert_eq!(nonancestor.output["scope"]["merge_base"], root);
+    assert_eq!(nonancestor.output["scope"]["base_is_ancestor"], false);
+
+    let disconnected = tempfile::tempdir().unwrap();
+    init_git_repo(disconnected.path());
+    write_git_review_fixture_file(disconnected.path(), "one.txt", "one\n");
+    let first = commit_git_review_fixture(disconnected.path(), "one");
+    git_test_command_ok(disconnected.path(), "git checkout --orphan other");
+    git_test_command_ok(disconnected.path(), "git rm -rf .");
+    write_git_review_fixture_file(disconnected.path(), "two.txt", "two\n");
+    let second = commit_git_review_fixture(disconnected.path(), "two");
+    let runtime2 = test_runtime();
+    let project2 = register_structured_git_agent_at_path(
+        &runtime2,
+        "committed-disconnected",
+        "repo",
+        disconnected.path(),
+    )
+    .await;
+    let (no_base, _, scripts) = run_agent_git_diff_hunks_committed_page(
+        &runtime2,
+        "committed-disconnected",
+        &project2,
+        disconnected.path(),
+        None,
+        10,
+        80,
+        first,
+        second,
+        None,
+    )
+    .await;
+    assert!(!no_base.success);
+    assert_eq!(no_base.output["reason_code"], "no_merge_base");
+    assert_eq!(scripts.len(), 1);
+
+    let ambiguous = tempfile::tempdir().unwrap();
+    init_git_repo(ambiguous.path());
+    write_git_review_fixture_file(ambiguous.path(), "root.txt", "root\n");
+    commit_git_review_fixture(ambiguous.path(), "root");
+    git_test_command_ok(ambiguous.path(), "git checkout -b side-a");
+    write_git_review_fixture_file(ambiguous.path(), "a.txt", "a\n");
+    let a1 = commit_git_review_fixture(ambiguous.path(), "a1");
+    git_test_command_ok(ambiguous.path(), "git checkout -b side-b HEAD~1");
+    write_git_review_fixture_file(ambiguous.path(), "b.txt", "b\n");
+    let b1 = commit_git_review_fixture(ambiguous.path(), "b1");
+    git_test_command_ok(ambiguous.path(), "git checkout side-a");
+    git_test_command_ok(
+        ambiguous.path(),
+        &format!("git merge --no-ff -m merge-b {}", shell_escape_simple(&b1)),
+    );
+    let (_, a2, _, _) = run_command_sync("git rev-parse HEAD", ambiguous.path(), 30);
+    let a2 = a2.trim().to_string();
+    git_test_command_ok(ambiguous.path(), "git checkout side-b");
+    git_test_command_ok(
+        ambiguous.path(),
+        &format!("git merge --no-ff -m merge-a {}", shell_escape_simple(&a1)),
+    );
+    let (_, b2, _, _) = run_command_sync("git rev-parse HEAD", ambiguous.path(), 30);
+    let b2 = b2.trim().to_string();
+    let runtime3 = test_runtime();
+    let project3 = register_structured_git_agent_at_path(
+        &runtime3,
+        "committed-ambiguous",
+        "repo",
+        ambiguous.path(),
+    )
+    .await;
+    let (ambiguous_result, _, ambiguous_scripts) = run_agent_git_diff_hunks_committed_page(
+        &runtime3,
+        "committed-ambiguous",
+        &project3,
+        ambiguous.path(),
+        None,
+        10,
+        80,
+        a2,
+        b2,
+        None,
+    )
+    .await;
+    assert!(!ambiguous_result.success);
+    assert_eq!(
+        ambiguous_result.output["reason_code"],
+        "ambiguous_merge_base"
+    );
+    assert_eq!(ambiguous_scripts.len(), 1);
+}
+
+#[tokio::test]
+async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let base_body = (0..1200)
+        .map(|line| format!("line-{line:04}\n"))
+        .collect::<String>();
+    write_git_review_fixture_file(tmp.path(), "large.txt", &base_body);
+    write_git_review_fixture_file(tmp.path(), "other.txt", "same\n");
+    let base = commit_git_review_fixture(tmp.path(), "base");
+    let head_body = (0..1200)
+        .map(|line| {
+            if matches!(line, 10 | 310 | 610 | 910) {
+                format!("changed-{line:04}\n")
+            } else {
+                format!("line-{line:04}\n")
+            }
+        })
+        .collect::<String>();
+    write_git_review_fixture_file(tmp.path(), "large.txt", &head_body);
+    let head = commit_git_review_fixture(tmp.path(), "head");
+
+    let runtime = test_runtime();
+    let project = register_structured_git_agent_at_path(
+        &runtime,
+        "committed-continuation",
+        "repo",
+        tmp.path(),
+    )
+    .await;
+    let paths = Some(vec!["large.txt".to_string()]);
+    let (first, first_bytes, first_scripts) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-continuation",
+        &project,
+        tmp.path(),
+        paths.clone(),
+        1,
+        120,
+        base.clone(),
+        head.clone(),
+        None,
+    )
+    .await;
+    assert!(first.success, "{:?}", first.error);
+    assert_eq!(first.output["has_more"], true);
+    assert!(first_bytes < 48 * 1024);
+    assert_eq!(first_scripts.len(), 2);
+    let token = first.output["next_continuation"]
+        .as_str()
+        .expect("first committed page continuation")
+        .to_string();
+    assert!(token.starts_with("wcdh1."));
+    let first_diff = first.output["files"][0]["hunks"][0]["diff"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (second, _, _) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-continuation",
+        &project,
+        tmp.path(),
+        paths.clone(),
+        1,
+        120,
+        base.clone(),
+        head.clone(),
+        Some(token.clone()),
+    )
+    .await;
+    assert!(second.success, "{:?}", second.error);
+    let second_diff = second.output["files"][0]["hunks"][0]["diff"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(
+        first_diff, second_diff,
+        "continuation must not replay page one"
+    );
+
+    let (second_again, _, _) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-continuation",
+        &project,
+        tmp.path(),
+        paths.clone(),
+        1,
+        120,
+        base.clone(),
+        head.clone(),
+        Some(token.clone()),
+    )
+    .await;
+    assert!(second_again.success);
+    assert_eq!(second_again.output["files"], second.output["files"]);
+    assert_eq!(
+        second_again.output["next_continuation"],
+        second.output["next_continuation"]
+    );
+
+    let mut seen = vec![first_diff, second_diff];
+    let mut next = second.output["next_continuation"]
+        .as_str()
+        .map(str::to_string);
+    while let Some(current) = next {
+        let (page, _, _) = run_agent_git_diff_hunks_committed_page(
+            &runtime,
+            "committed-continuation",
+            &project,
+            tmp.path(),
+            paths.clone(),
+            1,
+            120,
+            base.clone(),
+            head.clone(),
+            Some(current),
+        )
+        .await;
+        assert!(page.success, "{:?}", page.error);
+        if page.output["hunk_count"].as_u64().unwrap_or(0) > 0 {
+            let diff = page.output["files"][0]["hunks"][0]["diff"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            assert!(!seen.contains(&diff), "hunk page replayed: {diff}");
+            seen.push(diff);
+        }
+        next = page.output["next_continuation"]
+            .as_str()
+            .map(str::to_string);
+    }
+    assert_eq!(
+        seen.len(),
+        4,
+        "all four committed hunks must be returned once"
+    );
+
+    let (path_mismatch, _, path_scripts) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-continuation",
+        &project,
+        tmp.path(),
+        Some(vec!["other.txt".to_string()]),
+        1,
+        120,
+        base.clone(),
+        head.clone(),
+        Some(token.clone()),
+    )
+    .await;
+    assert!(!path_mismatch.success);
+    assert_eq!(path_mismatch.output["reason_code"], "continuation_mismatch");
+    assert_eq!(
+        path_scripts.len(),
+        1,
+        "mismatch must stop before page producer"
+    );
+
+    let (range_mismatch, _, range_scripts) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-continuation",
+        &project,
+        tmp.path(),
+        paths.clone(),
+        1,
+        120,
+        base.clone(),
+        base.clone(),
+        Some(token.clone()),
+    )
+    .await;
+    assert!(!range_mismatch.success);
+    assert_eq!(
+        range_mismatch.output["reason_code"],
+        "continuation_mismatch"
+    );
+    assert_eq!(range_scripts.len(), 1);
+
+    let mut tampered = token.clone().into_bytes();
+    let last = tampered.len() - 1;
+    tampered[last] = if tampered[last] == b'A' { b'B' } else { b'A' };
+    let tampered = String::from_utf8(tampered).unwrap();
+    let (tampered_result, _, tampered_scripts) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-continuation",
+        &project,
+        tmp.path(),
+        paths.clone(),
+        1,
+        120,
+        base.clone(),
+        head.clone(),
+        Some(tampered),
+    )
+    .await;
+    assert!(!tampered_result.success);
+    assert_eq!(
+        tampered_result.output["reason_code"],
+        "invalid_continuation"
+    );
+    assert_eq!(tampered_scripts.len(), 1);
+
+    {
+        use base64::{engine::general_purpose, Engine as _};
+        let encoded = token.strip_prefix("wcdh1.").unwrap();
+        let decoded = general_purpose::URL_SAFE_NO_PAD.decode(encoded).unwrap();
+        let mut state: Value = serde_json::from_slice(&decoded).unwrap();
+        state["next"] = json!(999u64);
+        let forged_next = format!(
+            "wcdh1.{}",
+            general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&state).unwrap())
+        );
+        let (forged_result, _, forged_scripts) = run_agent_git_diff_hunks_committed_page(
+            &runtime,
+            "committed-continuation",
+            &project,
+            tmp.path(),
+            paths.clone(),
+            1,
+            120,
+            base.clone(),
+            head.clone(),
+            Some(forged_next),
+        )
+        .await;
+        assert!(!forged_result.success);
+        assert_eq!(forged_result.output["reason_code"], "invalid_continuation");
+        assert_eq!(
+            forged_scripts.len(),
+            1,
+            "pagination-state tamper must fail after scope resolution and before page observation"
+        );
+    }
+
+    let dirty_body = (0..1200)
+        .map(|line| {
+            if matches!(line, 20 | 500 | 1000) {
+                format!("dirty-{line:04}\n")
+            } else {
+                if line == 10 || line == 310 || line == 610 || line == 910 {
+                    format!("changed-{line:04}\n")
+                } else {
+                    format!("line-{line:04}\n")
+                }
+            }
+        })
+        .collect::<String>();
+    write_git_review_fixture_file(tmp.path(), "large.txt", &dirty_body);
+    let (worktree_page, _, _) = run_agent_git_diff_hunks_page(
+        &runtime,
+        "committed-continuation",
+        &project,
+        tmp.path(),
+        paths.clone(),
+        1,
+        120,
+        false,
+        None,
+    )
+    .await;
+    assert!(worktree_page.success);
+    let worktree_token = worktree_page.output["next_continuation"]
+        .as_str()
+        .expect("worktree continuation")
+        .to_string();
+    let (wrong_mode, _, wrong_mode_scripts) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "committed-continuation",
+        &project,
+        tmp.path(),
+        paths.clone(),
+        1,
+        120,
+        base.clone(),
+        head.clone(),
+        Some(worktree_token),
+    )
+    .await;
+    assert!(!wrong_mode.success);
+    assert_eq!(wrong_mode.output["reason_code"], "continuation_mismatch");
+    assert_eq!(wrong_mode_scripts.len(), 1);
+
+    let reverse_mode = runtime
+        .git_diff_hunks_continued(project, paths, Some(1), Some(120), Some(false), Some(token))
+        .await;
+    assert!(!reverse_mode.success);
+    assert_eq!(reverse_mode.output["reason_code"], "continuation_mismatch");
+}
+
+#[tokio::test]
+async fn git_diff_hunks_committed_drains_bounded_consumer_and_preserves_producer_failure() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    write_git_review_fixture_file(tmp.path(), "file.txt", "old\n");
+    let base = commit_git_review_fixture(tmp.path(), "base");
+    write_git_review_fixture_file(tmp.path(), "file.txt", "new\n");
+    let head = commit_git_review_fixture(tmp.path(), "head");
+    let runtime = test_runtime();
+    let project = register_structured_git_agent_at_path(
+        &runtime,
+        "committed-producer-failure",
+        "repo",
+        tmp.path(),
+    )
+    .await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let base = base.clone();
+        let head = head.clone();
+        async move {
+            runtime
+                .git_diff_hunks_continued_with_range(
+                    project,
+                    Some(vec!["file.txt".to_string()]),
+                    Some(1),
+                    Some(40),
+                    None,
+                    Some(base),
+                    Some(head),
+                    None,
+                )
+                .await
+        }
+    });
+
+    let scope_request = next_patch_agent_request(&runtime, "committed-producer-failure")
+        .await
+        .expect("scope request");
+    complete_agent_request_by_running_locally(
+        &runtime,
+        "committed-producer-failure",
+        scope_request,
+    )
+    .await;
+
+    let mut page_request = next_patch_agent_request(&runtime, "committed-producer-failure")
+        .await
+        .expect("page request");
+    let page_script = page_request
+        .script
+        .as_ref()
+        .expect("typed page script")
+        .script
+        .clone();
+    let head_q = shell_escape_simple(&head);
+    let needle = format!(
+        "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --unified=80 {} {head_q} -- 'file.txt'",
+        shell_escape_simple(&base),
+    );
+    assert_eq!(
+        page_script.matches(&needle).count(),
+        1,
+        "middle diff producer must be uniquely injectable"
+    );
+    let producer_body = concat!(
+        "printf 'diff --git a/file.txt b/file.txt\\n--- a/file.txt\\n+++ b/file.txt\\n@@ -1 +1 @@\\n-old\\n'; ",
+        "i=0; while [ \"$i\" -lt 120000 ]; do printf '+payload-%06d\\n' \"$i\"; i=$((i+1)); done; ",
+        "exit 7"
+    );
+    let injected = format!("sh -c {}", shell_escape_simple(producer_body));
+    page_request
+        .script
+        .as_mut()
+        .expect("typed page script")
+        .script = page_script.replacen(&needle, &injected, 1);
+    let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&page_request);
+    assert_eq!(
+        exit_code, 0,
+        "page envelope should carry producer failure structurally: {stderr}"
+    );
+    assert!(
+        stdout.contains("diff_exit=7\n"),
+        "bounded consumer must drain to the producer's real exit status, not SIGPIPE: {stdout}"
+    );
+    assert!(!stdout.contains("diff_exit=141\n"));
+    assert!(
+        stdout.len() < 48 * 1024,
+        "consumer must retain only a bounded page despite multi-megabyte producer output"
+    );
+    complete_patch_agent_request(
+        &runtime,
+        "committed-producer-failure",
+        &page_request.request_id,
+        exit_code,
+        &stdout,
+        &stderr,
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["reason_code"], "git_diff_failed");
 }
 
 fn git_test_command_ok(repo: &Path, command: &str) {

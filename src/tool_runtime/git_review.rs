@@ -3,6 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES;
 use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
+use super::git_committed::{
+    checked_git_pipeline_to_file, committed_git_discovery_prefix,
+    committed_git_isolated_view_setup, normalize_exact_commit_id,
+};
 use super::helpers::{shell_escape_simple, validate_project_relative_path};
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
@@ -19,19 +23,6 @@ pub(crate) const GIT_REVIEW_MAX_DIFF_BYTES: usize = 64 * 1024;
 const GIT_REVIEW_METADATA_BYTES: usize = 64 * 1024;
 const GIT_REVIEW_MAX_WARNINGS: usize = 16;
 const GIT_REVIEW_ERROR_SENTINEL: &str = "@@WEBCODEX_GIT_REVIEW_COMMAND_FAILED@@";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReviewScope {
-    requested_base: String,
-    requested_head: String,
-    merge_base: String,
-    base_is_ancestor: bool,
-    commit_count: u64,
-    files_changed: u64,
-    insertions: u64,
-    deletions: u64,
-    binary_files: u64,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NameStatusRecord {
@@ -77,13 +68,6 @@ struct ReviewSignal {
     paths_truncated: bool,
 }
 
-fn normalize_exact_commit_id(value: &str) -> Result<String, &'static str> {
-    if value.len() != 40 || !value.as_bytes().iter().all(u8::is_ascii_hexdigit) {
-        return Err("invalid_commit_id");
-    }
-    Ok(value.to_ascii_lowercase())
-}
-
 fn git_review_failure(
     project: &str,
     requested_base: &str,
@@ -112,164 +96,6 @@ fn git_review_failure(
     )
 }
 
-fn review_git_discovery_prefix() -> &'static str {
-    concat!(
-        "export LC_ALL=C GIT_PAGER=cat GIT_NO_REPLACE_OBJECTS=1 GIT_NO_LAZY_FETCH=1 ",
-        "GIT_OPTIONAL_LOCKS=0 GIT_ATTR_NOSYSTEM=1 GIT_CONFIG_COUNT=0; ",
-        "unset GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE ",
-        "GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR ",
-        "GIT_CEILING_DIRECTORIES GIT_ATTR_SOURCE GIT_CONFIG GIT_CONFIG_PARAMETERS ",
-        "GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_SHALLOW_FILE ",
-        "GIT_NAMESPACE; "
-    )
-}
-
-fn review_git_isolated_view_setup(head: &str, failure: &str) -> String {
-    format!(
-        concat!(
-            "object_dir=$(git rev-parse --path-format=absolute --git-path objects 2>/dev/null) || {{ {failure}; }}; ",
-            "view=$(mktemp -d /tmp/webcodex-git-review.XXXXXX 2>/dev/null) || {{ {failure}; }}; ",
-            "cleanup_git_review_view() {{ rm -rf -- \"$view\"; }}; ",
-            "trap cleanup_git_review_view EXIT; trap 'exit 130' HUP INT TERM; ",
-            "mkdir -p \"$view/refs\" \"$view/objects/info\" || {{ {failure}; }}; ",
-            "printf 'ref: refs/heads/unused\\n' >\"$view/HEAD\" || {{ {failure}; }}; ",
-            "printf '[core]\\n\\trepositoryformatversion = 0\\n\\tbare = true\\n\\tattributesFile = /dev/null\\n' >\"$view/config\" || {{ {failure}; }}; ",
-            "export GIT_DIR=\"$view\" GIT_OBJECT_DIRECTORY=\"$object_dir\" GIT_ATTR_SOURCE={head_q} ",
-            "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1; "
-        ),
-        failure = failure,
-        head_q = shell_escape_simple(head),
-    )
-}
-
-fn checked_git_pipeline_to_file(
-    producer: &str,
-    consumer: &str,
-    stem: &str,
-    failure: &str,
-) -> String {
-    debug_assert!(stem
-        .as_bytes()
-        .iter()
-        .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_'));
-    format!(
-        concat!(
-            "rm -f \"$view/{stem}.status\" \"$view/{stem}.out\"; ",
-            "{{ {producer}; producer_exit=$?; printf '%s\\n' \"$producer_exit\" >\"$view/{stem}.status\"; }} | ",
-            "{consumer} >\"$view/{stem}.out\"; ",
-            "consumer_exit=$?; ",
-            "producer_exit=$(cat \"$view/{stem}.status\" 2>/dev/null || true); ",
-            "if [ \"$consumer_exit\" -ne 0 ] || [ \"$producer_exit\" != 0 ]; then {failure}; fi; "
-        ),
-        producer = producer,
-        consumer = consumer,
-        stem = stem,
-        failure = failure,
-    )
-}
-
-fn git_review_scope_command(base: &str, head: &str) -> String {
-    let isolated_view =
-        review_git_isolated_view_setup(head, "printf 'status=git_view_unavailable\\n'; exit 0");
-    let head_q = shell_escape_simple(head);
-    let stats_producer = format!(
-        "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --numstat \"$merge_base\" {head_q}"
-    );
-    let stats_pipeline = checked_git_pipeline_to_file(
-        &stats_producer,
-        "awk 'BEGIN{f=0;a=0;d=0;b=0} {f++; if ($1==\"-\" || $2==\"-\") b++; else {a+=$1; d+=$2}} END{printf \"files_changed=%d\\ninsertions=%d\\ndeletions=%d\\nbinary_files=%d\\n\",f,a,d,b}'",
-        "scope_stats",
-        "printf 'status=diff_failed\\n'; exit 0",
-    );
-    format!(
-        concat!(
-            "{prefix}",
-            "if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf 'status=not_git\\n'; exit 0; fi; ",
-            "{isolated_view}",
-            "base_type=$(git cat-file -t {base_q} 2>/dev/null || true); ",
-            "if [ \"$base_type\" != commit ]; then printf 'status=base_not_commit\\n'; exit 0; fi; ",
-            "head_type=$(git cat-file -t {head_q} 2>/dev/null || true); ",
-            "if [ \"$head_type\" != commit ]; then printf 'status=head_not_commit\\n'; exit 0; fi; ",
-            "merge_bases=$(git merge-base --all {base_q} {head_q} 2>/dev/null || true); ",
-            "if [ -z \"$merge_bases\" ]; then printf 'status=no_merge_base\\n'; exit 0; fi; ",
-            "merge_base_count=$(printf '%s\\n' \"$merge_bases\" | awk 'NF{{n++}} END{{print n+0}}'); ",
-            "if [ \"$merge_base_count\" -ne 1 ]; then printf 'status=ambiguous_merge_base\\n'; exit 0; fi; ",
-            "merge_base=$merge_bases; ",
-            "if git merge-base --is-ancestor {base_q} {head_q} >/dev/null 2>&1; then base_is_ancestor=true; ",
-            "else ancestor_exit=$?; if [ \"$ancestor_exit\" -eq 1 ]; then base_is_ancestor=false; else printf 'status=ancestor_failed\\n'; exit 0; fi; fi; ",
-            "commit_count=$(git rev-list --count \"$merge_base..{head}\" 2>/dev/null) || {{ printf 'status=rev_list_failed\\n'; exit 0; }}; ",
-            "{stats_pipeline}",
-            "stats=$(cat \"$view/scope_stats.out\" 2>/dev/null) || {{ printf 'status=stats_failed\\n'; exit 0; }}; ",
-            "printf 'status=ok\\nrequested_base=%s\\nrequested_head=%s\\nmerge_base=%s\\nbase_is_ancestor=%s\\ncommit_count=%s\\n%s' ",
-            "{base_q} {head_q} \"$merge_base\" \"$base_is_ancestor\" \"$commit_count\" \"$stats\""
-        ),
-        prefix = review_git_discovery_prefix(),
-        isolated_view = isolated_view,
-        stats_pipeline = stats_pipeline,
-        base_q = shell_escape_simple(base),
-        head_q = head_q,
-        head = head,
-    )
-}
-
-fn parse_scope_value<'a>(stdout: &'a str, key: &str) -> Option<&'a str> {
-    stdout.lines().find_map(|line| {
-        let (field, value) = line.split_once('=')?;
-        (field == key).then_some(value)
-    })
-}
-
-fn parse_u64_scope(stdout: &str, key: &str) -> Option<u64> {
-    parse_scope_value(stdout, key)?.parse().ok()
-}
-
-fn parse_git_review_scope(stdout: &str) -> Result<ReviewScope, &'static str> {
-    match parse_scope_value(stdout, "status") {
-        Some("ok") => {}
-        Some("not_git") => return Err("not_a_git_repository"),
-        Some("base_not_commit") => return Err("base_commit_missing_or_not_commit"),
-        Some("head_not_commit") => return Err("head_commit_missing_or_not_commit"),
-        Some("no_merge_base") => return Err("no_merge_base"),
-        Some("ambiguous_merge_base") => return Err("ambiguous_merge_base"),
-        Some("git_view_unavailable") => return Err("git_isolated_view_unavailable"),
-        Some("ancestor_failed") => return Err("merge_base_ancestor_check_failed"),
-        Some("rev_list_failed") => return Err("commit_count_unavailable"),
-        Some("diff_failed") | Some("stats_failed") => return Err("git_diff_failed"),
-        _ => return Err("scope_observation_unavailable"),
-    }
-    let requested_base = normalize_exact_commit_id(
-        parse_scope_value(stdout, "requested_base").ok_or("scope_observation_unavailable")?,
-    )
-    .map_err(|_| "scope_observation_unavailable")?;
-    let requested_head = normalize_exact_commit_id(
-        parse_scope_value(stdout, "requested_head").ok_or("scope_observation_unavailable")?,
-    )
-    .map_err(|_| "scope_observation_unavailable")?;
-    let merge_base = normalize_exact_commit_id(
-        parse_scope_value(stdout, "merge_base").ok_or("scope_observation_unavailable")?,
-    )
-    .map_err(|_| "scope_observation_unavailable")?;
-    let base_is_ancestor = match parse_scope_value(stdout, "base_is_ancestor") {
-        Some("true") => true,
-        Some("false") => false,
-        _ => return Err("scope_observation_unavailable"),
-    };
-    Ok(ReviewScope {
-        requested_base,
-        requested_head,
-        merge_base,
-        base_is_ancestor,
-        commit_count: parse_u64_scope(stdout, "commit_count")
-            .ok_or("scope_observation_unavailable")?,
-        files_changed: parse_u64_scope(stdout, "files_changed")
-            .ok_or("scope_observation_unavailable")?,
-        insertions: parse_u64_scope(stdout, "insertions").ok_or("scope_observation_unavailable")?,
-        deletions: parse_u64_scope(stdout, "deletions").ok_or("scope_observation_unavailable")?,
-        binary_files: parse_u64_scope(stdout, "binary_files")
-            .ok_or("scope_observation_unavailable")?,
-    })
-}
-
 fn bounded_review_diff_command(
     merge_base: &str,
     head: &str,
@@ -283,7 +109,7 @@ fn bounded_review_diff_command(
         _ => unreachable!("closed git review diff mode"),
     };
     let failure = format!("printf '{}\\n'; exit 0", GIT_REVIEW_ERROR_SENTINEL);
-    let isolated_view = review_git_isolated_view_setup(head, &failure);
+    let isolated_view = committed_git_isolated_view_setup(head, &failure);
     let producer = format!(
         "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q}",
         head_q = shell_escape_simple(head),
@@ -309,7 +135,7 @@ fn bounded_review_diff_command(
             "{pipeline}",
             "cat \"$view/metadata.out\" 2>/dev/null || {{ {failure}; }}"
         ),
-        prefix = review_git_discovery_prefix(),
+        prefix = committed_git_discovery_prefix(),
         isolated_view = isolated_view,
         pipeline = pipeline,
         error = GIT_REVIEW_ERROR_SENTINEL,
@@ -792,7 +618,7 @@ fn git_review_symbol_command(merge_base: &str, head: &str, paths: &[String]) -> 
         .collect::<Vec<_>>()
         .join(" ");
     let failure = format!("printf '{}\\n'; exit 0", GIT_REVIEW_ERROR_SENTINEL);
-    let isolated_view = review_git_isolated_view_setup(head, &failure);
+    let isolated_view = committed_git_isolated_view_setup(head, &failure);
     let producer = format!(
         "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ {base_q} {head_q} -- {paths}",
         base_q = shell_escape_simple(merge_base),
@@ -812,7 +638,7 @@ fn git_review_symbol_command(merge_base: &str, head: &str, paths: &[String]) -> 
             "{pipeline}",
             "cat \"$view/symbols.out\" 2>/dev/null || {{ {failure}; }}"
         ),
-        prefix = review_git_discovery_prefix(),
+        prefix = committed_git_discovery_prefix(),
         isolated_view = isolated_view,
         pipeline = pipeline,
         error = GIT_REVIEW_ERROR_SENTINEL,
@@ -1089,30 +915,13 @@ impl ToolRuntime {
             Ok(resolved) => resolved,
             Err(error) => return error.into_tool_result(),
         };
-        let scope_output = match self
-            .run_project_internal_posix_script_capture(
-                &resolved.resolved_id,
-                git_review_scope_command(&base, &head),
-                30,
-                None,
-            )
+        let scope = match self
+            .resolve_committed_git_scope(&resolved.resolved_id, &base, &head)
             .await
         {
-            Ok(output) => output,
-            Err(_) => {
-                return git_review_failure(&project, &base, &head, "scope_observation_unavailable")
-            }
-        };
-        if scope_output.exit_code != Some(0) || scope_output.error.is_some() {
-            return git_review_failure(&project, &base, &head, "scope_observation_unavailable");
-        }
-        let scope = match parse_git_review_scope(&scope_output.stdout) {
             Ok(scope) => scope,
             Err(reason) => return git_review_failure(&project, &base, &head, reason),
         };
-        if scope.requested_base != base || scope.requested_head != head {
-            return git_review_failure(&project, &base, &head, "scope_observation_mismatch");
-        }
 
         let max_lines = GIT_REVIEW_MAX_FILES;
         let mut observations = Vec::new();
@@ -1418,6 +1227,12 @@ impl ToolRuntime {
         }
     }
 }
+
+#[cfg(test)]
+use super::git_committed::{
+    committed_git_scope_command as git_review_scope_command,
+    parse_committed_git_scope as parse_git_review_scope,
+};
 
 #[cfg(test)]
 mod tests {

@@ -31,14 +31,18 @@ impl ToolRuntime {
                 max_hunks,
                 max_hunk_lines,
                 cached,
+                base_commit,
+                head_commit,
                 continuation,
             } => {
-                self.git_diff_hunks_continued(
+                self.git_diff_hunks_continued_with_range(
                     project,
                     paths,
                     max_hunks,
                     max_hunk_lines,
                     cached,
+                    base_commit,
+                    head_commit,
                     continuation,
                 )
                 .await

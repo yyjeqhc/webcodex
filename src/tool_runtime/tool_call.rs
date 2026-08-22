@@ -763,6 +763,10 @@ pub enum ToolCall {
         max_hunk_lines: Option<usize>,
         #[serde(default)]
         cached: Option<bool>,
+        #[serde(default)]
+        base_commit: Option<String>,
+        #[serde(default)]
+        head_commit: Option<String>,
         #[serde(
             default,
             deserialize_with = "deserialize_optional_git_diff_hunks_continuation"

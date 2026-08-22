@@ -3523,7 +3523,7 @@ async fn review_evidence_git_review_summary_counts_as_mapping_not_diff_review() 
 
     let result = runtime
         .dispatch(ToolCall::SessionHandoffSummary {
-            session_id: sid,
+            session_id: sid.clone(),
             project: None,
             include_workspace: None,
             include_checkpoints: None,
@@ -3538,6 +3538,49 @@ async fn review_evidence_git_review_summary_counts_as_mapping_not_diff_review() 
     assert_eq!(review["diff_review_count"], 0);
     assert_eq!(review["total"], 1);
     assert_eq!(review["tools"], json!(["git_review_summary"]));
+    assert_review_evidence_tools_safe(review);
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "git_diff_hunks",
+        json!({
+            "project": "agent:eval:demo",
+            "base_commit": "a".repeat(40),
+            "head_commit": "b".repeat(40),
+            "paths": ["src/runtime.rs"]
+        }),
+        true,
+        json!({
+            "scope": {
+                "mode": "committed",
+                "requested_base": "a".repeat(40),
+                "requested_head": "b".repeat(40),
+                "merge_base": "a".repeat(40)
+            },
+            "hunk_count": 1
+        }),
+    );
+    let result = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: sid,
+            project: None,
+            include_workspace: None,
+            include_checkpoints: None,
+            include_validation: None,
+            summary_only: false,
+            limit: None,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let review = &result.output["review_evidence"];
+    assert_eq!(review["read_only_inspection_count"], 1);
+    assert_eq!(review["diff_review_count"], 1);
+    assert_eq!(review["total"], 2);
+    assert_eq!(
+        review["tools"],
+        json!(["git_review_summary", "git_diff_hunks"])
+    );
     assert_review_evidence_tools_safe(review);
 }
 

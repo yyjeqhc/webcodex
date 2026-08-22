@@ -2635,6 +2635,8 @@ pub(crate) fn git_diff_hunks_command(paths: &[String], cached: bool) -> Result<S
     if cached {
         parts.push("--cached".to_string());
     }
+    parts.push("--no-ext-diff".to_string());
+    parts.push("--no-textconv".to_string());
     parts.push("--unified=80".to_string());
     if !paths.is_empty() {
         parts.push("--".to_string());
@@ -2649,6 +2651,8 @@ fn git_diff_hunks_fingerprint_command(paths: &[String], cached: bool) -> String 
         parts.push("--cached".to_string());
     }
     parts.extend([
+        "--no-ext-diff".to_string(),
+        "--no-textconv".to_string(),
         "--binary".to_string(),
         "--full-index".to_string(),
         "--unified=80".to_string(),
@@ -3020,6 +3024,27 @@ fn strip_diff_prefix(path: &str) -> String {
         .to_string()
 }
 
+fn parse_binary_diff_paths(line: &str) -> Option<(Option<String>, Option<String>)> {
+    let body = line
+        .strip_prefix("Binary files ")?
+        .strip_suffix(" differ")?;
+    for (index, _) in body.match_indices(" and ") {
+        let old_raw = &body[..index];
+        let new_raw = &body[index + " and ".len()..];
+        let old_path = (old_raw != "/dev/null").then(|| strip_diff_prefix(old_raw));
+        let path = (new_raw != "/dev/null").then(|| strip_diff_prefix(new_raw));
+        let plausible = match (&old_path, &path) {
+            (None, Some(_)) | (Some(_), None) => true,
+            (Some(old_path), Some(path)) => old_path == path,
+            (None, None) => false,
+        };
+        if plausible {
+            return Some((old_path, path));
+        }
+    }
+    None
+}
+
 fn parse_hunk_header(header: &str) -> (i64, i64, i64, i64) {
     fn parse_range(raw: &str) -> (i64, i64) {
         let raw = raw.trim_start_matches(['-', '+']);
@@ -3121,6 +3146,17 @@ pub(crate) fn parse_git_diff_hunks(
             file.insert("status".to_string(), json!("renamed"));
         } else if line.starts_with("Binary files ") {
             file.insert("binary".to_string(), json!(true));
+            if file.get("status").and_then(Value::as_str) != Some("renamed") {
+                if let Some((old_path, path)) = parse_binary_diff_paths(line) {
+                    file.insert("old_path".to_string(), json!(old_path));
+                    file.insert("path".to_string(), json!(path));
+                    if file.get("old_path").is_some_and(Value::is_null) {
+                        file.insert("status".to_string(), json!("added"));
+                    } else if file.get("path").is_some_and(Value::is_null) {
+                        file.insert("status".to_string(), json!("deleted"));
+                    }
+                }
+            }
         } else if let Some(path) = line.strip_prefix("--- ") {
             if path == "/dev/null" {
                 file.insert("old_path".to_string(), json!(null));

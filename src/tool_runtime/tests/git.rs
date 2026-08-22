@@ -974,6 +974,83 @@ async fn git_diff_hunks_committed_exact_range_isolated_targeted_and_head_attribu
     assert!(all_files.iter().any(|file| file["binary"] == true));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn git_diff_hunks_ignores_external_diff_helpers_in_worktree_and_cached_modes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    write_git_review_fixture_file(tmp.path(), "safe.txt", "safe-old\n");
+    write_git_review_fixture_file(tmp.path(), ".env", "FAKE_PRIVATE_MARKER_117\n");
+    commit_git_review_fixture(tmp.path(), "base");
+    write_git_review_fixture_file(tmp.path(), "safe.txt", "safe-new\n");
+    let helper = tmp.path().join("extdiff.sh");
+    fs::write(
+        &helper,
+        "#!/bin/sh\nprintf '%s\\n' 'diff --git a/safe.txt b/safe.txt' '--- a/safe.txt' '+++ b/safe.txt' '@@ -1 +1 @@' '-safe-old'\nprintf '+%s\\n' \"$(cat .env)\"\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&helper).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&helper, permissions).unwrap();
+    git_test_command_ok(
+        tmp.path(),
+        &format!(
+            "git config diff.external {}",
+            shell_escape_simple(helper.to_string_lossy().as_ref())
+        ),
+    );
+
+    let runtime = test_runtime();
+    let project = register_structured_git_agent_at_path(
+        &runtime,
+        "diff-hunks-no-external",
+        "repo",
+        tmp.path(),
+    )
+    .await;
+    let paths = Some(vec!["safe.txt".to_string()]);
+    let (worktree, _, worktree_script) = run_agent_git_diff_hunks_page(
+        &runtime,
+        "diff-hunks-no-external",
+        &project,
+        tmp.path(),
+        paths.clone(),
+        10,
+        80,
+        false,
+        None,
+    )
+    .await;
+    assert!(worktree.success, "{:?}", worktree.error);
+    assert!(worktree_script.contains("--no-ext-diff"));
+    assert!(worktree_script.contains("--no-textconv"));
+    let worktree_output = serde_json::to_string(&worktree.output).unwrap();
+    assert!(worktree_output.contains("safe-new"));
+    assert!(!worktree_output.contains("FAKE_PRIVATE_MARKER_117"));
+
+    git_test_command_ok(tmp.path(), "git add -- safe.txt");
+    let (cached, _, cached_script) = run_agent_git_diff_hunks_page(
+        &runtime,
+        "diff-hunks-no-external",
+        &project,
+        tmp.path(),
+        paths,
+        10,
+        80,
+        true,
+        None,
+    )
+    .await;
+    assert!(cached.success, "{:?}", cached.error);
+    assert!(cached_script.contains("--no-ext-diff"));
+    assert!(cached_script.contains("--no-textconv"));
+    let cached_output = serde_json::to_string(&cached.output).unwrap();
+    assert!(cached_output.contains("safe-new"));
+    assert!(!cached_output.contains("FAKE_PRIVATE_MARKER_117"));
+}
+
 #[tokio::test]
 async fn git_diff_hunks_never_returns_secret_path_content_in_any_mode() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2218,6 +2295,19 @@ async fn git_diff_hunks_malformed_continuation_fails_before_runner_dispatch() {
 
 #[test]
 fn git_diff_hunks_parser_handles_modified_empty_and_limits() {
+    let binary = "\
+diff --git a/binary file.bin b/binary file.bin
+index 1111111..2222222 100644
+Binary files a/binary file.bin and b/binary file.bin differ
+";
+    let (binary_files, binary_hunks, binary_truncated) = parse_git_diff_hunks(binary, 10, 20);
+    assert!(!binary_truncated);
+    assert_eq!(binary_hunks, 0);
+    assert_eq!(binary_files.len(), 1);
+    assert_eq!(binary_files[0]["path"], "binary file.bin");
+    assert_eq!(binary_files[0]["old_path"], "binary file.bin");
+    assert_eq!(binary_files[0]["binary"], true);
+
     let diff = "\
 diff --git a/src/lib.rs b/src/lib.rs
 index 1111111..2222222 100644
@@ -3469,9 +3559,11 @@ async fn show_changes_untracked_sensitive_path_preview_is_skipped() {
 
 #[test]
 fn git_diff_hunks_command_rejects_unsafe_paths() {
-    assert!(git_diff_hunks_command(&["src/lib.rs".to_string()], false)
-        .unwrap()
-        .contains("git diff --unified=80 -- 'src/lib.rs'"));
+    let command = git_diff_hunks_command(&["src/lib.rs".to_string()], false).unwrap();
+    assert!(command.contains("git diff"));
+    assert!(command.contains("--no-ext-diff"));
+    assert!(command.contains("--no-textconv"));
+    assert!(command.contains("--unified=80 -- 'src/lib.rs'"));
     assert!(validate_project_relative_path("../outside").is_err());
 }
 

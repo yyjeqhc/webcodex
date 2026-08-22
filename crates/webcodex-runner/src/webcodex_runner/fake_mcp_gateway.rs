@@ -49,7 +49,9 @@ fn main() -> io::Result<()> {
             },
         )?;
         let cwd_matches = match (args.get(2), env::current_dir()) {
-            (Some(expected), Ok(current)) => current == Path::new(expected),
+            (Some(expected), Ok(current)) => {
+                std::fs::canonicalize(current).ok() == std::fs::canonicalize(expected).ok()
+            }
             _ => false,
         };
         append(marker, if cwd_matches { "cwd-ok\n" } else { "cwd-bad\n" })?;

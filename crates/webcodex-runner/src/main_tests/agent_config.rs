@@ -763,13 +763,21 @@ fn phase_e2_polling_dispatch_and_job_execution_concurrency_defaults_are_independ
     assert_ne!(POLLING_DISPATCH_MAX_IN_FLIGHT, DEFAULT_MAX_CONCURRENT_JOBS);
 }
 
+fn mcp_test_toml_path(path: &std::path::Path) -> String {
+    serde_json::to_string(path.to_string_lossy().as_ref()).unwrap()
+}
+
 #[test]
 fn agent_config_accepts_static_literal_mcp_gateway_provider() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
+    let executable = mcp_test_toml_path(&std::env::current_exe().unwrap());
+    let cwd_value = tmp.path().to_string_lossy().into_owned();
+    let cwd = serde_json::to_string(&cwd_value).unwrap();
     std::fs::write(
         &path,
-        r#"
+        format!(
+            r#"
 server_url = "http://127.0.0.1:8000"
 token = "t"
 client_id = "oe"
@@ -780,12 +788,13 @@ request_timeout_secs = 7
 [[mcp.providers]]
 id = "local-tools"
 name = "Local tools"
-executable = "/usr/bin/example-mcp"
+executable = {executable}
 args = ["--stdio", "$HOME", "$(id)"]
-cwd = "/absolute/provider/workdir"
-env_from_env = { GITHUB_TOKEN = "GITHUB_TOKEN", HOME = "HOME" }
+cwd = {cwd}
+env_from_env = {{ GITHUB_TOKEN = "GITHUB_TOKEN", HOME = "HOME" }}
 timeout_secs = 5
-"#,
+"#
+        ),
     )
     .unwrap();
 
@@ -799,7 +808,7 @@ timeout_secs = 5
     );
     assert_eq!(
         config.mcp_gateway.providers[0].cwd.as_deref(),
-        Some("/absolute/provider/workdir")
+        Some(cwd_value.as_str())
     );
     assert_eq!(
         config.mcp_gateway.providers[0]
@@ -814,9 +823,11 @@ timeout_secs = 5
 fn agent_config_mcp_gateway_provider_timeout_defaults_to_gateway_timeout() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
+    let executable = mcp_test_toml_path(&std::env::current_exe().unwrap());
     std::fs::write(
         &path,
-        r#"
+        format!(
+            r#"
 server_url = "http://127.0.0.1:8000"
 token = "t"
 client_id = "oe"
@@ -827,8 +838,9 @@ request_timeout_secs = 11
 [[mcp.providers]]
 id = "inherits"
 name = "Inherits"
-executable = "/usr/bin/example-mcp"
-"#,
+executable = {executable}
+"#
+        ),
     )
     .unwrap();
 
@@ -839,6 +851,7 @@ executable = "/usr/bin/example-mcp"
 
 #[test]
 fn agent_config_rejects_unsafe_or_ambiguous_mcp_gateway_identity() {
+    let executable = mcp_test_toml_path(&std::env::current_exe().unwrap());
     for (providers, expected) in [
         (
             r#"
@@ -846,31 +859,36 @@ fn agent_config_rejects_unsafe_or_ambiguous_mcp_gateway_identity() {
 id = "local"
 name = "Local"
 executable = "relative-mcp"
-"#,
+"#
+            .to_string(),
             "executable must be an absolute path",
         ),
         (
-            r#"
+            format!(
+                r#"
 [[mcp.providers]]
 id = "bad-timeout"
 name = "Bad timeout"
-executable = "/usr/bin/example-mcp"
+executable = {executable}
 timeout_secs = 121
-"#,
+"#
+            ),
             "timeout_secs must be between 1 and 120",
         ),
         (
-            r#"
+            format!(
+                r#"
 [[mcp.providers]]
 id = "duplicate"
 name = "First"
-executable = "/usr/bin/first"
+executable = {executable}
 
 [[mcp.providers]]
 id = "duplicate"
 name = "Second"
-executable = "/usr/bin/second"
-"#,
+executable = {executable}
+"#
+            ),
             "provider ids must be unique",
         ),
     ] {

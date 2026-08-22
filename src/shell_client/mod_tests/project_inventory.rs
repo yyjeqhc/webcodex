@@ -433,6 +433,19 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
     assert_eq!(after_register.len(), 1);
     assert_eq!(after_register[0].id, "dynamic-added");
 
+    // Exact retransmission of the last accepted A/page0 must not hit the
+    // duplicate fast path after dynamic projection has retired A. The status
+    // must explicitly fence the old generation so a streaming Runner can
+    // resnapshot instead of waiting forever on an unrelated current status.
+    let duplicate_a0_after_register = registry
+        .apply_project_inventory_page(client_id, instance_id, stale_a_pages[0].clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        duplicate_a0_after_register.last_error_code.as_deref(),
+        Some("project_inventory_stale_generation")
+    );
+
     // Dynamic projection clears A staging and retires the pre-mutation
     // generation. A later page from A must be rejected rather than replacing
     // the just-committed mutation with its stale 70-project snapshot.

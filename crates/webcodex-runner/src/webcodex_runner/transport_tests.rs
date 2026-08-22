@@ -3961,6 +3961,123 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
 }
 
 #[tokio::test]
+async fn streaming_delayed_success_ack_does_not_discard_current_sync() {
+    for transport in [StreamTransport::WebSocket, StreamTransport::Quic] {
+        let projects_a = (0..100)
+            .map(|index| synthetic_project_summary(index, None))
+            .collect::<Vec<_>>();
+        let sync_a = ProjectInventorySync::new(projects_a);
+        let generation_a = sync_a.generation().to_string();
+        let mut coordinator = StreamingProjectInventoryCoordinator::new(Some(sync_a));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let cfg = test_agent_config("http://127.0.0.1:1".to_string());
+        let runtime = test_runtime(&cfg);
+
+        coordinator.queue_pending(transport, &tx);
+        let page_a0 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected generation A page 0, got {other:?}"),
+        };
+        coordinator.handle_status(
+            transport,
+            inventory_status("in_progress", &generation_a, 100, page_a0.projects.len()),
+            &cfg,
+            &runtime,
+            &tx,
+        );
+        let page_a1 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected generation A page 1, got {other:?}"),
+        };
+        assert_eq!(page_a1.page_index, 1);
+
+        // A duplicated/delayed success acknowledgement for page 0 is older than
+        // the pending page 1 cursor. It must not be interpreted as a permanent
+        // progress mismatch and discard the still-current generation A sync.
+        coordinator.handle_status(
+            transport,
+            inventory_status("in_progress", &generation_a, 100, page_a0.projects.len()),
+            &cfg,
+            &runtime,
+            &tx,
+        );
+        let current_a = coordinator
+            .sync
+            .as_mut()
+            .expect("generation A remains active");
+        assert_eq!(current_a.generation(), generation_a);
+        assert_eq!(
+            serde_json::to_vec(&current_a.current_page().unwrap().unwrap()).unwrap(),
+            serde_json::to_vec(&page_a1).unwrap(),
+            "delayed page-0 acknowledgement must leave page 1 pending"
+        );
+        assert!(rx.try_recv().is_err());
+
+        // A local mutation can replace A with a fresh generation B before A's
+        // already-enqueued normal acknowledgement arrives. That old successful
+        // acknowledgement belongs to A and must not tear down B.
+        let projects_b = (0..101)
+            .map(|index| synthetic_project_summary(index, None))
+            .collect::<Vec<_>>();
+        coordinator.sync = Some(ProjectInventorySync::new(projects_b));
+        coordinator.retry_backoff.reset();
+        coordinator.retry_at = None;
+        coordinator.queue_pending(transport, &tx);
+        let page_b0 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected generation B page 0, got {other:?}"),
+        };
+        let generation_b = page_b0.generation.clone();
+        assert_ne!(generation_b, generation_a);
+
+        // A transient capacity response owns a retry deadline for B. An old
+        // successful A acknowledgement must not cancel that unrelated timer.
+        coordinator.handle_status(
+            transport,
+            ShellProjectInventoryStatus {
+                sync_state: "degraded".to_string(),
+                generation: Some("previous-authoritative-generation".to_string()),
+                total_reported: Some(1),
+                total_synced: 1,
+                last_error_code: Some("project_inventory_staging_capacity".to_string()),
+                last_sync_at: Some(1),
+                max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+                max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
+            },
+            &cfg,
+            &runtime,
+            &tx,
+        );
+        let retry_at_before_delayed_ack = coordinator
+            .retry_at()
+            .expect("capacity response schedules generation B retry");
+
+        coordinator.handle_status(
+            transport,
+            inventory_status("in_progress", &generation_a, 100, page_a0.projects.len()),
+            &cfg,
+            &runtime,
+            &tx,
+        );
+        assert_eq!(
+            coordinator
+                .sync
+                .as_ref()
+                .map(ProjectInventorySync::generation),
+            Some(generation_b.as_str()),
+            "delayed generation-A acknowledgement must not discard generation B"
+        );
+        assert_eq!(
+            coordinator.retry_at(),
+            Some(retry_at_before_delayed_ack),
+            "delayed acknowledgement must not clear generation B capacity backoff"
+        );
+        assert!(rx.try_recv().is_err());
+        runtime.shutdown();
+    }
+}
+
+#[tokio::test]
 async fn streaming_permanent_inventory_error_does_not_fresh_resnapshot() {
     for transport in [StreamTransport::WebSocket, StreamTransport::Quic] {
         let cfg = test_agent_config("http://127.0.0.1:1".to_string());

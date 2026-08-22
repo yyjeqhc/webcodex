@@ -363,13 +363,6 @@ impl ShellClientRegistry {
             }
         };
 
-        if client.project_inventory.last_page_generation.as_deref() == Some(&page.generation)
-            && client.project_inventory.last_page_index == Some(page.page_index)
-            && client.project_inventory.last_page_digest.as_deref() == Some(&page_digest)
-        {
-            return Ok(client.project_inventory.status.clone());
-        }
-
         let staging_matches_page =
             client
                 .project_inventory
@@ -379,6 +372,21 @@ impl ShellClientRegistry {
                     staging.generation == page.generation
                         && staging.snapshot_sequence == page.snapshot_sequence
                 });
+        let completed_generation_matches_page = client.project_inventory.staging.is_none()
+            && client.project_inventory.status.sync_state == "complete"
+            && client.project_inventory.status.generation.as_deref() == Some(&page.generation);
+        let exact_last_page_replay = client.project_inventory.last_page_generation.as_deref()
+            == Some(&page.generation)
+            && client.project_inventory.last_page_index == Some(page.page_index)
+            && client.project_inventory.last_page_digest.as_deref() == Some(&page_digest);
+        // Exact replay is idempotent only while the page still belongs to the
+        // active staging generation or the current completed authoritative
+        // generation. Dynamic mutation, timeout, or a newer snapshot can retire
+        // the same generation after its last page was recorded; in that case the
+        // replay must continue through the stale-generation fences below.
+        if exact_last_page_replay && (staging_matches_page || completed_generation_matches_page) {
+            return Ok(client.project_inventory.status.clone());
+        }
         if page.snapshot_sequence < client.project_inventory.highest_snapshot_sequence
             || (page.snapshot_sequence == client.project_inventory.highest_snapshot_sequence
                 && !staging_matches_page)

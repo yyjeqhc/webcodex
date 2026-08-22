@@ -2585,6 +2585,7 @@ fn try_queue_project_inventory_page(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProjectInventoryStatusAction {
     None,
+    IgnoreDelayedAck,
     RetryExactAfter(Duration),
     FreshResnapshot,
 }
@@ -2598,6 +2599,24 @@ fn project_inventory_status_requests_fresh_resnapshot(
             "project_inventory_stale_generation" | "project_inventory_missing_or_stale_generation"
         )
     )
+}
+
+fn project_inventory_status_is_delayed_success_ack(
+    state: &ProjectInventorySync,
+    status: &ShellProjectInventoryStatus,
+) -> bool {
+    if status.last_error_code.is_some()
+        || !matches!(status.sync_state.as_str(), "in_progress" | "complete")
+    {
+        return false;
+    }
+    if status.generation.as_deref() != Some(state.generation()) {
+        return true;
+    }
+    state.pending.as_ref().is_some_and(|pending| {
+        status.total_reported == Some(state.total_reported())
+            && status.total_synced < pending.next_cursor
+    })
 }
 
 fn handle_project_inventory_status(
@@ -2631,6 +2650,16 @@ fn handle_project_inventory_status(
         retry_backoff.reset();
         return ProjectInventoryStatusAction::None;
     };
+    if project_inventory_status_is_delayed_success_ack(state, &status) {
+        tracing::debug!(
+            transport = transport.name(),
+            current_generation = state.generation(),
+            ack_generation = status.generation.as_deref(),
+            ack_total_synced = status.total_synced,
+            "ignoring delayed project inventory success acknowledgement"
+        );
+        return ProjectInventoryStatusAction::IgnoreDelayedAck;
+    }
     let projects = state.total_reported();
     match state.acknowledge(&status) {
         Ok(true) => {
@@ -2748,6 +2777,7 @@ impl StreamingProjectInventoryCoordinator {
             &mut self.retry_backoff,
         ) {
             ProjectInventoryStatusAction::None => self.retry_at = None,
+            ProjectInventoryStatusAction::IgnoreDelayedAck => {}
             ProjectInventoryStatusAction::RetryExactAfter(delay) => {
                 self.retry_at = Some(tokio::time::Instant::now() + delay);
             }

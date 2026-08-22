@@ -83,6 +83,195 @@ impl Default for JobLogWait {
     }
 }
 
+/// Frozen Server-side observation details accompanying one public Job log
+/// projection. The analysis context is bounded by the retained Server log and
+/// is consumed only by validation/summary projection; it is never repeated as
+/// model-facing output when the delta is empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ShellJobLogObservation {
+    pub(crate) wait: JobLogWait,
+    pub(crate) log_delta_status: crate::job_observation::JobLogDeltaStatus,
+    pub(crate) stdout_delta_reset: bool,
+    pub(crate) stderr_delta_reset: bool,
+    pub(crate) stdout_truncated: bool,
+    pub(crate) stderr_truncated: bool,
+    pub(crate) stdout_returned_lines: usize,
+    pub(crate) stderr_returned_lines: usize,
+    pub(crate) analysis_stdout: String,
+    pub(crate) analysis_stderr: String,
+    pub(crate) analysis_truncated: bool,
+}
+
+impl std::ops::Deref for ShellJobLogObservation {
+    type Target = JobLogWait;
+
+    fn deref(&self) -> &Self::Target {
+        &self.wait
+    }
+}
+
+impl Default for ShellJobLogObservation {
+    fn default() -> Self {
+        Self {
+            wait: JobLogWait::default(),
+            log_delta_status: crate::job_observation::JobLogDeltaStatus::Baseline,
+            stdout_delta_reset: false,
+            stderr_delta_reset: false,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            stdout_returned_lines: 0,
+            stderr_returned_lines: 0,
+            analysis_stdout: String::new(),
+            analysis_stderr: String::new(),
+            analysis_truncated: false,
+        }
+    }
+}
+
+fn frozen_shell_job_log_projection(
+    job: &ShellJobRecord,
+    after: Option<&crate::job_observation::JobObservationToken>,
+    since_stdout_line: Option<usize>,
+    since_stderr_line: Option<usize>,
+    tail_lines: Option<usize>,
+    wait: JobLogWait,
+) -> (
+    ShellJobInfo,
+    Option<String>,
+    Option<String>,
+    usize,
+    usize,
+    ShellJobLogObservation,
+) {
+    let (analysis_stdout, _, _, analysis_stdout_truncated) =
+        select_log_lines(&job.stdout, None, None);
+    let (analysis_stderr, _, _, analysis_stderr_truncated) =
+        select_log_lines(&job.stderr, None, None);
+    let analysis_stdout = analysis_stdout.unwrap_or_default();
+    let analysis_stderr = analysis_stderr.unwrap_or_default();
+    let analysis_truncated = analysis_stdout_truncated
+        || analysis_stderr_truncated
+        || job.stdout.first_retained_line > 1
+        || job.stderr.first_retained_line > 1;
+    let explicit_paging = since_stdout_line.is_some() || since_stderr_line.is_some();
+
+    if explicit_paging {
+        // Preserve the established explicit cursor/tail precedence exactly.
+        // The cursor-less token prevents a later automatic observation from
+        // assuming that this explicit page represented complete log receipt.
+        let (stdout, next_stdout_line, _, stdout_truncated) =
+            select_log_lines(&job.stdout, since_stdout_line, tail_lines);
+        let (stderr, next_stderr_line, _, stderr_truncated) =
+            select_log_lines(&job.stderr, since_stderr_line, tail_lines);
+        let mut view = job_view(job);
+        view.observation_token = crate::job_observation::JobObservationToken::new_legacy(
+            crate::job_observation::JobObservationExecutor::Agent,
+            job.job_id.clone(),
+            job.observation_epoch.to_string(),
+            job.public_revision.load(Ordering::Relaxed),
+        )
+        .ok()
+        .map(|token| token.encode());
+        let observation = ShellJobLogObservation {
+            wait,
+            log_delta_status: crate::job_observation::JobLogDeltaStatus::Baseline,
+            stdout_delta_reset: false,
+            stderr_delta_reset: false,
+            stdout_truncated,
+            stderr_truncated,
+            stdout_returned_lines: stdout.as_deref().unwrap_or_default().lines().count(),
+            stderr_returned_lines: stderr.as_deref().unwrap_or_default().lines().count(),
+            analysis_stdout,
+            analysis_stderr,
+            analysis_truncated,
+        };
+        return (
+            view,
+            stdout,
+            stderr,
+            next_stdout_line,
+            next_stderr_line,
+            observation,
+        );
+    }
+
+    let epoch_matches = after.is_none_or(|token| token.epoch == job.observation_epoch.as_ref());
+    let base_mode = match after {
+        None => crate::job_observation::JobLogSelectionMode::Baseline,
+        Some(token) if token.is_legacy() || !epoch_matches => {
+            crate::job_observation::JobLogSelectionMode::Reset
+        }
+        Some(token) => crate::job_observation::JobLogSelectionMode::Delta {
+            cursor: token
+                .stdout_cursor
+                .expect("cursor-aware token has stdout cursor"),
+        },
+    };
+    let stderr_mode = match after {
+        None => crate::job_observation::JobLogSelectionMode::Baseline,
+        Some(token) if token.is_legacy() || !epoch_matches => {
+            crate::job_observation::JobLogSelectionMode::Reset
+        }
+        Some(token) => crate::job_observation::JobLogSelectionMode::Delta {
+            cursor: token
+                .stderr_cursor
+                .expect("cursor-aware token has stderr cursor"),
+        },
+    };
+    let stdout = crate::job_observation::project_log_stream(
+        &job.stdout.tail,
+        job.stdout.first_retained_line,
+        job.stdout.next_line,
+        job.stdout.truncated,
+        tail_lines,
+        base_mode,
+        true,
+    );
+    let stderr = crate::job_observation::project_log_stream(
+        &job.stderr.tail,
+        job.stderr.first_retained_line,
+        job.stderr.next_line,
+        job.stderr.truncated,
+        tail_lines,
+        stderr_mode,
+        true,
+    );
+    let mut view = job_view(job);
+    view.observation_token = crate::job_observation::JobObservationToken::new(
+        crate::job_observation::JobObservationExecutor::Agent,
+        job.job_id.clone(),
+        job.observation_epoch.to_string(),
+        job.public_revision.load(Ordering::Relaxed),
+        stdout.next_line as u64,
+        stderr.next_line as u64,
+    )
+    .ok()
+    .map(|token| token.encode());
+    let observation = ShellJobLogObservation {
+        wait,
+        log_delta_status: crate::job_observation::combined_delta_status(
+            base_mode, &stdout, &stderr,
+        ),
+        stdout_delta_reset: stdout.delta_reset,
+        stderr_delta_reset: stderr.delta_reset,
+        stdout_truncated: stdout.truncated,
+        stderr_truncated: stderr.truncated,
+        stdout_returned_lines: stdout.returned_lines,
+        stderr_returned_lines: stderr.returned_lines,
+        analysis_stdout,
+        analysis_stderr,
+        analysis_truncated,
+    };
+    (
+        view,
+        Some(stdout.text),
+        Some(stderr.text),
+        stdout.next_line,
+        stderr.next_line,
+        observation,
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct JobPublicMutationSignature {
     status: String,
@@ -1342,7 +1531,7 @@ impl ShellClientRegistry {
             Option<String>,
             usize,
             usize,
-            JobLogWait,
+            ShellJobLogObservation,
         ),
         String,
     > {
@@ -1395,16 +1584,12 @@ impl ShellClientRegistry {
                     changed,
                     terminal,
                 };
-                let (stdout, next_stdout_line, _, _) =
-                    select_log_lines(&job.stdout, since_stdout_line, tail_lines);
-                let (stderr, next_stderr_line, _, _) =
-                    select_log_lines(&job.stderr, since_stderr_line, tail_lines);
-                return Ok((
-                    job_view(job),
-                    stdout,
-                    stderr,
-                    next_stdout_line,
-                    next_stderr_line,
+                return Ok(frozen_shell_job_log_projection(
+                    job,
+                    after.as_ref(),
+                    since_stdout_line,
+                    since_stderr_line,
+                    tail_lines,
                     wait,
                 ));
             }
@@ -1439,16 +1624,12 @@ impl ShellClientRegistry {
                     changed,
                     terminal,
                 };
-                let (stdout, next_stdout_line, _, _) =
-                    select_log_lines(&job.stdout, since_stdout_line, tail_lines);
-                let (stderr, next_stderr_line, _, _) =
-                    select_log_lines(&job.stderr, since_stderr_line, tail_lines);
-                return Ok((
-                    job_view(job),
-                    stdout,
-                    stderr,
-                    next_stdout_line,
-                    next_stderr_line,
+                return Ok(frozen_shell_job_log_projection(
+                    job,
+                    after.as_ref(),
+                    since_stdout_line,
+                    since_stderr_line,
+                    tail_lines,
                     wait,
                 ));
             }
@@ -1490,16 +1671,12 @@ impl ShellClientRegistry {
                     changed,
                     terminal,
                 };
-                let (stdout, next_stdout_line, _, _) =
-                    select_log_lines(&job.stdout, since_stdout_line, tail_lines);
-                let (stderr, next_stderr_line, _, _) =
-                    select_log_lines(&job.stderr, since_stderr_line, tail_lines);
-                return Ok((
-                    job_view(job),
-                    stdout,
-                    stderr,
-                    next_stdout_line,
-                    next_stderr_line,
+                return Ok(frozen_shell_job_log_projection(
+                    job,
+                    after.as_ref(),
+                    since_stdout_line,
+                    since_stderr_line,
+                    tail_lines,
                     wait,
                 ));
             }

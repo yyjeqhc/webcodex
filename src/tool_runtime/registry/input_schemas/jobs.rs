@@ -426,7 +426,7 @@ pub(crate) fn job_log_input_schema() -> Value {
         (
             "after_observation_token",
             "string",
-            "Opaque token from the latest Job snapshot. Return it unchanged. It is bound to one job_id, not execution identity; a Server epoch change causes an immediate refresh when that Job still exists.",
+            "Opaque token from the latest Job observation. Return it unchanged; it carries bounded lifecycle and automatic log-delta state. It is bound to one job_id, not execution identity or retry authority. A Server epoch change causes an immediate conservative log reset when that Job still exists.",
             false,
         ),
         (
@@ -436,7 +436,8 @@ pub(crate) fn job_log_input_schema() -> Value {
             false,
         ),
     ]);
-    schema["properties"]["after_observation_token"]["maxLength"] = json!(192);
+    schema["properties"]["after_observation_token"]["maxLength"] =
+        json!(crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN);
     schema["properties"]["wait_secs"]["minimum"] = json!(1);
     schema["properties"]["wait_secs"]["maximum"] = json!(60);
     schema
@@ -463,8 +464,8 @@ pub(crate) fn observe_jobs_input_schema() -> Value {
                         },
                         "after_observation_token": {
                             "type": "string",
-                            "maxLength": 192,
-                            "description": "Optional opaque Job-bound token from the latest snapshot. Return it unchanged. A stale server epoch is immediately actionable."
+                            "maxLength": crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN,
+                            "description": "Optional opaque Job-bound lifecycle/log-delta token from the latest observation. Return it unchanged without interpreting its cursor state. It is not execution identity or retry authority; a stale Server epoch is immediately actionable and conservatively resets the bounded log projection."
                         }
                     },
                     "required": ["job_id"]
@@ -475,7 +476,7 @@ pub(crate) fn observe_jobs_input_schema() -> Value {
                 "minimum": 1,
                 "maximum": 200,
                 "default": 40,
-                "description": "Global bounded trailing line count per stdout/stderr stream for every returned Job."
+                "description": "Global per-stream bound. First observations return a current tail; cursor-aware follow-ups return at most this many new or reset-recovery lines."
             },
             "wait_secs": {
                 "type": "integer",

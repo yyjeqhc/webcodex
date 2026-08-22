@@ -7,6 +7,7 @@ use crate::shell_protocol::{
     ShellCommandExecutionState, ShellJobInventory,
 };
 use serde_json::json;
+use std::io::Write;
 use std::time::{Duration, Instant};
 
 fn item(job_id: &str, token: Option<String>) -> ObserveJobsItem {
@@ -60,6 +61,18 @@ async fn seed_local_job(
         .await
         .insert(job_id.to_string(), record.clone());
     (record, token)
+}
+
+async fn local_cursor_token(runtime: &ToolRuntime, job_id: &str, tail_lines: usize) -> String {
+    let baseline = runtime
+        .job_log_for_auth(job_id.to_string(), None, Some(tail_lines), None, None, None)
+        .await;
+    assert!(baseline.success, "{:?}", baseline.error);
+    assert_eq!(baseline.output["log_delta_status"], "baseline");
+    baseline.output["observation_token"]
+        .as_str()
+        .unwrap()
+        .to_string()
 }
 
 async fn register_and_start_agent_job(
@@ -297,6 +310,30 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
         spec.output_schema["properties"]["output"]["anyOf"][0]["properties"]["wake_reason"]["enum"],
         json!(["immediate", "updated", "terminal", "item_error", "timeout"])
     );
+    let observation = &spec.output_schema["properties"]["output"]["anyOf"][0]["properties"]
+        ["items"]["items"]["properties"]["output"]["anyOf"][0];
+    assert_eq!(
+        observation["properties"]["log_delta_status"]["enum"],
+        json!(["baseline", "delta", "unchanged", "reset"])
+    );
+    assert_eq!(
+        observation["properties"]["observation_token"]["maxLength"],
+        crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN
+    );
+    for required in [
+        "log_delta_status",
+        "stdout_delta_reset",
+        "stderr_delta_reset",
+    ] {
+        assert!(
+            observation["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == required),
+            "observe_jobs item output must require {required}"
+        );
+    }
 
     let definition = super::super::tool_definition::lookup_tool_definition("observe_jobs").unwrap();
     assert!(definition.visibility.is_model_visible());
@@ -438,7 +475,7 @@ async fn observe_jobs_isolates_unknown_and_token_binding_failures() {
         seed_local_job(&runtime, temp.path(), "token-three", "running", "", "").await;
     let (_, token_four) =
         seed_local_job(&runtime, temp.path(), "token-four", "running", "", "").await;
-    let wrong_executor = crate::job_observation::JobObservationToken::new(
+    let wrong_executor = crate::job_observation::JobObservationToken::new_legacy(
         crate::job_observation::JobObservationExecutor::Agent,
         "token-three",
         "epoch",
@@ -520,7 +557,7 @@ async fn observe_jobs_old_epoch_token_refreshes_without_waiting() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     seed_local_job(&runtime, temp.path(), "epoch-job", "running", "", "").await;
-    let stale = crate::job_observation::JobObservationToken::new(
+    let stale = crate::job_observation::JobObservationToken::new_legacy(
         crate::job_observation::JobObservationExecutor::Local,
         "epoch-job",
         "old-server-epoch",
@@ -1021,4 +1058,268 @@ fn observe_jobs_session_sanitizer_removes_nested_token_bodies() {
     assert!(!serialized.contains(opaque));
     assert_eq!(summary["items"][0]["job_id"], "job");
     assert!(summary["items"][0].get("after_observation_token").is_none());
+}
+
+#[tokio::test]
+async fn observe_jobs_cursor_tokens_make_unchanged_siblings_empty() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let mut items = Vec::new();
+    for index in 0..3 {
+        let job_id = format!("delta-unchanged-{index}");
+        seed_local_job(
+            &runtime,
+            temp.path(),
+            &job_id,
+            "running",
+            &format!("old output {index}\n"),
+            "",
+        )
+        .await;
+        let token = local_cursor_token(&runtime, &job_id, 40).await;
+        items.push(item(&job_id, Some(token)));
+    }
+
+    let result = runtime.observe_jobs_for_auth(items, 40, None, None).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["changed_count"], 0);
+    assert_eq!(result.output["returned_count"], 3);
+    for observed in result.output["items"].as_array().unwrap() {
+        assert_eq!(observed["output"]["log_delta_status"], "unchanged");
+        assert_eq!(observed["output"]["stdout_tail"], "");
+        assert_eq!(observed["output"]["stderr_tail"], "");
+    }
+}
+
+#[tokio::test]
+async fn observe_jobs_returns_delta_only_for_the_changed_item() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let mut records = Vec::new();
+    let mut items = Vec::new();
+    for index in 0..3 {
+        let job_id = format!("delta-one-{index}");
+        let (record, _) = seed_local_job(
+            &runtime,
+            temp.path(),
+            &job_id,
+            "running",
+            &format!("old output {index}\n"),
+            "",
+        )
+        .await;
+        let token = local_cursor_token(&runtime, &job_id, 40).await;
+        records.push(record);
+        items.push(item(&job_id, Some(token)));
+    }
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(records[1].dir.join("stdout.log"))
+        .unwrap()
+        .write_all(b"only new output\n")
+        .unwrap();
+
+    let result = runtime.observe_jobs_for_auth(items, 40, None, None).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["changed_count"], 1);
+    assert_eq!(result.output["items"][0]["output"]["stdout_tail"], "");
+    assert_eq!(
+        result.output["items"][1]["output"]["stdout_tail"],
+        "only new output"
+    );
+    assert_eq!(
+        result.output["items"][1]["output"]["log_delta_status"],
+        "delta"
+    );
+    assert_eq!(result.output["items"][2]["output"]["stdout_tail"], "");
+}
+
+#[tokio::test]
+async fn observe_jobs_terminal_without_new_output_wakes_without_repeating_tail() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let (record, _) = seed_local_job(
+        &runtime,
+        temp.path(),
+        "delta-terminal",
+        "running",
+        "already observed\n",
+        "",
+    )
+    .await;
+    let token = local_cursor_token(&runtime, "delta-terminal", 40).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .observe_jobs_for_auth(vec![item("delta-terminal", Some(token))], 40, Some(5), None)
+                .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    std::fs::write(record.dir.join("exit_code"), "0").unwrap();
+    std::fs::write(
+        record.dir.join("finished_at"),
+        chrono::Utc::now().timestamp().to_string(),
+    )
+    .unwrap();
+    std::fs::write(record.dir.join("status"), "completed").unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .expect("terminal observation should wake")
+        .unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["wake_reason"], "terminal");
+    assert_eq!(result.output["changed_count"], 1);
+    assert_eq!(result.output["items"][0]["output"]["terminal"], true);
+    assert_eq!(
+        result.output["items"][0]["output"]["log_delta_status"],
+        "unchanged"
+    );
+    assert_eq!(result.output["items"][0]["output"]["stdout_tail"], "");
+    assert_eq!(result.output["items"][0]["output"]["stderr_tail"], "");
+}
+
+#[tokio::test]
+async fn observe_jobs_shared_timeout_keeps_all_cursor_items_compact() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let mut items = Vec::new();
+    for index in 0..4 {
+        let job_id = format!("delta-timeout-{index}");
+        seed_local_job(
+            &runtime,
+            temp.path(),
+            &job_id,
+            "running",
+            &format!("already observed {index}\n"),
+            "",
+        )
+        .await;
+        let token = local_cursor_token(&runtime, &job_id, 40).await;
+        items.push(item(&job_id, Some(token)));
+    }
+    let started = Instant::now();
+    let result = runtime
+        .observe_jobs_for_auth(items, 40, Some(1), None)
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["wake_reason"], "timeout");
+    assert_eq!(result.output["changed_count"], 0);
+    assert!(started.elapsed() < Duration::from_secs(3));
+    for observed in result.output["items"].as_array().unwrap() {
+        assert_eq!(observed["output"]["log_delta_status"], "unchanged");
+        assert_eq!(observed["output"]["stdout_tail"], "");
+        assert_eq!(observed["output"]["stderr_tail"], "");
+    }
+}
+
+#[tokio::test]
+async fn observe_jobs_resets_only_legacy_item_and_preserves_other_deltas() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let (_, legacy) = seed_local_job(
+        &runtime,
+        temp.path(),
+        "delta-legacy",
+        "running",
+        "legacy baseline\n",
+        "",
+    )
+    .await;
+    seed_local_job(
+        &runtime,
+        temp.path(),
+        "delta-current",
+        "running",
+        "current baseline\n",
+        "",
+    )
+    .await;
+    let current = local_cursor_token(&runtime, "delta-current", 40).await;
+
+    let result = runtime
+        .observe_jobs_for_auth(
+            vec![
+                item("delta-legacy", Some(legacy)),
+                item("delta-current", Some(current)),
+            ],
+            40,
+            None,
+            None,
+        )
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["wake_reason"], "immediate");
+    assert_eq!(
+        result.output["items"][0]["output"]["log_delta_status"],
+        "reset"
+    );
+    assert_eq!(
+        result.output["items"][0]["output"]["stdout_tail"],
+        "legacy baseline"
+    );
+    assert_eq!(
+        result.output["items"][1]["output"]["log_delta_status"],
+        "unchanged"
+    );
+    assert_eq!(result.output["items"][1]["output"]["stdout_tail"], "");
+}
+
+#[tokio::test]
+async fn observe_jobs_delta_measurement_and_budget_are_deterministic() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let log = (1..=40)
+        .map(|line| format!("line {line:02} {}", "x".repeat(32)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut legacy_items = Vec::new();
+    for index in 0..4 {
+        let job_id = format!("delta-measure-{index}");
+        let (_, legacy) = seed_local_job(&runtime, temp.path(), &job_id, "running", &log, "").await;
+        legacy_items.push(item(&job_id, Some(legacy)));
+    }
+    let legacy_full = runtime
+        .observe_jobs_for_auth(legacy_items, 40, None, None)
+        .await;
+    assert!(legacy_full.success, "{:?}", legacy_full.error);
+    for observed in legacy_full.output["items"].as_array().unwrap() {
+        assert_eq!(observed["output"]["log_delta_status"], "reset");
+        assert_eq!(observed["output"]["stdout_returned_lines"], 40);
+    }
+    let follow_items = legacy_full.output["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|observed| {
+            item(
+                observed["job_id"].as_str().unwrap(),
+                Some(
+                    observed["output"]["observation_token"]
+                        .as_str()
+                        .unwrap()
+                        .to_string(),
+                ),
+            )
+        })
+        .collect();
+    let unchanged = runtime
+        .observe_jobs_for_auth(follow_items, 40, None, None)
+        .await;
+    assert!(unchanged.success, "{:?}", unchanged.error);
+    assert_eq!(unchanged.output["output_truncated"], false);
+    assert_eq!(unchanged.output["next_index"], serde_json::Value::Null);
+    assert_eq!(unchanged.output["returned_count"], 4);
+
+    let legacy_full_bytes = serde_json::to_vec(&legacy_full).unwrap().len();
+    let unchanged_bytes = serde_json::to_vec(&unchanged).unwrap().len();
+    eprintln!(
+        "E4_BATCH_BYTES legacy_full_tail={legacy_full_bytes} unchanged_delta={unchanged_bytes}"
+    );
+    assert!(
+        unchanged_bytes * 2 < legacy_full_bytes,
+        "delta output should be materially smaller: legacy={legacy_full_bytes}, unchanged={unchanged_bytes}"
+    );
 }

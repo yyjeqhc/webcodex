@@ -41,11 +41,29 @@ impl LocalJobObservation {
         super::jobs::is_terminal_job_status(&super::helpers::normalize_local_status(&self.status))
     }
     pub(crate) fn token(&self, job_id: &str) -> Result<String, String> {
+        crate::job_observation::JobObservationToken::new_legacy(
+            crate::job_observation::JobObservationExecutor::Local,
+            job_id,
+            self.epoch.clone(),
+            self.revision,
+        )
+        .map(|token| token.encode())
+        .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn token_with_cursors(
+        &self,
+        job_id: &str,
+        stdout_cursor: usize,
+        stderr_cursor: usize,
+    ) -> Result<String, String> {
         crate::job_observation::JobObservationToken::new(
             crate::job_observation::JobObservationExecutor::Local,
             job_id,
             self.epoch.clone(),
             self.revision,
+            stdout_cursor as u64,
+            stderr_cursor as u64,
         )
         .map(|token| token.encode())
         .map_err(|error| error.to_string())
@@ -67,11 +85,11 @@ pub(crate) struct LocalJobTerminalSnapshot {
     logs: HashMap<String, LocalJobLogSnapshot>,
 }
 #[derive(Debug, Clone)]
-struct LocalJobLogSnapshot {
-    retained_text: String,
-    total_lines: usize,
-    first_retained_line: usize,
-    truncated: bool,
+pub(crate) struct LocalJobLogSnapshot {
+    pub(crate) retained_text: String,
+    pub(crate) total_lines: usize,
+    pub(crate) first_retained_line: usize,
+    pub(crate) truncated: bool,
 }
 impl LocalJobRecord {
     #[cfg(test)]
@@ -194,20 +212,6 @@ impl LocalJobRecord {
             .or_else(|| snapshot.files.get(name).cloned())
     }
 
-    fn terminal_log_lines(
-        &self,
-        name: &str,
-        offset: Option<usize>,
-        tail_lines: Option<usize>,
-    ) -> Option<(String, usize, usize, bool)> {
-        self.terminal_snapshot
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|snapshot| snapshot.logs.get(name))
-            .map(|log| log.read_lines(offset, tail_lines))
-    }
-
     pub(crate) fn observe(&self) -> Result<LocalJobObservation, String> {
         if let Some(observation) = self.terminal_observation() {
             return Ok(observation);
@@ -317,15 +321,37 @@ impl LocalJobRecord {
         tail_lines: Option<usize>,
         snapshot_len: u64,
     ) -> (String, usize, usize, bool) {
-        if let Some(lines) = self.terminal_log_lines(name, offset, tail_lines) {
-            return lines;
+        self.read_log_snapshot_at(name, offset, snapshot_len)
+            .map(|log| log.read_lines(offset, tail_lines))
+            .unwrap_or_else(|| (String::new(), 1, 0, false))
+    }
+
+    pub(crate) fn read_log_snapshot_at(
+        &self,
+        name: &str,
+        offset: Option<usize>,
+        snapshot_len: u64,
+    ) -> Option<LocalJobLogSnapshot> {
+        if let Some(log) = self
+            .terminal_snapshot
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|snapshot| snapshot.logs.get(name))
+            .cloned()
+        {
+            return Some(log);
         }
-        match read_bounded_log(&self.dir.join(name), offset, Some(snapshot_len)) {
-            Ok(log) => log.read_lines(offset, tail_lines),
-            Err(_) => self
-                .terminal_log_lines(name, offset, tail_lines)
-                .unwrap_or_else(|| (String::new(), 1, 0, false)),
-        }
+        read_bounded_log(&self.dir.join(name), offset, Some(snapshot_len))
+            .ok()
+            .or_else(|| {
+                self.terminal_snapshot
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.logs.get(name))
+                    .cloned()
+            })
     }
     pub(crate) fn read_json(&self, name: &str) -> Value {
         self.read_text(name)
@@ -394,7 +420,7 @@ pub(crate) fn set_bounded_log_read_delay(path: &Path, delay: Option<Duration>) {
 }
 
 impl LocalJobLogSnapshot {
-    fn read_lines(
+    pub(crate) fn read_lines(
         &self,
         offset: Option<usize>,
         tail_lines: Option<usize>,

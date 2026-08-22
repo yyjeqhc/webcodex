@@ -244,6 +244,10 @@ validator 返回非零是断言失败。
 更宽的 `local_coding` 与 `full_operator_runtime` MCP surface 才暴露
 `job_status`、`job_log`、`validation_summary`、`stop_job` 等原始 Job 工具；这些
 工具不属于十四个 Connector capability。
+`job_log` / `observe_jobs` 返回的 observation token 必须原样回传：首次调用返回
+有界 baseline；后续 cursor-aware 调用只返回新增日志；如果无法证明连续性（包括
+Server 重启），`reset` 会返回有界 recovery tail。该 token 只是 observation
+state，绝不是 Job identity、retry authority 或 execution identity。
 
 ## 第一个安全 prompt
 

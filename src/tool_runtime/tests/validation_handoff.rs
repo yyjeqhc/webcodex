@@ -48,6 +48,25 @@ async fn wait_for_agent_request(
     panic!("agent request was not enqueued for {client_id}");
 }
 
+fn assert_agent_observation_upgrades_without_changing_snapshot(
+    job_id: &str,
+    legacy_token: &str,
+    cursor_token: &str,
+) {
+    use crate::job_observation::{JobObservationExecutor, JobObservationToken};
+
+    let legacy =
+        JobObservationToken::parse_bound(legacy_token, JobObservationExecutor::Agent, job_id)
+            .expect("handoff token should bind the agent Job");
+    let cursor =
+        JobObservationToken::parse_bound(cursor_token, JobObservationExecutor::Agent, job_id)
+            .expect("observed token should bind the agent Job");
+    assert!(legacy.is_legacy());
+    assert!(!cursor.is_legacy());
+    assert_eq!(cursor.epoch, legacy.epoch);
+    assert_eq!(cursor.revision, legacy.revision);
+}
+
 async fn complete_sync_shell_lifecycle(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -722,9 +741,12 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
         .await;
     assert!(observed.success, "{:?}", observed.error);
     assert_eq!(observed.output["items"][0]["success"], true);
-    assert_eq!(
-        observed.output["items"][0]["output"]["observation_token"],
-        observation_token
+    assert_agent_observation_upgrades_without_changing_snapshot(
+        &job_id,
+        &observation_token,
+        observed.output["items"][0]["output"]["observation_token"]
+            .as_str()
+            .expect("observed go_test observation token"),
     );
     assert_cargo_result_matches_schema("go_test", &result);
 
@@ -912,9 +934,12 @@ async fn long_cargo_check_hands_off_with_immediately_observable_token() {
         .await;
     assert!(observed.success, "{:?}", observed.error);
     assert_eq!(observed.output["items"][0]["success"], true);
-    assert_eq!(
-        observed.output["items"][0]["output"]["observation_token"],
-        observation_token
+    assert_agent_observation_upgrades_without_changing_snapshot(
+        &job_id,
+        &observation_token,
+        observed.output["items"][0]["output"]["observation_token"]
+            .as_str()
+            .expect("observed cargo_check observation token"),
     );
     assert_cargo_result_matches_schema("cargo_check", &result);
 }
@@ -1013,9 +1038,12 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
         .await;
     assert!(observed.success, "{:?}", observed.error);
     assert_eq!(observed.output["items"][0]["success"], true);
-    assert_eq!(
-        observed.output["items"][0]["output"]["observation_token"],
-        observation_token
+    assert_agent_observation_upgrades_without_changing_snapshot(
+        &job_id,
+        &observation_token,
+        observed.output["items"][0]["output"]["observation_token"]
+            .as_str()
+            .expect("observed cargo_test observation token"),
     );
 
     // Job is immediately queryable and still active.
@@ -1266,7 +1294,7 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
 }
 
 #[tokio::test]
-async fn partial_agent_job_logs_null_complete_validation_counts_everywhere() {
+async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_validation_context() {
     let client_id = "vhandoff-partial-counts";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
@@ -1326,10 +1354,39 @@ async fn partial_agent_job_logs_null_complete_validation_counts_everywhere() {
     assert!(handoff.success, "{:?}", handoff.error);
     assert_eq!(handoff.output["promoted_to_job"], true);
 
-    let mut stdout = (0..600)
-        .map(|index| format!("progress line {index}\n"))
-        .collect::<String>();
+    let mut stdout = String::from("running 3 tests\n");
+    stdout.push_str(
+        &(0..600)
+            .map(|index| format!("progress line {index}\n"))
+            .collect::<String>(),
+    );
     stdout.push_str("test result: ok. 3 passed; 0 failed; 0 ignored\n");
+    runtime
+        .shell_clients
+        .update_job(cargo_test_update(
+            client_id,
+            &request.request_id,
+            &job_id,
+            "running",
+            &stdout,
+            "",
+            None,
+            running_progress("test"),
+            false,
+        ))
+        .await
+        .unwrap();
+    let running_log = runtime
+        .job_log_for_auth(job_id.clone(), None, Some(200), Some(&auth), None, None)
+        .await;
+    assert!(running_log.success, "{:?}", running_log.error);
+    assert_eq!(running_log.output["status"], "running");
+    assert_eq!(running_log.output["log_delta_status"], "baseline");
+    let running_token = running_log.output["observation_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
     runtime
         .shell_clients
         .update_job(cargo_test_update(
@@ -1362,19 +1419,26 @@ async fn partial_agent_job_logs_null_complete_validation_counts_everywhere() {
     }
 
     let log = runtime
-        .job_log_for_auth(job_id.clone(), None, Some(200), Some(&auth), None, None)
+        .job_log_for_auth(
+            job_id.clone(),
+            None,
+            Some(200),
+            Some(&auth),
+            Some(running_token),
+            None,
+        )
         .await;
     assert!(log.success, "{:?}", log.error);
+    assert_eq!(log.output["status"], "completed");
+    assert_eq!(log.output["log_delta_status"], "unchanged");
+    assert_eq!(log.output["stdout_tail"], "");
+    assert_eq!(log.output["stderr_tail"], "");
     assert_eq!(log.output["validation"]["passed"], true);
-    assert_eq!(log.output["validation"]["truncated"], true);
-    for field in [
-        "tests_run_count",
-        "tests_passed",
-        "tests_failed",
-        "zero_tests_run",
-    ] {
-        assert!(log.output["validation"][field].is_null(), "{field}");
-    }
+    assert_eq!(log.output["validation"]["truncated"], false);
+    assert_eq!(log.output["validation"]["tests_run_count"], 3);
+    assert_eq!(log.output["validation"]["tests_passed"], 3);
+    assert_eq!(log.output["validation"]["tests_failed"], 0);
+    assert_eq!(log.output["validation"]["zero_tests_run"], false);
 
     let summary = runtime
         .sessions

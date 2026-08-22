@@ -271,6 +271,11 @@ poll it.
 The broader `local_coding` and `full_operator_runtime` MCP surfaces expose raw
 Job tools such as `job_status`, `job_log`, `validation_summary`, and
 `stop_job`; those tools are not part of the fourteen Connector capabilities.
+Return `job_log` / `observe_jobs` observation tokens unchanged: the first call
+returns a bounded baseline, later cursor-aware calls return only new log output,
+and `reset` returns a bounded recovery tail when continuity (including across a
+Server restart) cannot be proved. The token is observation state, never Job
+identity, retry authority, or execution identity.
 
 ## First safe prompt
 

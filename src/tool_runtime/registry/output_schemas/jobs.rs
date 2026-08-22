@@ -364,12 +364,19 @@ fn observe_jobs_output_schema() -> Value {
             "exit_code": nullable_schema("integer", "Process exit code, when terminal and available."),
             "command_execution_state": job_command_execution_state_schema(),
             "structured_execution": job_structured_execution_metadata_schema(),
-            "stdout_tail": schema_type("string", "Bounded stdout tail."),
-            "stderr_tail": schema_type("string", "Bounded stderr tail."),
+            "stdout_tail": schema_type("string", "Bounded stdout baseline, delta, or reset-recovery tail. Empty for a continuous observation with no new stdout."),
+            "stderr_tail": schema_type("string", "Bounded stderr baseline, delta, or reset-recovery tail. Empty for a continuous observation with no new stderr."),
             "stdout_lines": schema_type("integer", "Total observed stdout line count."),
             "stderr_lines": schema_type("integer", "Total observed stderr line count."),
-            "stdout_truncated": schema_type("boolean", "Whether stdout_tail omits observed output."),
-            "stderr_truncated": schema_type("boolean", "Whether stderr_tail omits observed output."),
+            "stdout_truncated": schema_type("boolean", "Whether the requested stdout baseline/delta/reset projection was bounded or unavailable."),
+            "stderr_truncated": schema_type("boolean", "Whether the requested stderr baseline/delta/reset projection was bounded or unavailable."),
+            "log_delta_status": {
+                "type": "string",
+                "enum": ["baseline", "delta", "unchanged", "reset"],
+                "description": "baseline is a bounded non-delta selection (first observation or explicit pagination); delta contains only new output; unchanged has no new output; reset is a bounded recovery tail because exact continuity could not be proved."
+            },
+            "stdout_delta_reset": schema_type("boolean", "Whether stdout automatic delta continuity was reset for this observation."),
+            "stderr_delta_reset": schema_type("boolean", "Whether stderr automatic delta continuity was reset for this observation."),
             "stdout_retained_from_line": nullable_schema("integer", "First retained absolute stdout line, when available."),
             "stderr_retained_from_line": nullable_schema("integer", "First retained absolute stderr line, when available."),
             "earlier_stdout_unavailable": schema_type("boolean", "Whether earlier stdout is outside retained bounded logs."),
@@ -377,7 +384,12 @@ fn observe_jobs_output_schema() -> Value {
             "recovery_state": nullable_schema("string", "Canonical bounded recovery state."),
             "recovery_reason_code": nullable_schema("string", "Canonical bounded recovery reason code."),
             "recovery_reason": nullable_schema("string", "Canonical bounded recovery explanation."),
-            "observation_token": schema_type("string", "Opaque Job-bound token for this returned snapshot."),
+            "observation_token": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN,
+                "description": "Opaque Job-bound lifecycle/log-delta token for this frozen returned snapshot. Return it unchanged."
+            },
             "last_update_seq": nullable_schema("integer", "Agent protocol diagnostic sequence, when available."),
             "cursor": {
                 "type": "object",
@@ -390,7 +402,7 @@ fn observe_jobs_output_schema() -> Value {
             },
             "wait_outcome": schema_type("string", "Canonical per-Job internal observation outcome; outer wake_reason is the batch wait fact."),
             "waited_ms": schema_type("integer", "Canonical per-Job internal wait time. Final batch snapshots are non-waiting."),
-            "changed": schema_type("boolean", "Whether this snapshot differs from the item's supplied token."),
+            "changed": schema_type("boolean", "Whether the lifecycle revision or Server epoch differs from the item's supplied token. Token format upgrades alone do not set changed."),
             "terminal": schema_type("boolean", "Canonical terminal classification."),
             "executor": {
                 "type": "string",
@@ -416,6 +428,7 @@ fn observe_jobs_output_schema() -> Value {
         "required": [
             "job_id", "status", "exit_code", "stdout_tail", "stderr_tail",
             "stdout_lines", "stderr_lines", "stdout_truncated", "stderr_truncated",
+            "log_delta_status", "stdout_delta_reset", "stderr_delta_reset",
             "observation_token", "cursor", "wait_outcome", "waited_ms", "changed",
             "terminal", "executor", "cwd", "shell", "purpose", "command_summary",
             "detected_summary", "validation"
@@ -1101,7 +1114,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "changed",
-                schema_type("boolean", "Whether the current observation_token differs from the supplied after_observation_token."),
+                schema_type("boolean", "Whether the lifecycle revision or Server epoch differs from the supplied token. Token format upgrades alone do not set changed."),
             ),
             (
                 "terminal",
@@ -1121,11 +1134,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "stdout_tail",
-                schema_type("string", "Bounded stdout tail or cursor segment."),
+                schema_type("string", "Bounded stdout baseline, automatic delta, explicit cursor segment, or reset-recovery tail. Empty when no new stdout is available."),
             ),
             (
                 "stderr_tail",
-                schema_type("string", "Bounded stderr tail or cursor segment."),
+                schema_type("string", "Bounded stderr baseline, automatic delta, explicit cursor segment, or reset-recovery tail. Empty when no new stderr is available."),
             ),
             (
                 "stdout_lines",
@@ -1137,11 +1150,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "stdout_truncated",
-                schema_type("boolean", "Whether stdout_tail omits observed lines."),
+                schema_type("boolean", "Whether the requested stdout baseline/delta/reset projection was bounded or unavailable."),
             ),
             (
                 "stderr_truncated",
-                schema_type("boolean", "Whether stderr_tail omits observed lines."),
+                schema_type("boolean", "Whether the requested stderr baseline/delta/reset projection was bounded or unavailable."),
+            ),
+            (
+                "log_delta_status",
+                json!({
+                    "type": "string",
+                    "enum": ["baseline", "delta", "unchanged", "reset"],
+                    "description": "baseline is a bounded non-delta selection (first observation or explicit pagination); delta contains only new output; unchanged has no new output; reset is a bounded recovery tail because exact continuity could not be proved."
+                }),
+            ),
+            (
+                "stdout_delta_reset",
+                schema_type("boolean", "Whether stdout automatic delta continuity was reset for this observation."),
+            ),
+            (
+                "stderr_delta_reset",
+                schema_type("boolean", "Whether stderr automatic delta continuity was reset for this observation."),
             ),
             (
                 "stdout_retained_from_line",
@@ -1169,7 +1198,12 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "observation_token",
-                schema_type("string", "Opaque Job-bound observation token for the returned status and frozen log snapshot."),
+                json!({
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN,
+                    "description": "Opaque Job-bound lifecycle/log-delta token for the returned status and frozen log snapshot. Return it unchanged."
+                }),
             ),
             (
                 "last_update_seq",

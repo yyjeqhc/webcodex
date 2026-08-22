@@ -17,7 +17,7 @@ Three identities have different lifetimes:
 |---|---|---|
 | MCP / HTTP request | One transport request or bounded wait | No. The connection/request may fail immediately. |
 | `job_id` | Identity of one already-dispatched execution | Yes, when the same reconciliation-capable Runner process survives and reports the Job in inventory. |
-| `after_observation_token` | Opaque cursor for one observed Job snapshot | No. Its Server epoch is process-local; a surviving Job should return a fresh token immediately after restart. |
+| `after_observation_token` | Opaque lifecycle and bounded log-delta state for one observed Job snapshot | No. Its Server epoch is process-local; a surviving Job should return a reset baseline and fresh token immediately after restart. |
 
 A dropped `observe_jobs`, `job_log`, or other MCP request therefore does **not**
 mean that the underlying Job was lost. The caller should keep the original
@@ -26,6 +26,14 @@ mean that the underlying Job was lost. The caller should keep the original
 Observation tokens are opaque. They must be returned unchanged by clients and
 must never become business identity, retry identity, authorization, or evidence
 that an execution no longer exists.
+
+The first log observation returns a bounded current baseline. A later
+cursor-aware token returns only newly observed stdout/stderr when continuity is
+provable, or empty tails when only lifecycle metadata changed. `reset` means
+continuity could not be proved (for example, retained logs advanced past the
+token or the Server epoch changed), so the response contains a bounded recovery
+tail and a new current token. One conservative repeat after a reset is expected;
+silently assuming missing output is not.
 
 ## 2. Control Server restart recovery contract
 
@@ -203,6 +211,10 @@ description plus observation-field schemas should make clear that:
 - observation never launches or retries the Job;
 - `wait_secs` is one bounded wait, not a subscription;
 - `after_observation_token` is an opaque observation cursor, not Job identity;
+- first log observation is a bounded baseline and cursor-aware follow-ups are
+  delta-only when continuity is provable;
+- `reset` is a bounded recovery refresh, not proof that no intervening output
+  existed;
 - Control Server restart may invalidate the token while leaving `job_id` valid;
 - a stale Server epoch should refresh immediately when the same Job has been
   reconciled;

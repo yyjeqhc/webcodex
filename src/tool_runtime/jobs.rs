@@ -7,8 +7,8 @@ use super::helpers::{
     resolve_local_cwd, shell_escape_simple, validate_raw_shell_command_length, MAX_LOCAL_LOG_LINES,
 };
 use super::local_jobs::{
-    retain_inspect_job_until_terminal, LocalJobKiller, LocalJobRecord, TerminateOutcome,
-    ACTIVE_JOB_STATUSES, ACTIVE_LOCAL_STATUSES,
+    retain_inspect_job_until_terminal, LocalJobKiller, LocalJobLogSnapshot, LocalJobRecord,
+    TerminateOutcome, ACTIVE_JOB_STATUSES, ACTIVE_LOCAL_STATUSES,
 };
 use super::tool_result::ToolResult;
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
@@ -357,18 +357,27 @@ fn local_read_trim(record: &LocalJobRecord, name: &str) -> Option<String> {
 async fn local_read_log_pair(
     record: LocalJobRecord,
     offset: Option<usize>,
-    tail_lines: Option<usize>,
     stdout_len: u64,
     stderr_len: u64,
-) -> ((String, usize, usize, bool), (String, usize, usize, bool)) {
+) -> (LocalJobLogSnapshot, LocalJobLogSnapshot) {
     tokio::task::spawn_blocking(move || {
         (
-            record.read_log_lines_at("stdout.log", offset, tail_lines, stdout_len),
-            record.read_log_lines_at("stderr.log", offset, tail_lines, stderr_len),
+            record.read_log_snapshot_at("stdout.log", offset, stdout_len),
+            record.read_log_snapshot_at("stderr.log", offset, stderr_len),
         )
     })
     .await
-    .unwrap_or_else(|_| ((String::new(), 1, 0, false), (String::new(), 1, 0, false)))
+    .ok()
+    .and_then(|(stdout, stderr)| Some((stdout?, stderr?)))
+    .unwrap_or_else(|| {
+        let empty = || LocalJobLogSnapshot {
+            retained_text: String::new(),
+            total_lines: 0,
+            first_retained_line: 1,
+            truncated: false,
+        };
+        (empty(), empty())
+    })
 }
 
 fn local_runtime_deadline(meta: &Value) -> Option<tokio::time::Instant> {
@@ -637,10 +646,6 @@ pub(crate) async fn local_job_log(
     if wait_outcome == "timeout" {
         changed = false;
     }
-    let observation_token = match observation.token(job_id) {
-        Ok(token) => token,
-        Err(error) => return ToolResult::err(error),
-    };
     let frozen_stdout_len = observation.stdout_len;
     let frozen_stderr_len = observation.stderr_len;
     let final_exit_code = if final_terminal {
@@ -648,14 +653,140 @@ pub(crate) async fn local_job_log(
     } else {
         None
     };
-    let (stdout, stderr) = local_read_log_pair(
+    let explicit_paging = offset.is_some();
+    let (stdout_snapshot, stderr_snapshot) = local_read_log_pair(
         record.clone(),
-        offset,
-        tail_lines,
+        if explicit_paging { offset } else { None },
         frozen_stdout_len,
         frozen_stderr_len,
     )
     .await;
+    let (analysis_stdout_snapshot, analysis_stderr_snapshot) = if explicit_paging {
+        local_read_log_pair(record.clone(), None, frozen_stdout_len, frozen_stderr_len).await
+    } else {
+        (stdout_snapshot.clone(), stderr_snapshot.clone())
+    };
+    let analysis_stdout = crate::job_observation::project_log_stream(
+        &analysis_stdout_snapshot.retained_text,
+        analysis_stdout_snapshot.first_retained_line,
+        analysis_stdout_snapshot.total_lines.saturating_add(1),
+        analysis_stdout_snapshot.truncated,
+        Some(MAX_LOCAL_LOG_LINES),
+        crate::job_observation::JobLogSelectionMode::Baseline,
+        false,
+    );
+    let analysis_stderr = crate::job_observation::project_log_stream(
+        &analysis_stderr_snapshot.retained_text,
+        analysis_stderr_snapshot.first_retained_line,
+        analysis_stderr_snapshot.total_lines.saturating_add(1),
+        analysis_stderr_snapshot.truncated,
+        Some(MAX_LOCAL_LOG_LINES),
+        crate::job_observation::JobLogSelectionMode::Baseline,
+        false,
+    );
+    let (
+        stdout,
+        stderr,
+        log_delta_status,
+        observation_token,
+        stdout_delta_reset,
+        stderr_delta_reset,
+    ) = if explicit_paging {
+        let stdout = stdout_snapshot.read_lines(offset, tail_lines);
+        let stderr = stderr_snapshot.read_lines(offset, tail_lines);
+        let stdout = crate::job_observation::JobLogStreamProjection {
+            returned_lines: stdout.0.lines().count(),
+            text: stdout.0,
+            next_line: stdout.1,
+            total_lines: stdout.2,
+            first_retained_line: stdout_snapshot.first_retained_line,
+            truncated: stdout.3,
+            delta_reset: false,
+        };
+        let stderr = crate::job_observation::JobLogStreamProjection {
+            returned_lines: stderr.0.lines().count(),
+            text: stderr.0,
+            next_line: stderr.1,
+            total_lines: stderr.2,
+            first_retained_line: stderr_snapshot.first_retained_line,
+            truncated: stderr.3,
+            delta_reset: false,
+        };
+        let observation_token = match observation.token(job_id) {
+            Ok(token) => token,
+            Err(error) => return ToolResult::err(error),
+        };
+        (
+            stdout,
+            stderr,
+            crate::job_observation::JobLogDeltaStatus::Baseline,
+            observation_token,
+            false,
+            false,
+        )
+    } else {
+        let automatic_tail_lines = tail_lines.or(Some(super::helpers::DEFAULT_JOB_LOG_TAIL_LINES));
+        let epoch_matches = after
+            .as_ref()
+            .is_none_or(|token| token.epoch == observation.epoch);
+        let stdout_mode = match after.as_ref() {
+            None => crate::job_observation::JobLogSelectionMode::Baseline,
+            Some(token) if token.is_legacy() || !epoch_matches => {
+                crate::job_observation::JobLogSelectionMode::Reset
+            }
+            Some(token) => crate::job_observation::JobLogSelectionMode::Delta {
+                cursor: token
+                    .stdout_cursor
+                    .expect("cursor-aware token has stdout cursor"),
+            },
+        };
+        let stderr_mode = match after.as_ref() {
+            None => crate::job_observation::JobLogSelectionMode::Baseline,
+            Some(token) if token.is_legacy() || !epoch_matches => {
+                crate::job_observation::JobLogSelectionMode::Reset
+            }
+            Some(token) => crate::job_observation::JobLogSelectionMode::Delta {
+                cursor: token
+                    .stderr_cursor
+                    .expect("cursor-aware token has stderr cursor"),
+            },
+        };
+        let stdout = crate::job_observation::project_log_stream(
+            &stdout_snapshot.retained_text,
+            stdout_snapshot.first_retained_line,
+            stdout_snapshot.total_lines.saturating_add(1),
+            stdout_snapshot.truncated,
+            automatic_tail_lines,
+            stdout_mode,
+            false,
+        );
+        let stderr = crate::job_observation::project_log_stream(
+            &stderr_snapshot.retained_text,
+            stderr_snapshot.first_retained_line,
+            stderr_snapshot.total_lines.saturating_add(1),
+            stderr_snapshot.truncated,
+            automatic_tail_lines,
+            stderr_mode,
+            false,
+        );
+        let log_delta_status =
+            crate::job_observation::combined_delta_status(stdout_mode, &stdout, &stderr);
+        let observation_token =
+            match observation.token_with_cursors(job_id, stdout.next_line, stderr.next_line) {
+                Ok(token) => token,
+                Err(error) => return ToolResult::err(error),
+            };
+        let stdout_delta_reset = stdout.delta_reset;
+        let stderr_delta_reset = stderr.delta_reset;
+        (
+            stdout,
+            stderr,
+            log_delta_status,
+            observation_token,
+            stdout_delta_reset,
+            stderr_delta_reset,
+        )
+    };
     let purpose = meta
         .get("purpose")
         .and_then(Value::as_str)
@@ -670,8 +801,8 @@ pub(crate) async fn local_job_log(
         Some(purpose),
         &final_status,
         final_exit_code.map(i64::from),
-        &stdout.0,
-        &stderr.0,
+        &analysis_stdout.text,
+        &analysis_stderr.text,
     );
     let (validation_tool, validation_kind) = local_validation_identity(&meta);
     let validation = validation_job_projection(
@@ -679,17 +810,28 @@ pub(crate) async fn local_job_log(
         validation_kind,
         &final_status,
         final_exit_code.map(i64::from),
-        &stdout.0,
-        &stderr.0,
-        stdout.3 || stderr.3,
+        &analysis_stdout.text,
+        &analysis_stderr.text,
+        analysis_stdout.truncated || analysis_stderr.truncated,
     );
     let mut output = json!({
         "job_id": job_id, "status": final_status, "exit_code": final_exit_code,
-        "stdout_tail": stdout.0, "stderr_tail": stderr.0,
-        "stdout_lines": stdout.2, "stderr_lines": stderr.2,
-        "stdout_truncated": stdout.3, "stderr_truncated": stderr.3,
-        "cursor": { "stdout": stdout.1, "stderr": stderr.1 },
+        "stdout_tail": stdout.text, "stderr_tail": stderr.text,
+        "stdout_lines": stdout.total_lines, "stderr_lines": stderr.total_lines,
+        "stdout_returned_lines": stdout.returned_lines,
+        "stderr_returned_lines": stderr.returned_lines,
+        "stdout_truncated": stdout.truncated, "stderr_truncated": stderr.truncated,
+        "stdout_retained_from_line": stdout.first_retained_line,
+        "stderr_retained_from_line": stderr.first_retained_line,
+        "earlier_stdout_unavailable": stdout_snapshot.first_retained_line > 1
+            || stdout_snapshot.truncated,
+        "earlier_stderr_unavailable": stderr_snapshot.first_retained_line > 1
+            || stderr_snapshot.truncated,
+        "cursor": { "stdout": stdout.next_line, "stderr": stderr.next_line },
         "observation_token": observation_token,
+        "log_delta_status": log_delta_status.as_str(),
+        "stdout_delta_reset": stdout_delta_reset,
+        "stderr_delta_reset": stderr_delta_reset,
         "wait_outcome": wait_outcome, "waited_ms": waited_ms,
         "changed": changed, "terminal": final_terminal, "executor": "local",
         "cwd": meta.get("cwd").cloned().unwrap_or_else(|| json!(".")),
@@ -1728,8 +1870,6 @@ impl ToolRuntime {
             Ok((job, stdout, stderr, next_stdout_line, next_stderr_line, wait)) => {
                 let stdout = stdout.unwrap_or_default();
                 let stderr = stderr.unwrap_or_default();
-                let stdout_lines = stdout.lines().count();
-                let stderr_lines = stderr.lines().count();
                 let command_summary = job.command_preview.clone();
                 let purpose = job.purpose.clone().unwrap_or_else(|| "other".to_string());
                 let detected_summary = detected_job_summary(
@@ -1737,8 +1877,8 @@ impl ToolRuntime {
                     Some(&purpose),
                     &job.status,
                     job.exit_code.map(i64::from),
-                    &stdout,
-                    &stderr,
+                    &wait.analysis_stdout,
+                    &wait.analysis_stderr,
                 );
                 let validation_tool = job
                     .validation
@@ -1748,26 +1888,14 @@ impl ToolRuntime {
                     .validation
                     .as_ref()
                     .map(|metadata| metadata.kind.as_str());
-                let stdout_incomplete = agent_log_stream_incomplete(
-                    job.stdout_log_truncated,
-                    job.stdout_retained_from_line,
-                    stdout_lines,
-                    next_stdout_line,
-                );
-                let stderr_incomplete = agent_log_stream_incomplete(
-                    job.stderr_log_truncated,
-                    job.stderr_retained_from_line,
-                    stderr_lines,
-                    next_stderr_line,
-                );
                 let validation = validation_job_projection(
                     validation_tool,
                     validation_kind,
                     &job.status,
                     job.exit_code.map(i64::from),
-                    &stdout,
-                    &stderr,
-                    stdout_incomplete || stderr_incomplete,
+                    &wait.analysis_stdout,
+                    &wait.analysis_stderr,
+                    wait.analysis_truncated,
                 );
                 ToolResult::ok(json!({
                     "job_id": job.job_id,
@@ -1779,10 +1907,10 @@ impl ToolRuntime {
                     "stderr_tail": stderr,
                     "stdout_lines": next_stdout_line.saturating_sub(1),
                     "stderr_lines": next_stderr_line.saturating_sub(1),
-                    "stdout_returned_lines": stdout_lines,
-                    "stderr_returned_lines": stderr_lines,
-                    "stdout_truncated": stdout_incomplete,
-                    "stderr_truncated": stderr_incomplete,
+                    "stdout_returned_lines": wait.stdout_returned_lines,
+                    "stderr_returned_lines": wait.stderr_returned_lines,
+                    "stdout_truncated": wait.stdout_truncated,
+                    "stderr_truncated": wait.stderr_truncated,
                     "stdout_retained_from_line": job.stdout_retained_from_line,
                     "stderr_retained_from_line": job.stderr_retained_from_line,
                     "earlier_stdout_unavailable": job
@@ -1800,6 +1928,9 @@ impl ToolRuntime {
                         job.recovery_reason_code.as_deref(),
                     ),
                     "observation_token": job.observation_token,
+                    "log_delta_status": wait.log_delta_status.as_str(),
+                    "stdout_delta_reset": wait.stdout_delta_reset,
+                    "stderr_delta_reset": wait.stderr_delta_reset,
                     "last_update_seq": job.last_update_seq,
                     "cursor": {
                         "stdout": next_stdout_line,

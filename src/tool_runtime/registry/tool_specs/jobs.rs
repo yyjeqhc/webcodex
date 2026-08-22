@@ -67,12 +67,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "job_log",
-            "Read bounded stdout/stderr for one existing Job. With an observation token, wait_secs is one bounded wait; never starts or retries work and never subscribes.",
+            "Read bounded stdout/stderr for one Job. Return its opaque token to receive only new output; reset means a bounded recovery tail. wait_secs performs one bounded wait. Never starts or retries execution.",
             job_log_input_schema(),
         ),
         tool_spec(
             "observe_jobs",
-            "Observe 1 to 8 existing Jobs with bounded tails and isolated item errors. Optionally wait once for any change; never launches, retries, stops, or subscribes.",
+            "Observe 1 to 8 Jobs with bounded baseline/delta logs and isolated errors. Return each opaque token unchanged for compact follow-ups. Optionally wait once for any change; never launches, retries, stops, or subscribes.",
             observe_jobs_input_schema(),
         ),
         tool_spec(

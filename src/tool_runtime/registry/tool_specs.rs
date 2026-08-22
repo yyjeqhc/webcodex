@@ -317,6 +317,17 @@ mod tests {
             .expect("job_log observation token description");
         assert!(token.contains("not execution identity"), "{token}");
         assert!(token.contains("Server epoch"), "{token}");
+        assert!(token.contains("log-delta state"), "{token}");
+        assert!(token.contains("Return it unchanged"), "{token}");
+        let batch_token = find("observe_jobs").input_schema["properties"]["items"]["items"]
+            ["properties"]["after_observation_token"]["description"]
+            .as_str()
+            .expect("observe_jobs observation token description");
+        assert!(batch_token.contains("log-delta token"), "{batch_token}");
+        assert!(
+            batch_token.contains("without interpreting"),
+            "{batch_token}"
+        );
         let wait = job_log.input_schema["properties"]["wait_secs"]["description"]
             .as_str()
             .expect("job_log wait description");

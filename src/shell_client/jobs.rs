@@ -325,7 +325,10 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         recovered_after_server_restart: job.recovered_after_server_restart,
         reconciled_at: job.reconciled_at,
         recovery_reason_code: job.recovery_reason_code.clone(),
-        observation_token: crate::job_observation::JobObservationToken::new(
+        // General lifecycle views do not project log bodies, so they retain a
+        // cursor-less legacy token. `job_log_for_auth` replaces this with a
+        // cursor-aware v2 token for its frozen returned log snapshot.
+        observation_token: crate::job_observation::JobObservationToken::new_legacy(
             crate::job_observation::JobObservationExecutor::Agent,
             job.job_id.clone(),
             job.observation_epoch.to_string(),

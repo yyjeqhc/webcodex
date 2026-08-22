@@ -5,6 +5,7 @@ use super::support::*;
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
     ShellAgentResultRequest, ShellClientCapabilities, ShellClientRegisterRequest,
+    ShellProjectInventoryPage, AGENT_PROTOCOL_VERSION_POLLING_V2,
 };
 use crate::tool_runtime::sessions::{
     TOOL_CALL_EXPECTATION_METADATA_FIELDS, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
@@ -727,6 +728,287 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
         .await;
     assert!(!result.success);
     assert_eq!(result.output["error_kind"], "unknown_project");
+}
+
+#[tokio::test]
+async fn replacement_runner_pending_inventory_has_zero_project_routing_authority() {
+    let runtime = test_runtime();
+    let auth = bootstrap_auth();
+    let client_id = "restart-authority";
+    let old_instance = format!("inst-{client_id}");
+    let new_instance = "restart-authority-new";
+    let path_a = tempfile::tempdir().unwrap();
+    let path_b = tempfile::tempdir().unwrap();
+    let path_a = path_a.path().to_string_lossy().to_string();
+    let path_b = path_b.path().to_string_lossy().to_string();
+    let project_id = crate::tool_runtime::agent_project_runtime_id(client_id, "demo");
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        file_read: true,
+        file_write: true,
+        jobs: true,
+        async_jobs: true,
+        async_shell_jobs: true,
+        ..Default::default()
+    };
+
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        capabilities.clone(),
+        vec![registered_project("demo", &path_a)],
+    )
+    .await;
+    let initial = runtime
+        .resolve_project_input_for_auth(&project_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(initial.config.path, path_a);
+
+    runtime
+        .shell_clients
+        .reconcile_disconnect(client_id, &old_instance)
+        .await;
+    let replacement = runtime
+        .shell_clients
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            client_id: client_id.to_string(),
+            agent_instance_id: new_instance.to_string(),
+            display_name: None,
+            owner: None,
+            hostname: None,
+            host_context: None,
+            capabilities: Some(capabilities),
+            projects: None,
+            agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V2.to_string()),
+            policy: None,
+        })
+        .await
+        .unwrap();
+    assert!(replacement.connected);
+    assert!(replacement.projects.is_empty());
+    assert_eq!(
+        replacement
+            .project_inventory
+            .as_ref()
+            .map(|status| status.sync_state.as_str()),
+        Some("pending")
+    );
+
+    let pending_calls = vec![
+        ToolCall::RunShell {
+            project: project_id.clone(),
+            command: "pwd".to_string(),
+            session_id: None,
+            timeout_secs: Some(30),
+            cwd: None,
+            purpose: None,
+            shell: None,
+        },
+        ToolCall::ReadFile {
+            project: project_id.clone(),
+            path: "README.md".to_string(),
+            session_id: None,
+            start_line: None,
+            limit: None,
+            with_line_numbers: None,
+        },
+        ToolCall::WriteProjectFile {
+            project: project_id.clone(),
+            path: "blocked.txt".to_string(),
+            content: "must not dispatch".to_string(),
+            session_id: None,
+            overwrite: None,
+            expected_sha256: None,
+            expected_content_prefix: None,
+        },
+        ToolCall::RunJob {
+            project: project_id.clone(),
+            command: "pwd".to_string(),
+            session_id: None,
+            timeout_secs: Some(30),
+            cwd: None,
+            purpose: None,
+            shell: None,
+        },
+    ];
+    for call in pending_calls {
+        let result = runtime.dispatch_with_auth(call, Some(&auth)).await;
+        assert!(
+            !result.success,
+            "pending replacement unexpectedly routed: {result:?}"
+        );
+        assert_eq!(result.output["error_kind"], "unknown_project");
+    }
+    assert!(
+        next_agent_request_for_instance(&runtime, client_id, new_instance)
+            .await
+            .is_none(),
+        "pending replacement must receive zero project execution dispatches"
+    );
+
+    let completed = runtime
+        .shell_clients
+        .apply_project_inventory_page(
+            client_id,
+            new_instance,
+            ShellProjectInventoryPage {
+                generation: "replacement-authoritative".to_string(),
+                snapshot_sequence: 1,
+                page_index: 0,
+                total_reported: 1,
+                complete: true,
+                projects: vec![registered_project("demo", &path_b)],
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(completed.sync_state, "complete");
+    let resolved = runtime
+        .resolve_project_input_for_auth(&project_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(resolved.config.path, path_b);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let project_id = project_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::RunShell {
+                        project: project_id,
+                        command: "pwd".to_string(),
+                        session_id: None,
+                        timeout_secs: Some(30),
+                        cwd: None,
+                        purpose: None,
+                        shell: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_agent_request_for_instance(&runtime, client_id, new_instance)
+        .await
+        .expect("completed replacement snapshot should restore routing");
+    assert_eq!(request.cwd.as_deref(), Some(path_b.as_str()));
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        client_id,
+        new_instance,
+        &request.request_id,
+        0,
+        "ok\n",
+        "",
+    )
+    .await;
+    assert!(task.await.unwrap().success);
+}
+
+#[tokio::test]
+async fn replacement_runner_removed_project_never_inherits_old_authority() {
+    let runtime = test_runtime();
+    let auth = bootstrap_auth();
+    let client_id = "restart-removal-authority";
+    let old_instance = format!("inst-{client_id}");
+    let new_instance = "restart-removal-new";
+    let old_root = tempfile::tempdir().unwrap();
+    let old_root = old_root.path().to_string_lossy().to_string();
+    let project_id = crate::tool_runtime::agent_project_runtime_id(client_id, "demo");
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        file_read: true,
+        file_write: true,
+        ..Default::default()
+    };
+
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        capabilities.clone(),
+        vec![registered_project("demo", &old_root)],
+    )
+    .await;
+    runtime
+        .shell_clients
+        .reconcile_disconnect(client_id, &old_instance)
+        .await;
+    runtime
+        .shell_clients
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            client_id: client_id.to_string(),
+            agent_instance_id: new_instance.to_string(),
+            display_name: None,
+            owner: None,
+            hostname: None,
+            host_context: None,
+            capabilities: Some(capabilities),
+            projects: None,
+            agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V2.to_string()),
+            policy: None,
+        })
+        .await
+        .unwrap();
+
+    for phase in ["pending", "complete"] {
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunShell {
+                    project: project_id.clone(),
+                    command: "pwd".to_string(),
+                    session_id: None,
+                    timeout_secs: Some(30),
+                    cwd: None,
+                    purpose: None,
+                    shell: None,
+                },
+                Some(&auth),
+            )
+            .await;
+        assert!(
+            !result.success,
+            "removed project routed during {phase}: {result:?}"
+        );
+        assert_eq!(result.output["error_kind"], "unknown_project");
+        assert!(
+            next_agent_request_for_instance(&runtime, client_id, new_instance)
+                .await
+                .is_none(),
+            "removed project must receive zero dispatch during {phase}"
+        );
+        if phase == "pending" {
+            let status = runtime
+                .shell_clients
+                .apply_project_inventory_page(
+                    client_id,
+                    new_instance,
+                    ShellProjectInventoryPage {
+                        generation: "replacement-empty".to_string(),
+                        snapshot_sequence: 1,
+                        page_index: 0,
+                        total_reported: 0,
+                        complete: true,
+                        projects: Vec::new(),
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(status.sync_state, "complete");
+        }
+    }
 }
 
 #[tokio::test]

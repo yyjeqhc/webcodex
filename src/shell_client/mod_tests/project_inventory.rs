@@ -494,7 +494,7 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
 }
 
 #[tokio::test]
-async fn missing_out_of_order_and_restart_midway_preserve_last_complete_snapshot() {
+async fn missing_out_of_order_and_restart_midway_keep_atomicity_without_cross_instance_routing() {
     let registry = ShellClientRegistry::default();
     let client_id = "inventory-restart";
     let old_instance = "inventory-old-instance";
@@ -558,27 +558,26 @@ async fn missing_out_of_order_and_restart_midway_preserve_last_complete_snapshot
         .await
         .expect("new Runner instance should register after the old lease disconnects");
     assert!(restarted.connected);
-    assert_eq!(restarted.projects.len(), 160);
-    assert_eq!(
-        restarted
-            .project_inventory
-            .as_ref()
-            .map(|status| status.sync_state.as_str()),
-        Some("pending")
+    assert!(
+        restarted.projects.is_empty(),
+        "a new Runner instance must not inherit the previous process's routable project authority"
     );
+    let restarted_inventory = restarted.project_inventory.as_ref().unwrap();
+    assert_eq!(restarted_inventory.sync_state, "pending");
+    assert_eq!(restarted_inventory.total_synced, 0);
 
     let stale_instance = registry
         .apply_project_inventory_page(client_id, old_instance, midway_pages[1].clone())
         .await
         .unwrap_err();
     assert!(stale_instance.contains("stale or replaced"));
-    assert_eq!(
+    assert!(
         registry
             .list_client_projects(client_id)
             .await
             .unwrap()
-            .len(),
-        160
+            .is_empty(),
+        "stale old-instance pages must not restore routable authority while the replacement is pending"
     );
 
     let replacement = synthetic_projects(161);
@@ -758,6 +757,51 @@ async fn staging_capacity_and_timeout_are_bounded_without_taking_runners_offline
             .expect("first client has staging");
         staging.started_at = now_ts() - PROJECT_INVENTORY_STAGING_TTL_SECS - 1;
     }
+
+    // Capacity rejection happened before the denied page advanced the Server's
+    // sequence fence. Once one staging slot expires, retry the exact same page
+    // 0/generation/sequence and prove the snapshot can converge atomically.
+    let denied_index = PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS;
+    let denied_client = format!("staging-{denied_index}");
+    let denied_instance = format!("staging-instance-{denied_index}");
+    let denied_page0 = ShellProjectInventoryPage {
+        generation: format!("generation-{denied_index}"),
+        snapshot_sequence: 1,
+        page_index: 0,
+        total_reported: 2,
+        complete: false,
+        projects: vec![project_summary("first", "/tmp/first")],
+    };
+    let retry = registry
+        .apply_project_inventory_page(&denied_client, &denied_instance, denied_page0.clone())
+        .await
+        .unwrap();
+    assert_eq!(retry.sync_state, "in_progress");
+    assert_eq!(
+        retry.generation.as_deref(),
+        Some(denied_page0.generation.as_str())
+    );
+    assert_eq!(retry.total_synced, 1);
+    let completed = registry
+        .apply_project_inventory_page(
+            &denied_client,
+            &denied_instance,
+            ShellProjectInventoryPage {
+                generation: denied_page0.generation.clone(),
+                snapshot_sequence: denied_page0.snapshot_sequence,
+                page_index: 1,
+                total_reported: 2,
+                complete: true,
+                projects: vec![project_summary("second", "/tmp/second")],
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(completed.sync_state, "complete");
+    let published = registry.list_client_projects(&denied_client).await.unwrap();
+    assert_eq!(published.len(), 2);
+    assert!(published.iter().any(|project| project.id == "first"));
+    assert!(published.iter().any(|project| project.id == "second"));
 
     registry
         .register(paged_registration(

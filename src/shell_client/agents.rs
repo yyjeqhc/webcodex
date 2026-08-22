@@ -2,8 +2,7 @@ use super::auth::{assert_shell_client_access, shell_client_visible_to_auth, Shel
 use super::jobs::{begin_job_recovery, is_final_job_status, mark_job_lost, offline_last_seen};
 use super::project_inventory::{
     degraded_inventory_state, expire_staging, pending_inventory_state, prepare_legacy_inventory,
-    preserve_authoritative_for_new_instance, preserve_authoritative_pending,
-    preserve_authoritative_with_error,
+    preserve_authoritative_pending, preserve_authoritative_with_error,
 };
 use super::reconciliation::{
     preflight_inventory_locked, reconcile_inventory_locked, terminate_instance_jobs_locked,
@@ -377,33 +376,29 @@ impl ShellClientRegistry {
                     existing.projected_structured_terminal_suppressions.clone();
                 record.prune_projected_structured_terminal_suppressions(now);
             }
-            // Identity/liveness registration is independent from inventory. A
-            // paged registration intentionally carries no full snapshot, so
-            // preserve the last complete authoritative inventory even across a
-            // Runner process restart until the new instance completes its own
-            // generation. The active instance fence below prevents old pages
-            // from mutating that preserved snapshot.
-            if let Some(error_code) = project_inventory_error {
-                record.projects = existing.projects.clone();
-                record.project_inventory = preserve_authoritative_with_error(
-                    &existing.project_inventory,
-                    record.projects.len(),
-                    error_code,
-                    now,
-                );
-            } else if !projects_supplied {
-                record.projects = existing.projects.clone();
-                record.project_inventory = if existing.agent_instance_id == agent_instance_id {
-                    preserve_authoritative_pending(
+            // Identity/liveness registration is independent from inventory, but
+            // routing authority is not transferable across Runner processes. A
+            // same-instance transport reconnect may keep its last complete
+            // authoritative project projection while a fresh paged snapshot is
+            // pending/degraded. A different `agent_instance_id` must use the
+            // projection built from its own registration (empty for V2 paged
+            // registration) until that instance completes an atomic snapshot.
+            if existing.agent_instance_id == agent_instance_id {
+                if let Some(error_code) = project_inventory_error {
+                    record.projects = existing.projects.clone();
+                    record.project_inventory = preserve_authoritative_with_error(
                         &existing.project_inventory,
                         record.projects.len(),
-                    )
-                } else {
-                    preserve_authoritative_for_new_instance(
+                        error_code,
+                        now,
+                    );
+                } else if !projects_supplied {
+                    record.projects = existing.projects.clone();
+                    record.project_inventory = preserve_authoritative_pending(
                         &existing.project_inventory,
                         record.projects.len(),
-                    )
-                };
+                    );
+                }
             }
         }
 

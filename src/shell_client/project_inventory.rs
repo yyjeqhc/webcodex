@@ -152,25 +152,6 @@ pub(super) fn preserve_authoritative_pending(
     state
 }
 
-pub(super) fn preserve_authoritative_for_new_instance(
-    existing: &ProjectInventoryState,
-    total_synced: usize,
-) -> ProjectInventoryState {
-    // Preserve the last complete routing snapshot but reset every page freshness
-    // fence: the new Runner process has a new agent_instance_id and starts its
-    // monotonic snapshot sequence from a fresh process-local epoch.
-    let mut state = pending_inventory_state(total_synced);
-    state.status = status(
-        "pending",
-        existing.status.generation.clone(),
-        None,
-        total_synced,
-        None,
-        existing.status.last_sync_at,
-    );
-    state
-}
-
 pub(super) fn prepare_legacy_inventory(
     projects: Option<Vec<ShellAgentProjectSummary>>,
     now: i64,

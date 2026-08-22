@@ -55,6 +55,16 @@ const RECONNECT_BACKOFF_STEPS: [Duration; 5] = [
     Duration::from_secs(10),
     Duration::from_secs(30),
 ];
+/// Retry only transient Server-side project-inventory staging pressure on an
+/// otherwise healthy streaming connection. Permanent/malformed inventory
+/// failures never enter this backoff.
+const PROJECT_INVENTORY_STAGING_RETRY_BACKOFF_STEPS: [Duration; 5] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(30),
+];
 /// Reset reconnect backoff after a connection stayed up long enough to prove
 /// the endpoint is healthy. Immediate flapping still escalates.
 const RECONNECT_STABLE_RESET_AFTER: Duration = Duration::from_secs(60);
@@ -1512,9 +1522,21 @@ impl ProjectInventorySync {
     }
 
     fn acknowledge(&mut self, status: &ShellProjectInventoryStatus) -> Result<bool, String> {
+        // Explicit Server failure status owns error classification before any
+        // local pending-state or success-ack correlation. In particular,
+        // staging-capacity rejection can legitimately carry the previous
+        // authoritative generation because page 0 was not admitted.
+        if status.sync_state == "degraded" || status.sync_state == "failed" {
+            return Err(status
+                .last_error_code
+                .clone()
+                .unwrap_or_else(|| "project_inventory_sync_degraded".to_string()));
+        }
         let Some(pending) = self.pending.as_ref() else {
             return Ok(self.cursor >= self.projects.len());
         };
+        // Successful in-progress/complete acknowledgements remain strictly
+        // fenced by generation, total, and exact cursor progress below.
         if status.generation.as_deref() != Some(self.generation()) {
             return Err("project_inventory_ack_generation_mismatch".to_string());
         }
@@ -1523,12 +1545,6 @@ impl ProjectInventorySync {
         }
         if status.total_synced != pending.next_cursor {
             return Err("project_inventory_ack_progress_mismatch".to_string());
-        }
-        if status.sync_state == "degraded" || status.sync_state == "failed" {
-            return Err(status
-                .last_error_code
-                .clone()
-                .unwrap_or_else(|| "project_inventory_sync_degraded".to_string()));
         }
         let final_page = pending.page.complete;
         let valid_ack = (final_page && status.sync_state == "complete")
@@ -2571,21 +2587,43 @@ fn handle_project_inventory_status(
     status: ShellProjectInventoryStatus,
     sync: &mut Option<ProjectInventorySync>,
     out_tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
-) {
+    retry_backoff: &mut RetryBackoff,
+) -> Option<Duration> {
     let Some(state) = sync.as_mut() else {
-        return;
+        retry_backoff.reset();
+        return None;
     };
     let projects = state.total_reported();
     match state.acknowledge(&status) {
         Ok(true) => {
             *sync = None;
+            retry_backoff.reset();
+            None
         }
         Ok(false) => {
+            retry_backoff.reset();
             try_queue_project_inventory_page(transport, sync, out_tx);
+            None
+        }
+        Err(reason_code) if reason_code == "project_inventory_staging_capacity" => {
+            let delay = retry_backoff.next_delay();
+            log_project_inventory_degraded(transport.name(), projects, &reason_code);
+            eprintln!(
+                "webcodex-runner project inventory retry scheduled transport={} reason_code={} delay={}",
+                transport.name(),
+                reason_code,
+                format_delay(delay)
+            );
+            // Keep the exact pending page/generation/snapshot_sequence. The
+            // Server rejected page 0 before advancing its high-water fence, so
+            // replaying this exact page after bounded delay is safe.
+            Some(delay)
         }
         Err(reason_code) => {
             log_project_inventory_degraded(transport.name(), projects, &reason_code);
             *sync = None;
+            retry_backoff.reset();
+            None
         }
     }
 }
@@ -2597,6 +2635,8 @@ fn handle_stream_envelope(
     sink: &AgentSink,
     out_tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
     project_inventory_sync: &mut Option<ProjectInventorySync>,
+    project_inventory_retry_backoff: &mut RetryBackoff,
+    project_inventory_retry_at: &mut Option<tokio::time::Instant>,
     runtime: &AgentRuntimeState,
 ) -> Option<String> {
     match envelope {
@@ -2633,7 +2673,14 @@ fn handle_stream_envelope(
         }
         AgentEnvelope::Pong { .. } => None,
         AgentEnvelope::ProjectInventoryStatus { status } => {
-            handle_project_inventory_status(transport, status, project_inventory_sync, out_tx);
+            *project_inventory_retry_at = handle_project_inventory_status(
+                transport,
+                status,
+                project_inventory_sync,
+                out_tx,
+                project_inventory_retry_backoff,
+            )
+            .map(|delay| tokio::time::Instant::now() + delay);
             None
         }
         AgentEnvelope::Registered { .. } if transport == StreamTransport::Quic => None,
@@ -2682,12 +2729,25 @@ where
     jobs.replay_snapshots_since(registered_jobs);
     let mut ping_interval = tokio::time::interval(transport.ping_interval());
     ping_interval.tick().await;
+    let mut project_inventory_retry_backoff =
+        RetryBackoff::new(&PROJECT_INVENTORY_STAGING_RETRY_BACKOFF_STEPS);
+    let mut project_inventory_retry_at: Option<tokio::time::Instant> = None;
     let mut shutdown = Box::pin(shutdown);
     let mut shutdown_requested = false;
     let mut session_error = None;
 
     loop {
+        let project_inventory_retry_deadline =
+            project_inventory_retry_at.unwrap_or_else(tokio::time::Instant::now);
         tokio::select! {
+            _ = tokio::time::sleep_until(project_inventory_retry_deadline), if project_inventory_retry_at.is_some() => {
+                project_inventory_retry_at = None;
+                try_queue_project_inventory_page(
+                    transport,
+                    &mut project_inventory_sync,
+                    &out_tx,
+                );
+            }
             _ = &mut shutdown => {
                 runtime.request_shutdown_signal();
                 shutdown_requested = true;
@@ -2703,6 +2763,8 @@ where
                             &sink,
                             &out_tx,
                             &mut project_inventory_sync,
+                            &mut project_inventory_retry_backoff,
+                            &mut project_inventory_retry_at,
                             runtime,
                         ) {
                             session_error = Some(error);
@@ -2725,11 +2787,16 @@ where
                 // An acknowledgement can be dropped if the Server's outbound
                 // channel is saturated. Re-sending the exact pending page is
                 // idempotent and gives the sync a bounded periodic recovery path.
-                try_queue_project_inventory_page(
-                    transport,
-                    &mut project_inventory_sync,
-                    &out_tx,
-                );
+                // When the Server explicitly reported staging pressure, the
+                // dedicated backoff timer owns retry timing so keepalive cannot
+                // collapse that bounded delay into an eager resend.
+                if project_inventory_retry_at.is_none() {
+                    try_queue_project_inventory_page(
+                        transport,
+                        &mut project_inventory_sync,
+                        &out_tx,
+                    );
+                }
                 let _ = out_tx.try_send(AgentEnvelope::Ping {
                     ts: chrono::Utc::now().timestamp(),
                 });

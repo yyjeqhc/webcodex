@@ -3627,6 +3627,174 @@ async fn streaming_project_inventory_retry_preserves_pending_page_after_backpres
     );
 }
 
+#[tokio::test]
+async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_websocket_and_quic() {
+    for transport in [StreamTransport::WebSocket, StreamTransport::Quic] {
+        let projects = (0..100)
+            .map(|index| synthetic_project_summary(index, None))
+            .collect::<Vec<_>>();
+        let mut sync = Some(ProjectInventorySync::new(projects));
+        let generation = sync.as_ref().unwrap().generation().to_string();
+        let expected_page0 = sync
+            .as_mut()
+            .unwrap()
+            .current_page()
+            .unwrap()
+            .expect("first inventory page");
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let mut retry_backoff = RetryBackoff::new(&PROJECT_INVENTORY_STAGING_RETRY_BACKOFF_STEPS);
+
+        try_queue_project_inventory_page(transport, &mut sync, &tx);
+        let sent_page0 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected initial project inventory page, got {other:?}"),
+        };
+        assert_eq!(
+            serde_json::to_vec(&sent_page0).unwrap(),
+            serde_json::to_vec(&expected_page0).unwrap()
+        );
+
+        let capacity = ShellProjectInventoryStatus {
+            sync_state: "degraded".to_string(),
+            generation: Some("previous-authoritative-generation".to_string()),
+            total_reported: Some(7),
+            total_synced: 7,
+            last_error_code: Some("project_inventory_staging_capacity".to_string()),
+            last_sync_at: Some(1),
+            max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+            max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
+        };
+        let delay = handle_project_inventory_status(
+            transport,
+            capacity.clone(),
+            &mut sync,
+            &tx,
+            &mut retry_backoff,
+        );
+        assert_eq!(delay, Some(Duration::from_secs(1)));
+        assert!(
+            rx.try_recv().is_err(),
+            "capacity failure must not busy-loop"
+        );
+        let still_pending = sync
+            .as_mut()
+            .unwrap()
+            .current_page()
+            .unwrap()
+            .expect("capacity failure keeps page 0 pending");
+        assert_eq!(
+            serde_json::to_vec(&still_pending).unwrap(),
+            serde_json::to_vec(&expected_page0).unwrap(),
+            "capacity failure must not advance cursor or replace the logical snapshot"
+        );
+
+        // Simulate the bounded retry timer firing. The retry is the exact same
+        // page 0, and repeated transient pressure advances only the backoff.
+        try_queue_project_inventory_page(transport, &mut sync, &tx);
+        let retry_page0 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected retried project inventory page, got {other:?}"),
+        };
+        assert_eq!(
+            serde_json::to_vec(&retry_page0).unwrap(),
+            serde_json::to_vec(&expected_page0).unwrap()
+        );
+        let second_delay = handle_project_inventory_status(
+            transport,
+            capacity,
+            &mut sync,
+            &tx,
+            &mut retry_backoff,
+        );
+        assert_eq!(second_delay, Some(Duration::from_secs(2)));
+
+        try_queue_project_inventory_page(transport, &mut sync, &tx);
+        let accepted_retry_page0 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected second retried page 0, got {other:?}"),
+        };
+        assert_eq!(
+            serde_json::to_vec(&accepted_retry_page0).unwrap(),
+            serde_json::to_vec(&expected_page0).unwrap()
+        );
+        let accepted_page0 = inventory_status(
+            "in_progress",
+            &generation,
+            100,
+            expected_page0.projects.len(),
+        );
+        assert_eq!(
+            handle_project_inventory_status(
+                transport,
+                accepted_page0,
+                &mut sync,
+                &tx,
+                &mut retry_backoff,
+            ),
+            None
+        );
+        let page1 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected page 1 after accepted retry, got {other:?}"),
+        };
+        assert_eq!(page1.page_index, 1);
+        assert_eq!(page1.generation, generation);
+        assert_eq!(page1.snapshot_sequence, expected_page0.snapshot_sequence);
+        assert!(page1.complete);
+
+        let complete = inventory_status("complete", &generation, 100, 100);
+        assert_eq!(
+            handle_project_inventory_status(
+                transport,
+                complete,
+                &mut sync,
+                &tx,
+                &mut retry_backoff,
+            ),
+            None
+        );
+        assert!(
+            sync.is_none(),
+            "final acknowledgement must complete the sync"
+        );
+
+        // Permanent/malformed Server failures remain fail-closed and never
+        // enter the streaming retry loop even when their generation differs.
+        let mut permanent_sync = Some(ProjectInventorySync::new(
+            (0..65)
+                .map(|index| synthetic_project_summary(index, None))
+                .collect(),
+        ));
+        permanent_sync
+            .as_mut()
+            .unwrap()
+            .current_page()
+            .unwrap()
+            .unwrap();
+        let permanent = ShellProjectInventoryStatus {
+            sync_state: "degraded".to_string(),
+            generation: Some("unrelated-generation".to_string()),
+            total_reported: None,
+            total_synced: 0,
+            last_error_code: Some("project_inventory_page_too_large".to_string()),
+            last_sync_at: Some(1),
+            max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+            max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
+        };
+        assert_eq!(
+            handle_project_inventory_status(
+                transport,
+                permanent,
+                &mut permanent_sync,
+                &tx,
+                &mut retry_backoff,
+            ),
+            None
+        );
+        assert!(permanent_sync.is_none());
+    }
+}
+
 #[test]
 fn project_inventory_rolling_negotiation_never_sends_large_snapshot_to_old_server() {
     let small = (0..64)

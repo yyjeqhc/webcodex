@@ -260,12 +260,21 @@ fn accepted_active_record_is_never_reclaimed() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
-    let request = make_payload_request("count_once", Vec::new());
+    let request = make_payload_request("linger", Vec::new());
     let outcome = handoff_detached_job(&store, request.clone()).unwrap();
     assert!(matches!(outcome, DetachedHandoffOutcome::Accepted { .. }));
+    assert!(
+        wait_until(Duration::from_secs(5), || store
+            .read(&request.job_id)
+            .is_ok_and(|record| {
+                record.phase == DetachedJobPhase::Running
+                    && record.ownership_accepted_at_unix_ms.is_some()
+            })),
+        "accepted detached execution never reached a live Running state"
+    );
     let running = store.read(&request.job_id).unwrap();
     assert!(running.ownership_accepted_at_unix_ms.is_some());
-    assert_ne!(running.phase, DetachedJobPhase::Terminal);
+    assert_eq!(running.phase, DetachedJobPhase::Running);
 
     assert_eq!(
         store
@@ -273,14 +282,15 @@ fn accepted_active_record_is_never_reclaimed() {
             .unwrap(),
         1
     );
-    assert_eq!(
-        store.read(&request.job_id).unwrap().execution_id,
-        running.execution_id
-    );
-    store
+    let retained = store.read(&request.job_id).unwrap();
+    assert_eq!(retained.execution_id, running.execution_id);
+    assert_eq!(retained.phase, DetachedJobPhase::Running);
+    let stopped = store
         .request_stop(&request.job_id, &running.execution_id)
         .unwrap();
-    let _ = wait_for_terminal(&store, &request.job_id);
+    assert!(stopped.stop_requested);
+    let terminal = wait_for_terminal(&store, &request.job_id);
+    assert_eq!(terminal.terminal.as_ref().unwrap().status, "stopped");
 }
 
 #[cfg(unix)]

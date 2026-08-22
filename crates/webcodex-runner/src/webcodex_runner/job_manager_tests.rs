@@ -1472,6 +1472,16 @@ fn phase_e2_default_four_gates_fifth_and_promotes_same_job_once() {
         4,
         "simultaneously started children exceeded or failed to reach the default"
     );
+    assert!(
+        wait_until(Duration::from_secs(10), || manager
+            .inventory()
+            .jobs
+            .iter()
+            .any(
+                |snapshot| snapshot.job_id == jobs[4].job_id && snapshot.status == "running"
+            )),
+        "promoted fifth child became active before its Runner running state was published"
+    );
     let promoted = manager
         .inventory()
         .jobs
@@ -1529,6 +1539,16 @@ fn runner_job_slots_are_shared_across_runtime_projects() {
         "project A Job never became active"
     );
     assert!(!project_b.started.exists());
+    assert!(
+        wait_until(Duration::from_secs(10), || manager
+            .inventory()
+            .jobs
+            .iter()
+            .any(
+                |snapshot| snapshot.job_id == project_a.job_id && snapshot.status == "running"
+            )),
+        "project A child became active before its Runner running state was published"
+    );
 
     let inventory = manager.inventory();
     assert!(inventory.active_complete);
@@ -1558,6 +1578,16 @@ fn runner_job_slots_are_shared_across_runtime_projects() {
     assert!(
         wait_until(Duration::from_secs(10), || project_b.active.exists()),
         "project B queued Job did not claim the shared Runner slot"
+    );
+    assert!(
+        wait_until(Duration::from_secs(10), || manager
+            .inventory()
+            .jobs
+            .iter()
+            .any(
+                |snapshot| snapshot.job_id == project_b.job_id && snapshot.status == "running"
+            )),
+        "project B child became active before its Runner running state was published"
     );
     let promoted = manager
         .inventory()

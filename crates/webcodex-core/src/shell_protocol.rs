@@ -3439,6 +3439,7 @@ mod envelope_tests {
                 success: true,
                 request: Some(request.clone()),
                 error: None,
+                project_inventory: None,
             })
             .unwrap(),
         )
@@ -3484,6 +3485,7 @@ mod envelope_tests {
                 success: true,
                 request: Some(request.clone()),
                 error: None,
+                project_inventory: None,
             })
             .unwrap(),
         )
@@ -3532,6 +3534,7 @@ mod envelope_tests {
                 success: true,
                 request: Some(request.clone()),
                 error: None,
+                project_inventory: None,
             })
             .unwrap(),
         )
@@ -3581,6 +3584,7 @@ mod envelope_tests {
                 success: true,
                 request: Some(request.clone()),
                 error: None,
+                project_inventory: None,
             })
             .unwrap(),
         )

@@ -21,7 +21,7 @@ use super::tool_result::ToolResult;
 use super::{agent_project_runtime_id, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
-    ShellAgentProjectSummary, SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
+    ShellAgentProjectSummary, ShellClientView, SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
 };
 
 /// Maximum time the runtime waits for an agent project-op response. Project
@@ -43,6 +43,103 @@ pub(crate) struct ListProjectsOptions {
     pub(crate) summary_only: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ProjectCandidate {
+    pub(super) runtime_id: String,
+    pub(super) client_index: usize,
+    pub(super) project_index: usize,
+}
+
+fn validate_list_projects_options(
+    options: &ListProjectsOptions,
+) -> Result<(Option<String>, Option<usize>), ToolResult> {
+    if options
+        .client_id
+        .as_deref()
+        .is_some_and(|value| value.is_empty() || value.chars().count() > 128)
+    {
+        return Err(ToolResult::err_with_output(
+            "invalid_client_id: client_id must contain 1..=128 characters".to_string(),
+            json!({"error_kind": "invalid_client_id"}),
+        ));
+    }
+    if options
+        .project
+        .as_deref()
+        .is_some_and(|value| value.is_empty() || value.chars().count() > 512)
+    {
+        return Err(ToolResult::err_with_output(
+            "invalid_project: project must contain 1..=512 characters".to_string(),
+            json!({"error_kind": "invalid_project"}),
+        ));
+    }
+    let query = match options.query.as_deref() {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Err(ToolResult::err_with_output(
+                    "invalid_query: query must not be empty after trimming".to_string(),
+                    json!({"error_kind": "invalid_query"}),
+                ));
+            }
+            if trimmed.chars().count() > LIST_PROJECTS_MAX_QUERY_CHARS {
+                return Err(ToolResult::err_with_output(
+                    format!(
+                        "invalid_query: query exceeds {LIST_PROJECTS_MAX_QUERY_CHARS} characters"
+                    ),
+                    json!({"error_kind": "invalid_query"}),
+                ));
+            }
+            Some(trimmed.to_lowercase())
+        }
+        None => None,
+    };
+    let filtered =
+        options.client_id.is_some() || options.project.is_some() || options.query.is_some();
+    let limit = options
+        .limit
+        .map(|limit| limit.clamp(1, LIST_PROJECTS_MAX_RESULTS))
+        .or_else(|| filtered.then_some(LIST_PROJECTS_MAX_RESULTS));
+    Ok((query, limit))
+}
+
+fn project_candidates(
+    clients: &[ShellClientView],
+    options: &ListProjectsOptions,
+    query: Option<&str>,
+) -> Vec<ProjectCandidate> {
+    let mut candidates = Vec::new();
+    for (client_index, client) in clients.iter().enumerate() {
+        if options
+            .client_id
+            .as_deref()
+            .is_some_and(|expected| client.client_id != expected)
+        {
+            continue;
+        }
+        for (project_index, project) in client.projects.iter().enumerate() {
+            let runtime_id = agent_project_runtime_id(&client.client_id, &project.id);
+            if options
+                .project
+                .as_deref()
+                .is_some_and(|expected| runtime_id != expected)
+            {
+                continue;
+            }
+            if query.is_some_and(|needle| !project_query_matches(needle, &runtime_id, project)) {
+                continue;
+            }
+            candidates.push(ProjectCandidate {
+                runtime_id,
+                client_index,
+                project_index,
+            });
+        }
+    }
+    candidates.sort_by(|a, b| a.runtime_id.cmp(&b.runtime_id));
+    candidates
+}
+
 impl ToolRuntime {
     pub(crate) async fn list_projects(&self, auth: Option<&AuthContext>) -> ToolResult {
         self.list_projects_with_options(auth, ListProjectsOptions::default())
@@ -54,83 +151,39 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         options: ListProjectsOptions,
     ) -> ToolResult {
-        if options
-            .client_id
-            .as_deref()
-            .is_some_and(|value| value.is_empty() || value.chars().count() > 128)
-        {
-            return ToolResult::err_with_output(
-                "invalid_client_id: client_id must contain 1..=128 characters".to_string(),
-                json!({"error_kind": "invalid_client_id"}),
-            );
-        }
-        if options
-            .project
-            .as_deref()
-            .is_some_and(|value| value.is_empty() || value.chars().count() > 512)
-        {
-            return ToolResult::err_with_output(
-                "invalid_project: project must contain 1..=512 characters".to_string(),
-                json!({"error_kind": "invalid_project"}),
-            );
-        }
-        let query = match options.query.as_deref() {
-            Some(raw) => {
-                let trimmed = raw.trim();
-                if trimmed.is_empty() {
-                    return ToolResult::err_with_output(
-                        "invalid_query: query must not be empty after trimming".to_string(),
-                        json!({"error_kind": "invalid_query"}),
-                    );
-                }
-                if trimmed.chars().count() > LIST_PROJECTS_MAX_QUERY_CHARS {
-                    return ToolResult::err_with_output(
-                        format!(
-                            "invalid_query: query exceeds {LIST_PROJECTS_MAX_QUERY_CHARS} characters"
-                        ),
-                        json!({"error_kind": "invalid_query"}),
-                    );
-                }
-                Some(trimmed.to_lowercase())
-            }
-            None => None,
+        let (query, limit) = match validate_list_projects_options(&options) {
+            Ok(validated) => validated,
+            Err(result) => return result,
         };
-        let filtered =
-            options.client_id.is_some() || options.project.is_some() || options.query.is_some();
-        let limit = options
-            .limit
-            .map(|limit| limit.clamp(1, LIST_PROJECTS_MAX_RESULTS))
-            .or_else(|| filtered.then_some(LIST_PROJECTS_MAX_RESULTS));
-
         let clients = self.shell_clients.list_clients_for_auth(auth).await;
-        let mut candidates = Vec::new();
-        for client in clients {
-            if options
-                .client_id
-                .as_deref()
-                .is_some_and(|expected| client.client_id != expected)
-            {
-                continue;
-            }
-            for project in &client.projects {
-                let runtime_id = agent_project_runtime_id(&client.client_id, &project.id);
-                if options
-                    .project
-                    .as_deref()
-                    .is_some_and(|expected| runtime_id != expected)
-                {
-                    continue;
-                }
-                if query
-                    .as_deref()
-                    .is_some_and(|needle| !project_query_matches(needle, &runtime_id, project))
-                {
-                    continue;
-                }
-                candidates.push((runtime_id, client.clone(), project.clone()));
-            }
-        }
-        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+        self.list_projects_from_visible_clients(auth, &options, query.as_deref(), limit, &clients)
+            .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn list_projects_with_visible_clients_for_test(
+        &self,
+        auth: Option<&AuthContext>,
+        options: ListProjectsOptions,
+        clients: &[ShellClientView],
+    ) -> ToolResult {
+        let (query, limit) = match validate_list_projects_options(&options) {
+            Ok(validated) => validated,
+            Err(result) => return result,
+        };
+        self.list_projects_from_visible_clients(auth, &options, query.as_deref(), limit, clients)
+            .await
+    }
+
+    async fn list_projects_from_visible_clients(
+        &self,
+        auth: Option<&AuthContext>,
+        options: &ListProjectsOptions,
+        query: Option<&str>,
+        limit: Option<usize>,
+        clients: &[ShellClientView],
+    ) -> ToolResult {
+        let mut candidates = project_candidates(clients, options, query);
         let matched_count = candidates.len();
         if let Some(limit) = limit {
             candidates.truncate(limit);
@@ -138,14 +191,45 @@ impl ToolRuntime {
         let truncated = candidates.len() < matched_count;
 
         let mut list = Vec::with_capacity(candidates.len());
-        for (runtime_id, client, project) in candidates {
-            let shell_profiles = client
-                .policy
-                .as_ref()
-                .and_then(|policy| policy.shell_profiles.as_ref());
-            let (resolved_shell_profile, shell_profile_status) =
-                resolve_project_shell_profile(project.shell_profile.as_deref(), shell_profiles);
-            let capabilities = smoke_project_capabilities(&client, &project);
+        for ProjectCandidate {
+            runtime_id,
+            client_index,
+            project_index,
+        } in candidates
+        {
+            // Extract only one selected Project and the small Runner fields used by
+            // its projection before awaiting Job state. Candidate staging above
+            // never owns or clones a ShellClientView (and therefore never clones
+            // the Runner's complete projects Vec per match).
+            let (
+                client_id,
+                agent_status,
+                connected,
+                last_seen,
+                project,
+                resolved_shell_profile,
+                shell_profile_status,
+                capabilities,
+            ) = {
+                let client = &clients[client_index];
+                let project = &client.projects[project_index];
+                let shell_profiles = client
+                    .policy
+                    .as_ref()
+                    .and_then(|policy| policy.shell_profiles.as_ref());
+                let (resolved_shell_profile, shell_profile_status) =
+                    resolve_project_shell_profile(project.shell_profile.as_deref(), shell_profiles);
+                (
+                    client.client_id.clone(),
+                    client.status.clone(),
+                    client.connected,
+                    client.last_seen,
+                    project.clone(),
+                    resolved_shell_profile,
+                    shell_profile_status,
+                    smoke_project_capabilities(client, project),
+                )
+            };
             let active_jobs = self
                 .shell_clients
                 .count_active_jobs_for_project(auth, &runtime_id)
@@ -157,12 +241,12 @@ impl ToolRuntime {
                     "name": project.name,
                     "description": project.description,
                     "executor": "agent",
-                    "client_id": client.client_id,
+                    "client_id": client_id,
                     "enabled": !project.disabled,
                     "active_jobs": active_jobs,
                     "source": project_source(&project),
-                    "agent_status": client.status,
-                    "connected": client.connected,
+                    "agent_status": agent_status,
+                    "connected": connected,
                     "resolved_shell_profile": resolved_shell_profile,
                     "shell_profile_status": shell_profile_status,
                     "capabilities": {
@@ -177,7 +261,7 @@ impl ToolRuntime {
                     "name": project.name,
                     "path": project.path,
                     "executor": "agent",
-                    "client_id": client.client_id,
+                    "client_id": client_id,
                     "allow_patch": project.allow_patch,
                     "description": project.description,
                     "enabled": !project.disabled,
@@ -185,9 +269,9 @@ impl ToolRuntime {
                     "revision": project.revision,
                     "active_jobs": active_jobs,
                     "source": project_source(&project),
-                    "agent_status": client.status,
-                    "connected": client.connected,
-                    "last_seen": client.last_seen,
+                    "agent_status": agent_status,
+                    "connected": connected,
+                    "last_seen": last_seen,
                     "shell_profile": project.shell_profile,
                     "resolved_shell_profile": resolved_shell_profile,
                     "shell_profile_status": shell_profile_status,

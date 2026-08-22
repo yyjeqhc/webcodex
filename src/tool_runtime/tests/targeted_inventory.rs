@@ -1,3 +1,4 @@
+use super::super::projects::{ListProjectsOptions, ProjectCandidate};
 use super::super::*;
 use super::support::*;
 use crate::shell_protocol::{AgentBuildInfo, ShellClientCapabilities, ShellClientRegisterRequest};
@@ -104,6 +105,129 @@ async fn register_target_agent_for_auth(
         )
         .await
         .unwrap();
+}
+
+fn large_fixture_projects(count: usize) -> Vec<crate::shell_protocol::ShellAgentProjectSummary> {
+    (0..count)
+        .map(|index| {
+            let mut project = registered_project(
+                &format!("project-{index:04}"),
+                &format!("/tmp/large-fixture/project-{index:04}"),
+            );
+            project.name = Some(format!("Large Fixture Project {index:04}"));
+            project.description = Some("large-fixture".to_string());
+            project
+        })
+        .collect()
+}
+
+#[test]
+fn project_candidate_staging_is_index_only() {
+    let candidate = ProjectCandidate {
+        runtime_id: "agent:special:project-0007".to_string(),
+        client_index: 3,
+        project_index: 7,
+    };
+    let ProjectCandidate {
+        runtime_id,
+        client_index,
+        project_index,
+    } = candidate;
+    assert_eq!(runtime_id, "agent:special:project-0007");
+    assert_eq!(client_index, 3);
+    assert_eq!(project_index, 7);
+}
+
+#[tokio::test]
+async fn list_projects_large_single_runner_inventory_preserves_linear_staging_contract() {
+    for project_count in [256usize, 1024] {
+        let runtime = test_runtime();
+        register_target_agent(&runtime, "special", Vec::new(), None).await;
+        let mut clients = runtime.shell_clients.list_clients_for_auth(None).await;
+        assert_eq!(clients.len(), 1);
+        clients[0].projects = large_fixture_projects(project_count);
+
+        let exact_index = if project_count == 1024 { 999 } else { 255 };
+        let exact_id = format!("agent:special:project-{exact_index:04}");
+        let exact = runtime
+            .list_projects_with_visible_clients_for_test(
+                None,
+                ListProjectsOptions {
+                    project: Some(exact_id.clone()),
+                    limit: Some(1),
+                    summary_only: true,
+                    ..Default::default()
+                },
+                &clients,
+            )
+            .await;
+        assert!(exact.success, "{:?}", exact.error);
+        assert_eq!(exact.output["count"], 1);
+        assert_eq!(exact.output["matched_count"], 1);
+        assert_eq!(exact.output["truncated"], false);
+        assert_eq!(exact.output["projects"][0]["id"], exact_id);
+
+        let broad = runtime
+            .list_projects_with_visible_clients_for_test(
+                None,
+                ListProjectsOptions {
+                    client_id: Some("special".to_string()),
+                    query: Some("large-fixture".to_string()),
+                    limit: Some(10),
+                    summary_only: true,
+                    ..Default::default()
+                },
+                &clients,
+            )
+            .await;
+        assert!(broad.success, "{:?}", broad.error);
+        assert_eq!(broad.output["matched_count"], project_count);
+        assert_eq!(broad.output["count"], 10);
+        assert_eq!(broad.output["truncated"], true);
+        let broad_ids = broad.output["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|project| project["id"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        let expected_ids = (0..10)
+            .map(|index| format!("agent:special:project-{index:04}"))
+            .collect::<Vec<_>>();
+        assert_eq!(broad_ids, expected_ids);
+
+        let full = runtime
+            .list_projects_with_visible_clients_for_test(
+                None,
+                ListProjectsOptions::default(),
+                &clients,
+            )
+            .await;
+        assert!(full.success, "{:?}", full.error);
+        assert_eq!(full.output["matched_count"], project_count);
+        assert_eq!(full.output["count"], project_count);
+        assert_eq!(full.output["truncated"], false);
+        assert_eq!(
+            full.output["projects"][0]["id"],
+            "agent:special:project-0000"
+        );
+        assert_eq!(
+            full.output["projects"][project_count - 1]["id"],
+            format!("agent:special:project-{:04}", project_count - 1)
+        );
+        let first = &full.output["projects"][0];
+        assert!(
+            first.get("path").is_some(),
+            "legacy full projection lost path: {first}"
+        );
+        assert!(
+            first.get("allow_patch").is_some(),
+            "legacy full projection lost allow_patch: {first}"
+        );
+        assert!(
+            first.get("revision").is_some(),
+            "legacy full projection lost revision: {first}"
+        );
+    }
 }
 
 #[tokio::test]

@@ -12,8 +12,11 @@ platforms.
 ### Fastest first connection
 
 Supported platforms are Linux x64/arm64, macOS arm64, Windows x64, and native
-Windows arm64. The installer wrapper requires Node.js 18 or newer. The default
-public `share` flow also requires
+Windows arm64. The installer wrapper requires Node.js 18 or newer. Windows is a
+CLI + Runner client platform in this release: local Server runtime and
+`webcodex share` are unsupported there, so use `webcodex connect <server-url>`
+against a remote Linux Server. The `share` steps below apply to Linux/macOS and
+the default public flow also requires
 [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) on `PATH`.
 
 ```bash
@@ -74,7 +77,10 @@ npm package 会为支持的平台安装原生 `webcodex`、`webcodex-server`、
 ### 最快的第一次接入
 
 支持 Linux x64/arm64、macOS arm64、Windows x64 与原生 Windows arm64；installer
-wrapper 需要 Node.js 18 或更新版本。默认公网 `share` 还需要把
+wrapper 需要 Node.js 18 或更新版本。本版本的 Windows 是 CLI + Runner 客户端平台，
+不支持本地 Server runtime 或 `webcodex share`；Windows 请使用
+`webcodex connect <server-url>` 连接远程 Linux Server。下面的 `share` 步骤适用于
+Linux/macOS，默认公网流程还需要把
 [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) 安装到 `PATH`。
 
 ```bash

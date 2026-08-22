@@ -12,8 +12,13 @@ or OAuth scope ceilings unless the user's chosen path actually requires them.
 
 ## Choose the smallest path
 
-1. The user has one local repository and wants to try ChatGPT/MCP now, with no
-   existing WebCodex Server URL: use **`webcodex share`**.
+Check the platform before choosing the path. Windows does not support the local
+Server runtime used by `webcodex share`; on Windows, use `connect` when a remote
+Linux Server already exists, or guide the user through Linux Server deployment
+first. Do not recommend `share` on Windows.
+
+1. On Linux/macOS, the user has one local repository and wants to try ChatGPT/MCP
+   now, with no existing WebCodex Server URL: use **`webcodex share`**.
 2. The user already has a WebCodex Server URL and wants a persistent repository
    connection: use **`webcodex connect <server>`**.
 3. The user needs separate identity, independent revocation, audit, or managed

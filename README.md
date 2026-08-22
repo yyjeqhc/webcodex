@@ -9,6 +9,11 @@ capabilities to the chat client without requiring the repository itself to move.
 
 ## Try it with one repository
 
+Platform note: `webcodex share` starts a local WebCodex Server and is supported on
+Linux and macOS. Windows builds support the CLI + Runner against a remote Linux
+Server; on Windows use `webcodex connect <server-url>`. If you do not already
+have a Server, deploy one on Linux first.
+
 For the default temporary public share, install
 [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) and make
 sure it is on `PATH`. Then:

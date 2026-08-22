@@ -21,9 +21,10 @@ Runner 机器、连接 MCP/GPT 客户端以及 smoke 检查。第一次连接 Ch
 npm install -g @yyjeqhc/webcodex
 ```
 
-支持 Linux x64、Linux arm64、macOS arm64 与 Windows x64。Windows x64 支持针对
-远程 Linux Server 的 CLI + Runner 工作流；不支持长期运行的 Windows Server。
-npm 包装器要求 Node.js 18 或更新。从 v0.3.5 起，Linux x64 native artifact 以
+支持 Linux x64、Linux arm64、macOS arm64、Windows x64 与 Windows arm64。
+Windows x64/arm64 支持针对远程 Linux Server 的 CLI + Runner 工作流；不支持长期
+运行的 Windows Server。npm 包装器要求 Node.js 18 或更新。从 v0.3.5 起，Linux x64
+native artifact 以
 glibc 2.17 或更新为兼容基线。
 
 从源码构建：

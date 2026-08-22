@@ -7,6 +7,10 @@ Runner 在仓库所在机器上执行文件、Git、命令与测试操作；仓�
 
 ## 用一个仓库快速试起来
 
+平台说明：`webcodex share` 会启动本地 WebCodex Server，目前只支持 Linux 和 macOS。
+Windows 版本支持 CLI + Runner 连接远程 Linux Server；Windows 上请使用
+`webcodex connect <server-url>`。如果还没有 Server，需要先在 Linux 上部署一个。
+
 默认的临时公网分享依赖
 [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/)。先安装它并确保在
 `PATH` 中，然后执行：

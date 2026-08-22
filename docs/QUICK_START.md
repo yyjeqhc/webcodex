@@ -3,14 +3,17 @@
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
 This guide gets one local Git repository into ChatGPT through MCP with the fewest
-concepts possible. The normal first-run command is `webcodex share`.
+concepts possible. On Linux/macOS the normal first-run command is `webcodex share`.
+Windows does not support the local Server runtime used by `share`; Windows users
+need an existing remote Linux Server and should use `webcodex connect <server-url>`
+instead. If no Server exists yet, see [Deployment](DEPLOYMENT.md).
 
 ## Prerequisites
 
 - Node.js 18+ for the npm installer.
 - Git on `PATH` and a Git repository you can safely inspect/edit.
-- [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) on `PATH`
-  for the default temporary public HTTPS share.
+- On Linux/macOS, [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/)
+  on `PATH` for the default temporary public HTTPS share.
 
 Install WebCodex:
 
@@ -18,7 +21,7 @@ Install WebCodex:
 npm install -g @yyjeqhc/webcodex
 ```
 
-If you only need local MCP debugging, `webcodex share --tunnel none` does not
+On Linux/macOS, local MCP debugging with `webcodex share --tunnel none` does not
 need `cloudflared`.
 
 ## 1. Share the repository

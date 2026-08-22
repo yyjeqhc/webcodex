@@ -216,7 +216,8 @@ Cloudflare Quick Tunnel requires `cloudflared` on PATH. `setup`, `doctor`, and\n
 `run` remain the local/manual workflow; setup writes private state without\n\
 starting services. `run` is the explicit foreground local runtime step. Its optional\n\
 `--console-assets-dir` enables loopback-only development assets for that run.\n\
-`--auth oauth` adds project-bound OAuth while preserving that project grant.\n"
+`--auth oauth` adds project-bound OAuth while preserving that project grant.\n\
+On Windows, local Server/share runtime is unsupported; use `webcodex connect <server-url>` with a remote Linux Server.\n"
 }
 
 pub(crate) fn readiness_with_probe(

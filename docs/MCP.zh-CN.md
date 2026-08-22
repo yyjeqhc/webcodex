@@ -8,6 +8,10 @@ reference，不是 onboarding 前置知识。
 
 ## ChatGPT Developer Mode：第一次接入
 
+下面的 self-contained `share` 路径需要本地 WebCodex Server，只支持 Linux/macOS。
+Windows 用户应改用 `webcodex connect <server-url>`，把 Runner 连接到已有的远程
+Linux Server。
+
 默认临时公网路径先安装
 [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/)，然后执行：
 

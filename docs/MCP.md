@@ -9,6 +9,10 @@ reference material, not onboarding prerequisites.
 
 ## ChatGPT Developer Mode: first connection
 
+The self-contained `share` path below requires a local WebCodex Server and is
+supported on Linux/macOS. Windows users should connect the Runner to an existing
+remote Linux Server with `webcodex connect <server-url>` instead.
+
 For the default temporary public path, install
 [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) and run:
 

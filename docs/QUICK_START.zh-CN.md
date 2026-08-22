@@ -2,14 +2,16 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-本指南用尽可能少的概念，把一个本地 Git 仓库通过 MCP 接入 ChatGPT。普通第一次使用的
-主命令是 `webcodex share`。
+本指南用尽可能少的概念，把一个本地 Git 仓库通过 MCP 接入 ChatGPT。在 Linux/macOS
+上，普通第一次使用的主命令是 `webcodex share`。Windows 不支持 `share` 所需的本地
+Server runtime；Windows 用户需要已有的远程 Linux Server，并改用
+`webcodex connect <server-url>`。如果还没有 Server，请先看[部署指南](DEPLOYMENT.zh-CN.md)。
 
 ## 前置条件
 
 - npm installer 需要 Node.js 18+。
 - `PATH` 中有 Git，并准备一个可以安全查看/编辑的 Git 仓库。
-- 默认临时公网 HTTPS 分享需要把
+- Linux/macOS 的默认临时公网 HTTPS 分享需要把
   [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) 安装到 `PATH`。
 
 安装 WebCodex：
@@ -18,7 +20,8 @@
 npm install -g @yyjeqhc/webcodex
 ```
 
-如果只做本地 MCP 调试，`webcodex share --tunnel none` 不需要 `cloudflared`。
+在 Linux/macOS 上只做本地 MCP 调试时，`webcodex share --tunnel none` 不需要
+`cloudflared`。
 
 ## 1. 分享当前仓库
 

@@ -132,6 +132,7 @@ fn top_level_help_prioritizes_first_run_without_hiding_advanced_commands() {
     let operator = out.find("Operator / service management:").unwrap();
     assert!(start_here < share && share < connect && connect < operator);
     assert!(out.contains("cloudflared"));
+    assert!(out.contains("Windows -> use `webcodex connect <server-url>`"));
     assert!(out.contains("historical `agent` namespace"));
     assert!(out.contains("agent-tokens create|"));
 }

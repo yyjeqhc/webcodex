@@ -20,11 +20,13 @@ The CLI produces three binaries when built from source:
 `webcodex --help` lists the top-level namespaces. The sections below explain
 what each namespace is for.
 
-For a first ChatGPT connection, the normal entry is simply `webcodex share` in
-the repository. It performs project setup, starts the local Server and Runner,
-and exposes a temporary HTTPS MCP endpoint. The default Quick Tunnel requires
-`cloudflared` on `PATH`; the command checks that prerequisite before creating
-project/share state and reports an installation link if it is missing.
+For a first ChatGPT connection on Linux/macOS, the normal entry is simply
+`webcodex share` in the repository. It performs project setup, starts the local
+Server and Runner, and exposes a temporary HTTPS MCP endpoint. The default Quick
+Tunnel requires `cloudflared` on `PATH`; the command checks that prerequisite
+before creating project/share state and reports an installation link if it is
+missing. Windows does not support this local Server/share path; use
+`webcodex connect <server-url>` against a remote Linux Server there.
 
 ## Command map
 
@@ -34,7 +36,7 @@ These commands work on the current Git project.
 
 | Command | Purpose | Notes |
 | --- | --- | --- |
-| `webcodex share` | Share the current project for ChatGPT/MCP over HTTPS | First-run path; includes setup and starts the local Server + Runner. Default Quick Tunnel requires `cloudflared`. |
+| `webcodex share` | Share the current project for ChatGPT/MCP over HTTPS | Linux/macOS first-run path; includes setup and starts the local Server + Runner. Unavailable on Windows. Default Quick Tunnel requires `cloudflared`. |
 | `webcodex connect <server>` | Connect the current project to an existing Server | Long-lived path when you already have a Server URL; defaults to hosted shared-key. |
 | `webcodex status` | Concise project coding readiness | Short summary; `doctor` is the full diagnostic check. |
 | `webcodex doctor` | Read-only readiness checks for the current project | Diagnostics/manual workflow; reports a stable `next action`. |

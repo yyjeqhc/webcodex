@@ -1,5 +1,65 @@
 use super::*;
 
+fn with_mcp_recording_session(mut arguments: Value, session_id: &str) -> Value {
+    arguments
+        .as_object_mut()
+        .expect("tool arguments must be an object")
+        .insert(
+            crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string(),
+            Value::from(session_id),
+        );
+    arguments
+}
+
+async fn stateless_2026_tool_call(
+    service: &Service,
+    token: &str,
+    id: i64,
+    name: &str,
+    arguments: Value,
+    legacy_session_id: Option<&str>,
+) -> (StatusCode, Value) {
+    let params = mcp_2026_params(json!({
+        "name": name,
+        "arguments": arguments,
+    }));
+    let mut request = TestClient::post("http://localhost/mcp")
+        .bearer_auth(token)
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_STATELESS_PROTOCOL_VERSION,
+            true,
+        )
+        .add_header(MCP_METHOD_HEADER, "tools/call", true)
+        .add_header(MCP_NAME_HEADER, name, true);
+    if let Some(legacy_session_id) = legacy_session_id {
+        request = request.add_header(
+            crate::client_window::MCP_SESSION_HEADER,
+            legacy_session_id,
+            true,
+        );
+    }
+    let mut response = request
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": params,
+        }))
+        .send(service)
+        .await;
+    assert!(
+        response
+            .headers()
+            .get(crate::client_window::MCP_SESSION_HEADER)
+            .is_none(),
+        "stateless-2026 must never issue a legacy MCP session id"
+    );
+    let status = effective_status(&response);
+    let body = response.take_json::<Value>().await.unwrap();
+    (status, body)
+}
+
 #[tokio::test]
 async fn mcp_tools_call_writes_a_summary_action_audit_row() {
     // list_tools is a full-operator-only tool; select that surface so the
@@ -282,6 +342,249 @@ async fn http_mcp_accepts_chatgpt_2025_11_25_protocol_header() {
     let body: Value = response.take_json().await.unwrap();
     assert!(body["result"]["tools"].is_array());
     assert!(body["result"].get("resultType").is_none());
+}
+
+#[tokio::test]
+async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_provenance() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db, runtime.clone()));
+
+    let (status, coordinator_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        230,
+        "start_session",
+        json!({"title": "Coordinator C"}),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{coordinator_body}");
+    let coordinator_id = coordinator_body["result"]["structuredContent"]["output"]["session_id"]
+        .as_str()
+        .expect("coordinator Workflow Session")
+        .to_string();
+
+    let (status, worker_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        231,
+        "start_session",
+        json!({"title": "Worker W"}),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{worker_body}");
+    let worker_id = worker_body["result"]["structuredContent"]["output"]["session_id"]
+        .as_str()
+        .expect("worker Workflow Session")
+        .to_string();
+
+    let (status, replay_worker_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        232,
+        "start_session",
+        json!({"title": "Replay worker X"}),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replay_worker_body}");
+    let replay_worker_id = replay_worker_body["result"]["structuredContent"]["output"]
+        ["session_id"]
+        .as_str()
+        .expect("replay worker Workflow Session")
+        .to_string();
+
+    let (status, posted_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        233,
+        "post_session_message",
+        json!({
+            "session_id": coordinator_id,
+            "kind": "todo",
+            "message": "Review the stateless collaboration provenance path.",
+            "priority": "high"
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{posted_body}");
+    let todo_id = posted_body["result"]["structuredContent"]["output"]["message_id"]
+        .as_str()
+        .expect("todo message id")
+        .to_string();
+
+    let completion_arguments = with_mcp_recording_session(
+        json!({
+            "session_id": coordinator_id,
+            "message_id": todo_id,
+            "answer": "Reviewed and completed under the explicit worker recorder.",
+            "completion_key": "stateless-recorder-v1",
+            "author_session_id": "wc_sess_forged_should_not_win"
+        }),
+        &worker_id,
+    );
+    let (status, completed_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        234,
+        "complete_session_message",
+        completion_arguments,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{completed_body}");
+    assert_eq!(completed_body["result"]["isError"], false);
+    let completed = &completed_body["result"]["structuredContent"]["output"];
+    assert_eq!(completed["answer"]["author_session_id"], worker_id);
+    assert_eq!(completed["answer"]["reply_to"], todo_id);
+    assert_eq!(completed["todo"]["status"], "resolved");
+    let answer_message_id = completed["answer_message_id"].clone();
+
+    let worker_summary = runtime.sessions.summary(&worker_id, Some(100)).unwrap();
+    assert!(worker_summary.events.iter().any(|event| {
+        event.kind == "tool_call_finished" && event.tool_name == "complete_session_message"
+    }));
+    let worker_audit = serde_json::to_string(&worker_summary.events).unwrap();
+    for private in [
+        "recording_session_id",
+        "Reviewed and completed under the explicit worker recorder.",
+        "stateless-recorder-v1",
+        "wc_sess_forged_should_not_win",
+    ] {
+        assert!(
+            !worker_audit.contains(private),
+            "MCP wrapper/private completion data leaked into Session audit: {private}"
+        );
+    }
+    let coordinator_summary = runtime
+        .sessions
+        .summary(&coordinator_id, Some(100))
+        .unwrap();
+    assert!(!coordinator_summary.events.iter().any(|event| {
+        event.kind == "tool_call_finished" && event.tool_name == "complete_session_message"
+    }));
+
+    let replay_arguments = with_mcp_recording_session(
+        json!({
+            "session_id": coordinator_id,
+            "message_id": todo_id,
+            "answer": "Reviewed and completed under the explicit worker recorder.",
+            "completion_key": "stateless-recorder-v1"
+        }),
+        &replay_worker_id,
+    );
+    let (status, replay_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        235,
+        "complete_session_message",
+        replay_arguments,
+        Some("legacy-session-must-not-affect-2026"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replay_body}");
+    let replayed = &replay_body["result"]["structuredContent"]["output"];
+    assert_eq!(replayed["replayed"], true);
+    assert_eq!(replayed["answer_message_id"], answer_message_id);
+    assert_eq!(replayed["answer"]["author_session_id"], worker_id);
+
+    let (status, missing_todo_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        236,
+        "post_session_message",
+        json!({
+            "session_id": coordinator_id,
+            "kind": "todo",
+            "message": "Exercise missing recorder compatibility."
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{missing_todo_body}");
+    let missing_todo_id = missing_todo_body["result"]["structuredContent"]["output"]["message_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, missing_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        237,
+        "complete_session_message",
+        json!({
+            "session_id": coordinator_id,
+            "message_id": missing_todo_id,
+            "answer": "Compatibility completion without recorder.",
+            "completion_key": "stateless-no-recorder-v1"
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{missing_body}");
+    assert_eq!(
+        missing_body["result"]["structuredContent"]["output"]["answer"]["author_session_id"],
+        Value::Null
+    );
+
+    let (status, unknown_todo_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        238,
+        "post_session_message",
+        json!({
+            "session_id": coordinator_id,
+            "kind": "todo",
+            "message": "An unknown recorder must fail before completion mutation."
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unknown_todo_body}");
+    let unknown_todo_id = unknown_todo_body["result"]["structuredContent"]["output"]["message_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let before_unknown = runtime
+        .sessions
+        .summary(&coordinator_id, Some(100))
+        .unwrap();
+    let unknown_arguments = with_mcp_recording_session(
+        json!({
+            "session_id": coordinator_id,
+            "message_id": unknown_todo_id,
+            "answer": "must not be written",
+            "completion_key": "unknown-recorder-must-fail"
+        }),
+        "wc_sess_missing_recorder",
+    );
+    let (status, unknown_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        239,
+        "complete_session_message",
+        unknown_arguments,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unknown_body}");
+    assert_eq!(unknown_body["result"]["isError"], true);
+    assert_eq!(
+        unknown_body["result"]["structuredContent"]["output"]["error_kind"],
+        "unknown_session_id"
+    );
+    let after_unknown = runtime
+        .sessions
+        .summary(&coordinator_id, Some(100))
+        .unwrap();
+    assert_eq!(after_unknown.messages.total, before_unknown.messages.total);
+    assert!(runtime
+        .sessions
+        .summary("wc_sess_missing_recorder", None)
+        .is_none());
 }
 
 #[tokio::test]

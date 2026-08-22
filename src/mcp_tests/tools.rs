@@ -74,12 +74,32 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             stateless_names, runtime_names,
             "stateless-2026 tools/list must match the full runtime registry (compact={compact})"
         );
+        for tool in stateless_value["result"]["tools"].as_array().unwrap() {
+            let properties = tool["inputSchema"]["properties"].as_object().unwrap();
+            let recorder = properties
+                .get(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD)
+                .unwrap_or_else(|| {
+                    panic!("stateless recorder metadata missing for {}", tool["name"])
+                });
+            assert_eq!(recorder["type"], "string");
+            assert_eq!(recorder["pattern"], "^wc_sess_[A-Za-z0-9_]+$");
+            let description = recorder["description"].as_str().unwrap();
+            assert!(description.contains("wrapper metadata"));
+            assert!(description.contains("distinct from any concrete tool business session_id"));
+            assert!(!properties.contains_key(MCP_RESERVED_SESSION_ID_FIELD));
+        }
         // Exercise the real env adapter, not just the pure renderer: compact
         // must change outputSchema shape while preserving the common fields.
+        // Legacy MCP keeps its historical public schema; recorder metadata is
+        // a stateless-2026 transport projection only.
         for tool in tools {
             assert!(tool["name"].is_string());
             assert!(tool["description"].is_string());
             assert!(tool["inputSchema"].is_object());
+            let properties = tool["inputSchema"]["properties"].as_object().unwrap();
+            assert!(!properties
+                .contains_key(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD));
+            assert!(!properties.contains_key(MCP_RESERVED_SESSION_ID_FIELD));
             if compact {
                 assert!(
                     tool.get("outputSchema").is_none(),
@@ -96,6 +116,28 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
         }
     }
     std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+}
+
+#[test]
+fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_tool_schema() {
+    let mut connector =
+        mcp_tools_list_payload_with_compact(ModelSurface::CanonicalConnector, false);
+    add_stateless_workflow_recorder_metadata(&mut connector, ModelSurface::CanonicalConnector);
+    for tool in connector["tools"].as_array().unwrap() {
+        assert!(!tool["inputSchema"]["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD));
+    }
+
+    let generic = registered_tool_specs()
+        .into_iter()
+        .find(|tool| tool.name == "complete_session_message")
+        .expect("generic complete_session_message spec");
+    assert!(!generic.input_schema["properties"]
+        .as_object()
+        .unwrap()
+        .contains_key(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD));
 }
 
 #[test]
@@ -896,6 +938,46 @@ async fn mcp_tools_call_strips_reserved_session_id_before_dispatch() {
             .contains(MCP_RESERVED_SESSION_ID_FIELD),
         "_session_id must be stripped before recording/dispatch"
     );
+}
+
+#[tokio::test]
+async fn mcp_tools_call_rejects_conflicting_recorder_metadata_before_dispatch() {
+    let runtime = test_runtime();
+    let canonical = runtime
+        .sessions
+        .start_session(None, Some("canonical recorder".to_string()));
+    let legacy = runtime
+        .sessions
+        .start_session(None, Some("legacy recorder".to_string()));
+
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(Value::from(320)),
+            mcp_2026_params(json!({
+                "name": "list_projects",
+                "arguments": {
+                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &canonical.session_id,
+                    MCP_RESERVED_SESSION_ID_FIELD: &legacy.session_id
+                }
+            })),
+        ),
+        None,
+    )
+    .await;
+    let value = match outcome {
+        McpOutcome::BadRequest(value) => value,
+        other => panic!("expected invalid-params BadRequest, got {other:?}"),
+    };
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("must identify the same Workflow Session")));
+    for session_id in [&canonical.session_id, &legacy.session_id] {
+        let summary = runtime.sessions.summary(session_id, Some(10)).unwrap();
+        assert_eq!(summary.counts.tool_calls, 0);
+    }
 }
 
 #[tokio::test]

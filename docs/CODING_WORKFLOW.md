@@ -86,10 +86,14 @@ For a bounded independent subtask, keep coordinator `C` and worker `W` in
 **separate** Workflow Sessions. The coordinator posts a `todo` to `C`; `W` reads
 `session_handoff_summary(C)` plus that exact `message_id`, performs all tools and
 validation under `W`, then uses `complete_session_message` to atomically create one
-bounded answer and resolve the exact todo. The answer carries trusted
-`author_session_id` provenance from the recording worker Session first, falling
-back to the current worker Session binding only when no recording Session exists;
-the caller cannot forge that field.
+bounded answer and resolve the exact todo. On stateless MCP 2026, send
+`recording_session_id=W` as wrapper metadata while the concrete
+`complete_session_message.session_id=C` remains the coordinator/business target;
+WebCodex strips the recorder metadata before concrete parsing. The answer carries
+trusted `author_session_id` provenance from the recording worker Session first,
+falling back to the current worker Session binding only when no recording Session
+exists; the caller cannot forge that field, and legacy `mcp-session-id` is not used
+as Workflow Session provenance.
 
 The coordinator can retrieve the exact todo or its replies with
 `list_session_messages(message_id=...)` / `list_session_messages(reply_to=...)`,

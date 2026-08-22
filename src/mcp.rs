@@ -494,6 +494,31 @@ fn adapt_computer_snapshot_output_schema_for_mcp(spec: &mut ToolSpec) {
     );
 }
 
+fn add_stateless_workflow_recorder_metadata(payload: &mut Value, model_surface: ModelSurface) {
+    if matches!(model_surface, ModelSurface::CanonicalConnector) {
+        return;
+    }
+    let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for tool in tools {
+        let Some(properties) = tool
+            .pointer_mut("/inputSchema/properties")
+            .and_then(Value::as_object_mut)
+        else {
+            continue;
+        };
+        properties.insert(
+            crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string(),
+            json!({
+                "type": "string",
+                "pattern": "^wc_sess_[A-Za-z0-9_]+$",
+                "description": "MCP wrapper metadata only. Optional explicit existing Workflow Session that records this tools/call and supplies trusted collaboration provenance. It is distinct from any concrete tool business session_id, grants no authority, and is removed before concrete tool parsing."
+            }),
+        );
+    }
+}
+
 fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, _app_enabled: bool) -> Value {
     let tool_name = spec.name.clone();
     if matches!(
@@ -2685,6 +2710,9 @@ async fn handle_mcp_request_with_lifecycle(
             } else {
                 mcp_tools_list_payload(runtime.model_surface())
             };
+            if stateless_2026 {
+                add_stateless_workflow_recorder_metadata(&mut result, runtime.model_surface());
+            }
             if crate::mcp_gateway::authorized(auth) {
                 if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
                     tools.push(crate::mcp_gateway::tool_spec());
@@ -2959,7 +2987,16 @@ async fn handle_mcp_request_with_lifecycle(
                     },
                 ));
             }
-            let session_id = strip_reserved_session_id(&mut params.arguments);
+            let session_id = match strip_reserved_session_id(&mut params.arguments) {
+                Ok(session_id) => session_id,
+                Err(message) => {
+                    if let Some(lc) = lifecycle.as_deref() {
+                        lc.dispatch_failed("invalid_arguments");
+                        lc.dispatch_finished(false, Some(false), "invalid_arguments");
+                    }
+                    return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+                }
+            };
             let as_image_requested = params.name == "read_project_artifact"
                 && params.arguments.get("as_image").and_then(Value::as_bool) == Some(true);
             let outcome = runtime
@@ -3305,13 +3342,48 @@ fn require_mcp_scope(auth: Option<&AuthContext>, scope: &'static str) -> Option<
     ))
 }
 
-fn strip_reserved_session_id(arguments: &mut Value) -> Option<String> {
-    arguments
-        .as_object_mut()
-        .and_then(|obj| obj.remove(MCP_RESERVED_SESSION_ID_FIELD))
+fn strip_reserved_session_id(arguments: &mut Value) -> Result<Option<String>, String> {
+    let Some(object) = arguments.as_object_mut() else {
+        return Ok(None);
+    };
+    let canonical =
+        object.remove(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD);
+    let legacy = object.remove(MCP_RESERVED_SESSION_ID_FIELD);
+
+    let canonical = match canonical {
+        None => None,
+        Some(Value::String(value)) => {
+            let value = value.trim();
+            if value.is_empty() {
+                return Err(format!(
+                    "field '{}' must be a non-empty string",
+                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD
+                ));
+            }
+            Some(value.to_string())
+        }
+        Some(_) => {
+            return Err(format!(
+                "field '{}' must be a non-empty string",
+                crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD
+            ));
+        }
+    };
+    let legacy = legacy
         .and_then(|value| value.as_str().map(str::to_string))
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if let (Some(canonical), Some(legacy)) = (&canonical, &legacy) {
+        if canonical != legacy {
+            return Err(format!(
+                "fields '{}' and '{}' must identify the same Workflow Session when both are provided",
+                crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
+                MCP_RESERVED_SESSION_ID_FIELD
+            ));
+        }
+    }
+    Ok(canonical.or(legacy))
 }
 
 fn scope_forbidden(

@@ -16,7 +16,7 @@ Knowing a `session_id`, `message_id`, worker Session id, Job id, checkpoint id, 
 2. **Worker starts its own Session `W`.** Do not resume `C` just to accept the assignment.
 3. **Worker reads bounded coordinator state.** Use `session_handoff_summary(session_id=C)` and then `list_session_messages(session_id=C, message_id=<todo_id>)`. Exact lookup does not depend on the todo being in a recent-message window.
 4. **Worker performs the task under `W`.** Reads, edits, shell/process calls, validation, review evidence, Jobs, checkpoints, and other authoritative activity stay attached to `W`.
-5. **Worker completes the exact todo atomically.** Use `complete_session_message(session_id=C, message_id=<todo_id>, answer=<bounded answer>, completion_key=<caller key>)`. One Session-store mutation creates exactly one `kind=answer` reply, resolves the todo, and records the todo -> answer correlation.
+5. **Worker completes the exact todo atomically.** Use `complete_session_message(session_id=C, message_id=<todo_id>, answer=<bounded answer>, completion_key=<caller key>)`. On stateless MCP 2026, the `tools/call` arguments additionally carry wrapper metadata `recording_session_id=W`; this is distinct from the concrete business `session_id=C` and is stripped before concrete tool parsing. One Session-store mutation creates exactly one `kind=answer` reply, resolves the todo, and records the todo -> answer correlation.
 6. **Coordinator reads the result from `C`.** Use exact todo lookup, `list_session_messages(reply_to=<todo_id>)`, `session_discussion_summary`, or `session_handoff_summary`.
 7. **Coordinator re-observes authoritative state.** A message may reference `W`, a Job, checkpoint, artifact, commit, or PR, but the coordinator explicitly reads/revalidates that source before consequential follow-up.
 
@@ -48,7 +48,7 @@ A successful completion records:
 - a bounded completion identity derived from `completion_key`;
 - `author_session_id` from the trusted recording Session when the tool call is explicitly recorded under one; otherwise from the existing trusted current-window Session binding when available.
 
-The recording Session wins when it differs from the current-window binding, so provenance follows the Session that actually records the completion evidence. If neither trusted source exists, `author_session_id` is `null`; callers cannot supply a trusted author identity themselves.
+The recording Session wins when it differs from the current-window binding, so provenance follows the Session that actually records the completion evidence. If neither trusted source exists, `author_session_id` is `null`; callers cannot supply a trusted author identity themselves. Stateless MCP 2026 has no reliable transport/window Session identity, so callers that want worker provenance must pass the explicit `recording_session_id` wrapper metadata returned by WebCodex's 2026 `tools/list` schema. WebCodex does not infer it from `mcp-session-id`, HTTP connection state, credentials, project identity, or a recent Workflow Session.
 
 When a collaboration call has both a recording Session and a target Session, WebCodex authorizes both independently and then requires their stored project scopes to match exactly. `project/project` is allowed only for the same project, `project/project` with different projects is denied, both `project/project-less` directions are denied, and `project-less/project-less` is allowed only after both owner authorities have independently matched. The generic cross-project escape flag never widens this collaboration relationship.
 
@@ -71,7 +71,7 @@ All supplied filters use deterministic AND semantics. `message_id` therefore giv
 
 ## Provenance is metadata, not authority
 
-A completed answer can identify the independent worker with `author_session_id`. That value is derived first from the trusted recording Session that owns the completion tool evidence, then from the trusted current-Session binding only when no recording Session exists. It is not a caller-authored claim.
+A completed answer can identify the independent worker with `author_session_id`. That value is derived first from the trusted recording Session that owns the completion tool evidence, then from the trusted current-Session binding only when no recording Session exists. It is not a caller-authored claim. In stateless MCP 2026, `recording_session_id` is explicit wrapper provenance metadata, not a transport Session and not an authority grant; the legacy `mcp-session-id` header remains irrelevant.
 
 The coordinator may then explicitly inspect `session_handoff_summary(worker_session_id)` if it has authority to that Session. WebCodex does not copy the worker's transcript, validation, diff review, Job logs, or workspace evidence into the coordinator Session merely because the answer references `W`.
 

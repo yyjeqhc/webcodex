@@ -86,7 +86,7 @@ handoff, and finish can reason about the same unit of work.
 | ID form | `wc_sess_*` (`SESSION_ID_PREFIX`) |
 | Business field | `session_id` on tools that take a workflow session as input |
 | Coding resume field | `resume_session_id` on `start_coding_task`; distinct from ordinary project-tool `session_id` |
-| Recorder field | `recording_session_id` on generic wrappers (metadata only; stripped before concrete tool dispatch) |
+| Recorder field | `recording_session_id` on generic wrappers, including the stateless MCP 2026 tool-argument projection (metadata only; stripped before concrete tool dispatch) |
 
 ### Storage and ownership
 
@@ -96,6 +96,8 @@ handoff, and finish can reason about the same unit of work.
 | Primary store | In-memory session store |
 | Durability | JSON-oriented session ledger (bounded events/messages per session) |
 | Current-session binding | In-memory exact-key cache plus a bounded durable projection in the same JSON ledger; isolated by client window, principal, transport, resolved project, and canonical repository-root hash |
+
+Stateless MCP 2026 does not have a reliable Workflow Session or ChatGPT-window transport identity. Its `tools/list` schema therefore projects `recording_session_id` as explicit wrapper metadata for runtime tools. A call may carry `recording_session_id=W` while the concrete tool body carries business `session_id=C`; the MCP adapter removes the recorder field before concrete parsing and the kernel independently authorizes `W` before it can record evidence or supply trusted collaboration provenance. This does not revive legacy `mcp-session-id`, grant target authority, or infer a recorder from credentials, project identity, or connection state.
 
 Authenticated project-scoped Workflow Sessions created by current code also persist an internal canonical authority-group fingerprint. A legacy project-scoped record from before that fence may legitimately have no fingerprint; current project authorization or knowledge of its `session_id` is not enough to claim it. The only automatic compatibility upgrade is a coding continuation/resume whose current caller can reconstruct an exact historical `CurrentSessionKey` and whose pre-existing **durable** binding already points to that exact active Session for the same resolved project. The proof ignores the process-local cache. After all continuation validation succeeds, the canonical fingerprint is written atomically with the instruction/capability/context/binding mutation and enters the same persistence generation. Without that durable proof the legacy Session remains fail-closed.
 

@@ -25,7 +25,7 @@ use crate::shell_protocol::{
     PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
 };
 use crate::{
-    build_register_request_with_provider_status, dispatch_request, handle_one_poll,
+    build_register_request_with_provider_status, dispatch_request, handle_one_poll, is_project_op,
     legacy_inline_project_inventory, project_registration_bootstrap, register, AgentHttpError,
     AgentHttpErrorKind, CommandResult, JobManager, PollingDispatchSupervisor,
     PollingRecoveryAction, RegisterRecoveryAction,
@@ -2582,28 +2582,66 @@ fn try_queue_project_inventory_page(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectInventoryStatusAction {
+    None,
+    RetryExactAfter(Duration),
+    FreshResnapshot,
+}
+
+fn project_inventory_status_requests_fresh_resnapshot(
+    status: &ShellProjectInventoryStatus,
+) -> bool {
+    matches!(
+        status.last_error_code.as_deref(),
+        Some(
+            "project_inventory_stale_generation" | "project_inventory_missing_or_stale_generation"
+        )
+    )
+}
+
 fn handle_project_inventory_status(
     transport: StreamTransport,
     status: ShellProjectInventoryStatus,
     sync: &mut Option<ProjectInventorySync>,
     out_tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
     retry_backoff: &mut RetryBackoff,
-) -> Option<Duration> {
+) -> ProjectInventoryStatusAction {
+    // Stale-generation statuses can retain the last authoritative sync state
+    // and generation while carrying the actual recovery reason only in
+    // `last_error_code`. Those explicit reasons invalidate the current logical
+    // snapshot before ordinary success-ack correlation is attempted.
+    if project_inventory_status_requests_fresh_resnapshot(&status) {
+        if let Some(state) = sync.as_ref() {
+            log_project_inventory_degraded(
+                transport.name(),
+                state.total_reported(),
+                status
+                    .last_error_code
+                    .as_deref()
+                    .unwrap_or("project_inventory_stale_generation"),
+            );
+        }
+        *sync = None;
+        retry_backoff.reset();
+        return ProjectInventoryStatusAction::FreshResnapshot;
+    }
+
     let Some(state) = sync.as_mut() else {
         retry_backoff.reset();
-        return None;
+        return ProjectInventoryStatusAction::None;
     };
     let projects = state.total_reported();
     match state.acknowledge(&status) {
         Ok(true) => {
             *sync = None;
             retry_backoff.reset();
-            None
+            ProjectInventoryStatusAction::None
         }
         Ok(false) => {
             retry_backoff.reset();
             try_queue_project_inventory_page(transport, sync, out_tx);
-            None
+            ProjectInventoryStatusAction::None
         }
         Err(reason_code) if reason_code == "project_inventory_staging_capacity" => {
             let delay = retry_backoff.next_delay();
@@ -2617,13 +2655,109 @@ fn handle_project_inventory_status(
             // Keep the exact pending page/generation/snapshot_sequence. The
             // Server rejected page 0 before advancing its high-water fence, so
             // replaying this exact page after bounded delay is safe.
-            Some(delay)
+            ProjectInventoryStatusAction::RetryExactAfter(delay)
         }
         Err(reason_code) => {
             log_project_inventory_degraded(transport.name(), projects, &reason_code);
             *sync = None;
             retry_backoff.reset();
-            None
+            ProjectInventoryStatusAction::None
+        }
+    }
+}
+
+struct StreamingProjectInventoryCoordinator {
+    supported: bool,
+    sync: Option<ProjectInventorySync>,
+    project_cache: AgentProjectCache,
+    retry_backoff: RetryBackoff,
+    retry_at: Option<tokio::time::Instant>,
+}
+
+impl StreamingProjectInventoryCoordinator {
+    fn new(sync: Option<ProjectInventorySync>) -> Self {
+        Self {
+            supported: sync.is_some(),
+            sync,
+            project_cache: AgentProjectCache::default(),
+            retry_backoff: RetryBackoff::new(&PROJECT_INVENTORY_STAGING_RETRY_BACKOFF_STEPS),
+            retry_at: None,
+        }
+    }
+
+    fn retry_at(&self) -> Option<tokio::time::Instant> {
+        self.retry_at
+    }
+
+    fn queue_pending(
+        &mut self,
+        transport: StreamTransport,
+        out_tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
+    ) {
+        try_queue_project_inventory_page(transport, &mut self.sync, out_tx);
+    }
+
+    fn retry_pending_now(
+        &mut self,
+        transport: StreamTransport,
+        out_tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
+    ) {
+        self.retry_at = None;
+        self.queue_pending(transport, out_tx);
+    }
+
+    fn refresh_from_current_projects(
+        &mut self,
+        transport: StreamTransport,
+        cfg: &AgentConfig,
+        runtime: &AgentRuntimeState,
+        out_tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
+        reason_code: &str,
+    ) {
+        if !self.supported {
+            return;
+        }
+        self.project_cache.invalidate();
+        let projects = runtime.project_summaries(&mut self.project_cache, cfg);
+        let projects_count = projects.len();
+        self.sync = Some(ProjectInventorySync::new(projects));
+        self.retry_backoff.reset();
+        self.retry_at = None;
+        eprintln!(
+            "webcodex-runner project inventory resnapshot transport={} projects={} reason_code={}",
+            transport.name(),
+            projects_count,
+            reason_code
+        );
+        self.queue_pending(transport, out_tx);
+    }
+
+    fn handle_status(
+        &mut self,
+        transport: StreamTransport,
+        status: ShellProjectInventoryStatus,
+        cfg: &AgentConfig,
+        runtime: &AgentRuntimeState,
+        out_tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
+    ) {
+        match handle_project_inventory_status(
+            transport,
+            status,
+            &mut self.sync,
+            out_tx,
+            &mut self.retry_backoff,
+        ) {
+            ProjectInventoryStatusAction::None => self.retry_at = None,
+            ProjectInventoryStatusAction::RetryExactAfter(delay) => {
+                self.retry_at = Some(tokio::time::Instant::now() + delay);
+            }
+            ProjectInventoryStatusAction::FreshResnapshot => self.refresh_from_current_projects(
+                transport,
+                cfg,
+                runtime,
+                out_tx,
+                "project_inventory_server_invalidated_snapshot",
+            ),
         }
     }
 }
@@ -2634,13 +2768,13 @@ fn handle_stream_envelope(
     cfg: &AgentConfig,
     sink: &AgentSink,
     out_tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
-    project_inventory_sync: &mut Option<ProjectInventorySync>,
-    project_inventory_retry_backoff: &mut RetryBackoff,
-    project_inventory_retry_at: &mut Option<tokio::time::Instant>,
+    project_inventory: &mut StreamingProjectInventoryCoordinator,
+    project_inventory_refresh_tx: &tokio::sync::mpsc::Sender<()>,
     runtime: &AgentRuntimeState,
 ) -> Option<String> {
     match envelope {
         AgentEnvelope::Request { request } => {
+            let project_op = is_project_op(&request.kind);
             let sink = sink.clone();
             let config = Arc::clone(&runtime.config);
             let hot = config.snapshot();
@@ -2652,9 +2786,10 @@ fn handle_stream_envelope(
             };
             let lsp = runtime.lsp.clone();
             let dispatch_guard = runtime.dispatches.enter();
+            let project_inventory_refresh_tx = project_inventory_refresh_tx.clone();
             tokio::task::spawn_blocking(move || {
                 let _dispatch_guard = dispatch_guard;
-                let _ = dispatch_request(
+                let dispatch_result = dispatch_request(
                     &sink,
                     &hot,
                     &config,
@@ -2664,6 +2799,13 @@ fn handle_stream_envelope(
                     &lsp,
                     request,
                 );
+                if project_op && dispatch_result.is_ok() {
+                    // Capacity one deliberately coalesces multiple project
+                    // mutations. A queued dirty signal already guarantees a
+                    // fresh full observation; never block request completion on
+                    // inventory synchronization.
+                    let _ = project_inventory_refresh_tx.try_send(());
+                }
             });
             None
         }
@@ -2673,14 +2815,7 @@ fn handle_stream_envelope(
         }
         AgentEnvelope::Pong { .. } => None,
         AgentEnvelope::ProjectInventoryStatus { status } => {
-            *project_inventory_retry_at = handle_project_inventory_status(
-                transport,
-                status,
-                project_inventory_sync,
-                out_tx,
-                project_inventory_retry_backoff,
-            )
-            .map(|delay| tokio::time::Instant::now() + delay);
+            project_inventory.handle_status(transport, status, cfg, runtime, out_tx);
             None
         }
         AgentEnvelope::Registered { .. } if transport == StreamTransport::Quic => None,
@@ -2705,7 +2840,7 @@ async fn serve_registered_stream<F>(
     registered_jobs: &ShellJobInventory,
     out_tx: tokio::sync::mpsc::Sender<AgentEnvelope>,
     mut stream: RegisteredStream,
-    mut project_inventory_sync: Option<ProjectInventorySync>,
+    project_inventory_sync: Option<ProjectInventorySync>,
     runtime: &AgentRuntimeState,
     shutdown: F,
 ) -> Result<AgentSessionExit, String>
@@ -2729,24 +2864,31 @@ where
     jobs.replay_snapshots_since(registered_jobs);
     let mut ping_interval = tokio::time::interval(transport.ping_interval());
     ping_interval.tick().await;
-    let mut project_inventory_retry_backoff =
-        RetryBackoff::new(&PROJECT_INVENTORY_STAGING_RETRY_BACKOFF_STEPS);
-    let mut project_inventory_retry_at: Option<tokio::time::Instant> = None;
+    let mut project_inventory = StreamingProjectInventoryCoordinator::new(project_inventory_sync);
+    let (project_inventory_refresh_tx, mut project_inventory_refresh_rx) =
+        tokio::sync::mpsc::channel::<()>(1);
     let mut shutdown = Box::pin(shutdown);
     let mut shutdown_requested = false;
     let mut session_error = None;
 
     loop {
+        let project_inventory_retry_at = project_inventory.retry_at();
         let project_inventory_retry_deadline =
             project_inventory_retry_at.unwrap_or_else(tokio::time::Instant::now);
         tokio::select! {
             _ = tokio::time::sleep_until(project_inventory_retry_deadline), if project_inventory_retry_at.is_some() => {
-                project_inventory_retry_at = None;
-                try_queue_project_inventory_page(
-                    transport,
-                    &mut project_inventory_sync,
-                    &out_tx,
-                );
+                project_inventory.retry_pending_now(transport, &out_tx);
+            }
+            refresh = project_inventory_refresh_rx.recv() => {
+                if refresh.is_some() {
+                    project_inventory.refresh_from_current_projects(
+                        transport,
+                        cfg,
+                        runtime,
+                        &out_tx,
+                        "project_inventory_local_project_mutation",
+                    );
+                }
             }
             _ = &mut shutdown => {
                 runtime.request_shutdown_signal();
@@ -2762,9 +2904,8 @@ where
                             cfg,
                             &sink,
                             &out_tx,
-                            &mut project_inventory_sync,
-                            &mut project_inventory_retry_backoff,
-                            &mut project_inventory_retry_at,
+                            &mut project_inventory,
+                            &project_inventory_refresh_tx,
                             runtime,
                         ) {
                             session_error = Some(error);
@@ -2790,12 +2931,8 @@ where
                 // When the Server explicitly reported staging pressure, the
                 // dedicated backoff timer owns retry timing so keepalive cannot
                 // collapse that bounded delay into an eager resend.
-                if project_inventory_retry_at.is_none() {
-                    try_queue_project_inventory_page(
-                        transport,
-                        &mut project_inventory_sync,
-                        &out_tx,
-                    );
+                if project_inventory.retry_at().is_none() {
+                    project_inventory.queue_pending(transport, &out_tx);
                 }
                 let _ = out_tx.try_send(AgentEnvelope::Ping {
                     ts: chrono::Utc::now().timestamp(),

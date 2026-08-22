@@ -3671,7 +3671,10 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
             &tx,
             &mut retry_backoff,
         );
-        assert_eq!(delay, Some(Duration::from_secs(1)));
+        assert_eq!(
+            delay,
+            ProjectInventoryStatusAction::RetryExactAfter(Duration::from_secs(1))
+        );
         assert!(
             rx.try_recv().is_err(),
             "capacity failure must not busy-loop"
@@ -3706,7 +3709,10 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
             &tx,
             &mut retry_backoff,
         );
-        assert_eq!(second_delay, Some(Duration::from_secs(2)));
+        assert_eq!(
+            second_delay,
+            ProjectInventoryStatusAction::RetryExactAfter(Duration::from_secs(2))
+        );
 
         try_queue_project_inventory_page(transport, &mut sync, &tx);
         let accepted_retry_page0 = match rx.recv().await {
@@ -3731,7 +3737,7 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
                 &tx,
                 &mut retry_backoff,
             ),
-            None
+            ProjectInventoryStatusAction::None
         );
         let page1 = match rx.recv().await {
             Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
@@ -3751,7 +3757,7 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
                 &tx,
                 &mut retry_backoff,
             ),
-            None
+            ProjectInventoryStatusAction::None
         );
         assert!(
             sync.is_none(),
@@ -3789,9 +3795,213 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
                 &tx,
                 &mut retry_backoff,
             ),
-            None
+            ProjectInventoryStatusAction::None
         );
         assert!(permanent_sync.is_none());
+    }
+}
+
+#[tokio::test]
+async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_and_quic() {
+    for transport in [StreamTransport::WebSocket, StreamTransport::Quic] {
+        let temp = tempfile::tempdir().unwrap();
+        let projects_dir = temp.path().join("projects.d");
+        let project_root = temp.path().join("projects");
+        write_synthetic_project_configs(&projects_dir, &project_root, 100);
+
+        let mut cfg = test_agent_config("http://127.0.0.1:1".to_string());
+        cfg.projects_dir = Some(projects_dir.clone());
+        let runtime = test_runtime(&cfg);
+        let mut initial_cache = AgentProjectCache::default();
+        let initial_projects = runtime.project_summaries(&mut initial_cache, &cfg);
+        assert_eq!(initial_projects.len(), 100);
+
+        let initial_sync = ProjectInventorySync::new(initial_projects);
+        let generation_a = initial_sync.generation().to_string();
+        let sequence_a = initial_sync.snapshot_sequence;
+        let mut coordinator = StreamingProjectInventoryCoordinator::new(Some(initial_sync));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+
+        coordinator.queue_pending(transport, &tx);
+        let page_a0 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected generation A page 0, got {other:?}"),
+        };
+        assert_eq!(page_a0.generation, generation_a);
+        assert_eq!(page_a0.snapshot_sequence, sequence_a);
+        assert_eq!(page_a0.page_index, 0);
+        assert!(!page_a0.complete);
+
+        // Page 0 was accepted, so generation A is now staged on the Server.
+        coordinator.handle_status(
+            transport,
+            inventory_status("in_progress", &generation_a, 100, page_a0.projects.len()),
+            &cfg,
+            &runtime,
+            &tx,
+        );
+        let page_a1 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected generation A page 1, got {other:?}"),
+        };
+        assert_eq!(page_a1.generation, generation_a);
+        assert_eq!(page_a1.page_index, 1);
+
+        // Model a successful project mutation after its result was submitted:
+        // projects.d now has 101 entries. The event-driven dirty signal may
+        // eagerly create generation B before the Server-side dynamic projection
+        // has retired A, so B alone is not sufficient for correctness.
+        let added_root = project_root.join("new-project");
+        std::fs::create_dir_all(&added_root).unwrap();
+        std::fs::write(
+            projects_dir.join("new-project.toml"),
+            format!(
+                "id = \"new-project\"\nname = \"New Project\"\npath = {:?}\nallow_patch = true\n",
+                added_root.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        coordinator.refresh_from_current_projects(
+            transport,
+            &cfg,
+            &runtime,
+            &tx,
+            "project_inventory_local_project_mutation",
+        );
+        let page_b0 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected eager generation B page 0, got {other:?}"),
+        };
+        let generation_b = page_b0.generation.clone();
+        let sequence_b = page_b0.snapshot_sequence;
+        assert_ne!(generation_b, generation_a);
+        assert!(sequence_b > sequence_a);
+        assert_eq!(page_b0.page_index, 0);
+        let observed_b = &coordinator.sync.as_ref().unwrap().projects;
+        assert_eq!(observed_b.len(), 101);
+        assert!(observed_b
+            .iter()
+            .any(|project| project.id == "project-0000"));
+        assert!(observed_b
+            .iter()
+            .any(|project| project.id == "project-0099"));
+        assert!(observed_b.iter().any(|project| project.id == "new-project"));
+
+        // The authoritative dynamic projection can race after B/page0 and retire
+        // it too. A stale status is therefore the synchronization fence: abandon
+        // the old logical snapshot and re-observe projects.d as generation C.
+        coordinator.handle_status(
+            transport,
+            ShellProjectInventoryStatus {
+                sync_state: "complete".to_string(),
+                generation: None,
+                total_reported: Some(1),
+                total_synced: 1,
+                last_error_code: Some("project_inventory_stale_generation".to_string()),
+                last_sync_at: Some(1),
+                max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+                max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
+            },
+            &cfg,
+            &runtime,
+            &tx,
+        );
+        let page_c0 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected fresh generation C page 0, got {other:?}"),
+        };
+        let generation_c = page_c0.generation.clone();
+        let sequence_c = page_c0.snapshot_sequence;
+        assert_ne!(generation_c, generation_a);
+        assert_ne!(generation_c, generation_b);
+        assert!(sequence_c > sequence_b);
+        assert_eq!(page_c0.page_index, 0);
+        assert_eq!(page_c0.total_reported, 101);
+        let observed_c = &coordinator.sync.as_ref().unwrap().projects;
+        assert_eq!(observed_c.len(), 101);
+        assert!(observed_c
+            .iter()
+            .any(|project| project.id == "project-0000"));
+        assert!(observed_c
+            .iter()
+            .any(|project| project.id == "project-0099"));
+        assert!(observed_c.iter().any(|project| project.id == "new-project"));
+
+        coordinator.handle_status(
+            transport,
+            inventory_status("in_progress", &generation_c, 101, page_c0.projects.len()),
+            &cfg,
+            &runtime,
+            &tx,
+        );
+        let page_c1 = match rx.recv().await {
+            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            other => panic!("expected generation C final page, got {other:?}"),
+        };
+        assert_eq!(page_c1.generation, generation_c);
+        assert_eq!(page_c1.snapshot_sequence, sequence_c);
+        assert_eq!(page_c1.page_index, 1);
+        assert!(page_c1.complete);
+        coordinator.handle_status(
+            transport,
+            inventory_status("complete", &generation_c, 101, 101),
+            &cfg,
+            &runtime,
+            &tx,
+        );
+        assert!(coordinator.sync.is_none());
+        assert!(coordinator.retry_at().is_none());
+        assert!(
+            rx.try_recv().is_err(),
+            "stale generation must not be resent"
+        );
+
+        runtime.shutdown();
+    }
+}
+
+#[tokio::test]
+async fn streaming_permanent_inventory_error_does_not_fresh_resnapshot() {
+    for transport in [StreamTransport::WebSocket, StreamTransport::Quic] {
+        let cfg = test_agent_config("http://127.0.0.1:1".to_string());
+        let runtime = test_runtime(&cfg);
+        let sync = ProjectInventorySync::new(
+            (0..65)
+                .map(|index| synthetic_project_summary(index, None))
+                .collect(),
+        );
+        let mut coordinator = StreamingProjectInventoryCoordinator::new(Some(sync));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        coordinator.queue_pending(transport, &tx);
+        assert!(matches!(
+            rx.recv().await,
+            Some(AgentEnvelope::ProjectInventoryPage { .. })
+        ));
+
+        coordinator.handle_status(
+            transport,
+            ShellProjectInventoryStatus {
+                sync_state: "degraded".to_string(),
+                generation: Some("unrelated-generation".to_string()),
+                total_reported: None,
+                total_synced: 0,
+                last_error_code: Some("project_inventory_page_too_large".to_string()),
+                last_sync_at: Some(1),
+                max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+                max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
+            },
+            &cfg,
+            &runtime,
+            &tx,
+        );
+
+        assert!(coordinator.sync.is_none());
+        assert!(coordinator.retry_at().is_none());
+        assert!(
+            rx.try_recv().is_err(),
+            "permanent inventory failure must not create a fresh generation loop"
+        );
+        runtime.shutdown();
     }
 }
 

@@ -402,17 +402,24 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
         .register(paged_registration(client_id, instance_id))
         .await
         .unwrap();
+
+    // Generation A is deliberately incomplete: only page 0 is staged when a
+    // dynamic mutation becomes immediately authoritative.
     let generation_a = synthetic_projects(70);
     let stale_a_pages = snapshot_pages("generation-a", 1, &generation_a);
-    apply_snapshot(
-        &registry,
-        client_id,
-        instance_id,
-        "generation-a",
-        1,
-        &generation_a,
-    )
-    .await;
+    let staged_a = registry
+        .apply_project_inventory_page(client_id, instance_id, stale_a_pages[0].clone())
+        .await
+        .unwrap();
+    assert_eq!(staged_a.sync_state, "in_progress");
+    assert!(
+        registry
+            .list_client_projects(client_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "incomplete generation A must not partially publish"
+    );
 
     registry
         .upsert_client_project_for_instance(
@@ -423,13 +430,14 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
         .await
         .expect("dynamic register projection should commit against the active instance");
     let after_register = registry.list_client_projects(client_id).await.unwrap();
-    assert_eq!(after_register.len(), 71);
-    assert!(after_register
-        .iter()
-        .any(|project| project.id == "dynamic-added"));
+    assert_eq!(after_register.len(), 1);
+    assert_eq!(after_register[0].id, "dynamic-added");
 
+    // Dynamic projection clears A staging and retires the pre-mutation
+    // generation. A later page from A must be rejected rather than replacing
+    // the just-committed mutation with its stale 70-project snapshot.
     let stale_after_register = registry
-        .apply_project_inventory_page(client_id, instance_id, stale_a_pages[0].clone())
+        .apply_project_inventory_page(client_id, instance_id, stale_a_pages[1].clone())
         .await
         .unwrap();
     assert_eq!(stale_after_register.sync_state, "complete");
@@ -437,14 +445,33 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
         stale_after_register.last_error_code.as_deref(),
         Some("project_inventory_stale_generation")
     );
-    assert_eq!(
-        registry
-            .list_client_projects(client_id)
-            .await
-            .unwrap()
-            .len(),
-        71
-    );
+    let still_dynamic_only = registry.list_client_projects(client_id).await.unwrap();
+    assert_eq!(still_dynamic_only.len(), 1);
+    assert_eq!(still_dynamic_only[0].id, "dynamic-added");
+
+    // A fresh post-mutation full snapshot restores every pre-existing project
+    // plus the dynamically added project atomically.
+    let mut generation_b = generation_a.clone();
+    generation_b.push(project_summary("dynamic-added", "/tmp/dynamic-added"));
+    let converged_after_register = apply_snapshot(
+        &registry,
+        client_id,
+        instance_id,
+        "generation-b",
+        2,
+        &generation_b,
+    )
+    .await;
+    assert_eq!(converged_after_register.sync_state, "complete");
+    assert_eq!(converged_after_register.total_synced, 71);
+    let after_full_register = registry.list_client_projects(client_id).await.unwrap();
+    assert_eq!(after_full_register.len(), 71);
+    assert!(after_full_register
+        .iter()
+        .any(|project| project.id == "project-0037"));
+    assert!(after_full_register
+        .iter()
+        .any(|project| project.id == "dynamic-added"));
 
     assert!(registry
         .remove_client_project_for_instance(client_id, instance_id, "project-0037")
@@ -459,12 +486,22 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
         .iter()
         .any(|project| project.id == "dynamic-added"));
 
+    let stale_b_pages = snapshot_pages("generation-b", 2, &generation_b);
+    let stale_after_unregister = registry
+        .apply_project_inventory_page(client_id, instance_id, stale_b_pages[0].clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        stale_after_unregister.last_error_code.as_deref(),
+        Some("project_inventory_stale_generation")
+    );
+
     let converged = apply_snapshot(
         &registry,
         client_id,
         instance_id,
-        "generation-b",
-        2,
+        "generation-c",
+        3,
         &after_unregister,
     )
     .await;
@@ -480,7 +517,7 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
         .any(|project| project.id == "dynamic-added"));
 
     registry
-        .apply_project_inventory_page(client_id, instance_id, stale_a_pages[0].clone())
+        .apply_project_inventory_page(client_id, instance_id, stale_a_pages[1].clone())
         .await
         .unwrap();
     let after_stale = registry.list_client_projects(client_id).await.unwrap();

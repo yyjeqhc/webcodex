@@ -163,7 +163,7 @@ pub(crate) fn finish_coding_task_input_schema() -> Value {
             },
             "session_id": {
                 "type": "string",
-                "description": "Required explicit wc_sess_* id returned by start_coding_task or start_session. This is business input, not current-session fallback."
+                "description": "Required explicit wc_sess_* id returned by work_on_project. Advanced/internal callers may also obtain it from compatible Session bootstrap APIs. This is business input, not current-session fallback."
             },
             "include_diff": {
                 "type": "boolean",

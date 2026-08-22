@@ -221,7 +221,7 @@ pub(crate) fn session_summary_input_schema() -> Value {
         (
             "session_id",
             "string",
-            "Opaque session id returned by start_session.",
+            "Opaque wc_sess_* id returned by work_on_project or another compatible Session bootstrap.",
             true,
         ),
         (
@@ -362,7 +362,7 @@ pub(crate) fn current_session_input_schema(require_session_id: bool) -> Value {
         fields.push((
             "session_id",
             "string",
-            "Existing active project-scoped wc_sess_* id returned by start_session. Binding updates the process-local cache and hashed durable ledger projection without changing Session history.",
+            "Existing active project-scoped wc_sess_* id returned by work_on_project or another compatible Session bootstrap. Binding updates the process-local cache and hashed durable ledger projection without changing Session history.",
             true,
         ));
     }

@@ -1120,7 +1120,7 @@ fn work_on_project_output_schema() -> Value {
         ),
         (
             "project",
-            schema_type("string", "Original project input."),
+            schema_type("string", "Canonical runtime project id used for this task. For Runner path input it is the resolved full project id."),
         ),
         (
             "resolved_project",

@@ -41,6 +41,15 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         .description
         .contains("Advanced coding-session bootstrap"));
     assert!(start_compat.description.contains("Prefer work_on_project"));
+    let finish = specs
+        .iter()
+        .find(|spec| spec.name == "finish_coding_task")
+        .expect("finish_coding_task public spec");
+    assert!(
+        finish.input_schema["properties"]["session_id"]["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("work_on_project"))
+    );
     let start_schema = start_compat.input_schema;
     assert!(start_schema["required"].as_array().unwrap().is_empty());
     let start_props = start_schema["properties"].as_object().unwrap();

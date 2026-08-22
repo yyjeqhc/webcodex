@@ -213,7 +213,7 @@ impl ToolRuntime {
                 }
             }
         }
-        let recording_session_project_mismatch = match context.session_id {
+        let mut recording_session_project_mismatch = match context.session_id {
             Some(session_id) => {
                 self.recording_session_project_mismatch(
                     session_id,
@@ -453,6 +453,26 @@ impl ToolRuntime {
             }
         }
 
+        // `work_on_project` can resolve its canonical project only after a
+        // Runner path registration/lookup. Preserve enough source information
+        // to reconcile an outer recording Session once dispatch returns that
+        // resolved project id; explicit `project` inputs are already handled by
+        // `recording_session_project_mismatch` above.
+        let late_work_on_project_path_mismatch = request.tool_name == "work_on_project"
+            && concrete_arguments.as_object().is_some_and(|arguments| {
+                arguments
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .is_some_and(|path| !path.trim().is_empty())
+                    && arguments
+                        .get("client_id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|client_id| !client_id.trim().is_empty())
+                    && !arguments
+                        .get("project")
+                        .and_then(Value::as_str)
+                        .is_some_and(|project| !project.trim().is_empty())
+            });
         let mut call = match ToolCall::from_tool_name(&request.tool_name, concrete_arguments) {
             Ok(call) => call,
             Err(message) => {
@@ -514,6 +534,37 @@ impl ToolRuntime {
                 super::permissions::permission_decision_from_output(&result.output)
             {
                 self.sessions.record_permission_decision(start, permission);
+            }
+        }
+        if recording_session_project_mismatch.is_none() && late_work_on_project_path_mismatch {
+            if let Some(recording_session_id) = context.session_id {
+                let session_project = self
+                    .sessions
+                    .session_project(recording_session_id)
+                    .flatten();
+                let request_project = result
+                    .output
+                    .get("resolved_project")
+                    .and_then(Value::as_str)
+                    .or_else(|| {
+                        result
+                            .output
+                            .pointer("/project_resolution/resolved_project")
+                            .and_then(Value::as_str)
+                    })
+                    .map(str::trim)
+                    .filter(|project| !project.is_empty());
+                if let (Some(session_project), Some(request_project)) =
+                    (session_project, request_project)
+                {
+                    if session_project != request_project {
+                        recording_session_project_mismatch =
+                            Some(session_context::SessionProjectMismatch {
+                                session_project,
+                                request_project: request_project.to_string(),
+                            });
+                    }
+                }
             }
         }
         if let Some(mismatch) = recording_session_project_mismatch.as_ref() {

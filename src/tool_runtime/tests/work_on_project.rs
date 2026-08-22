@@ -1386,6 +1386,159 @@ async fn path_source_registers_before_unknown_session_rejection() {
 }
 
 #[tokio::test]
+async fn path_source_cross_project_recording_session_reports_resolved_mismatch() {
+    let recorder_root = tempfile::tempdir().unwrap();
+    let target_root = tempfile::tempdir().unwrap();
+    init_git_repo(recorder_root.path());
+    init_git_repo(target_root.path());
+    let target_path = target_root.path().canonicalize().unwrap();
+    let target_path = target_path.to_string_lossy().to_string();
+    let runtime = ToolRuntime::new_for_tests();
+    let recorder_project = register_agent_project_at_path(
+        &runtime,
+        "wop-recorder-owner",
+        "recorder",
+        recorder_root.path(),
+    )
+    .await;
+    let target_client = "wop-recorder-target";
+    register_agent_with_projects(
+        &runtime,
+        target_client,
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            git: true,
+            file_read: true,
+            file_write: true,
+            project_path_registration: true,
+            ..Default::default()
+        },
+        Vec::new(),
+    )
+    .await;
+    let auth = auth_context(None, true);
+    let recorder = runtime.sessions.start_session(
+        Some(recorder_project.clone()),
+        Some("path recorder boundary".to_string()),
+    );
+    let recorder_session_id = recorder.session_id.clone();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let target_path = target_path.clone();
+        let recorder_session_id = recorder_session_id.clone();
+        async move {
+            runtime
+                .call_tool_with_context(
+                    crate::tool_runtime::kernel::ToolCallRequest {
+                        tool_name: "work_on_project".to_string(),
+                        arguments: json!({
+                            "client_id": target_client,
+                            "path": target_path,
+                            "instruction": "bootstrap a different project through its path"
+                        }),
+                    },
+                    crate::tool_runtime::kernel::ToolCallContext {
+                        transport: crate::tool_runtime::kernel::ToolTransport::Api,
+                        session_id: Some(&recorder_session_id),
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: true,
+                        host_file_import_trust:
+                            crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
+                    },
+                )
+                .await
+        }
+    });
+
+    for _ in 0..500 {
+        if task.is_finished() {
+            break;
+        }
+        if let Some(request) = next_patch_agent_request(&runtime, target_client).await {
+            if request.kind == "resolve_or_register_project" {
+                let payload: Value =
+                    serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
+                assert_eq!(payload["path"], target_path);
+                let response = json!({
+                    "id": "agent:wop-recorder-target:target-a1b2c3d4",
+                    "agent_project_id": "target-a1b2c3d4",
+                    "client_id": target_client,
+                    "name": "target-a1b2c3d4",
+                    "path": target_path,
+                    "kind": "auto_registered",
+                    "description": null,
+                    "allow_patch": true,
+                    "disabled": false,
+                    "revision": format!("sha256:{}", "a".repeat(64)),
+                    "source": "path",
+                    "outcome": "auto_registered",
+                    "registered": true,
+                    "created_config": true,
+                    "changed": true,
+                    "recovered": false,
+                });
+                complete_patch_agent_request(
+                    &runtime,
+                    target_client,
+                    &request.request_id,
+                    0,
+                    &response.to_string(),
+                    "",
+                )
+                .await;
+            } else {
+                complete_agent_request_by_running_locally(&runtime, target_client, request).await;
+            }
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    assert!(task.is_finished(), "kernel path bootstrap did not finish");
+    let outcome = task.await.unwrap();
+    assert!(outcome.success);
+    let result = outcome.result.expect("work_on_project result");
+    assert_eq!(
+        result.output["resolved_project"],
+        "agent:wop-recorder-target:target-a1b2c3d4"
+    );
+    assert_eq!(
+        result.output["warning_kind"], "session_project_mismatch",
+        "resolved cross-project path bootstrap must preserve recorder provenance"
+    );
+    assert_eq!(result.output["session_project"], recorder_project);
+    assert_eq!(
+        result.output["request_project"],
+        "agent:wop-recorder-target:target-a1b2c3d4"
+    );
+    let summary = runtime
+        .sessions
+        .summary(&recorder_session_id, Some(50))
+        .expect("recording session summary");
+    let event = summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "work_on_project")
+        .expect("recorded work_on_project event");
+    assert_eq!(
+        event.warning_kind.as_deref(),
+        Some("session_project_mismatch")
+    );
+    assert_eq!(
+        event.session_project.as_deref(),
+        Some(recorder_project.as_str())
+    );
+    assert_eq!(
+        event.request_project.as_deref(),
+        Some("agent:wop-recorder-target:target-a1b2c3d4")
+    );
+}
+
+#[tokio::test]
 async fn path_source_requires_project_write_scope_before_runner_enqueue() {
     let root = tempfile::tempdir().unwrap();
     let project_path = root.path().canonicalize().unwrap();

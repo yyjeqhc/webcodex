@@ -650,6 +650,10 @@ mod tests {
         let spec = tool_spec();
         let encoded = serde_json::to_string(&spec).unwrap();
         assert!(encoded.contains("mcp_tool"));
+        assert!(
+            spec.get("outputSchema").is_none(),
+            "mcp_tool preserves provider-defined structuredContent, so a fixed outputSchema would be misleading"
+        );
         assert!(!encoded.contains("provider_instance_id"));
         assert!(!encoded.contains("agent_instance_id"));
         let properties = spec["inputSchema"]["properties"].as_object().unwrap();

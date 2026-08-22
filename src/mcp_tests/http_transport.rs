@@ -238,11 +238,18 @@ async fn http_mcp_tools_list_success() {
         assert!(tool["name"].is_string());
         assert!(tool["description"].is_string());
         assert!(tool["inputSchema"].is_object());
-        assert!(
-            tool["outputSchema"].is_object(),
-            "default HTTP tools/list must include outputSchema for {}",
-            tool["name"]
-        );
+        if tool["name"] == crate::mcp_gateway::MCP_TOOL_NAME {
+            assert!(
+                tool.get("outputSchema").is_none(),
+                "mcp_tool must not claim a fixed schema for provider-defined structuredContent"
+            );
+        } else {
+            assert!(
+                tool["outputSchema"].is_object(),
+                "default HTTP tools/list must include outputSchema for {}",
+                tool["name"]
+            );
+        }
     }
 }
 

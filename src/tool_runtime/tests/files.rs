@@ -24,7 +24,7 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     };
     register_agent(&runtime, "telemetry-write", None, caps).await;
     let project = agent_test_project_id("telemetry-write");
-    let session = runtime.sessions.start_session(None, None);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.clone();
@@ -831,7 +831,7 @@ async fn artifact_upload_chunk_session_log_arguments_do_not_store_base64() {
     )
     .await;
     let project = agent_test_project_id("telemetry-artifact-chunk");
-    let session = runtime.sessions.start_session(None, None);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
     let raw_marker = "SECRET_CHUNK_CONTENT_SHOULD_NOT_BE_LOGGED";
     let content_base64 =
         base64::Engine::encode(&base64::engine::general_purpose::STANDARD, raw_marker);

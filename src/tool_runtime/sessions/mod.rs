@@ -47,6 +47,12 @@ pub(crate) use model::{
 pub(crate) use store::SessionStore;
 pub(crate) use util::redact_and_bound_instruction;
 
+/// Synthetic authority marker used only by the cfg(test) SessionStore convenience
+/// constructors. Real runtime creation paths never write or accept this marker.
+#[cfg(test)]
+pub(crate) const TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT: &str =
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
 // Test-only surface: keep the runtime re-export list narrow while still
 // allowing crate-level tests to reach these constants without pub-ing `model`.
 #[cfg(test)]

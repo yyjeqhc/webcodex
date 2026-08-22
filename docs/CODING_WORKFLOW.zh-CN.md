@@ -75,9 +75,12 @@ caller 不能自行伪造该 provenance。
 
 coordinator 可用 `list_session_messages(message_id=...)` / `reply_to=...` 精确读取 todo 与
 reply，然后重新观察权威的 project/Git/artifact state。worker execution history 不会复制到
-`C`，知道 Session/message id 也不会获得 authority。project-scoped Session target 会根据其
-stored project 重新授权；project-less Session 只持久化 domain-separated owner fingerprint，
-不保存 raw principal，旧 ledger 缺少该 fingerprint 时 authenticated access 会 fail closed。
+`C`，知道 Session/message id 也不会获得 authority。任何 recording Session 都必须先通过
+统一 Session authorization，才能参与 ledger/lifecycle/provenance。project-scoped Session
+既要求当前 stored project authorization，也要求 creation-time immutable canonical authority-group
+fingerprint；project-less Session 使用同一内部 durable fence。direct shared-key 与对应 OAuth
+shared-key bridge 会归一到同一 authority group。跨 Session collaboration 还要求双方 stored
+project scope 完全一致，因此 scoped/unscoped 两个方向都不能作为 project boundary bridge。
 message board 只是 collaboration metadata，不是 claim、lease、filesystem/worktree/branch lock。并发写应使用独立 Git
 worktree 与 WebCodex Project。此流程不增加自动 worker spawning、scheduler、共享
 transcript、隐式跨 Session authority 或 cross-owner delegation。

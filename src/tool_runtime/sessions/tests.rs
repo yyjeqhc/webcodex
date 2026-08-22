@@ -629,6 +629,7 @@ fn coding_session_context_precommit_failure_leaves_memory_unchanged() {
         CodingSessionRequest {
             key: None,
             project: "agent:oe:private-drop".to_string(),
+            authority_fingerprint: None,
             resume_session_id,
             instruction: Some("continue".to_string()),
             mode: SessionMode::Normal,

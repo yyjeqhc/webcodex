@@ -15,7 +15,7 @@ async fn git_status_with_session_id_records_git_read_event() {
     };
     register_agent(&runtime, "telemetry-git", None, caps).await;
     let project = agent_test_project_id("telemetry-git");
-    let session = runtime.sessions.start_session(None, None);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.clone();
@@ -213,13 +213,15 @@ async fn git_log_read_only_session_allowed_and_recorded() {
     };
     register_agent(&runtime, "git-log-readonly", None, caps).await;
     let project = agent_test_project_id("git-log-readonly");
+    let bootstrap = auth_context(None, true);
     let session_result = runtime
-        .dispatch(
+        .dispatch_with_auth(
             ToolCall::from_tool_name(
                 "start_session",
                 json!({"project": project, "mode": "read_only"}),
             )
             .unwrap(),
+            Some(&bootstrap),
         )
         .await;
     assert!(session_result.success, "{:?}", session_result.error);

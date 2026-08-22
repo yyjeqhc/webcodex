@@ -1278,7 +1278,7 @@ async fn generic_call_runtime_tool_recording_session_preserves_failure_expectati
         .start_session(Some(project.clone()), Some("business session".to_string()));
     let tracking_session = runtime
         .sessions
-        .start_session(None, Some("tracking session".to_string()));
+        .start_session(Some(project.clone()), Some("tracking session".to_string()));
     let business_sid = business_session.session_id.clone();
     let tracking_sid = tracking_session.session_id.clone();
 

@@ -86,11 +86,15 @@ the caller cannot forge that field.
 The coordinator can retrieve the exact todo or its replies with
 `list_session_messages(message_id=...)` / `list_session_messages(reply_to=...)`,
 then re-observe authoritative project/Git/artifact state. Worker execution history
-is never copied into `C`, and Session/message ids never grant authority. Project-scoped
-Session targets are reauthorized through their stored project; project-less Sessions
-use only a durable hashed owner fingerprint, with authenticated legacy records that
-lack it failing closed. The message board is collaboration metadata, not a claim, lease, filesystem lock,
-or branch lock. Use separate worktrees/WebCodex Projects for concurrent writers.
+is never copied into `C`, and Session/message ids never grant authority. Any recording
+Session is authorized before ledger/lifecycle/provenance use. Project-scoped targets
+require both current stored-project authorization and their immutable creation-time
+canonical authority-group fingerprint; project-less Sessions use the same internal
+durable fence. Direct shared-key and OAuth shared-key bridge presentations normalize
+to one authority group. Cross-Session collaboration requires exact project-scope
+matching, so scoped/unscoped pairs cannot bridge project authority. The message board
+is collaboration metadata, not a claim, lease, filesystem lock, or branch lock. Use
+separate worktrees/WebCodex Projects for concurrent writers.
 There is no automatic worker spawning, scheduler, shared transcript, or implicit
 cross-Session/cross-owner delegation.
 

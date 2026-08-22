@@ -152,6 +152,12 @@ impl ToolRuntime {
         limit: Option<usize>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        if let Err(result) = self
+            .authorize_session_target(&session_id, "validation_summary", auth)
+            .await
+        {
+            return result;
+        }
         let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
             Ok(resolved) => resolved,
             Err(err) => return err.into_tool_result(),

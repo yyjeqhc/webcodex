@@ -1042,6 +1042,10 @@ async fn run_script_ssh_read_only_closed_and_inspect_session_boundaries_fail_clo
     std::fs::create_dir_all(&root).unwrap();
     let runtime = test_runtime();
     let project = register_script_agent(&runtime, "script-guards", &root, true, true).await;
+    let other_root = temp.path().join("other-project");
+    std::fs::create_dir_all(&other_root).unwrap();
+    let other_project =
+        register_script_agent(&runtime, "script-guards-other", &other_root, true, true).await;
 
     let ssh = runtime
         .sessions
@@ -1078,10 +1082,9 @@ async fn run_script_ssh_read_only_closed_and_inspect_session_boundaries_fail_clo
         .await
         .is_none());
 
-    let mismatch = runtime.sessions.start_session(
-        Some("agent:other:demo".to_string()),
-        Some("mismatched script".to_string()),
-    );
+    let mismatch = runtime
+        .sessions
+        .start_session(Some(other_project), Some("mismatched script".to_string()));
     let mismatched = runtime
         .dispatch_with_auth(
             script_call(

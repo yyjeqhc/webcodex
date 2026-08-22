@@ -38,7 +38,7 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     };
     register_agent(&runtime, "telemetry-shell", None, caps).await;
     let project = agent_test_project_id("telemetry-shell");
-    let session = runtime.sessions.start_session(None, None);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
 
     let ok_task = tokio::spawn({
         let runtime = runtime.clone();

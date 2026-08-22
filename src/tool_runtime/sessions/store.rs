@@ -500,6 +500,15 @@ impl SessionStore {
         mut opts: SessionCreateOptions,
     ) -> Result<SessionSummary, String> {
         opts.execution_context = opts.execution_context.validated()?;
+        #[cfg(test)]
+        if opts.project.is_some() && opts.owner_authority_fingerprint.is_none() {
+            // cfg(test)-only callers often build a synthetic project Session
+            // directly, without an AuthContext. Mark those fixtures explicitly;
+            // real runtime creation supplies a canonical fingerprint before this
+            // point, so production missing-fingerprint records still fail closed.
+            opts.owner_authority_fingerprint =
+                Some(super::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.to_string());
+        }
         if opts.project.is_none() && !opts.execution_context.is_empty() {
             return Err(
                 "execution_context requires a Workflow Session bound to a registered project"
@@ -509,11 +518,7 @@ impl SessionStore {
         let session_id = format!("{SESSION_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let now = now_ts();
         let guards = SessionGuards::effective(opts.mode, opts.guards);
-        let owner_authority_fingerprint = if opts.project.is_none() {
-            opts.owner_authority_fingerprint
-        } else {
-            None
-        };
+        let owner_authority_fingerprint = opts.owner_authority_fingerprint;
         let record = SessionRecord {
             session_id: session_id.clone(),
             project: opts.project,
@@ -609,6 +614,26 @@ impl SessionStore {
             } else {
                 None
             };
+
+            if let (Some(session_id), Some(authority_fingerprint)) = (
+                reusable_session_id.as_deref(),
+                request.authority_fingerprint.as_deref(),
+            ) {
+                let stored_fingerprint = inner
+                    .sessions
+                    .get(session_id)
+                    .and_then(StoredSession::owner_authority_fingerprint);
+                #[cfg(test)]
+                let synthetic_test_fixture = stored_fingerprint
+                    == Some(super::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT);
+                #[cfg(not(test))]
+                let synthetic_test_fixture = false;
+                if !synthetic_test_fixture && stored_fingerprint != Some(authority_fingerprint) {
+                    return Err(CodingSessionError::ResumeAuthorityMismatch {
+                        session_id: session_id.to_string(),
+                    });
+                }
+            }
 
             if let Some(session_id) = reusable_session_id {
                 let (previous_mode, previous_guards, previous_execution_context) = {
@@ -753,7 +778,7 @@ impl SessionStore {
                 let record = SessionRecord {
                     session_id: new_session_id.clone(),
                     project: Some(request.project.clone()),
-                    owner_authority_fingerprint: None,
+                    owner_authority_fingerprint: request.authority_fingerprint.clone(),
                     // The first accepted instruction remains the root title.
                     // Follow-up instructions never overwrite it.
                     title: instruction,

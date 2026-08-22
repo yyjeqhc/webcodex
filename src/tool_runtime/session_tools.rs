@@ -1,10 +1,11 @@
 //! Runtime handlers for session and current-session tool calls.
 
 use super::session_context::{
-    current_session_key, current_session_unavailable_result, session_authority_denied_result,
+    current_session_key, current_session_unavailable_result,
+    legacy_workflow_session_owner_fingerprint, session_authority_denied_result,
     session_lifecycle_denied_result, session_message_error_result,
     session_project_mismatch_no_escape_result, unknown_session_result,
-    workflow_session_owner_fingerprint, SessionProjectMismatch,
+    workflow_session_authority_fingerprint, SessionProjectMismatch,
 };
 use super::tool_inputs::SessionMode;
 use super::{sessions, ToolCall, ToolResult, ToolRuntime};
@@ -182,22 +183,28 @@ impl ToolRuntime {
             Some(resolved) => Some(self.load_project_instructions(&resolved.config).await),
             None => None,
         };
-        let owner_authority_fingerprint = if resolved.is_none() {
-            match workflow_session_owner_fingerprint(auth) {
-                Ok(fingerprint) => Some(fingerprint),
-                Err(_) => {
-                    return ToolResult::err_with_output(
-                        "session_owner_identity_unavailable",
-                        json!({
-                            "error_kind": "session_owner_identity_unavailable",
-                            "tool_name": "start_session",
-                            "state_changed": false,
-                        }),
-                    );
-                }
+        if resolved.is_none() && auth.is_some_and(AuthContext::is_open_anonymous) {
+            return ToolResult::err_with_output(
+                "session_owner_identity_unavailable",
+                json!({
+                    "error_kind": "session_owner_identity_unavailable",
+                    "tool_name": "start_session",
+                    "state_changed": false,
+                }),
+            );
+        }
+        let owner_authority_fingerprint = match workflow_session_authority_fingerprint(auth) {
+            Ok(fingerprint) => Some(fingerprint),
+            Err(_) => {
+                return ToolResult::err_with_output(
+                    "session_authority_identity_unavailable",
+                    json!({
+                        "error_kind": "session_authority_identity_unavailable",
+                        "tool_name": "start_session",
+                        "state_changed": false,
+                    }),
+                );
             }
-        } else {
-            None
         };
         let options = sessions::SessionCreateOptions::new(
             resolved
@@ -246,6 +253,12 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
     ) -> ToolResult {
+        if let Err(result) = self
+            .authorize_session_target(&session_id, "update_session_context", auth)
+            .await
+        {
+            return result;
+        }
         let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
             Ok(resolved) => resolved,
             Err(err) => return err.into_tool_result(),
@@ -381,9 +394,9 @@ impl ToolRuntime {
             return Err(unknown_session_result(session_id));
         };
         if let Some(project) = project {
-            // Preserve the existing no-auth local/internal dispatcher contract.
-            // Authenticated callers are revalidated against the exact canonical
-            // project stored on the business Session.
+            // The trusted local/dev dispatcher remains an explicit compatibility
+            // path. Every authenticated caller must satisfy both current project
+            // authorization and the immutable creation-time authority fence.
             let Some(auth) = auth else {
                 return Ok(None);
             };
@@ -404,18 +417,45 @@ impl ToolRuntime {
                     },
                 ));
             }
+            let caller_fingerprint = workflow_session_authority_fingerprint(Some(auth))
+                .map_err(|_| session_authority_denied_result(session_id, tool_name))?;
+            #[cfg(test)]
+            let synthetic_test_fixture = owner_authority_fingerprint.as_deref()
+                == Some(sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT);
+            #[cfg(not(test))]
+            let synthetic_test_fixture = false;
+            if !synthetic_test_fixture
+                && owner_authority_fingerprint.as_deref() != Some(caller_fingerprint.as_str())
+            {
+                return Err(session_authority_denied_result(session_id, tool_name));
+            }
             return Ok(Some(resolved));
         }
 
         // Project-less Sessions remain available to the trusted local/dev path.
-        // Authenticated callers must match the durable hashed owner. Legacy
-        // project-less ledgers have no hash and therefore fail closed here.
+        // Authenticated callers must match the durable hashed authority. c3a09275
+        // ledgers are accepted only when the same caller matches their legacy
+        // owner fingerprint; a missing fingerprint still fails closed.
         let Some(auth) = auth else {
             return Ok(None);
         };
-        let caller_fingerprint = workflow_session_owner_fingerprint(Some(auth))
+        if auth.is_open_anonymous() {
+            return Err(session_authority_denied_result(session_id, tool_name));
+        }
+        let caller_fingerprint = workflow_session_authority_fingerprint(Some(auth))
             .map_err(|_| session_authority_denied_result(session_id, tool_name))?;
-        if owner_authority_fingerprint.as_deref() != Some(caller_fingerprint.as_str()) {
+        let canonical_match =
+            owner_authority_fingerprint.as_deref() == Some(caller_fingerprint.as_str());
+        let legacy_match = if canonical_match {
+            false
+        } else {
+            legacy_workflow_session_owner_fingerprint(Some(auth))
+                .ok()
+                .is_some_and(|fingerprint| {
+                    owner_authority_fingerprint.as_deref() == Some(fingerprint.as_str())
+                })
+        };
+        if !canonical_match && !legacy_match {
             return Err(session_authority_denied_result(session_id, tool_name));
         }
         Ok(None)
@@ -660,6 +700,12 @@ impl ToolRuntime {
         transport: sessions::SessionTransport,
         window: Option<&crate::client_window::ClientWindow>,
     ) -> ToolResult {
+        if let Err(result) = self
+            .authorize_session_target(&session_id, "bind_current_session", auth)
+            .await
+        {
+            return result;
+        }
         let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
             Ok(resolved) => resolved,
             Err(err) => return err.into_tool_result(),

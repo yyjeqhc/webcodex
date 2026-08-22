@@ -8,7 +8,7 @@ Assume coordinator Session `C` and worker Session `W`.
 
 `C` owns the collaboration todo and bounded answers. `W` owns the worker's tool calls, validation, review evidence, and workspace activity. They are always independent Sessions: the worker does not resume `C`, and WebCodex does not copy `W` execution history into `C`.
 
-Knowing a `session_id`, `message_id`, worker Session id, Job id, checkpoint id, artifact ref, commit SHA, or PR number is not authority. Every read or mutation still passes the normal caller/project/owner authorization checks. Project-scoped Session targets are reauthorized from their stored project; project-less Sessions retain only a domain-separated owner-authority fingerprint, never the raw principal identity. Authenticated access to a legacy project-less Session without that fingerprint fails closed, while the trusted local/dev path retains its compatibility behavior. Collaboration never grants filesystem, shell, Computer, artifact, credential, or other project authority.
+Knowing a `session_id`, `message_id`, worker Session id, Job id, checkpoint id, artifact ref, commit SHA, or PR number is not authority. Every read or mutation still passes the normal caller/project/owner authorization checks. A `recording_session_id` is authorized before it can affect ledger recording, lifecycle/guard inheritance, provenance, or project-mismatch logic. Project-scoped Session targets require both current authorization to the stored project and an immutable creation-time canonical authority-group fingerprint; project-less Sessions use the same internal durable fence. Direct shared-key access and its OAuth shared-key bridge normalize to the same authority group. Authenticated legacy records without a usable authority root fail closed where ownership cannot be proven, while the trusted local/dev path retains its compatibility behavior. Collaboration never grants filesystem, shell, Computer, artifact, credential, or other project authority.
 
 ## Canonical coordinator -> worker flow
 
@@ -49,6 +49,8 @@ A successful completion records:
 - `author_session_id` from the trusted recording Session when the tool call is explicitly recorded under one; otherwise from the existing trusted current-window Session binding when available.
 
 The recording Session wins when it differs from the current-window binding, so provenance follows the Session that actually records the completion evidence. If neither trusted source exists, `author_session_id` is `null`; callers cannot supply a trusted author identity themselves.
+
+When a collaboration call has both a recording Session and a target Session, WebCodex authorizes both independently and then requires their stored project scopes to match exactly. `project/project` is allowed only for the same project, `project/project` with different projects is denied, both `project/project-less` directions are denied, and `project-less/project-less` is allowed only after both owner authorities have independently matched. The generic cross-project escape flag never widens this collaboration relationship.
 
 For uncertain responses, retry the same `session_id + message_id + completion_key` with the same answer metadata. WebCodex returns the original completion without creating another answer. Reusing the same key with different answer content/metadata fails with `idempotency_conflict`. A different completion after another completion already resolved the todo returns `already_completed` and bounded existing completion identity.
 

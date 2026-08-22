@@ -2356,6 +2356,7 @@ fn add_instruction(runtime: &ToolRuntime, session_id: &str, instruction: &str, m
         .ensure_coding_session(sessions::CodingSessionRequest {
             key: None,
             project: "test-project".to_string(),
+            authority_fingerprint: None,
             resume_session_id: Some(session_id.to_string()),
             instruction: Some(instruction.to_string()),
             mode,
@@ -2477,6 +2478,7 @@ fn add_instruction_for(
         .ensure_coding_session(sessions::CodingSessionRequest {
             key: None,
             project: project.to_string(),
+            authority_fingerprint: None,
             resume_session_id: Some(session_id.to_string()),
             instruction: Some(instruction.to_string()),
             mode,

@@ -44,6 +44,7 @@ fn add_instruction_for_project(
         .ensure_coding_session(CodingSessionRequest {
             key: None,
             project: project.to_string(),
+            authority_fingerprint: None,
             resume_session_id: Some(session_id.to_string()),
             instruction: Some(instruction.to_string()),
             mode: SessionMode::Normal,

@@ -3,8 +3,8 @@ use super::sessions::{
 };
 use super::tool_audit::{session_log_arguments_for_tool_request, session_log_result_for_tool};
 use super::{
-    session_context, session_guard_denied_result, tool_disabled_result_from_definition,
-    unknown_session_result, ToolCall, ToolResult, ToolRuntime, ALLOW_CROSS_PROJECT_SESSION_FIELD,
+    session_context, session_guard_denied_result, tool_disabled_result_from_definition, ToolCall,
+    ToolResult, ToolRuntime, ALLOW_CROSS_PROJECT_SESSION_FIELD,
 };
 use crate::auth::scopes::OAuthToolScopePolicy;
 use crate::auth::AuthContext;
@@ -144,13 +144,18 @@ impl ToolRuntime {
         let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments.clone());
         let allow_cross_project_session =
             extract_bool_arg(&concrete_arguments, ALLOW_CROSS_PROJECT_SESSION_FIELD);
-        if let Some(session_id) = context.session_id {
-            if !self.sessions.contains_session(session_id) {
-                let mut result = unknown_session_result(session_id);
+        // A wrapper recording_session_id is authority-bearing internal context,
+        // not a ledger address. Authorize it before any lifecycle/guard lookup,
+        // project mismatch computation, provenance derivation, or ledger write.
+        if let Some(recorder_session_id) = context.session_id {
+            if let Err(mut result) = self
+                .authorize_session_target(recorder_session_id, &request.tool_name, context.auth)
+                .await
+            {
                 super::dispatch::decorate_structured_execution_prestart_denial(
                     &request.tool_name,
                     &mut result,
-                    "unknown_session_id",
+                    "session_authority_denied",
                 );
                 return ToolCallOutcome {
                     success: false,
@@ -161,9 +166,16 @@ impl ToolRuntime {
             }
         }
         if collaboration_session_tool(&request.tool_name) {
-            if let Some(recorder_session_id) = context.session_id {
+            if let (Some(recorder_session_id), Some(target_session_id)) = (
+                context.session_id,
+                collaboration_target_session_id(&request.tool_name, &concrete_arguments),
+            ) {
+                // Both ends of a cross-Session collaboration relationship must
+                // be independently authorized before comparing scope. This makes
+                // None/None safe while rejecting either mixed scoped/unscoped
+                // direction and never consulting allow_cross_project_session.
                 if let Err(result) = self
-                    .authorize_session_target(recorder_session_id, &request.tool_name, context.auth)
+                    .authorize_session_target(target_session_id, &request.tool_name, context.auth)
                     .await
                 {
                     return ToolCallOutcome {
@@ -173,30 +185,31 @@ impl ToolRuntime {
                         project: None,
                     };
                 }
-                if let Some(target_session_id) =
-                    collaboration_target_session_id(&request.tool_name, &concrete_arguments)
-                {
-                    if let (Some(Some(recorder_project)), Some(Some(target_project))) = (
-                        self.sessions.session_project(recorder_session_id),
-                        self.sessions.session_project(target_session_id),
-                    ) {
-                        if recorder_project != target_project {
-                            let result = session_context::session_project_mismatch_no_escape_result(
-                                target_session_id,
-                                &request.tool_name,
-                                &session_context::SessionProjectMismatch {
-                                    session_project: target_project,
-                                    request_project: recorder_project,
-                                },
-                            );
-                            return ToolCallOutcome {
-                                success: false,
-                                result: Some(result),
-                                error_status: None,
-                                project: None,
-                            };
-                        }
-                    }
+                let recorder_project = self
+                    .sessions
+                    .session_project(recorder_session_id)
+                    .expect("authorized recording Session must exist");
+                let target_project = self
+                    .sessions
+                    .session_project(target_session_id)
+                    .expect("authorized collaboration target Session must exist");
+                if recorder_project != target_project {
+                    let result = session_context::session_project_mismatch_no_escape_result(
+                        target_session_id,
+                        &request.tool_name,
+                        &session_context::SessionProjectMismatch {
+                            session_project: target_project
+                                .unwrap_or_else(|| "<unscoped>".to_string()),
+                            request_project: recorder_project
+                                .unwrap_or_else(|| "<unscoped>".to_string()),
+                        },
+                    );
+                    return ToolCallOutcome {
+                        success: false,
+                        result: Some(result),
+                        error_status: None,
+                        project: None,
+                    };
                 }
             }
         }

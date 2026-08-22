@@ -26,7 +26,8 @@ use super::project_instructions::{ProjectInstructionFile, ProjectInstructionsSna
 use super::project_resolution::ResolvedProject;
 use super::runtime_info::compact_runtime_status;
 use super::session_context::{
-    session_project_mismatch_warning, SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
+    session_project_mismatch_warning, workflow_session_authority_fingerprint,
+    SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
 };
 use super::sessions::tool_failure_summary_from_events;
 use super::sessions::{self, SessionTransport, TOOL_CALL_RECORDING_SESSION_ID_FIELD};
@@ -744,10 +745,30 @@ impl ToolRuntime {
         let binding_available = bind_current && continuity_key.is_some();
         let write_scope_verified =
             auth.is_none_or(|auth| auth.has_scope(crate::auth::SCOPE_PROJECT_WRITE));
+        let authority_fingerprint = match auth {
+            None => None,
+            Some(auth) => match workflow_session_authority_fingerprint(Some(auth)) {
+                Ok(fingerprint) => Some(fingerprint),
+                Err(_) => {
+                    return attach_project_resolution(
+                        ToolResult::err_with_output(
+                            "authenticated caller has no canonical Workflow Session authority identity",
+                            json!({
+                                "error_kind": "session_authority_identity_unavailable",
+                                "failure_kind": "session_authority_denied",
+                                "state_changed": false,
+                            }),
+                        ),
+                        &project_resolution,
+                    );
+                }
+            },
+        };
         let session_outcome = match self.sessions.ensure_coding_session(
             sessions::CodingSessionRequest {
                 key: continuity_key.clone(),
                 project: resolved.resolved_id.clone(),
+                authority_fingerprint,
                 resume_session_id: resume_session_id.clone(),
                 instruction: title.clone(),
                 mode,
@@ -829,6 +850,21 @@ impl ToolRuntime {
                             "session_id": session_id,
                             "session_project": session_project,
                             "request_project": request_project,
+                            "resume_requested": true,
+                            "state_changed": false,
+                        }),
+                    ),
+                    &project_resolution,
+                );
+            }
+            Err(sessions::CodingSessionError::ResumeAuthorityMismatch { session_id }) => {
+                return attach_project_resolution(
+                    ToolResult::err_with_output(
+                        "session_authority_denied",
+                        json!({
+                            "error_kind": "session_authority_denied",
+                            "failure_kind": "session_authority_denied",
+                            "session_id": session_id,
                             "resume_requested": true,
                             "state_changed": false,
                         }),
@@ -1268,6 +1304,12 @@ impl ToolRuntime {
         let include_handoff = include_handoff.unwrap_or(true);
         let include_validation_summary = include_validation_summary.unwrap_or(true);
 
+        if let Err(result) = self
+            .authorize_session_target(&session_id, "finish_coding_task", auth)
+            .await
+        {
+            return result;
+        }
         let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
             Ok(resolved) => resolved,
             Err(err) => return err.into_tool_result(),

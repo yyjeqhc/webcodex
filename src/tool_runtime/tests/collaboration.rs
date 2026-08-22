@@ -11,6 +11,7 @@ use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
 use crate::shell_protocol::ShellClientCapabilities;
 use serde_json::{json, Value};
+use std::sync::Arc;
 
 async fn call_with_recorder(
     runtime: &ToolRuntime,
@@ -78,6 +79,29 @@ fn tool_names(runtime: &ToolRuntime, session_id: &str) -> Vec<String> {
         .collect()
 }
 
+fn start_authorized_project_session(
+    runtime: &ToolRuntime,
+    project: &str,
+    title: Option<&str>,
+    auth: &AuthContext,
+) -> sessions::SessionSummary {
+    let fingerprint =
+        super::super::session_context::workflow_session_authority_fingerprint(Some(auth))
+            .expect("test authority must have a stable identity");
+    runtime
+        .sessions
+        .start_session_with_options(
+            sessions::SessionCreateOptions::new(
+                Some(project.to_string()),
+                title.map(str::to_string),
+                super::super::SessionMode::Normal,
+                sessions::SessionGuards::default(),
+            )
+            .with_owner_authority_fingerprint(Some(fingerprint)),
+        )
+        .unwrap()
+}
+
 #[tokio::test]
 async fn collaboration_two_sessions_keep_execution_history_independent_and_bind_provenance() {
     let client_id = "collaboration-runtime";
@@ -91,12 +115,9 @@ async fn collaboration_two_sessions_keep_execution_history_independent_and_bind_
     .await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
-    let coordinator = runtime
-        .sessions
-        .start_session(Some(project.clone()), Some("coordinator C".to_string()));
-    let worker = runtime
-        .sessions
-        .start_session(Some(project.clone()), Some("worker W".to_string()));
+    let coordinator =
+        start_authorized_project_session(&runtime, &project, Some("coordinator C"), &auth);
+    let worker = start_authorized_project_session(&runtime, &project, Some("worker W"), &auth);
     assert_ne!(coordinator.session_id, worker.session_id);
 
     let coordinator_window = ClientWindow::for_test("collaboration-coordinator-window");
@@ -337,7 +358,7 @@ async fn collaboration_completion_without_recording_or_current_binding_has_null_
     .await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
-    let coordinator = runtime.sessions.start_session(Some(project), None);
+    let coordinator = start_authorized_project_session(&runtime, &project, None, &auth);
     let todo = runtime
         .sessions
         .post_message(PostSessionMessageInput {
@@ -381,12 +402,10 @@ async fn collaboration_current_binding_remains_author_fallback_without_recording
     .await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
-    let coordinator = runtime
-        .sessions
-        .start_session(Some(project.clone()), Some("coordinator".to_string()));
-    let worker_current = runtime
-        .sessions
-        .start_session(Some(project.clone()), Some("current worker".to_string()));
+    let coordinator =
+        start_authorized_project_session(&runtime, &project, Some("coordinator"), &auth);
+    let worker_current =
+        start_authorized_project_session(&runtime, &project, Some("current worker"), &auth);
     let todo = runtime
         .sessions
         .post_message(PostSessionMessageInput {
@@ -442,15 +461,12 @@ async fn collaboration_recording_session_wins_over_different_current_window_bind
     .await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
-    let coordinator = runtime
-        .sessions
-        .start_session(Some(project.clone()), Some("coordinator".to_string()));
-    let worker_recording = runtime
-        .sessions
-        .start_session(Some(project.clone()), Some("worker W1".to_string()));
-    let worker_current = runtime
-        .sessions
-        .start_session(Some(project.clone()), Some("worker W2".to_string()));
+    let coordinator =
+        start_authorized_project_session(&runtime, &project, Some("coordinator"), &auth);
+    let worker_recording =
+        start_authorized_project_session(&runtime, &project, Some("worker W1"), &auth);
+    let worker_current =
+        start_authorized_project_session(&runtime, &project, Some("worker W2"), &auth);
     let todo = runtime
         .sessions
         .post_message(PostSessionMessageInput {
@@ -526,13 +542,13 @@ async fn collaboration_recording_session_wins_over_different_current_window_bind
 async fn collaboration_cross_project_recorder_fails_closed_before_completion() {
     let runtime = runtime_with_resolver_projects().await;
     let auth = auth_context(None, true);
-    let coordinator = runtime.sessions.start_session(
-        Some("agent:workstation:my-repo".to_string()),
-        Some("C".to_string()),
-    );
-    let worker = runtime.sessions.start_session(
-        Some("agent:workstation:other-repo".to_string()),
-        Some("W".to_string()),
+    let coordinator =
+        start_authorized_project_session(&runtime, "agent:workstation:my-repo", Some("C"), &auth);
+    let worker = start_authorized_project_session(
+        &runtime,
+        "agent:workstation:other-repo",
+        Some("W"),
+        &auth,
     );
     let todo = runtime
         .sessions
@@ -597,6 +613,426 @@ async fn collaboration_cross_project_recorder_fails_closed_before_completion() {
             .len(),
         0
     );
+}
+
+#[tokio::test]
+async fn foreign_recording_session_is_denied_before_ordinary_tool_recording() {
+    let runtime = test_runtime();
+    let alice = shared_key_auth_context("ordinary-recorder-alice");
+    let bob = shared_key_auth_context("ordinary-recorder-bob");
+    let started = call_with_recorder(
+        &runtime,
+        "start_session",
+        json!({"title": "Alice recorder"}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session_id"].as_str().unwrap().to_string();
+    let before = runtime.sessions.summary(&session_id, Some(100)).unwrap();
+
+    let denied = call_with_recorder(
+        &runtime,
+        "list_projects",
+        json!({}),
+        Some(&session_id),
+        &bob,
+        None,
+    )
+    .await;
+    assert!(!denied.success);
+    assert_eq!(denied.output["error_kind"], "session_authority_denied");
+    let after_denial = runtime.sessions.summary(&session_id, Some(100)).unwrap();
+    assert_eq!(after_denial.events.len(), before.events.len());
+    assert!(!tool_names(&runtime, &session_id)
+        .iter()
+        .any(|tool| tool == "list_projects"));
+
+    let allowed = call_with_recorder(
+        &runtime,
+        "list_projects",
+        json!({}),
+        Some(&session_id),
+        &alice,
+        None,
+    )
+    .await;
+    assert!(allowed.success, "{:?}", allowed.error);
+    let after_allowed = runtime.sessions.summary(&session_id, Some(100)).unwrap();
+    assert_eq!(after_allowed.events.len(), before.events.len() + 2);
+    assert!(tool_names(&runtime, &session_id)
+        .iter()
+        .any(|tool| tool == "list_projects"));
+}
+
+#[tokio::test]
+async fn collaboration_mixed_project_scope_fails_closed_in_both_directions() {
+    let runtime = runtime_with_resolver_projects().await;
+    let auth = auth_context(None, true);
+
+    let scoped_coordinator = start_authorized_project_session(
+        &runtime,
+        "agent:workstation:my-repo",
+        Some("scoped coordinator"),
+        &auth,
+    );
+    let unscoped_worker = call_with_recorder(
+        &runtime,
+        "start_session",
+        json!({"title": "unscoped worker"}),
+        None,
+        &auth,
+        None,
+    )
+    .await;
+    assert!(unscoped_worker.success, "{:?}", unscoped_worker.error);
+    let unscoped_worker_id = unscoped_worker.output["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let scoped_todo = runtime
+        .sessions
+        .post_message(PostSessionMessageInput {
+            session_id: scoped_coordinator.session_id.clone(),
+            kind: SessionMessageKind::Todo,
+            message: "unscoped worker must not bridge into scoped coordinator".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::High,
+        })
+        .unwrap();
+    for (tool_name, arguments) in [
+        (
+            "list_session_messages",
+            json!({"session_id": scoped_coordinator.session_id, "message_id": scoped_todo.message_id}),
+        ),
+        (
+            "complete_session_message",
+            json!({
+                "session_id": scoped_coordinator.session_id,
+                "message_id": scoped_todo.message_id,
+                "answer": "must not complete",
+                "completion_key": "mixed-unscoped-to-scoped"
+            }),
+        ),
+    ] {
+        let denied = call_with_recorder(
+            &runtime,
+            tool_name,
+            arguments,
+            Some(&unscoped_worker_id),
+            &auth,
+            None,
+        )
+        .await;
+        assert!(!denied.success, "{tool_name} unexpectedly succeeded");
+        assert_eq!(denied.output["error_kind"], "session_project_mismatch");
+    }
+    assert_eq!(
+        runtime
+            .sessions
+            .list_messages(
+                &scoped_coordinator.session_id,
+                sessions::ListSessionMessagesFilter {
+                    kind: Some(SessionMessageKind::Answer),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .len(),
+        0
+    );
+
+    let unscoped_coordinator = call_with_recorder(
+        &runtime,
+        "start_session",
+        json!({"title": "unscoped coordinator"}),
+        None,
+        &auth,
+        None,
+    )
+    .await;
+    assert!(
+        unscoped_coordinator.success,
+        "{:?}",
+        unscoped_coordinator.error
+    );
+    let unscoped_coordinator_id = unscoped_coordinator.output["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let scoped_worker = start_authorized_project_session(
+        &runtime,
+        "agent:workstation:my-repo",
+        Some("scoped worker"),
+        &auth,
+    );
+    let unscoped_todo = runtime
+        .sessions
+        .post_message(PostSessionMessageInput {
+            session_id: unscoped_coordinator_id.clone(),
+            kind: SessionMessageKind::Todo,
+            message: "scoped worker must not bridge into unscoped coordinator".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::High,
+        })
+        .unwrap();
+    for (tool_name, arguments) in [
+        (
+            "list_session_messages",
+            json!({"session_id": unscoped_coordinator_id, "message_id": unscoped_todo.message_id}),
+        ),
+        (
+            "complete_session_message",
+            json!({
+                "session_id": unscoped_coordinator_id,
+                "message_id": unscoped_todo.message_id,
+                "answer": "must not complete",
+                "completion_key": "mixed-scoped-to-unscoped"
+            }),
+        ),
+    ] {
+        let denied = call_with_recorder(
+            &runtime,
+            tool_name,
+            arguments,
+            Some(&scoped_worker.session_id),
+            &auth,
+            None,
+        )
+        .await;
+        assert!(!denied.success, "{tool_name} unexpectedly succeeded");
+        assert_eq!(denied.output["error_kind"], "session_project_mismatch");
+    }
+    assert_eq!(
+        runtime
+            .sessions
+            .list_messages(
+                &unscoped_coordinator_id,
+                sessions::ListSessionMessagesFilter {
+                    kind: Some(SessionMessageKind::Answer),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn project_scoped_session_authority_rejects_recycled_project_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let shell_clients = Arc::new(
+        crate::shell_client::ShellClientRegistry::with_shared_key_limits_for_test(4, 8, 1),
+    );
+    let runtime = ToolRuntime::new_for_tests_with_shell_clients(shell_clients.clone())
+        .with_session_ledger(&ledger);
+    let alice = shared_key_auth_context("recycled-authority-a");
+    let alice_oauth = oauth_bridge_auth_context(
+        "recycled-authority-a",
+        &[
+            crate::auth::SCOPE_RUNTIME_READ,
+            crate::auth::SCOPE_PROJECT_READ,
+            crate::auth::SCOPE_PROJECT_WRITE,
+            crate::auth::SCOPE_JOB_RUN,
+            crate::auth::SCOPE_AGENT_REGISTER,
+        ],
+    );
+    let bob = shared_key_auth_context("recycled-authority-b");
+    assert_eq!(
+        super::super::session_context::workflow_session_authority_fingerprint(Some(&alice))
+            .unwrap(),
+        super::super::session_context::workflow_session_authority_fingerprint(Some(&alice_oauth))
+            .unwrap(),
+        "direct shared-key and OAuth bridge must be one canonical authority group"
+    );
+
+    let project_summary = named_registered_project(
+        "recycled-client",
+        "recycled-project",
+        "Recycled Project",
+        "/tmp/recycled-project",
+        1,
+    );
+    register_agent_projects_for_auth(
+        &runtime,
+        "recycled-client",
+        &alice,
+        ShellClientCapabilities::default(),
+        vec![project_summary.clone()],
+    )
+    .await;
+    let project = "agent:recycled-client:recycled-project".to_string();
+    let started = call_with_recorder(
+        &runtime,
+        "start_session",
+        json!({"project": project, "title": "recycling fence"}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session_id"].as_str().unwrap().to_string();
+    let posted = call_with_recorder(
+        &runtime,
+        "post_session_message",
+        json!({
+            "session_id": session_id,
+            "kind": "todo",
+            "message": "authority recycling must not resolve this todo"
+        }),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(posted.success, "{:?}", posted.error);
+    let todo_id = posted.output["message_id"].as_str().unwrap().to_string();
+    runtime.sessions.flush_persistence();
+    let persisted = std::fs::read_to_string(&ledger).unwrap();
+    assert!(persisted.contains("owner_authority_fingerprint"));
+    assert!(!persisted.contains("recycled-authority-a"));
+
+    let oauth_read = call_with_recorder(
+        &runtime,
+        "session_summary",
+        json!({"session_id": session_id}),
+        None,
+        &alice_oauth,
+        None,
+    )
+    .await;
+    assert!(oauth_read.success, "{:?}", oauth_read.error);
+
+    let expired_at = chrono::Utc::now().timestamp() - 100;
+    shell_clients
+        .set_last_seen_for_test("recycled-client", expired_at)
+        .await;
+    let _ = shell_clients.list_clients_for_auth(Some(&alice)).await;
+    assert!(shell_clients
+        .get_client_view("recycled-client")
+        .await
+        .is_none());
+
+    register_agent_projects_for_auth(
+        &runtime,
+        "recycled-client",
+        &bob,
+        ShellClientCapabilities::default(),
+        vec![project_summary.clone()],
+    )
+    .await;
+    let before = runtime.sessions.summary(&session_id, Some(100)).unwrap();
+    let denied_calls = [
+        ("session_summary", json!({"session_id": session_id})),
+        (
+            "list_session_messages",
+            json!({"session_id": session_id, "message_id": todo_id}),
+        ),
+        (
+            "post_session_message",
+            json!({"session_id": session_id, "kind": "note", "message": "Bob must not write"}),
+        ),
+        (
+            "complete_session_message",
+            json!({
+                "session_id": session_id,
+                "message_id": todo_id,
+                "answer": "Bob must not complete",
+                "completion_key": "recycled-bob"
+            }),
+        ),
+        (
+            "session_discussion_summary",
+            json!({"session_id": session_id}),
+        ),
+        (
+            "session_handoff_summary",
+            json!({
+                "session_id": session_id,
+                "include_workspace": false,
+                "include_checkpoints": false,
+                "include_validation": false,
+                "summary_only": true
+            }),
+        ),
+        ("close_session", json!({"session_id": session_id})),
+    ];
+    for (tool_name, arguments) in denied_calls {
+        let denied = call_with_recorder(&runtime, tool_name, arguments, None, &bob, None).await;
+        assert!(!denied.success, "{tool_name} unexpectedly succeeded");
+        assert_eq!(
+            denied.output["error_kind"], "session_authority_denied",
+            "{tool_name}: {:?}",
+            denied.output
+        );
+        let denied_state = runtime.sessions.summary(&session_id, Some(100)).unwrap();
+        assert_eq!(
+            denied_state.events.len(),
+            before.events.len(),
+            "{tool_name} denial must not append Session evidence: {:?}",
+            tool_names(&runtime, &session_id)
+        );
+        assert_eq!(
+            denied_state.messages.total, before.messages.total,
+            "{tool_name} denial must not mutate Session messages"
+        );
+        assert_eq!(
+            denied_state.lifecycle, before.lifecycle,
+            "{tool_name} denial must not mutate Session lifecycle"
+        );
+    }
+    let after = runtime.sessions.summary(&session_id, Some(100)).unwrap();
+    assert_eq!(after.lifecycle, before.lifecycle);
+    assert_eq!(after.messages.total, before.messages.total);
+    assert_eq!(after.events.len(), before.events.len());
+    assert_eq!(
+        runtime
+            .sessions
+            .list_messages(
+                &session_id,
+                sessions::ListSessionMessagesFilter {
+                    kind: Some(SessionMessageKind::Answer),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .len(),
+        0
+    );
+
+    shell_clients
+        .set_last_seen_for_test("recycled-client", expired_at)
+        .await;
+    let _ = shell_clients.list_clients_for_auth(Some(&bob)).await;
+    assert!(shell_clients
+        .get_client_view("recycled-client")
+        .await
+        .is_none());
+    register_agent_projects_for_auth(
+        &runtime,
+        "recycled-client",
+        &alice,
+        ShellClientCapabilities::default(),
+        vec![project_summary],
+    )
+    .await;
+    let restored_owner = call_with_recorder(
+        &runtime,
+        "session_summary",
+        json!({"session_id": session_id}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(restored_owner.success, "{:?}", restored_owner.error);
 }
 
 #[tokio::test]
@@ -826,7 +1262,7 @@ async fn collaboration_foreign_owner_cannot_read_or_complete_known_session_and_t
     )
     .await;
     let project = "agent:alice-host:private".to_string();
-    let coordinator = runtime.sessions.start_session(Some(project), None);
+    let coordinator = start_authorized_project_session(&runtime, &project, None, &alice);
     let todo = runtime
         .sessions
         .post_message(PostSessionMessageInput {

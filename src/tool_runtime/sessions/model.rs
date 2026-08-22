@@ -292,8 +292,9 @@ pub(crate) struct SessionLifecycleDenial {
 pub(super) struct SessionRecord {
     pub(super) session_id: String,
     pub(super) project: Option<String>,
-    /// Domain-separated SHA-256 of the stable caller principal tuple for
-    /// project-less Sessions. Never stores the raw principal identity.
+    /// Domain-separated SHA-256 of the canonical creation-time authority group.
+    /// The historical field name is retained for ledger compatibility; the raw
+    /// authority identity is never stored.
     pub(super) owner_authority_fingerprint: Option<String>,
     pub(super) title: Option<String>,
     pub(super) mode: SessionMode,
@@ -462,6 +463,9 @@ impl SessionCreateOptions {
 pub(crate) struct CodingSessionRequest {
     pub(crate) key: Option<CurrentSessionKey>,
     pub(crate) project: String,
+    /// Canonical creation-time authority fence for authenticated callers.
+    /// `None` is reserved for the trusted local/dev path.
+    pub(crate) authority_fingerprint: Option<String>,
     pub(crate) resume_session_id: Option<String>,
     pub(crate) instruction: Option<String>,
     pub(crate) mode: SessionMode,
@@ -506,6 +510,9 @@ pub(crate) enum CodingSessionError {
         session_id: String,
         session_project: Option<String>,
         request_project: String,
+    },
+    ResumeAuthorityMismatch {
+        session_id: String,
     },
     ResumeNewSessionConflict,
     WriteScopeRequired,
@@ -629,8 +636,9 @@ pub(super) struct DurableCurrentBinding {
 pub(super) struct PersistedSessionRecord {
     pub(super) session_id: String,
     pub(super) project: Option<String>,
-    /// Additive v1 field. Project-less legacy Sessions omit it and authenticated
-    /// access to those records fails closed.
+    /// Additive v1 field. c3a09275 used it only for project-less ownership;
+    /// current writers store the canonical authority-group fingerprint for every
+    /// authenticated Session. The historical name keeps ledger compatibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) owner_authority_fingerprint: Option<String>,
     pub(super) title: Option<String>,

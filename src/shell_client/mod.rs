@@ -184,7 +184,7 @@ impl Default for ShellClientRegistry {
 
 #[cfg(test)]
 impl ShellClientRegistry {
-    fn with_shared_key_limits_for_test(
+    pub(crate) fn with_shared_key_limits_for_test(
         per_group: usize,
         global: usize,
         offline_ttl_secs: i64,

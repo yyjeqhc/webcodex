@@ -133,11 +133,8 @@ impl PersistedSessionRecord {
         // count persisted.
         let retained_events = events.len() as u64;
         let project = self.project.map(|value| bound_summary_string(value.trim()));
-        let owner_authority_fingerprint = if project.is_none() {
-            sanitize_owner_authority_fingerprint(self.owner_authority_fingerprint)
-        } else {
-            None
-        };
+        let owner_authority_fingerprint =
+            sanitize_owner_authority_fingerprint(self.owner_authority_fingerprint);
         let execution_context = if project.is_some() {
             self.execution_context.sanitized_for_restore()
         } else {
@@ -193,11 +190,9 @@ pub(super) fn cold_session_from_persisted(
     Ok(ColdSessionRecord {
         session_id: persisted.session_id.clone(),
         project: persisted.project.clone(),
-        owner_authority_fingerprint: if persisted.project.is_none() {
-            sanitize_owner_authority_fingerprint(persisted.owner_authority_fingerprint.clone())
-        } else {
-            None
-        },
+        owner_authority_fingerprint: sanitize_owner_authority_fingerprint(
+            persisted.owner_authority_fingerprint.clone(),
+        ),
         mode: persisted.mode,
         guards: persisted.guards,
         lifecycle: persisted.lifecycle,

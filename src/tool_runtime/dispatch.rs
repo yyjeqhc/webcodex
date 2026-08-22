@@ -5,7 +5,7 @@ use super::session_context::{
     add_session_project_mismatch_warning, add_session_telemetry_hint, current_session_key,
     current_session_unavailable_result, is_current_session_eligible, session_guard_denied_result,
     session_lifecycle_denied_result, session_project_mismatch_requires_escape,
-    session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
+    session_project_mismatch_result, SessionProjectMismatch,
 };
 use super::{
     permissions, session_context, sessions, tool_disabled_result_from_definition, ToolCall,
@@ -731,14 +731,22 @@ impl ToolRuntime {
             // error instead of being rewritten by the generic lookup guard.
             let malformed_work_on_project_session = matches!(&call, ToolCall::WorkOnProject { .. })
                 && !sessions::is_valid_session_id(session_id);
-            if !malformed_work_on_project_session && !self.sessions.contains_session(session_id) {
-                let mut result = unknown_session_result(session_id);
-                decorate_structured_execution_prestart_denial(
-                    call.tool_name(),
-                    &mut result,
-                    "unknown_session_id",
-                );
-                return result;
+            if !malformed_work_on_project_session {
+                // Direct/internal dispatch may derive a recorder from business
+                // session_id (notably the handoff compatibility path) or current
+                // binding. Fence that exact Session before lifecycle/guard
+                // inheritance, project mismatch logic, or any ledger mutation.
+                if let Err(mut result) = self
+                    .authorize_session_target(session_id, call.tool_name(), auth)
+                    .await
+                {
+                    decorate_structured_execution_prestart_denial(
+                        call.tool_name(),
+                        &mut result,
+                        "session_authority_denied",
+                    );
+                    return result;
+                }
             }
         }
         let execution_sandbox = inherited_sandbox.or_else(|| {

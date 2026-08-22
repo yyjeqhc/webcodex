@@ -3594,7 +3594,7 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
     };
     register_agent(&runtime, "telemetry-show", None, caps).await;
     let project = agent_test_project_id("telemetry-show");
-    let session = runtime.sessions.start_session(None, None);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
 
     let read_task = tokio::spawn({
         let runtime = runtime.clone();

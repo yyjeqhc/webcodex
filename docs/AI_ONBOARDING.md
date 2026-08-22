@@ -44,7 +44,10 @@ webcodex share
 run → share` as the onboarding sequence.
 
 When the CLI reports **WebCodex ready**, tell the human to keep that terminal open
-and follow the printed **What to do next** section:
+and follow the printed **What to do next** section. Before promising write access,
+remember that ChatGPT Developer Mode, custom MCP apps, and write/modify actions
+are controlled by the user's ChatGPT plan, workspace, and admin settings; these
+client-side permissions are separate from WebCodex authorization:
 
 - ChatGPT Developer Mode → create an MCP custom app.
 - paste the printed MCP URL.

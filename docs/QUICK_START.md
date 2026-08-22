@@ -57,7 +57,10 @@ When the terminal reports **WebCodex ready**, use the values printed under
 
 The Console intentionally does not display that credential. If you later open
 `/console`, get connection credentials from the successful CLI output, not from
-the browser page.
+the browser page. ChatGPT Developer Mode, custom MCP apps, and write/modify
+actions are separately controlled by the ChatGPT plan, workspace, and admin
+settings; WebCodex cannot enable an action that the client workspace does not
+permit.
 
 ## 3. Send a safe first prompt
 

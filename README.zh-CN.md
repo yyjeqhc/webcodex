@@ -38,8 +38,10 @@ webcodex share
 检查这个仓库并总结它的结构。先不要做任何修改。
 ```
 
-ChatGPT 的 UI 文案可能随 workspace 与 rollout 改变；当前这次运行到底该填哪个 URL、
-认证类型和 credential，以 CLI 成功输出为准。
+ChatGPT 的 UI 文案可能随 workspace 与 rollout 改变。Developer Mode、custom MCP app 以及
+write/modify action 是否可用，由 ChatGPT 套餐、workspace 与管理员设置控制；WebCodex
+不能扩大客户端侧 app 权限。当前这次运行到底该填哪个 WebCodex URL、认证类型和
+credential，以 CLI 成功输出为准。
 
 默认 `share` 的 URL 与 credential 都是临时的，命令退出后失效。仅做本地 MCP 调试时可用
 `webcodex share --tunnel none`，此模式不需要 `cloudflared`。

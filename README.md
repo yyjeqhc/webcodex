@@ -43,8 +43,11 @@ values it prints:
 Inspect this repository and summarize its structure. Do not make changes.
 ```
 
-ChatGPT UI labels can vary by workspace and rollout. The CLI output is the source
-of truth for the URL, authentication type, and credential for that run.
+ChatGPT UI labels can vary by workspace and rollout. Developer Mode, custom MCP
+apps, and write/modify actions are controlled by the ChatGPT plan, workspace, and
+admin settings; WebCodex cannot widen client-side app permissions. The CLI output
+is the source of truth for the WebCodex URL, authentication type, and credential
+for that run.
 
 A default `share` URL and credential are temporary and stop working when the
 command exits. `webcodex share --tunnel none` is available for local-only MCP

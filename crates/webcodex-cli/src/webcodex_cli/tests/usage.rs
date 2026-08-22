@@ -304,11 +304,11 @@ fn help_moves_client_enroll_to_advanced_and_keeps_login_as_the_primary_entry() {
                 "help missing client enroll: {stdout}"
             );
             assert!(
-                stdout.contains("Advanced / Compatibility"),
+                stdout.contains("Advanced / compatibility"),
                 "help missing Advanced section: {stdout}"
             );
             // client enroll must sit under the advanced section, after it.
-            let advanced = stdout.find("Advanced / Compatibility").unwrap();
+            let advanced = stdout.find("Advanced / compatibility").unwrap();
             let enroll = stdout.find("client enroll").unwrap();
             assert!(
                 enroll > advanced,

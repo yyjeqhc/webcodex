@@ -40,7 +40,10 @@ webcodex share
 `share` 自己会完成项目 setup。不要把
 `setup → doctor → run → 停掉 run → share` 教成 onboarding 主流程。
 
-CLI 显示 **WebCodex ready** 后，让人类保持终端运行，并按 **What to do next**：
+CLI 显示 **WebCodex ready** 后，让人类保持终端运行，并按 **What to do next**。不要在未确认
+前承诺 write 能力：ChatGPT Developer Mode、custom MCP app 与 write/modify action 受用户的
+ChatGPT 套餐、workspace 和管理员设置控制，这些客户端侧权限与 WebCodex authorization 是
+两层独立边界：
 
 - ChatGPT Developer Mode → 创建 MCP custom app；
 - 粘贴输出的 MCP URL；

@@ -40,6 +40,9 @@ When it says **WebCodex ready**:
 
 The default share is temporary and ends when the command exits. For local-only
 MCP debugging, `webcodex share --tunnel none` does not require `cloudflared`.
+ChatGPT Developer Mode, custom MCP apps, and write/modify actions are controlled
+by the ChatGPT plan, workspace, and admin settings; WebCodex cannot widen those
+client-side permissions.
 
 If you already operate a WebCodex Server, use the long-lived path instead:
 
@@ -102,7 +105,9 @@ Runner、打开临时 Cloudflare Quick Tunnel，并输出 MCP URL 与临时 cred
 6. 第一条可先说：`检查这个仓库并总结它的结构。先不要做任何修改。`
 
 默认 share 会在命令退出时结束。仅做本地 MCP 调试可用
-`webcodex share --tunnel none`，此时不需要 `cloudflared`。
+`webcodex share --tunnel none`，此时不需要 `cloudflared`。ChatGPT Developer Mode、custom
+MCP app 与 write/modify action 受 ChatGPT 套餐、workspace 和管理员设置控制；WebCodex
+不能扩大这些客户端侧权限。
 
 如果你已经运营一个 WebCodex Server，再使用长期路径：
 

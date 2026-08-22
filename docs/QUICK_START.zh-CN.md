@@ -51,7 +51,9 @@ webcodex share
 5. 点击 **Scan Tools**。
 
 Console 故意不显示 credential。以后即使打开 `/console`，认证值也应来自成功的 CLI 首次
-输出，而不是浏览器页面。
+输出，而不是浏览器页面。ChatGPT Developer Mode、custom MCP app 与 write/modify action
+还分别受 ChatGPT 套餐、workspace 和管理员设置控制；客户端 workspace 没有允许的 action，
+WebCodex 不能自行把它开启。
 
 ## 3. 发送第一条安全请求
 

@@ -32,7 +32,9 @@ CLI 显示 **WebCodex ready** 后：
 
 `share` 自己会完成 project setup。Hosted ChatGPT 无法访问 loopback-only 的
 `webcodex run`，因此 `setup`、`doctor`、`run` 都不是 `share` 之前的必经步骤。ChatGPT
-UI 文案可能随 rollout 变化；URL 与认证以 CLI 输出为准。
+UI 文案可能随 rollout 变化；URL 与认证以 CLI 输出为准。Developer Mode、custom MCP app
+和 write/modify action 是否可用，还分别受 ChatGPT 套餐、workspace 与管理员设置控制；
+WebCodex scope 不会扩大这些客户端侧权限。
 
 ## Claude 与其他 MCP client
 

@@ -34,7 +34,10 @@ When the CLI says **WebCodex ready**:
 The command performs project setup itself. Hosted ChatGPT cannot reach a
 loopback-only `webcodex run`, so `setup`, `doctor`, and `run` are not required
 steps before `share`. ChatGPT UI labels can vary by rollout; use the CLI output
-as the source of truth for URL and authentication.
+as the source of truth for URL and authentication. Developer Mode, custom MCP
+apps, and write/modify actions are controlled independently by the ChatGPT plan,
+workspace, and admin settings; those client-side permissions are not widened by
+WebCodex scopes.
 
 ## Claude and other MCP clients
 

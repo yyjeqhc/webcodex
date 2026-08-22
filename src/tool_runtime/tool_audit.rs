@@ -268,6 +268,59 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             );
             copy_keys(obj, &mut out, &["tail_lines", "wait_secs"]);
         }
+        "list_projects" => {
+            out.remove("project");
+            out.insert(
+                "client_id_present".to_string(),
+                Value::Bool(obj.get("client_id").is_some_and(|value| !value.is_null())),
+            );
+            out.insert(
+                "project_present".to_string(),
+                Value::Bool(obj.get("project").is_some_and(|value| !value.is_null())),
+            );
+            let query = obj.get("query").and_then(Value::as_str);
+            out.insert("query_present".to_string(), Value::Bool(query.is_some()));
+            out.insert(
+                "query_length".to_string(),
+                Value::from(query.map(|value| value.chars().count()).unwrap_or_default()),
+            );
+            copy_keys(obj, &mut out, &["limit", "summary_only"]);
+        }
+        "list_agents" => {
+            out.insert(
+                "client_id_present".to_string(),
+                Value::Bool(obj.get("client_id").is_some_and(|value| !value.is_null())),
+            );
+            out.insert(
+                "client_ids_count".to_string(),
+                Value::from(
+                    obj.get("client_ids")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            copy_keys(obj, &mut out, &["include_projects", "summary_only"]);
+        }
+        "runtime_status" => {
+            out.insert(
+                "client_id_present".to_string(),
+                Value::Bool(obj.get("client_id").is_some_and(|value| !value.is_null())),
+            );
+            copy_keys(obj, &mut out, &["compact", "summary_only"]);
+        }
+        "list_jobs" => {
+            out.remove("project");
+            out.insert(
+                "project_present".to_string(),
+                Value::Bool(obj.get("project").is_some_and(|value| !value.is_null())),
+            );
+            out.insert(
+                "session_id_present".to_string(),
+                Value::Bool(obj.get("session_id").is_some_and(|value| !value.is_null())),
+            );
+            copy_keys(obj, &mut out, &["limit", "status"]);
+        }
         "start_session" | "start_coding_task" | "update_session_context" => {
             copy_keys(
                 obj,
@@ -2666,6 +2719,42 @@ impl ToolCall {
                 "include_handoff": include_handoff,
                 "include_validation_summary": include_validation_summary,
             }),
+            Self::ListProjects {
+                client_id,
+                project,
+                query,
+                limit,
+                summary_only,
+            } => serde_json::json!({
+                "client_id_present": client_id.is_some(),
+                "project_present": project.is_some(),
+                "query_present": query.is_some(),
+                "query_length": query.as_deref().map(|value| value.chars().count()).unwrap_or_default(),
+                "limit": limit,
+                "summary_only": summary_only,
+            }),
+            Self::ListAgents {
+                client_id,
+                client_ids,
+                include_projects,
+                summary_only,
+            } => serde_json::json!({
+                "client_id_present": client_id.is_some(),
+                "client_ids_count": client_ids.as_ref().map(Vec::len).unwrap_or_default(),
+                "include_projects": include_projects,
+                "summary_only": summary_only,
+            }),
+            Self::ListJobs {
+                limit,
+                status,
+                project,
+                session_id,
+            } => serde_json::json!({
+                "limit": limit,
+                "status": status,
+                "project_present": project.is_some(),
+                "session_id_present": session_id.is_some(),
+            }),
             Self::ToolManifest {
                 category,
                 intent,
@@ -2691,9 +2780,11 @@ impl ToolCall {
             Self::RuntimeStatus {
                 compact,
                 summary_only,
+                client_id,
             } => serde_json::json!({
                 "compact": compact,
                 "summary_only": summary_only,
+                "client_id_present": client_id.is_some(),
             }),
             Self::WorkspaceHygieneCheck {
                 project,

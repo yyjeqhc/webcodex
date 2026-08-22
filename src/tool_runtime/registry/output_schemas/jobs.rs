@@ -895,6 +895,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("count", schema_type("integer", "Returned job summary count.")),
             (
+                "matched_count",
+                schema_type("integer", "Caller-visible Job count matching all filters before limit."),
+            ),
+            (
                 "truncated",
                 schema_type(
                     "boolean",

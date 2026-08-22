@@ -77,7 +77,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "list_jobs",
-            "List bounded lifecycle metadata for existing Jobs across Runner and local executors; stdout/stderr bodies are never included.".to_string(),
+            "List bounded lifecycle metadata for caller-visible Jobs. Inside a coding Session, prefer exact project/session_id filters; status combines with them using AND semantics. stdout/stderr bodies are never included.".to_string(),
             list_jobs_input_schema(),
         ),
     ]

@@ -150,7 +150,16 @@ async fn visible_project_values(
     auth: &AuthContext,
 ) -> Result<Vec<Value>, RuntimeConsoleError> {
     let result = runtime
-        .dispatch_with_auth(ToolCall::ListProjects, Some(auth))
+        .dispatch_with_auth(
+            ToolCall::ListProjects {
+                client_id: None,
+                project: None,
+                query: None,
+                limit: None,
+                summary_only: false,
+            },
+            Some(auth),
+        )
         .await;
     if !result.success {
         return Err(RuntimeConsoleError::Internal);
@@ -496,7 +505,16 @@ mod tests {
         register_project(&runtime, "client-b", "proj-b", "/private/b", Some(&auth_b)).await;
 
         let direct = runtime
-            .dispatch_with_auth(ToolCall::ListProjects, Some(&auth_a))
+            .dispatch_with_auth(
+                ToolCall::ListProjects {
+                    client_id: None,
+                    project: None,
+                    query: None,
+                    limit: None,
+                    summary_only: false,
+                },
+                Some(&auth_a),
+            )
             .await;
         let projected = projects_for_auth(&runtime, &auth_a, Some(100))
             .await

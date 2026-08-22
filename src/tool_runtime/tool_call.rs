@@ -395,9 +395,7 @@ pub enum ToolCall {
     /// explicit `session_id` (never current-session fallback). Idempotent when
     /// already closed. Does not archive or evict; clears bindings to the closed
     /// Session.
-    CloseSession {
-        session_id: String,
-    },
+    CloseSession { session_id: String },
 
     /// Read bounded structured validation evidence already present in an
     /// explicit project-scoped session ledger. Never executes validation,
@@ -475,22 +473,15 @@ pub enum ToolCall {
 
     /// Explicitly bind an existing project-scoped session as current for the
     /// client window, caller, transport, and project.
-    BindCurrentSession {
-        project: String,
-        session_id: String,
-    },
+    BindCurrentSession { project: String, session_id: String },
 
     /// Return this window/caller/transport's exact current session binding for
     /// a project, restoring its process-local cache from the ledger if needed.
-    CurrentSession {
-        project: String,
-    },
+    CurrentSession { project: String },
 
     /// Remove this window/caller/transport's exact current session binding from
     /// both the process-local cache and durable ledger projection. Idempotent.
-    UnbindCurrentSession {
-        project: String,
-    },
+    UnbindCurrentSession { project: String },
 
     /// Create a bounded last-known-good workspace checkpoint outside the
     /// project worktree.
@@ -1068,6 +1059,10 @@ pub enum ToolCall {
         limit: Option<usize>,
         #[serde(default)]
         status: Option<String>,
+        #[serde(default)]
+        project: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
     },
 
     /// Return bounded stdout/stderr tails for a job. Defaults to a bounded tail
@@ -1384,9 +1379,7 @@ pub enum ToolCall {
     },
 
     /// Read the exact Runner's macOS Accessibility trust status without prompting.
-    ComputerAccessibilityStatus {
-        client_id: String,
-    },
+    ComputerAccessibilityStatus { client_id: String },
 
     /// Inspect one exact previously listed macOS surface as a bounded AX tree.
     ComputerAccessibilityTree {
@@ -1454,15 +1447,10 @@ pub enum ToolCall {
     },
 
     /// Read bounded native plain Unicode text from the global clipboard.
-    ComputerReadClipboard {
-        client_id: String,
-    },
+    ComputerReadClipboard { client_id: String },
 
     /// Replace the global clipboard with bounded native plain Unicode text.
-    ComputerWriteClipboard {
-        client_id: String,
-        text: String,
-    },
+    ComputerWriteClipboard { client_id: String, text: String },
 
     /// Move the native macOS or Windows pointer using one latest unspent full-display snapshot generation.
     ComputerPointerMove {
@@ -1528,7 +1516,18 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
-    ListProjects,
+    ListProjects {
+        #[serde(default)]
+        client_id: Option<String>,
+        #[serde(default)]
+        project: Option<String>,
+        #[serde(default)]
+        query: Option<String>,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        summary_only: bool,
+    },
 
     /// Register an existing directory as a WebCodex project on a selected
     /// agent. The agent validates the path against its own policy, writes a
@@ -1589,7 +1588,16 @@ pub enum ToolCall {
     },
 
     /// List connected shell/agent clients.
-    ListAgents,
+    ListAgents {
+        #[serde(default)]
+        client_id: Option<String>,
+        #[serde(default)]
+        client_ids: Option<Vec<String>>,
+        #[serde(default)]
+        include_projects: Option<bool>,
+        #[serde(default)]
+        summary_only: bool,
+    },
 
     /// Return a structured runtime health/observability summary.
     ///
@@ -1601,6 +1609,8 @@ pub enum ToolCall {
         compact: bool,
         #[serde(default)]
         summary_only: bool,
+        #[serde(default)]
+        client_id: Option<String>,
     },
 
     /// Return a compact, bounded tool manifest with categories, risk summary,
@@ -2074,11 +2084,11 @@ impl ToolCall {
             Self::ComputerSnapshot { .. } => "computer_snapshot",
             Self::ComputerSnapshotDisplay { .. } => "computer_snapshot_display",
             Self::ComputerSaveSnapshot { .. } => "computer_save_snapshot",
-            Self::ListProjects => "list_projects",
+            Self::ListProjects { .. } => "list_projects",
             Self::RegisterProject { .. } => "register_project",
             Self::UnregisterProject { .. } => "unregister_project",
             Self::CreateProject { .. } => "create_project",
-            Self::ListAgents => "list_agents",
+            Self::ListAgents { .. } => "list_agents",
             Self::RuntimeStatus { .. } => "runtime_status",
             Self::ToolManifest { .. } => "tool_manifest",
         }

@@ -77,8 +77,14 @@ impl ToolRuntime {
                 self.observe_jobs_for_auth(items, tail_lines, wait_secs, auth)
                     .await
             }
-            ToolCall::ListJobs { limit, status } => {
-                self.list_jobs_for_auth(limit, status, auth).await
+            ToolCall::ListJobs {
+                limit,
+                status,
+                project,
+                session_id,
+            } => {
+                self.list_jobs_for_auth_with_filters(limit, status, project, session_id, auth)
+                    .await
             }
             ToolCall::JobTail {
                 job_id,

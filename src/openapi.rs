@@ -263,8 +263,8 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation(
                     "listProjects",
                     "List agent-registered projects",
-                    "Read-only. Returns projects registered by connected agents with runtime id (`agent:<client_id>:<project_id>`), path, executor, client_id, patch flag, and smoke-selection capabilities such as git_available and recommended_for_smoke. Call this first to learn the project ids required by other actions.",
-                    "EmptyRequest",
+                    "Read-only. When a Runner or Project is already known, pass exact client_id/project instead of reading the full registry; query is bounded text filtering over already-visible metadata and summary_only returns a compact workspace-selection projection.",
+                    "ListProjectsRequest",
                     "ToolResult"
                 )
             },
@@ -330,8 +330,8 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation(
                     "getRuntimeStatus",
                     "Get runtime status",
-                    "Read-only runtime health/observability summary with service metadata, registered agent count/online_count/stale_count, project counts, and job counts. Never exposes tokens, secrets, full env, or stdout/stderr. Call first when troubleshooting.",
-                    "EmptyRequest",
+                    "Read-only runtime health/observability with agent count/online_count/stale_count plus project and Job counts. Pass exact client_id when validating one Runner deployment/source alignment so unrelated fleet mismatches remain secondary; omit it for fleet-wide investigation.",
+                    "RuntimeStatusRequest",
                     "ToolResult"
                 )
             },
@@ -380,7 +380,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "listRuntimeJobs",
                     "List runtime jobs",
-                    "Read-only bounded runtime job summaries across agent and local executors. Never returns stdout/stderr bodies — only metadata (job_id, kind, status, project, timestamps, exit_code). Optional `status` filter and `limit`.",
+                    "Read-only bounded runtime job summaries. Inside a coding Session, prefer exact project/session_id filters; status combines with them using AND semantics. Filters only reduce caller-visible Jobs and are applied before limit. Never returns stdout/stderr bodies.",
                     "ListJobsRequest",
                     "ToolResult",
                     json!({
@@ -393,6 +393,13 @@ pub(crate) fn build_openapi_spec() -> Value {
                             "value": {
                                 "status": "running",
                                 "limit": 20
+                            }
+                        },
+                        "session": {
+                            "summary": "List Jobs for one coding Session",
+                            "value": {
+                                "project": "agent:special:webcodex",
+                                "session_id": "wc_sess_example"
                             }
                         }
                     })
@@ -1031,6 +1038,28 @@ fn schemas() -> Value {
             "additionalProperties": false,
             "properties": {},
             "description": "Empty request body. Send {} for actions that take no arguments."
+        },
+        "ListProjectsRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional targeted Project inventory filters. Omit all fields for legacy full-registry behavior.",
+            "properties": {
+                "client_id": {"type": "string", "maxLength": 128, "description": "Exact caller-visible Runner client_id."},
+                "project": {"type": "string", "maxLength": 512, "description": "Exact full runtime Project id."},
+                "query": {"type": "string", "maxLength": 200, "description": "Bounded deterministic text filter over already-visible Project metadata; blank queries are rejected."},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum Projects after filtering; targeted calls default to 100."},
+                "summary_only": {"type": "boolean", "description": "Return compact workspace-selection metadata instead of full Project detail."}
+            }
+        },
+        "RuntimeStatusRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional focused runtime observation. Omit client_id for legacy fleet-wide semantics.",
+            "properties": {
+                "client_id": {"type": "string", "maxLength": 128, "description": "Exact caller-visible Runner client_id to evaluate independently of unrelated fleet mismatches."},
+                "compact": {"type": "boolean", "description": "Return compact runtime observability."},
+                "summary_only": {"type": "boolean", "description": "Alias for compact=true."}
+            }
         },
         "ToolsListRequest": {
             "type": "object",
@@ -1738,15 +1767,27 @@ fn schemas() -> Value {
         "ListJobsRequest": {
             "type": "object",
             "additionalProperties": false,
-            "description": "List bounded runtime job summaries. Read-only; never returns stdout/stderr bodies.",
+            "description": "List bounded caller-visible runtime Job summaries. Exact project/session_id/status filters use AND semantics before limit; never returns stdout/stderr bodies.",
             "properties": {
                 "limit": {
                     "type": "integer",
-                    "description": "Optional maximum number of job summaries to return."
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Optional maximum number of matching Job summaries to return."
                 },
                 "status": {
                     "type": "string",
-                    "description": "Optional status filter (e.g. running, completed, failed)."
+                    "description": "Optional exact status filter (e.g. running, completed, failed)."
+                },
+                "project": {
+                    "type": "string",
+                    "maxLength": 512,
+                    "description": "Optional exact full runtime Project id."
+                },
+                "session_id": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "description": "Optional exact workflow Session id."
                 }
             }
         },

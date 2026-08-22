@@ -1824,41 +1824,104 @@ impl ToolRuntime {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn list_jobs_for_auth(
         &self,
         limit: Option<usize>,
         status: Option<String>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        self.list_jobs_for_auth_with_filters(limit, status, None, None, auth)
+            .await
+    }
+
+    pub(crate) async fn list_jobs_for_auth_with_filters(
+        &self,
+        limit: Option<usize>,
+        status: Option<String>,
+        project: Option<String>,
+        session_id: Option<String>,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
         let max = limit.unwrap_or(20).clamp(1, 100);
         let status_filter = status
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        // Agent jobs come pre-bounded to `max` by the registry. Local jobs are
-        // collected fully (the in-memory map is small) so truncation can be
-        // detected accurately for the common local-only case.
-        let agent_jobs = self.shell_clients.list_jobs_for_auth(auth, Some(max)).await;
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let project_filter = match project {
+            Some(value) => {
+                let value = value.trim();
+                if value.is_empty() || value.chars().count() > 512 {
+                    return ToolResult::err_with_output(
+                        "invalid_project_filter: project must contain 1..=512 characters"
+                            .to_string(),
+                        json!({"error_kind": "invalid_project_filter"}),
+                    );
+                }
+                Some(value.to_string())
+            }
+            None => None,
+        };
+        let session_filter = match session_id {
+            Some(value) => {
+                let value = value.trim();
+                if value.is_empty() || value.chars().count() > 128 {
+                    return ToolResult::err_with_output(
+                        "invalid_session_filter: session_id must contain 1..=128 characters"
+                            .to_string(),
+                        json!({"error_kind": "invalid_session_filter"}),
+                    );
+                }
+                Some(value.to_string())
+            }
+            None => None,
+        };
+
+        // Authorization/visibility is applied by the registry first. Focused
+        // filters only reduce that already-visible set, and limit is applied
+        // after every filter so exact project/session targets cannot be hidden
+        // behind unrelated recent Jobs.
+        let agent_jobs = self.shell_clients.list_all_jobs_for_auth(auth).await;
         let mut summaries: Vec<Value> = agent_jobs
             .iter()
-            .filter(|j| {
+            .filter(|job| {
                 status_filter
                     .as_ref()
-                    .map(|s| s == &j.status)
+                    .map(|status| status == &job.status)
                     .unwrap_or(true)
+                    && project_filter
+                        .as_deref()
+                        .map(|project| job.project_id.as_deref() == Some(project))
+                        .unwrap_or(true)
+                    && session_filter
+                        .as_deref()
+                        .map(|session_id| job.session_id.as_deref() == Some(session_id))
+                        .unwrap_or(true)
             })
             .map(agent_job_summary_value)
             .collect();
+
         let local_records: Vec<(String, LocalJobRecord)> = if local_jobs_visible_to_auth(auth) {
             let local_jobs_map = self.local_jobs.lock().await;
             local_jobs_map
                 .iter()
                 .filter(|(_, record)| record.is_public())
+                .filter(|(_, record)| {
+                    project_filter
+                        .as_deref()
+                        .map(|project| record.project == project)
+                        .unwrap_or(true)
+                })
                 .map(|(job_id, record)| (job_id.clone(), record.clone()))
                 .collect()
         } else {
             Vec::new()
         };
         for (job_id, record) in &local_records {
+            if session_filter.as_deref().is_some_and(|session_id| {
+                local_job_session_id(record).as_deref() != Some(session_id)
+            }) {
+                continue;
+            }
             if let Some(summary) = local_job_summary_value(job_id, record, &status_filter) {
                 summaries.push(summary);
             }
@@ -1868,12 +1931,20 @@ impl ToolRuntime {
                 .as_i64()
                 .unwrap_or(0)
                 .cmp(&a["created_at"].as_i64().unwrap_or(0))
+                .then_with(|| {
+                    a["job_id"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .cmp(b["job_id"].as_str().unwrap_or_default())
+                })
         });
-        let truncated = summaries.len() > max;
+        let matched_count = summaries.len();
+        let truncated = matched_count > max;
         summaries.truncate(max);
         ToolResult::ok(json!({
             "jobs": summaries,
             "count": summaries.len(),
+            "matched_count": matched_count,
             "truncated": truncated,
         }))
     }

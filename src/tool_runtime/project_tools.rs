@@ -1,5 +1,6 @@
 //! Runtime dispatch adapters for project management tool calls.
 
+use super::projects::ListProjectsOptions;
 use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 
@@ -10,7 +11,25 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         match call {
-            ToolCall::ListProjects => self.list_projects(auth).await,
+            ToolCall::ListProjects {
+                client_id,
+                project,
+                query,
+                limit,
+                summary_only,
+            } => {
+                self.list_projects_with_options(
+                    auth,
+                    ListProjectsOptions {
+                        client_id,
+                        project,
+                        query,
+                        limit,
+                        summary_only,
+                    },
+                )
+                .await
+            }
             ToolCall::RegisterProject {
                 client_id,
                 id,

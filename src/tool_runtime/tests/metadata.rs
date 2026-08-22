@@ -80,6 +80,26 @@ fn runtime_status_call() -> ToolCall {
     ToolCall::RuntimeStatus {
         compact: false,
         summary_only: false,
+        client_id: None,
+    }
+}
+
+fn list_projects_call() -> ToolCall {
+    ToolCall::ListProjects {
+        client_id: None,
+        project: None,
+        query: None,
+        limit: None,
+        summary_only: false,
+    }
+}
+
+fn list_agents_call() -> ToolCall {
+    ToolCall::ListAgents {
+        client_id: None,
+        client_ids: None,
+        include_projects: None,
+        summary_only: false,
     }
 }
 
@@ -368,7 +388,7 @@ async fn list_projects_returns_agent_registered_projects_without_server_config()
     )
     .await;
 
-    let result = runtime.dispatch(ToolCall::ListProjects).await;
+    let result = runtime.dispatch(list_projects_call()).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["count"], 1);
     let projects = result.output["projects"].as_array().unwrap();
@@ -406,7 +426,7 @@ async fn list_projects_reports_smoke_selection_capabilities() {
     )
     .await;
 
-    let result = runtime.dispatch(ToolCall::ListProjects).await;
+    let result = runtime.dispatch(list_projects_call()).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["count"], 2);
     let projects = result.output["projects"].as_array().unwrap();
@@ -451,7 +471,7 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
     register_agent_projects_for_auth(&runtime, "client-open", &open, "proj-open").await;
 
     let result = runtime
-        .dispatch_with_auth(ToolCall::ListProjects, Some(&shared_a))
+        .dispatch_with_auth(list_projects_call(), Some(&shared_a))
         .await;
     assert!(result.success, "{:?}", result.error);
     let ids: Vec<&str> = result
@@ -465,7 +485,7 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
     assert_eq!(ids, vec!["agent:client-a:proj-a"]);
 
     let result = runtime
-        .dispatch_with_auth(ToolCall::ListProjects, Some(&bridge_a))
+        .dispatch_with_auth(list_projects_call(), Some(&bridge_a))
         .await;
     assert!(result.success, "{:?}", result.error);
     let ids: Vec<&str> = result
@@ -530,7 +550,7 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
     assert_eq!(result.output["error_kind"], "unknown_project");
 
     let result = runtime
-        .dispatch_with_auth(ToolCall::ListProjects, Some(&bridge_b))
+        .dispatch_with_auth(list_projects_call(), Some(&bridge_b))
         .await;
     assert!(result.success, "{:?}", result.error);
     let ids: Vec<&str> = result
@@ -560,7 +580,7 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
     assert_eq!(result.output["error_kind"], "unknown_project");
 
     let result = runtime
-        .dispatch_with_auth(ToolCall::ListProjects, Some(&open))
+        .dispatch_with_auth(list_projects_call(), Some(&open))
         .await;
     let ids: Vec<&str> = result
         .output
@@ -657,7 +677,7 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
     assert_eq!(result.output["error_kind"], "unknown_project");
 
     let result = runtime
-        .dispatch_with_auth(ToolCall::ListProjects, Some(&bootstrap))
+        .dispatch_with_auth(list_projects_call(), Some(&bootstrap))
         .await;
     let ids: Vec<&str> = result
         .output
@@ -746,7 +766,7 @@ async fn list_projects_shows_shell_profile_resolution() {
     )
     .await;
 
-    let result = runtime.dispatch(ToolCall::ListProjects).await;
+    let result = runtime.dispatch(list_projects_call()).await;
     assert!(result.success, "{:?}", result.error);
     let projects = result.output["projects"].as_array().unwrap();
     let by_id: std::collections::HashMap<&str, &Value> = projects
@@ -783,7 +803,7 @@ async fn list_projects_shell_profile_status_unknown_without_summary() {
     project.shell_profile = Some("rust".to_string());
     register_agent_with_shell_profiles(&runtime, "legacy", None, vec![project]).await;
 
-    let result = runtime.dispatch(ToolCall::ListProjects).await;
+    let result = runtime.dispatch(list_projects_call()).await;
     assert!(result.success);
     let projects = result.output["projects"].as_array().unwrap();
     assert_eq!(projects[0]["resolved_shell_profile"], "rust");
@@ -806,7 +826,7 @@ async fn project_path_registration_capability_is_projected_safely() {
     )
     .await;
 
-    let listed = runtime.dispatch(ToolCall::ListAgents).await;
+    let listed = runtime.dispatch(list_agents_call()).await;
     assert!(listed.success, "{:?}", listed.error);
     assert_eq!(
         listed.output["agents"][0]["capabilities"]["project_path_registration"],
@@ -1213,6 +1233,8 @@ fn runtime_status_input_schema_exposes_compact_flags() {
     let properties = spec.input_schema["properties"]
         .as_object()
         .expect("runtime_status input properties");
+    assert_eq!(properties["client_id"]["type"], "string");
+    assert_eq!(properties["client_id"]["maxLength"], 128);
     for field in ["compact", "summary_only"] {
         assert!(
             properties.contains_key(field),
@@ -2241,7 +2263,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
     assert!(policy.get("env").is_none());
     assert!(policy.get("init_script").is_none());
 
-    let listed = runtime.dispatch(ToolCall::ListAgents).await;
+    let listed = runtime.dispatch(list_agents_call()).await;
     assert_eq!(
         listed.output["agents"][0]["tool_providers"]["claude_code"]["last_call"]["fallback_used"],
         false
@@ -2653,7 +2675,7 @@ async fn list_agents_includes_sanitized_policy_summary() {
         .await
         .unwrap();
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
-    let result = runtime.dispatch(ToolCall::ListAgents).await;
+    let result = runtime.dispatch(list_agents_call()).await;
     assert!(result.success);
     assert_eq!(result.output["count"], 1);
     assert_eq!(result.output["summary"]["online"], 1);

@@ -1594,6 +1594,34 @@ fn openapi_call_runtime_tool_examples_cover_alias_and_no_params() {
 }
 
 #[test]
+fn openapi_targeted_inventory_request_schemas_are_bounded() {
+    let spec = build_openapi_spec();
+    let schemas = &spec["components"]["schemas"];
+
+    let projects = &schemas["ListProjectsRequest"]["properties"];
+    assert_eq!(projects["client_id"]["maxLength"], 128);
+    assert_eq!(projects["project"]["maxLength"], 512);
+    assert_eq!(projects["query"]["maxLength"], 200);
+    assert_eq!(projects["limit"]["maximum"], 100);
+    assert!(projects.get("summary_only").is_some());
+    assert_eq!(
+        spec["paths"]["/api/projects/list"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/ListProjectsRequest"
+    );
+
+    let runtime = &schemas["RuntimeStatusRequest"]["properties"];
+    assert_eq!(runtime["client_id"]["maxLength"], 128);
+    assert!(runtime.get("compact").is_some());
+    assert!(runtime.get("summary_only").is_some());
+
+    let jobs = &schemas["ListJobsRequest"]["properties"];
+    assert_eq!(jobs["limit"]["maximum"], 100);
+    assert_eq!(jobs["project"]["maxLength"], 512);
+    assert_eq!(jobs["session_id"]["maxLength"], 128);
+}
+
+#[test]
 fn openapi_spec_serializes_as_valid_json() {
     // Building the spec must not panic and must produce a JSON object with
     // the top-level OpenAPI 3.1 keys ChatGPT expects.

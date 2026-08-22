@@ -18,6 +18,18 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("version", schema_type("string", "Runtime version.")),
             (
+                "focus",
+                open_object_schema("Exact focused Runner status when client_id is supplied."),
+            ),
+            (
+                "server",
+                open_object_schema("Server build/version identity in focused mode."),
+            ),
+            (
+                "fleet_summary",
+                open_object_schema("Secondary aggregate fleet mismatch counts in focused mode; never overrides focus truth."),
+            ),
+            (
                 "build",
                 open_object_schema("Build revision metadata for the running binary."),
             ),
@@ -59,6 +71,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 array_schema(open_object_schema("Project summary including capabilities.git_available, supports_cleanup_verification, and recommended_for_smoke."), "Runtime projects."),
             ),
             ("count", schema_type("integer", "Project count.")),
+            (
+                "matched_count",
+                schema_type("integer", "Caller-visible Project count matching filters before limit."),
+            ),
+            (
+                "truncated",
+                schema_type("boolean", "Whether limit truncated matching Projects."),
+            ),
             (
                 "recommended_for_smoke",
                 array_schema(

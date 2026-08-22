@@ -489,18 +489,37 @@ pub(crate) fn observe_jobs_input_schema() -> Value {
 }
 
 pub(crate) fn list_jobs_input_schema() -> Value {
-    object_schema(vec![
+    let mut schema = object_schema(vec![
         (
             "limit",
             "integer",
-            "Maximum number of job summaries to return.",
+            "Maximum number of job summaries to return after all filters.",
             false,
         ),
         (
             "status",
             "string",
-            "Optional status filter (e.g. running, completed, failed).",
+            "Optional exact status filter (e.g. running, completed, failed).",
             false,
         ),
-    ])
+        (
+            "project",
+            "string",
+            "Optional exact full runtime Project id; filters only already caller-visible Jobs.",
+            false,
+        ),
+        (
+            "session_id",
+            "string",
+            "Optional exact Workflow Session id; filters only already caller-visible Jobs.",
+            false,
+        ),
+    ]);
+    schema["properties"]["limit"]["minimum"] = json!(1);
+    schema["properties"]["limit"]["maximum"] = json!(100);
+    schema["properties"]["project"]["minLength"] = json!(1);
+    schema["properties"]["project"]["maxLength"] = json!(512);
+    schema["properties"]["session_id"]["minLength"] = json!(1);
+    schema["properties"]["session_id"]["maxLength"] = json!(128);
+    schema
 }

@@ -57,10 +57,86 @@ pub(crate) fn tool_manifest_input_schema() -> Value {
     })
 }
 
+pub(crate) fn list_projects_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "Exact Runner client_id. Filters only caller-visible Projects on that Runner."
+            },
+            "project": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "Exact full runtime Project id (agent:<client_id>:<project_id>)."
+            },
+            "query": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "Bounded deterministic case-insensitive text filter over already-visible Project metadata."
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Maximum Projects returned after all filters. Omit to preserve the legacy full visible registry result."
+            },
+            "summary_only": {
+                "type": "boolean",
+                "description": "Return a compact workspace-selection projection without paths, revisions, or broad smoke metadata."
+            }
+        },
+        "required": [],
+        "additionalProperties": false,
+    })
+}
+
+pub(crate) fn list_agents_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "Exact single Runner client_id. Mutually exclusive with client_ids."
+            },
+            "client_ids": {
+                "type": "array",
+                "maxItems": 8,
+                "minItems": 1,
+                "uniqueItems": true,
+                "description": "Bounded exact Runner client_ids. Mutually exclusive with client_id; duplicates are rejected.",
+                "items": {"type": "string", "minLength": 1, "maxLength": 128}
+            },
+            "include_projects": {
+                "type": "boolean",
+                "description": "When false, omit Project bodies while retaining each Runner project count. Defaults to true for compatibility."
+            },
+            "summary_only": {
+                "type": "boolean",
+                "description": "Return compact Runner identity, health, build, project-count, and shared Job-concurrency facts."
+            }
+        },
+        "required": [],
+        "additionalProperties": false,
+    })
+}
+
 pub(crate) fn runtime_status_input_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
+            "client_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "Exact caller-visible Runner client_id. Focused source alignment evaluates only this Runner; omit for fleet-wide status."
+            },
             "compact": {
                 "type": "boolean",
                 "description": "When true, return compact runtime observability with service/version, build revision, tool/job counts, agent health summary, and project effective/server status. Defaults to false."
@@ -81,6 +157,9 @@ pub(crate) fn empty_input_schema() -> Value {
 
 pub(crate) const ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER: &[&str] = &[
     "project",
+    "client_id",
+    "client_ids",
+    "query",
     "path",
     "title",
     "instruction",
@@ -107,6 +186,7 @@ pub(crate) const ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER: &[&str] = &[
     "intent",
     "features",
     "summary_only",
+    "include_projects",
     "limit",
     "allow_missing",
     "upload_id",

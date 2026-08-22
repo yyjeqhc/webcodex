@@ -401,23 +401,33 @@ pub async fn runtime_status(req: &mut Request, depot: &mut Depot, res: &mut Resp
     let Some(runtime) = require_runtime(depot, res) else {
         return;
     };
-    // Body is optional; tolerate an empty/missing body since this call takes
-    // no arguments.
+    // Body remains optional for compatibility. When present, parse it through
+    // the canonical tool-call contract so the focused client_id path is shared
+    // with MCP/generic runtime calls.
     let body: Value = match req.parse_json().await {
         Ok(body) => body,
         Err(_) => Value::Null,
     };
-    let _ = body;
+    let arguments = if body.is_null() {
+        Value::Object(Default::default())
+    } else {
+        body
+    };
+    let call = match ToolCall::from_tool_name("runtime_status", arguments) {
+        Ok(call) => call,
+        Err(error) => {
+            render_result(
+                res,
+                &audit,
+                "runtime_status",
+                None,
+                crate::tool_runtime::ToolResult::err(error),
+            );
+            return;
+        }
+    };
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RuntimeStatus {
-                compact: false,
-                summary_only: false,
-            },
-            auth.as_ref(),
-        )
-        .await;
+    let result = runtime.dispatch_with_auth(call, auth.as_ref()).await;
     render_result(res, &audit, "runtime_status", None, result);
 }
 

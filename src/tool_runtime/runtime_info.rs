@@ -13,6 +13,16 @@ use std::path::PathBuf;
 const RUNNING_JOB_STATUSES: &[&str] = &["running", "started"];
 const AGENT_QUEUED_JOB_STATUSES: &[&str] = &["queued", "agent_queued"];
 const LOCAL_QUEUED_JOB_STATUSES: &[&str] = &["queued"];
+const LIST_AGENTS_MAX_CLIENT_IDS: usize = 8;
+const TARGET_CLIENT_ID_MAX_CHARS: usize = 128;
+
+#[derive(Debug, Default)]
+pub(crate) struct ListAgentsOptions {
+    pub(crate) client_id: Option<String>,
+    pub(crate) client_ids: Option<Vec<String>>,
+    pub(crate) include_projects: Option<bool>,
+    pub(crate) summary_only: bool,
+}
 
 /// Lightweight runtime metadata injected into `ToolRuntime` so observability
 /// tools (e.g. `runtime_status`) can report auth/public-url state without the
@@ -57,39 +67,161 @@ impl RuntimeInfo {
 
 impl ToolRuntime {
     pub(crate) async fn list_agents(&self, auth: Option<&AuthContext>) -> ToolResult {
-        let clients = self.shell_clients.list_clients_for_auth(auth).await;
-        let agent_jobs = self.shell_clients.list_all_jobs_for_auth(auth).await;
-        let now = chrono::Utc::now().timestamp();
-        let agents: Vec<Value> = clients
-            .iter()
-            .map(|c| {
-                json!({
-                    "client_id": c.client_id,
-                    "agent_instance_id": c.agent_instance_id,
-                    "display_name": c.display_name,
-                    "owner": c.owner,
-                    "hostname": c.hostname,
-                    "host_context": host_context_projection(c.host_context.as_ref()),
-                    "status": c.status,
-                    "connected": c.connected,
-                    "agent_protocol_version": c.agent_protocol_version,
-                    "transport": c.transport,
-                    "last_seen": c.last_seen,
-                    "last_seen_age_secs": last_seen_age_secs(c, now),
-                    "pending_requests": c.pending_requests,
-                    "projects_count": enabled_projects_count(c),
-                    "active_jobs": active_jobs_for_client(&agent_jobs, &c.client_id),
-                    "job_concurrency": job_concurrency_for_client(c, &agent_jobs),
-                    "capabilities": c.capabilities,
-                    "projects": c.projects,
-                    "policy": sanitized_policy_summary(c.policy.as_ref()),
-                    "shell_profiles": sanitized_shell_profiles_summary(
-                        c.policy.as_ref().and_then(|p| p.shell_profiles.as_ref())
+        self.list_agents_with_options(auth, ListAgentsOptions::default())
+            .await
+    }
+
+    pub(crate) async fn list_agents_with_options(
+        &self,
+        auth: Option<&AuthContext>,
+        options: ListAgentsOptions,
+    ) -> ToolResult {
+        if options.client_id.is_some() && options.client_ids.is_some() {
+            return ToolResult::err_with_output(
+                "invalid_client_filter: client_id and client_ids are mutually exclusive"
+                    .to_string(),
+                json!({"error_kind": "invalid_client_filter"}),
+            );
+        }
+        if options
+            .client_id
+            .as_deref()
+            .is_some_and(|value| !valid_target_client_id(value))
+        {
+            return ToolResult::err_with_output(
+                "invalid_client_id: client_id must contain 1..=128 characters".to_string(),
+                json!({"error_kind": "invalid_client_id"}),
+            );
+        }
+        if let Some(client_ids) = options.client_ids.as_ref() {
+            if client_ids.is_empty() {
+                return ToolResult::err_with_output(
+                    "invalid_client_ids: at least one client id is required".to_string(),
+                    json!({"error_kind": "invalid_client_ids"}),
+                );
+            }
+            if client_ids.len() > LIST_AGENTS_MAX_CLIENT_IDS {
+                return ToolResult::err_with_output(
+                    format!(
+                        "invalid_client_ids: at most {LIST_AGENTS_MAX_CLIENT_IDS} client ids are allowed"
                     ),
-                    "tool_providers": c.policy.as_ref().and_then(|p| p.tool_providers.as_ref()),
+                    json!({"error_kind": "invalid_client_ids"}),
+                );
+            }
+            let mut seen = std::collections::HashSet::new();
+            for client_id in client_ids {
+                if !valid_target_client_id(client_id) {
+                    return ToolResult::err_with_output(
+                        "invalid_client_ids: every client id must contain 1..=128 characters"
+                            .to_string(),
+                        json!({"error_kind": "invalid_client_ids"}),
+                    );
+                }
+                if !seen.insert(client_id.as_str()) {
+                    return ToolResult::err_with_output(
+                        "invalid_client_ids: duplicate client ids are not allowed".to_string(),
+                        json!({"error_kind": "invalid_client_ids"}),
+                    );
+                }
+            }
+        }
+
+        let mut clients = self.shell_clients.list_clients_for_auth(auth).await;
+        clients.sort_by(|a, b| a.client_id.cmp(&b.client_id));
+        clients.retain(|client| {
+            if let Some(expected) = options.client_id.as_deref() {
+                return client.client_id == expected;
+            }
+            if let Some(expected) = options.client_ids.as_ref() {
+                return expected
+                    .iter()
+                    .any(|client_id| client_id == &client.client_id);
+            }
+            true
+        });
+        let mut agent_jobs = self.shell_clients.list_all_jobs_for_auth(auth).await;
+        if options.client_id.is_some() || options.client_ids.is_some() {
+            agent_jobs.retain(|job| {
+                clients
+                    .iter()
+                    .any(|client| client.client_id == job.client_id)
+            });
+        }
+        let now = chrono::Utc::now().timestamp();
+        let include_projects = options.include_projects.unwrap_or(true);
+        let agents: Vec<Value> = if options.summary_only {
+            clients
+                .iter()
+                .map(|client| {
+                    json!({
+                        "client_id": client.client_id,
+                        "agent_instance_id": client.agent_instance_id,
+                        "display_name": client.display_name,
+                        "status": client.status,
+                        "connected": client.connected,
+                        "agent_protocol_version": client.agent_protocol_version,
+                        "transport": client.transport,
+                        "last_seen_age_secs": last_seen_age_secs(client, now),
+                        "pending_requests": client.pending_requests,
+                        "projects_count": enabled_projects_count(client),
+                        "active_jobs": active_jobs_for_client(&agent_jobs, &client.client_id),
+                        "job_concurrency": job_concurrency_for_client(client, &agent_jobs),
+                        "build": client.build,
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        } else {
+            clients
+                .iter()
+                .map(|client| {
+                    let mut value = json!({
+                        "client_id": client.client_id,
+                        "agent_instance_id": client.agent_instance_id,
+                        "display_name": client.display_name,
+                        "owner": client.owner,
+                        "hostname": client.hostname,
+                        "host_context": host_context_projection(client.host_context.as_ref()),
+                        "status": client.status,
+                        "connected": client.connected,
+                        "agent_protocol_version": client.agent_protocol_version,
+                        "transport": client.transport,
+                        "last_seen": client.last_seen,
+                        "last_seen_age_secs": last_seen_age_secs(client, now),
+                        "pending_requests": client.pending_requests,
+                        "projects_count": enabled_projects_count(client),
+                        "active_jobs": active_jobs_for_client(&agent_jobs, &client.client_id),
+                        "job_concurrency": job_concurrency_for_client(client, &agent_jobs),
+                        "capabilities": client.capabilities,
+                        "policy": sanitized_policy_summary(client.policy.as_ref()),
+                        "shell_profiles": sanitized_shell_profiles_summary(
+                            client.policy.as_ref().and_then(|policy| policy.shell_profiles.as_ref())
+                        ),
+                        "tool_providers": client.policy.as_ref().and_then(|policy| policy.tool_providers.as_ref()),
+                    });
+                    if include_projects {
+                        value["projects"] = json!(client.projects);
+                    }
+                    value
+                })
+                .collect()
+        };
+        if options.summary_only {
+            let online = clients.iter().filter(|client| client.connected).count();
+            let stale = clients
+                .iter()
+                .filter(|client| client.status == "stale")
+                .count();
+            return ToolResult::ok(json!({
+                "agents": agents,
+                "summary": {
+                    "count": clients.len(),
+                    "online": online,
+                    "offline": clients.len().saturating_sub(online),
+                    "stale": stale,
+                },
+                "count": clients.len(),
+            }));
+        }
         ToolResult::ok(json!({
             "agents": agents,
             "clients": agent_health_clients(&clients, &agent_jobs, now),
@@ -336,9 +468,13 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         compact: bool,
         summary_only: bool,
+        client_id: Option<String>,
     ) -> ToolResult {
-        let result = self.runtime_status(auth).await;
-        if compact || summary_only {
+        let result = match client_id {
+            Some(client_id) => self.runtime_status_for_client(auth, client_id).await,
+            None => self.runtime_status(auth).await,
+        };
+        if result.success && (compact || summary_only) {
             ToolResult {
                 output: compact_runtime_status(&result.output),
                 ..result
@@ -347,10 +483,221 @@ impl ToolRuntime {
             result
         }
     }
+
+    async fn runtime_status_for_client(
+        &self,
+        auth: Option<&AuthContext>,
+        client_id: String,
+    ) -> ToolResult {
+        if !valid_target_client_id(&client_id) {
+            return ToolResult::err_with_output(
+                "invalid_client_id: client_id must contain 1..=128 characters".to_string(),
+                json!({"error_kind": "invalid_client_id"}),
+            );
+        }
+        let visible_clients = self.shell_clients.list_clients_for_auth(auth).await;
+        let Some(client) = visible_clients
+            .iter()
+            .find(|client| client.client_id == client_id)
+            .cloned()
+        else {
+            return ToolResult::err_with_output(
+                "unknown_client_id: no caller-visible Runner matches the exact client_id"
+                    .to_string(),
+                json!({"error_kind": "unknown_client_id", "client_id": client_id}),
+            );
+        };
+        let visible_jobs = self.shell_clients.list_all_jobs_for_auth(auth).await;
+        let selected_jobs: Vec<ShellJobInfo> = visible_jobs
+            .iter()
+            .filter(|job| job.client_id == client.client_id)
+            .cloned()
+            .collect();
+        let clients = vec![client.clone()];
+        let now = chrono::Utc::now().timestamp();
+        let project_count = enabled_projects_count(&client);
+        let online_project_count = if client.connected { project_count } else { 0 };
+        let target_compatibility = version_compatibility(&clients);
+        let target_runner = target_compatibility
+            .pointer("/runners/0")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let source_alignment = target_runner
+            .get("source_alignment")
+            .cloned()
+            .unwrap_or_else(|| json!({"status": "unknown"}));
+        let fleet_compatibility = version_compatibility(&visible_clients);
+        let fleet_runners = fleet_compatibility
+            .get("runners")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mismatched_agents_count = fleet_runners
+            .iter()
+            .filter(|runner| runner.get("status").and_then(Value::as_str) != Some("compatible"))
+            .count();
+        let source_mismatched_agents_count = fleet_runners
+            .iter()
+            .filter(|runner| {
+                runner
+                    .pointer("/source_alignment/status")
+                    .and_then(Value::as_str)
+                    == Some("different")
+            })
+            .count();
+        let agent_active = selected_jobs
+            .iter()
+            .filter(|job| ACTIVE_JOB_STATUSES.contains(&job.status.as_str()))
+            .count();
+        let running_count = selected_jobs
+            .iter()
+            .filter(|job| job_status_is_running(&job.status))
+            .count();
+        let queued_count = selected_jobs
+            .iter()
+            .filter(|job| job_status_is_agent_queued(&job.status))
+            .count();
+        let recovering_count = selected_jobs
+            .iter()
+            .filter(|job| job.status == "recovering")
+            .count();
+        let reconciled_count = selected_jobs
+            .iter()
+            .filter(|job| job.recovery_state.as_deref() == Some("reconciled"))
+            .count();
+        let lost_after_reconcile_count = selected_jobs
+            .iter()
+            .filter(|job| {
+                job.status == "lost"
+                    && matches!(
+                        job.recovery_reason_code.as_deref(),
+                        Some(
+                            "runner_inventory_missing"
+                                | "runner_instance_replaced"
+                                | "runner_recovery_deadline_exceeded"
+                        )
+                    )
+            })
+            .count();
+        let projects = json!({
+            "mode": "agent_registered",
+            "agent_registered": {
+                "count": project_count,
+                "online_count": online_project_count,
+            },
+            "effective": {
+                "count": project_count,
+                "status": if project_count > 0 { "ok" } else { "no_projects" },
+            },
+            "count": project_count,
+        });
+        let agents = json!({
+            "count": 1,
+            "online_count": usize::from(client.connected),
+            "stale_count": usize::from(!client.connected),
+            "clients": [{
+                "client_id": client.client_id,
+                "agent_instance_id": client.agent_instance_id,
+                "display_name": client.display_name,
+                "status": client.status,
+                "connected": client.connected,
+                "agent_protocol_version": client.agent_protocol_version,
+                "transport": client.transport,
+                "last_seen": client.last_seen,
+                "last_seen_age_secs": last_seen_age_secs(&client, now),
+                "pending_requests": client.pending_requests,
+                "active_jobs": active_jobs_for_client(&selected_jobs, &client.client_id),
+                "job_concurrency": job_concurrency_for_client(&client, &selected_jobs),
+                "projects_count": project_count,
+            }],
+            "summary": agent_health_summary(&clients, &selected_jobs, now),
+        });
+        let jobs = json!({
+            "agent_known_count": selected_jobs.len(),
+            "local_known_count": 0,
+            "active_count": agent_active,
+            "running_count": running_count,
+            "queued_count": queued_count,
+            "recovering_count": recovering_count,
+            "reconciled_count": reconciled_count,
+            "lost_after_reconcile_count": lost_after_reconcile_count,
+        });
+        let specs = registered_tool_specs();
+        let tools = json!({
+            "count": specs.len(),
+            "names": specs.iter().map(|spec| spec.name.clone()).collect::<Vec<_>>(),
+        });
+        let server_build = crate::build_info::runtime_build_info();
+        ToolResult::ok(json!({
+            "service": "webcodex",
+            "model_surface": self.model_surface().name(),
+            "version": env!("CARGO_PKG_VERSION"),
+            "build": server_build,
+            "server_time": now,
+            "pid": std::process::id(),
+            "auth_enabled": self.runtime_info.auth_enabled,
+            "configured_public_url": self.runtime_info.configured_public_url,
+            "focus": {
+                "client_id": client.client_id,
+                "connected": client.connected,
+                "status": client.status,
+                "agent_instance_id": client.agent_instance_id,
+                "build": client.build,
+                "project_count": project_count,
+                "active_jobs": agent_active,
+                "job_concurrency": job_concurrency_for_client(&client, &selected_jobs),
+                "compatibility_status": target_runner.get("status").cloned().unwrap_or(Value::Null),
+                "source_alignment": source_alignment,
+            },
+            "server": {
+                "version": env!("CARGO_PKG_VERSION"),
+                "build": server_build,
+            },
+            "fleet_summary": {
+                "visible_runner_count": visible_clients.len(),
+                "mismatched_agents_count": mismatched_agents_count,
+                "source_mismatched_agents_count": source_mismatched_agents_count,
+                "mixed_builds_present": mismatched_agents_count > 0 || source_mismatched_agents_count > 0,
+            },
+            "projects": projects,
+            "agents": agents,
+            "version_compatibility": target_compatibility,
+            "jobs": jobs,
+            "tools": tools,
+            "authority": permissions::authority_profile_payload(),
+        }))
+    }
 }
 
 pub(crate) fn compact_runtime_status(status: &Value) -> Value {
-    json!({
+    if status.get("focus").is_some() {
+        return json!({
+            "compact": true,
+            "service": status.get("service").cloned().unwrap_or_else(|| json!("webcodex")),
+            "model_surface": status
+                .get("model_surface")
+                .cloned()
+                .unwrap_or_else(|| json!(crate::model_surface::MODEL_SURFACE_LOCAL_CODING)),
+            "version": status.get("version").cloned().unwrap_or(Value::Null),
+            "focus": status.get("focus").cloned().unwrap_or(Value::Null),
+            "server": status.get("server").cloned().unwrap_or(Value::Null),
+            "fleet_summary": status.get("fleet_summary").cloned().unwrap_or(Value::Null),
+            "projects": {
+                "effective": status.pointer("/projects/effective").cloned().unwrap_or(Value::Null),
+                "agent_registered": status.pointer("/projects/agent_registered").cloned().unwrap_or(Value::Null),
+            },
+            "jobs": {
+                "active_count": status.pointer("/jobs/active_count").cloned().unwrap_or(Value::Null),
+                "running_count": status.pointer("/jobs/running_count").cloned().unwrap_or(Value::Null),
+                "queued_count": status.pointer("/jobs/queued_count").cloned().unwrap_or(Value::Null),
+            },
+            "version_compatibility": {
+                "status": status.pointer("/version_compatibility/status").cloned().unwrap_or_else(|| json!("unknown")),
+                "source_alignment": status.pointer("/version_compatibility/source_alignment").cloned().unwrap_or_else(|| json!({"status": "unknown"})),
+            },
+        });
+    }
+    let mut compact = json!({
         "compact": true,
         "service": status.get("service").cloned().unwrap_or_else(|| json!("webcodex")),
         "model_surface": status
@@ -409,7 +756,15 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
             "source_alignment": status.pointer("/version_compatibility/source_alignment").cloned().unwrap_or_else(|| json!({"status": "unknown"})),
         },
         "authority": status.get("authority").cloned().unwrap_or(Value::Null),
-    })
+    });
+    if let Some(object) = compact.as_object_mut() {
+        for field in ["focus", "server", "fleet_summary"] {
+            if let Some(value) = status.get(field) {
+                object.insert(field.to_string(), value.clone());
+            }
+        }
+    }
+    compact
 }
 
 fn compact_runner_clients(status: &Value) -> Vec<Value> {
@@ -431,17 +786,20 @@ fn compact_runner_clients(status: &Value) -> Vec<Value> {
             let compat = compatibility
                 .iter()
                 .find(|candidate| candidate.get("client_id").and_then(Value::as_str) == Some(client_id));
-            Some(json!({
+            let mut compact = json!({
                 "client_id": client_id,
                 "agent_instance_id": agent.get("agent_instance_id").cloned().unwrap_or(Value::Null),
                 "status": agent.get("status").cloned().unwrap_or(Value::Null),
                 "transport": agent.get("transport").cloned().unwrap_or(Value::Null),
-                "host_context": agent.get("host_context").cloned().unwrap_or(Value::Null),
                 "build_git_commit": compat.and_then(|value| value.get("build_git_commit")).cloned().unwrap_or(Value::Null),
                 "build_git_dirty": compat.and_then(|value| value.get("build_git_dirty")).cloned().unwrap_or(Value::Null),
                 "version_matches_server": compat.and_then(|value| value.get("version_matches_server")).cloned().unwrap_or(Value::Null),
                 "source_alignment": compat.and_then(|value| value.get("source_alignment")).cloned().unwrap_or_else(|| json!({"status": "unknown"})),
-            }))
+            });
+            if status.get("focus").is_none() {
+                compact["host_context"] = agent.get("host_context").cloned().unwrap_or(Value::Null);
+            }
+            Some(compact)
         })
         .collect()
 }
@@ -795,8 +1153,23 @@ fn connection_layers(
 /// capability-compatible. Reports facts about which side to upgrade without
 /// exposing paths or environment.
 fn version_compatibility(clients: &[ShellClientView]) -> Value {
-    let server_version = env!("CARGO_PKG_VERSION");
     let build = crate::build_info::runtime_build_info();
+    version_compatibility_against(
+        clients,
+        env!("CARGO_PKG_VERSION"),
+        build.git_commit,
+        build.git_dirty,
+        json!(build),
+    )
+}
+
+fn version_compatibility_against(
+    clients: &[ShellClientView],
+    server_version: &str,
+    server_git_commit: Option<&str>,
+    server_git_dirty: Option<bool>,
+    server_build: Value,
+) -> Value {
     let mut overall = if clients.is_empty() {
         "no_runners"
     } else {
@@ -818,14 +1191,14 @@ fn version_compatibility(clients: &[ShellClientView]) -> Value {
             let version_matches_server = build_version
                 .as_deref()
                 .map(|version| version == server_version);
-            let git_commit_matches_server = match (build_git_commit.as_deref(), build.git_commit) {
+            let git_commit_matches_server = match (build_git_commit.as_deref(), server_git_commit) {
                 (Some(runner), Some(server)) => Some(runner == server),
                 _ => None,
             };
             let source_matches_server = match (
                 git_commit_matches_server,
                 build_git_dirty,
-                build.git_dirty,
+                server_git_dirty,
             ) {
                 (Some(false), _, _) => Some(false),
                 (Some(true), Some(false), Some(false)) => Some(true),
@@ -906,10 +1279,34 @@ fn version_compatibility(clients: &[ShellClientView]) -> Value {
         },
         "server": {
             "version": server_version,
-            "build": build,
+            "build": server_build,
         },
         "runners": runners,
     })
+}
+
+fn valid_target_client_id(client_id: &str) -> bool {
+    !client_id.is_empty() && client_id.chars().count() <= TARGET_CLIENT_ID_MAX_CHARS
+}
+
+#[cfg(test)]
+pub(crate) fn version_compatibility_for_test(
+    clients: &[ShellClientView],
+    server_version: &str,
+    server_git_commit: Option<&str>,
+    server_git_dirty: Option<bool>,
+) -> Value {
+    version_compatibility_against(
+        clients,
+        server_version,
+        server_git_commit,
+        server_git_dirty,
+        json!({
+            "git_commit": server_git_commit,
+            "git_dirty": server_git_dirty,
+            "built_at": null,
+        }),
+    )
 }
 
 fn enabled_projects_count(client: &ShellClientView) -> usize {

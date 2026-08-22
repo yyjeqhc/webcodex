@@ -2503,12 +2503,22 @@ async fn start_agent_runtime_job(
     project_id: &str,
     auth: &crate::auth::AuthContext,
 ) -> String {
+    start_agent_runtime_job_in_session(runtime, client_id, project_id, None, auth).await
+}
+
+async fn start_agent_runtime_job_in_session(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project_id: &str,
+    session_id: Option<&str>,
+    auth: &crate::auth::AuthContext,
+) -> String {
     let result = runtime
         .dispatch_with_auth(
             ToolCall::RunJob {
                 project: format!("agent:{client_id}:{project_id}"),
                 command: format!("echo {client_id}"),
-                session_id: None,
+                session_id: session_id.map(str::to_string),
                 timeout_secs: None,
                 cwd: None,
                 purpose: None,
@@ -2598,6 +2608,8 @@ async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group() {
             ToolCall::ListJobs {
                 limit: None,
                 status: None,
+                project: None,
+                session_id: None,
             },
             Some(&shared_a),
         )
@@ -2609,6 +2621,8 @@ async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group() {
             ToolCall::ListJobs {
                 limit: None,
                 status: None,
+                project: None,
+                session_id: None,
             },
             Some(&bridge_a),
         )
@@ -2620,6 +2634,8 @@ async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group() {
             ToolCall::ListJobs {
                 limit: None,
                 status: None,
+                project: None,
+                session_id: None,
             },
             Some(&bridge_b),
         )
@@ -2631,6 +2647,8 @@ async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group() {
             ToolCall::ListJobs {
                 limit: None,
                 status: None,
+                project: None,
+                session_id: None,
             },
             Some(&open),
         )
@@ -2642,6 +2660,8 @@ async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group() {
             ToolCall::ListJobs {
                 limit: None,
                 status: None,
+                project: None,
+                session_id: None,
             },
             Some(&bootstrap),
         )
@@ -2806,6 +2826,8 @@ async fn lightweight_auth_cannot_enumerate_unrelated_local_jobs() {
                 ToolCall::ListJobs {
                     limit: None,
                     status: None,
+                    project: None,
+                    session_id: None,
                 },
                 Some(auth),
             )
@@ -2829,6 +2851,8 @@ async fn lightweight_auth_cannot_enumerate_unrelated_local_jobs() {
             ToolCall::ListJobs {
                 limit: None,
                 status: None,
+                project: None,
+                session_id: None,
             },
             Some(&managed_oauth),
         )
@@ -2851,11 +2875,221 @@ async fn lightweight_auth_cannot_enumerate_unrelated_local_jobs() {
             ToolCall::ListJobs {
                 limit: None,
                 status: None,
+                project: None,
+                session_id: None,
             },
             Some(&bootstrap),
         )
         .await;
     assert_eq!(listed_job_ids(&result), vec!["job-local".to_string()]);
+}
+
+#[tokio::test]
+async fn list_jobs_filters_visible_jobs_by_project_session_and_status_before_limit() {
+    let runtime = test_runtime();
+    let auth_a = shared_key_auth_context("targeted-jobs-a");
+    let auth_b = shared_key_auth_context("targeted-jobs-b");
+    register_job_agent_for_auth(&runtime, "target-a", "proj-a", &auth_a).await;
+    register_job_agent_for_auth(&runtime, "target-b", "proj-b", &auth_b).await;
+    let project_a = "agent:target-a:proj-a".to_string();
+    let project_b = "agent:target-b:proj-b".to_string();
+    let session_a1 = runtime
+        .sessions
+        .start_session(Some(project_a.clone()), Some("A1".to_string()));
+    let session_a2 = runtime
+        .sessions
+        .start_session(Some(project_a.clone()), Some("A2".to_string()));
+    let session_b1 = runtime
+        .sessions
+        .start_session(Some(project_b.clone()), Some("B1".to_string()));
+
+    let job_a1_running = start_agent_runtime_job_in_session(
+        &runtime,
+        "target-a",
+        "proj-a",
+        Some(&session_a1.session_id),
+        &auth_a,
+    )
+    .await;
+    let job_a1_completed = start_agent_runtime_job_in_session(
+        &runtime,
+        "target-a",
+        "proj-a",
+        Some(&session_a1.session_id),
+        &auth_a,
+    )
+    .await;
+    let job_a2 = start_agent_runtime_job_in_session(
+        &runtime,
+        "target-a",
+        "proj-a",
+        Some(&session_a2.session_id),
+        &auth_a,
+    )
+    .await;
+    let _job_b1 = start_agent_runtime_job_in_session(
+        &runtime,
+        "target-b",
+        "proj-b",
+        Some(&session_b1.session_id),
+        &auth_b,
+    )
+    .await;
+
+    assert_eq!(
+        mark_next_agent_job_running(&runtime, "target-a").await,
+        job_a1_running
+    );
+    let completed_request = next_agent_request_for_instance(&runtime, "target-a", "inst")
+        .await
+        .expect("second A1 Job request");
+    assert_eq!(
+        completed_request.job_id.as_deref(),
+        Some(job_a1_completed.as_str())
+    );
+    complete_patch_agent_request(
+        &runtime,
+        "target-a",
+        &completed_request.request_id,
+        0,
+        "done",
+        "",
+    )
+    .await;
+
+    let by_project = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+                project: Some(project_a.clone()),
+                session_id: None,
+            },
+            Some(&auth_a),
+        )
+        .await;
+    assert!(by_project.success, "{:?}", by_project.error);
+    assert_eq!(by_project.output["matched_count"], 3);
+    assert_eq!(by_project.output["count"], 3);
+
+    let running = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: Some("running".to_string()),
+                project: Some(project_a.clone()),
+                session_id: None,
+            },
+            Some(&auth_a),
+        )
+        .await;
+    assert_eq!(listed_job_ids(&running), vec![job_a1_running.clone()]);
+
+    let a1 = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+                project: Some(project_a.clone()),
+                session_id: Some(session_a1.session_id.clone()),
+            },
+            Some(&auth_a),
+        )
+        .await;
+    let mut a1_ids = listed_job_ids(&a1);
+    a1_ids.sort();
+    let mut expected_a1 = vec![job_a1_running.clone(), job_a1_completed.clone()];
+    expected_a1.sort();
+    assert_eq!(a1_ids, expected_a1);
+
+    let a2 = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+                project: None,
+                session_id: Some(session_a2.session_id.clone()),
+            },
+            Some(&auth_a),
+        )
+        .await;
+    assert_eq!(listed_job_ids(&a2), vec![job_a2.clone()]);
+
+    let completed = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: Some("completed".to_string()),
+                project: Some(project_a.clone()),
+                session_id: Some(session_a1.session_id.clone()),
+            },
+            Some(&auth_a),
+        )
+        .await;
+    assert_eq!(listed_job_ids(&completed), vec![job_a1_completed.clone()]);
+
+    let limited = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: Some(1),
+                status: None,
+                project: Some(project_a.clone()),
+                session_id: Some(session_a1.session_id.clone()),
+            },
+            Some(&auth_a),
+        )
+        .await;
+    assert!(limited.success);
+    assert_eq!(limited.output["matched_count"], 2);
+    assert_eq!(limited.output["count"], 1);
+    assert_eq!(limited.output["truncated"], true);
+
+    let mismatched = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+                project: Some(project_a),
+                session_id: Some(session_b1.session_id.clone()),
+            },
+            Some(&auth_a),
+        )
+        .await;
+    assert!(mismatched.success);
+    assert_eq!(mismatched.output["count"], 0);
+
+    for foreign_filter in [
+        ToolCall::ListJobs {
+            limit: None,
+            status: None,
+            project: Some(project_b),
+            session_id: None,
+        },
+        ToolCall::ListJobs {
+            limit: None,
+            status: None,
+            project: None,
+            session_id: Some(session_b1.session_id),
+        },
+    ] {
+        let hidden = runtime
+            .dispatch_with_auth(foreign_filter, Some(&auth_a))
+            .await;
+        assert!(hidden.success, "{:?}", hidden.error);
+        assert_eq!(hidden.output["count"], 0);
+        assert_eq!(hidden.output["matched_count"], 0);
+    }
+
+    let status = runtime
+        .dispatch_with_auth(
+            ToolCall::JobStatus {
+                job_id: job_a1_running,
+                include_command_preview: false,
+            },
+            Some(&auth_a),
+        )
+        .await;
+    assert_eq!(status.output["status"], "running");
 }
 
 #[tokio::test]
@@ -2889,6 +3123,7 @@ async fn runtime_status_and_list_agents_filter_concurrency_counts_by_auth_group(
             ToolCall::RuntimeStatus {
                 compact: false,
                 summary_only: false,
+                client_id: None,
             },
             Some(&shared_a),
         )
@@ -2910,7 +3145,15 @@ async fn runtime_status_and_list_agents_filter_concurrency_counts_by_auth_group(
         .is_none());
 
     let agents_a = runtime
-        .dispatch_with_auth(ToolCall::ListAgents, Some(&shared_a))
+        .dispatch_with_auth(
+            ToolCall::ListAgents {
+                client_id: None,
+                client_ids: None,
+                include_projects: None,
+                summary_only: false,
+            },
+            Some(&shared_a),
+        )
         .await;
     assert!(agents_a.success, "{:?}", agents_a.error);
     assert_eq!(agents_a.output["count"], 1);
@@ -2945,6 +3188,7 @@ async fn runtime_status_and_list_agents_filter_concurrency_counts_by_auth_group(
             ToolCall::RuntimeStatus {
                 compact: false,
                 summary_only: false,
+                client_id: None,
             },
             Some(&open),
         )
@@ -2960,6 +3204,7 @@ async fn runtime_status_and_list_agents_filter_concurrency_counts_by_auth_group(
             ToolCall::RuntimeStatus {
                 compact: false,
                 summary_only: false,
+                client_id: None,
             },
             Some(&bootstrap),
         )
@@ -2976,6 +3221,7 @@ async fn runtime_status_and_list_agents_filter_concurrency_counts_by_auth_group(
             ToolCall::RuntimeStatus {
                 compact: true,
                 summary_only: false,
+                client_id: None,
             },
             Some(&shared_a),
         )
@@ -3000,6 +3246,7 @@ async fn runtime_concurrency_counts_cover_all_visible_jobs_beyond_list_paginatio
             ToolCall::RuntimeStatus {
                 compact: false,
                 summary_only: false,
+                client_id: None,
             },
             Some(&auth),
         )
@@ -3038,6 +3285,8 @@ async fn list_jobs_returns_bounded_summaries_without_stdout_stderr() {
         .dispatch(ToolCall::ListJobs {
             limit: None,
             status: None,
+            project: None,
+            session_id: None,
         })
         .await;
     assert!(result.success, "{:?}", result.error);
@@ -3095,6 +3344,8 @@ async fn list_jobs_respects_limit_bound() {
         .dispatch(ToolCall::ListJobs {
             limit: Some(2),
             status: None,
+            project: None,
+            session_id: None,
         })
         .await;
     assert!(result.success);
@@ -3112,6 +3363,8 @@ async fn list_jobs_requires_no_agent_capability() {
         .dispatch(ToolCall::ListJobs {
             limit: None,
             status: None,
+            project: None,
+            session_id: None,
         })
         .await;
     assert!(result.success);

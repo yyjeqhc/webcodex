@@ -407,6 +407,22 @@ pub(crate) fn session_input_summary_for_tool(tool_name: &str, arguments: &Value)
         return summary;
     };
     match tool_name {
+        "list_projects" => {
+            object.remove("client_id");
+            object.remove("project");
+            object.remove("query");
+        }
+        "list_agents" => {
+            object.remove("client_id");
+            object.remove("client_ids");
+        }
+        "runtime_status" => {
+            object.remove("client_id");
+        }
+        "list_jobs" => {
+            object.remove("project");
+            object.remove("session_id");
+        }
         "search_project_text" => {
             object.remove("pattern");
         }

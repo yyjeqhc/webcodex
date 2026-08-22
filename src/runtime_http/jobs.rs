@@ -64,6 +64,10 @@ struct ListJobsRequest {
     pub limit: Option<usize>,
     #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -226,6 +230,8 @@ pub async fn jobs_list(req: &mut Request, depot: &mut Depot, res: &mut Response)
             ToolCall::ListJobs {
                 limit: body.limit,
                 status: body.status,
+                project: body.project,
+                session_id: body.session_id,
             },
             auth.as_ref(),
         )

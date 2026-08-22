@@ -1232,6 +1232,8 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
             ToolCall::ListJobs {
                 limit: Some(10),
                 status: None,
+                project: None,
+                session_id: None,
             },
             Some(&auth),
         )

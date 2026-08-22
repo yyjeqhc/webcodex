@@ -19,8 +19,8 @@ fn from_tool_name_parses_unit_tools_without_arguments() {
                 call,
                 ToolCall::ListTools { .. }
                     | ToolCall::ComputerListTargets
-                    | ToolCall::ListProjects
-                    | ToolCall::ListAgents
+                    | ToolCall::ListProjects { .. }
+                    | ToolCall::ListAgents { .. }
                     | ToolCall::RuntimeStatus { .. }
             ),
             "unit tool {} should parse",
@@ -494,9 +494,18 @@ fn tool_call_session_id_accessor_covers_session_tool_specs() {
         }
         let call = ToolCall::from_tool_name(&spec.name, sample_tool_args_with_session(&spec.name))
             .unwrap_or_else(|e| panic!("{} should deserialize: {}", spec.name, e));
+        let expected = if spec.name == "list_jobs" {
+            // list_jobs.session_id is an exact metadata filter over the
+            // already-authorized Job set. It deliberately does not opt into
+            // generic Workflow Session lookup/recording, which would turn a
+            // foreign or missing filter value into an existence oracle.
+            None
+        } else {
+            Some("wc_sess_accessor")
+        };
         assert_eq!(
             call.session_id(),
-            Some("wc_sess_accessor"),
+            expected,
             "{} ToolCall::session_id() mismatch",
             spec.name
         );
@@ -594,7 +603,8 @@ fn from_tool_name_parses_runtime_status() {
         call,
         ToolCall::RuntimeStatus {
             compact: false,
-            summary_only: false
+            summary_only: false,
+            client_id: None,
         }
     ));
     // Also accepts an empty object.
@@ -603,7 +613,8 @@ fn from_tool_name_parses_runtime_status() {
         call,
         ToolCall::RuntimeStatus {
             compact: false,
-            summary_only: false
+            summary_only: false,
+            client_id: None,
         }
     ));
     let call = ToolCall::from_tool_name(
@@ -615,7 +626,8 @@ fn from_tool_name_parses_runtime_status() {
         call,
         ToolCall::RuntimeStatus {
             compact: true,
-            summary_only: true
+            summary_only: true,
+            client_id: None,
         }
     ));
 }
@@ -1061,13 +1073,15 @@ fn from_tool_name_parses_phase_a_tools() {
         call,
         ToolCall::ListJobs {
             limit: None,
-            status: None
+            status: None,
+            project: None,
+            session_id: None,
         }
     ));
     let call =
         ToolCall::from_tool_name("list_jobs", json!({"limit": 3, "status": "running"})).unwrap();
     match call {
-        ToolCall::ListJobs { limit, status } => {
+        ToolCall::ListJobs { limit, status, .. } => {
             assert_eq!(limit, Some(3));
             assert_eq!(status.as_deref(), Some("running"));
         }

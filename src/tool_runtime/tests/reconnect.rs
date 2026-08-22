@@ -276,6 +276,7 @@ async fn meaningful_activity_is_scoped_and_not_refreshed_by_status_calls() {
                 ToolCall::RuntimeStatus {
                     compact: false,
                     summary_only: false,
+                    client_id: None,
                 },
                 None,
             )
@@ -320,6 +321,7 @@ async fn meaningful_activity_is_scoped_and_not_refreshed_by_status_calls() {
                 ToolCall::RuntimeStatus {
                     compact: false,
                     summary_only: false,
+                    client_id: None,
                 },
                 None,
             )

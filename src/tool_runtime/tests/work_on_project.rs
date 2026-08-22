@@ -192,6 +192,40 @@ async fn dispatch_recording_startup_requests(
     (task.await.unwrap(), request_kinds)
 }
 
+async fn dispatch_startup_without_window(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    call: ToolCall,
+    auth: Option<&crate::auth::AuthContext>,
+) -> ToolResult {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.cloned();
+        async move {
+            runtime
+                .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
+                    call,
+                    auth.as_ref(),
+                    crate::tool_runtime::sessions::SessionTransport::Mcp,
+                    true,
+                    false,
+                    Default::default(),
+                    None,
+                    None,
+                )
+                .await
+        }
+    });
+    while !task.is_finished() {
+        if let Some(request) = next_patch_agent_request(runtime, client_id).await {
+            complete_agent_request_by_running_locally(runtime, client_id, request).await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+    }
+    task.await.unwrap()
+}
+
 async fn dispatch_with_path_runner(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -2178,6 +2212,184 @@ async fn work_on_project_can_omit_static_workflow_guidance() {
 }
 
 #[tokio::test]
+async fn work_on_project_static_projection_is_caller_explicit_not_window_state() {
+    let root = tempfile::tempdir().unwrap();
+    seed_coding_repository(root.path(), "static caller-explicit rule");
+    let runtime = ToolRuntime::new_for_tests();
+    let project =
+        register_agent_project_at_path(&runtime, "wop-explicit", "demo", root.path()).await;
+    let auth = auth_context(None, true);
+
+    let first = dispatch_start_coding_task_in_window(
+        &runtime,
+        "wop-explicit",
+        work_on_project_call(&project, "first", None),
+        Some(&auth),
+        "same-window",
+    )
+    .await;
+    assert!(first.success, "{:?}", first.error);
+    let session_id = first.output["session_id"].as_str().unwrap().to_string();
+    assert!(first.output["workflow"].is_object());
+
+    let repeated = dispatch_start_coding_task_in_window(
+        &runtime,
+        "wop-explicit",
+        work_on_project_call(&project, "repeat true", Some(&session_id)),
+        Some(&auth),
+        "same-window",
+    )
+    .await;
+    assert!(repeated.success, "{:?}", repeated.error);
+    assert!(repeated.output["workflow"].is_object());
+    assert_eq!(repeated.output["instructions"]["status"], "reused");
+    assert_eq!(repeated.output["instructions"]["content_included"], true);
+
+    let suppressed = dispatch_start_coding_task_in_window(
+        &runtime,
+        "wop-explicit",
+        work_on_project_call_with_projections(
+            &project,
+            "caller suppresses static content",
+            Some(&session_id),
+            false,
+            false,
+        ),
+        Some(&auth),
+        "same-window",
+    )
+    .await;
+    assert!(suppressed.success, "{:?}", suppressed.error);
+    assert!(suppressed.output.get("workflow").is_none());
+    assert_eq!(suppressed.output["instructions"]["status"], "reused");
+    assert!(suppressed.output["instructions"]
+        .get("content_included")
+        .is_none());
+    let suppressed_agents = suppressed.output["instructions"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["path"] == "AGENTS.md")
+        .unwrap();
+    assert!(suppressed_agents["fingerprint"].is_string());
+    assert!(suppressed_agents.get("content").is_none());
+    assert!(suppressed_agents.get("headings").is_none());
+    assert!(suppressed_agents.get("read_more").is_none());
+
+    let restored_other_window = dispatch_start_coding_task_in_window(
+        &runtime,
+        "wop-explicit",
+        work_on_project_call(&project, "true in another window", Some(&session_id)),
+        Some(&auth),
+        "different-window",
+    )
+    .await;
+    assert!(
+        restored_other_window.success,
+        "{:?}",
+        restored_other_window.error
+    );
+    assert!(restored_other_window.output["workflow"].is_object());
+    assert_eq!(
+        restored_other_window.output["instructions"]["content_included"],
+        true
+    );
+
+    let no_window = dispatch_startup_without_window(
+        &runtime,
+        "wop-explicit",
+        work_on_project_call(&project, "true without window", Some(&session_id)),
+        Some(&auth),
+    )
+    .await;
+    assert!(no_window.success, "{:?}", no_window.error);
+    assert!(no_window.output["workflow"].is_object());
+    assert_eq!(no_window.output["instructions"]["content_included"], true);
+}
+
+#[tokio::test]
+async fn work_on_project_suppressed_instruction_bodies_still_track_changed_rules() {
+    let root = tempfile::tempdir().unwrap();
+    seed_coding_repository(root.path(), "old body");
+    let runtime = ToolRuntime::new_for_tests();
+    let project =
+        register_agent_project_at_path(&runtime, "wop-suppressed-change", "demo", root.path())
+            .await;
+    let auth = auth_context(None, true);
+
+    let first = dispatch_start_coding_task_in_window(
+        &runtime,
+        "wop-suppressed-change",
+        work_on_project_call(&project, "first", None),
+        Some(&auth),
+        "window-a",
+    )
+    .await;
+    assert!(first.success, "{:?}", first.error);
+    let session_id = first.output["session_id"].as_str().unwrap().to_string();
+    let old_fingerprint = first.output["instructions"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["path"] == "AGENTS.md")
+        .unwrap()["fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    overwrite_agents_rule(root.path(), "new body while projection is suppressed");
+    let changed = dispatch_start_coding_task_in_window(
+        &runtime,
+        "wop-suppressed-change",
+        work_on_project_call_with_instruction_projection(
+            &project,
+            "observe change without body",
+            Some(&session_id),
+            false,
+        ),
+        Some(&auth),
+        "window-a",
+    )
+    .await;
+    assert!(changed.success, "{:?}", changed.error);
+    assert_eq!(changed.output["instructions"]["status"], "changed");
+    assert!(changed.output["instructions"]["changed_sources"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("AGENTS.md")));
+    let changed_agents = changed.output["instructions"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["path"] == "AGENTS.md")
+        .unwrap();
+    assert_ne!(changed_agents["fingerprint"], old_fingerprint);
+    assert!(changed_agents.get("content").is_none());
+    assert!(changed_agents.get("headings").is_none());
+    assert!(changed_agents.get("read_more").is_none());
+
+    let projected = dispatch_start_coding_task_in_window(
+        &runtime,
+        "wop-suppressed-change",
+        work_on_project_call(&project, "project current body", Some(&session_id)),
+        Some(&auth),
+        "window-b",
+    )
+    .await;
+    assert!(projected.success, "{:?}", projected.error);
+    assert_eq!(projected.output["instructions"]["status"], "reused");
+    assert_eq!(projected.output["instructions"]["content_included"], true);
+    assert!(projected.output["instructions"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source["path"] == "AGENTS.md"
+            && source["content"].as_str().is_some_and(
+                |content| content.contains("new body while projection is suppressed")
+            )));
+}
+
+#[tokio::test]
 async fn work_on_project_exact_resume_reuses_rules_and_detects_changes() {
     let root = tempfile::tempdir().unwrap();
     seed_coding_repository(root.path(), "first rule body");
@@ -2196,7 +2408,8 @@ async fn work_on_project_exact_resume_reuses_rules_and_detects_changes() {
     assert!(first.success, "{:?}", first.error);
     let session_id = first.output["session_id"].as_str().unwrap().to_string();
 
-    // Exact resume with unchanged rules: status=reused, no repeated content.
+    // Exact resume with unchanged rules: repository delta status remains reused,
+    // while the caller-explicit default still projects the current bounded body.
     let reused = dispatch_start_coding_task_in_window(
         &runtime,
         "wop-reuse",
@@ -2210,15 +2423,19 @@ async fn work_on_project_exact_resume_reuses_rules_and_detects_changes() {
     assert_eq!(reused.output["continuation"], "resumed_explicitly");
     let reused_instructions = &reused.output["instructions"];
     assert_eq!(reused_instructions["status"], "reused");
-    assert!(reused_instructions.get("content_included").is_none());
+    assert_eq!(reused_instructions["content_included"], true);
     assert!(reused_instructions.get("changed_sources").is_none());
-    for source in reused_instructions["sources"].as_array().unwrap() {
-        if source["path"] == "AGENTS.md" {
-            assert!(source.get("content").is_none());
-            assert!(source.get("headings").is_none());
-            assert!(source["fingerprint"].is_string());
-        }
-    }
+    let reused_agents = reused_instructions["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["path"] == "AGENTS.md")
+        .expect("reused AGENTS.md source");
+    assert!(reused_agents["content"]
+        .as_str()
+        .is_some_and(|content| content.contains("first rule body")));
+    assert!(reused_agents["headings"].is_array());
+    assert!(reused_agents["fingerprint"].is_string());
 
     // Change the rule then resume: status=changed, changed_sources includes it.
     overwrite_agents_rule(root.path(), "changed rule body");
@@ -2295,9 +2512,7 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
     .await;
     assert!(reused.success, "{:?}", reused.error);
     assert_eq!(reused.output["instructions"]["status"], "reused");
-    assert!(reused.output["instructions"]
-        .get("content_included")
-        .is_none());
+    assert_eq!(reused.output["instructions"]["content_included"], true);
 
     let (workflow_omitted, workflow_omitted_requests) = dispatch_recording_startup_requests(
         &runtime,

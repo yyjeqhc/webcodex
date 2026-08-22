@@ -16,15 +16,20 @@ role selector.
 
 - Use `work_on_project` for the normal coding bootstrap. Its task `instruction`
   is the natural place to state what the agent should do.
-- When the caller's current model context already retains the applicable repository
-  instructions, `work_on_project(include_project_instructions=false)` omits their
-  bodies from that bootstrap response. WebCodex still observes the instruction
-  files and records current instruction metadata for the resulting Workflow Session.
-- When the caller's current model context already retains the built-in WebCodex
-  coding-workflow guidance, `work_on_project(include_workflow_guidance=false)`
-  omits that static `workflow` section from the response. This is projection-only:
-  it does not change Workflow Session state, authority, role selection, or execution
-  semantics.
+- `include_project_instructions=true` (the default) always projects the current
+  bounded repository-instruction bodies, including on an exact Workflow Session
+  continuation whose repository delta status is `reused`. Set it false only when
+  the caller's current model context already retains those instructions. WebCodex
+  still re-observes the files and updates Workflow Session instruction metadata.
+- `include_workflow_guidance=true` (the default) always projects the canonical
+  built-in coding workflow. Set it false only when the caller's current model
+  context already retains that guidance. This is projection-only: it does not
+  change Workflow Session state, authority, role selection, or execution semantics.
+- WebCodex does not infer model-context retention from a `wc_sess_*` Workflow
+  Session, MCP/HTTP transport identity, client window, credential, project, or
+  server lifetime. A Workflow Session is business continuity and may be resumed
+  by multiple independent model contexts. The caller-explicit include flags are
+  the only inputs that suppress these static model-facing bodies.
 - `work_on_project` success output is sparse by default. Omitted default sections
   mean no Session execution defaults, ordinary existing-project resolution, the
   intentionally skipped repository overview, pass/non-blocking readiness, no

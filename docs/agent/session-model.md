@@ -278,6 +278,17 @@ use `work_on_project` as the canonical coding entry. The advanced schema remains
 available only to explicit direct/API compatibility callers. With a stable
 transport window, `start_coding_task`'s default behavior is:
 
+`work_on_project` deliberately does not use Workflow Session identity, transport
+identity, a client-window key, credentials, project identity, or Server lifetime
+as evidence that the current model still retains static bootstrap content. The
+same `wc_sess_*` may be explicitly resumed by multiple independent ChatGPT
+conversations. Its `include_workflow_guidance` and
+`include_project_instructions` flags are caller-explicit model-facing projection
+preferences only: their defaults are true, and false is appropriate only when
+the caller's current model context already retains the corresponding content.
+Repository instruction files are still re-observed and Session metadata/delta
+status still update when instruction bodies are suppressed.
+
 - no valid binding creates and binds one active Workflow Session;
 - an exact repository binding reuses that Session and appends the accepted
   instruction as a `task_instruction` event;

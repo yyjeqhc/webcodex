@@ -108,6 +108,7 @@ pub(crate) struct StartupBriefInput<'a> {
     pub(crate) previous_instructions: Option<&'a ProjectInstructionsSummarySnapshot>,
     pub(crate) force_instruction_load: bool,
     pub(crate) include_project_instructions: bool,
+    pub(crate) include_reused_instruction_content: bool,
     pub(crate) git: &'a Value,
     pub(crate) semantic_navigation: &'a Value,
     pub(crate) repository: &'a Value,
@@ -126,6 +127,7 @@ pub(crate) fn build_startup_brief(input: StartupBriefInput<'_>) -> Value {
         input.previous_instructions,
         input.force_instruction_load,
         !minimal && input.include_project_instructions,
+        input.include_reused_instruction_content,
         minimal,
     );
     let continuation = continuation_projection(
@@ -528,11 +530,13 @@ fn instructions_projection(
     previous: Option<&ProjectInstructionsSummarySnapshot>,
     force_load: bool,
     allow_content: bool,
+    include_reused_content: bool,
     minimal: bool,
 ) -> Value {
     let status = instruction_status(current, previous, force_load);
     let include_content = allow_content
         && (matches!(status, "loaded" | "changed")
+            || (status == "reused" && include_reused_content)
             || (status == "unavailable" && !current.files.is_empty()));
     let changed_sources = if status == "changed" {
         changed_instruction_sources(current, previous)
@@ -1825,6 +1829,32 @@ mod tests {
         )
     }
 
+    #[test]
+    fn reused_instruction_status_and_body_projection_are_independent() {
+        let current = instruction_snapshot();
+        let previous = current.to_summary();
+
+        let advanced =
+            instructions_projection(&current, Some(&previous), false, true, false, false);
+        assert_eq!(advanced["status"], "reused");
+        assert_eq!(advanced["content_included"], false);
+        assert!(advanced["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|source| source["content"].is_null()));
+
+        let canonical =
+            instructions_projection(&current, Some(&previous), false, true, true, false);
+        assert_eq!(canonical["status"], "reused");
+        assert_eq!(canonical["content_included"], true);
+        assert!(canonical["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|source| source["content"].is_string()));
+    }
+
     fn delta_feedback(new_total: usize, resolved_total: usize, still_total: usize) -> Value {
         let failures = |total: usize, offset: usize| {
             (0..total.min(20))
@@ -2090,6 +2120,7 @@ mod tests {
                 previous_instructions: None,
                 force_instruction_load: true,
                 include_project_instructions: true,
+                include_reused_instruction_content: false,
                 git: &git,
                 semantic_navigation: &semantic_navigation,
                 repository: &large_repository(),

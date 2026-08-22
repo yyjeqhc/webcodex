@@ -88,6 +88,7 @@ struct CodingStartupOptions {
     detail: StartupDetail,
     include_repository_overview: bool,
     include_project_instructions: bool,
+    include_reused_instruction_content: bool,
 }
 
 impl CodingStartupOptions {
@@ -96,6 +97,7 @@ impl CodingStartupOptions {
             detail,
             include_repository_overview: true,
             include_project_instructions: true,
+            include_reused_instruction_content: false,
         }
     }
 
@@ -104,6 +106,7 @@ impl CodingStartupOptions {
             detail: StartupDetail::Standard,
             include_repository_overview: false,
             include_project_instructions,
+            include_reused_instruction_content: include_project_instructions,
         }
     }
 }
@@ -1130,9 +1133,10 @@ impl ToolRuntime {
         // Reload rule bodies only when there is no prior snapshot to compare
         // against (fresh session, or a session whose rules were never
         // persisted, e.g. restored after a restart). Otherwise the shared
-        // brief compares fingerprints and reports reused/changed: an exact
-        // resume with unchanged rules returns `reused` without repeating the
-        // body, and changed rules return `changed` with the new bounded body.
+        // brief compares fingerprints and reports reused/changed. Whether a
+        // reused body is projected is intentionally separate: advanced
+        // start_coding_task stays incremental, while work_on_project follows
+        // its caller-explicit include_project_instructions preference.
         let force_instruction_load = previous_instructions.is_none();
         let binding_reason_code = if binding_available {
             None
@@ -1170,6 +1174,7 @@ impl ToolRuntime {
             previous_instructions,
             force_instruction_load,
             include_project_instructions: startup.include_project_instructions,
+            include_reused_instruction_content: startup.include_reused_instruction_content,
             git: &git,
             semantic_navigation: &semantic_navigation,
             repository: &repository_overview,

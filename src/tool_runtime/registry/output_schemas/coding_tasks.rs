@@ -1038,7 +1038,7 @@ fn work_on_project_output_schema() -> Value {
     });
     let compact_instructions = json!({
         "type": "object",
-        "description": "Compact project-local repository instruction projection, separate from the WebCodex built-in workflow. False/null/empty body-projection defaults are omitted.",
+        "description": "Compact project-local repository instruction projection, separate from the WebCodex built-in workflow. status reports repository/Workflow Session delta; content_included reports this call's caller-explicit model-facing body projection. False/null/empty body-projection defaults are omitted.",
         "properties": {
             "status": {
                 "type": "string",
@@ -1065,7 +1065,7 @@ fn work_on_project_output_schema() -> Value {
                     ]
                 }
             },
-            "content_included": {"type": "boolean", "description": "Emitted only when bounded instruction bodies are included; omission means false."},
+            "content_included": {"type": "boolean", "description": "Emitted only when bounded instruction bodies are included for this call; omission means false. This is independent of status=reused."},
             "truncated": {"type": "boolean", "description": "Emitted only when true."},
             "total_chars": {"type": "integer", "minimum": 1, "maximum": 32768, "description": "Emitted only with truncated=true to quantify the observed instruction extent."}
         },
@@ -1170,7 +1170,7 @@ fn work_on_project_output_schema() -> Value {
             "workflow",
             {
                 let mut schema = startup_workflow_schema();
-                schema["description"] = json!("Static built-in WebCodex coding-workflow guidance. Omitted when work_on_project is called with include_workflow_guidance=false.");
+                schema["description"] = json!("Canonical static built-in WebCodex coding-workflow guidance. Included on every work_on_project call with include_workflow_guidance=true and omitted only when the caller explicitly passes false; Workflow Session or transport identity never suppresses it automatically.");
                 schema
             },
         ),

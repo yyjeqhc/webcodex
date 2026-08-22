@@ -14,14 +14,18 @@ instructions；它不是 role selector。
 
 - 普通 coding bootstrap 优先用 `work_on_project`；它的 task `instruction` 正是描述模型
   应该做什么的自然位置。
-- 如果 caller 当前的模型上下文已经保留适用的 repository instructions，可使用
-  `work_on_project(include_project_instructions=false)` 省略本轮 bootstrap response 中的
-  instruction 正文。WebCodex 仍会观察这些文件，并为本次 bootstrap 对应的 Workflow
-  Session 记录当前的 instruction metadata。
-- 如果 caller 当前模型上下文已经保留 WebCodex 内置 coding-workflow guidance，可使用
-  `work_on_project(include_workflow_guidance=false)` 省略 response 中静态的 `workflow`
-  section。这只控制 model-facing projection，不改变 Workflow Session state、authority、
-  role selection 或 execution semantics。
+- `include_project_instructions=true`（默认）始终投影当前适用的有界 repository
+  instruction 正文；即使精确续用同一个 Workflow Session 且 repository delta status 为
+  `reused`，正文仍会返回。只有 caller 当前模型上下文已保留这些 instructions 时才应传
+  false；WebCodex 仍会重新观察文件并更新 Workflow Session instruction metadata。
+- `include_workflow_guidance=true`（默认）始终投影 canonical 内置 coding workflow。
+  只有 caller 当前模型上下文已保留该 guidance 时才应传 false。该 flag 只控制
+  model-facing projection，不改变 Workflow Session state、authority、role selection 或
+  execution semantics。
+- WebCodex 不会从 `wc_sess_*` Workflow Session、MCP/HTTP transport identity、client
+  window、credential、project 或 Server process lifetime 推断当前模型上下文是否仍保留
+  静态内容。Workflow Session 只表示业务 continuity，同一个 Session 可以被多个独立模型
+  上下文 resume；只有 caller-explicit 的 include flags 才能省略静态 model-facing 内容。
 - `work_on_project` 的成功输出默认采用 sparse projection。省略的默认 section 表示：没有
   Session execution defaults、普通已有 project 的解析没有特殊事件、repository overview
   按设计未请求、readiness 为 pass/non-blocking、没有值得报告的 Job，或 blockers/warnings

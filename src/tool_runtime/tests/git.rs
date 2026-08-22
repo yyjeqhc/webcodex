@@ -2789,6 +2789,10 @@ async fn run_git_review_summary_via_agent(
             );
             assert!(payload.args.is_empty());
             assert!(payload.script.contains("GIT_NO_REPLACE_OBJECTS=1"));
+            assert!(payload.script.contains("GIT_NO_LAZY_FETCH=1"));
+            assert!(payload.script.contains("GIT_ATTR_NOSYSTEM=1"));
+            assert!(payload.script.contains("attributesFile = /dev/null"));
+            assert!(payload.script.contains("GIT_CONFIG_GLOBAL=/dev/null"));
             for forbidden in [
                 "git fetch",
                 "git apply",
@@ -2991,6 +2995,188 @@ async fn git_review_summary_maps_exact_committed_range_without_raw_diff() {
         output["scope"]["requested_base"]
     );
     assert_eq!(audit["stats"], output["stats"]);
+}
+
+#[tokio::test]
+async fn git_review_summary_exact_range_ignores_mutable_git_attributes_and_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "data.txt", "a\nb\n", "base");
+    let base = {
+        let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+        stdout.trim().to_string()
+    };
+    commit_file(tmp.path(), "data.txt", "a\nc\n", "head");
+    let head = {
+        let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+        stdout.trim().to_string()
+    };
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-attributes", "repo", tmp.path())
+            .await;
+    let before = run_git_review_summary_via_agent(
+        &runtime,
+        "review-attributes",
+        project.clone(),
+        base.clone(),
+        head.clone(),
+    )
+    .await;
+    assert!(before.success, "{:?}", before.error);
+    assert_eq!(before.output["stats"]["files_changed"], 1);
+    assert_eq!(before.output["stats"]["insertions"], 1);
+    assert_eq!(before.output["stats"]["deletions"], 1);
+    assert_eq!(before.output["stats"]["binary_files"], 0);
+
+    fs::write(tmp.path().join(".gitattributes"), "data.txt -diff\n").unwrap();
+    fs::create_dir_all(tmp.path().join(".git/info")).unwrap();
+    fs::write(tmp.path().join(".git/info/attributes"), "data.txt -diff\n").unwrap();
+    let mutable_attributes = tmp.path().join("mutable.attributes");
+    fs::write(&mutable_attributes, "data.txt -diff\n").unwrap();
+    let config_command = format!(
+        "git config core.attributesFile {}",
+        shell_escape_simple(mutable_attributes.to_string_lossy().as_ref())
+    );
+    let (exit_code, _, stderr, _) = run_command_sync(&config_command, tmp.path(), 30);
+    assert_eq!(exit_code, 0, "{stderr}");
+
+    let after =
+        run_git_review_summary_via_agent(&runtime, "review-attributes", project, base, head).await;
+    assert!(after.success, "{:?}", after.error);
+    assert_eq!(
+        after.output, before.output,
+        "mutable worktree/info/config attributes must not change an exact committed review"
+    );
+}
+
+#[tokio::test]
+async fn git_review_summary_uses_reviewed_head_committed_attributes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "data.txt", "a\nb\n", "base");
+    let base = {
+        let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+        stdout.trim().to_string()
+    };
+    write_git_review_fixture_file(tmp.path(), ".gitattributes", "data.txt -diff\n");
+    write_git_review_fixture_file(tmp.path(), "data.txt", "a\nc\n");
+    let head = commit_git_review_fixture(tmp.path(), "head attributes");
+
+    let runtime = test_runtime();
+    let project = register_structured_git_agent_at_path(
+        &runtime,
+        "review-head-attributes",
+        "repo",
+        tmp.path(),
+    )
+    .await;
+    let result =
+        run_git_review_summary_via_agent(&runtime, "review-head-attributes", project, base, head)
+            .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["stats"]["files_changed"], 2);
+    assert_eq!(result.output["stats"]["binary_files"], 1);
+    let data = result.output["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "data.txt")
+        .unwrap();
+    assert_eq!(data["binary"], true);
+    assert_eq!(data["symbol_inspection"], "skipped_binary");
+}
+
+#[tokio::test]
+async fn git_review_summary_rename_preserves_old_path_classification_and_privacy() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/auth/scopes.rs",
+        "pub fn auth_scope() -> bool { true }\n",
+    );
+    write_git_review_fixture_file(
+        tmp.path(),
+        ".env",
+        concat!(
+            "pub fn credential_fixture() -> u8 {\n",
+            "    let a = 1;\n",
+            "    let b = 2;\n",
+            "    let c = 3;\n",
+            "    let d = 4;\n",
+            "    let e = 5;\n",
+            "    a + b + c + d + e + 1\n",
+            "}\n",
+        ),
+    );
+    let base = commit_git_review_fixture(tmp.path(), "rename base");
+
+    fs::rename(
+        tmp.path().join("src/auth/scopes.rs"),
+        tmp.path().join("src/tokenizer.rs"),
+    )
+    .unwrap();
+    fs::rename(tmp.path().join(".env"), tmp.path().join("src/config.rs")).unwrap();
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/config.rs",
+        concat!(
+            "pub fn credential_fixture() -> u8 {\n",
+            "    let a = 1;\n",
+            "    let b = 2;\n",
+            "    let c = 3;\n",
+            "    let d = 4;\n",
+            "    let e = 5;\n",
+            "    a + b + c + d + e + 2\n",
+            "}\n",
+        ),
+    );
+    let head = commit_git_review_fixture(tmp.path(), "rename head");
+
+    let runtime = test_runtime();
+    let project = register_structured_git_agent_at_path(
+        &runtime,
+        "review-rename-boundaries",
+        "repo",
+        tmp.path(),
+    )
+    .await;
+    let result =
+        run_git_review_summary_via_agent(&runtime, "review-rename-boundaries", project, base, head)
+            .await;
+    assert!(result.success, "{:?}", result.error);
+    let files = result.output["files"].as_array().unwrap();
+
+    let tokenizer = files
+        .iter()
+        .find(|file| file["path"] == "src/tokenizer.rs")
+        .unwrap();
+    assert_eq!(tokenizer["status"], "renamed");
+    assert_eq!(tokenizer["previous_path"], "src/auth/scopes.rs");
+    assert!(tokenizer["classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|class| class == "auth_security"));
+    assert!(result.output["signals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|signal| signal["name"] == "auth_or_scope_surface_touched"));
+
+    let credential = files
+        .iter()
+        .find(|file| file["path"] == "src/config.rs")
+        .unwrap();
+    assert_eq!(credential["status"], "renamed");
+    assert_eq!(credential["previous_path"], ".env");
+    assert_eq!(
+        credential["symbol_inspection"],
+        "skipped_sensitive_or_excluded"
+    );
+    assert_eq!(credential["symbols"], json!([]));
 }
 
 #[tokio::test]

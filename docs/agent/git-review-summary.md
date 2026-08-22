@@ -8,7 +8,7 @@ Inputs are `project`, `base_commit`, and `head_commit`. V1 intentionally accepts
 
 The tool resolves both objects as commits, computes the best merge-base set, reports whether the requested base is an ancestor of the head, and reviews the single exact `merge_base..head_commit` range. A missing object, missing merge-base, or criss-cross history with multiple best merge-bases is a structured failure rather than a guessed range.
 
-Git diff observations run through the existing agent internal POSIX Git path with external diff drivers and textconv disabled. The commands are read-only and do not update the index or worktree.
+Git diff observations run through the existing agent internal POSIX Git path with external diff drivers and textconv disabled. Before reading committed objects, the tool switches to a temporary isolated Git metadata view backed by the repository's object database, fixes attribute lookup to the reviewed head commit, ignores mutable worktree `.gitattributes`, repository `info/attributes`, and repository/global diff configuration, and disables lazy object fetching. The temporary view lives outside the project and is removed after each bounded observation; the commands do not update the repository index or worktree.
 
 ## Output contract
 
@@ -42,7 +42,7 @@ The initial fixed bounds are:
 
 Aggregate Git stats are computed independently of the returned-file bound. If changed-file or symbol evidence exceeds a bound, the successful result sets `truncated=true` and reports the relevant `*_partial` / `*_truncated` fields. When file classification is partial, an unobserved production/test/docs category is returned as `null`, not falsely asserted as `false`.
 
-Binary files and Gitlinks are metadata-only for symbol inspection. Secret-like and bulk-excluded paths reuse the repository sensitive-path policy and are not opened for hunk-context symbol extraction.
+Binary files and Gitlinks are metadata-only for symbol inspection. Secret-like and bulk-excluded paths reuse the repository sensitive-path policy and are not opened for hunk-context symbol extraction. For a detected rename, both the old and new path participate in deterministic classification, and either side being protected suppresses symbol-context inspection.
 
 ## Review workflow
 

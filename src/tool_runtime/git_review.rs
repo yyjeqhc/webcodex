@@ -112,15 +112,44 @@ fn git_review_failure(
     )
 }
 
-fn review_git_prefix() -> &'static str {
-    "export LC_ALL=C GIT_PAGER=cat GIT_NO_REPLACE_OBJECTS=1; unset GIT_EXTERNAL_DIFF GIT_DIFF_OPTS; "
+fn review_git_discovery_prefix() -> &'static str {
+    concat!(
+        "export LC_ALL=C GIT_PAGER=cat GIT_NO_REPLACE_OBJECTS=1 GIT_NO_LAZY_FETCH=1 ",
+        "GIT_OPTIONAL_LOCKS=0 GIT_ATTR_NOSYSTEM=1 GIT_CONFIG_COUNT=0; ",
+        "unset GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE ",
+        "GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR ",
+        "GIT_CEILING_DIRECTORIES GIT_ATTR_SOURCE GIT_CONFIG GIT_CONFIG_PARAMETERS ",
+        "GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_SHALLOW_FILE ",
+        "GIT_NAMESPACE; "
+    )
+}
+
+fn review_git_isolated_view_setup(head: &str, failure: &str) -> String {
+    format!(
+        concat!(
+            "object_dir=$(git rev-parse --path-format=absolute --git-path objects 2>/dev/null) || {{ {failure}; }}; ",
+            "view=$(mktemp -d /tmp/webcodex-git-review.XXXXXX 2>/dev/null) || {{ {failure}; }}; ",
+            "cleanup_git_review_view() {{ rm -rf -- \"$view\"; }}; ",
+            "trap cleanup_git_review_view EXIT; trap 'exit 130' HUP INT TERM; ",
+            "mkdir -p \"$view/refs\" \"$view/objects/info\" || {{ {failure}; }}; ",
+            "printf 'ref: refs/heads/unused\\n' >\"$view/HEAD\" || {{ {failure}; }}; ",
+            "printf '[core]\\n\\trepositoryformatversion = 0\\n\\tbare = true\\n\\tattributesFile = /dev/null\\n' >\"$view/config\" || {{ {failure}; }}; ",
+            "export GIT_DIR=\"$view\" GIT_OBJECT_DIRECTORY=\"$object_dir\" GIT_ATTR_SOURCE={head_q} ",
+            "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1; "
+        ),
+        failure = failure,
+        head_q = shell_escape_simple(head),
+    )
 }
 
 fn git_review_scope_command(base: &str, head: &str) -> String {
+    let isolated_view =
+        review_git_isolated_view_setup(head, "printf 'status=git_view_unavailable\\n'; exit 0");
     format!(
         concat!(
             "{prefix}",
             "if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf 'status=not_git\\n'; exit 0; fi; ",
+            "{isolated_view}",
             "base_type=$(git cat-file -t {base_q} 2>/dev/null || true); ",
             "if [ \"$base_type\" != commit ]; then printf 'status=base_not_commit\\n'; exit 0; fi; ",
             "head_type=$(git cat-file -t {head_q} 2>/dev/null || true); ",
@@ -133,15 +162,16 @@ fn git_review_scope_command(base: &str, head: &str) -> String {
             "if git merge-base --is-ancestor {base_q} {head_q} >/dev/null 2>&1; then base_is_ancestor=true; ",
             "else ancestor_exit=$?; if [ \"$ancestor_exit\" -eq 1 ]; then base_is_ancestor=false; else printf 'status=ancestor_failed\\n'; exit 0; fi; fi; ",
             "commit_count=$(git rev-list --count \"$merge_base..{head}\" 2>/dev/null) || {{ printf 'status=rev_list_failed\\n'; exit 0; }}; ",
-            "if ! git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames --numstat \"$merge_base\" {head_q} >/dev/null 2>&1; ",
+            "if ! git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --numstat \"$merge_base\" {head_q} >/dev/null 2>&1; ",
             "then printf 'status=diff_failed\\n'; exit 0; fi; ",
-            "stats=$(git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames --numstat \"$merge_base\" {head_q} | ",
+            "stats=$(git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --numstat \"$merge_base\" {head_q} | ",
             "awk 'BEGIN{{f=0;a=0;d=0;b=0}} {{f++; if ($1==\"-\" || $2==\"-\") b++; else {{a+=$1; d+=$2}}}} END{{printf \"files_changed=%d\\ninsertions=%d\\ndeletions=%d\\nbinary_files=%d\\n\",f,a,d,b}}') || ",
             "{{ printf 'status=stats_failed\\n'; exit 0; }}; ",
             "printf 'status=ok\\nrequested_base=%s\\nrequested_head=%s\\nmerge_base=%s\\nbase_is_ancestor=%s\\ncommit_count=%s\\n%s' ",
             "{base_q} {head_q} \"$merge_base\" \"$base_is_ancestor\" \"$commit_count\" \"$stats\""
         ),
-        prefix = review_git_prefix(),
+        prefix = review_git_discovery_prefix(),
+        isolated_view = isolated_view,
         base_q = shell_escape_simple(base),
         head_q = shell_escape_simple(head),
         head = head,
@@ -167,6 +197,7 @@ fn parse_git_review_scope(stdout: &str) -> Result<ReviewScope, &'static str> {
         Some("head_not_commit") => return Err("head_commit_missing_or_not_commit"),
         Some("no_merge_base") => return Err("no_merge_base"),
         Some("ambiguous_merge_base") => return Err("ambiguous_merge_base"),
+        Some("git_view_unavailable") => return Err("git_isolated_view_unavailable"),
         Some("ancestor_failed") => return Err("merge_base_ancestor_check_failed"),
         Some("rev_list_failed") => return Err("commit_count_unavailable"),
         Some("diff_failed") | Some("stats_failed") => return Err("git_diff_failed"),
@@ -217,16 +248,21 @@ fn bounded_review_diff_command(
         "raw" => "--raw",
         _ => unreachable!("closed git review diff mode"),
     };
+    let failure = format!("printf '{}\\n'; exit 0", GIT_REVIEW_ERROR_SENTINEL);
+    let isolated_view = review_git_isolated_view_setup(head, &failure);
     format!(
         concat!(
             "{prefix}",
-            "if ! git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q} >/dev/null 2>&1; ",
+            "if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf '{error}\\n'; exit 0; fi; ",
+            "{isolated_view}",
+            "if ! git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q} >/dev/null 2>&1; ",
             "then printf '{error}\\n'; exit 0; fi; ",
-            "git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q} | ",
+            "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q} | ",
             "awk -v max_lines={max_lines} -v max_bytes={max_bytes} '",
             "BEGIN{{n=0;b=0}} {{s=length($0)+1; if (n>=max_lines || b+s>max_bytes) exit; print; n++; b+=s}}'"
         ),
-        prefix = review_git_prefix(),
+        prefix = review_git_discovery_prefix(),
+        isolated_view = isolated_view,
         mode = mode,
         base_q = shell_escape_simple(merge_base),
         head_q = shell_escape_simple(head),
@@ -634,6 +670,32 @@ fn classify_path(path: &str) -> Vec<String> {
     classes
 }
 
+fn classify_review_paths(
+    status: &str,
+    path: Option<&str>,
+    previous_path: Option<&str>,
+) -> Vec<String> {
+    let mut classes = path
+        .map(classify_path)
+        .unwrap_or_else(|| vec!["unknown".to_string()]);
+    if status == "renamed" {
+        if let Some(previous_path) = previous_path {
+            for class in classify_path(previous_path) {
+                if !classes.iter().any(|existing| existing == &class) {
+                    classes.push(class);
+                }
+            }
+        }
+    }
+    if classes.iter().any(|class| class != "unknown") {
+        classes.retain(|class| class != "unknown");
+    }
+    if classes.is_empty() {
+        classes.push("unknown".to_string());
+    }
+    classes
+}
+
 fn has_class(file: &ReviewFile, class: &str) -> bool {
     file.classes.iter().any(|value| value == class)
 }
@@ -651,15 +713,31 @@ fn runtime_config_surface(path: &str, classes: &[String]) -> bool {
     )
 }
 
+fn symbol_probe_path_eligible(path: &str) -> bool {
+    validate_project_relative_path(path).is_ok()
+        && !crate::sensitive_paths::is_secret_path(path)
+        && !crate::sensitive_paths::is_bulk_skipped_path(path)
+}
+
 fn symbol_probe_eligible(file: &ReviewFile) -> bool {
     let Some(path) = file.path.as_deref() else {
         return false;
     };
-    file.binary == Some(false)
-        && file.gitlink == Some(false)
-        && validate_project_relative_path(path).is_ok()
-        && !crate::sensitive_paths::is_secret_path(path)
-        && !crate::sensitive_paths::is_bulk_skipped_path(path)
+    if file.binary != Some(false)
+        || file.gitlink != Some(false)
+        || !symbol_probe_path_eligible(path)
+    {
+        return false;
+    }
+    if file.status == "renamed" {
+        let Some(previous_path) = file.previous_path.as_deref() else {
+            return false;
+        };
+        if !symbol_probe_path_eligible(previous_path) {
+            return false;
+        }
+    }
+    true
 }
 
 fn git_review_symbol_command(merge_base: &str, head: &str, paths: &[String]) -> String {
@@ -668,15 +746,20 @@ fn git_review_symbol_command(merge_base: &str, head: &str, paths: &[String]) -> 
         .map(|path| shell_escape_simple(path))
         .collect::<Vec<_>>()
         .join(" ");
+    let failure = format!("printf '{}\\n'; exit 0", GIT_REVIEW_ERROR_SENTINEL);
+    let isolated_view = review_git_isolated_view_setup(head, &failure);
     format!(
         concat!(
             "{prefix}",
-            "if ! git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ {base_q} {head_q} -- {paths} >/dev/null 2>&1; ",
+            "if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf '{error}\\n'; exit 0; fi; ",
+            "{isolated_view}",
+            "if ! git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ {base_q} {head_q} -- {paths} >/dev/null 2>&1; ",
             "then printf '{error}\\n'; exit 0; fi; ",
-            "git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ {base_q} {head_q} -- {paths} | ",
+            "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ {base_q} {head_q} -- {paths} | ",
             "head -c {max_bytes}"
         ),
-        prefix = review_git_prefix(),
+        prefix = review_git_discovery_prefix(),
+        isolated_view = isolated_view,
         base_q = shell_escape_simple(merge_base),
         head_q = shell_escape_simple(head),
         paths = joined,
@@ -1049,11 +1132,11 @@ impl ToolRuntime {
                 let mode = metadata_alignment_complete
                     .then(|| raw_modes.get(index).copied())
                     .flatten();
-                let classes = name
-                    .path
-                    .as_deref()
-                    .map(classify_path)
-                    .unwrap_or_else(|| vec!["unknown".to_string()]);
+                let classes = classify_review_paths(
+                    &name.status,
+                    name.path.as_deref(),
+                    name.previous_path.as_deref(),
+                );
                 ReviewFile {
                     status: name.status,
                     path: name.path,
@@ -1082,6 +1165,8 @@ impl ToolRuntime {
                 file.symbol_inspection = "skipped_binary";
             } else if file.gitlink == Some(true) {
                 file.symbol_inspection = "skipped_gitlink";
+            } else if file.status == "renamed" && file.previous_path.is_none() {
+                file.symbol_inspection = "skipped_path_unavailable";
             } else if file.binary.is_none() || file.gitlink.is_none() {
                 file.symbol_inspection = "skipped_metadata_partial";
             } else if file.path.is_none() {

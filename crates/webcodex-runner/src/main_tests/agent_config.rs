@@ -782,6 +782,8 @@ id = "local-tools"
 name = "Local tools"
 executable = "/usr/bin/example-mcp"
 args = ["--stdio", "$HOME", "$(id)"]
+cwd = "/absolute/provider/workdir"
+env_from_env = { GITHUB_TOKEN = "GITHUB_TOKEN", HOME = "HOME" }
 timeout_secs = 5
 "#,
     )
@@ -794,6 +796,17 @@ timeout_secs = 5
     assert_eq!(
         config.mcp_gateway.providers[0].args,
         ["--stdio", "$HOME", "$(id)"]
+    );
+    assert_eq!(
+        config.mcp_gateway.providers[0].cwd.as_deref(),
+        Some("/absolute/provider/workdir")
+    );
+    assert_eq!(
+        config.mcp_gateway.providers[0]
+            .env_from_env
+            .get("GITHUB_TOKEN")
+            .map(String::as_str),
+        Some("GITHUB_TOKEN")
     );
 }
 

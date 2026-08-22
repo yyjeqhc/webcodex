@@ -70,16 +70,38 @@ impl Fixture {
         default_timeout_secs: u64,
         provider_timeout_secs: Option<u64>,
     ) -> Self {
+        Self::with_execution_context(
+            scenario,
+            default_timeout_secs,
+            provider_timeout_secs,
+            None,
+            BTreeMap::new(),
+        )
+    }
+
+    fn with_execution_context(
+        scenario: &str,
+        default_timeout_secs: u64,
+        provider_timeout_secs: Option<u64>,
+        cwd: Option<String>,
+        env_from_env: BTreeMap<String, String>,
+    ) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let marker = temp.path().join("marker.log");
         let fake = fake_binary();
+        let mut args = vec![scenario.to_string(), marker.to_string_lossy().to_string()];
+        if let Some(cwd) = cwd.as_ref() {
+            args.push(cwd.clone());
+        }
         let manager = McpGatewayManager::new(&McpGatewayConfig {
             request_timeout_secs: default_timeout_secs,
             providers: vec![McpGatewayProviderConfig {
                 id: "fake".to_string(),
                 name: "Fake provider".to_string(),
                 executable: fake.path.to_string_lossy().to_string(),
-                args: vec![scenario.to_string(), marker.to_string_lossy().to_string()],
+                args,
+                cwd,
+                env_from_env,
                 timeout_secs: provider_timeout_secs,
             }],
         });
@@ -107,14 +129,6 @@ impl Fixture {
     }
 
     fn call(&self, provider: &McpGatewayProvider) -> McpGatewayResponse {
-        self.call_with_meta(provider, None)
-    }
-
-    fn call_with_meta(
-        &self,
-        provider: &McpGatewayProvider,
-        meta: Option<Value>,
-    ) -> McpGatewayResponse {
         self.manager.handle(McpGatewayRequest::ToolsCall {
             provider_id: provider.provider_id.clone(),
             provider_instance_id: provider.provider_instance_id.clone(),
@@ -128,7 +142,6 @@ impl Fixture {
                 output_schema: None,
                 annotations: None,
             },
-            meta,
         })
     }
 
@@ -196,17 +209,129 @@ fn schema_change_blocks_effectful_call_without_retiring_provider() {
 }
 
 #[test]
-fn tools_call_forwards_standard_meta_to_upstream() {
-    let fixture = Fixture::new("meta_required", 2);
+fn tools_call_sends_only_gateway_owned_name_and_arguments() {
+    let fixture = Fixture::new("meta_forbidden", 2);
     let provider = fixture.provider();
-    let response = fixture.call_with_meta(
-        &provider,
-        Some(json!({"progressToken": "gateway-progress"})),
-    );
+    let response = fixture.call(&provider);
     assert!(matches!(
         response.payload,
         Some(McpGatewayResponsePayload::ToolResult { .. })
     ));
+    assert_eq!(fixture.marker_count("call"), 1);
+}
+
+#[test]
+fn provider_execution_context_is_explicit_cleared_and_private() {
+    let _guard = crate::tests::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _env = crate::tests::EnvGuard::new()
+        .set("GITHUB_TOKEN", "github-provider-secret-value")
+        .set("WEBCODEX_MCP_MAPPED_SOURCE", "mapped-provider-secret-value")
+        .set("WEBCODEX_MCP_UNLISTED", "must-not-reach-provider");
+    let cwd = tempfile::tempdir().unwrap();
+    let fixture = Fixture::with_execution_context(
+        "execution_context",
+        2,
+        None,
+        Some(cwd.path().to_string_lossy().into_owned()),
+        BTreeMap::from([
+            ("GITHUB_TOKEN".to_string(), "GITHUB_TOKEN".to_string()),
+            (
+                "WEBCODEX_MCP_MAPPED_CHILD".to_string(),
+                "WEBCODEX_MCP_MAPPED_SOURCE".to_string(),
+            ),
+        ]),
+    );
+    let provider = fixture.provider();
+    let inventory = serde_json::to_string(&fixture.manager.provider_inventory()).unwrap();
+    assert!(!inventory.contains("github-provider-secret-value"));
+    assert!(!inventory.contains("mapped-provider-secret-value"));
+
+    let response = fixture.list(&provider);
+    assert!(response.error.is_none(), "{:?}", response.error);
+    for marker in [
+        "github-env-ok",
+        "mapped-env-ok",
+        "unlisted-env-cleared",
+        "path-cleared",
+        "cwd-ok",
+    ] {
+        assert_eq!(fixture.marker_count(marker), 1, "missing marker {marker}");
+    }
+    let encoded = serde_json::to_string(&response).unwrap();
+    assert!(!encoded.contains("github-provider-secret-value"));
+    assert!(!encoded.contains("mapped-provider-secret-value"));
+    assert!(!encoded.contains("must-not-reach-provider"));
+}
+
+#[test]
+fn missing_mapped_source_fails_before_provider_spawn() {
+    let _guard = crate::tests::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _env = crate::tests::EnvGuard::new().remove("WEBCODEX_MCP_TEST_MISSING_SOURCE");
+    let fixture = Fixture::with_execution_context(
+        "normal",
+        2,
+        None,
+        None,
+        BTreeMap::from([(
+            "PROVIDER_CREDENTIAL".to_string(),
+            "WEBCODEX_MCP_TEST_MISSING_SOURCE".to_string(),
+        )]),
+    );
+    let response = fixture.list(&fixture.provider());
+    assert_eq!(response.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(
+        response.error.as_ref().unwrap().code,
+        "provider_env_missing"
+    );
+    assert_eq!(fixture.marker_count("start"), 0);
+}
+
+#[test]
+fn sensitive_runner_env_mapping_is_blocked_before_provider_spawn() {
+    let fixture = Fixture::with_execution_context(
+        "normal",
+        2,
+        None,
+        None,
+        BTreeMap::from([(
+            "PROVIDER_CREDENTIAL".to_string(),
+            "WEBCODEX_AGENT_TOKEN".to_string(),
+        )]),
+    );
+    let response = fixture.list(&fixture.provider());
+    assert_eq!(response.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(
+        response.error.as_ref().unwrap().code,
+        "provider_env_forbidden"
+    );
+    assert_eq!(fixture.marker_count("start"), 0);
+    assert!(!serde_json::to_string(&response)
+        .unwrap()
+        .contains("WEBCODEX_AGENT_TOKEN"));
+}
+
+#[test]
+fn unavailable_provider_cwd_fails_before_provider_spawn() {
+    let cwd_parent = tempfile::tempdir().unwrap();
+    let missing = cwd_parent.path().join("missing-provider-cwd");
+    let fixture = Fixture::with_execution_context(
+        "normal",
+        2,
+        None,
+        Some(missing.to_string_lossy().into_owned()),
+        BTreeMap::new(),
+    );
+    let response = fixture.list(&fixture.provider());
+    assert_eq!(response.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(
+        response.error.as_ref().unwrap().code,
+        "provider_cwd_unavailable"
+    );
+    assert_eq!(fixture.marker_count("start"), 0);
 }
 
 #[test]

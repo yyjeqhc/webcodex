@@ -110,14 +110,35 @@ Runner 可以直接托管供 WebCodex 内建 MCP gateway 使用的 persistent st
 request_timeout_secs = 30
 
 [[mcp.providers]]
-id = "everything"
-name = "Everything"
-executable = "/absolute/path/to/mcp-server-everything"
+id = "github"
+name = "GitHub"
+executable = "/absolute/path/to/github-mcp-server"
 args = []
+cwd = "/absolute/provider/workdir"
+env_from_env = { GITHUB_TOKEN = "GITHUB_TOKEN", PATH = "PATH", HOME = "HOME" }
 timeout_secs = 30
 ```
 
-`executable` 必须是绝对路径；Runner 不经过 shell 启动 provider，并使用清空的宿主环境而不是继承整个 Runner 环境。provider 首次使用时启动、完成 MCP initialize 后持久复用。配置变化需要 Runner restart；restart 后逻辑 `id` 可以保持不变，但内部 provider instance 会更换。Server dispatch 会绑定 exact current instance，过期请求不会被重定向。registration 只向 Server 投影 provider 的 `id`/`name` 与内部 instance fencing metadata，不投影 executable、argv、PID、stderr 或 Runner credential。
+`executable` 与可选 `cwd` 都是 Runner host-local operator 配置并且必须为绝对路径。`cwd` 会原样交给 `Command::current_dir`，没有 fallback；非法配置在加载时拒绝，不可用目录则在 provider child spawn 前失败。`[mcp]` 仍是 restart-required 配置，不增加 hot reload 或 live provider replacement。
+
+provider 永远不会整体继承 Runner 环境：`env_clear()` 始终保留。`env_from_env` 是显式的 **provider 环境变量名 -> Runner 进程环境变量名** mapping，只复制明确列出的变量；source 不存在时不会静默 omit，而是在 provider spawn 前以 `not_started` 失败。`WEBCODEX_TOKEN`、`WEBCODEX_AGENT_TOKEN`、`WEBCODEX_USER_TOKEN`、`AUTHORIZATION` 等 WebCodex sensitive transport/account key 不允许映射。环境变量名与数量都有边界；Windows destination name 按大小写不敏感语义判断冲突，Unix 保持大小写敏感。环境变量值只存在于 Runner 本地，不进入 provider inventory、Server wire metadata、error body、audit/log metadata 或 model-facing output。
+
+provider 在第一次真实交互时 lazy start，完成 MCP initialize 后持久复用。Runner restart 后逻辑 `id` 可以保持不变，但内部 provider instance 会变化；Server dispatch 绑定 exact Runner/provider instance，因此 stale request 不会被重定向或 replay。registration 只向 Server 投影 provider `id`/`name` 与内部 instance fencing metadata，不投影 executable、argv、cwd、环境 mapping/value、PID、stderr 或 Runner credential。因此不带 `server` 的 `mcp_tool(action=list)` 只表示 registration routing 是否 **resolvable**，不是 provider process health；`list(server=...)` 与 `describe` 才会真实与 provider 交互。
+
+### Provider-side gateway V1 compatibility
+
+WebCodex 对外 `/mcp` 有自己已经文档化的 2025/2026 protocol support；这不代表任意或最新 MCP server 都能被无损透明桥接。Runner 到 configured local provider 的内建 gateway V1 有意限制为 bounded stdio tool subset：
+
+- 单一 persistent stdio provider connection，使用 `initialize` 后发送 `notifications/initialized`；
+- provider-side 行为目前基于 MCP `2025-06-18` tool semantics；
+- 只支持 `tools/list` 与 `tools/call`；provider callback 不支持并 fail closed；
+- provider notification 只做 bounded consume，不 relay 给 outer MCP caller；
+- 不支持 `tools/list` pagination；
+- tool result `content` 目前只支持 text；bounded optional `structuredContent` 会保留；
+- image/audio content、resource link、embedded resource 不支持并 fail closed；
+- outer request `_meta`（包括 progress token、client info、protocol version、capabilities 或 custom metadata）不会转发给 local provider。provider 在 `tools/list` descriptor 中返回的 `_meta` 属于相反方向的独立字段，仍然保留。
+
+不支持的 protocol/content shape 会 fail closed，而不是静默转换。provider-side stateless 2026 bridge、callback、pagination、media/resource forwarding 与端到端 progress relay 都不属于 V1 contract。
 
 ## Shell profile
 

@@ -13,6 +13,47 @@ fn main() -> io::Result<()> {
     let scenario = args.first().map(String::as_str).unwrap_or("normal");
     let marker = args.get(1).map(Path::new);
     append(marker, "start\n")?;
+    if scenario == "execution_context" {
+        append(
+            marker,
+            if env::var("GITHUB_TOKEN").as_deref() == Ok("github-provider-secret-value") {
+                "github-env-ok\n"
+            } else {
+                "github-env-bad\n"
+            },
+        )?;
+        append(
+            marker,
+            if env::var("WEBCODEX_MCP_MAPPED_CHILD").as_deref()
+                == Ok("mapped-provider-secret-value")
+            {
+                "mapped-env-ok\n"
+            } else {
+                "mapped-env-bad\n"
+            },
+        )?;
+        append(
+            marker,
+            if env::var_os("WEBCODEX_MCP_UNLISTED").is_none() {
+                "unlisted-env-cleared\n"
+            } else {
+                "unlisted-env-leaked\n"
+            },
+        )?;
+        append(
+            marker,
+            if env::var_os("PATH").is_none() {
+                "path-cleared\n"
+            } else {
+                "path-leaked\n"
+            },
+        )?;
+        let cwd_matches = match (args.get(2), env::current_dir()) {
+            (Some(expected), Ok(current)) => current == Path::new(expected),
+            _ => false,
+        };
+        append(marker, if cwd_matches { "cwd-ok\n" } else { "cwd-bad\n" })?;
+    }
     let mut reader = BufReader::new(io::stdin().lock());
     let mut writer = io::stdout().lock();
     let mut calls = 0usize;
@@ -130,13 +171,21 @@ fn main() -> io::Result<()> {
             "tools/call" => {
                 calls += 1;
                 append(marker, "call\n")?;
-                if scenario == "meta_required"
-                    && !line.contains("\"progressToken\":\"gateway-progress\"")
+                if scenario == "meta_forbidden"
+                    && [
+                        "\"_meta\"",
+                        "progressToken",
+                        "clientInfo",
+                        "protocolVersion",
+                        "clientCapabilities",
+                    ]
+                    .iter()
+                    .any(|field| line.contains(field))
                 {
                     send(
                         &mut writer,
                         &format!(
-                            r#"{{"jsonrpc":"2.0","id":{id},"error":{{"code":-32602,"message":"missing _meta"}}}}"#
+                            r#"{{"jsonrpc":"2.0","id":{id},"error":{{"code":-32602,"message":"caller metadata crossed gateway boundary"}}}}"#
                         ),
                     )?;
                     continue;

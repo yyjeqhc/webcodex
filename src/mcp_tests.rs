@@ -6,6 +6,28 @@ use crate::shell_protocol::{
 use base64::engine::general_purpose;
 use sha2::{Digest, Sha256};
 
+#[test]
+fn mcp_gateway_tool_call_params_do_not_retain_outer_meta() {
+    for meta in [
+        json!({"progressToken": "legacy-progress", "custom": {"private": true}}),
+        json!({
+            "io.modelcontextprotocol/protocolVersion": MCP_STATELESS_PROTOCOL_VERSION,
+            "io.modelcontextprotocol/clientCapabilities": {"extensions": {}},
+            "io.modelcontextprotocol/clientInfo": {"name": "outer-host", "version": "2026"}
+        }),
+    ] {
+        let parsed: McpToolCallParams = serde_json::from_value(json!({
+            "name": crate::mcp_gateway::MCP_TOOL_NAME,
+            "arguments": {"action": "list"},
+            "_meta": meta
+        }))
+        .unwrap();
+        let McpToolCallParams { name, arguments } = parsed;
+        assert_eq!(name, crate::mcp_gateway::MCP_TOOL_NAME);
+        assert_eq!(arguments, json!({"action": "list"}));
+    }
+}
+
 fn test_runtime() -> ToolRuntime {
     test_runtime_with_surface(ModelSurface::LocalCoding)
 }

@@ -120,8 +120,6 @@ struct McpToolCallParams {
     pub name: String,
     #[serde(default)]
     pub arguments: Value,
-    #[serde(default, rename = "_meta")]
-    pub meta: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2828,9 +2826,7 @@ async fn handle_mcp_request_with_lifecycle(
                     }
                     return outcome;
                 }
-                let result =
-                    crate::mcp_gateway::call(runtime, params.arguments, auth, params.meta.take())
-                        .await;
+                let result = crate::mcp_gateway::call(runtime, params.arguments, auth).await;
                 let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
                 if let Some(lc) = lifecycle.as_deref() {
                     lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });

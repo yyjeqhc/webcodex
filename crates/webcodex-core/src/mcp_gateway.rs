@@ -38,8 +38,6 @@ pub enum McpGatewayRequest {
         name: String,
         arguments: Value,
         expected_schema: McpGatewaySchemaObservation,
-        #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
-        meta: Option<Value>,
     },
 }
 
@@ -278,7 +276,6 @@ pub fn validate_request(request: &McpGatewayRequest) -> Result<(), String> {
             name,
             arguments,
             expected_schema,
-            meta,
         } => {
             validate_provider_id(provider_id)?;
             validate_provider_instance_id(provider_instance_id)?;
@@ -288,12 +285,6 @@ pub fn validate_request(request: &McpGatewayRequest) -> Result<(), String> {
             }
             validate_json_value(arguments, MCP_GATEWAY_MAX_ARGUMENT_BYTES, "tool arguments")?;
             validate_schema_observation(expected_schema)?;
-            if let Some(meta) = meta {
-                if !meta.is_object() {
-                    return Err("tool call _meta must be a JSON object".to_string());
-                }
-                validate_json_value(meta, MCP_GATEWAY_MAX_ARGUMENT_BYTES, "tool call _meta")?;
-            }
             Ok(())
         }
     }
@@ -558,6 +549,41 @@ mod tests {
         let arguments = json!({"value": "x".repeat(MCP_GATEWAY_MAX_ARGUMENT_BYTES)});
         assert!(
             validate_json_value(&arguments, MCP_GATEWAY_MAX_ARGUMENT_BYTES, "arguments").is_err()
+        );
+    }
+
+    #[test]
+    fn tools_call_wire_has_no_caller_meta_but_tool_descriptor_meta_is_preserved() {
+        let request = McpGatewayRequest::ToolsCall {
+            provider_id: "provider".to_string(),
+            provider_instance_id: "instance".to_string(),
+            name: "echo".to_string(),
+            arguments: json!({"value": "hello"}),
+            expected_schema: McpGatewaySchemaObservation {
+                input_schema: json!({"type": "object"}),
+                output_schema: None,
+                annotations: None,
+            },
+        };
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert!(encoded.get("_meta").is_none());
+        let mut injected = encoded;
+        injected["_meta"] = json!({"progressToken": "outer"});
+        assert!(serde_json::from_value::<McpGatewayRequest>(injected).is_err());
+
+        let tool = McpGatewayTool {
+            name: "echo".to_string(),
+            title: None,
+            description: None,
+            input_schema: json!({"type": "object"}),
+            output_schema: None,
+            annotations: None,
+            meta: Some(json!({"providerExtension": true})),
+        };
+        validate_tools(std::slice::from_ref(&tool)).unwrap();
+        assert_eq!(
+            serde_json::to_value(tool).unwrap()["_meta"]["providerExtension"],
+            true
         );
     }
 

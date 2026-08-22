@@ -132,7 +132,7 @@ pub(crate) fn authorized(auth: Option<&AuthContext>) -> bool {
 pub(crate) fn tool_spec() -> Value {
     json!({
         "name": MCP_TOOL_NAME,
-        "description": "Access explicitly authorized Runner-owned local MCP servers through WebCodex's built-in gateway. Use action=list to discover servers/tools, action=describe before action=call, and re-describe when WebCodex reports a schema change. Provider process identities and schema revision tokens are intentionally hidden.",
+        "description": "Access explicitly authorized Runner-owned local MCP servers through WebCodex's built-in gateway. No-argument action=list reports registration routing resolvability, not provider process health; action=list with server and action=describe interact with the provider. Use action=describe before action=call, and re-describe when WebCodex reports a schema change. Provider process identities and schema revision tokens are intentionally hidden.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -166,7 +166,6 @@ pub(crate) async fn call(
     runtime: &ToolRuntime,
     arguments: Value,
     auth: Option<&AuthContext>,
-    meta: Option<Value>,
 ) -> Value {
     if !authorized(auth) {
         return gateway_error_result(GatewayError::local(
@@ -191,7 +190,7 @@ pub(crate) async fn call(
         "describe" => describe(runtime, parsed, auth)
             .await
             .map(GatewaySuccess::Metadata),
-        "call" => call_upstream(runtime, parsed, auth, meta)
+        "call" => call_upstream(runtime, parsed, auth)
             .await
             .map(GatewaySuccess::UpstreamToolResult),
         _ => Err(GatewayError::local(
@@ -250,17 +249,21 @@ async fn list(
         }));
     }
 
+    Ok(registration_routing_summary(&candidates))
+}
+
+fn registration_routing_summary(candidates: &BTreeMap<String, Vec<ResolvedProvider>>) -> Value {
     let mut servers = Vec::with_capacity(candidates.len());
     for (provider_id, entries) in candidates {
         let first = &entries[0];
         servers.push(json!({
             "server": provider_id,
             "name": first.name,
-            "available": entries.len() == 1,
-            "status": if entries.len() == 1 { "available" } else { "ambiguous" }
+            "resolvable": entries.len() == 1,
+            "status": if entries.len() == 1 { "resolvable" } else { "ambiguous" }
         }));
     }
-    Ok(json!({"servers": servers}))
+    json!({"servers": servers})
 }
 
 async fn describe(
@@ -318,7 +321,6 @@ async fn call_upstream(
     runtime: &ToolRuntime,
     args: McpToolArguments,
     auth: Option<&AuthContext>,
-    meta: Option<Value>,
 ) -> Result<McpGatewayToolResult, GatewayError> {
     let server = required_id(args.server.as_deref(), "server")?;
     let tool_name = required_tool(args.tool.as_deref())?;
@@ -334,17 +336,6 @@ async fn call_upstream(
     validate_json_value(&arguments, MCP_GATEWAY_MAX_ARGUMENT_BYTES, "tool arguments").map_err(
         |_| GatewayError::local("invalid_arguments", "tool arguments exceed gateway bounds"),
     )?;
-    if let Some(meta) = meta.as_ref() {
-        if !meta.is_object()
-            || validate_json_value(meta, MCP_GATEWAY_MAX_ARGUMENT_BYTES, "tool call _meta").is_err()
-        {
-            return Err(GatewayError::local(
-                "invalid_arguments",
-                "tools/call _meta exceeds gateway bounds",
-            ));
-        }
-    }
-
     let candidates = visible_provider_candidates(runtime, auth).await;
     let provider = resolve_provider(&candidates, server)?;
     let observation_key = ObservationKey {
@@ -373,7 +364,6 @@ async fn call_upstream(
             name: tool_name.to_string(),
             arguments,
             expected_schema,
-            meta,
         },
         auth,
     )
@@ -661,6 +651,50 @@ mod tests {
         assert!(!properties.contains_key("revisionToken"));
         assert!(!properties.contains_key("provider_instance_id"));
         assert!(!properties.contains_key("agent_instance_id"));
+    }
+
+    #[test]
+    fn no_arg_list_reports_routing_resolvability_not_health() {
+        let provider = |client_id: &str, instance_id: &str| ResolvedProvider {
+            client_id: client_id.to_string(),
+            agent_instance_id: format!("{client_id}-agent"),
+            provider_id: "server".to_string(),
+            provider_instance_id: instance_id.to_string(),
+            name: "Server".to_string(),
+        };
+        let candidates = BTreeMap::from([
+            (
+                "ambiguous".to_string(),
+                vec![
+                    provider("runner-a", "instance-a"),
+                    provider("runner-b", "instance-b"),
+                ],
+            ),
+            (
+                "unique".to_string(),
+                vec![ResolvedProvider {
+                    provider_id: "unique".to_string(),
+                    ..provider("runner-c", "instance-c")
+                }],
+            ),
+        ]);
+        let summary = registration_routing_summary(&candidates);
+        let servers = summary["servers"].as_array().unwrap();
+        let unique = servers
+            .iter()
+            .find(|server| server["server"] == "unique")
+            .unwrap();
+        assert_eq!(unique["resolvable"], true);
+        assert_eq!(unique["status"], "resolvable");
+        let ambiguous = servers
+            .iter()
+            .find(|server| server["server"] == "ambiguous")
+            .unwrap();
+        assert_eq!(ambiguous["resolvable"], false);
+        assert_eq!(ambiguous["status"], "ambiguous");
+        assert!(!serde_json::to_string(&summary)
+            .unwrap()
+            .contains("available"));
     }
 
     #[test]

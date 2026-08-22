@@ -4,7 +4,8 @@
 //! Runner process. A protocol/transport failure permanently closes that
 //! provider instance; it is never silently restarted under the same identity.
 
-use super::config::{McpGatewayConfig, McpGatewayProviderConfig};
+use super::config::{McpGatewayConfig, McpGatewayProviderConfig, MCP_GATEWAY_MAX_CWD_BYTES};
+use super::shell::is_sensitive_env_key;
 use crate::mcp_gateway::{
     validate_json_value, validate_request, validate_tool_result, validate_tools, McpGatewayContent,
     McpGatewayDispatchState, McpGatewayProvider, McpGatewayRequest, McpGatewayResponse,
@@ -189,7 +190,6 @@ impl McpGatewayManager {
                 name,
                 arguments,
                 expected_schema,
-                meta,
             } => {
                 let Some(provider) = self.exact_provider(&provider_id, &provider_instance_id)
                 else {
@@ -214,7 +214,7 @@ impl McpGatewayManager {
                         if remaining.is_zero() {
                             return Err(ProviderFailure::not_started("provider_timeout"));
                         }
-                        connection.tools_call(&name, arguments, meta, remaining)
+                        connection.tools_call(&name, arguments, remaining)
                     },
                 ) {
                     Ok(result) => {
@@ -335,18 +335,67 @@ impl ProviderEntry {
     }
 }
 
+fn resolve_provider_environment(
+    config: &McpGatewayProviderConfig,
+) -> Result<Vec<(String, std::ffi::OsString)>, ProviderFailure> {
+    let mut resolved = Vec::with_capacity(config.env_from_env.len());
+    for (destination, source) in &config.env_from_env {
+        // Keep the Runner transport/account secret invariant authoritative even
+        // if a caller constructs config without going through load_config.
+        if is_sensitive_env_key(destination) || is_sensitive_env_key(source) {
+            return Err(ProviderFailure::before_send("provider_env_forbidden"));
+        }
+        let Some(value) = std::env::var_os(source) else {
+            return Err(ProviderFailure::before_send("provider_env_missing"));
+        };
+        resolved.push((destination.clone(), value));
+    }
+    Ok(resolved)
+}
+
+fn resolve_provider_cwd(
+    config: &McpGatewayProviderConfig,
+) -> Result<Option<&std::path::Path>, ProviderFailure> {
+    let Some(cwd) = config.cwd.as_deref() else {
+        return Ok(None);
+    };
+    let path = std::path::Path::new(cwd);
+    if cwd.is_empty()
+        || cwd.len() > MCP_GATEWAY_MAX_CWD_BYTES
+        || cwd.contains('\0')
+        || !path.is_absolute()
+    {
+        return Err(ProviderFailure::before_send("provider_cwd_invalid"));
+    }
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => Ok(Some(path)),
+        _ => Err(ProviderFailure::before_send("provider_cwd_unavailable")),
+    }
+}
+
 impl ProviderConnection {
     fn spawn(
         config: &McpGatewayProviderConfig,
         timeout: Duration,
     ) -> Result<Self, ProviderFailure> {
+        // Resolve the complete operator-declared execution context before
+        // creating the child. Missing env sources or unavailable cwd therefore
+        // cannot produce a partially initialized provider process.
+        let environment = resolve_provider_environment(config)?;
+        let cwd = resolve_provider_cwd(config)?;
         let mut command = Command::new(&config.executable);
         command
             .args(&config.args)
-            // The bridge configuration deliberately has no environment
-            // injection. Do not implicitly hand the Runner's transport
-            // credentials or service environment to a third-party provider.
-            .env_clear()
+            // Never inherit the Runner process environment implicitly. Only the
+            // explicit env_from_env mapping below crosses this trust boundary.
+            .env_clear();
+        for (destination, value) in environment {
+            command.env(destination, value);
+        }
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -479,13 +528,11 @@ impl ProviderConnection {
         &mut self,
         name: &str,
         arguments: Value,
-        meta: Option<Value>,
         timeout: Duration,
     ) -> Result<McpGatewayToolResult, ProviderFailure> {
-        let mut params = json!({"name": name, "arguments": arguments});
-        if let (Some(params), Some(meta)) = (params.as_object_mut(), meta) {
-            params.insert("_meta".to_string(), meta);
-        }
+        // Outer MCP caller metadata deliberately stops at the WebCodex trust
+        // boundary. Provider tools/call receives only gateway-owned fields.
+        let params = json!({"name": name, "arguments": arguments});
         let result = self.request("tools/call", params, timeout)?;
         validate_json_value(
             &result,

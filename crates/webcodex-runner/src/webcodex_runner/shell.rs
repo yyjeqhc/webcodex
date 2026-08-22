@@ -91,18 +91,23 @@ const SENSITIVE_ENV_KEYS: [&str; 4] = [
     "AUTHORIZATION",
 ];
 
+/// Compare environment variable names with the host platform's semantics.
+/// Windows names are case-insensitive; Unix names remain case-sensitive.
+pub(crate) fn env_keys_equal(left: &str, right: &str) -> bool {
+    if cfg!(windows) {
+        left.eq_ignore_ascii_case(right)
+    } else {
+        left == right
+    }
+}
+
 /// Sensitive environment keys must never reach child processes. Windows
 /// environment names are case-insensitive, so a mixed-case spelling such as
 /// `WebCodex_Token` must be filtered too; Unix stays case-sensitive.
-fn is_sensitive_env_key(key: &str) -> bool {
-    if cfg!(windows) {
-        let upper = key.to_ascii_uppercase();
-        SENSITIVE_ENV_KEYS
-            .iter()
-            .any(|sensitive| *sensitive == upper)
-    } else {
-        SENSITIVE_ENV_KEYS.contains(&key)
-    }
+pub(crate) fn is_sensitive_env_key(key: &str) -> bool {
+    SENSITIVE_ENV_KEYS
+        .iter()
+        .any(|sensitive| env_keys_equal(sensitive, key))
 }
 
 fn should_inherit_env_key(key: &str) -> bool {
@@ -120,7 +125,7 @@ fn should_inherit_env_key(key: &str) -> bool {
 fn env_lookup<'a>(env: &'a HashMap<String, String>, key: &str) -> Option<&'a String> {
     if cfg!(windows) {
         env.iter()
-            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(key))
+            .find(|(candidate, _)| env_keys_equal(candidate, key))
             .map(|(_, value)| value)
     } else {
         env.get(key)
@@ -133,7 +138,7 @@ fn env_lookup<'a>(env: &'a HashMap<String, String>, key: &str) -> Option<&'a Str
 /// child environment depend on HashMap iteration order); on Unix it is exact.
 fn env_insert(env: &mut HashMap<String, String>, key: &str, value: String) {
     if cfg!(windows) {
-        env.retain(|candidate, _| !candidate.eq_ignore_ascii_case(key));
+        env.retain(|candidate, _| !env_keys_equal(candidate, key));
     }
     env.insert(key.to_string(), value);
 }

@@ -6,29 +6,29 @@ use crate::webcodex_runner::{
     handle_project_lifecycle_op, handle_project_op_with_temporary_projects_root,
     handle_resolve_or_register_project,
 };
-static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// RAII restore for environment variables mutated by tests: restores the
 /// previous value (or absence) on drop, even when the test panics, so a
 /// failure cannot leak env state into later tests.
-struct EnvGuard {
+pub(crate) struct EnvGuard {
     restored: Vec<(&'static str, Option<std::ffi::OsString>)>,
 }
 
 impl EnvGuard {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         EnvGuard {
             restored: Vec::new(),
         }
     }
 
-    fn set(mut self, name: &'static str, value: &str) -> Self {
+    pub(crate) fn set(mut self, name: &'static str, value: &str) -> Self {
         self.capture(name);
         std::env::set_var(name, value);
         self
     }
 
-    fn remove(mut self, name: &'static str) -> Self {
+    pub(crate) fn remove(mut self, name: &'static str) -> Self {
         self.capture(name);
         std::env::remove_var(name);
         self

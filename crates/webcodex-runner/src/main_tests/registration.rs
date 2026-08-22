@@ -9,6 +9,11 @@ fn mcp_gateway_register_request_projects_bounded_provider_inventory_without_loca
         name: "Local tools".to_string(),
         executable: "/private/operator/bin/local-tools-mcp".to_string(),
         args: vec!["--secret-profile".to_string()],
+        cwd: Some("/private/operator/provider-workdir".to_string()),
+        env_from_env: std::collections::BTreeMap::from([(
+            "GITHUB_TOKEN".to_string(),
+            "OPERATOR_GITHUB_TOKEN".to_string(),
+        )]),
         timeout_secs: Some(5),
     }];
 
@@ -31,6 +36,9 @@ fn mcp_gateway_register_request_projects_bounded_provider_inventory_without_loca
     let serialized = serde_json::to_string(providers).unwrap();
     assert!(!serialized.contains("/private/operator/bin"));
     assert!(!serialized.contains("--secret-profile"));
+    assert!(!serialized.contains("/private/operator/provider-workdir"));
+    assert!(!serialized.contains("GITHUB_TOKEN"));
+    assert!(!serialized.contains("OPERATOR_GITHUB_TOKEN"));
     assert!(!serialized.contains("timeout_secs"));
 }
 

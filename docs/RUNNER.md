@@ -122,14 +122,35 @@ The Runner can directly host persistent stdio MCP providers for WebCodex's built
 request_timeout_secs = 30
 
 [[mcp.providers]]
-id = "everything"
-name = "Everything"
-executable = "/absolute/path/to/mcp-server-everything"
+id = "github"
+name = "GitHub"
+executable = "/absolute/path/to/github-mcp-server"
 args = []
+cwd = "/absolute/provider/workdir"
+env_from_env = { GITHUB_TOKEN = "GITHUB_TOKEN", PATH = "PATH", HOME = "HOME" }
 timeout_secs = 30
 ```
 
-`executable` must be absolute. The Runner starts providers without a shell and with a cleared host environment rather than inheriting the Runner process environment. A provider starts on first use, completes MCP initialization, and is then reused persistently. Configuration changes require a Runner restart; the logical `id` may stay stable while the internal provider instance changes. Server dispatch binds the exact current instance, so stale requests are not redirected. Registration projects only provider `id`/`name` plus internal instance-fencing metadata to the Server; executable paths, argv, PID, stderr, and Runner credentials are not advertised.
+`executable` and optional `cwd` must be absolute host-local operator configuration. `cwd` is applied exactly with `Command::current_dir`; there is no fallback. An invalid configured path is rejected at config load, and an unavailable directory fails before the provider child is spawned. `[mcp]` remains restart-required configuration: changing a provider does not hot-reload or replace a live provider instance.
+
+Provider processes never inherit the Runner environment wholesale. `env_clear()` is always applied. `env_from_env` is an explicit **provider environment key -> Runner process environment key** mapping; only named entries are copied. A missing source variable fails the request as `not_started` before provider spawn rather than silently omitting the variable. WebCodex-sensitive transport/account keys such as `WEBCODEX_TOKEN`, `WEBCODEX_AGENT_TOKEN`, `WEBCODEX_USER_TOKEN`, and `AUTHORIZATION` cannot be mapped. Environment names and counts are bounded; Windows destination-name conflicts are compared case-insensitively, while Unix keeps case-sensitive environment semantics. Environment values stay Runner-local and are never projected into provider inventory, Server wire metadata, error bodies, audit/log metadata, or model-facing output.
+
+A provider starts lazily on first real interaction, completes MCP initialization, and is then reused persistently. The logical `id` may stay stable across a Runner restart while the internal provider instance changes. Server dispatch binds the exact current Runner/provider instance, so stale requests are not redirected or replayed. Registration projects only provider `id`/`name` plus internal instance-fencing metadata to the Server; executable paths, argv, cwd, environment mappings/values, PID, stderr, and Runner credentials are not advertised. Consequently, `mcp_tool(action=list)` without `server` reports registration routing **resolvability**, not provider process health. `list(server=...)` and `describe` perform provider interaction.
+
+### Provider-side gateway V1 compatibility
+
+The public WebCodex `/mcp` endpoint has its own documented 2025/2026 protocol support. That outer protocol support must not be read as a claim that arbitrary or latest MCP servers are transparently bridge-compatible. The Runner-to-configured-provider side of the built-in gateway is intentionally a bounded V1 stdio tool subset:
+
+- one persistent stdio provider connection with `initialize` followed by `notifications/initialized`;
+- provider-side protocol behavior currently based on MCP `2025-06-18` tool semantics;
+- `tools/list` and `tools/call` only; provider callbacks are unsupported and fail closed;
+- provider notifications are bounded and consumed locally, not relayed to the outer MCP caller;
+- `tools/list` pagination is unsupported;
+- tool-result `content` is text-only; bounded optional `structuredContent` is preserved;
+- image/audio content, resource links, and embedded resources are unsupported and fail closed;
+- outer request `_meta` (including progress tokens, client info, protocol version, capabilities, or custom metadata) is not forwarded to the local provider. Provider-supplied tool-descriptor `_meta` from `tools/list` is a separate upstream-to-host field and remains preserved.
+
+Unsupported protocol or content shapes fail closed rather than being silently translated. Provider-side stateless 2026 bridging, callbacks, pagination, media/resource forwarding, and end-to-end progress relay are not part of this V1 contract.
 
 ## Shell profiles
 

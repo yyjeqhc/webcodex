@@ -1,6 +1,7 @@
 use super::super::input_schemas::{
     git_diff_hunks_input_schema, git_diff_input_schema, git_diff_summary_input_schema,
-    git_log_input_schema, git_status_input_schema, show_changes_input_schema,
+    git_log_input_schema, git_review_summary_input_schema, git_status_input_schema,
+    show_changes_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -14,6 +15,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                 + "`git diff --stat`, and a parsed changed-file list. Does not modify the "
                 + "worktree.",
             git_diff_summary_input_schema(),
+        ),
+        tool_spec(
+            "git_review_summary",
+            "Deterministic bounded committed-range review map. Use before targeted git_diff_hunks/read_file during branch or PR review. Does not judge correctness and never mutates the repository.",
+            git_review_summary_input_schema(),
         ),
         tool_spec(
             "show_changes",

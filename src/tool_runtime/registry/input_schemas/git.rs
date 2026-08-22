@@ -11,6 +11,30 @@ pub(crate) fn git_diff_summary_input_schema() -> Value {
     )]))
 }
 
+pub(crate) fn git_review_summary_input_schema() -> Value {
+    let mut schema = object_schema(with_optional_session_id(vec![
+        ("project", "string", "Agent-registered project id.", true),
+        (
+            "base_commit",
+            "string",
+            "Exact 40-hex Git commit object id used to compute the merge-base.",
+            true,
+        ),
+        (
+            "head_commit",
+            "string",
+            "Exact 40-hex Git commit object id reviewed from merge-base to head.",
+            true,
+        ),
+    ]));
+    for field in ["base_commit", "head_commit"] {
+        schema["properties"][field]["minLength"] = Value::from(40);
+        schema["properties"][field]["maxLength"] = Value::from(40);
+        schema["properties"][field]["pattern"] = Value::from("^[0-9A-Fa-f]{40}$");
+    }
+    schema
+}
+
 pub(crate) fn show_changes_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
         ("project", "string", "Agent-registered project id.", true),

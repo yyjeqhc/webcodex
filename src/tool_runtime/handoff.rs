@@ -752,7 +752,9 @@ fn review_evidence_kind(tool_name: &str) -> Option<ReviewEvidenceKind> {
             Some(ReviewEvidenceKind::ReadOnlyInspection)
         }
         "search_project_text" | "search_project_texts" => Some(ReviewEvidenceKind::Search),
-        "git_diff" | "git_diff_summary" | "git_diff_hunks" => Some(ReviewEvidenceKind::DiffReview),
+        "git_diff" | "git_diff_summary" | "git_diff_hunks" | "git_review_summary" => {
+            Some(ReviewEvidenceKind::DiffReview)
+        }
         "show_changes" | "git_status" => Some(ReviewEvidenceKind::WorkspaceReview),
         "workspace_hygiene_check" => Some(ReviewEvidenceKind::HygieneReview),
         _ => None,

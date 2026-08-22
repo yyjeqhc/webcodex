@@ -31,6 +31,50 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
+        "git_review_summary" => Some(wrapped_output_schema(vec![
+            ("project", schema_type("string", "Runtime project input.")),
+            (
+                "scope",
+                open_object_schema("Exact requested commits, merge-base, ancestry, commit count, and effective diff range."),
+            ),
+            (
+                "stats",
+                open_object_schema("Exact aggregate committed-range file and line statistics."),
+            ),
+            (
+                "file_classes",
+                open_object_schema("Deterministic observed file-class counts plus partial metadata."),
+            ),
+            (
+                "subsystems",
+                array_schema(open_object_schema("Bounded deterministic subsystem bucket."), "Touched subsystem buckets."),
+            ),
+            (
+                "signals",
+                array_schema(open_object_schema("Bounded reviewer-attention signal; never a correctness claim."), "Deterministic review signals."),
+            ),
+            (
+                "files",
+                array_schema(open_object_schema("Bounded changed-file review metadata and symbol hints."), "Changed files returned within fixed bounds."),
+            ),
+            (
+                "coverage",
+                open_object_schema("Production/test/docs change observation; false becomes null when classification is partial."),
+            ),
+            ("bounds", open_object_schema("Fixed producer and model-result bounds used by this invocation.")),
+            (
+                "truncation",
+                open_object_schema("Explicit file, symbol, subsystem, and signal partiality metadata."),
+            ),
+            ("deterministic", schema_type("boolean", "Always true for this built-in deterministic classifier.")),
+            ("llm_summary", schema_type("boolean", "Always false; no LLM is used for this review map.")),
+            ("truncated", schema_type("boolean", "Whether any review-map observation is partial or bounded.")),
+            (
+                "warnings",
+                array_schema(schema_type("string", "Stable bounded review warning."), "Bounded non-fatal warnings."),
+            ),
+            ("reason_code", nullable_schema("string", "Stable structured failure reason when review observation cannot proceed.")),
+        ])),
         "git_diff_hunks" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Runtime project input.")),
             (

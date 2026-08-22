@@ -450,6 +450,10 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
         "delete_project_files" | "git_restore_paths" | "discard_untracked" => {
             copy_keys(obj, &mut out, &["paths"]);
         }
+        "git_review_summary" => {
+            insert_exact_git_commit_audit(obj, &mut out, "base_commit");
+            insert_exact_git_commit_audit(obj, &mut out, "head_commit");
+        }
         "git_diff_hunks" => {
             copy_keys(
                 obj,
@@ -597,6 +601,19 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
 
 pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Value {
     match tool_name {
+        "git_review_summary" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "scope": output.get("scope").cloned().unwrap_or(Value::Null),
+            "stats": output.get("stats").cloned().unwrap_or(Value::Null),
+            "coverage": output.get("coverage").cloned().unwrap_or(Value::Null),
+            "truncation": output.get("truncation").cloned().unwrap_or(Value::Null),
+            "deterministic": output.get("deterministic").cloned().unwrap_or(Value::Null),
+            "llm_summary": output.get("llm_summary").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "reason_code": output.get("reason_code").cloned().unwrap_or(Value::Null),
+            "signal_count": output.get("signals").and_then(Value::as_array).map(Vec::len),
+            "file_count": output.get("files").and_then(Value::as_array).map(Vec::len),
+        }),
         "computer_list_targets" => serde_json::json!({
             "count": output.get("count").cloned().unwrap_or(Value::Null),
             "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
@@ -746,6 +763,26 @@ fn copy_keys(
         if let Some(value) = obj.get(*key).cloned() {
             out.insert((*key).to_string(), value);
         }
+    }
+}
+
+fn normalized_exact_git_commit_for_audit(value: &str) -> Option<String> {
+    (value.len() == 40 && value.as_bytes().iter().all(u8::is_ascii_hexdigit))
+        .then(|| value.to_ascii_lowercase())
+}
+
+fn insert_exact_git_commit_audit(
+    obj: &serde_json::Map<String, Value>,
+    out: &mut serde_json::Map<String, Value>,
+    key: &str,
+) {
+    let normalized = obj
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(normalized_exact_git_commit_for_audit);
+    out.insert(format!("{key}_valid"), Value::Bool(normalized.is_some()));
+    if let Some(normalized) = normalized {
+        out.insert(key.to_string(), Value::String(normalized));
     }
 }
 
@@ -1952,6 +1989,22 @@ impl ToolCall {
             Self::GitStatus { project, .. } | Self::GitDiffSummary { project, .. } => {
                 serde_json::json!({
                     "project": project,
+                })
+            }
+            Self::GitReviewSummary {
+                project,
+                base_commit,
+                head_commit,
+                ..
+            } => {
+                let base_commit = normalized_exact_git_commit_for_audit(base_commit);
+                let head_commit = normalized_exact_git_commit_for_audit(head_commit);
+                serde_json::json!({
+                    "project": project,
+                    "base_commit_valid": base_commit.is_some(),
+                    "base_commit": base_commit,
+                    "head_commit_valid": head_commit.is_some(),
+                    "head_commit": head_commit,
                 })
             }
             Self::GitLog {

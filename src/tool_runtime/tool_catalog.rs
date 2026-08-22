@@ -47,6 +47,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "git_status",
             "git_diff",
             "git_diff_summary",
+            "git_review_summary",
             "git_diff_hunks",
             "git_log",
             "workspace_checkpoint_list",
@@ -89,6 +90,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "git_status",
             "git_diff",
             "git_diff_summary",
+            "git_review_summary",
             "git_diff_hunks",
             "git_log",
             "show_changes",
@@ -103,6 +105,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         tools: &[
             "finish_coding_task",
             "show_changes",
+            "git_review_summary",
             "git_diff_hunks",
             "workspace_hygiene_check",
             "git_diff_summary",
@@ -322,9 +325,14 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "review",
-        summary: "Review: use show_changes / git_diff_hunks / workspace_hygiene_check before final response.",
-        manifest_purpose: "Review diffs and workspace hygiene before the final response.",
-        tools: &["show_changes", "git_diff_hunks", "workspace_hygiene_check"],
+        summary: "Review: use show_changes / git_diff_hunks / workspace_hygiene_check before final response; for committed ranges, call git_review_summary first and then targeted read_file as needed.",
+        manifest_purpose: "Map committed review ranges, inspect targeted diffs, and check workspace hygiene before the final response.",
+        tools: &[
+            "git_review_summary",
+            "show_changes",
+            "git_diff_hunks",
+            "workspace_hygiene_check",
+        ],
     },
     ToolRecommendedFlow {
         name: "handoff",
@@ -385,6 +393,7 @@ pub(crate) const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     // git review
     "git_status",
     "git_log",
+    "git_review_summary",
     "git_diff",
     "git_diff_hunks",
     "show_changes",
@@ -417,6 +426,7 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "list_project_files",
             "git_status",
             "git_log",
+            "git_review_summary",
             "git_diff_summary",
             "git_diff_hunks",
             "show_changes",

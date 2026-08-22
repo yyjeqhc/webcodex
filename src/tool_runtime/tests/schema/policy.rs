@@ -192,7 +192,12 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .collect::<Vec<_>>();
     assert_eq!(
         change_summary_tools,
-        vec!["git_diff_summary", "show_changes", "git_diff_hunks"]
+        vec![
+            "git_diff_summary",
+            "git_review_summary",
+            "show_changes",
+            "git_diff_hunks",
+        ]
     );
 
     let validation_output_tools = tool_definitions()
@@ -492,6 +497,11 @@ fn required_agent_capability_matches_metadata_risk_table() {
         ("git_diff", ToolRisk::ReadOnly, AgentCapability::GitOrShell),
         (
             "git_diff_hunks",
+            ToolRisk::ReadOnly,
+            AgentCapability::GitOrShell,
+        ),
+        (
+            "git_review_summary",
             ToolRisk::ReadOnly,
             AgentCapability::GitOrShell,
         ),

@@ -306,6 +306,7 @@ fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'stat
         "finish_coding_task" => Some(&["review", "runtime"]),
         "git_diff" => Some(&["git", "inspect", "review"]),
         "git_diff_hunks" => Some(&["git", "inspect", "review"]),
+        "git_review_summary" => Some(&["git", "inspect", "review"]),
         "git_diff_summary" => Some(&["git", "inspect", "review"]),
         "git_log" => Some(&["git", "inspect", "review"]),
         "git_restore_paths" => Some(&["cleanup", "git"]),

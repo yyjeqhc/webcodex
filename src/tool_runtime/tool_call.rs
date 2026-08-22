@@ -770,6 +770,15 @@ pub enum ToolCall {
         continuation: Option<String>,
     },
 
+    /// Return a deterministic bounded review map for an exact committed range.
+    GitReviewSummary {
+        project: String,
+        base_commit: String,
+        head_commit: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Run `cargo fmt` in an agent-registered Rust project.
     CargoFmt {
         project: String,
@@ -1998,6 +2007,7 @@ impl ToolCall {
             Self::GitStatus { .. } => "git_status",
             Self::GitDiff { .. } => "git_diff",
             Self::GitDiffHunks { .. } => "git_diff_hunks",
+            Self::GitReviewSummary { .. } => "git_review_summary",
             Self::GitLog { .. } => "git_log",
             Self::CargoFmt { .. } => "cargo_fmt",
             Self::CargoCheck { .. } => "cargo_check",
@@ -2085,6 +2095,7 @@ impl ToolCall {
             | Self::GitStatus { session_id, .. }
             | Self::GitDiff { session_id, .. }
             | Self::GitDiffHunks { session_id, .. }
+            | Self::GitReviewSummary { session_id, .. }
             | Self::GitLog { session_id, .. }
             | Self::CargoFmt { session_id, .. }
             | Self::CargoCheck { session_id, .. }
@@ -2152,6 +2163,7 @@ impl ToolCall {
             | Self::GitStatus { session_id, .. }
             | Self::GitDiff { session_id, .. }
             | Self::GitDiffHunks { session_id, .. }
+            | Self::GitReviewSummary { session_id, .. }
             | Self::GitLog { session_id, .. }
             | Self::CargoFmt { session_id, .. }
             | Self::CargoCheck { session_id, .. }
@@ -2253,6 +2265,7 @@ impl ToolCall {
             | Self::GitStatus { project, .. }
             | Self::GitDiff { project, .. }
             | Self::GitDiffHunks { project, .. }
+            | Self::GitReviewSummary { project, .. }
             | Self::GitLog { project, .. }
             | Self::CargoFmt { project, .. }
             | Self::CargoCheck { project, .. }

@@ -1195,6 +1195,7 @@ impl ToolRuntime {
             | ToolCall::GitStatus { .. }
             | ToolCall::GitDiff { .. }
             | ToolCall::GitDiffHunks { .. }
+            | ToolCall::GitReviewSummary { .. }
             | ToolCall::GitLog { .. }
             | ToolCall::GitDiffSummary { .. }
             | ToolCall::ShowChanges { .. }) => self.dispatch_git_tool(call).await,

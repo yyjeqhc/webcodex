@@ -1,6 +1,7 @@
 //! Git tests for tool_runtime.
 
 use super::super::git::*;
+use super::super::git_review::*;
 use super::super::helpers::*;
 use super::super::*;
 use super::support::*;
@@ -27,6 +28,7 @@ async fn register_structured_git_agent_at_path(
             shell: true,
             git: true,
             structured_process_argv: true,
+            internal_posix_script: true,
             ..Default::default()
         },
         vec![registered_project(project_id, &project_path)],
@@ -2731,6 +2733,699 @@ async fn git_diff_summary_agent_uses_internal_posix_runtime() {
         .contains("README.md"));
 }
 
+fn write_git_review_fixture_file(root: &Path, path: &str, content: &str) {
+    let full = root.join(path);
+    if let Some(parent) = full.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    fs::write(full, content).unwrap();
+}
+
+fn commit_git_review_fixture(root: &Path, subject: &str) -> String {
+    for cmd in [
+        "git add -A".to_string(),
+        format!("git commit -m {}", shell_escape_simple(subject)),
+    ] {
+        let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, root, 30);
+        assert_eq!(
+            exit_code, 0,
+            "git review fixture command failed: {cmd}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+    let (exit_code, stdout, stderr, _) = run_command_sync("git rev-parse HEAD", root, 30);
+    assert_eq!(exit_code, 0, "rev-parse failed: {stderr}");
+    let sha = stdout.trim().to_string();
+    assert_eq!(sha.len(), 40);
+    sha
+}
+
+async fn run_git_review_summary_via_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: String,
+    base_commit: String,
+    head_commit: String,
+) -> ToolResult {
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .git_review_summary(project, base_commit, head_commit)
+            .await
+    });
+    for _ in 0..64 {
+        if task.is_finished() {
+            break;
+        }
+        if let Some(request) = next_patch_agent_request(runtime, client_id).await {
+            assert_eq!(request.kind, "run_internal_posix_script");
+            assert!(request.command.is_empty());
+            let payload = request
+                .script
+                .as_ref()
+                .expect("git_review_summary must use a typed internal script");
+            assert_eq!(
+                payload.language,
+                crate::shell_protocol::ShellScriptLanguage::Sh
+            );
+            assert!(payload.args.is_empty());
+            assert!(payload.script.contains("GIT_NO_REPLACE_OBJECTS=1"));
+            for forbidden in [
+                "git fetch",
+                "git apply",
+                "git commit",
+                "git checkout",
+                "git reset",
+                "git push",
+                "git stash",
+                "git merge ",
+                "git rebase",
+                "git clean",
+                "git add ",
+            ] {
+                assert!(
+                    !payload.script.contains(forbidden),
+                    "git_review_summary internal script must remain read-only; found {forbidden}: {}",
+                    payload.script
+                );
+            }
+            if payload.script.contains(" diff ") {
+                assert!(payload.script.contains("--no-ext-diff"));
+                assert!(payload.script.contains("--no-textconv"));
+            }
+            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+            assert_eq!(
+                exit_code, 0,
+                "git_review_summary internal script failed\nscript:\n{}\nstdout:\n{}\nstderr:\n{}",
+                payload.script, stdout, stderr
+            );
+            complete_patch_agent_request(
+                runtime,
+                client_id,
+                &request.request_id,
+                exit_code,
+                &stdout,
+                &stderr,
+            )
+            .await;
+        } else {
+            tokio::task::yield_now().await;
+        }
+    }
+    assert!(
+        task.is_finished(),
+        "git_review_summary did not finish after bounded agent requests"
+    );
+    task.await.unwrap()
+}
+
+#[tokio::test]
+async fn git_review_summary_maps_exact_committed_range_without_raw_diff() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    write_git_review_fixture_file(tmp.path(), ".gitattributes", "*.rs diff=rust\n");
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/auth/scopes.rs",
+        "pub fn auth_scope() -> bool {\n    false\n}\n",
+    );
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/protocol.rs",
+        "pub fn wire_version() -> u8 {\n    1\n}\n",
+    );
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/runtime/job.rs",
+        "pub fn job_state() -> &'static str {\n    \"RAW_SECRET_BODY_MARKER_OLD\"\n}\n",
+    );
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/tokenizer.rs",
+        "pub fn tokenizer_mode() -> u8 {\n    1\n}\n",
+    );
+    write_git_review_fixture_file(tmp.path(), "tests/auth.rs", "assert_eq!(1, 1);\n");
+    write_git_review_fixture_file(tmp.path(), "docs/AUTH.md", "old auth docs\n");
+    let base = commit_git_review_fixture(tmp.path(), "base");
+
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/auth/scopes.rs",
+        "pub fn auth_scope() -> bool {\n    true\n}\n",
+    );
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/protocol.rs",
+        "pub fn wire_version() -> u8 {\n    2\n}\n",
+    );
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/runtime/job.rs",
+        "pub fn job_state() -> &'static str {\n    \"RAW_SECRET_BODY_MARKER_NEW\"\n}\n",
+    );
+    write_git_review_fixture_file(
+        tmp.path(),
+        "src/tokenizer.rs",
+        "pub fn tokenizer_mode() -> u8 {\n    2\n}\n",
+    );
+    write_git_review_fixture_file(tmp.path(), "tests/auth.rs", "assert_eq!(2, 2);\n");
+    write_git_review_fixture_file(tmp.path(), "docs/AUTH.md", "new auth docs\n");
+    let head = commit_git_review_fixture(tmp.path(), "head");
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-summary", "repo", tmp.path()).await;
+    let result = run_git_review_summary_via_agent(
+        &runtime,
+        "review-summary",
+        project,
+        base.clone(),
+        head.clone(),
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    let output = &result.output;
+    assert_eq!(output["scope"]["requested_base"], base);
+    assert_eq!(output["scope"]["requested_head"], head);
+    assert_eq!(
+        output["scope"]["merge_base"],
+        output["scope"]["requested_base"]
+    );
+    assert_eq!(output["scope"]["base_is_ancestor"], true);
+    assert_eq!(output["scope"]["commit_count"], 1);
+    assert_eq!(output["stats"]["files_changed"], 6);
+    assert_eq!(output["stats"]["insertions"], 6);
+    assert_eq!(output["stats"]["deletions"], 6);
+    assert_eq!(output["stats"]["binary_files"], 0);
+    assert_eq!(output["coverage"]["production_changed"], true);
+    assert_eq!(output["coverage"]["tests_changed"], true);
+    assert_eq!(output["coverage"]["docs_changed"], true);
+    assert_eq!(output["deterministic"], true);
+    assert_eq!(output["llm_summary"], false);
+    assert_eq!(output["truncated"], false, "{output}");
+
+    let signals = output["signals"].as_array().unwrap();
+    let signal_names = signals
+        .iter()
+        .filter_map(|signal| signal["name"].as_str())
+        .collect::<HashSet<_>>();
+    for expected in [
+        "auth_or_scope_surface_touched",
+        "protocol_or_wire_schema_surface_touched",
+        "execution_lifecycle_surface_touched",
+    ] {
+        assert!(
+            signal_names.contains(expected),
+            "missing {expected}: {signals:?}"
+        );
+    }
+    assert!(!signal_names.contains("production_without_test_changes"));
+    assert!(!signal_names.contains("contract_surface_without_doc_changes"));
+
+    let files = output["files"].as_array().unwrap();
+    assert_eq!(files.len(), 6);
+    let tokenizer = files
+        .iter()
+        .find(|file| file["path"] == "src/tokenizer.rs")
+        .unwrap();
+    assert!(tokenizer["classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|class| class == "production"));
+    assert!(!tokenizer["classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|class| class == "auth_security"));
+    let auth = files
+        .iter()
+        .find(|file| file["path"] == "src/auth/scopes.rs")
+        .unwrap();
+    assert!(auth["classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|class| class == "auth_security"));
+    assert!(auth["symbols"].as_array().unwrap().len() <= GIT_REVIEW_MAX_SYMBOLS_PER_FILE);
+    assert!(
+        output["truncation"]["symbols_returned"].as_u64().unwrap()
+            <= GIT_REVIEW_MAX_TOTAL_SYMBOLS as u64
+    );
+
+    let serialized = serde_json::to_string(output).unwrap();
+    assert!(!serialized.contains("RAW_SECRET_BODY_MARKER_OLD"));
+    assert!(!serialized.contains("RAW_SECRET_BODY_MARKER_NEW"));
+    assert!(!serialized.contains("@@ -"));
+
+    let audit = crate::tool_runtime::audit_safe_result_for_tool("git_review_summary", output);
+    assert!(
+        audit.get("files").is_none(),
+        "audit must not persist paths/symbols: {audit}"
+    );
+    assert!(
+        audit.get("signals").is_none(),
+        "audit must not persist signal paths: {audit}"
+    );
+    assert_eq!(
+        audit["scope"]["requested_base"],
+        output["scope"]["requested_base"]
+    );
+    assert_eq!(audit["stats"], output["stats"]);
+}
+
+#[tokio::test]
+async fn git_review_summary_uses_merge_base_when_requested_base_is_not_ancestor() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "base.txt", "root\n", "root");
+    let root = {
+        let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+        stdout.trim().to_string()
+    };
+    let root_branch = {
+        let (_, stdout, _, _) = run_command_sync("git branch --show-current", tmp.path(), 30);
+        stdout.trim().to_string()
+    };
+    assert!(!root_branch.is_empty());
+    let (exit_code, _, stderr, _) = run_command_sync("git checkout -b feature", tmp.path(), 30);
+    assert_eq!(exit_code, 0, "{stderr}");
+    commit_file(tmp.path(), "feature.txt", "feature\n", "feature");
+    let head = {
+        let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+        stdout.trim().to_string()
+    };
+    let checkout_root = format!("git checkout {}", shell_escape_simple(&root_branch));
+    let (exit_code, _, stderr, _) = run_command_sync(&checkout_root, tmp.path(), 30);
+    assert_eq!(exit_code, 0, "{stderr}");
+    commit_file(tmp.path(), "main.txt", "main\n", "main");
+    let requested_base = {
+        let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+        stdout.trim().to_string()
+    };
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-merge-base", "repo", tmp.path())
+            .await;
+    let result = run_git_review_summary_via_agent(
+        &runtime,
+        "review-merge-base",
+        project,
+        requested_base.clone(),
+        head.clone(),
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["scope"]["requested_base"], requested_base);
+    assert_eq!(result.output["scope"]["requested_head"], head);
+    assert_eq!(result.output["scope"]["merge_base"], root);
+    assert_eq!(result.output["scope"]["base_is_ancestor"], false);
+    assert_eq!(result.output["scope"]["commit_count"], 1);
+    assert_eq!(result.output["stats"]["files_changed"], 1);
+    assert_eq!(result.output["files"][0]["path"], "feature.txt");
+}
+
+#[tokio::test]
+async fn git_review_summary_no_change_and_missing_object_are_structured() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "same\n", "root");
+    let exact = {
+        let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+        stdout.trim().to_string()
+    };
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-empty", "repo", tmp.path()).await;
+    let empty = run_git_review_summary_via_agent(
+        &runtime,
+        "review-empty",
+        project.clone(),
+        exact.clone(),
+        exact.clone(),
+    )
+    .await;
+    assert!(empty.success, "{:?}", empty.error);
+    assert_eq!(empty.output["stats"]["files_changed"], 0);
+    assert_eq!(empty.output["files"], json!([]));
+    assert_eq!(empty.output["coverage"]["production_changed"], false);
+    assert_eq!(empty.output["truncated"], false);
+
+    let missing = "f".repeat(40);
+    let failed =
+        run_git_review_summary_via_agent(&runtime, "review-empty", project, exact, missing).await;
+    assert!(!failed.success);
+    assert_eq!(
+        failed.output["reason_code"],
+        "head_commit_missing_or_not_commit"
+    );
+}
+
+#[tokio::test]
+async fn git_review_summary_real_git_edges_cover_rename_delete_add_binary_and_utf8() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    write_git_review_fixture_file(
+        tmp.path(),
+        "old name.rs",
+        "pub fn renamed() -> u8 {\n    1\n}\n",
+    );
+    write_git_review_fixture_file(tmp.path(), "deleted.rs", "pub fn deleted() {}\n");
+    write_git_review_fixture_file(tmp.path(), "路径.rs", "pub fn utf8() -> u8 {\n    1\n}\n");
+    fs::write(tmp.path().join("binary.bin"), [0u8, 1, 0, 2, 3]).unwrap();
+    let base = commit_git_review_fixture(tmp.path(), "edge base");
+
+    fs::rename(
+        tmp.path().join("old name.rs"),
+        tmp.path().join("new name.rs"),
+    )
+    .unwrap();
+    fs::remove_file(tmp.path().join("deleted.rs")).unwrap();
+    write_git_review_fixture_file(tmp.path(), "added.rs", "pub fn added() {}\n");
+    write_git_review_fixture_file(tmp.path(), "路径.rs", "pub fn utf8() -> u8 {\n    2\n}\n");
+    fs::write(tmp.path().join("binary.bin"), [0u8, 9, 0, 8, 7]).unwrap();
+    let head = commit_git_review_fixture(tmp.path(), "edge head");
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-edges", "repo", tmp.path()).await;
+    let result =
+        run_git_review_summary_via_agent(&runtime, "review-edges", project, base, head).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["stats"]["files_changed"], 5);
+    assert_eq!(result.output["stats"]["binary_files"], 1);
+    let files = result.output["files"].as_array().unwrap();
+    let renamed = files
+        .iter()
+        .find(|file| file["path"] == "new name.rs")
+        .unwrap();
+    assert_eq!(renamed["status"], "renamed");
+    assert_eq!(renamed["previous_path"], "old name.rs");
+    let deleted = files
+        .iter()
+        .find(|file| file["path"] == "deleted.rs")
+        .unwrap();
+    assert_eq!(deleted["status"], "deleted");
+    let added = files
+        .iter()
+        .find(|file| file["path"] == "added.rs")
+        .unwrap();
+    assert_eq!(added["status"], "added");
+    assert!(files.iter().any(|file| file["path"] == "路径.rs"));
+    let binary = files
+        .iter()
+        .find(|file| file["path"] == "binary.bin")
+        .unwrap();
+    assert_eq!(binary["binary"], true);
+    assert_eq!(binary["symbol_inspection"], "skipped_binary");
+    assert_eq!(binary["symbols"], json!([]));
+}
+
+#[tokio::test]
+async fn git_review_summary_large_file_count_reports_partial_coverage_truthfully() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "base\n", "base");
+    let base = {
+        let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+        stdout.trim().to_string()
+    };
+    for index in 0..(GIT_REVIEW_MAX_FILES + 2) {
+        write_git_review_fixture_file(
+            tmp.path(),
+            &format!("src/generated/file_{index:03}.rs"),
+            &format!("pub fn generated_{index:03}() -> usize {{ {index} }}\n"),
+        );
+    }
+    let head = commit_git_review_fixture(tmp.path(), "many files");
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-many", "repo", tmp.path()).await;
+    let result =
+        run_git_review_summary_via_agent(&runtime, "review-many", project, base, head).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(
+        result.output["stats"]["files_changed"],
+        (GIT_REVIEW_MAX_FILES + 2) as u64
+    );
+    assert_eq!(
+        result.output["truncation"]["files_returned"],
+        GIT_REVIEW_MAX_FILES as u64
+    );
+    assert_eq!(result.output["truncation"]["files_truncated"], true);
+    assert_eq!(result.output["coverage"]["production_changed"], true);
+    assert!(result.output["coverage"]["tests_changed"].is_null());
+    assert!(result.output["coverage"]["docs_changed"].is_null());
+    assert_eq!(result.output["coverage"]["partial"], true);
+    assert_eq!(result.output["truncated"], true);
+}
+
+#[tokio::test]
+async fn git_review_summary_large_diff_saturates_symbol_probe_without_source_output() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let old_body = format!(
+        "pub fn huge() -> &'static str {{\n    \"{}\"\n}}\n",
+        "A".repeat(GIT_REVIEW_MAX_DIFF_BYTES + 4096)
+    );
+    write_git_review_fixture_file(tmp.path(), "src/runtime/huge.rs", &old_body);
+    let base = commit_git_review_fixture(tmp.path(), "huge base");
+    let new_body = format!(
+        "pub fn huge() -> &'static str {{\n    \"{}\"\n}}\n",
+        "B".repeat(GIT_REVIEW_MAX_DIFF_BYTES + 4096)
+    );
+    write_git_review_fixture_file(tmp.path(), "src/runtime/huge.rs", &new_body);
+    let head = commit_git_review_fixture(tmp.path(), "huge head");
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-huge", "repo", tmp.path()).await;
+    let result =
+        run_git_review_summary_via_agent(&runtime, "review-huge", project, base, head).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["truncation"]["symbols_partial"], true);
+    assert_eq!(result.output["truncated"], true);
+    assert!(
+        result.output["truncation"]["diff_bytes_inspected"]
+            .as_u64()
+            .unwrap()
+            <= GIT_REVIEW_MAX_DIFF_BYTES as u64
+    );
+    let serialized = serde_json::to_string(&result.output).unwrap();
+    assert!(!serialized.contains(&"A".repeat(256)));
+    assert!(!serialized.contains(&"B".repeat(256)));
+}
+
+#[tokio::test]
+async fn git_review_summary_structures_non_git_no_merge_base_and_unborn_head() {
+    let non_git = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-non-git", "repo", non_git.path())
+            .await;
+    let failed = run_git_review_summary_via_agent(
+        &runtime,
+        "review-non-git",
+        project,
+        "a".repeat(40),
+        "b".repeat(40),
+    )
+    .await;
+    assert!(!failed.success);
+    assert_eq!(failed.output["reason_code"], "not_a_git_repository");
+
+    let disconnected = tempfile::tempdir().unwrap();
+    init_git_repo(disconnected.path());
+    commit_file(disconnected.path(), "one.txt", "one\n", "one");
+    let first = {
+        let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", disconnected.path(), 30);
+        stdout.trim().to_string()
+    };
+    let (exit_code, _, stderr, _) = run_command_sync(
+        "git checkout --orphan disconnected",
+        disconnected.path(),
+        30,
+    );
+    assert_eq!(exit_code, 0, "{stderr}");
+    let (exit_code, _, stderr, _) = run_command_sync("git rm -rf .", disconnected.path(), 30);
+    assert_eq!(exit_code, 0, "{stderr}");
+    commit_file(disconnected.path(), "two.txt", "two\n", "two");
+    let second = {
+        let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", disconnected.path(), 30);
+        stdout.trim().to_string()
+    };
+    let runtime = test_runtime();
+    let project = register_structured_git_agent_at_path(
+        &runtime,
+        "review-disconnected",
+        "repo",
+        disconnected.path(),
+    )
+    .await;
+    let failed =
+        run_git_review_summary_via_agent(&runtime, "review-disconnected", project, first, second)
+            .await;
+    assert!(!failed.success);
+    assert_eq!(failed.output["reason_code"], "no_merge_base");
+
+    let unborn = tempfile::tempdir().unwrap();
+    init_git_repo(unborn.path());
+    commit_file(unborn.path(), "kept.txt", "kept\n", "kept");
+    let exact = {
+        let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", unborn.path(), 30);
+        stdout.trim().to_string()
+    };
+    let (exit_code, _, stderr, _) = run_command_sync(
+        "git symbolic-ref HEAD refs/heads/unborn-review",
+        unborn.path(),
+        30,
+    );
+    assert_eq!(exit_code, 0, "{stderr}");
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-unborn", "repo", unborn.path())
+            .await;
+    let result = run_git_review_summary_via_agent(
+        &runtime,
+        "review-unborn",
+        project,
+        exact.clone(),
+        exact.clone(),
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["scope"]["requested_head"], exact);
+    assert_eq!(result.output["stats"]["files_changed"], 0);
+}
+
+#[test]
+fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
+    use crate::auth::scopes::{oauth_scope_policy_for_runtime_tool, OAuthToolScopePolicy};
+    use crate::auth::SCOPE_PROJECT_READ;
+    use crate::tool_runtime::metadata::{lookup_tool_metadata, ToolRisk};
+    let base = "a".repeat(40);
+    let head = "b".repeat(40);
+    let call = ToolCall::from_tool_name(
+        "git_review_summary",
+        json!({
+            "project": SAMPLE_PROJECT,
+            "base_commit": base,
+            "head_commit": head,
+            "session_id": "wc_sess_review"
+        }),
+    )
+    .expect("git_review_summary should parse through generic ToolCall");
+    match call {
+        ToolCall::GitReviewSummary {
+            project,
+            base_commit,
+            head_commit,
+            session_id,
+        } => {
+            assert_eq!(project, SAMPLE_PROJECT);
+            assert_eq!(base_commit, "a".repeat(40));
+            assert_eq!(head_commit, "b".repeat(40));
+            assert_eq!(session_id.as_deref(), Some("wc_sess_review"));
+        }
+        other => panic!("expected git_review_summary, got {other:?}"),
+    }
+    let request_audit = crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
+        "git_review_summary",
+        &json!({
+            "project": SAMPLE_PROJECT,
+            "base_commit": "a".repeat(40),
+            "head_commit": "b".repeat(40),
+            "source_body": "must-not-persist"
+        }),
+    );
+    assert_eq!(request_audit["project"], SAMPLE_PROJECT);
+    assert_eq!(request_audit["base_commit"], "a".repeat(40));
+    assert_eq!(request_audit["head_commit"], "b".repeat(40));
+    assert!(request_audit.get("source_body").is_none());
+    assert_eq!(request_audit["base_commit_valid"], true);
+    assert_eq!(request_audit["head_commit_valid"], true);
+    let malformed = "source-like-invalid-value".repeat(1024);
+    let malformed_audit = crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
+        "git_review_summary",
+        &json!({
+            "project": SAMPLE_PROJECT,
+            "base_commit": malformed,
+            "head_commit": "b".repeat(40)
+        }),
+    );
+    assert_eq!(malformed_audit["base_commit_valid"], false);
+    assert!(malformed_audit.get("base_commit").is_none());
+    assert_eq!(malformed_audit["head_commit_valid"], true);
+    let audit_text = serde_json::to_string(&malformed_audit).unwrap();
+    assert!(!audit_text.contains("source-like-invalid-value"));
+
+    let typed_malformed = ToolCall::GitReviewSummary {
+        project: SAMPLE_PROJECT.to_string(),
+        base_commit: "source-like-invalid-value".repeat(1024),
+        head_commit: "b".repeat(40),
+        session_id: None,
+    }
+    .session_log_arguments();
+    assert_eq!(typed_malformed["base_commit_valid"], false);
+    assert!(typed_malformed["base_commit"].is_null());
+    assert_eq!(typed_malformed["head_commit_valid"], true);
+    assert!(!serde_json::to_string(&typed_malformed)
+        .unwrap()
+        .contains("source-like-invalid-value"));
+    let definition =
+        crate::tool_runtime::tool_definition::lookup_tool_definition("git_review_summary")
+            .expect("git_review_summary definition");
+    assert_eq!(definition.metadata.oauth_scope, Some(SCOPE_PROJECT_READ));
+    assert!(definition.visibility.is_model_visible());
+    let metadata = lookup_tool_metadata("git_review_summary").expect("git_review_summary metadata");
+    assert_eq!(metadata.risk, ToolRisk::ReadOnly);
+    assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_READ));
+    assert!(metadata.requires_project);
+    assert!(metadata.read_only);
+    assert!(!metadata.destructive);
+    assert_eq!(
+        oauth_scope_policy_for_runtime_tool("git_review_summary"),
+        OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ)
+    );
+    let specs = crate::tool_runtime::registered_tool_specs();
+    let spec = specs
+        .iter()
+        .find(|spec| spec.name == "git_review_summary")
+        .expect("git_review_summary public spec");
+    assert!(spec
+        .description
+        .contains("Deterministic bounded committed-range review map"));
+    for field in ["base_commit", "head_commit"] {
+        assert_eq!(spec.input_schema["properties"][field]["minLength"], 40);
+        assert_eq!(spec.input_schema["properties"][field]["maxLength"], 40);
+        assert_eq!(
+            spec.input_schema["properties"][field]["pattern"],
+            "^[0-9A-Fa-f]{40}$"
+        );
+    }
+    let output = crate::tool_runtime::registry::output_schema_for_tool("git_review_summary");
+    let payload = &output["properties"]["output"];
+    for field in [
+        "scope",
+        "stats",
+        "file_classes",
+        "subsystems",
+        "signals",
+        "files",
+        "coverage",
+        "bounds",
+        "truncation",
+        "deterministic",
+        "llm_summary",
+        "truncated",
+        "warnings",
+    ] {
+        assert!(
+            payload["properties"].get(field).is_some(),
+            "missing output field {field}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn git_or_shell_tools_rejected_without_git_or_shell_capability() {
     let runtime = runtime_with_agent_project("oe");
@@ -2749,6 +3444,12 @@ async fn git_or_shell_tools_rejected_without_git_or_shell_capability() {
     let calls = [
         ToolCall::GitDiffSummary {
             project: agent_test_project_id("oe"),
+            session_id: None,
+        },
+        ToolCall::GitReviewSummary {
+            project: agent_test_project_id("oe"),
+            base_commit: "a".repeat(40),
+            head_commit: "b".repeat(40),
             session_id: None,
         },
         ToolCall::ShowChanges {

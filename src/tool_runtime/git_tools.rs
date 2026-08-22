@@ -49,6 +49,15 @@ impl ToolRuntime {
                 skip,
                 session_id: _,
             } => self.git_log(project, limit, skip).await,
+            ToolCall::GitReviewSummary {
+                project,
+                base_commit,
+                head_commit,
+                session_id: _,
+            } => {
+                self.git_review_summary(project, base_commit, head_commit)
+                    .await
+            }
             ToolCall::GitDiffSummary {
                 project,
                 session_id: _,

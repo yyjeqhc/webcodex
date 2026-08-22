@@ -62,7 +62,8 @@ pub(super) use files::{
 };
 pub(super) use git::{
     git_diff_hunks_input_schema, git_diff_input_schema, git_diff_summary_input_schema,
-    git_log_input_schema, git_status_input_schema, show_changes_input_schema,
+    git_log_input_schema, git_review_summary_input_schema, git_status_input_schema,
+    show_changes_input_schema,
 };
 pub(super) use hygiene::workspace_hygiene_check_input_schema;
 pub(super) use jobs::{

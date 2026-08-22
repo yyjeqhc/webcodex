@@ -325,7 +325,7 @@ async fn collaboration_two_sessions_keep_execution_history_independent_and_bind_
 }
 
 #[tokio::test]
-async fn collaboration_completion_without_trusted_current_binding_has_null_author() {
+async fn collaboration_completion_without_recording_or_current_binding_has_null_author() {
     let client_id = "collaboration-null-author";
     let runtime = runtime_with_agent_project(client_id);
     register_agent(
@@ -338,9 +338,6 @@ async fn collaboration_completion_without_trusted_current_binding_has_null_autho
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let coordinator = runtime.sessions.start_session(Some(project), None);
-    let worker = runtime
-        .sessions
-        .start_session(Some(agent_test_project_id(client_id)), None);
     let todo = runtime
         .sessions
         .post_message(PostSessionMessageInput {
@@ -362,13 +359,167 @@ async fn collaboration_completion_without_trusted_current_binding_has_null_autho
             "answer": "done",
             "completion_key": "no-window"
         }),
-        Some(&worker.session_id),
+        None,
         &auth,
         None,
     )
     .await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["answer"]["author_session_id"], Value::Null);
+}
+
+#[tokio::test]
+async fn collaboration_current_binding_remains_author_fallback_without_recording_session() {
+    let client_id = "collaboration-current-author-fallback";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities::default(),
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let auth = auth_context(None, true);
+    let coordinator = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("coordinator".to_string()));
+    let worker_current = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("current worker".to_string()));
+    let todo = runtime
+        .sessions
+        .post_message(PostSessionMessageInput {
+            session_id: coordinator.session_id.clone(),
+            kind: SessionMessageKind::Todo,
+            message: "exercise current binding fallback".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::Normal,
+        })
+        .unwrap();
+    let window = ClientWindow::for_test("current-author-fallback-window");
+    bind_worker_window(
+        &runtime,
+        &auth,
+        &project,
+        "/tmp/agent-proj",
+        &window,
+        &worker_current.session_id,
+    );
+
+    let completed = call_with_recorder(
+        &runtime,
+        "complete_session_message",
+        json!({
+            "session_id": coordinator.session_id,
+            "message_id": todo.message_id,
+            "answer": "done by current fallback",
+            "completion_key": "current-fallback-v1"
+        }),
+        None,
+        &auth,
+        Some(&window),
+    )
+    .await;
+    assert!(completed.success, "{:?}", completed.error);
+    assert_eq!(
+        completed.output["answer"]["author_session_id"],
+        worker_current.session_id
+    );
+}
+
+#[tokio::test]
+async fn collaboration_recording_session_wins_over_different_current_window_binding() {
+    let client_id = "collaboration-recorder-author";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities::default(),
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let auth = auth_context(None, true);
+    let coordinator = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("coordinator".to_string()));
+    let worker_recording = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("worker W1".to_string()));
+    let worker_current = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("worker W2".to_string()));
+    let todo = runtime
+        .sessions
+        .post_message(PostSessionMessageInput {
+            session_id: coordinator.session_id.clone(),
+            kind: SessionMessageKind::Todo,
+            message: "prove recorder provenance precedence".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::High,
+        })
+        .unwrap();
+    let window = ClientWindow::for_test("recorder-vs-current-window");
+    bind_worker_window(
+        &runtime,
+        &auth,
+        &project,
+        "/tmp/agent-proj",
+        &window,
+        &worker_current.session_id,
+    );
+
+    let completed = call_with_recorder(
+        &runtime,
+        "complete_session_message",
+        json!({
+            "session_id": coordinator.session_id,
+            "message_id": todo.message_id,
+            "answer": "completed by the recording Session",
+            "completion_key": "recorder-wins-v1"
+        }),
+        Some(&worker_recording.session_id),
+        &auth,
+        Some(&window),
+    )
+    .await;
+    assert!(completed.success, "{:?}", completed.error);
+    assert_eq!(
+        completed.output["answer"]["author_session_id"],
+        worker_recording.session_id
+    );
+    assert_ne!(
+        completed.output["answer"]["author_session_id"],
+        worker_current.session_id
+    );
+
+    let recording_tools = tool_names(&runtime, &worker_recording.session_id);
+    assert!(recording_tools
+        .iter()
+        .any(|tool| tool == "complete_session_message"));
+    let current_tools = tool_names(&runtime, &worker_current.session_id);
+    assert!(!current_tools
+        .iter()
+        .any(|tool| tool == "complete_session_message"));
+    let coordinator_tools = tool_names(&runtime, &coordinator.session_id);
+    assert!(!coordinator_tools
+        .iter()
+        .any(|tool| tool == "complete_session_message"));
+
+    let discussion = runtime
+        .sessions
+        .discussion_summary(&coordinator.session_id, Some(10))
+        .unwrap();
+    assert_eq!(discussion.recent_completions.len(), 1);
+    assert_eq!(
+        discussion.recent_completions[0]
+            .author_session_id
+            .as_deref(),
+        Some(worker_recording.session_id.as_str())
+    );
 }
 
 #[tokio::test]
@@ -446,6 +597,213 @@ async fn collaboration_cross_project_recorder_fails_closed_before_completion() {
             .len(),
         0
     );
+}
+
+#[tokio::test]
+async fn projectless_session_owner_authority_blocks_known_ids_from_foreign_principal() {
+    let runtime = test_runtime();
+    let alice = shared_key_auth_context("projectless-owner-alice");
+    let bob = shared_key_auth_context("projectless-owner-bob");
+
+    let started = call_with_recorder(
+        &runtime,
+        "start_session",
+        json!({"title": "Alice project-less Session"}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session_id"].as_str().unwrap().to_string();
+    assert_eq!(started.output["project"], Value::Null);
+
+    let posted = call_with_recorder(
+        &runtime,
+        "post_session_message",
+        json!({
+            "session_id": session_id,
+            "kind": "todo",
+            "message": "Alice-owned project-less todo",
+            "priority": "high"
+        }),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(posted.success, "{:?}", posted.error);
+    let todo_id = posted.output["message_id"].as_str().unwrap().to_string();
+
+    let denied_calls = [
+        ("session_summary", json!({"session_id": session_id})),
+        (
+            "post_session_message",
+            json!({"session_id": session_id, "kind": "note", "message": "Bob note"}),
+        ),
+        (
+            "list_session_messages",
+            json!({"session_id": session_id, "message_id": todo_id}),
+        ),
+        (
+            "resolve_session_message",
+            json!({"session_id": session_id, "message_id": todo_id}),
+        ),
+        (
+            "complete_session_message",
+            json!({
+                "session_id": session_id,
+                "message_id": todo_id,
+                "answer": "Bob forged completion",
+                "completion_key": "bob-forged"
+            }),
+        ),
+        (
+            "session_discussion_summary",
+            json!({"session_id": session_id}),
+        ),
+        (
+            "session_handoff_summary",
+            json!({
+                "session_id": session_id,
+                "include_workspace": false,
+                "include_checkpoints": false,
+                "include_validation": false,
+                "summary_only": true
+            }),
+        ),
+        ("close_session", json!({"session_id": session_id})),
+    ];
+    for (tool_name, arguments) in denied_calls {
+        let denied = call_with_recorder(&runtime, tool_name, arguments, None, &bob, None).await;
+        assert!(!denied.success, "{tool_name} unexpectedly succeeded");
+        assert_eq!(
+            denied.output["error_kind"], "session_authority_denied",
+            "{tool_name}: {:?}",
+            denied.output
+        );
+    }
+
+    let alice_summary = call_with_recorder(
+        &runtime,
+        "session_summary",
+        json!({"session_id": session_id}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(alice_summary.success, "{:?}", alice_summary.error);
+    let alice_complete = call_with_recorder(
+        &runtime,
+        "complete_session_message",
+        json!({
+            "session_id": session_id,
+            "message_id": todo_id,
+            "answer": "Alice completion",
+            "completion_key": "alice-complete"
+        }),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(alice_complete.success, "{:?}", alice_complete.error);
+    let alice_close = call_with_recorder(
+        &runtime,
+        "close_session",
+        json!({"session_id": session_id}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(alice_close.success, "{:?}", alice_close.error);
+}
+
+#[tokio::test]
+async fn projectless_owner_fingerprint_survives_restart_without_raw_principal_material() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let alice_identity = "projectless-persisted-alice-raw-principal";
+    let alice = shared_key_auth_context(alice_identity);
+    let bob = shared_key_auth_context("projectless-persisted-bob");
+    let runtime = test_runtime().with_session_ledger(&ledger);
+
+    let started = call_with_recorder(
+        &runtime,
+        "start_session",
+        json!({"title": "durable project-less owner"}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session_id"].as_str().unwrap().to_string();
+    runtime.sessions.flush_persistence();
+    let persisted = std::fs::read_to_string(&ledger).unwrap();
+    assert!(persisted.contains("owner_authority_fingerprint"));
+    assert!(!persisted.contains(alice_identity));
+    drop(runtime);
+
+    let restored = test_runtime().with_session_ledger(&ledger);
+    let alice_read = call_with_recorder(
+        &restored,
+        "session_summary",
+        json!({"session_id": session_id}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(alice_read.success, "{:?}", alice_read.error);
+    let bob_read = call_with_recorder(
+        &restored,
+        "session_summary",
+        json!({"session_id": session_id}),
+        None,
+        &bob,
+        None,
+    )
+    .await;
+    assert!(!bob_read.success);
+    assert_eq!(bob_read.output["error_kind"], "session_authority_denied");
+}
+
+#[tokio::test]
+async fn legacy_persisted_projectless_session_without_owner_fails_closed_for_authenticated_caller()
+{
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = sessions::SessionStore::with_persistence(
+        &ledger,
+        sessions::DEFAULT_MAX_SESSIONS,
+        sessions::DEFAULT_MAX_EVENTS_PER_SESSION,
+    );
+    let legacy = store.start_session(None, Some("legacy project-less".to_string()));
+    store.flush_persistence();
+    let persisted = std::fs::read_to_string(&ledger).unwrap();
+    assert!(!persisted.contains("owner_authority_fingerprint"));
+    drop(store);
+
+    let runtime = test_runtime().with_session_ledger(&ledger);
+    let alice = shared_key_auth_context("legacy-owner-alice");
+    let denied = call_with_recorder(
+        &runtime,
+        "session_summary",
+        json!({"session_id": legacy.session_id}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(!denied.success);
+    assert_eq!(denied.output["error_kind"], "session_authority_denied");
+
+    // The trusted local/dev path retains compatibility for legacy project-less
+    // records; the new authenticated boundary is the fail-closed change.
+    assert!(runtime.sessions.summary(&legacy.session_id, None).is_some());
 }
 
 #[tokio::test]

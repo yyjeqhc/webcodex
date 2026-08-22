@@ -292,6 +292,9 @@ pub(crate) struct SessionLifecycleDenial {
 pub(super) struct SessionRecord {
     pub(super) session_id: String,
     pub(super) project: Option<String>,
+    /// Domain-separated SHA-256 of the stable caller principal tuple for
+    /// project-less Sessions. Never stores the raw principal identity.
+    pub(super) owner_authority_fingerprint: Option<String>,
     pub(super) title: Option<String>,
     pub(super) mode: SessionMode,
     pub(super) guards: SessionGuards,
@@ -325,6 +328,7 @@ pub(super) enum StoredSession {
 pub(super) struct ColdSessionRecord {
     pub(super) session_id: String,
     pub(super) project: Option<String>,
+    pub(super) owner_authority_fingerprint: Option<String>,
     pub(super) mode: SessionMode,
     pub(super) guards: SessionGuards,
     pub(super) lifecycle: SessionLifecycle,
@@ -345,6 +349,13 @@ impl StoredSession {
         match self {
             Self::Hot(record) => record.project.as_deref(),
             Self::Cold(record) => record.project.as_deref(),
+        }
+    }
+
+    pub(super) fn owner_authority_fingerprint(&self) -> Option<&str> {
+        match self {
+            Self::Hot(record) => record.owner_authority_fingerprint.as_deref(),
+            Self::Cold(record) => record.owner_authority_fingerprint.as_deref(),
         }
     }
 
@@ -390,6 +401,7 @@ impl StoredSession {
 #[derive(Debug, Clone)]
 pub(crate) struct SessionCreateOptions {
     pub(crate) project: Option<String>,
+    pub(crate) owner_authority_fingerprint: Option<String>,
     pub(crate) title: Option<String>,
     pub(crate) mode: SessionMode,
     pub(crate) guards: SessionGuards,
@@ -406,6 +418,7 @@ impl SessionCreateOptions {
     ) -> Self {
         Self {
             project,
+            owner_authority_fingerprint: None,
             title,
             mode,
             guards,
@@ -419,6 +432,14 @@ impl SessionCreateOptions {
         project_instructions: Option<ProjectInstructionsSnapshot>,
     ) -> Self {
         self.project_instructions = project_instructions;
+        self
+    }
+
+    pub(crate) fn with_owner_authority_fingerprint(
+        mut self,
+        owner_authority_fingerprint: Option<String>,
+    ) -> Self {
+        self.owner_authority_fingerprint = owner_authority_fingerprint;
         self
     }
 
@@ -608,6 +629,10 @@ pub(super) struct DurableCurrentBinding {
 pub(super) struct PersistedSessionRecord {
     pub(super) session_id: String,
     pub(super) project: Option<String>,
+    /// Additive v1 field. Project-less legacy Sessions omit it and authenticated
+    /// access to those records fails closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) owner_authority_fingerprint: Option<String>,
     pub(super) title: Option<String>,
     pub(super) mode: SessionMode,
     pub(super) guards: SessionGuards,

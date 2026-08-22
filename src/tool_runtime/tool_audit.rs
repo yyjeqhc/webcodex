@@ -789,18 +789,6 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
             "reason_code": output.get("reason_code").cloned().unwrap_or(Value::Null),
             "file_count": output.get("files").and_then(Value::as_array).map(Vec::len),
-        "git_diff_hunks" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "scope": output.get("scope").cloned().unwrap_or(Value::Null),
-            "cached": output.get("cached").cloned().unwrap_or(Value::Null),
-            "hunk_count": output.get("hunk_count").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "truncation_reasons": output.get("truncation_reasons").cloned().unwrap_or(Value::Null),
-            "has_more": output.get("has_more").cloned().unwrap_or(Value::Null),
-            "exit_code": output.get("exit_code").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "reason_code": output.get("reason_code").cloned().unwrap_or(Value::Null),
-            "file_count": output.get("files").and_then(Value::as_array).map(Vec::len),
         }),
         "post_session_message" => serde_json::json!({
             "success": output.get("success").cloned().unwrap_or(Value::Null),
@@ -2798,6 +2786,7 @@ impl ToolCall {
                 completion_key,
                 tags,
                 priority,
+                ..
             } => serde_json::json!({
                 "session_id": session_id,
                 "message_id": message_id,

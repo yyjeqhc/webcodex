@@ -66,7 +66,7 @@ impl ToolRuntime {
         let include_validation = include_validation.unwrap_or(true);
 
         let authorized_target = match self
-            .authorize_collaboration_session(&session_id, "session_handoff_summary", auth)
+            .authorize_session_target(&session_id, "session_handoff_summary", auth)
             .await
         {
             Ok(resolved) => resolved,

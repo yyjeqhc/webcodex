@@ -509,9 +509,15 @@ impl SessionStore {
         let session_id = format!("{SESSION_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let now = now_ts();
         let guards = SessionGuards::effective(opts.mode, opts.guards);
+        let owner_authority_fingerprint = if opts.project.is_none() {
+            opts.owner_authority_fingerprint
+        } else {
+            None
+        };
         let record = SessionRecord {
             session_id: session_id.clone(),
             project: opts.project,
+            owner_authority_fingerprint,
             title: opts.title,
             mode: opts.mode,
             guards,
@@ -747,6 +753,7 @@ impl SessionStore {
                 let record = SessionRecord {
                     session_id: new_session_id.clone(),
                     project: Some(request.project.clone()),
+                    owner_authority_fingerprint: None,
                     // The first accepted instruction remains the root title.
                     // Follow-up instructions never overwrite it.
                     title: instruction,
@@ -943,6 +950,14 @@ impl SessionStore {
     pub(crate) fn session_project(&self, session_id: &str) -> Option<Option<String>> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.session_project(session_id)
+    }
+
+    pub(crate) fn session_target_authority(
+        &self,
+        session_id: &str,
+    ) -> Option<(Option<String>, Option<String>)> {
+        let inner = self.inner.lock().expect("session store mutex poisoned");
+        inner.session_target_authority(session_id)
     }
 
     /// Return inherited defaults only for an active Session whose registered
@@ -2480,6 +2495,18 @@ impl SessionStoreInner {
         self.sessions
             .get(session_id)
             .map(|record| record.project().map(str::to_string))
+    }
+
+    pub(super) fn session_target_authority(
+        &self,
+        session_id: &str,
+    ) -> Option<(Option<String>, Option<String>)> {
+        self.sessions.get(session_id).map(|record| {
+            (
+                record.project().map(str::to_string),
+                record.owner_authority_fingerprint().map(str::to_string),
+            )
+        })
     }
 
     pub(super) fn guard_state(&self, session_id: &str) -> Option<(SessionMode, SessionGuards)> {

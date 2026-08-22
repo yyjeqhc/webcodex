@@ -456,6 +456,9 @@ pub enum ToolCall {
         tags: Vec<String>,
         #[serde(default)]
         priority: SessionMessagePriority,
+        /// Kernel-injected trusted provenance. Never accepted from public JSON.
+        #[serde(skip)]
+        trusted_recording_session_id: Option<String>,
     },
 
     /// Return a bounded structured aggregate of session-local ledger discussion.

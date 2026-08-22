@@ -162,20 +162,16 @@ impl ToolRuntime {
         }
         if collaboration_session_tool(&request.tool_name) {
             if let Some(recorder_session_id) = context.session_id {
-                if let Some(Some(recorder_project)) =
-                    self.sessions.session_project(recorder_session_id)
+                if let Err(result) = self
+                    .authorize_session_target(recorder_session_id, &request.tool_name, context.auth)
+                    .await
                 {
-                    if let Err(err) = self
-                        .resolve_project_input_for_auth(&recorder_project, context.auth)
-                        .await
-                    {
-                        return ToolCallOutcome {
-                            success: false,
-                            result: Some(err.into_tool_result()),
-                            error_status: None,
-                            project: None,
-                        };
-                    }
+                    return ToolCallOutcome {
+                        success: false,
+                        result: Some(result),
+                        error_status: None,
+                        project: None,
+                    };
                 }
                 if let Some(target_session_id) =
                     collaboration_target_session_id(&request.tool_name, &concrete_arguments)
@@ -468,6 +464,15 @@ impl ToolRuntime {
         } = &mut call
         {
             *trusted_mcp_host_file_import = context.host_file_import_trust.is_trusted();
+        }
+        if let ToolCall::CompleteSessionMessage {
+            trusted_recording_session_id,
+            ..
+        } = &mut call
+        {
+            // Private provenance is derived from the already-authorized outer
+            // recording Session. Public arguments can never populate this field.
+            *trusted_recording_session_id = context.session_id.map(str::to_string);
         }
 
         let project = tool_project(&call);

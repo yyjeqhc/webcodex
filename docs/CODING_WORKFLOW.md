@@ -79,14 +79,17 @@ For a bounded independent subtask, keep coordinator `C` and worker `W` in
 `session_handoff_summary(C)` plus that exact `message_id`, performs all tools and
 validation under `W`, then uses `complete_session_message` to atomically create one
 bounded answer and resolve the exact todo. The answer carries trusted
-`author_session_id` provenance when a current worker Session can be derived; the
-caller cannot forge that field.
+`author_session_id` provenance from the recording worker Session first, falling
+back to the current worker Session binding only when no recording Session exists;
+the caller cannot forge that field.
 
 The coordinator can retrieve the exact todo or its replies with
 `list_session_messages(message_id=...)` / `list_session_messages(reply_to=...)`,
 then re-observe authoritative project/Git/artifact state. Worker execution history
-is never copied into `C`, and Session/message ids never grant project authority.
-The message board is collaboration metadata, not a claim, lease, filesystem lock,
+is never copied into `C`, and Session/message ids never grant authority. Project-scoped
+Session targets are reauthorized through their stored project; project-less Sessions
+use only a durable hashed owner fingerprint, with authenticated legacy records that
+lack it failing closed. The message board is collaboration metadata, not a claim, lease, filesystem lock,
 or branch lock. Use separate worktrees/WebCodex Projects for concurrent writers.
 There is no automatic worker spawning, scheduler, shared transcript, or implicit
 cross-Session/cross-owner delegation.

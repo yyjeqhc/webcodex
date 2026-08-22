@@ -58,6 +58,7 @@ impl PersistedSessionRecord {
         Self {
             session_id: record.session_id.clone(),
             project: record.project.clone(),
+            owner_authority_fingerprint: record.owner_authority_fingerprint.clone(),
             title: record.title.clone(),
             mode: record.mode,
             guards: record.guards,
@@ -74,6 +75,7 @@ impl PersistedSessionRecord {
     pub(super) fn still_matches_record(&self, record: &SessionRecord) -> bool {
         self.session_id == record.session_id
             && self.project == record.project
+            && self.owner_authority_fingerprint == record.owner_authority_fingerprint
             && self.title == record.title
             && self.mode == record.mode
             && self.guards == record.guards
@@ -131,6 +133,11 @@ impl PersistedSessionRecord {
         // count persisted.
         let retained_events = events.len() as u64;
         let project = self.project.map(|value| bound_summary_string(value.trim()));
+        let owner_authority_fingerprint = if project.is_none() {
+            sanitize_owner_authority_fingerprint(self.owner_authority_fingerprint)
+        } else {
+            None
+        };
         let execution_context = if project.is_some() {
             self.execution_context.sanitized_for_restore()
         } else {
@@ -139,6 +146,7 @@ impl PersistedSessionRecord {
         Some(SessionRecord {
             session_id,
             project,
+            owner_authority_fingerprint,
             title: self.title.map(|value| bound_summary_string(value.trim())),
             mode: self.mode,
             guards: SessionGuards::effective(self.mode, self.guards),
@@ -153,6 +161,15 @@ impl PersistedSessionRecord {
             project_instructions: None,
         })
     }
+}
+
+fn sanitize_owner_authority_fingerprint(value: Option<String>) -> Option<String> {
+    let value = value?.trim().to_ascii_lowercase();
+    (value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+    .then_some(value)
 }
 
 pub(super) fn cold_session_from_record(
@@ -176,6 +193,11 @@ pub(super) fn cold_session_from_persisted(
     Ok(ColdSessionRecord {
         session_id: persisted.session_id.clone(),
         project: persisted.project.clone(),
+        owner_authority_fingerprint: if persisted.project.is_none() {
+            sanitize_owner_authority_fingerprint(persisted.owner_authority_fingerprint.clone())
+        } else {
+            None
+        },
         mode: persisted.mode,
         guards: persisted.guards,
         lifecycle: persisted.lifecycle,

@@ -8,7 +8,7 @@ Assume coordinator Session `C` and worker Session `W`.
 
 `C` owns the collaboration todo and bounded answers. `W` owns the worker's tool calls, validation, review evidence, and workspace activity. They are always independent Sessions: the worker does not resume `C`, and WebCodex does not copy `W` execution history into `C`.
 
-Knowing a `session_id`, `message_id`, worker Session id, Job id, checkpoint id, artifact ref, commit SHA, or PR number is not authority. Every read or mutation still passes the normal caller/project/owner authorization checks. Collaboration never grants filesystem, shell, Computer, artifact, credential, or other project authority.
+Knowing a `session_id`, `message_id`, worker Session id, Job id, checkpoint id, artifact ref, commit SHA, or PR number is not authority. Every read or mutation still passes the normal caller/project/owner authorization checks. Project-scoped Session targets are reauthorized from their stored project; project-less Sessions retain only a domain-separated owner-authority fingerprint, never the raw principal identity. Authenticated access to a legacy project-less Session without that fingerprint fails closed, while the trusted local/dev path retains its compatibility behavior. Collaboration never grants filesystem, shell, Computer, artifact, credential, or other project authority.
 
 ## Canonical coordinator -> worker flow
 
@@ -46,9 +46,9 @@ A successful completion records:
 - the todo as resolved;
 - `resolved_by_message_id` pointing to that exact answer;
 - a bounded completion identity derived from `completion_key`;
-- `author_session_id` when WebCodex can derive a trusted current worker Session from the caller/transport/stable-window/project binding.
+- `author_session_id` from the trusted recording Session when the tool call is explicitly recorded under one; otherwise from the existing trusted current-window Session binding when available.
 
-If no trusted current worker binding is available, `author_session_id` is `null`; callers cannot supply a trusted author identity themselves.
+The recording Session wins when it differs from the current-window binding, so provenance follows the Session that actually records the completion evidence. If neither trusted source exists, `author_session_id` is `null`; callers cannot supply a trusted author identity themselves.
 
 For uncertain responses, retry the same `session_id + message_id + completion_key` with the same answer metadata. WebCodex returns the original completion without creating another answer. Reusing the same key with different answer content/metadata fails with `idempotency_conflict`. A different completion after another completion already resolved the todo returns `already_completed` and bounded existing completion identity.
 
@@ -69,7 +69,7 @@ All supplied filters use deterministic AND semantics. `message_id` therefore giv
 
 ## Provenance is metadata, not authority
 
-A completed answer can identify the independent worker with `author_session_id`. That value is derived from trusted runtime current-Session context when available; it is not a caller-authored claim.
+A completed answer can identify the independent worker with `author_session_id`. That value is derived first from the trusted recording Session that owns the completion tool evidence, then from the trusted current-Session binding only when no recording Session exists. It is not a caller-authored claim.
 
 The coordinator may then explicitly inspect `session_handoff_summary(worker_session_id)` if it has authority to that Session. WebCodex does not copy the worker's transcript, validation, diff review, Job logs, or workspace evidence into the coordinator Session merely because the answer references `W`.
 

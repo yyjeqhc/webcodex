@@ -27,6 +27,19 @@ pub(crate) fn unknown_session_result(session_id: &str) -> ToolResult {
     )
 }
 
+pub(crate) fn session_authority_denied_result(session_id: &str, tool_name: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        "session_authority_denied",
+        json!({
+            "error_kind": "session_authority_denied",
+            "failure_kind": "session_authority_denied",
+            "session_id": session_id,
+            "tool_name": tool_name,
+            "state_changed": false,
+        }),
+    )
+}
+
 pub(crate) fn session_project_mismatch_result(
     session_id: &str,
     tool_name: &str,
@@ -337,6 +350,72 @@ pub(crate) fn add_session_telemetry_hint(
 
 pub(crate) fn is_current_session_eligible(call: &ToolCall) -> bool {
     call.project().is_some() && runtime_tool_allows_current_session_fallback(call.tool_name())
+}
+
+pub(crate) fn workflow_session_owner_fingerprint(
+    auth: Option<&AuthContext>,
+) -> Result<String, String> {
+    let (principal_kind, principal_id) = match auth {
+        None => ("dev".to_string(), "dev".to_string()),
+        Some(auth) if auth.is_open_anonymous() => {
+            return Err(
+                "project-less Workflow Session requires a distinct stable caller identity"
+                    .to_string(),
+            );
+        }
+        Some(auth) if auth.is_bootstrap => (
+            "bootstrap".to_string(),
+            auth.user_id
+                .as_deref()
+                .or(auth.username.as_deref())
+                .unwrap_or("bootstrap")
+                .to_string(),
+        ),
+        Some(auth) if auth.is_oauth_shared_key_subject() => (
+            auth.principal_kind().to_string(),
+            auth.shared_key_hash
+                .as_deref()
+                .ok_or_else(|| "OAuth shared-key subject has no stable identity".to_string())?
+                .to_string(),
+        ),
+        Some(auth) if auth.is_oauth_project_subject() => (
+            auth.principal_kind().to_string(),
+            auth.project_grant_id
+                .as_deref()
+                .ok_or_else(|| "OAuth project subject has no stable identity".to_string())?
+                .to_string(),
+        ),
+        Some(auth) if auth.is_oauth_token() => (
+            auth.principal_kind().to_string(),
+            auth.user_id
+                .as_deref()
+                .or(auth.username.as_deref())
+                .or(auth.api_key_id.as_deref())
+                .ok_or_else(|| "OAuth caller has no stable owner identity".to_string())?
+                .to_string(),
+        ),
+        Some(auth) if auth.is_shared_key() => (
+            auth.principal_kind().to_string(),
+            auth.shared_key_hash
+                .as_deref()
+                .ok_or_else(|| "shared-key caller has no stable owner identity".to_string())?
+                .to_string(),
+        ),
+        Some(auth) if auth.is_project_credential() => (
+            auth.principal_kind().to_string(),
+            auth.project_grant_id
+                .as_deref()
+                .ok_or_else(|| "project credential has no stable owner identity".to_string())?
+                .to_string(),
+        ),
+        Some(auth) => current_session_principal(Some(auth))?,
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex.workflow-session-owner.v1\0");
+    hasher.update(principal_kind.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(principal_id.as_bytes());
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 pub(crate) fn current_session_key(

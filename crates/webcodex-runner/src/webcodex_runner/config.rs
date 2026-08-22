@@ -1023,6 +1023,7 @@ pub(crate) fn load_config(path: &Path) -> Result<AgentConfig, String> {
 fn validate_mcp_gateway_env_name(value: &str) -> Result<(), ()> {
     if value.is_empty()
         || value.len() > MCP_GATEWAY_MAX_ENV_NAME_BYTES
+        || !value.is_ascii()
         || value.contains('\0')
         || value.contains('=')
     {
@@ -1212,6 +1213,8 @@ mod mcp_gateway_config_tests {
             ("BAD=NAME", "SOURCE"),
             ("DEST", "BAD=SOURCE"),
             ("DEST", "BAD\0SOURCE"),
+            ("DÉST", "SOURCE"),
+            ("DEST", "SOURCÉ"),
         ] {
             let mut invalid = provider();
             invalid

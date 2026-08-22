@@ -121,7 +121,9 @@ timeout_secs = 30
 
 `executable` 与可选 `cwd` 都是 Runner host-local operator 配置并且必须为绝对路径。`cwd` 会原样交给 `Command::current_dir`，没有 fallback；非法配置在加载时拒绝，不可用目录则在 provider child spawn 前失败。`[mcp]` 仍是 restart-required 配置，不增加 hot reload 或 live provider replacement。
 
-provider 永远不会整体继承 Runner 环境：`env_clear()` 始终保留。`env_from_env` 是显式的 **provider 环境变量名 -> Runner 进程环境变量名** mapping，只复制明确列出的变量；source 不存在时不会静默 omit，而是在 provider spawn 前以 `not_started` 失败。`WEBCODEX_TOKEN`、`WEBCODEX_AGENT_TOKEN`、`WEBCODEX_USER_TOKEN`、`AUTHORIZATION` 等 WebCodex sensitive transport/account key 不允许映射。环境变量名与数量都有边界；Windows destination name 按大小写不敏感语义判断冲突，Unix 保持大小写敏感。环境变量值只存在于 Runner 本地，不进入 provider inventory、Server wire metadata、error body、audit/log metadata 或 model-facing output。
+provider 永远不会整体继承 Runner 环境：`env_clear()` 始终保留。`env_from_env` 是显式的 **provider 环境变量名 -> Runner 进程环境变量名** mapping，只复制明确列出的变量；source 不存在时不会静默 omit，而是在 provider spawn 前以 `not_started` 失败。`WEBCODEX_TOKEN`、`WEBCODEX_AGENT_TOKEN`、`WEBCODEX_USER_TOKEN`、`AUTHORIZATION` 等 WebCodex sensitive transport/account key 不允许映射。环境变量名必须为 ASCII，mapping 数量也有边界；Windows destination name 按大小写不敏感语义判断冲突，Unix 保持大小写敏感。WebCodex 自身不会把 mapped environment value 投影到 provider inventory、Server wire metadata、error body 或 audit/log metadata。
+
+把 credential 映射给 provider，就等于把这份 credential 委托给该 provider process。provider 可以按自身实现使用它，也可以通过正常 tool result 返回派生值甚至原始值；WebCodex 不会尝试对任意 provider output 做 secret redaction。因此应把 configured provider 视为 credential recipient，使用 least-privilege provider credential，并注意任何拥有 `mcp:local` 权限的 caller 都能行使这些 credential 为 provider 提供的能力。
 
 provider 在第一次真实交互时 lazy start，完成 MCP initialize 后持久复用。Runner restart 后逻辑 `id` 可以保持不变，但内部 provider instance 会变化；Server dispatch 绑定 exact Runner/provider instance，因此 stale request 不会被重定向或 replay。registration 只向 Server 投影 provider `id`/`name` 与内部 instance fencing metadata，不投影 executable、argv、cwd、环境 mapping/value、PID、stderr 或 Runner credential。因此不带 `server` 的 `mcp_tool(action=list)` 只表示 registration routing 是否 **resolvable**，不是 provider process health；`list(server=...)` 与 `describe` 才会真实与 provider 交互。
 

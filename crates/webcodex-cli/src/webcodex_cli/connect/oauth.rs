@@ -451,6 +451,7 @@ fn render_oauth_output(
     runtime_project_id: &str,
     config_path: &Path,
     log_path: &Path,
+    oauth_profile_path: &Path,
     oauth: &OAuthConnectProfile,
     metadata: &OAuthServerMetadata,
     disclose_client_secret: bool,
@@ -458,17 +459,20 @@ fn render_oauth_output(
     let secret_line = if disclose_client_secret {
         format!("Client secret: {}\n", oauth.oauth_client_secret)
     } else {
-        String::new()
+        format!(
+            "Credential source: protected OAuth client profile at {} (client secret not reprinted).\n",
+            oauth_profile_path.display()
+        )
     };
     format!(
-        "Connected to WebCodex\n\nServer:       {server_url}\nMCP URL:      {server_url}/mcp\nProfile:      {profile}\nClient:       {client_id}\nProject:      {runtime_project_id}\nRunner:       running\nConfig:       {}\nLogs:         {}\n\nAuthentication: OAuth 2.0 Authorization Code + PKCE S256\nIssuer:        {}\nAuthorization: {}\nToken endpoint: {}\nClient ID:     {}\n{secret_line}Redirect URI:  {}\nScopes:        {} offline_access\n\nThe OAuth client is managed-user-owned on the remote Server. The Runner uses a separate Agent token and OAuth credentials are never sent to Agent transport.\n",
+        "WebCodex connected\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {server_url}/mcp\n3. Authentication: OAuth 2.0 Authorization Code + PKCE S256\n4. Client ID: {}\n5. {secret_line}6. Redirect URI: {}\n7. Scan Tools and complete browser authorization.\n8. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nDetails\nServer:          {server_url}\nRunner:          running\nProfile:         {profile}\nClient:          {client_id}\nRuntime project: {runtime_project_id}\nConfig:          {}\nLogs:            {}\nIssuer:          {}\nAuthorization:   {}\nToken endpoint:  {}\nScopes:          {} offline_access\n\nThe OAuth client is managed-user-owned on the remote Server. The Runner uses a separate Runner token and OAuth credentials are never sent to Runner transport.\n",
+        oauth.oauth_client_id,
+        oauth.oauth_redirect_uri,
         config_path.display(),
         log_path.display(),
         metadata.issuer,
         metadata.authorization_endpoint,
         metadata.token_endpoint,
-        oauth.oauth_client_id,
-        oauth.oauth_redirect_uri,
         oauth.allowed_scopes.join(" "),
     )
 }
@@ -499,6 +503,7 @@ fn build_oauth_connect_result(
             runtime_project_id,
             config_path,
             log_path,
+            &profile_dir.join(OAUTH_PROFILE_FILE),
             oauth,
             metadata,
             disclose_client_secret,
@@ -1402,12 +1407,18 @@ mod tests {
             "agent:runner:project",
             Path::new("agent.toml"),
             Path::new("runner.log"),
+            Path::new("/protected/profile/oauth-client.toml"),
             &oauth,
             &metadata,
             false,
         );
         assert!(!reused.contains("wc_csec_existing"));
         assert!(!reused.contains("Client secret:"));
+        assert!(reused.starts_with("WebCodex connected\n\nWhat to do next"));
+        assert!(reused.find("MCP URL:").unwrap() < reused.find("Details").unwrap());
+        assert!(reused.contains("Credential source:"));
+        assert!(reused.contains("/protected/profile/oauth-client.toml"));
+        assert!(reused.contains("not reprinted"));
 
         let created = render_oauth_output(
             "https://example.test",
@@ -1416,10 +1427,13 @@ mod tests {
             "agent:runner:project",
             Path::new("agent.toml"),
             Path::new("runner.log"),
+            Path::new("/protected/profile/oauth-client.toml"),
             &oauth,
             &metadata,
             true,
         );
         assert!(created.contains("Client secret: wc_csec_existing"));
+        assert_eq!(created.matches("wc_csec_existing").count(), 1);
+        assert!(created.find("Client secret:").unwrap() < created.find("Details").unwrap());
     }
 }

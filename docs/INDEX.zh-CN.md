@@ -4,22 +4,22 @@
 
 ## 入门
 
-- [README](../README.zh-CN.md) —— WebCodex 是什么，以及如何开始
+- [README](../README.zh-CN.md) —— WebCodex 是什么，以及 `webcodex share` 首次体验
+- [快速开始](QUICK_START.zh-CN.md) —— 从本地仓库接入 ChatGPT MCP 的最短路径
+- [MCP](MCP.zh-CN.md) —— ChatGPT Developer Mode 与其他 MCP 客户端配置
 - [AI 接入指南](AI_ONBOARDING.zh-CN.md) —— 让 AI agent 帮你配置 WebCodex
-- [快速开始](QUICK_START.zh-CN.md) —— 最短的本地设置
-- [CLI](CLI.zh-CN.md) —— 命令、术语与凭据
+
+## 日常使用
+
+- [CLI](CLI.zh-CN.md) —— 命令、兼容性术语与凭据
 - [Coding 工作流](CODING_WORKFLOW.zh-CN.md) —— canonical task bootstrap、behavioral guidance、validation 与 closeout
+- [Runner](RUNNER.zh-CN.md) —— 在持有仓库的机器上运维 Runner
 
-## 自托管
+## 高级部署与集成
 
-- [部署指南](DEPLOYMENT.zh-CN.md) —— 构建、bootstrap Server、接入 Runner
-- [认证模型](AUTH_MODEL.zh-CN.md) —— 凭据与令牌
-- [Runner](RUNNER.zh-CN.md) —— Runner/agent 是什么，以及如何运维
-
-## 客户端接入
-
-- [MCP](MCP.zh-CN.md) —— 接入 MCP 客户端（ChatGPT、Claude 等）
-- [GPT Actions](GPT_ACTIONS.zh-CN.md) —— 基于 OpenAPI 的 Custom GPT 集成
+- [部署指南](DEPLOYMENT.zh-CN.md) —— 自托管、Server bootstrap 与长期 Runner 接入
+- [认证模型](AUTH_MODEL.zh-CN.md) —— 详细凭据与令牌边界
+- [GPT Actions](GPT_ACTIONS.zh-CN.md) —— 可选的 OpenAPI Custom GPT 集成
 
 ## 理解 WebCodex
 

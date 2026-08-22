@@ -2,198 +2,173 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-This is the shortest path to a working WebCodex setup on one local Git project.
-It uses the project-first flow: `webcodex setup` configures the current
-directory without asking for client IDs, runtime project ids, transports, or
-internal config paths.
-
-For connecting to an existing hosted Server, see
-[Deployment](DEPLOYMENT.md#connect-a-repository-to-an-existing-server). For
-letting an AI agent do the setup, see [AI Onboarding](AI_ONBOARDING.md).
+This guide gets one local Git repository into ChatGPT through MCP with the fewest
+concepts possible. The normal first-run command is `webcodex share`.
 
 ## Prerequisites
 
-- All three binaries installed: `webcodex`, `webcodex-server`,
-  `webcodex-runner`.
-- Git available on `PATH`.
-- A Git project you can safely inspect and edit.
+- Node.js 18+ for the npm installer.
+- Git on `PATH` and a Git repository you can safely inspect/edit.
+- [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) on `PATH`
+  for the default temporary public HTTPS share.
 
-Install the packaged build:
+Install WebCodex:
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
 
-Or build from this checkout:
+If you only need local MCP debugging, `webcodex share --tunnel none` does not
+need `cloudflared`.
 
-```bash
-cargo build --release --workspace --bins
-export PATH="$PWD/target/release:$PATH"
-```
-
-## 1. Set up the project
+## 1. Share the repository
 
 ```bash
 cd /path/to/your/repository
-webcodex setup
-```
-
-On first run, `setup` resolves the Git top-level, creates private state outside
-the checkout, creates the minimum project registration and Agent
-configuration, and creates one Project Credential for this project's Connector
-and Agent — without printing it. It leaves the Server and Agent stopped.
-
-Run it again to verify idempotency; the second result is `already configured`.
-If one generated component is missing, `setup` repairs only that component.
-
-## 2. Check readiness
-
-```bash
-webcodex doctor
-```
-
-`doctor` is read-only. Before the Agent starts, its expected verdict is
-`Needs action` with `Next: webcodex run`. Use `--json` for the structured
-projection.
-
-## 3. Start the local runtime
-
-```bash
-webcodex run
-```
-
-This starts the project-bound loopback Server and local Agent in the
-foreground. Leave the terminal open; Ctrl-C stops both. In another terminal,
-from the same project:
-
-```bash
-webcodex status
-```
-
-A ready project reports its Project, Connection, Agent, coding readiness, and
-no next action.
-
-## 4. Connect a client
-
-### Temporarily share over HTTPS
-
-Hosted clients cannot reach a loopback address. For temporary development or
-testing access from a hosted MCP client, stop `webcodex run` and run:
-
-```bash
 webcodex share
 ```
 
-`share` reuses the project setup and local runtime but starts a Cloudflare
-Quick Tunnel and a separate temporary Connector credential. It prints a
-temporary `https://*.trycloudflare.com/mcp` URL and Bearer token; both stop
-being usable when the command exits.
+That single command performs the project setup, starts the local Server + Runner,
+creates a temporary Connector credential, opens a Cloudflare Quick Tunnel, and
+waits for the MCP endpoint to become usable. Do not run `setup`, `doctor`, or
+`run` first unless you specifically want the manual/local workflow described
+later.
 
-For an MCP client that requires OAuth, register its exact callback and run:
+The default share is temporary. Keep the terminal open; Ctrl-C stops the local
+runtime, tunnel, URL, and temporary credential.
 
-```bash
-webcodex share --auth oauth --oauth-redirect-uri https://client.example/callback
-```
+If `cloudflared` is missing, WebCodex fails before project setup/state creation
+and tells you where to install it. Install it and retry, or use `--tunnel none`
+for local-only debugging.
 
-The command prints the temporary Project share credential plus a project-bound OAuth client ID/secret. Enter the Project share credential only on the WebCodex authorization page. OAuth grants are fenced to that `share` process, so a restart invalidates old access and refresh tokens. The client ID/secret remain in protected project state for reuse with the same callback.
+## 2. Add WebCodex to ChatGPT
 
-`webcodex share --tunnel none` starts the same runtime without a public tunnel for local debugging. For a stable operator-managed OAuth origin, combine it with `--public-url https://share.example` and route that HTTPS origin to the local WebCodex port yourself. Quick Tunnels are not a stable-origin or production deployment mechanism.
+When the terminal reports **WebCodex ready**, use the values printed under
+**What to do next**:
 
-### Connect to an existing Server
+1. In ChatGPT, enable **Developer Mode** and create a **custom app** using MCP.
+2. Set **MCP URL** to the printed `https://.../mcp` value.
+3. For the default share, choose **Access token / API key** (Bearer token).
+4. Paste the printed **Credential (this share only)**.
+5. Run **Scan Tools**.
 
-For a stable, long-lived setup against an existing Server, shared-key connect remains available:
+The Console intentionally does not display that credential. If you later open
+`/console`, get connection credentials from the successful CLI output, not from
+the browser page.
 
-```bash
-webcodex connect https://webcodex.example --project .
-```
+## 3. Send a safe first prompt
 
-For ChatGPT OAuth, use the same hosted shared-key identity; no login, pairing, PAT, or account identity is required:
-
-```bash
-webcodex connect https://webcodex.example --auth oauth \
-  --oauth-redirect-uri https://client.example/callback --project .
-```
-
-To opt the OAuth client into the optional Computer consent ceiling, use:
-
-```bash
-webcodex connect https://webcodex.example --auth oauth \
-  --oauth-redirect-uri https://client.example/callback \
-  --oauth-computer-permissions --project .
-```
-
-The Runner keeps the direct shared key and its fixed baseline authority while ChatGPT receives only OAuth credentials/tokens. A fresh ordinary shared-key OAuth client starts with the full baseline (`runtime/project/job`, `computer:read`, `computer:control`), but an existing protected client may retain a narrower valid baseline subset. To let the browser offer the fixed optional launch/full-display/pointer/clipboard permissions, reconnect explicitly with `--oauth-computer-permissions`; the flag appends only those optional scopes to the existing baseline subset and never restores missing baseline authority. All optional permissions remain unchecked until selected on WebCodex's authorize page. Launch can be selected only when the OAuth request already contains both `computer:read` and `computer:launch`; WebCodex never fills a missing request scope. `account:manage`, `admin`, `job:detach`, Agent scopes, and future scopes are never offered. Existing baseline clients are not widened by normal reconnect. Runner capability and OS/native permission are rechecked at runtime, so consent-page availability is not a success guarantee. Advanced managed-user OAuth remains separate as `--auth managed-oauth` after `webcodex login`. See [Deployment](DEPLOYMENT.md).
-
-To remove only this repository from a hosted `connect` profile later, run from the repository:
-
-```bash
-webcodex disconnect
-```
-
-This unregisters the exact canonical repository and leaves the source tree, `.git`, profile
-credential, and any other registered projects intact. If more than one hosted profile registers
-the same repository, rerun with `--profile NAME`.
-
-## 5. Run a coding task
-
-Ask the client for a small, reversible change. The canonical calls are:
+Start by confirming that the client can see the intended repository without
+making changes:
 
 ```text
-task_start
-→ files_list
-→ files_read or files_search
-→ edits_apply
-→ checks_run
-→ task_finish
-→ task_review
+Inspect this repository and summarize its structure. Do not make changes.
 ```
 
-Use a stable `operation_id` for edits, commands, and checks: retrying the same
-payload reuses the operation; a different payload under the same ID fails
-closed.
+After that succeeds, ask for a small, reversible change. WebCodex's project-bound
+coding surface handles project identity internally; ordinary users do not need
+to provide runtime project ids or operation ids in prompts.
 
-`checks_run` accepts `format`, `check`, and `test` plus an optional `recipe`
-(`rust`, `node`, `python`, `go`). Omit the recipe for automatic resolution
-from the nearest manifest directory.
+## 4. Review work
 
-## 6. Review and accept locally
-
-The coding result stays isolated from the target checkout until a human
-decision:
+The browser `/console` shows readiness, work queue, task guidance, approvals, and
+review actions. Where a stable result is ready, a human can Accept or Reject it
+from the Console or CLI:
 
 ```bash
 webcodex task list
 webcodex task show <task-id>
 webcodex task accept <task-id>
+# or: webcodex task reject <task-id>
 ```
 
-Use `webcodex task reject <task-id>` to discard it. Acceptance verifies that
-the target Git state still matches the task baseline before applying the
-result. The online model can propose work but can never accept it.
+The online model cannot accept its own result.
 
-You can also review in the browser: open `/console` and use the work queue.
-Accept and Reject in the browser call the same authority the CLI uses.
+## Existing Server: long-lived connection
+
+If you already have a WebCodex Server URL, use `connect` instead of temporary
+`share`:
+
+```bash
+cd /path/to/your/repository
+webcodex connect https://webcodex.example
+```
+
+`connect` creates/reuses a local profile, starts a detached Runner, waits until
+the Server can see the Runner and project, then prints the MCP URL,
+authentication type, credential source, ChatGPT hint, and diagnostic details.
+When it generates a shared key, the full value is shown only on the permitted
+first disclosure; status/log commands do not reveal it.
+
+To remove only this repository from a hosted profile later:
+
+```bash
+webcodex disconnect
+```
+
+Self-hosting and managed identity are separate operator/advanced workflows; see
+[Deployment](DEPLOYMENT.md).
+
+## Optional OAuth
+
+Bearer authentication is the simplest trial path. If the MCP client requires
+OAuth, provide its exact callback URL.
+
+Temporary project-bound share:
+
+```bash
+webcodex share --auth oauth \
+  --oauth-redirect-uri https://client.example/callback
+```
+
+Existing hosted Server:
+
+```bash
+webcodex connect https://webcodex.example --auth oauth \
+  --oauth-redirect-uri https://client.example/callback
+```
+
+The CLI prints which values belong in the MCP client and which temporary project
+credential belongs only on the WebCodex authorization page. Advanced OAuth
+scope ceilings, optional Computer permissions, managed-user OAuth, and protocol
+contracts are documented in [MCP](MCP.md) and [Authentication](AUTH_MODEL.md).
+
+## Local-only / manual workflow
+
+These commands remain useful for development and diagnostics, but they are not
+prerequisites for a hosted ChatGPT connection:
+
+```bash
+cd /path/to/your/repository
+webcodex setup     # configure private project state only
+webcodex doctor    # read-only local readiness diagnostics
+webcodex run       # foreground loopback Server + Runner
+# in another terminal:
+webcodex status
+```
+
+`doctor` describes the local/manual runtime and may recommend `webcodex run` when
+that loopback runtime is stopped. Hosted clients cannot reach a loopback-only
+runtime, which is why the normal ChatGPT onboarding starts with `share` instead.
 
 ## Troubleshooting
 
-Start with:
+Start with the exact error from `share` or `connect`. For established local
+state, these remain useful:
 
 ```bash
 webcodex status
 webcodex doctor
 ```
 
-Common stable codes and next actions:
+Common examples:
 
-| Code | Meaning | Next action |
-| --- | --- | --- |
-| `project_not_configured` | No setup for this project/profile | `webcodex setup` |
-| `project_credential_invalid` | Private credential state is missing or mismatched | Restore both matching private files or recreate the profile |
-| `server_unreachable` | Loopback runtime cannot be reached | `webcodex run` |
-| `agent_offline` | Server reachable but the local Agent is unavailable | `webcodex run` |
-| `required_capability_unavailable` | Installed Agent too old | Upgrade all binaries |
-| `workspace_unavailable` | Git or project path unavailable | Restore the path/Git workspace |
-| `checks_required` | Normal result has not run checks | Run `checks_run`, then finish |
-| `checks_stale` | Workspace changed after the last check | Run a new check |
+| Symptom | Next action |
+| --- | --- |
+| `cloudflared` missing | Install it from the official Cloudflare downloads and retry, or use `share --tunnel none` locally |
+| loopback port already in use | Stop the conflicting process and retry |
+| local/manual runtime stopped | `webcodex run` |
+| Runner unavailable on an existing hosted profile | rerun `connect` or inspect `webcodex agent status --profile <profile>` |
+| workspace unavailable | restore the Git project/path |
 
 See [Troubleshooting](TROUBLESHOOTING.md) for the full operational checklist.

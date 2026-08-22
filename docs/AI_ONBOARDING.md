@@ -2,170 +2,143 @@
 
 [English](AI_ONBOARDING.md) | [简体中文](AI_ONBOARDING.zh-CN.md)
 
-This guide is for an AI coding agent helping a **user** connect a local
-repository to WebCodex or deploy a WebCodex Server. It is not the same as
-[`AGENTS.md`](../AGENTS.md), which is for an AI coding agent **developing
-WebCodex itself**.
+This guide is for an AI coding agent helping a **user** connect a repository to
+WebCodex or operate an existing deployment. It is not [`AGENTS.md`](../AGENTS.md),
+which governs development of WebCodex itself.
 
-Choose one path before running commands, and verify the current machine and
-existing configuration before changing anything.
+The default user goal is: **"let ChatGPT work with this repository."** Do not
+introduce Server deployment, client ids, runtime project ids, PATs, Runner tokens,
+or OAuth scope ceilings unless the user's chosen path actually requires them.
 
-## Decision tree
+## Choose the smallest path
 
-1. Does the user want the fastest connection to one or more repositories,
-   without operating a Server?
-   - Yes: use **Hosted shared key** and `webcodex connect`.
-2. Does the user need an individual account, device-level authorization,
-   independent token revocation, identity audit, or organization management?
-   - Yes: use the **Managed flow** and `webcodex login`.
-3. Does the user need full infrastructure control, an internal network, their
-   own HTTPS or identity system, or no dependency on the official Server?
-   - Yes: use **Full self-hosting** and read
-     [Deployment](DEPLOYMENT.md).
+1. The user has one local repository and wants to try ChatGPT/MCP now, with no
+   existing WebCodex Server URL: use **`webcodex share`**.
+2. The user already has a WebCodex Server URL and wants a persistent repository
+   connection: use **`webcodex connect <server>`**.
+3. The user needs separate identity, independent revocation, audit, or managed
+   users: use the managed identity path (`webcodex login` / managed OAuth).
+4. The user needs infrastructure control, private networking, stable HTTPS, or
+   their own identity system: use [Deployment](DEPLOYMENT.md).
 
-Do not deploy a WebCodex Server for the hosted path.
+Do not invent `https://your-server.example` as a prerequisite for a new user.
 
-## Fastest connection: hosted shared key
+## First-time ChatGPT path: `share`
 
-Run on the machine that owns the repository:
+Verify Git and the target repository, then verify that `cloudflared` is installed
+for the default public share. If it is absent, point the user to Cloudflare's
+official downloads rather than installing third-party executables silently.
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 cd /path/to/your/repository
-webcodex connect https://your-server.example
+webcodex share
 ```
 
-The current directory is the default project. The command generates the shared
-key unless the user explicitly supplies `--key-file` or `--key`. Configure the
-MCP client from the values printed after the connection check succeeds:
+`share` performs project setup itself. Do not teach `setup → doctor → run → stop
+run → share` as the onboarding sequence.
 
-```text
-MCP URL: https://your-server.example/mcp
-Authentication: Bearer token
-Bearer token: the generated key
-```
+When the CLI reports **WebCodex ready**, tell the human to keep that terminal open
+and follow the printed **What to do next** section:
 
-`connect` performs the complete local setup: it creates or reuses a profile
-scoped to that origin and key, generates a unique client ID, registers the
-local project, writes a `0600` Runner config, starts one detached Runner, and
-waits until the same key can see the Runner and target project. Running the
-same command again reuses the profile and live Runner.
+- ChatGPT Developer Mode → create an MCP custom app.
+- paste the printed MCP URL.
+- select the authentication type printed by the CLI.
+- the **human** pastes the printed credential into ChatGPT.
+- Scan Tools.
+- first prompt: `Inspect this repository and summarize its structure. Do not make changes.`
 
-For automation, prefer `--key-file <path>` over passing a key in shell
-history. Do not pass `--key` and `--key-file` together.
+For local-only debugging, `webcodex share --tunnel none` avoids the Cloudflare
+Quick Tunnel and does not require `cloudflared`.
 
-## Automatic key
+## Existing Server path: `connect`
 
-When `--key`/`--key-file` is omitted, `connect` generates a `wck_...` key with
-more than 256 bits of randomness, stores it in the protected profile, and
-prints the complete value only when first created. Tell the user to copy it
-immediately into the MCP client. A repeat connection recovers the local
-profile and does not print the key again.
-
-The key is stored as the top-level `token` field in
-`~/.config/webcodex/clients/<profile>/agent.toml` (or
-`$XDG_CONFIG_HOME/webcodex/clients/<profile>/agent.toml`). If the user lost
-the printed value, have the human copy it from that field; as an AI agent,
-locate the file and point the user at it — do not echo the value into chat.
-
-The detached Runner survives terminal closure but not a machine reboot. After
-reboot, rerun the same `connect` or use `webcodex agent start --profile
-<profile>`.
-
-The inverse operation is `webcodex disconnect [--project PATH] [--profile NAME]`.
-Use it when the user wants to unregister one hosted repository without deleting or modifying the
-repository, `.git`, the profile credential, `agent.toml`, or sibling projects. It resolves the
-canonical repository path exactly; if several hosted profiles match, let the command fail closed
-and ask the user to choose one with `--profile` rather than guessing. A live Runner is unregistered
-through the structured Server/Runner lifecycle before the local registration is removed.
-
-## Managed flow
-
-Use the managed flow when the user needs a separate user identity, token
-revocation, device-level authorization, identity audit, or organization
-administration:
+Only use this path when a real Server URL is already available:
 
 ```bash
-webcodex login https://your-server.example --code <wc_pair_...> \
+cd /path/to/your/repository
+webcodex connect https://webcodex.example
+```
+
+`connect` creates/reuses a profile, starts a detached Runner, waits for the same
+identity to see the Runner and project, then prints the MCP setup values before
+diagnostic details. If the command generates a shared key, it is printed in full
+only on its permitted first disclosure. A repeat connection reuses the protected
+profile without redisclosing the key.
+
+The inverse operation is:
+
+```bash
+webcodex disconnect
+```
+
+It unregisters only the exact canonical repository; do not delete the checkout,
+`.git`, profile credential, or sibling project registrations.
+
+## OAuth and managed identity are opt-in complexity
+
+Use `share --auth oauth` or `connect --auth oauth` only when the client requires
+OAuth and the exact callback URL is known. Do not collapse OAuth client secrets,
+shared keys, Project Credentials, PATs, or Runner tokens into one concept.
+
+Use the managed flow when the user explicitly needs user identity, revocation,
+device authorization, audit, or organization administration:
+
+```bash
+webcodex login https://webcodex.example --code <wc_pair_...> \
   --allowed-root "$HOME/git"
 ```
 
-The managed flow uses a pairing/account credential, a PAT for MCP/API, and a
-separately bound Runner token. Do not replace that split with a shared key.
+The managed path intentionally keeps user/API authority separate from Runner
+transport authority. See [Authentication](AUTH_MODEL.md) and [MCP](MCP.md) for
+the reference model.
 
-## Full self-hosting
+## What the AI may inspect
 
-Use [Deployment](DEPLOYMENT.md) when the user needs complete Server and data
-control, an internal-network deployment, their own HTTPS endpoint, their own
-identity system, or no dependency on the official Server. That path includes
-Server, database/state, reverse proxy, TLS, service, and credential operations;
-none of those are prerequisites for hosted `webcodex connect`.
+Safe non-secret observations include:
 
-## What the AI agent may inspect
+- repository path and Git status;
+- Server URL;
+- profile/state/log **paths**;
+- service status via `webcodex agent status` / `webcodex server status`;
+- `webcodex status` and `webcodex doctor` output;
+- the location of a token file, but not its contents.
 
-You may safely locate and read **non-secret** configuration:
+`doctor` is a local/manual runtime diagnostic. If it recommends `webcodex run`,
+do not reinterpret that as a prerequisite for hosted ChatGPT; use `share` for the
+first hosted-chat path.
 
-- profile path: `~/.config/webcodex/clients/<profile>/` (or
-  `$XDG_CONFIG_HOME/webcodex/clients/<profile>/`)
-- Runner state and log path:
-  `~/.local/state/webcodex/clients/<profile>/` (or
-  `$XDG_STATE_HOME/webcodex/clients/<profile>/`)
-- token **file** path (not its contents): e.g. `webcodex-user-token`
-- env file **path** and variable **name** (e.g. `WEBCODEX_TOKEN` in the server
-  env file) — not the value
-- server URL
-- service status via `webcodex agent status` / `webcodex server status`
-- `webcodex doctor` output
-
-Useful non-secret commands:
-
-```bash
-webcodex agent status --profile <profile>
-webcodex agent logs --profile <profile> --lines 100
-webcodex status
-webcodex doctor
-webcodex ops status --server-url <url> --token-file <path> --strict
-```
-
-## What the human must copy or paste
+## Secrets remain human-controlled
 
 Do **not** read back, print, log, commit, or echo into chat:
 
-- full token values (shared key, PAT, Runner token, account credential,
-  bootstrap token, OAuth secrets)
-- full `agent.toml` contents
-- server env files
-- `Authorization` headers
-- OAuth client secrets
+- shared keys, PATs, Runner tokens, account credentials, bootstrap tokens;
+- Project Credentials;
+- OAuth client secrets;
+- full `agent.toml` contents or Server env files;
+- `Authorization` headers.
 
-When a secret must be entered into ChatGPT/Claude or another client, tell the
-**human** exactly which local file/value to copy. For example: "Copy the value
-from `~/.config/webcodex/<server>/<user>/webcodex-user-token` into the Bearer
-field." Do not read the file yourself and paste its contents into the chat.
+When a credential must be entered into ChatGPT/Claude, identify the source
+precisely and ask the **human** to copy it. The successful `share`/`connect` output
+is the preferred first-disclosure source. If a stored value must be recovered,
+point the user to the exact protected file/field without echoing it yourself.
+Status/log commands intentionally do not reveal secrets.
 
-### Credential rules for AI agents
+Never substitute a `wc_agent_*` Runner token for an MCP token, never use a
+bootstrap `WEBCODEX_TOKEN` as an MCP credential, and never assume offline
+`webcodex token generate` material is registered on a remote Server.
 
-- Never run `webcodex token generate` and assume a remote Server will accept
-  its output. It creates offline material only; it does not register it.
-- Never use a `wc_*` value as a hosted shared key. Unknown or revoked managed
-  credentials do not fall back to shared-key auth.
-- Never substitute a `wc_agent_*` for an MCP token.
-- Never paste a bootstrap `WEBCODEX_TOKEN` into MCP or a local hosted profile.
-- Never print, log, commit, or copy a full `agent.toml`.
-- Run `connect` before configuring MCP, so the full Runner/project path is
-  verified first.
+## Troubleshooting
 
-## Local state and troubleshooting
+Use the CLI's actionable error first. For established state, inspect only the
+minimum non-secret diagnostics needed:
 
-For a normal non-root user, profile configuration defaults below
-`~/.config/webcodex/clients/<profile>/`; Runner state and logs below
-`~/.local/state/webcodex/clients/<profile>/`. The hosted Runner writes
-`runner.log` in that profile state directory and rotates it while running at
-approximately 10 MiB, keeping `runner.log`, `runner.log.1`, and
-`runner.log.2` (all `0600` on Unix). `agent logs --lines` reads bounded tails;
-`--follow` reopens `runner.log` after rotation.
+```bash
+webcodex status
+webcodex doctor
+webcodex agent status --profile <profile>
+webcodex agent logs --profile <profile> --lines 100
+```
 
-On connection failure, use the profile and log path printed by `connect`.
-Check Server reachability, shared-key enablement, exact key equality, client ID
-collision, and project-path validity. Status and logs do not print the key. See
-[Troubleshooting](TROUBLESHOOTING.md) for stable failure guidance.
+See [Troubleshooting](TROUBLESHOOTING.md) for stable failure codes and operator
+checks.

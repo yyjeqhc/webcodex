@@ -202,19 +202,20 @@ pub(crate) fn parse_options(
 }
 
 pub(crate) fn usage() -> &'static str {
-    "Usage: webcodex setup [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
-       webcodex doctor [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
-       webcodex status [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
-       webcodex run [--root PATH] [--profile NAME] [--state-dir PATH]\n\
-                              [--console-assets-dir ABSOLUTE_PATH]\n\
-       webcodex share [--root PATH] [--profile NAME] [--state-dir PATH]\n\
+    "Usage: webcodex share [--root PATH] [--profile NAME] [--state-dir PATH]\n\
                      [--tunnel cloudflare|none] [--auth bearer|oauth]\n\
-                     [--oauth-redirect-uri URL] [--public-url URL]\n\n\
-Run setup in a local Git project. It writes private WebCodex state outside the\n\
-checkout and never starts services, modifies Git content, or opens a network\n\
-port. `run` is the explicit foreground runtime step. Its optional\n\
+                     [--oauth-redirect-uri URL] [--public-url URL]\n\
+       webcodex status [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
+       webcodex doctor [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
+       webcodex setup [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
+       webcodex run [--root PATH] [--profile NAME] [--state-dir PATH]\n\
+                              [--console-assets-dir ABSOLUTE_PATH]\n\n\
+`share` is the first-run path for ChatGPT/remote MCP: it performs project setup,\n\
+starts the local Server + Runner, and exposes a temporary credential. The default\n\
+Cloudflare Quick Tunnel requires `cloudflared` on PATH. `setup`, `doctor`, and\n\
+`run` remain the local/manual workflow; setup writes private state without\n\
+starting services. `run` is the explicit foreground local runtime step. Its optional\n\
 `--console-assets-dir` enables loopback-only development assets for that run.\n\
-`share` starts the same local runtime with a temporary Connector credential;\n\
 `--auth oauth` adds project-bound OAuth while preserving that project grant.\n"
 }
 

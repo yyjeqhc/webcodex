@@ -20,6 +20,12 @@ The CLI produces three binaries when built from source:
 `webcodex --help` lists the top-level namespaces. The sections below explain
 what each namespace is for.
 
+For a first ChatGPT connection, the normal entry is simply `webcodex share` in
+the repository. It performs project setup, starts the local Server and Runner,
+and exposes a temporary HTTPS MCP endpoint. The default Quick Tunnel requires
+`cloudflared` on `PATH`; the command checks that prerequisite before creating
+project/share state and reports an installation link if it is missing.
+
 ## Command map
 
 ### Project / local workflow
@@ -28,15 +34,15 @@ These commands work on the current Git project.
 
 | Command | Purpose | Notes |
 | --- | --- | --- |
-| `webcodex setup` | Configure the current Git project for project-first use | Creates private state and a Project Credential; does not start services. |
-| `webcodex doctor` | Read-only readiness checks for the current project | Reports a stable `next action`; use `--json` for the structured projection. |
-| `webcodex run` | Start the project-bound loopback Server and local Runner | Foreground; Ctrl-C stops both. |
-| `webcodex status` | Concise project coding readiness | Short summary; `doctor` is the full check. |
-| `webcodex share` | Share the local project over HTTPS | Defaults to a temporary Bearer credential; `--auth oauth --oauth-redirect-uri <URL>` enables project-bound OAuth. |
-| `webcodex connect <server>` | Connect the current project to an existing Server | Defaults to hosted shared-key; `--auth oauth --oauth-redirect-uri <URL>` bridges that same shared-key identity into ChatGPT OAuth without a managed login. |
+| `webcodex share` | Share the current project for ChatGPT/MCP over HTTPS | First-run path; includes setup and starts the local Server + Runner. Default Quick Tunnel requires `cloudflared`. |
+| `webcodex connect <server>` | Connect the current project to an existing Server | Long-lived path when you already have a Server URL; defaults to hosted shared-key. |
+| `webcodex status` | Concise project coding readiness | Short summary; `doctor` is the full diagnostic check. |
+| `webcodex doctor` | Read-only readiness checks for the current project | Diagnostics/manual workflow; reports a stable `next action`. |
+| `webcodex setup` | Configure the current Git project without starting it | Local-only/manual workflow; creates private state and a Project Credential. |
+| `webcodex run` | Start the project-bound loopback Server and local Runner | Local-only/manual workflow; foreground, Ctrl-C stops both. |
 | `webcodex disconnect [--project PATH] [--profile NAME]` | Remove one hosted project registration | Exact inverse of `connect` for that repository; never removes the repository or `.git`. |
 
-`webcodex share --auth oauth --oauth-redirect-uri <exact-callback>` uses OAuth 2.0 Authorization Code with PKCE S256. The OAuth client ID/secret are persisted in protected project state for that project + callback, while authorization codes, access tokens, refresh tokens, and the temporary Project Credential are fenced to the current `share` process. Restarting `share` therefore invalidates old OAuth grants without changing the Connector's stable project identity. OAuth access tokens are never accepted on Runner/Agent transport.
+`webcodex share --auth oauth --oauth-redirect-uri <exact-callback>` uses OAuth 2.0 Authorization Code with PKCE S256. The OAuth client ID/secret are persisted in protected project state for that project + callback, while authorization codes, access tokens, refresh tokens, and the temporary Project Credential are fenced to the current `share` process. Restarting `share` therefore invalidates old OAuth grants without changing the Connector's stable project identity. OAuth access tokens are never accepted on Runner transport.
 
 Quick Tunnel origins remain temporary. For an operator-managed stable HTTPS origin, use `--tunnel none --public-url https://share.example` and route that origin to the loopback WebCodex Server yourself; `--public-url` advertises the external origin/issuer and does not create a proxy or tunnel.
 
@@ -179,11 +185,6 @@ normal entry points.
 - **CLI** — the `webcodex` command described here.
 - **Runner** — the `webcodex-runner` process on the machine that owns the
   repositories. It executes the actual work.
-- **Agent / agent CLI namespace** — the CLI namespace `webcodex agent ...`
-  manages the Runner. "Agent" and "Runner" refer to the same execution
-  component, not the same program: `webcodex` and `webcodex-runner` are
-  separate executables. The term "agent" survives from the older
-  `webcodex-agent` name.
 - **profile** — a named local client configuration (paths, `agent.toml`,
   tokens) under the user's WebCodex config directory. `webcodex connect`
   creates one; `webcodex agent ... --profile <name>` targets it.
@@ -230,8 +231,8 @@ quick answer.
 | --- | --- | --- | --- | --- |
 | Server bootstrap token | (env `WEBCODEX_TOKEN`) | `webcodex server init` | server/admin setup, user creation, pairing | GPT Actions, MCP, Runner, daily use |
 | Shared key | `wck_...` | `webcodex connect` (generated once) | hosted shared-key MCP + Runner | production IAM |
-| Project Credential | (private file) | `webcodex setup` | the one project's Connector + Agent | other projects, admin |
-| Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | local token creation | GPT Actions, MCP, agent |
+| Project Credential | (private file) | `webcodex setup` | the one project's Connector + Runner | other projects, admin |
+| Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | local token creation | GPT Actions, MCP, Runner |
 | Personal API token (PAT) | `wc_pat_...` | `webcodex token create-local` | GPT Actions, MCP, REST API | Runner connectivity |
 | Runner token | `wc_agent_...` | `webcodex agent-token create-local` | `webcodex-runner` transport only | MCP, REST, GPT Actions |
 | OAuth access token | `wc_oat_...` | OAuth2 authorization flow | GPT Actions / MCP when OAuth is enabled | — |
@@ -315,7 +316,14 @@ and `wc_oat_*` access tokens are delegated credentials; see
 
 ## Common examples
 
-Project-first workflow:
+First ChatGPT/MCP connection:
+
+```bash
+cd /path/to/your/repository
+webcodex share
+```
+
+Local/manual workflow:
 
 ```bash
 webcodex setup
@@ -327,7 +335,7 @@ webcodex task show <task-id>
 webcodex task accept <task-id>
 ```
 
-Hosted connection:
+Existing hosted Server:
 
 ```bash
 webcodex connect https://your-server.example

@@ -1,40 +1,40 @@
 pub(crate) fn usage() -> &'static str {
     "Usage: webcodex <COMMAND>\n\n\
 Unified command-line interface for WebCodex.\n\n\
-Project:\n\
-  setup                         Configure the current Git project\n\
-  doctor                        Diagnose project readiness\n\
+Start here:\n\
+  share                         Share the current project for ChatGPT/MCP over HTTPS\n\
+  connect                       Connect the current project to an existing Server\n\
   status                        Show concise project coding readiness\n\
-  run                           Run the current project runtime and local Agent\n\
-  share                         Temporarily share the local project over HTTPS\n\n\
-Account (quick start):\n\
-  connect                       Connect a local project to a hosted Server\n\
+  doctor                        Diagnose project readiness\n\n\
+Project (local/manual):\n\
+  setup                         Configure the current Git project without starting it\n\
+  run                           Run the project-bound Server and Runner locally\n\
   disconnect                    Disconnect a local project from its hosted Server\n\
+  task                          Review tasks and make host-local decisions\n\n\
+Account / identity (advanced):\n\
   login                         Log this device into a server (one-time pairing code)\n\
   logout                        Remove this device's credentials\n\
   auth status                   Show login status\n\n\
-Server:\n\
+Operator / service management:\n\
   server init|install|run|start|stop|restart|status|logs|uninstall\n\
-                                Configure and manage the Server service\n\n\
-Agent:\n\
+                                Configure and manage the Server service\n\
   agent init|install|run|start|stop|restart|status|logs|uninstall\n\
-                                Configure and manage the standalone Agent service\n\n\
-Operations:\n\
-  task                          Review tasks and make host-local decisions\n\
+                                Manage the Runner service (historical `agent` namespace)\n\
   ops status|agents|projects|smoke-preflight\n\
                                 Read-only operator workflow checks\n\n\
-Advanced / Compatibility:\n\
+Advanced / compatibility:\n\
   pairing create                Create a client enrollment code\n\
   client enroll                 Enroll this machine (advanced; prefer `webcodex login`)\n\
   users create|list             Manage users\n\
   tokens create|create-local|generate|register-hash|list|revoke\n\
                                 Manage personal API tokens\n\
   agent-tokens create|create-local|register-hash|list|revoke\n\
-                                Manage Agent tokens\n\
+                                Manage Runner tokens\n\
   setup single-user             Run the existing single-user bootstrap flow\n\n\
 Options:\n\
   -h, --help                    Print help and exit\n\
-  -V, --version                 Print version and exit\n"
+  -V, --version                 Print version and exit\n\n\
+For a first ChatGPT connection, install `cloudflared`, `cd` into a repository, and run `webcodex share`.\n"
 }
 
 pub(crate) fn connect_usage() -> &'static str {

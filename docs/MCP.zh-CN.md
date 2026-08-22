@@ -2,40 +2,68 @@
 
 [English](MCP.md) | [简体中文](MCP.zh-CN.md)
 
-WebCodex 可以暴露不止一种 MCP model surface。project-first 的
-`webcodex run` / `webcodex share` 会启动带 project-bound
-`canonical_connector` surface 的 Server。`webcodex connect <server>` 则连接
-已有 hosted Server，并使用该 Server 选择的 MCP surface；没有 Connector 配置时，
-默认是更宽的 `local_coding` surface。project-first 流程先看
-[快速开始](QUICK_START.zh-CN.md)。
+WebCodex 通过 MCP endpoint，让 ChatGPT、Claude 与其他 MCP client 使用持有仓库机器上的
+Runner。第一次接入先完成下面的客户端配置；protocol surface 与 scope ceiling 属于
+reference，不是 onboarding 前置知识。
 
-## Endpoint 与认证
+## ChatGPT Developer Mode：第一次接入
 
-本地客户端可用：
+默认临时公网路径先安装
+[`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/)，然后执行：
 
-```text
-http://127.0.0.1:<configured-port>/mcp
+```bash
+npm install -g @yyjeqhc/webcodex
+cd /path/to/your/repository
+webcodex share
 ```
 
-Hosted 客户端需要 HTTPS。有三种路径：
+CLI 显示 **WebCodex ready** 后：
 
-- **Hosted：** `webcodex connect <server>` 使用已有 hosted Server；本地只运行
-  Runner。默认仍使用 shared-key。`webcodex connect <server> --auth oauth
-  --oauth-redirect-uri <URL>` 会把同一个 shared-key group 桥接成 ChatGPT OAuth，
-  不需要 login、pairing、PAT 或 account identity。Runner 继续使用 direct shared key，
-  ChatGPT 只获得 OAuth client credential/token；工具集合先由远端 Server 的 MCP
-  model surface 决定，OAuth caller 的 `tools/list` 还会按 access token 的实际 scopes
-  进一步投影。
-- **本地分享：** `webcodex share` 启动本地 Server + Agent；默认启动 Cloudflare
-  Quick Tunnel 并使用独立的临时 Bearer credential。`webcodex share --auth oauth
-  --oauth-redirect-uri <URL>` 则暴露 project-bound OAuth 2.0 Authorization Code +
-  PKCE。OAuth client 仍绑定同一个 project grant，而 code/access/refresh grant
-  都 fenced 到当前 share 进程。`--tunnel none` 可用于本地测试，或配合 operator
-  管理的 `--public-url` 使用。
-- **自托管：** 使用稳定 HTTPS 域名/tunnel、持久服务管理与 OAuth 或受限凭据进行
-  长期运行。
+1. 在 ChatGPT Developer Mode 创建基于 MCP 的 custom app。
+2. 填入输出的 **MCP URL**。
+3. 默认 share 选择 **Access token / API key**（Bearer token）。
+4. 填入输出的临时 **Credential**。
+5. 点击 **Scan Tools**。
+6. 第一条可先说：`检查这个仓库并总结它的结构。先不要做任何修改。`
 
-普通 hosted `connect` 直接使用其生成/提供的 shared key，或把同一个身份桥接成 OAuth。managed-user 部署也可使用受限 user API token（`wc_pat_*`）或显式 `--auth managed-oauth` 流程。不要把 bootstrap/admin token、account credential、Runner token 或持久 project-first Connector credential 当作公开分享 secret。`share` 会为该会话创建并打印自己的临时 credential。
+`share` 自己会完成 project setup。Hosted ChatGPT 无法访问 loopback-only 的
+`webcodex run`，因此 `setup`、`doctor`、`run` 都不是 `share` 之前的必经步骤。ChatGPT
+UI 文案可能随 rollout 变化；URL 与认证以 CLI 输出为准。
+
+## Claude 与其他 MCP client
+
+使用同一份输出的 `/mcp` URL 与认证值。Claude 中添加 custom connector 并粘贴 MCP URL；
+其他 MCP client 同样使用 CLI 报告的 endpoint 与认证方式。仅本地 client 可用
+`webcodex share --tunnel none`，不需要 `cloudflared`。
+
+## 已有 Server
+
+如果已经拥有稳定的 WebCodex Server URL，使用长期路径：
+
+```bash
+webcodex connect https://webcodex.example
+```
+
+`connect` 会启动/复用本地 Runner，并在连接验证完成后输出 MCP URL 与 credential source。
+自动生成的 shared key 只会在允许的首次输出中完整显示；status/log 不会泄露它。自托管见
+[部署指南](DEPLOYMENT.zh-CN.md)。
+
+Bearer/shared-key 是最简单的路径。客户端要求 OAuth 时，使用 `share --auth oauth` 或
+`connect --auth oauth` 并传入该客户端的精确 callback URL，然后按 CLI 输出配置。managed-user
+OAuth 仍是独立的高级身份路径。
+
+## Advanced / reference
+
+### MCP model surface
+
+project-first 的 `webcodex run` / `webcodex share` 使用 project-bound
+`canonical_connector` surface。`webcodex connect <server>` 使用已有 Server 选择的 MCP
+surface；没有 Connector 配置时默认是更宽的 `local_coding`，operator 还可显式选择
+`full_operator_runtime`。这些名称描述 protocol/tool contract；第一次用户不需要先做选择。
+
+Hosted client 需要公网 HTTPS：`share` 默认提供临时 Cloudflare Quick Tunnel，`connect` 使用
+已有 hosted Server，自托管部署则提供自己的稳定 HTTPS origin。不要把 bootstrap/admin token、
+Runner token 或持久 project-first Connector credential 当作公网 share secret。
 
 ### 内建 local MCP gateway
 
@@ -45,11 +73,6 @@ hosted WebCodex Server 可以继续通过同一个稳定 `/mcp` 暴露 Runner-ow
 
 Runner 在 `[mcp]` 中配置 provider；不需要额外 daemon/sidecar、第二个公网 resource URL 或 per-provider ChatGPT App。local MCP 使用显式 `mcp:local` scope；direct shared-key、project、open-anonymous 与 legacy OAuth 默认权限都不会自动获得它。普通 hosted shared-key OAuth 必须使用 `webcodex connect ... --auth oauth --oauth-local-mcp` 显式加入“同一 shared-key Runner group 内当前及未来本地 MCP provider”的 class-level authority。ceiling 真正变化会撤销旧 grant 并要求重新走浏览器授权。因此以后新增/替换 provider 不需要新建 OAuth client/App，但只有此前明确 opt in `mcp:local` 的 credential 才能访问。
 
-在 ChatGPT Developer Mode 中，用输出的 `/mcp` URL 创建自定义 app。如果认证菜单
-提供 **访问令牌/API 密钥**，选择它并粘贴 bearer credential，然后执行 **Scan
-Tools / 扫描工具**。ChatGPT 的 UI 文案与可用范围可能随 workspace 与 rollout
-变化。
-
 ### OAuth2
 
 当 managed/自托管 Server 启用 OAuth，或使用 `webcodex share --auth oauth` 时，MCP 客户端可以使用 authorization-code
@@ -57,7 +80,7 @@ Tools / 扫描工具**。ChatGPT 的 UI 文案与可用范围可能随 workspace
 URI；宿主提供 `offline_access` 时保持勾选（它是协议级 refresh-token scope，不授予
 额外权限）。服务端 OAuth 设置见[部署指南](DEPLOYMENT.zh-CN.md#oauth2)。
 
-对于 project-first share，授权页要求输入本次临时 Project share credential，并签发只带 `runtime:read`、`project:read`、`project:write`、`job:run` 的 `oauth2_project` 身份；它不会创建 managed user，OAuth token 也不能用于 Agent transport。Quick Tunnel 的 issuer URL 每次运行都会变化；如果 OAuth issuer 必须稳定，请使用 `--tunnel none --public-url https://...` 并在外部配置稳定 HTTPS proxy/tunnel。
+对于 project-first share，授权页要求输入本次临时 Project share credential，并签发只带 `runtime:read`、`project:read`、`project:write`、`job:run` 的 `oauth2_project` 身份；它不会创建 managed user，OAuth token 也不能用于 Runner transport。Quick Tunnel 的 issuer URL 每次运行都会变化；如果 OAuth issuer 必须稳定，请使用 `--tunnel none --public-url https://...` 并在外部配置稳定 HTTPS proxy/tunnel。
 
 对于已有 hosted Server，普通 `connect --auth oauth` 使用 shared-key OAuth bridge。OAuth client 以及 code/access/refresh grant 都绑定到 direct shared-key Runner/projects/jobs 所使用的同一个 `shared_key_hash`。direct shared-key bearer authority 始终固定为 `runtime:read`、`project:read`、`project:write`、`job:run`、`computer:read`、`computer:control`。fresh OAuth client 从完整 baseline 开始，但已有受保护 client 可以保留合法的窄 baseline subset。`--oauth-computer-permissions` 只在该现有 baseline subset 上追加 `computer:launch`、`computer:display_read`、`computer:pointer_control`、`computer:clipboard_read`、`computer:clipboard_write`，不会恢复缺失的 baseline scope。浏览器授权页仍默认全部未勾选，并且只能 grant 本次 OAuth request 实际请求且用户选择的 permission。Launch consent 要求 `computer:read` + `computer:launch`；display 要求 `computer:read` + `computer:display_read`；pointer 要求 `computer:read`、`computer:control`、`computer:display_read`、`computer:pointer_control`；clipboard read/write 也分别要求 baseline read/control prerequisite 与对应 optional scope。缺失的 request prerequisite 会 unavailable，而不是自动补齐，因此 consent、token projection 与 runtime scope gate 静态一致。ceiling 真正变化会撤销旧 grant。`account:manage`、`admin`、`job:detach`、任何 `agent:*` 与未来 scope 始终在 bridge 之外；`offline_access` 仍只是协议 scope。授权页按同一个在线 Runner 判断 capability，并在 POST 重新计算；这只代表 backend 当前可用，不保证 OS/native permission 或调用一定成功。runtime 中 OAuth `tools/list` 会隐藏 token scope 不足的工具，直接 `tools/call` scope gate 与 Runner/native 实时检查仍是最终 authority。managed-user identity 仍单独使用 `connect --auth managed-oauth`。
 

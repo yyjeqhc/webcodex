@@ -408,6 +408,11 @@ fn tunnel_runtime_error() -> ProductError {
 }
 
 pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductError> {
+    // Fail before setup/state creation when the default public-share dependency is absent.
+    let cloudflared_binary = match options.tunnel {
+        TunnelProvider::CloudflareQuick => Some(locate_cloudflared()?),
+        TunnelProvider::None => None,
+    };
     setup(&options.project)?;
     let (config, paths) = configured_project(&options.project)?;
     ensure_local_runtime_port_available(
@@ -445,9 +450,11 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
     let local_url = config.server_url();
     let (public_url, mut tunnel) = match options.tunnel {
         TunnelProvider::CloudflareQuick => {
-            let binary = locate_cloudflared()?;
+            let binary = cloudflared_binary
+                .as_deref()
+                .ok_or_else(tunnel_runtime_error)?;
             let (url, tunnel) =
-                start_cloudflare_quick_with_binary(&binary, &local_url, TUNNEL_START_TIMEOUT)
+                start_cloudflare_quick_with_binary(binary, &local_url, TUNNEL_START_TIMEOUT)
                     .await?;
             (url, Some(tunnel))
         }
@@ -543,14 +550,23 @@ fn render_share_ready(
 ) -> String {
     let (tunnel_name, public_access, ready_message) =
         share_access_labels(tunnel, externally_managed);
+    let base = public_url.trim_end_matches('/');
+    let next_steps = if tunnel == TunnelProvider::CloudflareQuick || externally_managed {
+        format!(
+            "What to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {base}/mcp\n3. Authentication: Bearer token\n4. Credential (this share only): {credential}\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\""
+        )
+    } else {
+        format!(
+            "What to do next\n1. Add this MCP endpoint to a local MCP client: {base}/mcp\n2. Authentication: Bearer token\n3. Credential (this share only): {credential}\n4. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\""
+        )
+    };
     let lifetime_message = if tunnel == TunnelProvider::CloudflareQuick {
         "This credential and tunneled URL are temporary."
     } else {
         "This credential is temporary."
     };
     format!(
-        "Project: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\n\nMCP URL:\n  {}/mcp\n\nAuthentication:\n  Bearer token\n\nToken:\n  {credential}\n\n{ready_message}\n\n{lifetime_message}\nPress Ctrl-C to stop sharing.",
-        public_url.trim_end_matches('/')
+        "WebCodex ready\n\n{next_steps}\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nCredential lifetime: {lifetime_message}\nPress Ctrl-C to stop sharing."
     )
 }
 
@@ -570,8 +586,13 @@ fn render_share_oauth_ready(
         "The project share credential and OAuth grants are temporary. The client ID/secret are persisted for this project and redirect URI."
     };
     let base = public_url.trim_end_matches('/');
+    let client_step = if tunnel == TunnelProvider::CloudflareQuick || externally_managed {
+        "1. In ChatGPT Developer Mode, create a custom MCP app."
+    } else {
+        "1. In a local MCP client, create an MCP connection."
+    };
     format!(
-        "Project: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\n\nMCP URL:\n  {base}/mcp\n\nAuthentication:\n  OAuth 2.0 Authorization Code + PKCE S256\n\nAuthorization server:\n  {base}\n\nClient ID:\n  {}\n\nClient secret:\n  {}\n\nRedirect URI:\n  {}\n\nProject share credential:\n  {credential}\n\nUse the project share credential only on the WebCodex authorization page. OAuth access/refresh grants are fenced to this share process and cannot survive a restart.\n\n{ready_message}\n\n{lifetime_message}\nPress Ctrl-C to stop sharing.",
+        "WebCodex ready\n\nWhat to do next\n{client_step}\n2. MCP URL: {base}/mcp\n3. Authentication: OAuth 2.0 Authorization Code + PKCE S256\n4. Client ID: {}\n5. Client secret: {}\n6. Redirect URI: {}\n7. Scan Tools and complete the WebCodex authorization flow.\n   Project share credential (this share only): {credential}\n   Enter it only on the WebCodex authorization page; do not put it in ChatGPT.\n8. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nAuthorization server: {base}\nOAuth grant lifetime: fenced to this share process; access/refresh grants cannot survive a restart.\nCredential lifetime: {lifetime_message}\nPress Ctrl-C to stop sharing.",
         oauth.client_id, oauth.client_secret, oauth.redirect_uri
     )
 }
@@ -588,7 +609,7 @@ fn require_cloudflared_from(
     locate_cloudflared_from(override_bin, path).ok_or_else(|| {
         ProductError::new(
             "tunnel_unavailable",
-            "cloudflared was not found",
+            "cloudflared is required for the default public HTTPS share and was not found",
             Some(
                 "Install cloudflared from Cloudflare's official downloads (https://developers.cloudflare.com/tunnel/downloads/), ensure it is on PATH, then retry; or use webcodex share --tunnel none for local-only debugging.",
             ),
@@ -783,7 +804,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let error = require_cloudflared_from(Some(&temp.path().join("missing")), None).unwrap_err();
         assert_eq!(error.code, "tunnel_unavailable");
-        assert!(error.message.contains("cloudflared was not found"));
+        assert!(error
+            .message
+            .contains("required for the default public HTTPS share"));
+        assert!(error.message.contains("was not found"));
         let next_action = error.next_action.unwrap();
         assert!(next_action.contains("https://developers.cloudflare.com/tunnel/downloads/"));
         assert!(next_action.contains("--tunnel none"));
@@ -848,7 +872,12 @@ mod tests {
         );
         assert!(output.contains(temporary));
         assert!(!output.contains(persistent));
+        assert!(output.starts_with("WebCodex ready\n\nWhat to do next"));
         assert!(output.contains("https://demo.trycloudflare.com/mcp"));
+        assert!(output.contains("Authentication: Bearer token"));
+        assert!(output.contains("Scan Tools"));
+        assert!(output.contains("First prompt:"));
+        assert!(output.find("What to do next").unwrap() < output.find("Details").unwrap());
     }
 
     #[test]
@@ -862,7 +891,9 @@ mod tests {
         );
         assert!(output.contains("Ready for a local MCP client"));
         assert!(output.contains("No public tunnel is running"));
+        assert!(output.contains("Add this MCP endpoint to a local MCP client"));
         assert!(!output.contains("Ready for ChatGPT"));
+        assert!(!output.contains("In ChatGPT Developer Mode"));
         assert!(!output.contains("tunneled URL"));
     }
 
@@ -886,6 +917,9 @@ mod tests {
         assert!(output.contains("wc_client_test"));
         assert!(output.contains("wc_csec_test"));
         assert!(output.contains("webcodex_temporary-print-once"));
+        assert!(output.starts_with("WebCodex ready\n\nWhat to do next"));
+        assert!(output.contains("Project share credential (this share only)"));
+        assert!(output.find("MCP URL:").unwrap() < output.find("Details").unwrap());
         assert!(output.contains("fenced to this share process"));
         assert!(output.contains("externally managed"));
     }

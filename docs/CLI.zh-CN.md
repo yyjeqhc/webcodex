@@ -16,6 +16,11 @@ Server API 完成。
 
 `webcodex --help` 会列出顶层命名空间。下面按命名空间说明各自的用途。
 
+第一次连接 ChatGPT 时，普通用户通常只需要在仓库中运行 `webcodex share`。它会完成
+项目设置、启动本地 Server 与 Runner，并暴露临时 HTTPS MCP endpoint。默认 Quick
+Tunnel 要求 `cloudflared` 位于 `PATH`；命令会在创建项目/share 状态之前检查这个
+前置条件，缺失时直接给出安装链接与下一步。
+
 ## 命令总览
 
 ### 项目 / 本地工作流
@@ -24,15 +29,15 @@ Server API 完成。
 
 | 命令 | 用途 | 说明 |
 | --- | --- | --- |
-| `webcodex setup` | 为当前 Git 项目配置 project-first 使用方式 | 创建私有状态与 Project Credential；不启动服务。 |
-| `webcodex doctor` | 当前项目的只读就绪检查 | 输出稳定的 `next action`；用 `--json` 获取结构化结果。 |
-| `webcodex run` | 启动 project-bound loopback Server 与本地 Runner | 前台运行；Ctrl-C 同时停止两者。 |
-| `webcodex status` | 简洁的项目 coding 就绪状态 | `doctor` 提供完整检查。 |
-| `webcodex share` | 通过 HTTPS 分享本地项目 | 默认使用临时 Bearer credential；`--auth oauth --oauth-redirect-uri <URL>` 可启用 project-bound OAuth。 |
-| `webcodex connect <server>` | 把当前项目接入已有的 Server | 默认使用 hosted shared-key；`--auth oauth --oauth-redirect-uri <URL>` 可把同一个 shared-key 身份桥接成 ChatGPT OAuth，不需要 managed login。 |
+| `webcodex share` | 通过 HTTPS 把当前项目接入 ChatGPT/MCP | 首次使用主路径；包含 setup，并启动本地 Server + Runner。默认 Quick Tunnel 需要 `cloudflared`。 |
+| `webcodex connect <server>` | 把当前项目接入已有的 Server | 已经拥有 Server URL 时的长期路径；默认使用 hosted shared-key。 |
+| `webcodex status` | 简洁的项目 coding 就绪状态 | 简短状态；`doctor` 提供完整诊断。 |
+| `webcodex doctor` | 当前项目的只读就绪检查 | 诊断/手动工作流；输出稳定的 `next action`。 |
+| `webcodex setup` | 只配置当前 Git 项目，不启动 runtime | local-only/手动工作流；创建私有状态与 Project Credential。 |
+| `webcodex run` | 启动 project-bound loopback Server 与本地 Runner | local-only/手动工作流；前台运行，Ctrl-C 同时停止两者。 |
 | `webcodex disconnect [--project PATH] [--profile NAME]` | 移除一个 hosted 项目注册 | 是该仓库 `connect` 的精确逆操作；绝不删除仓库或 `.git`。 |
 
-`webcodex share --auth oauth --oauth-redirect-uri <精确回调地址>` 使用 OAuth 2.0 Authorization Code + PKCE S256。OAuth client ID/secret 会按“项目 + 回调地址”保存在受保护的 project state 中；authorization code、access token、refresh token 与临时 Project Credential 则都被 fenced 到当前 `share` 进程。重启 `share` 会让旧 OAuth grant 失效，但不会改变 Connector 的稳定 project identity。OAuth access token 永远不能用于 Runner/Agent transport。
+`webcodex share --auth oauth --oauth-redirect-uri <精确回调地址>` 使用 OAuth 2.0 Authorization Code + PKCE S256。OAuth client ID/secret 会按“项目 + 回调地址”保存在受保护的 project state 中；authorization code、access token、refresh token 与临时 Project Credential 则都被 fenced 到当前 `share` 进程。重启 `share` 会让旧 OAuth grant 失效，但不会改变 Connector 的稳定 project identity。OAuth access token 永远不能用于 Runner transport。
 
 Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS origin，可使用 `--tunnel none --public-url https://share.example`，并由 operator 自己把该 origin 反向代理/隧道到 loopback WebCodex Server；`--public-url` 只声明外部 origin/issuer，不会创建代理或 tunnel。
 
@@ -166,10 +171,6 @@ Admin 用户/令牌操作由 Server API 支撑；`auth status` 读取本机连�
 - **Server** —— 负责认证调用方并路由工具请求的 `webcodex-server` 进程。
 - **CLI** —— 本文档介绍的 `webcodex` 命令。
 - **Runner** —— 运行在持有仓库机器上的 `webcodex-runner` 进程，执行实际工作。
-- **Agent / agent CLI 命名空间** —— `webcodex agent ...` 管理的就是 Runner。
-  "Agent" 与 "Runner" 指同一个执行组件，而不是同一个程序：`webcodex` 与
-  `webcodex-runner` 是两个独立可执行文件。"agent" 一词来自旧的 `webcodex-agent`
-  名称。
 - **profile** —— 用户 WebCodex 配置目录下的一个命名客户端配置（路径、
   `agent.toml`、令牌）。`webcodex connect` 会创建一个；
   `webcodex agent ... --profile <name>` 指向它。
@@ -207,8 +208,8 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 | --- | --- | --- | --- | --- |
 | Server bootstrap token | （env `WEBCODEX_TOKEN`） | `webcodex server init` | server/admin 设置、建用户、pairing | GPT Actions、MCP、Runner、日常使用 |
 | 共享 key | `wck_...` | `webcodex connect`（一次性生成） | hosted shared-key 的 MCP + Runner | 生产 IAM |
-| Project Credential | （私有文件） | `webcodex setup` | 单个项目的 Connector + Agent | 其他项目、admin |
-| Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | 本地创建令牌 | GPT Actions、MCP、agent |
+| Project Credential | （私有文件） | `webcodex setup` | 单个项目的 Connector + Runner | 其他项目、admin |
+| Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | 本地创建令牌 | GPT Actions、MCP、Runner |
 | 个人 API 令牌（PAT） | `wc_pat_...` | `webcodex token create-local` | GPT Actions、MCP、REST API | Runner 连接 |
 | Runner 令牌 | `wc_agent_...` | `webcodex agent-token create-local` | 仅 `webcodex-runner` 传输 | MCP、REST、GPT Actions |
 | OAuth 访问令牌 | `wc_oat_...` | OAuth2 授权流程 | 启用 OAuth 时的 GPT Actions / MCP | — |
@@ -281,7 +282,14 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 
 ## 常用示例
 
-Project-first 工作流：
+第一次连接 ChatGPT/MCP：
+
+```bash
+cd /path/to/your/repository
+webcodex share
+```
+
+Local/manual 工作流：
 
 ```bash
 webcodex setup
@@ -293,7 +301,7 @@ webcodex task show <task-id>
 webcodex task accept <task-id>
 ```
 
-Hosted 接入：
+已有 hosted Server：
 
 ```bash
 webcodex connect https://your-server.example

@@ -4,22 +4,22 @@
 
 ## Getting started
 
-- [README](../README.md) — what WebCodex is and how to get going
+- [README](../README.md) — what WebCodex is and the `webcodex share` first-run path
+- [Quick Start](QUICK_START.md) — shortest path from a local repository to ChatGPT MCP
+- [MCP](MCP.md) — ChatGPT Developer Mode and other MCP client setup
 - [AI-assisted setup](AI_ONBOARDING.md) — have an AI agent configure WebCodex for you
-- [Quick Start](QUICK_START.md) — shortest local setup
-- [CLI](CLI.md) — command map, terminology, and credentials
+
+## Common operation
+
+- [CLI](CLI.md) — command map, compatibility terminology, and credentials
 - [Coding Workflow](CODING_WORKFLOW.md) — canonical task bootstrap, behavioral guidance, validation, and closeout
+- [Runner](RUNNER.md) — operating the Runner on repository machines
 
-## Self-hosting
+## Advanced deployment and integration
 
-- [Deployment](DEPLOYMENT.md) — build, bootstrap the Server, enroll Runners
-- [Authentication](AUTH_MODEL.md) — credentials and tokens
-- [Runner](RUNNER.md) — what the Runner/agent is and how to operate it
-
-## Client integration
-
-- [MCP](MCP.md) — connect MCP clients (ChatGPT, Claude, and others)
-- [GPT Actions](GPT_ACTIONS.md) — OpenAPI-based Custom GPT integration
+- [Deployment](DEPLOYMENT.md) — self-hosting, Server bootstrap, and long-lived Runner enrollment
+- [Authentication](AUTH_MODEL.md) — detailed credential and token boundaries
+- [GPT Actions](GPT_ACTIONS.md) — optional OpenAPI-based Custom GPT integration
 
 ## Understanding WebCodex
 

@@ -181,22 +181,26 @@
         <div class="panel-head">
           <h2>Connect a chat client</h2>
         </div>
-        <p class="muted small">Copy-paste targets for this instance. The Project Credential from <code>webcodex setup</code> stays out of this page by design.</p>
+        <p class="muted small">Connection targets for this instance. Credentials stay out of this page by design; use the credential or OAuth values shown by the successful <code>webcodex share</code> or <code>webcodex connect</code> command.</p>
         <div class="connect-block">
-          <h3>Claude — custom connector (MCP)</h3>
+          <h3>ChatGPT — Developer Mode custom app (MCP)</h3>
           <div class="field-row connect-row">
             <code id="connect-mcp-url" class="connect-url">—</code>
             <button class="btn" type="button" data-copy="connect-mcp-url">Copy</button>
           </div>
-          <p class="muted small">Claude → Settings → Connectors → Add custom connector → paste this URL. OAuth metadata is discovered from <code id="connect-oauth">—</code>.</p>
+          <p class="muted small">In ChatGPT Developer Mode, create a custom app, paste this MCP URL, choose the authentication type printed by the CLI, enter the credential from that first successful CLI output, then Scan Tools. This console never exposes the credential.</p>
         </div>
         <div class="connect-block">
-          <h3>ChatGPT — GPT Action (OpenAPI)</h3>
+          <h3>Claude — custom connector (MCP)</h3>
+          <p class="muted small">Claude → Settings → Connectors → Add custom connector → use the MCP URL above. OAuth metadata is discovered from <code id="connect-oauth">—</code>.</p>
+        </div>
+        <div class="connect-block">
+          <h3>ChatGPT — GPT Action (OpenAPI, optional)</h3>
           <div class="field-row connect-row">
             <code id="connect-schema-url" class="connect-url">—</code>
             <button class="btn" type="button" data-copy="connect-schema-url">Copy</button>
           </div>
-          <p class="muted small">Create a GPT → Actions → Import from URL → Authentication: API key (Bearer) with the Project Credential.</p>
+          <p class="muted small">Optional compatibility path for Custom GPT Actions. Import this schema URL and configure its authentication separately; MCP custom apps are the primary ChatGPT path.</p>
         </div>
         <p class="muted small" id="connect-public-warning" hidden>
           This address is local. Hosted ChatGPT/Claude need a public HTTPS URL — start a tunnel and open the console through it, or set <code>WEBCODEX_PUBLIC_URL</code>.

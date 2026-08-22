@@ -420,6 +420,37 @@ fn bridge_scope_output(profile: &SharedKeyOAuthProfile) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn bridge_browser_authorization_key_line(resolved_key: &ResolvedKey, config_path: &Path) -> String {
+    if resolved_key.generated {
+        format!(
+            "Browser authorization key: {}\nEnter this key only on the WebCodex authorize page; do not put it in ChatGPT.\n",
+            resolved_key.value
+        )
+    } else if resolved_key.recovered_profile.is_some() {
+        format!(
+            "Browser authorization key source: {} (top-level token; not reprinted).\nEnter that key only on the WebCodex authorize page; do not put it in ChatGPT.\n",
+            config_path.display()
+        )
+    } else {
+        "Browser authorization key: use the shared key supplied to this command on the WebCodex authorize page; do not put it in ChatGPT.\n".to_string()
+    }
+}
+
+fn bridge_client_secret_line(
+    oauth: &SharedKeyOAuthProfile,
+    disclose_client_secret: bool,
+    state_path: &Path,
+) -> String {
+    if disclose_client_secret {
+        format!("Client secret: {}\n", oauth.client_secret)
+    } else {
+        format!(
+            "Credential source: protected OAuth client profile at {} (client secret not reprinted).\n",
+            state_path.display()
+        )
+    }
+}
+
 pub(super) async fn finish_shared_key_oauth_connect(
     opts: &ConnectOptions,
     server_url: &str,
@@ -482,30 +513,19 @@ pub(super) async fn finish_shared_key_oauth_connect(
     if disclose_client_secret {
         disclosure_markers.push(secret_marker);
     }
-    let key_line = if resolved_key.generated {
-        format!(
-            "Browser authorization key: {}\nEnter this key only on the WebCodex authorize page; do not put it in ChatGPT.\n",
-            resolved_key.value
-        )
-    } else {
-        "Browser authorization key: use the existing shared key for this hosted profile on the WebCodex authorize page.\n".to_string()
-    };
-    let secret_line = if disclose_client_secret {
-        format!("Client secret: {}\n", oauth.client_secret)
-    } else {
-        String::new()
-    };
+    let key_line = bridge_browser_authorization_key_line(resolved_key, config_path);
+    let secret_line = bridge_client_secret_line(&oauth, disclose_client_secret, &state_path);
     let authorization_endpoint = bridge_authorization_endpoint(&metadata)?;
     let scope_lines = bridge_scope_output(&oauth);
     let output = format!(
-        "Connected to WebCodex\n\nServer:       {server_url}\nMCP URL:      {server_url}/mcp\nProfile:      {profile}\nClient:       {runner_client_id}\nProject:      {runtime_project_id}\nRunner:       running\nConfig:       {}\nLogs:         {}\n\nChatGPT OAuth: Authorization Code + PKCE S256\nIssuer:        {}\nAuthorization: {}\nToken endpoint: {}\nOAuth client ID: {}\n{secret_line}Redirect URI:  {}\n{scope_lines}\n{key_line}The Runner continues to use the direct shared key. ChatGPT receives only OAuth credentials/tokens; OAuth access tokens remain invalid on Agent transport.\n",
+        "WebCodex connected\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {server_url}/mcp\n3. Authentication: OAuth 2.0 Authorization Code + PKCE S256\n4. OAuth client ID: {}\n5. {secret_line}6. Redirect URI: {}\n7. Scan Tools and complete the WebCodex browser authorization flow.\n{key_line}8. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nDetails\nServer:          {server_url}\nRunner:          running\nProfile:         {profile}\nClient:          {runner_client_id}\nRuntime project: {runtime_project_id}\nConfig:          {}\nLogs:            {}\nIssuer:          {}\nAuthorization:   {}\nToken endpoint:  {}\n{scope_lines}\nThe Runner continues to use the direct shared key. ChatGPT receives only OAuth credentials/tokens; OAuth access tokens remain invalid on Runner transport.\n",
+        oauth.client_id,
+        oauth.redirect_uri,
         config_path.display(),
         log_path.display(),
         metadata.issuer,
         authorization_endpoint,
         metadata.token_endpoint,
-        oauth.client_id,
-        oauth.redirect_uri,
     );
     Ok(ConnectResult {
         output,
@@ -872,6 +892,50 @@ mod tests {
             ..enabled
         };
         assert!(profile_scope_ceiling_is_valid(&full_enabled));
+    }
+
+    #[test]
+    fn shared_key_oauth_credential_lines_preserve_first_disclosure_and_recovery_sources() {
+        let oauth = SharedKeyOAuthProfile {
+            version: BRIDGE_PROFILE_VERSION,
+            server_url: "https://server.example".to_string(),
+            client_id: "wc_client_test".to_string(),
+            client_secret: "wc_csec_test_once".to_string(),
+            redirect_uri: "https://chatgpt.example/callback".to_string(),
+            allowed_scopes: vec!["runtime:read".to_string()],
+            computer_permissions_enabled: false,
+            local_mcp_enabled: false,
+        };
+        let state_path = Path::new("/protected/profile/shared-key-oauth.toml");
+        let first = bridge_client_secret_line(&oauth, true, state_path);
+        assert_eq!(first.matches("wc_csec_test_once").count(), 1);
+        let reused = bridge_client_secret_line(&oauth, false, state_path);
+        assert!(!reused.contains("wc_csec_test_once"));
+        assert!(reused.contains("/protected/profile/shared-key-oauth.toml"));
+        assert!(reused.contains("not reprinted"));
+
+        let generated = ResolvedKey {
+            value: "wck_browser_once".to_string(),
+            generated: true,
+            recovered_profile: None,
+            warn_short: false,
+        };
+        let generated_line =
+            bridge_browser_authorization_key_line(&generated, Path::new("agent.toml"));
+        assert_eq!(generated_line.matches("wck_browser_once").count(), 1);
+
+        let recovered = ResolvedKey {
+            value: "wck_browser_hidden".to_string(),
+            generated: false,
+            recovered_profile: Some("profile".to_string()),
+            warn_short: false,
+        };
+        let recovered_line = bridge_browser_authorization_key_line(
+            &recovered,
+            Path::new("/protected/profile/agent.toml"),
+        );
+        assert!(!recovered_line.contains("wck_browser_hidden"));
+        assert!(recovered_line.contains("/protected/profile/agent.toml"));
     }
 
     #[test]

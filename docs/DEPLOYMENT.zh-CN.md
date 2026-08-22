@@ -3,7 +3,7 @@
 [English](DEPLOYMENT.md) | [简体中文](DEPLOYMENT.zh-CN.md)
 
 本文档覆盖 WebCodex 的生产自托管：构建与安装二进制、bootstrap Server、接入
-Runner 机器、连接 MCP/GPT 客户端以及 smoke 检查。最短的纯本地设置见
+Runner 机器、连接 MCP/GPT 客户端以及 smoke 检查。第一次连接 ChatGPT/MCP 的最短路径见
 [快速开始](QUICK_START.zh-CN.md)。
 
 ## 组件
@@ -355,9 +355,12 @@ webcodex ops smoke-preflight --server-url "$SERVER_URL" \
 
 ### Runtime console
 
-Server 在 `/console` 提供只读浏览器 console，展示共享 project-readiness 投影
-（Project、Connection、Agent/coding 就绪、findings、next action）。它不暴露
-Agent registry 或传输细节，也不是完整 admin UI。
+Server 在 `/console` 提供 host-local 浏览器 console。它展示项目就绪状态、工作队列、
+Workflow Session 活动、当前可见 Runner 与近期变更性活动。对于 Connector task，同机
+人类可以发送 task guidance、处理待审批操作、取消工作，并对稳定结果执行 Accept 或
+Reject；这些动作与 CLI 使用相同的权限边界，在线模型仍然不能接受自己的工作。Console
+还会展示不含 secret 的客户端连接目标，并把 ChatGPT Developer Mode MCP custom app
+作为 ChatGPT 主路径。Credential 不会由 console API 返回。
 
 ### Runtime job API 信任模型
 

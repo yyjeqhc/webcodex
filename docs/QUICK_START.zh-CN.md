@@ -2,186 +2,154 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-这是在单个本地 Git 项目上跑通 WebCodex 的最短路径。它使用 project-first 流程：
-`webcodex setup` 配置当前目录，不需要你提供 client id、runtime project id、
-transport 或内部配置路径。
-
-接入已有 hosted Server 见[部署指南](DEPLOYMENT.zh-CN.md#把仓库接入已有的-server)；
-让 AI agent 帮你搭建见 [AI 接入指南](AI_ONBOARDING.zh-CN.md)。
+本指南用尽可能少的概念，把一个本地 Git 仓库通过 MCP 接入 ChatGPT。普通第一次使用的
+主命令是 `webcodex share`。
 
 ## 前置条件
 
-- 三个二进制都已安装：`webcodex`、`webcodex-server`、`webcodex-runner`。
-- Git 在 `PATH` 上。
-- 一个可以安全查看和编辑的 Git 项目。
+- npm installer 需要 Node.js 18+。
+- `PATH` 中有 Git，并准备一个可以安全查看/编辑的 Git 仓库。
+- 默认临时公网 HTTPS 分享需要把
+  [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) 安装到 `PATH`。
 
-安装打包版本：
+安装 WebCodex：
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
 
-或从本 checkout 构建：
+如果只做本地 MCP 调试，`webcodex share --tunnel none` 不需要 `cloudflared`。
 
-```bash
-cargo build --release --workspace --bins
-export PATH="$PWD/target/release:$PATH"
-```
-
-## 1. 设置项目
+## 1. 分享当前仓库
 
 ```bash
 cd /path/to/your/repository
-webcodex setup
-```
-
-首次运行 `setup` 会：解析 Git 顶层目录；在 checkout 之外创建私有状态；创建最小
-的项目注册与 Agent 配置；为当前项目的 Connector 与 Agent 创建一把 Project
-Credential——不会打印它。它会让 Server 与 Agent 保持停止。
-
-再次运行可验证幂等性；第二次结果应为 `already configured`。如果某个生成的组件
-缺失，`setup` 只修复该组件。
-
-## 2. 检查就绪
-
-```bash
-webcodex doctor
-```
-
-`doctor` 只读。在 Agent 启动前，预期结果是 `Needs action`，并给出
-`Next: webcodex run`。用 `--json` 获取结构化结果。
-
-## 3. 启动本地 runtime
-
-```bash
-webcodex run
-```
-
-这会在前台启动 project-bound loopback Server 与本地 Agent。保持该终端打开；
-Ctrl-C 会同时停止两者。在另一个终端、同一个项目下执行：
-
-```bash
-webcodex status
-```
-
-就绪项目会报告 Project、Connection、Agent、coding 就绪状态与 next action。
-
-## 4. 接入客户端
-
-### 临时通过 HTTPS 分享
-
-Hosted 客户端无法访问 loopback 地址。若需要从 hosted MCP 客户端临时访问，
-先停止 `webcodex run`，再执行：
-
-```bash
 webcodex share
 ```
 
-`share` 复用项目设置与本地 runtime，但会额外启动 Cloudflare Quick Tunnel 与
-一把独立的临时 Connector credential。它输出临时 `https://*.trycloudflare.com/mcp`
-URL 与 Bearer token；命令退出后两者都失效。
+这一条命令会完成项目设置、启动本地 Server + Runner、创建临时 Connector credential、
+打开 Cloudflare Quick Tunnel，并等待 MCP endpoint 可用。除非你明确需要后文的手动/本地
+工作流，否则不要先跑 `setup`、`doctor` 或 `run`。
 
-如果 MCP 客户端要求 OAuth，先确定它的精确 callback，然后运行：
+默认 share 是临时的。保持终端运行；Ctrl-C 会停止本地 runtime 与 tunnel，同时使 URL 和
+临时 credential 失效。
 
-```bash
-webcodex share --auth oauth --oauth-redirect-uri https://client.example/callback
-```
+如果缺少 `cloudflared`，WebCodex 会在创建项目 setup/state 之前失败，并给出官方安装地址。
+安装后重试；或者仅本地调试时使用 `--tunnel none`。
 
-命令会输出临时 Project share credential，以及 project-bound OAuth client ID/secret。Project share credential 只应输入 WebCodex 自己的授权页。OAuth grant 被 fenced 到本次 `share` 进程，因此重启后旧 access/refresh token 失效；同一项目与 callback 的 client ID/secret 会保存在受保护的 project state 中以便复用。
+## 2. 在 ChatGPT 中添加 WebCodex
 
-`webcodex share --tunnel none` 在不开放公网 tunnel 的情况下启动同一 runtime，用于本地调试。如需稳定、由 operator 管理的 OAuth origin，可再加 `--public-url https://share.example`，并自行把该 HTTPS origin 反向代理/隧道到本地 WebCodex 端口。Quick Tunnel 不提供稳定 origin，也不适合作为生产部署。
+终端出现 **WebCodex ready** 后，直接按 **What to do next** 中的值填写：
 
-### 接入已有 Server
+1. 在 ChatGPT 开启 **Developer Mode**，创建基于 MCP 的 **custom app**。
+2. **MCP URL** 填输出的 `https://.../mcp`。
+3. 默认 share 的认证选择 **Access token / API key**（Bearer token）。
+4. 粘贴输出的 **Credential (this share only)**。
+5. 点击 **Scan Tools**。
 
-如需接入已有 Server 的稳定长期环境，仍可使用 shared-key：
+Console 故意不显示 credential。以后即使打开 `/console`，认证值也应来自成功的 CLI 首次
+输出，而不是浏览器页面。
 
-```bash
-webcodex connect https://webcodex.example --project .
-```
+## 3. 发送第一条安全请求
 
-ChatGPT OAuth 直接复用同一个 hosted shared-key identity，不需要 login、pairing、PAT 或 account identity：
-
-```bash
-webcodex connect https://webcodex.example --auth oauth \
-  --oauth-redirect-uri https://client.example/callback --project .
-```
-
-如需显式把 OAuth client 升级到可提供 optional Computer consent 的 ceiling：
-
-```bash
-webcodex connect https://webcodex.example --auth oauth \
-  --oauth-redirect-uri https://client.example/callback \
-  --oauth-computer-permissions --project .
-```
-
-Runner 继续使用 direct shared key 及其固定 baseline authority，ChatGPT 只获得 OAuth credential/token。fresh ordinary shared-key OAuth client 从完整 baseline（runtime/project/job、`computer:read`、`computer:control`）开始，但已有受保护 client 可以继续保留合法的窄 baseline subset。只有显式使用 `--oauth-computer-permissions`，浏览器才会提供固定的 launch/full-display/pointer/clipboard optional consent；该 flag 只在现有 baseline subset 上追加这些 optional scopes，不会恢复此前缺失的 baseline authority。所有 optional permission 在 WebCodex authorize 页面仍默认未勾选；Launch 只有在本次 OAuth request 已同时包含 `computer:read` 与 `computer:launch` 时才可选择，Server 不会补缺失 scope。`account:manage`、`admin`、`job:detach`、Agent scope 与未来 scope 永远不会出现。普通 reconnect 不会静默扩大已有 baseline client。Runner capability 与 OS/native permission 会在 runtime 调用时重新检查，因此授权页的 available 不代表操作保证成功。高级 managed-user OAuth 仍与此分离，在 `webcodex login` 后使用 `--auth managed-oauth`。见[部署指南](DEPLOYMENT.zh-CN.md)。
-
-以后如果只想从 hosted `connect` profile 中注销当前仓库，可在仓库中运行：
-
-```bash
-webcodex disconnect
-```
-
-它只注销 canonical 路径精确匹配的仓库，保留 source tree、`.git`、profile credential
-以及其他已注册项目。如果同一仓库存在于多个 hosted profile 中，请显式传
-`--profile NAME`。
-
-## 5. 运行 coding 任务
-
-让客户端做一个小的、可回退的改动。典型调用序列：
+先确认客户端连接的是正确仓库，并且不产生修改：
 
 ```text
-task_start
-→ files_list
-→ files_read 或 files_search
-→ edits_apply
-→ checks_run
-→ task_finish
-→ task_review
+检查这个仓库并总结它的结构。先不要做任何修改。
 ```
 
-编辑、命令与校验使用稳定的 `operation_id`：重试相同 payload 会复用同一操作；
-同一 ID 下不同 payload 会 fail closed。
+确认成功后，再让它完成一个小且可回退的改动。project-bound coding surface 会在内部处理
+项目身份；普通用户不需要在 prompt 中提供 runtime project id 或 operation id。
 
-`checks_run` 支持 `format`、`check`、`test` 与可选 `recipe`（`rust`、`node`、
-`python`、`go`）。省略 recipe 时自动从最近的 manifest 目录解析。
+## 4. 审查结果
 
-## 6. 本地审查与接受
-
-coding 结果在人工决策前与目标 checkout 隔离：
+浏览器 `/console` 可以查看 readiness、工作队列、task guidance、审批与 review action。
+稳定结果准备好后，人类可以在 Console 或 CLI 中 Accept/Reject：
 
 ```bash
 webcodex task list
 webcodex task show <task-id>
 webcodex task accept <task-id>
+# 或：webcodex task reject <task-id>
 ```
 
-用 `webcodex task reject <task-id>` 丢弃它。Accept 会先验证目标 Git 状态仍与
-task 基线一致再应用结果。在线模型可以提出工作，但永远不能接受它。
+在线模型不能接受自己的结果。
 
-也可以在浏览器中审查：打开 `/console` 使用工作队列。浏览器里的 Accept/Reject
-与 CLI 使用同一套决策权威。
+## 已有 Server：长期连接
+
+只有已经拥有 WebCodex Server URL 时，才用 `connect` 替代临时 `share`：
+
+```bash
+cd /path/to/your/repository
+webcodex connect https://webcodex.example
+```
+
+`connect` 创建/复用本地 profile、启动 detached Runner、等待 Server 看见 Runner 与项目，
+然后输出 MCP URL、认证类型、credential 来源、ChatGPT 提示和诊断 Details。若它自动生成
+shared key，完整值只会在允许的首次 disclosure 中出现；status/log 不会泄露它。
+
+以后只注销当前仓库：
+
+```bash
+webcodex disconnect
+```
+
+自托管和 managed identity 属于独立 operator/高级工作流，见[部署指南](DEPLOYMENT.zh-CN.md)。
+
+## 可选 OAuth
+
+Bearer 是最简单的试用路径。如果 MCP client 要求 OAuth，请提供它的精确 callback URL。
+
+临时 project-bound share：
+
+```bash
+webcodex share --auth oauth \
+  --oauth-redirect-uri https://client.example/callback
+```
+
+已有 hosted Server：
+
+```bash
+webcodex connect https://webcodex.example --auth oauth \
+  --oauth-redirect-uri https://client.example/callback
+```
+
+CLI 会明确哪些值填进 MCP client，哪个临时 project credential 只能填在 WebCodex 授权页。
+高级 OAuth scope ceiling、optional Computer permission、managed-user OAuth 与协议 contract
+见 [MCP](MCP.zh-CN.md) 和[认证模型](AUTH_MODEL.zh-CN.md)。
+
+## 仅本地 / 手动工作流
+
+这些命令仍适合开发与诊断，但不是 hosted ChatGPT 接入的前置条件：
+
+```bash
+cd /path/to/your/repository
+webcodex setup     # 只配置私有项目状态
+webcodex doctor    # 只读本地 readiness 诊断
+webcodex run       # 前台 loopback Server + Runner
+# 另一个终端：
+webcodex status
+```
+
+`doctor` 描述的是本地/手动 runtime；loopback runtime 停止时，它仍可能推荐
+`webcodex run`。Hosted client 无法访问 loopback，因此普通 ChatGPT onboarding 从
+`share` 开始，而不是从 `doctor` 开始。
 
 ## 故障排查
 
-先执行：
+优先看 `share` 或 `connect` 返回的精确错误。已有本地状态时也可运行：
 
 ```bash
 webcodex status
 webcodex doctor
 ```
 
-常见稳定错误码与下一步：
+| 现象 | 下一步 |
+| --- | --- |
+| 缺少 `cloudflared` | 从 Cloudflare 官方下载并安装后重试；仅本地调试可用 `share --tunnel none` |
+| loopback 端口已被占用 | 停掉冲突进程后重试 |
+| 本地/手动 runtime 未运行 | `webcodex run` |
+| 已有 hosted profile 的 Runner 不可用 | 重跑 `connect` 或检查 `webcodex agent status --profile <profile>` |
+| workspace 不可用 | 恢复 Git 仓库/路径 |
 
-| 错误码 | 含义 | 下一步 |
-| --- | --- | --- |
-| `project_not_configured` | 该项目/profile 没有 setup | `webcodex setup` |
-| `project_credential_invalid` | 私有凭据状态缺失或不匹配 | 恢复两个匹配的私有文件或重建 profile |
-| `server_unreachable` | 无法访问 loopback runtime | `webcodex run` |
-| `agent_offline` | Server 可达但本地 Agent 不可用 | `webcodex run` |
-| `required_capability_unavailable` | 已安装 Agent 过旧 | 升级所有二进制 |
-| `workspace_unavailable` | Git 或项目路径不可用 | 恢复路径/Git 工作区 |
-| `checks_required` | 普通结果尚未运行检查 | 先 `checks_run` 再 finish |
-| `checks_stale` | 上次检查后工作区已变化 | 运行一次新检查 |
-
-完整运维检查清单见[故障排查](TROUBLESHOOTING.zh-CN.md)。
+完整检查清单见[故障排查](TROUBLESHOOTING.zh-CN.md)。

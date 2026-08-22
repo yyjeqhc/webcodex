@@ -4,47 +4,61 @@
 
 ## English
 
-WebCodex turns ChatGPT, Claude, and other MCP clients into assistants connected
-to your own repositories and machines. The npm package installs the native
+WebCodex connects ChatGPT, Claude, and other MCP clients to repositories and
+development tools on your own machines. This npm package installs the native
 `webcodex`, `webcodex-server`, and `webcodex-runner` binaries for supported
 platforms.
 
-### Install and connect
+### Fastest first connection
 
-Supported platforms are Linux x64, Linux arm64, macOS arm64, Windows x64, and native Windows
-arm64. Node.js 18 or newer is required by the installer wrapper.
+Supported platforms are Linux x64/arm64, macOS arm64, Windows x64, and native
+Windows arm64. The installer wrapper requires Node.js 18 or newer. The default
+public `share` flow also requires
+[`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) on `PATH`.
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 cd /path/to/your/repository
-webcodex connect https://your-server.example
+webcodex share
 ```
 
-`connect` uses the current directory, creates a local profile, starts a detached
-Runner, and prints the MCP URL and generated key. Add those values to ChatGPT or
-Claude, then ask it to inspect code, edit files, run tests, or work with Git.
+You do not need to run `setup`, `doctor`, or `run` first. `share` configures the
+project, starts a local Server + Runner, opens a temporary Cloudflare Quick
+Tunnel, and prints the MCP URL and temporary credential.
 
-The generated key is printed in full only when first created. Keep it and the
-generated `agent.toml` out of Git. After a machine reboot, rerun `connect` or
-start the profile reported by the first run:
+When it says **WebCodex ready**:
+
+1. In ChatGPT Developer Mode, create a custom MCP app.
+2. Paste the printed MCP URL.
+3. Choose Access token / API key (Bearer token).
+4. Paste the printed Credential.
+5. Scan Tools.
+6. Try: `Inspect this repository and summarize its structure. Do not make changes.`
+
+The default share is temporary and ends when the command exits. For local-only
+MCP debugging, `webcodex share --tunnel none` does not require `cloudflared`.
+
+If you already operate a WebCodex Server, use the long-lived path instead:
 
 ```bash
-webcodex agent start --profile <profile>
+webcodex connect https://webcodex.example
 ```
 
-Advanced users can provide `--key-file`, `--key`, or `--project`.
+`connect` creates a reusable profile and prints the corresponding MCP setup
+values. A generated hosted shared key is disclosed in full only on its permitted
+first output; status/log commands do not reveal it.
 
 ### Package integrity
 
-The npm package exposes one public command: `webcodex`. During installation it
+The package exposes one public command, `webcodex`. During installation it
 downloads the matching release artifact, verifies its SHA-256 checksum, checks
-that all three binaries share one version and build identity, and atomically
+that all three binaries share one version/build identity, and atomically
 replaces the previous complete binary set. A failed download, extraction,
 checksum, or identity check leaves the previous installation intact.
 
 `webcodex-server` and `webcodex-runner` are package-local binaries rather than
 separate npm `bin` entries. The public CLI discovers them for `webcodex server`
-and `webcodex agent` commands.
+and the compatibility `webcodex agent` Runner-management namespace.
 
 ### Disclaimer
 
@@ -53,65 +67,68 @@ project boundaries. Use version control and recoverable backups.
 
 ## 简体中文
 
-WebCodex 让 ChatGPT、Claude 和其他 MCP client 成为连接到你自己仓库和机器的
-专属助手。npm package 会为支持的平台安装原生 `webcodex`、
-`webcodex-server` 和 `webcodex-runner` binaries。
+WebCodex 把 ChatGPT、Claude 和其他 MCP client 连接到你自己机器上的仓库与开发工具。
+npm package 会为支持的平台安装原生 `webcodex`、`webcodex-server`、
+`webcodex-runner` binaries。
 
-### 安装与接入
+### 最快的第一次接入
 
-支持 Linux x64、Linux arm64、macOS arm64、Windows x64 和原生 Windows arm64；installer
-wrapper 需要 Node.js 18 或更新版本。
+支持 Linux x64/arm64、macOS arm64、Windows x64 与原生 Windows arm64；installer
+wrapper 需要 Node.js 18 或更新版本。默认公网 `share` 还需要把
+[`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) 安装到 `PATH`。
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 cd /path/to/your/repository
-webcodex connect https://your-server.example
+webcodex share
 ```
 
-`connect` 默认使用当前目录，创建本地 profile，启动 detached Runner，并输出 MCP
-URL 与生成的 key。把这些信息添加到 ChatGPT 或 Claude 后，就可以让它查看和修改
-代码、运行测试、执行命令或操作 Git。
+第一次不需要先执行 `setup`、`doctor` 或 `run`。`share` 会配置项目、启动本地 Server +
+Runner、打开临时 Cloudflare Quick Tunnel，并输出 MCP URL 与临时 credential。
 
-生成的 key 只在首次创建时完整显示。不要把它或生成的 `agent.toml` 提交进 Git。
-机器重启后重新执行 `connect`，或者启动首次输出的 profile：
+出现 **WebCodex ready** 后：
+
+1. 在 ChatGPT Developer Mode 创建 MCP custom app。
+2. 填入输出的 MCP URL。
+3. 认证选择 Access token / API key（Bearer token）。
+4. 填入输出的 Credential。
+5. Scan Tools。
+6. 第一条可先说：`检查这个仓库并总结它的结构。先不要做任何修改。`
+
+默认 share 会在命令退出时结束。仅做本地 MCP 调试可用
+`webcodex share --tunnel none`，此时不需要 `cloudflared`。
+
+如果你已经运营一个 WebCodex Server，再使用长期路径：
 
 ```bash
-webcodex agent start --profile <profile>
+webcodex connect https://webcodex.example
 ```
 
-高级用户可以使用 `--key-file`、`--key` 或 `--project`。
+`connect` 会创建可复用 profile 并输出对应 MCP 配置。自动生成的 hosted shared key 只会在
+允许的首次输出中完整显示；status/log 不会泄露它。
 
 ### Package 完整性
 
-npm package 只暴露一个公共命令：`webcodex`。安装时会下载匹配的 release
-artifact，校验 SHA-256，确认三个 binary 的版本和 build identity 一致，再原子替换
-旧的完整 binary set。下载、解压、checksum 或 identity 校验失败时，旧安装保持不变。
+package 只暴露一个公共命令 `webcodex`。安装时会下载匹配的 release artifact、校验
+SHA-256、确认三个 binary 版本/build identity 一致，再原子替换旧 binary set。下载、
+解压、checksum 或 identity 校验失败时，旧安装保持不变。
 
-`webcodex-server` 和 `webcodex-runner` 是 package-local binaries，不单独作为 npm
-`bin` 暴露；公共 CLI 会在 `webcodex server` 和 `webcodex agent` 命令中发现它们。
+`webcodex-server` 与 `webcodex-runner` 是 package-local binaries，不单独作为 npm `bin`
+暴露。公共 CLI 会通过 `webcodex server` 和兼容保留的 `webcodex agent` Runner 管理
+命名空间发现它们。
 
 ### 免责声明
 
-WebCodex 能够在配置的项目边界内读取、修改文件并执行命令，请使用版本控制和可恢复
-备份。
+WebCodex 能够在配置的项目边界内读取、修改文件并执行命令，请使用版本控制和可恢复备份。
 
 ## Development verification / 开发验证
-
-Source-level npm tests do not require publish checksums:
 
 ```bash
 npm --prefix npm/webcodex test
 ```
 
-Release smoke runs against the release-control-host-staged package that contains the generated publish-ready manifest. Reuse the exact extracted `linux-x64` CI candidate so the smoke does not rebuild release bytes:
-
-```bash
-bash scripts/npm_package_smoke.sh \
-  --package-dir <STAGE_DIR>/npm-package \
-  --binary-dir <EXTRACTED_LINUX_X64_DIR>
-```
-
-Omitting `--binary-dir` keeps the development behavior and builds the selected release/debug profile locally.
+Release smoke uses the release-control-host-staged package and exact extracted
+binary candidate; see the repository release documentation for the full command.
 
 ## License
 

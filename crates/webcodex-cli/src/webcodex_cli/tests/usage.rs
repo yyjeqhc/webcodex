@@ -91,7 +91,9 @@ fn common_help_entrypoints_smoke() {
             &["--help"],
             &[
                 "Usage: webcodex <COMMAND>",
-                "Project:",
+                "Start here:",
+                "share",
+                "connect",
                 "server init|install|run|start|stop|restart|status|logs|uninstall",
                 "setup single-user",
             ],
@@ -119,6 +121,19 @@ fn common_help_entrypoints_smoke() {
             );
         }
     }
+}
+
+#[test]
+fn top_level_help_prioritizes_first_run_without_hiding_advanced_commands() {
+    let out = cli_exit(["--help"]).unwrap();
+    let start_here = out.find("Start here:").unwrap();
+    let share = out.find("\nshare").unwrap();
+    let connect = out.find("\nconnect").unwrap();
+    let operator = out.find("Operator / service management:").unwrap();
+    assert!(start_here < share && share < connect && connect < operator);
+    assert!(out.contains("cloudflared"));
+    assert!(out.contains("historical `agent` namespace"));
+    assert!(out.contains("agent-tokens create|"));
 }
 
 #[test]

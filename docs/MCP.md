@@ -2,42 +2,78 @@
 
 [English](MCP.md) | [简体中文](MCP.zh-CN.md)
 
-WebCodex can expose more than one MCP model surface. The project-first
-`webcodex run` / `webcodex share` path starts a Server with the project-bound
-`canonical_connector` surface. `webcodex connect <server>` connects to an
-existing hosted Server and uses the MCP surface selected by that Server;
-without Connector configuration, the default is the broader `local_coding`
-surface. Complete [Quick Start](QUICK_START.md) for the project-first flow.
+WebCodex exposes an MCP endpoint so ChatGPT, Claude, and other MCP clients can
+work with a repository through the Runner that owns it. For a first connection,
+start with the client setup below; protocol surfaces and scope ceilings are
+reference material, not onboarding prerequisites.
 
-## Endpoint and authentication
+## ChatGPT Developer Mode: first connection
 
-Local clients can use:
+For the default temporary public path, install
+[`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) and run:
 
-```text
-http://127.0.0.1:<configured-port>/mcp
+```bash
+npm install -g @yyjeqhc/webcodex
+cd /path/to/your/repository
+webcodex share
 ```
 
-Hosted clients need HTTPS. There are three paths:
+When the CLI says **WebCodex ready**:
 
-- **Hosted:** `webcodex connect <server>` uses an existing hosted Server; only
-  the Runner runs locally. Shared-key authentication remains the default.
-  `webcodex connect <server> --auth oauth --oauth-redirect-uri <URL>` bridges
-  that same shared-key group into OAuth for ChatGPT without login, pairing, PAT,
-  or account identity. The Runner keeps using the direct shared key; ChatGPT
-  receives only OAuth client credentials/tokens. The exposed tool set starts
-  from that Server's configured MCP model surface; for OAuth callers, `tools/list`
-  is additionally projected by the access token's actual scopes.
-- **Local Share:** `webcodex share` starts the local Server + Agent and, by
-  default, a Cloudflare Quick Tunnel with a separate temporary Bearer
-  credential. `webcodex share --auth oauth --oauth-redirect-uri <URL>` instead
-  exposes project-bound OAuth 2.0 Authorization Code + PKCE. The OAuth client
-  remains bound to the same project grant, while every code/access/refresh
-  grant is fenced to the current share process. Use `--tunnel none` for local
-  testing or with an operator-managed `--public-url`.
-- **Self-hosted:** use a stable HTTPS domain/tunnel, durable service
-  management, and OAuth or scoped credentials for long-lived operation.
+1. In ChatGPT Developer Mode, create a custom app using MCP.
+2. Paste the printed **MCP URL**.
+3. Choose **Access token / API key** (Bearer token) for the default share.
+4. Paste the printed temporary **Credential**.
+5. Run **Scan Tools**.
+6. Try: `Inspect this repository and summarize its structure. Do not make changes.`
 
-For ordinary hosted `connect`, use its generated/provided shared key directly or bridge that same identity through OAuth. Managed-user deployments may instead use a scoped user API token (`wc_pat_*`) or the explicit `--auth managed-oauth` flow. Do not use the bootstrap/admin token, account credentials, Runner tokens, or the persistent project-first Connector credential as a public sharing secret. `share` creates and prints its own temporary credential for that session.
+The command performs project setup itself. Hosted ChatGPT cannot reach a
+loopback-only `webcodex run`, so `setup`, `doctor`, and `run` are not required
+steps before `share`. ChatGPT UI labels can vary by rollout; use the CLI output
+as the source of truth for URL and authentication.
+
+## Claude and other MCP clients
+
+Use the same printed `/mcp` URL and authentication values. In Claude, add a
+custom connector and paste the MCP URL. Other MCP clients should be configured
+with the same endpoint and the authentication mechanism reported by the CLI.
+For local-only clients, `webcodex share --tunnel none` exposes the loopback MCP
+endpoint without `cloudflared`.
+
+## Existing Server
+
+If you already have a stable WebCodex Server URL, use the long-lived path:
+
+```bash
+webcodex connect https://webcodex.example
+```
+
+`connect` starts/reuses the local Runner and prints the MCP URL and credential
+source after the connection is verified. A generated shared key is fully
+disclosed only on its allowed first output. `status` and log commands do not
+reveal it. Self-hosting is documented in [Deployment](DEPLOYMENT.md).
+
+Bearer/shared-key authentication is the simplest path. When a client requires
+OAuth, use `share --auth oauth` or `connect --auth oauth` with that client's exact
+callback URL and follow the CLI output. Managed-user OAuth remains a separate
+advanced identity flow.
+
+## Advanced / reference
+
+### MCP model surfaces
+
+The project-first `webcodex run` / `webcodex share` path starts a Server with the
+project-bound `canonical_connector` surface. `webcodex connect <server>` uses
+the MCP surface selected by that existing Server; without Connector
+configuration, the default is the broader `local_coding` surface. Operators may
+explicitly select `full_operator_runtime`. These names describe protocol/tool
+contracts; a first-time user does not need to choose among them.
+
+Hosted clients need public HTTPS. `share` supplies a temporary Cloudflare Quick
+Tunnel by default; `connect` uses an existing hosted Server; self-hosted
+deployments provide their own stable HTTPS origin. Do not use bootstrap/admin
+tokens, Runner tokens, or the persistent project-first Connector credential as
+a public sharing secret.
 
 ### Built-in local MCP gateway
 
@@ -46,11 +82,6 @@ A hosted WebCodex Server can also expose Runner-owned local stdio MCP providers 
 No-argument `mcp_tool(action=list)` reports whether a registered logical provider id is uniquely routable (`resolvable` versus `ambiguous`); it is not a provider health check. `list(server=...)` and `describe` perform provider interaction. The outer `/mcp` endpoint's 2025/2026 support is separate from the Runner-to-provider gateway V1 compatibility contract: configured local providers currently use the bounded 2025-06-18 stdio tool subset documented in [Runner](RUNNER.md#provider-side-gateway-v1-compatibility), not an arbitrary/latest transparent MCP bridge. Outer caller request `_meta` is intentionally not forwarded to local providers.
 
 Configure providers on the Runner in `[mcp]`; no additional daemon, sidecar, public resource URL, or per-provider ChatGPT App is required. Local MCP access is guarded by the explicit `mcp:local` scope. Direct shared-key, project, open-anonymous, and legacy OAuth defaults do not acquire that scope. For ordinary hosted shared-key OAuth, `webcodex connect ... --auth oauth --oauth-local-mcp` explicitly adds the class-level authority for current and future local MCP providers in that same shared-key Runner group. A real ceiling change revokes existing grants and requires browser authorization again. Adding or replacing a provider later therefore does not require a new OAuth client/App, but only credentials that previously opted into `mcp:local` may use it.
-
-In ChatGPT Developer Mode, create a custom app with the printed `/mcp` URL.
-If the authentication menu offers **Access token/API key**, choose it, paste
-the bearer credential, and run **Scan Tools**. ChatGPT UI labels and
-availability can vary by workspace and rollout.
 
 ### OAuth2
 
@@ -61,7 +92,7 @@ enabled when offered (it is a protocol-level refresh-token scope and grants no
 extra permission). Server-side OAuth setup is in
 [Deployment](DEPLOYMENT.md#oauth2).
 
-For project-first sharing, the authorization page asks for the temporary Project share credential and issues an `oauth2_project` identity carrying only `runtime:read`, `project:read`, `project:write`, and `job:run`. It does not create a managed user and OAuth tokens cannot be used on Agent transport. Quick Tunnel issuer URLs change between runs; use `--tunnel none --public-url https://...` behind your own stable HTTPS proxy/tunnel when the OAuth issuer must remain stable.
+For project-first sharing, the authorization page asks for the temporary Project share credential and issues an `oauth2_project` identity carrying only `runtime:read`, `project:read`, `project:write`, and `job:run`. It does not create a managed user and OAuth tokens cannot be used on Runner transport. Quick Tunnel issuer URLs change between runs; use `--tunnel none --public-url https://...` behind your own stable HTTPS proxy/tunnel when the OAuth issuer must remain stable.
 
 For an existing hosted Server, ordinary `connect --auth oauth` uses the shared-key OAuth bridge. The OAuth client and every code/access/refresh grant remain bound to the same `shared_key_hash` that groups the direct shared-key Runner/projects/jobs. Direct shared-key bearer authority stays fixed at `runtime:read`, `project:read`, `project:write`, `job:run`, `computer:read`, and `computer:control`. A fresh OAuth client starts with that full baseline, but a protected existing client may retain a narrower valid baseline subset. `--oauth-computer-permissions` appends only `computer:launch`, `computer:display_read`, `computer:pointer_control`, `computer:clipboard_read`, and `computer:clipboard_write` to that existing baseline subset; it never restores an absent baseline scope. The browser consent page leaves every optional permission unchecked and grants only selected permissions that the OAuth request actually requested. Launch consent requires both `computer:read` and `computer:launch`; display requires `computer:read` plus `computer:display_read`; pointer requires `computer:read`, `computer:control`, `computer:display_read`, and `computer:pointer_control`; clipboard read/write likewise require their baseline read/control prerequisite plus the matching optional scope. Missing request prerequisites are unavailable rather than auto-added, so consent, token projection, and runtime scope gates remain statically aligned. A real ceiling change revokes prior grants. `account:manage`, `admin`, `job:detach`, every `agent:*` transport scope, and future scopes remain outside this bridge. `offline_access` is protocol-only. Consent-page Runner capability is evaluated per same connected Runner and is rechecked on POST; it is backend availability, not a promise of OS/native permission or call success. At runtime, OAuth `tools/list` hides tools whose required scopes are absent, while direct `tools/call` authorization and live Runner/native checks remain authoritative. The managed-user flow remains separate as `connect --auth managed-oauth`.
 

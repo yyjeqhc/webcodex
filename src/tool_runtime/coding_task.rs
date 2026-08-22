@@ -2073,9 +2073,9 @@ fn sparse_work_on_project_instruction_source(
             projected["headings"] = json!(headings);
         }
         projected["content"] = json!(content);
-    }
-    if let Some(read_more) = read_more.0 {
-        projected["read_more"] = json!(read_more);
+        if let Some(read_more) = read_more.0 {
+            projected["read_more"] = json!(read_more);
+        }
     }
     projected
 }

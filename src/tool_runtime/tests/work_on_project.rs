@@ -2337,7 +2337,11 @@ async fn work_on_project_suppressed_instruction_bodies_still_track_changed_rules
         .unwrap()
         .to_string();
 
-    overwrite_agents_rule(root.path(), "new body while projection is suppressed");
+    let long_changed_body = std::iter::once("new body while projection is suppressed".to_string())
+        .chain((0..500).map(|index| format!("suppressed-line-{index}")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    overwrite_agents_rule(root.path(), &long_changed_body);
     let changed = dispatch_start_coding_task_in_window(
         &runtime,
         "wop-suppressed-change",

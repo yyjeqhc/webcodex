@@ -3,6 +3,7 @@ use crate::shell_protocol::{
     AgentConfigReloadStatus, ProviderCallSummary, ShellAgentProjectSummary, ShellFileOpRequest,
     ShellProcessArgv, ShellRunRequest, ShellScriptPayload, ToolProvidersStatus,
     PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
+    PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES,
     STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
 };
 use sha2::{Digest, Sha256};
@@ -567,17 +568,93 @@ pub(super) fn normalize_project_summaries(
     projects
 }
 
-pub(super) fn validate_project_summary_count(
-    projects: Option<&[ShellAgentProjectSummary]>,
-) -> Result<(), String> {
-    let count = projects.map_or(0, <[ShellAgentProjectSummary]>::len);
-    if count > super::MAX_RUNNER_PROJECT_SUMMARIES {
-        return Err(format!(
-            "runner project summary limit exceeded (maximum {} projects)",
-            super::MAX_RUNNER_PROJECT_SUMMARIES
-        ));
+pub(super) fn validate_project_summary(
+    project: &ShellAgentProjectSummary,
+) -> Result<(), &'static str> {
+    if project.id.is_empty()
+        || project.id.len() > 64
+        || !project
+            .id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err("project_summary_invalid_id");
+    }
+    if project.path.is_empty() || project.path.len() > 4096 || project.path.contains('\0') {
+        return Err("project_summary_invalid_path");
+    }
+    if project
+        .name
+        .as_deref()
+        .is_some_and(|value| value.is_empty() || value.len() > 120 || value.contains('\0'))
+    {
+        return Err("project_summary_invalid_name");
+    }
+    if project
+        .description
+        .as_deref()
+        .is_some_and(|value| value.len() > 500 || value.contains('\0'))
+    {
+        return Err("project_summary_invalid_description");
+    }
+    if project
+        .kind
+        .as_deref()
+        .is_some_and(|value| value.len() > 120 || value.contains('\0'))
+        || project
+            .shell_profile
+            .as_deref()
+            .is_some_and(|value| value.len() > 120 || value.contains('\0'))
+        || project
+            .git_branch
+            .as_deref()
+            .is_some_and(|value| value.len() > 512 || value.contains('\0'))
+        || project
+            .git_head
+            .as_deref()
+            .is_some_and(|value| value.len() > 128 || value.contains('\0'))
+    {
+        return Err("project_summary_invalid_metadata");
+    }
+    if project.hooks.len() > 64
+        || project
+            .hooks
+            .iter()
+            .any(|hook| hook.is_empty() || hook.len() > 120 || hook.contains('\0'))
+    {
+        return Err("project_summary_invalid_hooks");
+    }
+    if project.revision.as_deref().is_some_and(|revision| {
+        let Some(hex) = revision.strip_prefix("sha256:") else {
+            return true;
+        };
+        hex.len() != 64 || !hex.chars().all(|character| character.is_ascii_hexdigit())
+    }) {
+        return Err("project_summary_invalid_revision");
     }
     Ok(())
+}
+
+pub(super) fn validate_project_summary_batch(
+    projects: &[ShellAgentProjectSummary],
+) -> Result<usize, &'static str> {
+    for project in projects {
+        validate_project_summary(project)?;
+    }
+    let serialized_bytes = serde_json::to_vec(projects)
+        .map_err(|_| "project_inventory_serialization_failed")?
+        .len();
+    if serialized_bytes > PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES {
+        return Err("project_inventory_snapshot_too_large");
+    }
+    let unique = projects
+        .iter()
+        .map(|project| &project.id)
+        .collect::<std::collections::HashSet<_>>();
+    if unique.len() != projects.len() {
+        return Err("project_inventory_duplicate_project_id");
+    }
+    Ok(serialized_bytes)
 }
 
 pub(super) fn sha256_hex(value: &str) -> String {

@@ -394,6 +394,34 @@ async fn dispatch_inbound(
                 )
                 .await;
         }
+        AgentEnvelope::ProjectInventoryPage { page } => {
+            match registry
+                .apply_project_inventory_page_for_connection(
+                    client_id,
+                    agent_instance_id,
+                    connection_id,
+                    page,
+                )
+                .await
+            {
+                Ok(status) => {
+                    // Bounded best-effort acknowledgement. A full outbound
+                    // channel must not make project inventory a liveness fence;
+                    // the Runner can restart the snapshot on reconnect.
+                    let _ = out_tx.try_send(AgentEnvelope::ProjectInventoryStatus { status });
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        client_id = client_id,
+                        error = %error,
+                        "agent project inventory page rejected by lease fence"
+                    );
+                }
+            }
+        }
+        AgentEnvelope::ProjectInventoryStatus { .. } => {
+            // Server-to-Runner only; ignore if a peer reflects it.
+        }
         AgentEnvelope::Goodbye { reason } => {
             tracing::debug!(
                 client_id = client_id,

@@ -1,6 +1,8 @@
 use super::auth::assert_shell_client_access;
+use super::project_inventory::reconcile_dynamic_projection;
 #[cfg(test)]
 use super::validation::validate_id;
+use super::validation::validate_project_summary;
 use super::ShellClientRegistry;
 use crate::shell_protocol::{
     ShellAgentProjectSummary, ShellClientCapabilities,
@@ -201,41 +203,63 @@ impl ShellClientRegistry {
     /// the agent's next register/poll cycle. If a project with the same id
     /// already exists it is replaced; otherwise the new summary is appended
     /// and the list is re-sorted by id (matching `normalize_project_summaries`).
-    pub async fn upsert_client_project(
+    pub async fn upsert_client_project_for_instance(
         &self,
         client_id: &str,
+        agent_instance_id: &str,
         project: ShellAgentProjectSummary,
     ) -> Result<(), String> {
+        validate_project_summary(&project).map_err(str::to_string)?;
         let mut inner = self.inner.lock().await;
         let Some(client) = inner.clients.get_mut(client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
-        if client.projects.len() >= super::MAX_RUNNER_PROJECT_SUMMARIES
-            && !client
-                .projects
-                .iter()
-                .any(|existing| existing.id == project.id)
-        {
+        if client.agent_instance_id != agent_instance_id {
             return Err(format!(
-                "runner project summary limit reached (maximum {} projects)",
-                super::MAX_RUNNER_PROJECT_SUMMARIES
+                "agent client {} is no longer the active instance (stale or replaced)",
+                client_id
             ));
         }
         upsert_project_summary(&mut client.projects, project);
+        reconcile_dynamic_projection(client, super::now_ts());
         Ok(())
     }
 
-    pub async fn remove_client_project(
+    pub async fn remove_client_project_for_instance(
         &self,
         client_id: &str,
+        agent_instance_id: &str,
         project_id: &str,
     ) -> Result<bool, String> {
         let mut inner = self.inner.lock().await;
         let Some(client) = inner.clients.get_mut(client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
+        if client.agent_instance_id != agent_instance_id {
+            return Err(format!(
+                "agent client {} is no longer the active instance (stale or replaced)",
+                client_id
+            ));
+        }
         let before = client.projects.len();
         client.projects.retain(|project| project.id != project_id);
-        Ok(client.projects.len() != before)
+        let changed = client.projects.len() != before;
+        reconcile_dynamic_projection(client, super::now_ts());
+        Ok(changed)
+    }
+
+    #[cfg(test)]
+    pub async fn upsert_client_project(
+        &self,
+        client_id: &str,
+        project: ShellAgentProjectSummary,
+    ) -> Result<(), String> {
+        let instance = self
+            .get_client_view(client_id)
+            .await
+            .ok_or_else(|| format!("unknown shell client: {}", client_id))?
+            .agent_instance_id;
+        self.upsert_client_project_for_instance(client_id, &instance, project)
+            .await
     }
 }

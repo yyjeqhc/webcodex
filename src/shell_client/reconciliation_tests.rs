@@ -1,7 +1,7 @@
 use super::job_updates::{JobLogWaitOutcome, ShellJobStartMetadata, StructuredJobExecution};
 use super::reconciliation::{
     reconcile_inventory_locked, recovery_timeout_sweep, validate_job_inventory,
-    RECOVERY_SWEEP_PASS_CAP,
+    validate_job_inventory_without_project_membership, RECOVERY_SWEEP_PASS_CAP,
 };
 use super::state::{PendingShellRequest, ShellJobVisibility};
 use super::{
@@ -14,8 +14,8 @@ use crate::shell_protocol::{
     ShellClientRegisterRequest, ShellCommandExecutionState, ShellJobContext, ShellJobInventory,
     ShellJobLogSnapshot, ShellJobOpRequest, ShellJobSnapshot, ShellJobStreamSnapshot,
     ShellJobValidationMetadata, ShellJobValidationProgress, ShellJobValidationStep,
-    ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload, JOB_INVENTORY_MAX_TERMINAL_JOBS,
-    JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
+    ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload, AGENT_PROTOCOL_VERSION_POLLING_V2,
+    JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
 };
 
 const CLIENT_ID: &str = "oe";
@@ -2197,6 +2197,35 @@ async fn reconciliation_summary_counts_inventory_effects_without_payload_data() 
     assert_eq!(second.suppressed_terminal, 0);
 }
 
+#[tokio::test]
+async fn paged_project_registration_does_not_make_active_job_inventory_a_liveness_fence() {
+    let registry = ShellClientRegistry::default();
+    let mut snapshot = standalone_snapshot("paged-active-job", "running");
+    snapshot.context.runtime_project_id = Some(RUNTIME_PROJECT_ID.to_string());
+    let mut request = register_request(
+        INSTANCE_A,
+        ShellJobInventory {
+            active_complete: true,
+            jobs: vec![snapshot],
+        },
+    );
+    request.projects = Some(vec![project_summary()]);
+    request.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_POLLING_V2.to_string());
+
+    let view = registry.register(request).await.expect(
+        "paged project inventory must not reject Runner liveness during job reconciliation",
+    );
+    assert!(view.connected);
+    assert!(view.projects.is_empty());
+    assert_eq!(
+        view.project_inventory
+            .as_ref()
+            .map(|status| status.sync_state.as_str()),
+        Some("pending")
+    );
+    assert_eq!(registry.list_jobs(Some(10)).await.len(), 1);
+}
+
 #[test]
 fn job_reconciliation_inventory_validation_is_bounded_and_atomic() {
     let projects = vec![project_summary()];
@@ -2301,6 +2330,30 @@ fn job_reconciliation_inventory_validation_is_bounded_and_atomic() {
     )
     .unwrap_err()
     .contains("not registered"));
+
+    let mut deferred_project = standalone_snapshot("deferred-project", "running");
+    deferred_project.context.runtime_project_id = Some(RUNTIME_PROJECT_ID.to_string());
+    let deferred_inventory = ShellJobInventory {
+        active_complete: true,
+        jobs: vec![deferred_project.clone()],
+    };
+    assert!(validate_job_inventory(CLIENT_ID, &[], &deferred_inventory)
+        .unwrap_err()
+        .contains("not registered"));
+    assert!(
+        validate_job_inventory_without_project_membership(CLIENT_ID, &deferred_inventory).is_ok()
+    );
+
+    deferred_project.context.runtime_project_id = Some("agent:other:demo".to_string());
+    assert!(validate_job_inventory_without_project_membership(
+        CLIENT_ID,
+        &ShellJobInventory {
+            active_complete: true,
+            jobs: vec![deferred_project],
+        },
+    )
+    .unwrap_err()
+    .contains("does not belong to client_id"));
 
     let mut invalid_session = standalone_snapshot("invalid-session", "running");
     invalid_session.context.runtime_project_id = Some(RUNTIME_PROJECT_ID.to_string());

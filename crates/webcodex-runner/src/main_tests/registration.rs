@@ -1,5 +1,84 @@
 use super::*;
 
+fn bootstrap_project(index: usize) -> ShellAgentProjectSummary {
+    ShellAgentProjectSummary {
+        id: format!("project-{index:04}"),
+        name: Some(format!("Project {index:04}")),
+        path: format!("/tmp/project-{index:04}"),
+        allow_patch: true,
+        kind: Some("repo".to_string()),
+        description: None,
+        hooks: Vec::new(),
+        disabled: false,
+        revision: Some(format!("sha256:{}", "a".repeat(64))),
+        git_branch: None,
+        git_head: None,
+        git_dirty: None,
+        updated_at: 1,
+        shell_profile: None,
+    }
+}
+
+fn bootstrap_active_job(project_index: usize) -> ShellJobSnapshot {
+    ShellJobSnapshot {
+        job_id: "job-bootstrap-active".to_string(),
+        request_id: "request-bootstrap-active".to_string(),
+        status: "running".to_string(),
+        update_seq: 1,
+        created_at: 1_700_000_000,
+        started_at: Some(1_700_000_001),
+        ended_at: None,
+        exit_code: None,
+        duration_ms: None,
+        error: None,
+        command_execution_state: None,
+        context: ShellJobContext {
+            runtime_project_id: Some(format!("agent:oe:project-{project_index:04}")),
+            workflow_session_id: None,
+            ssh_resource: None,
+            project_cwd: Some(format!("/tmp/project-{project_index:04}")),
+            cwd: Some(format!("/tmp/project-{project_index:04}")),
+            purpose: Some("test".to_string()),
+            shell: Some("bash".to_string()),
+            command_preview: "sleep 30".to_string(),
+            validation_steps: Vec::new(),
+            validation: None,
+            structured_execution: None,
+        },
+        stdout: ShellJobStreamSnapshot::default(),
+        stderr: ShellJobStreamSnapshot::default(),
+        validation_progress: None,
+    }
+}
+
+#[test]
+fn large_inventory_registration_bootstrap_keeps_active_job_project_within_legacy_bound() {
+    let projects = (0..65).map(bootstrap_project).collect::<Vec<_>>();
+    let job_inventory = ShellJobInventory {
+        active_complete: true,
+        jobs: vec![bootstrap_active_job(64)],
+    };
+
+    let bootstrap = project_registration_bootstrap("oe", &projects, &job_inventory);
+    assert!(bootstrap.paged_inventory);
+    let summaries = bootstrap.projects.expect("active Job project bootstrap");
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].id, "project-0064");
+    assert!(summaries.len() <= PROJECT_INVENTORY_INLINE_MAX_SUMMARIES);
+    assert!(
+        serde_json::to_vec(&summaries).unwrap().len()
+            <= PROJECT_REGISTRATION_BOOTSTRAP_MAX_SERIALIZED_BYTES
+    );
+    assert_eq!(bootstrap.job_inventory.jobs.len(), 1);
+    assert_eq!(
+        bootstrap.job_inventory.jobs[0]
+            .context
+            .runtime_project_id
+            .as_deref(),
+        Some("agent:oe:project-0064")
+    );
+}
+
 #[test]
 fn mcp_gateway_register_request_projects_bounded_provider_inventory_without_local_launch_details() {
     let tmp = tempfile::tempdir().unwrap();

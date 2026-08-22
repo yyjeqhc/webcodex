@@ -1,102 +1,65 @@
 use super::*;
 
 #[tokio::test]
-async fn shared_key_project_summary_limit_uses_raw_input_and_preserves_existing_projects() {
+async fn project_cardinality_does_not_reject_runner_liveness_or_dynamic_upsert() {
     let registry = ShellClientRegistry::default();
-    let shared = crate::auth::shared_key::shared_key_context("project-limit-shared");
-    let projects = (0..MAX_RUNNER_PROJECT_SUMMARIES)
+    let shared = crate::auth::shared_key::shared_key_context("project-scale-shared");
+    let projects = (0..65)
         .map(|index| project_summary(&format!("project-{index}"), "/tmp/project"))
         .collect::<Vec<_>>();
-    registry
+    let view = registry
         .register_with_auth(
-            runner_registration("project-limit", "project-limit-instance", projects.clone()),
+            runner_registration("project-scale", "project-scale-instance", projects),
             Some(&shared),
         )
         .await
-        .expect("the documented project limit is accepted");
+        .expect("65 projects must not reject Runner registration");
+    assert!(view.connected);
+    assert_eq!(view.projects.len(), 65);
 
-    let too_many = (0..=MAX_RUNNER_PROJECT_SUMMARIES)
-        .map(|index| project_summary(&format!("project-{index}"), "/tmp/project"))
-        .collect::<Vec<_>>();
-    let error = registry
-        .register_with_auth(
-            runner_registration("project-limit", "project-limit-instance", too_many),
-            Some(&shared),
+    registry
+        .upsert_client_project(
+            "project-scale",
+            project_summary("project-65", "/tmp/project-65"),
         )
         .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        format!(
-            "runner project summary limit exceeded (maximum {} projects)",
-            MAX_RUNNER_PROJECT_SUMMARIES
-        )
-    );
+        .expect("dynamic projection may cross the historical 64-project threshold");
     assert_eq!(
         registry
-            .list_client_projects("project-limit")
+            .list_client_projects("project-scale")
             .await
             .unwrap()
             .len(),
-        MAX_RUNNER_PROJECT_SUMMARIES
+        66
     );
 
-    let duplicate_projects =
-        vec![project_summary("duplicate", "/tmp/duplicate"); MAX_RUNNER_PROJECT_SUMMARIES + 1];
-    let poll_error = registry
+    let duplicate_projects = vec![project_summary("duplicate", "/tmp/duplicate"); 65];
+    registry
         .poll(ShellAgentPollRequest {
-            client_id: "project-limit".to_string(),
-            agent_instance_id: "project-limit-instance".to_string(),
+            client_id: "project-scale".to_string(),
+            agent_instance_id: "project-scale-instance".to_string(),
             projects: Some(duplicate_projects),
         })
         .await
-        .unwrap_err();
-    assert!(poll_error.contains("project summary limit exceeded"));
+        .expect("malformed inventory refresh must not reject Runner heartbeat");
     assert_eq!(
         registry
-            .list_client_projects("project-limit")
+            .list_client_projects("project-scale")
             .await
             .unwrap()
             .len(),
-        MAX_RUNNER_PROJECT_SUMMARIES,
-        "an oversized polling refresh must not overwrite the existing project list"
+        66,
+        "malformed inventory refresh must preserve the authoritative projection"
     );
-    let upsert_error = registry
-        .upsert_client_project(
-            "project-limit",
-            project_summary("project-over-limit", "/tmp/project-over-limit"),
-        )
+    let status = registry
+        .project_inventory_status_for_test("project-scale")
         .await
-        .unwrap_err();
-    assert!(upsert_error.contains("project summary limit reached"));
-    registry
-        .upsert_client_project(
-            "project-limit",
-            project_summary("project-0", "/tmp/project-replaced"),
-        )
-        .await
-        .expect("replacing an existing project remains allowed at the limit");
+        .unwrap();
+    assert_eq!(status.sync_state, "degraded");
     assert_eq!(
-        registry
-            .list_client_projects("project-limit")
-            .await
-            .unwrap()
-            .len(),
-        MAX_RUNNER_PROJECT_SUMMARIES
+        status.last_error_code.as_deref(),
+        Some("project_inventory_duplicate_project_id")
     );
-
-    let managed = agent_auth_context("managed", "managed-project-limit", vec!["agent:register"]);
-    let mut managed_registration = runner_registration(
-        "managed-project-limit",
-        "managed-project-limit-instance",
-        vec![project_summary("duplicate", "/tmp/duplicate"); MAX_RUNNER_PROJECT_SUMMARIES + 1],
-    );
-    managed_registration.owner = Some("managed".to_string());
-    let managed_error = registry
-        .register_with_auth(managed_registration, Some(&managed))
-        .await
-        .unwrap_err();
-    assert!(managed_error.contains("project summary limit exceeded"));
 }
 
 #[tokio::test]

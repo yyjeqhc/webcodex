@@ -550,17 +550,17 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         // -- owner boundary + client existence --------------------------------
-        if self
+        let Some(client_view) = self
             .shell_clients
             .get_client_view_for_auth(&client_id, auth)
             .await
-            .is_none()
-        {
+        else {
             return ToolResult::err(format!(
                 "unknown agent client '{}'. Call listAgents to discover registered client_ids.",
                 client_id
             ));
-        }
+        };
+        let expected_agent_instance_id = client_view.agent_instance_id.clone();
         if let Err(e) = self
             .shell_clients
             .assert_client_access(auth, &client_id)
@@ -635,28 +635,87 @@ impl ToolRuntime {
             return ToolResult::err_with_output(code, result);
         }
 
-        // -- refresh server-side project cache --------------------------------
-        // After a successful operation the agent reports the new/updated
-        // project summary in the response. The server upserts it into the
-        // client's cached project list so listProjects sees it immediately,
-        // without waiting for the agent's next register/poll cycle.
-        if let Some(project) = parse_project_summary_from_result(&result, &client_id) {
-            let _ = self
-                .shell_clients
-                .upsert_client_project(&client_id, project)
-                .await;
+        // -- commit authoritative server routing projection -------------------
+        // Runner persistence already happened exactly once. The caller may see
+        // ordinary success only after the authoritative summary is fenced to the
+        // same Runner instance and committed into the Server routing projection.
+        let Some(project) = parse_project_summary_from_result(&result, &client_id) else {
+            return project_projection_reconcile_required(
+                &client_id,
+                &expected_agent_instance_id,
+                &result,
+                "authoritative_project_summary_missing",
+            );
+        };
+        if let Err(error) = self
+            .shell_clients
+            .upsert_client_project_for_instance(&client_id, &expected_agent_instance_id, project)
+            .await
+        {
+            return project_projection_reconcile_required(
+                &client_id,
+                &expected_agent_instance_id,
+                &result,
+                if error.contains("stale or replaced") {
+                    "runner_instance_changed_before_projection"
+                } else {
+                    "server_project_projection_failed"
+                },
+            );
         }
 
         ToolResult::ok(result)
     }
 }
 
+fn project_projection_reconcile_required(
+    client_id: &str,
+    agent_instance_id: &str,
+    result: &Value,
+    reason_code: &str,
+) -> ToolResult {
+    let project_id = result
+        .get("agent_project_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let revision = result
+        .get("revision")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let state_changed = result
+        .get("changed")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    ToolResult::err_with_output(
+        "project_projection_reconcile_required",
+        json!({
+            "error_code": "project_projection_reconcile_required",
+            "failure_kind": "reconcile_required",
+            "reason_code": reason_code,
+            "state_changed": state_changed,
+            "client_id": client_id,
+            "agent_instance_id": agent_instance_id,
+            "agent_project_id": project_id.clone(),
+            "revision": revision.clone(),
+            "authoritative_outcome": result.get("outcome").cloned().unwrap_or(Value::Null),
+            "reconcile": {
+                "action": "observe_exact_project_revision_before_retry",
+                "project": project_id.map(|project_id| format!("agent:{client_id}:{project_id}")),
+                "expected_revision": revision,
+            }
+        }),
+    )
+}
+
 fn agent_protocol_reports_project_git(protocol: &str) -> bool {
     matches!(
         protocol,
         crate::shell_protocol::AGENT_PROTOCOL_VERSION_POLLING_V1
+            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_POLLING_V2
             | crate::shell_protocol::AGENT_PROTOCOL_VERSION_WEBSOCKET_V1
+            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_WEBSOCKET_V2
             | crate::shell_protocol::AGENT_PROTOCOL_VERSION_QUIC_V1
+            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_QUIC_V2
     )
 }
 

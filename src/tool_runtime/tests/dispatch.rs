@@ -1018,6 +1018,212 @@ fn project_management_tools_require_expected_fields() {
 }
 
 #[tokio::test]
+async fn register_project_crosses_historical_64_threshold_and_is_immediately_resolvable() {
+    let runtime = test_runtime();
+    let client_id = "project-scale-mutation";
+    let existing = (0..64)
+        .map(|index| {
+            registered_project(
+                &format!("project-{index:04}"),
+                &format!("/tmp/project-{index:04}"),
+            )
+        })
+        .collect::<Vec<_>>();
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities::default(),
+        existing,
+    )
+    .await;
+
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        let bootstrap = bootstrap_auth_context();
+        runtime_for_task
+            .register_project(
+                client_id.to_string(),
+                "project-0064".to_string(),
+                "Project 0064".to_string(),
+                "/tmp/project-0064".to_string(),
+                None,
+                true,
+                false,
+                Some(&bootstrap),
+            )
+            .await
+    });
+    let mut request = None;
+    for _ in 0..20 {
+        request = next_agent_request_for_client(&runtime, client_id).await;
+        if request.is_some() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let request = match request {
+        Some(request) => request,
+        None => {
+            assert!(
+                task.is_finished(),
+                "register_project task neither enqueued nor completed"
+            );
+            let early = task.await.unwrap();
+            panic!("register_project completed before enqueue: {early:?}");
+        }
+    };
+    assert_eq!(request.kind, "register_project");
+    let authoritative = json!({
+        "outcome": "registered",
+        "changed": true,
+        "client_id": client_id,
+        "agent_project_id": "project-0064",
+        "name": "Project 0064",
+        "path": "/tmp/project-0064",
+        "allow_patch": true,
+        "revision": format!("sha256:{}", "a".repeat(64))
+    });
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        client_id,
+        &format!("inst-{client_id}"),
+        &request.request_id,
+        0,
+        &authoritative.to_string(),
+        "",
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(
+        result.success,
+        "authoritative projection should commit: {result:?}"
+    );
+    let projects = runtime
+        .shell_clients
+        .list_client_projects(client_id)
+        .await
+        .unwrap();
+    assert_eq!(projects.len(), 65);
+    let projected = projects
+        .iter()
+        .find(|project| project.id == "project-0064")
+        .expect("successful register_project must be immediately Server-resolvable");
+    assert_eq!(
+        projected.revision,
+        authoritative["revision"].as_str().map(str::to_string)
+    );
+    assert!(
+        next_agent_request_for_client(&runtime, client_id)
+            .await
+            .is_none(),
+        "successful projection must not replay the mutation"
+    );
+}
+
+#[tokio::test]
+async fn register_project_projection_failure_returns_reconcile_required_without_retrying_mutation()
+{
+    let runtime = test_runtime();
+    let client_id = "project-projection-failure";
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities::default(),
+        Vec::new(),
+    )
+    .await;
+
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        let bootstrap = bootstrap_auth_context();
+        runtime_for_task
+            .register_project(
+                client_id.to_string(),
+                "persisted-on-runner".to_string(),
+                "Persisted on Runner".to_string(),
+                "/tmp/persisted-on-runner".to_string(),
+                None,
+                true,
+                false,
+                Some(&bootstrap),
+            )
+            .await
+    });
+    let mut request = None;
+    for _ in 0..20 {
+        request = next_agent_request_for_client(&runtime, client_id).await;
+        if request.is_some() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let request = request.expect("register_project should enqueue one mutation");
+    assert_eq!(request.kind, "register_project");
+    let authoritative = json!({
+        "outcome": "registered",
+        "changed": true,
+        "client_id": client_id,
+        "agent_project_id": "persisted-on-runner",
+        "name": "Persisted on Runner",
+        // Simulate a successful Runner persistence followed by a Server-side
+        // projection validation failure. The mutation itself must not be replayed.
+        "path": format!("/{}", "x".repeat(4096)),
+        "allow_patch": true,
+        "revision": format!("sha256:{}", "b".repeat(64))
+    });
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        client_id,
+        &format!("inst-{client_id}"),
+        &request.request_id,
+        0,
+        &authoritative.to_string(),
+        "",
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(
+        !result.success,
+        "projection failure must never return ordinary success"
+    );
+    assert_eq!(
+        result.error.as_deref(),
+        Some("project_projection_reconcile_required")
+    );
+    assert_eq!(result.output["failure_kind"], "reconcile_required");
+    assert_eq!(
+        result.output["reason_code"],
+        "server_project_projection_failed"
+    );
+    assert_eq!(result.output["state_changed"], true);
+    assert_eq!(result.output["agent_project_id"], "persisted-on-runner");
+    assert_eq!(result.output["revision"], authoritative["revision"]);
+    assert_eq!(
+        result.output["reconcile"]["action"],
+        "observe_exact_project_revision_before_retry"
+    );
+    assert!(
+        runtime
+            .shell_clients
+            .list_client_projects(client_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "failed Server projection must not falsely advertise routing"
+    );
+    assert!(
+        next_agent_request_for_client(&runtime, client_id)
+            .await
+            .is_none(),
+        "uncertain post-persist state must not blind-retry register_project"
+    );
+}
+
+#[tokio::test]
 async fn dispatch_register_project_rejects_unknown_client_id() {
     let runtime = test_runtime();
     let result = runtime

@@ -225,7 +225,7 @@ async fn dispatch_with_path_runner(
                     "description": null,
                     "allow_patch": true,
                     "disabled": false,
-                    "revision": "sha256:test",
+                    "revision": format!("sha256:{}", "a".repeat(64)),
                     "source": "path",
                     "outcome": outcome,
                     "registered": registered,

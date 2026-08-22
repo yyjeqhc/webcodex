@@ -45,6 +45,9 @@ fn default_transport_polling() -> String {
 
 /// Protocol version announced by current `webcodex-runner` polling builds.
 pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
+/// Polling registration uses bounded project bootstrap summaries followed by
+/// negotiated paged project-inventory synchronization.
+pub const AGENT_PROTOCOL_VERSION_POLLING_V2: &str = "polling-v2";
 /// Model/user-authored raw shell command ceiling. Raw shell remains a bounded
 /// escape hatch; larger program text belongs in `run_script`, while large
 /// literal data belongs in stdin/files/artifacts.
@@ -120,6 +123,9 @@ pub const GO_TEST_PACKAGE_MAX_BYTES: usize = 256;
 /// WebSocket. Kept in the shared protocol module so both the server and the
 /// agent binary reference the same literal.
 pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V1: &str = "websocket-v1";
+/// WebSocket registration uses bounded project bootstrap summaries followed by
+/// `project_inventory_page` envelopes.
+pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V2: &str = "websocket-v2";
 
 /// Protocol version announced by `webcodex-runner` builds that connect over the
 /// custom QUIC stream transport. Kept in the shared protocol module so the
@@ -130,6 +136,18 @@ pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V1: &str = "websocket-v1";
 /// results, and job updates. The transport label remains `"quic"` (see
 /// `TRANSPORT_QUIC`).
 pub const AGENT_PROTOCOL_VERSION_QUIC_V1: &str = "quic-v1";
+/// QUIC registration uses bounded project bootstrap summaries followed by
+/// `project_inventory_page` envelopes.
+pub const AGENT_PROTOCOL_VERSION_QUIC_V2: &str = "quic-v2";
+
+pub fn agent_protocol_uses_paged_project_inventory(version: &str) -> bool {
+    matches!(
+        version,
+        AGENT_PROTOCOL_VERSION_POLLING_V2
+            | AGENT_PROTOCOL_VERSION_WEBSOCKET_V2
+            | AGENT_PROTOCOL_VERSION_QUIC_V2
+    )
+}
 pub const AGENT_QUIC_ALPN_V1: &str = "webcodex-runner/1";
 
 pub const SHELL_CLIENT_CAPABILITY_SHELL: &str = "shell";
@@ -352,6 +370,26 @@ pub const JOB_INVENTORY_MAX_SERIALIZED_BYTES: usize = 1024 * 1024;
 /// Same-process terminal results remain available long enough for ordinary
 /// reconnect backoff without becoming an unbounded process-lifetime ledger.
 pub const JOB_TERMINAL_RETENTION_SECS: i64 = 15 * 60;
+
+/// Legacy registration/poll refreshes remain inline only while they fit this
+/// bounded batch. This is a wire-compatibility threshold, not a Runner project
+/// cardinality limit: larger inventories use [`ShellProjectInventoryPage`].
+pub const PROJECT_INVENTORY_INLINE_MAX_SUMMARIES: usize = 64;
+/// Maximum summaries in one project-inventory page. Cardinality is bounded per
+/// request rather than across the lifetime of a Runner.
+pub const PROJECT_INVENTORY_PAGE_MAX_SUMMARIES: usize = 64;
+/// Maximum serialized JSON bytes for one inventory page.
+pub const PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES: usize = 256 * 1024;
+/// Maximum staged serialized inventory bytes for one in-progress snapshot. A
+/// Runner that exceeds this remains live; only project inventory sync degrades.
+pub const PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES: usize = 16 * 1024 * 1024;
+/// Opaque generation identifiers are deliberately small and never carry paths.
+pub const PROJECT_INVENTORY_GENERATION_MAX_BYTES: usize = 96;
+/// Incomplete server-side staging is discarded after this many seconds without
+/// publishing a partial snapshot.
+pub const PROJECT_INVENTORY_STAGING_TTL_SECS: i64 = 120;
+/// Bound concurrent temporary inventory staging across one Server process.
+pub const PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {
@@ -629,6 +667,58 @@ pub struct ShellAgentProjectSummary {
     /// without exposing env values or init_script contents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_profile: Option<String>,
+}
+
+/// One bounded page of a complete Runner project snapshot. Pages are strictly
+/// ordered starting at zero. `complete=true` is valid only for the final page;
+/// the Server publishes the staged snapshot atomically at that point.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellProjectInventoryPage {
+    pub generation: String,
+    /// Monotonic within one `agent_instance_id`. The Server keeps a high-water
+    /// mark so arbitrarily old generations cannot be replayed after bounded
+    /// generation metadata has been cleaned up.
+    pub snapshot_sequence: u64,
+    pub page_index: u32,
+    pub total_reported: usize,
+    #[serde(default)]
+    pub complete: bool,
+    #[serde(default)]
+    pub projects: Vec<ShellAgentProjectSummary>,
+}
+
+/// Compact, path-free synchronization status projected by a new Server. Its
+/// presence is also the rolling-upgrade negotiation signal: an old Server omits
+/// the field, so a new Runner never sends page envelopes it cannot decode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellProjectInventoryStatus {
+    pub sync_state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_reported: Option<usize>,
+    pub total_synced: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync_at: Option<i64>,
+    pub max_summaries_per_page: usize,
+    pub max_serialized_bytes_per_page: usize,
+}
+
+impl ShellProjectInventoryStatus {
+    pub fn pending(total_synced: usize) -> Self {
+        Self {
+            sync_state: "pending".to_string(),
+            generation: None,
+            total_reported: None,
+            total_synced,
+            last_error_code: None,
+            last_sync_at: None,
+            max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+            max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
+        }
+    }
 }
 
 /// Sanitized summary of one configured shell profile. Exposes ONLY safe
@@ -967,6 +1057,10 @@ pub struct ShellClientView {
     pub pending_requests: usize,
     #[serde(default)]
     pub projects: Vec<ShellAgentProjectSummary>,
+    /// Project inventory synchronization health. Missing means this Server
+    /// predates paged inventory synchronization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_inventory: Option<ShellProjectInventoryStatus>,
     /// Agent-announced protocol version. Defaults to `"unknown"` for agents
     /// that registered before this field existed.
     #[serde(default = "default_agent_protocol_version")]
@@ -1306,6 +1400,10 @@ pub struct ShellAgentPollPayload {
     pub request: ShellAgentPollRequest,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_providers: Option<ToolProvidersStatus>,
+    /// Optional bounded project inventory page. Old Servers ignore this field;
+    /// new Runners send it only after registration negotiated support.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_inventory_page: Option<ShellProjectInventoryPage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1425,6 +1523,9 @@ pub struct ShellAgentPollResponse {
     pub request: Option<ShellAgentShellRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Current inventory status/acknowledgement. Missing on old Servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_inventory: Option<ShellProjectInventoryStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2485,6 +2586,14 @@ pub enum AgentEnvelope {
     /// Agent -> server changed-only sanitized runtime metadata. It reuses the
     /// active transport and never requires an acknowledgement round trip.
     RuntimeMetadata { tool_providers: ToolProvidersStatus },
+    /// Agent -> Server bounded page of one project-inventory snapshot. New
+    /// Runners send this only after the Registered view proved support.
+    ProjectInventoryPage {
+        #[serde(flatten)]
+        page: ShellProjectInventoryPage,
+    },
+    /// Server -> Agent status acknowledgement for a project inventory page.
+    ProjectInventoryStatus { status: ShellProjectInventoryStatus },
     /// Either direction. Reply to `Ping`.
     Pong { ts: i64 },
     /// Agent -> server. Best-effort graceful shutdown notice. Older agents do
@@ -2510,6 +2619,8 @@ impl AgentEnvelope {
             AgentEnvelope::PersistentShellResult { .. } => "persistent_shell_result",
             AgentEnvelope::Ping { .. } => "ping",
             AgentEnvelope::RuntimeMetadata { .. } => "runtime_metadata",
+            AgentEnvelope::ProjectInventoryPage { .. } => "project_inventory_page",
+            AgentEnvelope::ProjectInventoryStatus { .. } => "project_inventory_status",
             AgentEnvelope::Pong { .. } => "pong",
             AgentEnvelope::Goodbye { .. } => "goodbye",
             AgentEnvelope::Error { .. } => "error",

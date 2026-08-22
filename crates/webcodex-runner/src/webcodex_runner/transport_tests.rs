@@ -57,6 +57,63 @@ fn polling_agent_config(server_url: String, projects_dir: PathBuf) -> AgentConfi
     cfg
 }
 
+fn synthetic_project_summary(index: usize, path_bytes: Option<usize>) -> ShellAgentProjectSummary {
+    let path = match path_bytes {
+        Some(bytes) => format!("/{}", "x".repeat(bytes.saturating_sub(1))),
+        None => format!("/tmp/project-{index:04}"),
+    };
+    ShellAgentProjectSummary {
+        id: format!("project-{index:04}"),
+        name: Some(format!("Project {index:04}")),
+        path,
+        allow_patch: true,
+        kind: None,
+        description: None,
+        hooks: Vec::new(),
+        disabled: false,
+        revision: Some(format!("sha256:{index:064x}")),
+        git_branch: None,
+        git_head: None,
+        git_dirty: None,
+        updated_at: index as i64,
+        shell_profile: None,
+    }
+}
+
+fn inventory_status(
+    state: &str,
+    generation: &str,
+    total_reported: usize,
+    total_synced: usize,
+) -> ShellProjectInventoryStatus {
+    ShellProjectInventoryStatus {
+        sync_state: state.to_string(),
+        generation: Some(generation.to_string()),
+        total_reported: Some(total_reported),
+        total_synced,
+        last_error_code: None,
+        last_sync_at: Some(1),
+        max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+        max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
+    }
+}
+
+fn write_synthetic_project_configs(projects_dir: &Path, root: &Path, count: usize) {
+    std::fs::create_dir_all(projects_dir).unwrap();
+    for index in 0..count {
+        let path = root.join(format!("project-{index:04}"));
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(
+            projects_dir.join(format!("project-{index:04}.toml")),
+            format!(
+                "id = \"project-{index:04}\"\nname = \"Project {index:04}\"\npath = {:?}\nallow_patch = true\n",
+                path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+    }
+}
+
 fn test_runtime(cfg: &AgentConfig) -> AgentRuntimeState {
     AgentRuntimeState::new(cfg, PathBuf::new())
 }
@@ -681,6 +738,48 @@ fn poll_delivery_response(request: Option<&ShellAgentShellRequest>) -> Concurren
 
 fn register_success_response() -> ConcurrentHttpResponse {
     ConcurrentHttpResponse::json(r#"{"success":true,"client":null,"error":null}"#)
+}
+
+fn register_inventory_support_response() -> ConcurrentHttpResponse {
+    ConcurrentHttpResponse::json(
+        serde_json::json!({
+            "success": true,
+            "client": {
+                "client_id": "oe",
+                "agent_instance_id": "inst-project-inventory",
+                "status": "online",
+                "connected": true,
+                "last_seen": 1,
+                "capabilities": {},
+                "pending_requests": 0,
+                "projects": [],
+                "project_inventory": {
+                    "sync_state": "pending",
+                    "generation": null,
+                    "total_reported": null,
+                    "total_synced": 0,
+                    "last_error_code": null,
+                    "last_sync_at": null,
+                    "max_summaries_per_page": PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+                    "max_serialized_bytes_per_page": PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES
+                }
+            },
+            "error": null
+        })
+        .to_string(),
+    )
+}
+
+fn poll_inventory_response(status: &ShellProjectInventoryStatus) -> ConcurrentHttpResponse {
+    ConcurrentHttpResponse::json(
+        serde_json::json!({
+            "success": true,
+            "request": null,
+            "error": null,
+            "project_inventory": status
+        })
+        .to_string(),
+    )
 }
 
 fn result_success_response() -> ConcurrentHttpResponse {
@@ -3400,6 +3499,298 @@ fn polling_register_sends_projects_and_ordinary_poll_omits_them() {
         poll["projects"].is_null(),
         "ordinary poll must omit project refresh"
     );
+}
+
+#[test]
+fn project_inventory_pager_honors_count_byte_and_ack_boundaries() {
+    for count in [64usize, 65, 100, 256, 1024] {
+        let projects = (0..count)
+            .map(|index| synthetic_project_summary(index, None))
+            .collect::<Vec<_>>();
+        let mut sync = ProjectInventorySync::new(projects);
+        let generation = sync.generation().to_string();
+        let mut total = 0usize;
+        let mut pages = 0usize;
+        loop {
+            let page = sync.current_page().unwrap().expect("next inventory page");
+            assert!(page.projects.len() <= PROJECT_INVENTORY_PAGE_MAX_SUMMARIES);
+            assert!(
+                serde_json::to_vec(&page).unwrap().len()
+                    <= PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES
+            );
+            total += page.projects.len();
+            pages += 1;
+            let state = if page.complete {
+                "complete"
+            } else {
+                "in_progress"
+            };
+            let done = sync
+                .acknowledge(&inventory_status(state, &generation, count, total))
+                .unwrap();
+            if done {
+                break;
+            }
+        }
+        assert_eq!(total, count);
+        assert_eq!(
+            pages,
+            count.div_ceil(PROJECT_INVENTORY_PAGE_MAX_SUMMARIES),
+            "count {count} should use deterministic bounded pages"
+        );
+    }
+
+    let projects = (0..PROJECT_INVENTORY_PAGE_MAX_SUMMARIES)
+        .map(|index| synthetic_project_summary(index, Some(4096)))
+        .collect::<Vec<_>>();
+    let mut sync = ProjectInventorySync::new(projects);
+    let generation = sync.generation().to_string();
+    let mut total = 0usize;
+    let mut pages = 0usize;
+    loop {
+        let page = sync.current_page().unwrap().unwrap();
+        let serialized = serde_json::to_vec(&page).unwrap();
+        assert!(serialized.len() <= PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES);
+        assert!(page.projects.len() < PROJECT_INVENTORY_PAGE_MAX_SUMMARIES);
+        total += page.projects.len();
+        pages += 1;
+        let state = if page.complete {
+            "complete"
+        } else {
+            "in_progress"
+        };
+        if sync
+            .acknowledge(&inventory_status(
+                state,
+                &generation,
+                PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+                total,
+            ))
+            .unwrap()
+        {
+            break;
+        }
+    }
+    assert!(
+        pages > 1,
+        "serialized-byte bound should split the 64-summary batch"
+    );
+    assert_eq!(total, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES);
+
+    let mut sync = ProjectInventorySync::new(
+        (0..65)
+            .map(|index| synthetic_project_summary(index, None))
+            .collect(),
+    );
+    let page = sync.current_page().unwrap().unwrap();
+    let duplicate = sync.current_page().unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_vec(&page).unwrap(),
+        serde_json::to_vec(&duplicate).unwrap()
+    );
+    let mismatch = sync
+        .acknowledge(&inventory_status("in_progress", "stale-generation", 65, 64))
+        .unwrap_err();
+    assert_eq!(mismatch, "project_inventory_ack_generation_mismatch");
+}
+
+#[tokio::test]
+async fn streaming_project_inventory_retry_preserves_pending_page_after_backpressure() {
+    let projects = (0..65)
+        .map(|index| synthetic_project_summary(index, None))
+        .collect::<Vec<_>>();
+    let mut sync = Some(ProjectInventorySync::new(projects));
+    let expected = sync
+        .as_mut()
+        .unwrap()
+        .current_page()
+        .unwrap()
+        .expect("first pending page");
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    tx.try_send(AgentEnvelope::Ping { ts: 1 }).unwrap();
+
+    try_queue_project_inventory_page(StreamTransport::WebSocket, &mut sync, &tx);
+    assert!(matches!(
+        rx.recv().await,
+        Some(AgentEnvelope::Ping { ts: 1 })
+    ));
+
+    try_queue_project_inventory_page(StreamTransport::WebSocket, &mut sync, &tx);
+    let retried = match rx.recv().await {
+        Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+        other => panic!("expected retried project inventory page, got {other:?}"),
+    };
+    assert_eq!(
+        serde_json::to_vec(&retried).unwrap(),
+        serde_json::to_vec(&expected).unwrap(),
+        "backpressure retry must resend the exact pending page without advancing"
+    );
+}
+
+#[test]
+fn project_inventory_rolling_negotiation_never_sends_large_snapshot_to_old_server() {
+    let small = (0..64)
+        .map(|index| synthetic_project_summary(index, None))
+        .collect::<Vec<_>>();
+    assert!(legacy_inline_project_inventory(&small).is_some());
+    assert!(paged_sync_after_registration(TRANSPORT_POLLING, small, None).is_none());
+
+    let large = (0..65)
+        .map(|index| synthetic_project_summary(index, None))
+        .collect::<Vec<_>>();
+    assert!(legacy_inline_project_inventory(&large).is_none());
+    assert!(
+        paged_sync_after_registration(TRANSPORT_POLLING, large.clone(), None).is_none(),
+        "old Server must never receive unknown project-inventory framing"
+    );
+    let support = ShellProjectInventoryStatus::pending(0);
+    assert!(
+        paged_sync_after_registration(TRANSPORT_POLLING, large, Some(&support)).is_some(),
+        "new Server negotiation enables paged sync"
+    );
+}
+
+#[test]
+fn polling_once_startup_with_100_projects_registers_liveness_then_completes_paged_inventory() {
+    let temp = tempfile::tempdir().unwrap();
+    let projects_dir = temp.path().join("projects.d");
+    let project_root = temp.path().join("projects");
+    write_synthetic_project_configs(&projects_dir, &project_root, 100);
+
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let next_page = Arc::new(AtomicUsize::new(0));
+    let runner_shutdown = Arc::new(AtomicBool::new(false));
+    let handler = {
+        let seen = Arc::clone(&seen);
+        let next_page = Arc::clone(&next_page);
+        let runner_shutdown = Arc::clone(&runner_shutdown);
+        Arc::new(move |path: &str, body: &str| match path {
+            "/api/shell/agent/register" => {
+                let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+                assert!(
+                    payload["projects"].is_null(),
+                    "100-project startup must keep base liveness registration bounded"
+                );
+                register_inventory_support_response()
+            }
+            "/api/shell/agent/poll" => {
+                let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+                let page = &payload["project_inventory_page"];
+                assert!(
+                    page.is_object(),
+                    "paged inventory should begin immediately after register"
+                );
+                let page_index = page["page_index"].as_u64().unwrap() as usize;
+                assert_eq!(page_index, next_page.load(Ordering::SeqCst));
+                let generation = page["generation"].as_str().unwrap().to_string();
+                let projects = page["projects"].as_array().unwrap();
+                assert!(projects.len() <= PROJECT_INVENTORY_PAGE_MAX_SUMMARIES);
+                assert!(
+                    serde_json::to_vec(page).unwrap().len()
+                        <= PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES
+                );
+                seen.lock().unwrap().extend(
+                    projects
+                        .iter()
+                        .map(|project| project["id"].as_str().unwrap().to_string()),
+                );
+                let synced = seen.lock().unwrap().len();
+                let complete = page["complete"].as_bool().unwrap();
+                next_page.fetch_add(1, Ordering::SeqCst);
+                if complete {
+                    runner_shutdown.store(true, Ordering::SeqCst);
+                }
+                poll_inventory_response(&inventory_status(
+                    if complete { "complete" } else { "in_progress" },
+                    &generation,
+                    100,
+                    synced,
+                ))
+            }
+            other => panic!("unexpected project-inventory polling endpoint: {other}"),
+        })
+    };
+    let server = start_concurrent_polling_server(handler);
+    let mut cfg = polling_agent_config(server.server_url.clone(), projects_dir);
+    cfg.policy.allowed_roots = vec![temp.path().to_path_buf()];
+    let runtime = test_runtime(&cfg);
+    let result = run_polling_agent_with_shutdown(
+        cfg,
+        true,
+        "inst-project-inventory",
+        Arc::clone(&runner_shutdown),
+        &runtime,
+    );
+    assert!(
+        result.is_ok(),
+        "Runner should remain online through inventory sync: {result:?}"
+    );
+    server.finish();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 100);
+    assert_eq!(seen.first().map(String::as_str), Some("project-0000"));
+    assert!(seen.iter().any(|id| id == "project-0050"));
+    assert_eq!(seen.last().map(String::as_str), Some("project-0099"));
+    assert_eq!(next_page.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn polling_startup_with_65_projects_stays_online_against_old_server_without_new_framing() {
+    let temp = tempfile::tempdir().unwrap();
+    let projects_dir = temp.path().join("projects.d");
+    let project_root = temp.path().join("projects");
+    write_synthetic_project_configs(&projects_dir, &project_root, 65);
+
+    let runner_shutdown = Arc::new(AtomicBool::new(false));
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let handler = {
+        let runner_shutdown = Arc::clone(&runner_shutdown);
+        let poll_count = Arc::clone(&poll_count);
+        Arc::new(move |path: &str, body: &str| match path {
+            "/api/shell/agent/register" => {
+                let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+                assert!(
+                    payload["projects"].is_null(),
+                    "large inventory must not poison an old Server registration envelope"
+                );
+                assert_eq!(
+                    payload["agent_protocol_version"],
+                    crate::shell_protocol::AGENT_PROTOCOL_VERSION_POLLING_V2,
+                    "large inventory must explicitly advertise the paged registration contract"
+                );
+                register_success_response()
+            }
+            "/api/shell/agent/poll" => {
+                let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+                assert!(
+                    payload.get("project_inventory_page").is_none()
+                        || payload["project_inventory_page"].is_null(),
+                    "new Runner must not send unknown inventory framing before negotiation"
+                );
+                poll_count.fetch_add(1, Ordering::SeqCst);
+                runner_shutdown.store(true, Ordering::SeqCst);
+                poll_delivery_response(None)
+            }
+            other => panic!("unexpected old-server compatibility endpoint: {other}"),
+        })
+    };
+    let server = start_concurrent_polling_server(handler);
+    let mut cfg = polling_agent_config(server.server_url.clone(), projects_dir);
+    cfg.policy.allowed_roots = vec![temp.path().to_path_buf()];
+    let runtime = test_runtime(&cfg);
+    let result = run_polling_agent_with_shutdown(
+        cfg,
+        false,
+        "inst-old-server-project-inventory",
+        Arc::clone(&runner_shutdown),
+        &runtime,
+    );
+    assert!(
+        result.is_ok(),
+        "old Server compatibility must preserve Runner liveness: {result:?}"
+    );
+    server.finish();
+    assert!(poll_count.load(Ordering::SeqCst) >= 1);
 }
 
 #[test]

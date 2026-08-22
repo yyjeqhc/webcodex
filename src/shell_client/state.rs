@@ -4,13 +4,38 @@ use crate::shell_protocol::{
     AgentBuildInfo, AgentHostContext, AgentPolicySummary, PersistentShellResult,
     ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientCapabilities,
     ShellCommandExecutionState, ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata,
-    ShellJobValidationProgress, ShellProcessArgv, ShellRunResponse,
+    ShellJobValidationProgress, ShellProcessArgv, ShellProjectInventoryStatus, ShellRunResponse,
     JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_TERMINAL_RETENTION_SECS,
 };
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Notify};
+
+#[derive(Debug, Clone)]
+pub(super) struct ProjectInventoryStaging {
+    pub(super) generation: String,
+    pub(super) snapshot_sequence: u64,
+    pub(super) total_reported: usize,
+    pub(super) next_page_index: u32,
+    pub(super) projects: Vec<ShellAgentProjectSummary>,
+    pub(super) seen_ids: HashSet<String>,
+    pub(super) serialized_bytes: usize,
+    pub(super) started_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ProjectInventoryState {
+    pub(super) status: ShellProjectInventoryStatus,
+    pub(super) staging: Option<ProjectInventoryStaging>,
+    pub(super) retired_generations: VecDeque<String>,
+    /// Monotonic freshness fence for the active Runner process. Reset only
+    /// when `agent_instance_id` changes.
+    pub(super) highest_snapshot_sequence: u64,
+    pub(super) last_page_generation: Option<String>,
+    pub(super) last_page_index: Option<u32>,
+    pub(super) last_page_digest: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct ShellClientRecord {
@@ -27,6 +52,9 @@ pub(super) struct ShellClientRecord {
     pub(super) host_context: Option<AgentHostContext>,
     pub(super) capabilities: ShellClientCapabilities,
     pub(super) projects: Vec<ShellAgentProjectSummary>,
+    /// Authoritative project snapshot plus bounded in-progress staging. A
+    /// staging failure never changes liveness or partially publishes projects.
+    pub(super) project_inventory: ProjectInventoryState,
     pub(super) last_seen: i64,
     pub(super) agent_protocol_version: String,
     /// How this client is currently connected: `"polling"`, `"websocket"`,

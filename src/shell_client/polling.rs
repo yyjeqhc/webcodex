@@ -2,11 +2,9 @@ use super::jobs::{
     assert_active_instance_locked, observe_job_terminal, replace_log_limited, request_preview,
     truncate_output, truncate_output_to,
 };
+use super::project_inventory::apply_legacy_refresh;
 use super::requests::{remove_pending_request_locked, take_pending_request_locked};
-use super::validation::{
-    normalize_project_summaries, validate_agent_instance_id, validate_id,
-    validate_project_summary_count,
-};
+use super::validation::{validate_agent_instance_id, validate_id};
 use super::{now_ts, ShellClientRegistry};
 use crate::mcp_gateway::{
     validate_response as validate_mcp_gateway_response, McpGatewayDispatchState, McpGatewayResponse,
@@ -57,7 +55,6 @@ impl ShellClientRegistry {
     ) -> Result<Option<ShellAgentShellRequest>, String> {
         validate_id(&body.client_id, "client_id")?;
         validate_agent_instance_id(&body.agent_instance_id)?;
-        validate_project_summary_count(body.projects.as_deref())?;
         let mut inner = self.inner.lock().await;
         {
             let Some(client) = inner.clients.get_mut(&body.client_id) else {
@@ -77,10 +74,13 @@ impl ShellClientRegistry {
                     ));
                 }
             }
-            if body.projects.is_some() {
-                client.projects = normalize_project_summaries(body.projects);
+            let now = now_ts();
+            if let Some(projects) = body.projects {
+                // A bad legacy inventory refresh degrades only project routing;
+                // the active Runner lease and heartbeat still succeed.
+                apply_legacy_refresh(client, projects, now);
             }
-            client.last_seen = now_ts();
+            client.last_seen = now;
         }
         loop {
             let request_id = {

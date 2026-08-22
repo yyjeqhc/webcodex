@@ -1,14 +1,19 @@
 use super::auth::{assert_shell_client_access, shell_client_visible_to_auth, ShellClientAuthGroup};
 use super::jobs::{begin_job_recovery, is_final_job_status, mark_job_lost, offline_last_seen};
+use super::project_inventory::{
+    degraded_inventory_state, expire_staging, pending_inventory_state, prepare_legacy_inventory,
+    preserve_authoritative_for_new_instance, preserve_authoritative_pending,
+    preserve_authoritative_with_error,
+};
 use super::reconciliation::{
     preflight_inventory_locked, reconcile_inventory_locked, terminate_instance_jobs_locked,
-    validate_job_inventory,
+    validate_job_inventory, validate_job_inventory_without_project_membership,
 };
 use super::requests::resolve_disconnected_sync_requests_locked;
 use super::state::{NotifierEntry, ShellClientRecord, ShellClientRegistryInner};
 use super::validation::{
     normalize_project_summaries, normalize_tool_providers, trim_string, validate_agent_instance_id,
-    validate_id, validate_optional_field, validate_project_summary_count,
+    validate_id, validate_optional_field, validate_project_summary_batch,
 };
 use super::{
     now_ts, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS, MAX_RETIRED_INSTANCES_PER_CLIENT,
@@ -16,8 +21,8 @@ use super::{
 };
 use crate::mcp_gateway::validate_providers;
 use crate::shell_protocol::{
-    ShellClientCapabilities, ShellClientRegisterRequest, ShellClientView,
-    JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    agent_protocol_uses_paged_project_inventory, ShellClientCapabilities,
+    ShellClientRegisterRequest, ShellClientView, JOB_INVENTORY_MAX_ACTIVE_JOBS,
 };
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -51,7 +56,6 @@ impl ShellClientRegistry {
         validate_optional_field(&body.display_name, "display_name")?;
         validate_optional_field(&body.owner, "owner")?;
         validate_optional_field(&body.hostname, "hostname")?;
-        validate_project_summary_count(body.projects.as_deref())?;
         if body
             .job_concurrency_limit
             .is_some_and(|limit| !(1..=JOB_INVENTORY_MAX_ACTIVE_JOBS).contains(&limit))
@@ -65,6 +69,15 @@ impl ShellClientRegistry {
         let agent_instance_id = body.agent_instance_id.trim().to_string();
         let capabilities = body.capabilities.clone().unwrap_or_default();
         let job_inventory = body.job_inventory.clone();
+        let agent_protocol_version = body
+            .agent_protocol_version
+            .as_deref()
+            .map(str::trim)
+            .filter(|version| !version.is_empty())
+            .unwrap_or("unknown")
+            .to_string();
+        let paged_project_inventory =
+            agent_protocol_uses_paged_project_inventory(&agent_protocol_version);
         let host_context = body
             .host_context
             .clone()
@@ -82,6 +95,24 @@ impl ShellClientRegistry {
                 .map_err(|error| format!("invalid MCP gateway provider inventory: {error}"))?;
         }
         let now = now_ts();
+        // Project inventory validation is deliberately independent from the
+        // Runner lease. Malformed/oversized inventory degrades routing state but
+        // must not reject identity/liveness registration.
+        let job_validation_projects = normalize_project_summaries(body.projects.clone());
+        let (projects_supplied, projects, project_inventory, project_inventory_error) =
+            if paged_project_inventory {
+                match validate_project_summary_batch(body.projects.as_deref().unwrap_or(&[])) {
+                    Ok(_) => (false, Vec::new(), pending_inventory_state(0), None),
+                    Err(code) => (
+                        false,
+                        Vec::new(),
+                        degraded_inventory_state(0, code, now),
+                        Some(code),
+                    ),
+                }
+            } else {
+                prepare_legacy_inventory(body.projects, now)
+            };
         let record = ShellClientRecord {
             client_id: client_id.clone(),
             agent_instance_id: agent_instance_id.clone(),
@@ -90,13 +121,10 @@ impl ShellClientRegistry {
             hostname: trim_string(body.hostname),
             host_context,
             capabilities: capabilities.clone(),
-            projects: normalize_project_summaries(body.projects),
+            projects,
+            project_inventory,
             last_seen: now,
-            agent_protocol_version: body
-                .agent_protocol_version
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| "unknown".to_string()),
+            agent_protocol_version,
             transport: TRANSPORT_POLLING.to_string(),
             policy,
             auth_group: auth.and_then(ShellClientAuthGroup::from_auth),
@@ -114,7 +142,19 @@ impl ShellClientRegistry {
             job_inventory.as_ref(),
         ) {
             (true, Some(inventory)) => {
-                validate_job_inventory(&client_id, &record.projects, inventory)?;
+                if !paged_project_inventory
+                    && projects_supplied
+                    && project_inventory_error.is_none()
+                {
+                    validate_job_inventory(&client_id, &job_validation_projects, inventory)?;
+                } else {
+                    // A paged or degraded project inventory is intentionally not
+                    // a liveness prerequisite. Validate the bounded job snapshot
+                    // and same-client namespace now; exact project membership is
+                    // established independently by the authoritative project
+                    // inventory before any project becomes routable.
+                    validate_job_inventory_without_project_membership(&client_id, inventory)?;
+                }
             }
             (true, None) => {
                 return Err(
@@ -336,6 +376,34 @@ impl ShellClientRegistry {
                 record.projected_structured_terminal_suppressions =
                     existing.projected_structured_terminal_suppressions.clone();
                 record.prune_projected_structured_terminal_suppressions(now);
+            }
+            // Identity/liveness registration is independent from inventory. A
+            // paged registration intentionally carries no full snapshot, so
+            // preserve the last complete authoritative inventory even across a
+            // Runner process restart until the new instance completes its own
+            // generation. The active instance fence below prevents old pages
+            // from mutating that preserved snapshot.
+            if let Some(error_code) = project_inventory_error {
+                record.projects = existing.projects.clone();
+                record.project_inventory = preserve_authoritative_with_error(
+                    &existing.project_inventory,
+                    record.projects.len(),
+                    error_code,
+                    now,
+                );
+            } else if !projects_supplied {
+                record.projects = existing.projects.clone();
+                record.project_inventory = if existing.agent_instance_id == agent_instance_id {
+                    preserve_authoritative_pending(
+                        &existing.project_inventory,
+                        record.projects.len(),
+                    )
+                } else {
+                    preserve_authoritative_for_new_instance(
+                        &existing.project_inventory,
+                        record.projects.len(),
+                    )
+                };
             }
         }
 
@@ -857,8 +925,12 @@ impl ShellClientRegistry {
 
     #[cfg(test)]
     pub async fn list_clients(&self) -> Vec<ShellClientView> {
+        let now = now_ts();
         let mut inner = self.inner.lock().await;
-        self.prune_expired_shared_key_clients_locked(&mut inner, now_ts());
+        self.prune_expired_shared_key_clients_locked(&mut inner, now);
+        for client in inner.clients.values_mut() {
+            expire_staging(client, now);
+        }
         let mut ids = inner.clients.keys().cloned().collect::<Vec<_>>();
         ids.sort();
         ids.into_iter()
@@ -870,8 +942,12 @@ impl ShellClientRegistry {
         &self,
         auth: Option<&crate::auth::AuthContext>,
     ) -> Vec<ShellClientView> {
+        let now = now_ts();
         let mut inner = self.inner.lock().await;
-        self.prune_expired_shared_key_clients_locked(&mut inner, now_ts());
+        self.prune_expired_shared_key_clients_locked(&mut inner, now);
+        for client in inner.clients.values_mut() {
+            expire_staging(client, now);
+        }
         let mut ids = inner.clients.keys().cloned().collect::<Vec<_>>();
         ids.sort();
         ids.into_iter()
@@ -923,8 +999,12 @@ impl ShellClientRegistry {
     }
 
     pub async fn get_client_view(&self, client_id: &str) -> Option<ShellClientView> {
+        let now = now_ts();
         let mut inner = self.inner.lock().await;
-        self.prune_expired_shared_key_clients_locked(&mut inner, now_ts());
+        self.prune_expired_shared_key_clients_locked(&mut inner, now);
+        if let Some(client) = inner.clients.get_mut(client_id) {
+            expire_staging(client, now);
+        }
         Self::client_view_locked(&inner, client_id)
     }
 
@@ -998,6 +1078,7 @@ impl ShellClientRegistry {
             capabilities: client.capabilities.clone(),
             pending_requests,
             projects: client.projects.clone(),
+            project_inventory: Some(client.project_inventory.status.clone()),
             agent_protocol_version: client.agent_protocol_version.clone(),
             transport: client.transport.clone(),
             policy: client.policy.clone(),

@@ -29,6 +29,7 @@ mod handlers;
 mod job_updates;
 mod jobs;
 mod polling;
+mod project_inventory;
 mod projects;
 mod reconciliation;
 #[cfg(test)]
@@ -69,7 +70,6 @@ const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 pub(crate) const CLIENT_ONLINE_WINDOW_SECS: i64 = 60;
 pub(crate) const MAX_SHARED_KEY_RUNNERS_PER_GROUP: usize = 16;
 pub(crate) const MAX_SHARED_KEY_RUNNERS_GLOBAL: usize = 1024;
-pub(crate) const MAX_RUNNER_PROJECT_SUMMARIES: usize = 64;
 pub(crate) const SHARED_KEY_OFFLINE_TTL_SECS: i64 = 24 * 60 * 60;
 pub(crate) const DETACHED_IDEMPOTENCY_CONFLICT: &str = "detached_idempotency_conflict";
 pub(crate) const DETACHED_IDEMPOTENCY_RECOVERY_PREFIX: &str =

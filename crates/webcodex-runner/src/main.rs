@@ -31,10 +31,13 @@ use shell_protocol::{
     ShellClientRegisterResponse, ShellCommandExecutionState, ShellJobContext, ShellJobInventory,
     ShellJobLogSnapshot, ShellJobSnapshot, ShellJobStreamSnapshot, ShellJobValidationProgress,
     ShellJobValidationStep, ShellProfileSummaryEntry, ShellProfilesSummary,
-    AGENT_PROTOCOL_VERSION_POLLING_V1, JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    ShellProjectInventoryPage, ShellProjectInventoryStatus, AGENT_PROTOCOL_VERSION_POLLING_V1,
+    AGENT_PROTOCOL_VERSION_POLLING_V2, JOB_INVENTORY_MAX_ACTIVE_JOBS,
     JOB_INVENTORY_MAX_SERIALIZED_BYTES, JOB_INVENTORY_MAX_TERMINAL_JOBS,
-    JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS, VALIDATION_STEP_SPAWN_FAILED_CODE,
-    VALIDATION_STEP_WAIT_FAILED_CODE, VALIDATION_TOOL_UNAVAILABLE_CODE,
+    JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
+    PROJECT_INVENTORY_INLINE_MAX_SUMMARIES, PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
+    VALIDATION_STEP_SPAWN_FAILED_CODE, VALIDATION_STEP_WAIT_FAILED_CODE,
+    VALIDATION_TOOL_UNAVAILABLE_CODE,
 };
 
 #[cfg(test)]
@@ -1974,6 +1977,123 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities
 }
 
+fn legacy_inline_project_inventory(
+    projects: &[ShellAgentProjectSummary],
+) -> Option<Vec<ShellAgentProjectSummary>> {
+    if projects.len() > PROJECT_INVENTORY_INLINE_MAX_SUMMARIES {
+        return None;
+    }
+    let serialized = serde_json::to_vec(projects).ok()?;
+    (serialized.len() <= PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES).then(|| projects.to_vec())
+}
+
+const PROJECT_REGISTRATION_BOOTSTRAP_MAX_SERIALIZED_BYTES: usize = 512 * 1024;
+
+#[derive(Debug, Clone)]
+struct ProjectRegistrationBootstrap {
+    projects: Option<Vec<ShellAgentProjectSummary>>,
+    job_inventory: ShellJobInventory,
+    paged_inventory: bool,
+}
+
+fn project_registration_bootstrap(
+    client_id: &str,
+    projects: &[ShellAgentProjectSummary],
+    job_inventory: &ShellJobInventory,
+) -> ProjectRegistrationBootstrap {
+    if let Some(inline) = legacy_inline_project_inventory(projects) {
+        return ProjectRegistrationBootstrap {
+            projects: Some(inline),
+            job_inventory: job_inventory.clone(),
+            paged_inventory: false,
+        };
+    }
+
+    // A V2 registration never carries the full project inventory. To keep an
+    // old Server able to validate same-process Job reconciliation, include only
+    // the real project summaries referenced by the bounded register-time Job
+    // inventory. Active jobs are complete and therefore have priority; terminal
+    // history is explicitly partial and may be omitted to preserve the legacy
+    // 64-summary compatibility envelope.
+    let prefix = format!("agent:{client_id}:");
+    let by_id = projects
+        .iter()
+        .filter(|project| !project.disabled)
+        .map(|project| (project.id.as_str(), project))
+        .collect::<HashMap<_, _>>();
+    let mut bootstrap_projects = Vec::new();
+    let mut bootstrap_ids = HashSet::new();
+    let mut bootstrap_jobs = Vec::new();
+    let mut active_coverage_complete = true;
+
+    for snapshot in &job_inventory.jobs {
+        let active = matches!(
+            snapshot.status.as_str(),
+            "agent_queued" | "running" | "stop_requested"
+        );
+        if let Some(runtime_project_id) = snapshot.context.runtime_project_id.as_deref() {
+            let project_id = runtime_project_id
+                .strip_prefix(&prefix)
+                .filter(|project_id| !project_id.is_empty());
+            let Some(project_id) = project_id else {
+                if active {
+                    active_coverage_complete = false;
+                    break;
+                }
+                continue;
+            };
+            if !bootstrap_ids.contains(project_id) {
+                let Some(project) = by_id.get(project_id).copied() else {
+                    if active {
+                        active_coverage_complete = false;
+                        break;
+                    }
+                    continue;
+                };
+                let mut candidate = bootstrap_projects.clone();
+                candidate.push(project.clone());
+                let candidate_fits = candidate.len() <= PROJECT_INVENTORY_INLINE_MAX_SUMMARIES
+                    && serde_json::to_vec(&candidate)
+                        .map(|encoded| {
+                            encoded.len() <= PROJECT_REGISTRATION_BOOTSTRAP_MAX_SERIALIZED_BYTES
+                        })
+                        .unwrap_or(false);
+                if candidate_fits {
+                    bootstrap_projects = candidate;
+                    bootstrap_ids.insert(project_id.to_string());
+                } else if active {
+                    active_coverage_complete = false;
+                    break;
+                } else {
+                    continue;
+                }
+            }
+        }
+        bootstrap_jobs.push(snapshot.clone());
+    }
+
+    if !active_coverage_complete {
+        tracing::warn!(
+            client_id,
+            "paged project inventory cannot fit active Job project bootstrap into the legacy registration envelope; a Server upgrade is required for Job reconciliation"
+        );
+        return ProjectRegistrationBootstrap {
+            projects: None,
+            job_inventory: job_inventory.clone(),
+            paged_inventory: true,
+        };
+    }
+
+    ProjectRegistrationBootstrap {
+        projects: (!bootstrap_projects.is_empty()).then_some(bootstrap_projects),
+        job_inventory: ShellJobInventory {
+            active_complete: true,
+            jobs: bootstrap_jobs,
+        },
+        paged_inventory: true,
+    }
+}
+
 #[cfg(test)]
 fn build_register_request(
     cfg: &AgentConfig,
@@ -1986,7 +2106,7 @@ fn build_register_request(
     build_register_request_with_provider_status(
         cfg,
         &runtime,
-        projects,
+        Some(projects),
         protocol_version,
         agent_instance_id,
         prepared_cache_count,
@@ -2001,7 +2121,7 @@ fn build_register_request(
 fn build_register_request_with_provider_status(
     cfg: &AgentConfig,
     runtime: &ReloadableAgentConfig,
-    projects: Vec<ShellAgentProjectSummary>,
+    projects: Option<Vec<ShellAgentProjectSummary>>,
     protocol_version: &str,
     agent_instance_id: &str,
     prepared_cache_count: usize,
@@ -2024,7 +2144,7 @@ fn build_register_request_with_provider_status(
             hostname: cfg.hostname.clone().or_else(hostname),
             host_context: cfg.host_context.clone(),
             capabilities: Some(capabilities),
-            projects: Some(projects),
+            projects,
             agent_protocol_version: Some(protocol_version.to_string()),
             policy: Some(register_policy_summary(
                 &hot,
@@ -2180,24 +2300,42 @@ fn register(
     agent_instance_id: &str,
     prepared_cache_count: usize,
     jobs: &JobManager,
-) -> Result<(usize, ShellJobInventory), RegisterError> {
+) -> Result<
+    (
+        usize,
+        ShellJobInventory,
+        Vec<ShellAgentProjectSummary>,
+        Option<ShellProjectInventoryStatus>,
+    ),
+    RegisterError,
+> {
     let projects = project_cache.get_with_shutdown(cfg, shutdown);
     let projects_count = projects.iter().filter(|project| !project.disabled).count();
     let job_inventory = jobs.inventory();
+    let bootstrap = project_registration_bootstrap(&cfg.client_id, &projects, &job_inventory);
+    let protocol_version = if bootstrap.paged_inventory {
+        AGENT_PROTOCOL_VERSION_POLLING_V2
+    } else {
+        AGENT_PROTOCOL_VERSION_POLLING_V1
+    };
     let (body, provider, provider_revision) = build_register_request_with_provider_status(
         cfg,
         runtime,
-        projects,
-        AGENT_PROTOCOL_VERSION_POLLING_V1,
+        bootstrap.projects,
+        protocol_version,
         agent_instance_id,
         prepared_cache_count,
-        job_inventory.clone(),
+        bootstrap.job_inventory,
     );
     let response: ShellClientRegisterResponse = post_json(client, cfg, AGENT_REGISTER_PATH, &body)
         .map_err(|error| RegisterError::from_http(error, &cfg.client_id))?;
     if response.success {
         provider.mark_status_reported(provider_revision);
-        Ok((projects_count, job_inventory))
+        let inventory_status = response
+            .client
+            .as_ref()
+            .and_then(|client| client.project_inventory.clone());
+        Ok((projects_count, job_inventory, projects, inventory_status))
     } else {
         Err(RegisterError::from_response_error(
             &cfg.client_id,
@@ -5327,13 +5465,14 @@ fn handle_one_poll(
     persistent_shells: &webcodex_runner::PersistentShellManager,
     project_cache: &mut AgentProjectCache,
     poll_projects: Option<Vec<ShellAgentProjectSummary>>,
+    project_inventory_page: Option<ShellProjectInventoryPage>,
     agent_instance_id: &str,
     lsp: &webcodex_runner::LspSupervisor,
     shutdown: &Arc<AtomicBool>,
     dispatches: &ActivityTracker,
     polling_dispatches: &mut PollingDispatchSupervisor,
     once: bool,
-) -> Result<bool, PollError> {
+) -> Result<(bool, Option<ShellProjectInventoryStatus>), PollError> {
     let metadata_config = runtime.snapshot();
     let provider_update =
         metadata_config
@@ -5356,6 +5495,7 @@ fn handle_one_poll(
         tool_providers: provider_update
             .as_ref()
             .map(|(status, _, _)| status.clone()),
+        project_inventory_page,
     };
     let response: ShellAgentPollResponse = match post_json(client, cfg, AGENT_POLL_PATH, &poll) {
         Ok(response) => response,
@@ -5387,8 +5527,9 @@ fn handle_one_poll(
         shutdown: Arc::clone(shutdown),
     });
     jobs.install_sink(sink.clone());
+    let inventory_status = response.project_inventory.clone();
     let Some(request) = response.request else {
-        return Ok(false);
+        return Ok((false, inventory_status));
     };
     let project_op = is_project_op(&request.kind);
     let hot = runtime.snapshot();
@@ -5414,7 +5555,7 @@ fn handle_one_poll(
     };
     if !once {
         polling_dispatches.spawn(dispatch)?;
-        return Ok(true);
+        return Ok((true, inventory_status));
     }
 
     // `--once` deliberately retains its existing synchronous contract: the
@@ -5467,7 +5608,9 @@ fn handle_one_poll(
         project_cache.invalidate();
     }
     let _ = polling_dispatches.background_threads.reap_finished();
-    result.map_err(PollError::from_submit)
+    result
+        .map(|_| (true, inventory_status))
+        .map_err(PollError::from_submit)
 }
 
 fn main() {

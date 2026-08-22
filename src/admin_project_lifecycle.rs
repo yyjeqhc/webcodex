@@ -344,15 +344,48 @@ impl AdminProjectLifecycleService {
             .unwrap_or(false);
         let revision = output.get("revision").cloned().unwrap_or(Value::Null);
         if action == "unregister" && matches!(outcome, "unregistered" | "already_unregistered") {
-            let _ = runtime
+            if runtime
                 .shell_clients
-                .remove_client_project(&client_id, &project_id)
-                .await;
-        } else if let Some(summary) = lifecycle_summary(&output, &project_id) {
-            let _ = runtime
+                .remove_client_project_for_instance(
+                    &client_id,
+                    &client.agent_instance_id,
+                    &project_id,
+                )
+                .await
+                .is_err()
+            {
+                return Err(project_projection_reconcile_response(
+                    target,
+                    outcome,
+                    changed,
+                    revision.clone(),
+                    "server_project_projection_failed",
+                ));
+            }
+        } else {
+            let Some(summary) = lifecycle_summary(&output, &project_id) else {
+                return Err(project_projection_reconcile_response(
+                    target,
+                    outcome,
+                    changed,
+                    revision.clone(),
+                    "authoritative_project_summary_missing",
+                ));
+            };
+            if runtime
                 .shell_clients
-                .upsert_client_project(&client_id, summary)
-                .await;
+                .upsert_client_project_for_instance(&client_id, &client.agent_instance_id, summary)
+                .await
+                .is_err()
+            {
+                return Err(project_projection_reconcile_response(
+                    target,
+                    outcome,
+                    changed,
+                    revision.clone(),
+                    "server_project_projection_failed",
+                ));
+            }
         }
         let warnings = if active_jobs > 0 {
             json!([{"code":"active_jobs_present","active_jobs":active_jobs}])
@@ -745,6 +778,31 @@ fn subject_id(auth: &AuthContext) -> String {
 fn digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
+fn project_projection_reconcile_response(
+    project: &str,
+    outcome: &str,
+    state_changed: bool,
+    revision: Value,
+    reason_code: &str,
+) -> ServiceResponse {
+    ServiceResponse {
+        status: 503,
+        body: json!({
+            "error": {"code": "project_projection_reconcile_required"},
+            "failure_kind": "reconcile_required",
+            "reason_code": reason_code,
+            "state_changed": state_changed,
+            "project": project,
+            "authoritative_outcome": outcome,
+            "revision": revision,
+            "reconcile": {
+                "action": "observe_exact_project_revision_before_retry",
+                "project": project,
+            }
+        }),
+    }
+}
+
 fn api_error(status: u16, code: &str) -> ServiceResponse {
     ServiceResponse {
         status,
@@ -761,6 +819,9 @@ fn map_agent_error(error: &str) -> ServiceResponse {
         "unsupported_runner_version" => api_error(409, "unsupported_runner_version"),
         "agent_unavailable" => api_error(503, "agent_unavailable"),
         "operation_indeterminate" => api_error(503, "operation_indeterminate"),
+        "project_projection_reconcile_required" => {
+            api_error(503, "project_projection_reconcile_required")
+        }
         _ => api_error(500, "operation_failed"),
     }
 }

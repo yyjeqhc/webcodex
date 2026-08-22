@@ -339,7 +339,7 @@ mod tests {
             description: Some("private description".to_string()),
             hooks: vec!["private-hook".to_string()],
             disabled: false,
-            revision: Some("private-revision".to_string()),
+            revision: Some(format!("sha256:{}", "1".repeat(64))),
             git_branch: None,
             git_head: None,
             git_dirty: None,
@@ -464,7 +464,7 @@ mod tests {
             "private-host-special",
             "private-shell-profile",
             "private-hook",
-            "private-revision",
+            &format!("sha256:{}", "1".repeat(64)),
             "private description",
         ] {
             assert!(

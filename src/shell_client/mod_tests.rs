@@ -165,6 +165,9 @@ mod shared_key_ttl;
 #[path = "mod_tests/project_projection.rs"]
 mod project_projection;
 
+#[path = "mod_tests/project_inventory.rs"]
+mod project_inventory;
+
 #[path = "mod_tests/auth_owner.rs"]
 mod auth_owner;
 

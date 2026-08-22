@@ -84,6 +84,7 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
             success: false,
             request: None,
             error: Some("Shell client registry not configured".to_string()),
+            project_inventory: None,
         }));
         return;
     };
@@ -95,6 +96,7 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
                 success: false,
                 request: None,
                 error: Some(format!("Invalid JSON: {}", e)),
+                project_inventory: None,
             }));
             return;
         }
@@ -106,6 +108,7 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
             success: false,
             request: None,
             error: Some(e),
+            project_inventory: None,
         }));
         return;
     }
@@ -115,6 +118,7 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
             success: false,
             request: None,
             error: Some(e),
+            project_inventory: None,
         }));
         return;
     }
@@ -127,6 +131,7 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
             success: false,
             request: None,
             error: Some(e),
+            project_inventory: None,
         }));
         return;
     }
@@ -137,18 +142,33 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
             body.tool_providers,
         )
         .await;
+    let client_id = body.request.client_id.clone();
+    let agent_instance_id = body.request.agent_instance_id.clone();
+    let inventory_page = body.project_inventory_page;
     match registry.poll(body.request).await {
-        Ok(request) => res.render(Json(ShellAgentPollResponse {
-            success: true,
-            request,
-            error: None,
-        })),
+        Ok(request) => {
+            let project_inventory = if let Some(page) = inventory_page {
+                registry
+                    .apply_project_inventory_page(&client_id, &agent_instance_id, page)
+                    .await
+                    .ok()
+            } else {
+                None
+            };
+            res.render(Json(ShellAgentPollResponse {
+                success: true,
+                request,
+                error: None,
+                project_inventory,
+            }))
+        }
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
             res.render(Json(ShellAgentPollResponse {
                 success: false,
                 request: None,
                 error: Some(e),
+                project_inventory: None,
             }));
         }
     }

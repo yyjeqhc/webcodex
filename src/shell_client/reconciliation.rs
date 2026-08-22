@@ -56,6 +56,7 @@ pub(super) fn validate_stream_snapshot(
 fn validate_context(
     client_id: &str,
     projects: &[ShellAgentProjectSummary],
+    require_project_membership: bool,
     snapshot: &ShellJobSnapshot,
 ) -> Result<(), String> {
     let context = &snapshot.context;
@@ -152,9 +153,11 @@ fn validate_context(
             .ok_or_else(|| {
                 "job inventory runtime_project_id does not belong to client_id".to_string()
             })?;
-        if !projects
-            .iter()
-            .any(|project| !project.disabled && project.id == project_id)
+        validate_id(project_id, "project_id")?;
+        if require_project_membership
+            && !projects
+                .iter()
+                .any(|project| !project.disabled && project.id == project_id)
         {
             return Err(
                 "job inventory runtime_project_id is not registered by this runner".to_string(),
@@ -167,6 +170,7 @@ fn validate_context(
 fn validate_snapshot(
     client_id: &str,
     projects: &[ShellAgentProjectSummary],
+    require_project_membership: bool,
     snapshot: &ShellJobSnapshot,
 ) -> Result<bool, String> {
     validate_id(&snapshot.job_id, "job_id")?;
@@ -259,7 +263,7 @@ fn validate_snapshot(
             return Err("job inventory command_execution_state is inconsistent".to_string());
         }
     }
-    validate_context(client_id, projects, snapshot)?;
+    validate_context(client_id, projects, require_project_membership, snapshot)?;
     validate_stream_snapshot(&snapshot.stdout, "stdout")?;
     validate_stream_snapshot(&snapshot.stderr, "stderr")?;
     if snapshot.context.validation_steps.is_empty() && snapshot.validation_progress.is_some() {
@@ -316,9 +320,10 @@ fn validate_snapshot(
     Ok(active)
 }
 
-pub(super) fn validate_job_inventory(
+fn validate_job_inventory_inner(
     client_id: &str,
     projects: &[ShellAgentProjectSummary],
+    require_project_membership: bool,
     inventory: &ShellJobInventory,
 ) -> Result<(), String> {
     if !inventory.active_complete {
@@ -356,7 +361,7 @@ pub(super) fn validate_job_inventory(
                 snapshot.request_id
             ));
         }
-        let active = validate_snapshot(client_id, projects, snapshot)?;
+        let active = validate_snapshot(client_id, projects, require_project_membership, snapshot)?;
         if active {
             if saw_terminal {
                 return Err(
@@ -382,6 +387,21 @@ pub(super) fn validate_job_inventory(
         ));
     }
     Ok(())
+}
+
+pub(super) fn validate_job_inventory(
+    client_id: &str,
+    projects: &[ShellAgentProjectSummary],
+    inventory: &ShellJobInventory,
+) -> Result<(), String> {
+    validate_job_inventory_inner(client_id, projects, true, inventory)
+}
+
+pub(super) fn validate_job_inventory_without_project_membership(
+    client_id: &str,
+    inventory: &ShellJobInventory,
+) -> Result<(), String> {
+    validate_job_inventory_inner(client_id, &[], false, inventory)
 }
 
 fn same_context(job: &ShellJobRecord, snapshot: &ShellJobSnapshot) -> bool {

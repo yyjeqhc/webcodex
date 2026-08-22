@@ -4,12 +4,12 @@ use std::collections::BTreeMap;
 
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::{
-    accepted_flattened_args_for_spec, registered_tool_specs, start_coding_task_compatibility_spec,
-    TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
+    accepted_flattened_args_for_spec, registered_tool_specs, TOOL_CALL_ARGUMENTS_FIELD,
+    TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
 };
 
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
-const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by start_session. When provided, records this dedicated action in the session ledger and wins over any current-session binding.";
+const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional explicit existing wc_sess_* id. When provided, records this dedicated action in that session ledger and wins over any current-session binding.";
 const FLATTENED_TOOL_ARG_DESCRIPTION: &str =
     "Flattened tool-specific argument. Used only when `params` and `arguments` are absent.";
 
@@ -745,19 +745,10 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "callRuntimeTool",
                     "Call runtime tool (advanced)",
-                    "Advanced generic escape hatch for runtime tools. Prefer dedicated actions. Use listRuntimeTools for names. GPT Actions should use flattened top-level fields; params/arguments remain for non-Action clients. Use recording_session_id for ledger recording; keep explicit ids for continuity.",
+                    "Advanced generic escape hatch for model-visible runtime tools. Prefer dedicated actions or tool_manifest. GPT Actions use flattened fields; params/arguments remain direct/non-Action compatibility envelopes. recording_session_id records wrapper calls.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
-                        "trackedSession": {
-                            "summary": "Start a session with flattened GPT Action fields",
-                            "value": {
-                                "tool": "start_session",
-                                "project": "webcodex",
-                                "title": "implement show_changes follow-up",
-                                "mode": "read_only"
-                            }
-                        },
                         "workOnAbsolutePath": {
                             "summary": "Resolve or register a Runner path, then start coding",
                             "value": {
@@ -803,14 +794,6 @@ pub(crate) fn build_openapi_spec() -> Value {
                                 "session_id": "wc_sess_example",
                                 "include_diff": false,
                                 "session_event_limit": 30
-                            }
-                        },
-                        "bindCurrentSession": {
-                            "summary": "Bind an existing session as current in memory for a project",
-                            "value": {
-                                "tool": "bind_current_session",
-                                "project": "webcodex",
-                                "session_id": "wc_sess_example"
                             }
                         },
                         "readFile": {
@@ -1131,16 +1114,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": [TOOL_CALL_TOOL_FIELD],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with non-null `params` taking precedence; null wrappers do not suppress flattened arguments. Top-level `session_id` is ordinary project-tool business input; `resume_session_id` is the distinct start_coding_task input that resumes one known active Workflow Session and never creates on failure; use `recording_session_id` to record this wrapper call in the session ledger and enforce that recorder Session's guards. When no explicit tool session_id is provided, project tools may use the exact window/caller/transport/project/canonical-root current Session ensured by start_coding_task (default bind_current=true) or established manually by bind_current_session. Its process-local cache can be restored after restart from a hashed durable projection when the client retains the same stable window identity. Explicit session_id or recording_session_id still wins over current-session lookup; missing identity never falls back to a credential-wide binding. Explicit resume can still continue without a window, but cannot establish a current binding and later project tools must pass session_id. Ordinary project-bound Connector continuity is handled separately by task_start. For daily discovery prefer tool_manifest; it exposes accepted_flattened_args for GPT Action top-level calls. Use list_tools with summary_only/category/features/limit only for focused discovery.",
+            "description": "Generic GPT Actions runtime tool call. The model-facing `tool` selector and flattened top-level fields cover only model-visible runtime tools and match registered_tool_specs, MCP discovery, and tool_manifest. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted direct/non-Action compatibility envelopes; non-null `params` takes precedence, and null wrappers do not suppress flattened arguments. Top-level `session_id` is ordinary tool business input when declared by the selected visible tool; use `recording_session_id` only to record this wrapper call in the session ledger for an existing Workflow Session. Explicit business ids win over current-session lookup, and missing window identity never falls back to a credential-wide binding. For daily discovery prefer tool_manifest; it exposes accepted_flattened_args for model-facing top-level calls. Use list_tools with summary_only/category/features/limit only for focused discovery.",
             "properties": {
                 "session_id": {
                     "type": "string",
                     "description": "Flattened tool-specific argument. For session_summary and message-board tools this is the required business session id to read or update in the session ledger; for project tools it is the explicit tool session that wins over current-session binding. Use recording_session_id to record the wrapper call itself."
-                },
-                "resume_session_id": {
-                    "type": "string",
-                    "pattern": "^wc_sess_[A-Za-z0-9_]+$",
-                    "description": "Flattened start_coding_task business input. Explicitly resumes exactly one known active wc_sess_* Workflow Session after project, lifecycle, access, and capability checks. Failure never falls back or creates. Without stable window identity it resumes unbound, so later project tools need session_id. Distinct from session_id and recording_session_id; mutually exclusive with new_session=true. Used only when params and arguments are absent."
                 },
                 "kind": {
                     "type": "string",
@@ -1290,22 +1268,9 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": "Flattened resolve_session_message resolution note. Used only when `params` and `arguments` are absent."
                 },
-                "detail": {
-                    "type": "string",
-                    "enum": ["minimal", "standard", "full"],
-                    "description": "Flattened start_coding_task detail level. Defaults to the bounded model-facing standard brief, including repository rules, continuation evidence, and the attempt-scoped exploration workset of validated project-relative paths. minimal retains identity, workspace blockers, instruction status, up to 3 exploration paths, and the first next action without rule bodies; standard and the embedded full startup_brief return up to 12 exploration paths. The workset never contains search text, file/LSP bodies, commands, output, or absolute roots and never executes tools. full preserves complete runtime/connection/authority/binding/Git/manifest diagnostics and embeds the same startup_brief core."
-                },
                 "compact": {
                     "type": "boolean",
                     "description": "Flattened runtime_status flag. Defaults to false. When true, returns compact runtime observability for sanity checks instead of the full status payload. Used only when `params` and `arguments` are absent."
-                },
-                "bind_current": {
-                    "type": "boolean",
-                    "description": "Flattened start_coding_task flag. Defaults to true and enables same-window/project/repository continuation through process-local and hashed durable exact bindings. Explicit resume without stable window identity remains allowed but cannot bind. Used only when `params` and `arguments` are absent."
-                },
-                "new_session": {
-                    "type": "boolean",
-                    "description": "Flattened start_coding_task isolation flag. Defaults to false. Set true only to create and bind an independent Workflow Session; title changes never imply isolation. Used only when `params` and `arguments` are absent."
                 },
                 "path": {
                     "type": "string",
@@ -2039,11 +2004,10 @@ fn tool_call_request_properties_mut(
 }
 
 fn insert_tool_call_request_flattened_arg_properties(schemas: &mut Value) {
-    let mut specs = registered_tool_specs();
-    // Hidden from ordinary model discovery, but retained here so legacy generic
-    // API callers keep the advanced flattened start_coding_task argument schema.
-    specs.push(start_coding_task_compatibility_spec());
-    insert_tool_call_request_flattened_arg_properties_for_specs(schemas, specs);
+    // The GPT Actions schema is a model-facing contract. Hidden runtime
+    // compatibility specs remain parser/dispatch contracts and must not add
+    // selector names or flattened fields here.
+    insert_tool_call_request_flattened_arg_properties_for_specs(schemas, registered_tool_specs());
 }
 
 fn insert_tool_call_request_flattened_arg_properties_for_specs(
@@ -2113,7 +2077,7 @@ fn insert_tool_call_request_reserved_properties(schemas: &mut Value) {
         json!({
             "type": "string",
             "description": format!(
-                "Runtime tool name. Accepted values: {}. Prefer tool_manifest for daily discovery; use listRuntimeTools for schema debugging.",
+                "Model-visible runtime tool name. Accepted model-facing values: {}. Prefer tool_manifest for daily discovery; use listRuntimeTools for schema debugging.",
                 crate::tool_runtime::tool_definition::model_visible_tool_names_csv()
             )
         }),
@@ -2140,7 +2104,7 @@ fn insert_tool_call_request_reserved_properties(schemas: &mut Value) {
         TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string(),
         json!({
             "type": "string",
-            "description": "Optional recorder metadata for the generic wrapper call. Pass an explicit wc_sess_* id from start_session to record this call in the session ledger and enforce that recorder session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id for ordinary tool input such as session_summary.session_id or post_session_message.session_id."
+            "description": "Optional recorder metadata for the generic wrapper call. Pass an existing explicit wc_sess_* id to record this call in that session ledger and enforce the recorder session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id only when the selected model-visible tool declares it as business input."
         }),
     );
 }

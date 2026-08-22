@@ -745,6 +745,55 @@ async fn http_start_coding_task_default_response_is_standard() {
 }
 
 #[tokio::test]
+async fn http_hidden_start_coding_task_keeps_params_and_arguments_advanced_compatibility() {
+    let _compact = ActionCompactEnvGuard::disabled();
+    for wrapper in ["params", "arguments"] {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let (runtime, registry) = register_import_agent_with_capabilities(
+            tmp_proj.path(),
+            Some(crate::shell_protocol::ShellClientCapabilities {
+                shell: true,
+                file_read: true,
+                file_write: true,
+                git: true,
+                ..Default::default()
+            }),
+        )
+        .await;
+        let executor = spawn_startup_agent_executor(registry);
+        let service = Service::new(build_projects_router(config, db, runtime));
+        let advanced = json!({
+            "project": "agent:importer:demo",
+            "mode": "read_only",
+            "detail": "minimal",
+            "bind_current": false
+        });
+        let body = if wrapper == "params" {
+            json!({"tool": "start_coding_task", "params": advanced})
+        } else {
+            json!({"tool": "start_coding_task", "arguments": advanced})
+        };
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&body)
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK, "{wrapper}: {body}");
+        let output: Value = resp.take_json().await.unwrap();
+        assert_eq!(output["success"], true, "{wrapper}: {output}");
+        assert_eq!(output["output"]["detail"], "minimal");
+        assert_eq!(output["output"]["session"]["mode"], "read_only");
+        assert!(output["output"]["session"]["session_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("wc_sess_")));
+        executor.abort();
+    }
+}
+
+#[tokio::test]
 async fn http_start_coding_task_action_compact_wraps_the_shared_core_brief() {
     let _compact = ActionCompactEnvGuard::enabled();
 

@@ -6,6 +6,7 @@ use crate::tool_runtime::tool_spec::ToolSpec;
 
 /// Non-model-facing contract retained for direct/API compatibility. This is
 /// intentionally not returned by `tool_specs()` or ordinary MCP discovery.
+#[allow(dead_code)]
 pub(super) fn start_coding_task_compatibility_spec() -> ToolSpec {
     tool_spec(
         "start_coding_task",

@@ -35,7 +35,8 @@ role selector.
 - `start_coding_task` remains an advanced/direct compatibility bootstrap for callers
   that explicitly need managed temporary projects, Session mode/guards, execution
   context, startup detail, exact resume, current binding, or new-session isolation.
-  Ordinary model coding/review should use `work_on_project`.
+  It is intentionally absent from ordinary MCP/OpenAPI model discovery and generic
+  Action flattened fields. Ordinary model coding/review should use `work_on_project`.
 - Choose behavioral roles in the **task instruction**. For implementation work,
   explicitly say to use `implementation_owner` guidance. For a separate review,
   explicitly say to use `independent_review` guidance.

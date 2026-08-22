@@ -49,13 +49,39 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "client_id",
         "path",
         "temporary_project_name",
+        "title",
+        "mode",
+        "deny_write_tools",
+        "deny_shell_tools",
+        "execution_context",
         "detail",
+        "resume_session_id",
+        "bind_current",
+        "new_session",
     ] {
         assert!(start_props.contains_key(field), "missing {field}");
     }
     assert_eq!(start_schema["oneOf"].as_array().unwrap().len(), 3);
     assert_eq!(start_props["bind_current"]["default"], true);
     assert_eq!(start_props["new_session"]["default"], false);
+    let work = spec_named(&specs, "work_on_project");
+    let work_props = work.input_schema["properties"].as_object().unwrap();
+    for advanced in [
+        "temporary_project_name",
+        "mode",
+        "deny_write_tools",
+        "deny_shell_tools",
+        "execution_context",
+        "detail",
+        "resume_session_id",
+        "bind_current",
+        "new_session",
+    ] {
+        assert!(
+            !work_props.contains_key(advanced),
+            "work_on_project must not grow advanced start knob {advanced}"
+        );
+    }
     for removed in [
         "include_runtime_status",
         "compact_startup",
@@ -162,10 +188,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "project",
         "client_id",
         "path",
-        "temporary_project_name",
-        "detail",
-        "bind_current",
-        "new_session",
+        "execution_context",
         "include_hygiene",
         "include_handoff",
         "include_workspace",
@@ -175,9 +198,28 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     ] {
         assert!(
             properties.contains_key(field),
-            "ToolCallRequest missing flattened field {field}"
+            "ToolCallRequest missing model-visible flattened field {field}"
         );
     }
+    for field in [
+        "temporary_project_name",
+        "mode",
+        "deny_write_tools",
+        "deny_shell_tools",
+        "detail",
+        "resume_session_id",
+        "bind_current",
+        "new_session",
+    ] {
+        assert!(
+            !properties.contains_key(field),
+            "ToolCallRequest must not expose hidden start-only flattened field {field}"
+        );
+    }
+    assert!(!tool_call["description"]
+        .as_str()
+        .unwrap()
+        .contains("start_coding_task"));
     for field in [
         "expected_failure",
         "expected_failure_kind",

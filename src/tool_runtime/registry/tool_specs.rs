@@ -28,6 +28,7 @@ pub(crate) fn registered_tool_specs() -> Vec<ToolSpec> {
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn start_coding_task_compatibility_spec() -> ToolSpec {
     coding_tasks::start_coding_task_compatibility_spec()
 }

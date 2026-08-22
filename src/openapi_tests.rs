@@ -3,9 +3,7 @@ use crate::tool_runtime::TOOL_CALL_WRAPPER_FIELDS;
 
 fn runtime_accepted_flattened_action_fields() -> std::collections::BTreeSet<String> {
     let mut fields = std::collections::BTreeSet::new();
-    let mut specs = registered_tool_specs();
-    specs.push(crate::tool_runtime::start_coding_task_compatibility_spec());
-    for spec in specs {
+    for spec in registered_tool_specs() {
         fields.extend(accepted_flattened_args_for_spec(&spec));
     }
     fields
@@ -19,11 +17,29 @@ fn flattened_schema_alternatives(schema: &Value) -> Vec<&Value> {
 }
 
 #[test]
-fn openapi_flattened_session_mode_includes_inspect() {
+fn openapi_hidden_start_only_fields_do_not_enter_model_facing_flattened_schema() {
     let spec = build_openapi_spec();
-    assert_eq!(
-        spec["components"]["schemas"]["ToolCallRequest"]["properties"]["mode"]["enum"],
-        json!(["normal", "inspect", "read_only"])
+    let properties = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
+        .as_object()
+        .unwrap();
+    for field in [
+        "temporary_project_name",
+        "mode",
+        "deny_write_tools",
+        "deny_shell_tools",
+        "detail",
+        "resume_session_id",
+        "bind_current",
+        "new_session",
+    ] {
+        assert!(
+            !properties.contains_key(field),
+            "hidden start-only flattened field {field} must not enter GPT Actions ToolCallRequest"
+        );
+    }
+    assert!(
+        properties.contains_key("execution_context"),
+        "execution_context stays model-facing because update_session_context uses it"
     );
 }
 
@@ -45,39 +61,17 @@ fn openapi_flattened_execution_context_is_strongly_typed() {
 }
 
 #[test]
-fn explicit_resume_openapi_metadata_is_distinct_from_session_recording() {
+fn openapi_tool_call_request_does_not_advertise_hidden_start_bootstrap() {
     let spec = build_openapi_spec();
-    let properties = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
-        .as_object()
-        .unwrap();
-    let resume = &properties["resume_session_id"];
-    assert_eq!(resume["type"], "string");
-    assert_eq!(resume["pattern"], "^wc_sess_[A-Za-z0-9_]+$");
-    let resume_description = resume["description"].as_str().unwrap();
-    for phrase in [
-        "start_coding_task business input",
-        "failure never falls back or creates",
-        "without stable window identity",
-        "mutually exclusive with new_session=true",
-    ] {
-        assert!(
-            resume_description.to_lowercase().contains(phrase),
-            "missing {phrase}: {resume_description}"
-        );
-    }
-    assert_ne!(
-        resume["description"],
-        properties["session_id"]["description"]
-    );
-    assert_ne!(
-        resume["description"],
-        properties[TOOL_CALL_RECORDING_SESSION_ID_FIELD]["description"]
-    );
-    let wrapper_description = spec["components"]["schemas"]["ToolCallRequest"]["description"]
+    let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
+    let wrapper_description = tool_call["description"].as_str().unwrap();
+    let tool_description = tool_call["properties"][TOOL_CALL_TOOL_FIELD]["description"]
         .as_str()
         .unwrap();
-    assert!(wrapper_description.contains("resume_session_id"));
-    assert!(wrapper_description.contains("cannot establish a current binding"));
+    assert!(!wrapper_description.contains("start_coding_task"));
+    assert!(!tool_description.contains("start_coding_task"));
+    assert!(tool_description.contains("work_on_project"));
+    assert!(wrapper_description.contains("model-visible runtime tools"));
 }
 
 /// Recursively collect every `$ref` string found anywhere in a JSON value.
@@ -994,10 +988,8 @@ fn openapi_call_runtime_tool_params_is_explicit_object() {
         );
     for phrase in [
         "record this wrapper call in the session ledger",
-        "process-local cache can be restored after restart",
-        "hashed durable projection",
-        "missing identity never falls back",
-        "session_id or recording_session_id still wins",
+        "Explicit business ids win over current-session lookup",
+        "missing window identity never falls back",
     ] {
         assert!(
             description.contains(phrase),
@@ -1020,10 +1012,11 @@ fn openapi_call_runtime_tool_params_is_explicit_object() {
             && session_desc.contains("wins over current-session binding"),
         "session_id should describe explicit session priority: {session_desc}"
     );
-    let start_example = &spec["paths"]["/api/tools/call"]["post"]["requestBody"]["content"]
-        ["application/json"]["examples"]["trackedSession"]["value"];
-    assert_eq!(start_example["mode"], "read_only");
-    assert_eq!(start_example["title"], "implement show_changes follow-up");
+    let work_example = &spec["paths"]["/api/tools/call"]["post"]["requestBody"]["content"]
+        ["application/json"]["examples"]["workOnAbsolutePath"]["value"];
+    assert_eq!(work_example["tool"], "work_on_project");
+    assert_eq!(work_example["client_id"], "special");
+    assert_eq!(work_example["instruction"], "Complete the development task");
     // `tool` remains required; `params` is optional (advanced callers may
     // omit it for argument-less tools).
     let required = tool_call["required"].as_array().unwrap();
@@ -1148,7 +1141,7 @@ fn openapi_flattened_arg_table_does_not_overwrite_existing_properties() {
 }
 
 #[test]
-fn openapi_tool_call_request_exposes_canonical_closeout_and_detail_fields() {
+fn openapi_tool_call_request_exposes_canonical_closeout_and_visible_runtime_fields() {
     let spec = build_openapi_spec();
     let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
     let properties = tool_call["properties"].as_object().unwrap();
@@ -1157,7 +1150,6 @@ fn openapi_tool_call_request_exposes_canonical_closeout_and_detail_fields() {
         "include_validation",
         "include_workspace",
         "include_checkpoints",
-        "detail",
         "compact",
         "include_recommended_flows",
         "include_risk_summary",
@@ -1171,14 +1163,13 @@ fn openapi_tool_call_request_exposes_canonical_closeout_and_detail_fields() {
     assert_eq!(properties["include_validation"]["type"], "boolean");
     assert_eq!(properties["include_workspace"]["type"], "boolean");
     assert_eq!(properties["include_checkpoints"]["type"], "boolean");
-    assert_eq!(properties["detail"]["type"], "string");
-    assert_eq!(
-        properties["detail"]["enum"],
-        json!(["minimal", "standard", "full"])
-    );
     assert_eq!(properties["compact"]["type"], "boolean");
     assert_eq!(properties["include_recommended_flows"]["type"], "boolean");
     assert_eq!(properties["include_risk_summary"]["type"], "boolean");
+    assert!(
+        !properties.contains_key("detail"),
+        "hidden start-only detail field must not be model-facing"
+    );
     for removed_startup_field in [
         "compact_startup",
         "include_tool_manifest",
@@ -1593,6 +1584,24 @@ fn openapi_call_runtime_tool_examples_cover_alias_and_no_params() {
         }),
         "callRuntimeTool examples should include an argument-less variant"
     );
+}
+
+#[test]
+fn openapi_call_runtime_tool_examples_only_advertise_model_visible_tools() {
+    let spec = build_openapi_spec();
+    let examples = spec["paths"]["/api/tools/call"]["post"]["requestBody"]["content"]
+        ["application/json"]["examples"]
+        .as_object()
+        .unwrap();
+    for (example_name, example) in examples {
+        let Some(tool) = example["value"]["tool"].as_str() else {
+            continue;
+        };
+        assert!(
+            crate::tool_runtime::tool_definition::is_model_visible_tool_name(tool),
+            "generic Action example {example_name} advertises hidden runtime tool {tool}"
+        );
+    }
 }
 
 #[test]

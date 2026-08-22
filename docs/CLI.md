@@ -61,7 +61,8 @@ profile credentials, and `agent.toml` are preserved.
 
 After connecting an MCP coding client, see the [Coding Workflow](CODING_WORKFLOW.md) for the
 canonical `work_on_project` model bootstrap, behavioral guidance, validation, and closeout
-evidence. `start_coding_task` remains available to explicit advanced/direct callers.
+evidence. `start_coding_task` remains available only to explicit advanced/direct callers and is
+not advertised by ordinary MCP/GPT Actions model discovery.
 
 ### Enrollment
 

@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 
 use super::sessions::{session_execution_context_schema, session_mode_schema};
 
+#[allow(dead_code)]
 pub(crate) fn start_coding_task_input_schema() -> Value {
     json!({
         "type": "object",

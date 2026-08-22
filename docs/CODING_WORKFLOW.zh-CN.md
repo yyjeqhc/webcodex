@@ -30,7 +30,8 @@ instructions；它不是 role selector。
   Job state 仍会显式返回。
 - `start_coding_task` 保留为 advanced/direct compatibility bootstrap，只供明确需要 managed
   temporary project、Session mode/guards、execution context、startup detail、精确 resume、
-  current binding 或 new-session isolation 的 caller 使用。普通模型 coding/review 使用
+  current binding 或 new-session isolation 的 caller 使用。它不会进入普通 MCP/OpenAPI
+  model discovery 或 generic Action flattened fields；普通模型 coding/review 使用
   `work_on_project`。
 - behavioral role 由 **task instruction** 显式选择。实现任务明确写使用
   `implementation_owner` guidance；独立评审明确写使用 `independent_review` guidance。

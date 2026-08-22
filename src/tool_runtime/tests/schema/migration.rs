@@ -666,17 +666,16 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
     let tool_call_properties = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
         .as_object()
         .expect("ToolCallRequest properties");
-    for field in [
-        "summary_only",
-        "include_command_preview",
-        "detail",
-        "compact",
-    ] {
+    for field in ["summary_only", "include_command_preview", "compact"] {
         assert!(
             tool_call_properties.contains_key(field),
             "callRuntimeTool must keep flattened GPT Action field {field}"
         );
     }
+    assert!(
+        !tool_call_properties.contains_key("detail"),
+        "hidden start-only detail must not be published by callRuntimeTool"
+    );
     for field in [
         "expected_failure",
         "expected_failure_kind",

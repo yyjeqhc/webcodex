@@ -1785,7 +1785,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
 }
 
 #[tokio::test]
-async fn tool_manifest_and_advanced_compat_flattened_args_are_declared_in_action_schema() {
+async fn tool_manifest_model_fields_and_hidden_start_compatibility_stay_separate() {
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
@@ -1828,20 +1828,37 @@ async fn tool_manifest_and_advanced_compat_flattened_args_are_declared_in_action
         crate::tool_runtime::registry::accepted_flattened_args_for_spec(&start)
             .into_iter()
             .collect::<BTreeSet<_>>();
-    for field in &compatibility_fields {
+    for field in [
+        "temporary_project_name",
+        "mode",
+        "deny_write_tools",
+        "deny_shell_tools",
+        "detail",
+        "resume_session_id",
+        "bind_current",
+        "new_session",
+    ] {
+        assert!(compatibility_fields.contains(field));
         assert!(
-            properties.contains_key(field),
-            "advanced start_coding_task flattened arg {field} must remain declared by ToolCallRequest.properties"
+            !accepted_fields.contains(field),
+            "{field} is start-only and must not be owned by the model-visible manifest"
+        );
+        assert!(
+            !properties.contains_key(field),
+            "start-only flattened arg {field} must remain direct/API-only"
         );
     }
+    assert!(compatibility_fields.contains("execution_context"));
+    assert!(accepted_fields.contains("execution_context"));
+    assert!(properties.contains_key("execution_context"));
 
     for field in properties.keys() {
         if TOOL_CALL_WRAPPER_FIELDS.contains(&field.as_str()) {
             continue;
         }
         assert!(
-            accepted_fields.contains(field) || compatibility_fields.contains(field),
-            "ToolCallRequest.properties declares flattened field {field}, but neither a model manifest entry nor the advanced start_coding_task compatibility spec accepts it"
+            accepted_fields.contains(field),
+            "ToolCallRequest.properties declares flattened field {field}, but no model-visible manifest entry accepts it"
         );
     }
 }

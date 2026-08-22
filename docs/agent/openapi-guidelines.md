@@ -22,8 +22,11 @@ When adding or renaming a runtime tool, update **all** of:
 7. MCP schema tests  
 8. consistency tests  
 
-Tool metadata, registry, OAuth scope policy, MCP `tools/list`, and OpenAPI
-`callRuntimeTool` names must stay synchronized.
+Runtime parser/metadata/OAuth policy must stay synchronized for every known tool.
+The **model-visible** registry, MCP `tools/list`, `tool_manifest`, and GPT Actions
+`ToolCallRequest` selector/flattened fields must separately stay synchronized with
+`registered_tool_specs()`. Hidden direct/API compatibility specs must not leak
+names or start-only fields into the model-facing Action schema.
 
 ---
 
@@ -98,12 +101,15 @@ failures. `policy_rejected` means policy blocked the request before a write.
   `arguments`.
 - Use `recording_session_id` for generic wrapper recorder metadata.
 - Use `session_id` as tool business input.
-- When a runtime-only tool is expected to work through GPT Action
+- When a **model-visible** runtime tool is expected to work through GPT Action
   `callRuntimeTool` with flattened top-level fields, `ToolCallRequest.properties`
   must expose **every** flattened field that GPT Actions need (including nested
   object/list payload fields such as `edits`, `validation`, `labels`,
   `checkpoint_id`, `confirm`, `dry_run`, `include_untracked`, and
-  `include_diff_stat`).
+  `include_diff_stat`). Hidden direct/API compatibility tools remain out-of-band
+  parser/dispatch contracts and must not contribute flattened model fields;
+  explicit direct callers should prefer `params` or `arguments`, while any
+  retained historical flattened form stays a runtime compatibility detail only.
 - Add/update tests that fail when flattened Action fields are missing.
 - Do **not** loosen `additionalProperties` to `true` as a workaround — list the
   needed flattened fields explicitly.

@@ -78,6 +78,42 @@ where
     }
 }
 
+/// Parse an optional JSON request body while distinguishing a truly absent body
+/// from malformed non-empty JSON. Empty/whitespace bodies and explicit `null`
+/// preserve legacy no-argument behavior; malformed bodies fail closed with 400
+/// instead of silently widening a targeted inventory request.
+pub(crate) async fn parse_optional_json_body(
+    req: &mut Request,
+    res: &mut Response,
+) -> Option<Value> {
+    let payload = match req.payload().await {
+        Ok(payload) => payload,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Failed to read request body: {}", e),
+            ));
+            return None;
+        }
+    };
+    if payload.is_empty() || payload.iter().all(|byte| byte.is_ascii_whitespace()) {
+        return Some(Value::Object(Default::default()));
+    }
+    match serde_json::from_slice::<Value>(payload) {
+        Ok(Value::Null) => Some(Value::Object(Default::default())),
+        Ok(body) => Some(body),
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            None
+        }
+    }
+}
+
 fn render_result(
     res: &mut Response,
     audit: &ActionAudit,
@@ -401,17 +437,10 @@ pub async fn runtime_status(req: &mut Request, depot: &mut Depot, res: &mut Resp
     let Some(runtime) = require_runtime(depot, res) else {
         return;
     };
-    // Body remains optional for compatibility. When present, parse it through
-    // the canonical tool-call contract so the focused client_id path is shared
-    // with MCP/generic runtime calls.
-    let body: Value = match req.parse_json().await {
-        Ok(body) => body,
-        Err(_) => Value::Null,
-    };
-    let arguments = if body.is_null() {
-        Value::Object(Default::default())
-    } else {
-        body
+    // Body remains optional for compatibility. Non-empty malformed JSON must
+    // fail closed instead of silently widening a focused request to fleet-wide.
+    let Some(arguments) = parse_optional_json_body(req, res).await else {
+        return;
     };
     let call = match ToolCall::from_tool_name("runtime_status", arguments) {
         Ok(call) => call,

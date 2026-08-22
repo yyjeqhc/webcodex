@@ -51,6 +51,34 @@ async fn http_projects_list_ignores_server_configured_projects() {
     );
 }
 
+#[tokio::test]
+async fn http_projects_list_optional_body_accepts_empty_and_rejects_malformed_json() {
+    let config = super::test_config(Some("secret"));
+    let (_tmp, db) = super::test_db();
+    let tmp_proj = tempfile::tempdir().unwrap();
+    let runtime = Arc::new(super::runtime_with_local_project(tmp_proj.path(), "demo"));
+    let service = Service::new(super::build_projects_router(config, db, runtime));
+
+    let resp = TestClient::post("http://localhost/api/projects/list")
+        .bearer_auth("secret")
+        .send(&service)
+        .await;
+    assert_eq!(super::effective_status(&resp), StatusCode::OK);
+
+    let mut resp = TestClient::post("http://localhost/api/projects/list")
+        .bearer_auth("secret")
+        .add_header("content-type", "application/json", true)
+        .body("{\"client_id\":")
+        .send(&service)
+        .await;
+    assert_eq!(super::effective_status(&resp), StatusCode::BAD_REQUEST);
+    let body: Value = resp.take_json().await.unwrap();
+    assert_eq!(body["status"], 400);
+    assert!(body["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("Invalid JSON")));
+}
+
 // =========================================================================
 // register_project / create_project REST endpoints
 // =========================================================================

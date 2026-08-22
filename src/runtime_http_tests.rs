@@ -527,6 +527,34 @@ async fn http_runtime_status_correct_bearer_returns_summary() {
     }
 }
 
+#[tokio::test]
+async fn http_runtime_status_optional_body_accepts_empty_and_rejects_malformed_json() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let tmp_proj = tempfile::tempdir().unwrap();
+    let (runtime, _registry) = register_import_agent(tmp_proj.path()).await;
+    let service = Service::new(build_projects_router(config, db, runtime));
+
+    let resp = TestClient::post("http://localhost/api/runtime/status")
+        .bearer_auth("secret")
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::OK);
+
+    let mut resp = TestClient::post("http://localhost/api/runtime/status")
+        .bearer_auth("secret")
+        .add_header("content-type", "application/json", true)
+        .body("{\"client_id\":")
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+    let body: Value = resp.take_json().await.unwrap();
+    assert_eq!(body["status"], 400);
+    assert!(body["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("Invalid JSON")));
+}
+
 // =========================================================================
 // Phase 2: callRuntimeTool / /api/tools/call generic entry point
 // =========================================================================

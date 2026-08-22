@@ -737,6 +737,37 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
 }
 
 #[test]
+fn targeted_inventory_tool_calls_reject_unknown_filter_fields() {
+    for (tool, arguments, typo) in [
+        (
+            "list_projects",
+            serde_json::json!({"clinet_id": "special"}),
+            "clinet_id",
+        ),
+        (
+            "list_agents",
+            serde_json::json!({"clinet_id": "special"}),
+            "clinet_id",
+        ),
+        (
+            "runtime_status",
+            serde_json::json!({"clinet_id": "special"}),
+            "clinet_id",
+        ),
+        (
+            "list_jobs",
+            serde_json::json!({"sesion_id": "wc_sess_example"}),
+            "sesion_id",
+        ),
+    ] {
+        let error = ToolCall::from_tool_name(tool, arguments)
+            .expect_err("unknown targeted-inventory fields must not widen the query");
+        assert!(error.contains("unknown field"), "{tool}: {error}");
+        assert!(error.contains(typo), "{tool}: {error}");
+    }
+}
+
+#[test]
 fn targeted_inventory_audit_summaries_do_not_persist_raw_query_or_id_filters() {
     let query = "/private/worktree/needle";
     let raw = serde_json::json!({

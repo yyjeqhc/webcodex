@@ -1844,6 +1844,40 @@ fn reject_unknown_search_project_texts_fields(arguments: &Value) -> Result<(), S
     ))
 }
 
+fn reject_unknown_targeted_inventory_fields(
+    tool_name: &str,
+    arguments: &Value,
+) -> Result<(), String> {
+    let allowed: &[&str] = match tool_name {
+        "list_projects" => &["client_id", "project", "query", "limit", "summary_only"],
+        "list_agents" => &[
+            "client_id",
+            "client_ids",
+            "include_projects",
+            "summary_only",
+        ],
+        "runtime_status" => &["client_id", "compact", "summary_only"],
+        "list_jobs" => &["limit", "status", "project", "session_id"],
+        _ => return Ok(()),
+    };
+    let Some(object) = arguments.as_object() else {
+        return Ok(());
+    };
+    let unknown: Vec<&str> = object
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !allowed.contains(key))
+        .collect();
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid arguments for tool '{tool_name}': unknown field(s) {}",
+            unknown.join(", ")
+        ))
+    }
+}
+
 fn reject_unknown_bounded_computer_fields(
     tool_name: &str,
     arguments: &Value,
@@ -1916,6 +1950,12 @@ impl ToolCall {
         }
         if name == "search_project_texts" {
             reject_unknown_search_project_texts_fields(&arguments)?;
+        }
+        if matches!(
+            name,
+            "list_projects" | "list_agents" | "runtime_status" | "list_jobs"
+        ) {
+            reject_unknown_targeted_inventory_fields(name, &arguments)?;
         }
         if matches!(
             name,

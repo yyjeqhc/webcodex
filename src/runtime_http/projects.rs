@@ -1,4 +1,4 @@
-use super::{parse_json_body, render_result, require_runtime};
+use super::{parse_json_body, parse_optional_json_body, render_result, require_runtime};
 use crate::action_audit::ActionAudit;
 use crate::tool_runtime::ToolCall;
 use salvo::prelude::*;
@@ -62,17 +62,11 @@ pub async fn projects_list(req: &mut Request, depot: &mut Depot, res: &mut Respo
     let Some(runtime) = require_runtime(depot, res) else {
         return;
     };
-    // Body remains optional for compatibility. When present, parse it through
-    // the canonical tool-call contract so dedicated REST and MCP/generic calls
-    // share the same bounded targeted-inventory validation.
-    let body: Value = match req.parse_json().await {
-        Ok(body) => body,
-        Err(_) => Value::Null,
-    };
-    let arguments = if body.is_null() {
-        Value::Object(Default::default())
-    } else {
-        body
+    // Body remains optional for compatibility. Non-empty malformed JSON must
+    // fail closed instead of silently widening a targeted request to the full
+    // caller-visible registry.
+    let Some(arguments) = parse_optional_json_body(req, res).await else {
+        return;
     };
     let call = match ToolCall::from_tool_name("list_projects", arguments) {
         Ok(call) => call,

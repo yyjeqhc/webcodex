@@ -7,7 +7,7 @@ use super::git_committed::{
     checked_git_pipeline_to_file, committed_git_discovery_prefix,
     committed_git_isolated_view_setup, normalize_exact_commit_id,
 };
-use super::helpers::{shell_escape_simple, validate_project_relative_path};
+use super::helpers::{decode_git_quoted_path, shell_escape_simple, validate_project_relative_path};
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
 
@@ -141,64 +141,6 @@ fn bounded_review_diff_command(
         error = GIT_REVIEW_ERROR_SENTINEL,
         failure = failure,
     )
-}
-
-fn decode_git_quoted_path(raw: &str) -> Option<String> {
-    let raw = raw.strip_suffix('\r').unwrap_or(raw);
-    if !raw.starts_with('"') {
-        return Some(raw.to_string());
-    }
-    if raw.len() < 2 || !raw.ends_with('"') {
-        return None;
-    }
-    let inner = &raw[1..raw.len() - 1];
-    let bytes = inner.as_bytes();
-    let mut out = Vec::with_capacity(inner.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b'\\' {
-            let ch = inner[index..].chars().next()?;
-            let mut buf = [0u8; 4];
-            out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
-            index += ch.len_utf8();
-            continue;
-        }
-        index += 1;
-        let escaped = *bytes.get(index)?;
-        match escaped {
-            b'a' => out.push(0x07),
-            b'b' => out.push(0x08),
-            b't' => out.push(b'\t'),
-            b'n' => out.push(b'\n'),
-            b'v' => out.push(0x0b),
-            b'f' => out.push(0x0c),
-            b'r' => out.push(b'\r'),
-            b'\\' => out.push(b'\\'),
-            b'"' => out.push(b'"'),
-            b'0'..=b'7' => {
-                let mut value = (escaped - b'0') as u16;
-                let mut consumed = 1;
-                while consumed < 3 {
-                    let Some(next) = bytes.get(index + consumed).copied() else {
-                        break;
-                    };
-                    if !(b'0'..=b'7').contains(&next) {
-                        break;
-                    }
-                    value = value * 8 + (next - b'0') as u16;
-                    consumed += 1;
-                }
-                if value > u8::MAX as u16 {
-                    return None;
-                }
-                out.push(value as u8);
-                index += consumed - 1;
-            }
-            _ => return None,
-        }
-        index += 1;
-    }
-    String::from_utf8(out).ok()
 }
 
 fn bounded_output_path(path: String) -> (Option<String>, bool) {
@@ -1320,6 +1262,14 @@ mod tests {
             "space name.rs"
         );
         assert_eq!(decode_git_quoted_path("路径.rs").unwrap(), "路径.rs");
+        assert_eq!(
+            decode_git_quoted_path("secret key.pem\t").unwrap(),
+            "secret key.pem"
+        );
+        assert_eq!(
+            decode_git_quoted_path("\"secret\\tkey.pem\"\t").unwrap(),
+            "secret\tkey.pem"
+        );
         assert_eq!(
             decode_git_quoted_path("\"tab\\tname.rs\"").unwrap(),
             "tab\tname.rs"

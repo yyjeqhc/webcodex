@@ -896,6 +896,87 @@ pub(crate) fn validate_project_relative_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Decode Git's C-style quoted path representation. `core.quotePath=false`
+/// preserves UTF-8 but Git still quotes whitespace/control characters, so
+/// callers must decode before applying path policy or returning path metadata.
+pub(crate) fn decode_git_quoted_path(raw: &str) -> Option<String> {
+    let raw = raw.strip_suffix('\r').unwrap_or(raw);
+    let raw = if raw.starts_with('"') {
+        let bytes = raw.as_bytes();
+        let mut index = 1usize;
+        let mut closing = None;
+        while index < bytes.len() {
+            match bytes[index] {
+                b'\\' => index = index.saturating_add(2),
+                b'"' => {
+                    closing = Some(index);
+                    break;
+                }
+                _ => index += 1,
+            }
+        }
+        let closing = closing?;
+        let suffix = &raw[closing + 1..];
+        if !suffix.is_empty() && !suffix.starts_with('\t') {
+            return None;
+        }
+        &raw[..=closing]
+    } else {
+        raw.split_once('\t').map(|(path, _)| path).unwrap_or(raw)
+    };
+    if !raw.starts_with('"') {
+        return Some(raw.to_string());
+    }
+    let inner = &raw[1..raw.len() - 1];
+    let bytes = inner.as_bytes();
+    let mut out = Vec::with_capacity(inner.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'\\' {
+            let ch = inner[index..].chars().next()?;
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+            index += ch.len_utf8();
+            continue;
+        }
+        index += 1;
+        let escaped = *bytes.get(index)?;
+        match escaped {
+            b'a' => out.push(0x07),
+            b'b' => out.push(0x08),
+            b't' => out.push(b'\t'),
+            b'n' => out.push(b'\n'),
+            b'v' => out.push(0x0b),
+            b'f' => out.push(0x0c),
+            b'r' => out.push(b'\r'),
+            b'\\' => out.push(b'\\'),
+            b'"' => out.push(b'"'),
+            b'0'..=b'7' => {
+                let mut value = (escaped - b'0') as u16;
+                let mut consumed = 1;
+                while consumed < 3 {
+                    let Some(next) = bytes.get(index + consumed).copied() else {
+                        break;
+                    };
+                    if !(b'0'..=b'7').contains(&next) {
+                        break;
+                    }
+                    value = value * 8 + (next - b'0') as u16;
+                    consumed += 1;
+                }
+                if value > u8::MAX as u16 {
+                    return None;
+                }
+                out.push(value as u8);
+                index += consumed - 1;
+            }
+            _ => return None,
+        }
+        index += 1;
+    }
+    String::from_utf8(out).ok()
+}
+
 pub(crate) fn validate_raw_shell_command_length(command: &str) -> Result<(), String> {
     if command.len() > RAW_SHELL_COMMAND_MAX_BYTES {
         return Err(format!(

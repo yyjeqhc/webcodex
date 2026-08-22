@@ -975,6 +975,92 @@ async fn git_diff_hunks_committed_exact_range_isolated_targeted_and_head_attribu
 }
 
 #[tokio::test]
+async fn git_diff_hunks_never_returns_secret_path_content_in_any_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    write_git_review_fixture_file(tmp.path(), ".env", "API_TOKEN=base-secret\n");
+    write_git_review_fixture_file(tmp.path(), "secret key.pem", "API_TOKEN=worktree-base\n");
+    let base = commit_git_review_fixture(tmp.path(), "secret base");
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::rename(tmp.path().join(".env"), tmp.path().join("src/config.rs")).unwrap();
+    write_git_review_fixture_file(tmp.path(), "src/config.rs", "API_TOKEN=committed-secret\n");
+    let head = commit_git_review_fixture(tmp.path(), "secret head");
+    write_git_review_fixture_file(tmp.path(), "secret key.pem", "API_TOKEN=dirty-secret\n");
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "diff-secret-boundary", "repo", tmp.path())
+            .await;
+
+    let (committed, _, _) = run_agent_git_diff_hunks_committed_page(
+        &runtime,
+        "diff-secret-boundary",
+        &project,
+        tmp.path(),
+        None,
+        20,
+        120,
+        base,
+        head,
+        None,
+    )
+    .await;
+    assert!(!committed.success);
+    assert_eq!(committed.output["reason_code"], "sensitive_path");
+    let committed_serialized = serde_json::to_string(&committed).unwrap();
+    for secret in [
+        "base-secret",
+        "committed-secret",
+        "worktree-base",
+        "dirty-secret",
+    ] {
+        assert!(
+            !committed_serialized.contains(secret),
+            "committed diff leaked protected content: {committed_serialized}"
+        );
+    }
+
+    let (worktree, _, _) = run_agent_git_diff_hunks_page(
+        &runtime,
+        "diff-secret-boundary",
+        &project,
+        tmp.path(),
+        None,
+        20,
+        120,
+        false,
+        None,
+    )
+    .await;
+    assert!(
+        !worktree.success,
+        "unexpected protected diff success: {worktree:?}"
+    );
+    assert_eq!(worktree.output["reason_code"], "sensitive_path");
+    let worktree_serialized = serde_json::to_string(&worktree).unwrap();
+    assert!(!worktree_serialized.contains("dirty-secret"));
+
+    let explicit = runtime
+        .git_diff_hunks_continued(
+            project,
+            Some(vec![".env".to_string()]),
+            Some(20),
+            Some(120),
+            Some(false),
+            None,
+        )
+        .await;
+    assert!(!explicit.success);
+    assert_eq!(explicit.output["reason_code"], "sensitive_path");
+    assert!(
+        next_patch_agent_request(&runtime, "diff-secret-boundary")
+            .await
+            .is_none(),
+        "explicit protected path must fail before Runner dispatch"
+    );
+}
+
+#[tokio::test]
 async fn git_diff_hunks_committed_range_validation_and_merge_base_fail_closed() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());

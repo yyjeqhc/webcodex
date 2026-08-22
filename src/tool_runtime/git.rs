@@ -12,8 +12,8 @@ use super::git_committed::{
     CommittedGitScope,
 };
 use super::helpers::{
-    run_command_sync_bounded, shell_escape_simple, validate_limited_cleanup_paths,
-    validate_project_relative_path, LocalRunFailure,
+    decode_git_quoted_path, run_command_sync_bounded, shell_escape_simple,
+    validate_limited_cleanup_paths, validate_project_relative_path, LocalRunFailure,
 };
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
@@ -2614,6 +2614,22 @@ fn clean_optional_paths(paths: Option<Vec<String>>) -> Result<Vec<String>, Strin
     Ok(clean)
 }
 
+fn git_diff_hunks_paths_include_secret(paths: &[String]) -> bool {
+    paths
+        .iter()
+        .any(|path| crate::sensitive_paths::is_secret_path(path))
+}
+
+fn git_diff_hunks_files_include_secret(files: &[Value]) -> bool {
+    files.iter().any(|file| {
+        ["path", "old_path"].into_iter().any(|field| {
+            file.get(field)
+                .and_then(Value::as_str)
+                .is_some_and(crate::sensitive_paths::is_secret_path)
+        })
+    })
+}
+
 pub(crate) fn git_diff_hunks_command(paths: &[String], cached: bool) -> Result<String, String> {
     let mut parts = vec!["git".to_string(), "diff".to_string()];
     if cached {
@@ -2996,9 +3012,11 @@ fn mark_git_diff_hunks_page_metadata(
 }
 
 fn strip_diff_prefix(path: &str) -> String {
-    path.strip_prefix("a/")
-        .or_else(|| path.strip_prefix("b/"))
-        .unwrap_or(path)
+    let decoded = decode_git_quoted_path(path).unwrap_or_else(|| path.to_string());
+    decoded
+        .strip_prefix("a/")
+        .or_else(|| decoded.strip_prefix("b/"))
+        .unwrap_or(&decoded)
         .to_string()
 }
 
@@ -3096,10 +3114,10 @@ pub(crate) fn parse_git_diff_hunks(
         } else if line.starts_with("deleted file mode ") {
             file.insert("status".to_string(), json!("deleted"));
         } else if let Some(path) = line.strip_prefix("rename from ") {
-            file.insert("old_path".to_string(), json!(path));
+            file.insert("old_path".to_string(), json!(strip_diff_prefix(path)));
             file.insert("status".to_string(), json!("renamed"));
         } else if let Some(path) = line.strip_prefix("rename to ") {
-            file.insert("path".to_string(), json!(path));
+            file.insert("path".to_string(), json!(strip_diff_prefix(path)));
             file.insert("status".to_string(), json!("renamed"));
         } else if line.starts_with("Binary files ") {
             file.insert("binary".to_string(), json!(true));
@@ -3469,6 +3487,16 @@ impl ToolRuntime {
             Ok(paths) => paths,
             Err(e) => return ToolResult::err(e),
         };
+        if git_diff_hunks_paths_include_secret(&paths) {
+            return git_diff_hunks_failure(
+                &project,
+                &paths,
+                cached.unwrap_or(false),
+                "sensitive_path",
+                None,
+                "",
+            );
+        }
         let committed_range = match normalize_git_diff_hunks_committed_range(
             base_commit.as_deref(),
             head_commit.as_deref(),
@@ -3719,6 +3747,16 @@ impl ToolRuntime {
         }
         let (mut files, parsed_hunks, parser_truncated) =
             parse_git_diff_hunks(&wire.diff, MAX_MAX_HUNKS, MAX_MAX_HUNK_LINES);
+        if git_diff_hunks_files_include_secret(&files) {
+            return git_diff_hunks_failure(
+                &project,
+                &paths,
+                cached,
+                "sensitive_path",
+                output.exit_code,
+                "",
+            );
+        }
         let marked_hunks = mark_git_diff_hunks_page_metadata(
             &mut files,
             &wire.truncated_hunks,

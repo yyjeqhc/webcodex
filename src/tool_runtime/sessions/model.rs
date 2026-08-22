@@ -294,7 +294,9 @@ pub(super) struct SessionRecord {
     pub(super) project: Option<String>,
     /// Domain-separated SHA-256 of the canonical creation-time authority group.
     /// The historical field name is retained for ledger compatibility; the raw
-    /// authority identity is never stored.
+    /// authority identity is never stored. Restore may use a private noncanonical
+    /// marker for a malformed persisted value so it remains distinguishable from
+    /// a genuinely absent legacy field and permanently fails authorization.
     pub(super) owner_authority_fingerprint: Option<String>,
     pub(super) title: Option<String>,
     pub(super) mode: SessionMode,
@@ -512,6 +514,9 @@ pub(crate) enum CodingSessionError {
         request_project: String,
     },
     ResumeAuthorityMismatch {
+        session_id: String,
+    },
+    LegacySessionAuthorityUnverifiable {
         session_id: String,
     },
     ResumeNewSessionConflict,

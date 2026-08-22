@@ -160,13 +160,25 @@ impl PersistedSessionRecord {
     }
 }
 
+// Preserve the distinction between a genuinely absent legacy field and a
+// present-but-malformed value without retaining attacker-controlled material.
+// The marker is internal ledger state, is never a valid canonical fingerprint,
+// and therefore remains permanently fail-closed across subsequent rewrites.
+const INVALID_OWNER_AUTHORITY_FINGERPRINT_MARKER: &str =
+    "invalid_persisted_workflow_session_authority_fingerprint";
+
 fn sanitize_owner_authority_fingerprint(value: Option<String>) -> Option<String> {
-    let value = value?.trim().to_ascii_lowercase();
-    (value.len() == 64
-        && value
+    let value = value?;
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.len() == 64
+        && normalized
             .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
-    .then_some(value)
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        Some(normalized)
+    } else {
+        Some(INVALID_OWNER_AUTHORITY_FINGERPRINT_MARKER.to_string())
+    }
 }
 
 pub(super) fn cold_session_from_record(

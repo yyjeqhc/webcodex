@@ -700,19 +700,15 @@ impl ToolRuntime {
                 }
             }
         }
-        // A path-backed work_on_project call must let the Runner resolve or
-        // register the canonical project before exact Workflow Session
-        // validation. The wrapper delegates all Session checks to
-        // start_coding_task, so suppress only the generic pre-dispatch Session
-        // path here; the business session_id remains on the ToolCall.
-        let defer_path_work_session = matches!(
-            &call,
-            ToolCall::WorkOnProject {
-                project,
-                path: Some(path),
-                ..
-            } if project.trim().is_empty() && !path.trim().is_empty()
-        );
+        // work_on_project.session_id is explicit coding-resume business input,
+        // never a generic tool recorder. Its implementation delegates all exact
+        // Session/project/lifecycle/authority handling to start_coding_task. This
+        // is also the only safe place where a legacy project Session may prove a
+        // pre-existing durable current binding and atomically acquire the new
+        // canonical authority fence. Path-backed calls additionally need Runner
+        // project resolution before those checks, but both forms must bypass the
+        // generic business-session recorder path here.
+        let defer_work_session = matches!(&call, ToolCall::WorkOnProject { .. });
         // session_handoff_summary.session_id is business input and remains the
         // legacy recorder fallback for direct/internal dispatch. When the
         // generic kernel already has an explicit outer recording Session (it
@@ -720,33 +716,26 @@ impl ToolRuntime {
         // worker W reading coordinator C records the tool execution only in W.
         let suppress_handoff_business_recorder =
             !use_current_session && matches!(&call, ToolCall::SessionHandoffSummary { .. });
-        let session_id = if defer_path_work_session || suppress_handoff_business_recorder {
+        let session_id = if defer_work_session || suppress_handoff_business_recorder {
             None
         } else {
             call.session_id().map(str::to_string)
         };
         if let Some(session_id) = session_id.as_deref() {
-            // `work_on_project` owns validation of its public `session_id`
-            // argument so malformed ids retain the stable invalid_session_id
-            // error instead of being rewritten by the generic lookup guard.
-            let malformed_work_on_project_session = matches!(&call, ToolCall::WorkOnProject { .. })
-                && !sessions::is_valid_session_id(session_id);
-            if !malformed_work_on_project_session {
-                // Direct/internal dispatch may derive a recorder from business
-                // session_id (notably the handoff compatibility path) or current
-                // binding. Fence that exact Session before lifecycle/guard
-                // inheritance, project mismatch logic, or any ledger mutation.
-                if let Err(mut result) = self
-                    .authorize_session_target(session_id, call.tool_name(), auth)
-                    .await
-                {
-                    decorate_structured_execution_prestart_denial(
-                        call.tool_name(),
-                        &mut result,
-                        "session_authority_denied",
-                    );
-                    return result;
-                }
+            // Direct/internal dispatch may derive a recorder from business
+            // session_id (notably the handoff compatibility path) or current
+            // binding. Fence that exact Session before lifecycle/guard
+            // inheritance, project mismatch logic, or any ledger mutation.
+            if let Err(mut result) = self
+                .authorize_session_target(session_id, call.tool_name(), auth)
+                .await
+            {
+                decorate_structured_execution_prestart_denial(
+                    call.tool_name(),
+                    &mut result,
+                    "session_authority_denied",
+                );
+                return result;
             }
         }
         let execution_sandbox = inherited_sandbox.or_else(|| {

@@ -97,6 +97,10 @@ handoff, and finish can reason about the same unit of work.
 | Durability | JSON-oriented session ledger (bounded events/messages per session) |
 | Current-session binding | In-memory exact-key cache plus a bounded durable projection in the same JSON ledger; isolated by client window, principal, transport, resolved project, and canonical repository-root hash |
 
+Authenticated project-scoped Workflow Sessions created by current code also persist an internal canonical authority-group fingerprint. A legacy project-scoped record from before that fence may legitimately have no fingerprint; current project authorization or knowledge of its `session_id` is not enough to claim it. The only automatic compatibility upgrade is a coding continuation/resume whose current caller can reconstruct an exact historical `CurrentSessionKey` and whose pre-existing **durable** binding already points to that exact active Session for the same resolved project. The proof ignores the process-local cache. After all continuation validation succeeds, the canonical fingerprint is written atomically with the instruction/capability/context/binding mutation and enters the same persistence generation. Without that durable proof the legacy Session remains fail-closed.
+
+The historical `CurrentSessionKey` and durable binding hash format are unchanged, including their principal-presentation, transport, stable-window, project, and canonical-root components. Consequently a legacy binding created through one presentation (for example direct shared-key) is not rewritten to make a first migration attempt through another presentation match. Once migration succeeds, subsequent Session authorization uses the canonical authority-group fingerprint, so direct shared-key and its OAuth shared-key bridge share the migrated Session normally.
+
 ### Persistent execution defaults
 
 An existing registered-project-bound Workflow Session may persist a closed set

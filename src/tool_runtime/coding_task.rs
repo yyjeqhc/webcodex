@@ -678,7 +678,11 @@ impl ToolRuntime {
                 "message": "repository structure overview was unavailable during startup",
             }));
         }
-        let continuity_key = if bind_current {
+        // Explicit resume may need the exact historical durable binding as a
+        // legacy authority-upgrade proof even when the caller does not want to
+        // bind this request as current. Building the key does not itself create
+        // or refresh any binding; `bind_current` remains the sole mutation gate.
+        let continuity_key = if bind_current || resume_requested {
             match current_session_key(
                 auth,
                 transport,
@@ -688,18 +692,20 @@ impl ToolRuntime {
             ) {
                 Ok(key) => Some(key),
                 Err(message) => {
-                    warnings.push(if resume_requested {
-                        json!({
-                            "kind": "current_binding_unavailable",
-                            "reason_code": "stable_window_identity_unavailable",
-                            "message": "explicit Workflow Session resume continued without a current binding because stable chat-window identity was unavailable",
-                        })
-                    } else {
-                        json!({
-                            "kind": "current_binding_unavailable",
-                            "message": message,
-                        })
-                    });
+                    if bind_current {
+                        warnings.push(if resume_requested {
+                            json!({
+                                "kind": "current_binding_unavailable",
+                                "reason_code": "stable_window_identity_unavailable",
+                                "message": "explicit Workflow Session resume continued without a current binding because stable chat-window identity was unavailable",
+                            })
+                        } else {
+                            json!({
+                                "kind": "current_binding_unavailable",
+                                "message": message,
+                            })
+                        });
+                    }
                     None
                 }
             }
@@ -866,6 +872,24 @@ impl ToolRuntime {
                             "failure_kind": "session_authority_denied",
                             "session_id": session_id,
                             "resume_requested": true,
+                            "state_changed": false,
+                        }),
+                    ),
+                    &project_resolution,
+                );
+            }
+            Err(sessions::CodingSessionError::LegacySessionAuthorityUnverifiable {
+                session_id,
+            }) => {
+                return attach_project_resolution(
+                    ToolResult::err_with_output(
+                        "legacy_session_authority_unverifiable",
+                        json!({
+                            "error_kind": "legacy_session_authority_unverifiable",
+                            "failure_kind": "session_authority_denied",
+                            "reason_code": "legacy_session_authority_unverifiable",
+                            "session_id": session_id,
+                            "resume_requested": resume_requested,
                             "state_changed": false,
                         }),
                     ),

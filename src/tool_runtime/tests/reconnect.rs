@@ -12,6 +12,56 @@ use crate::shell_protocol::{
 use crate::tool_runtime::tool_inputs::{SessionMode, StartupDetail};
 use crate::tool_runtime::{ToolCall, ToolRuntime};
 use serde_json::Value;
+use std::sync::Arc;
+
+fn rewrite_persisted_session_as_legacy(
+    ledger: &std::path::Path,
+    session_id: &str,
+    keep_durable_bindings: bool,
+) {
+    let mut value: Value = serde_json::from_str(&std::fs::read_to_string(ledger).unwrap()).unwrap();
+    let session = value["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|session| session["session_id"] == session_id)
+        .expect("persisted Session");
+    assert!(session
+        .as_object_mut()
+        .unwrap()
+        .remove("owner_authority_fingerprint")
+        .is_some());
+    if !keep_durable_bindings {
+        value["durable_current_bindings"] = Value::Array(Vec::new());
+    }
+    std::fs::write(ledger, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+}
+
+fn persisted_session_authority_fingerprint(
+    ledger: &std::path::Path,
+    session_id: &str,
+) -> Option<String> {
+    let value: Value = serde_json::from_str(&std::fs::read_to_string(ledger).unwrap()).unwrap();
+    value["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|session| session["session_id"] == session_id)
+        .and_then(|session| session["owner_authority_fingerprint"].as_str())
+        .map(str::to_string)
+}
+
+fn rewrite_persisted_session_with_malformed_authority(ledger: &std::path::Path, session_id: &str) {
+    let mut value: Value = serde_json::from_str(&std::fs::read_to_string(ledger).unwrap()).unwrap();
+    let session = value["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|session| session["session_id"] == session_id)
+        .expect("persisted Session");
+    session["owner_authority_fingerprint"] = Value::String("not-a-valid-fingerprint".to_string());
+    std::fs::write(ledger, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+}
 
 fn register_request(
     client_id: &str,
@@ -453,6 +503,701 @@ async fn durable_current_binding_restores_same_window_after_restart() {
         instructions[1].instruction.as_deref(),
         Some("new post-restart context")
     );
+}
+
+#[tokio::test]
+async fn legacy_project_session_authority_migrates_via_work_on_project_and_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let project_root = dir.path().join("proj");
+    std::fs::create_dir_all(&project_root).unwrap();
+    init_git_repo(&project_root);
+    let alice = shared_key_auth_context("legacy-migration-alice");
+    let alice_oauth = oauth_bridge_auth_context(
+        "legacy-migration-alice",
+        &[
+            crate::auth::SCOPE_RUNTIME_READ,
+            crate::auth::SCOPE_PROJECT_READ,
+            crate::auth::SCOPE_PROJECT_WRITE,
+        ],
+    );
+    let expected_fingerprint =
+        super::super::session_context::workflow_session_authority_fingerprint(Some(&alice))
+            .unwrap();
+
+    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    let project = register_agent_project_at_path_with_auth(
+        &runtime1,
+        "legacy-migration-agent",
+        "proj",
+        &project_root,
+        &alice,
+    )
+    .await;
+    let started = dispatch_start_coding_task_in_window(
+        &runtime1,
+        "legacy-migration-agent",
+        coding_start_call(&project, "legacy root", SessionMode::Normal, false),
+        Some(&alice),
+        "legacy-migration-window",
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    runtime1.sessions.flush_persistence();
+    drop(runtime1);
+    rewrite_persisted_session_as_legacy(&ledger, &session_id, true);
+    assert_eq!(
+        persisted_session_authority_fingerprint(&ledger, &session_id),
+        None
+    );
+
+    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    register_agent_project_at_path_with_auth(
+        &runtime2,
+        "legacy-migration-agent",
+        "proj",
+        &project_root,
+        &alice,
+    )
+    .await;
+    assert_eq!(runtime2.sessions.process_local_binding_count_for_test(), 0);
+    assert_eq!(runtime2.sessions.status().restored_binding_count, 1);
+    assert_eq!(
+        runtime2
+            .sessions
+            .session_target_authority(&session_id)
+            .unwrap()
+            .1,
+        None
+    );
+
+    let denied_before_migration = runtime2
+        .dispatch_with_auth(
+            ToolCall::SessionSummary {
+                session_id: session_id.clone(),
+                limit: None,
+            },
+            Some(&alice),
+        )
+        .await;
+    assert!(!denied_before_migration.success);
+    assert_eq!(
+        denied_before_migration.output["error_kind"],
+        "session_authority_denied"
+    );
+
+    // The old durable CurrentSessionKey is intentionally presentation-specific.
+    // Canonical shared-key grouping applies only after this one-time migration.
+    let oauth_first = dispatch_start_coding_task_in_window(
+        &runtime2,
+        "legacy-migration-agent",
+        work_on_project_resume_call(&project, "oauth cannot claim legacy binding", &session_id),
+        Some(&alice_oauth),
+        "legacy-migration-window",
+    )
+    .await;
+    assert!(!oauth_first.success);
+    assert_eq!(
+        oauth_first.output["error_kind"],
+        "legacy_session_authority_unverifiable"
+    );
+    assert_eq!(
+        runtime2
+            .sessions
+            .session_target_authority(&session_id)
+            .unwrap()
+            .1,
+        None
+    );
+
+    let migrated = dispatch_start_coding_task_in_window(
+        &runtime2,
+        "legacy-migration-agent",
+        work_on_project_resume_call(&project, "legacy migration continuation", &session_id),
+        Some(&alice),
+        "legacy-migration-window",
+    )
+    .await;
+    assert!(migrated.success, "{:?}", migrated.error);
+    assert_eq!(
+        runtime2
+            .sessions
+            .active_session_count_for_test(Some(&project)),
+        1
+    );
+    let authority = runtime2
+        .sessions
+        .session_target_authority(&session_id)
+        .unwrap();
+    assert_eq!(authority.0.as_deref(), Some(project.as_str()));
+    assert_eq!(authority.1.as_deref(), Some(expected_fingerprint.as_str()));
+    let summary = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    assert_eq!(
+        summary
+            .events
+            .iter()
+            .filter(|event| event.kind == "task_instruction")
+            .count(),
+        2
+    );
+
+    let discussion = runtime2
+        .dispatch_with_auth(
+            ToolCall::SessionDiscussionSummary {
+                session_id: session_id.clone(),
+                limit: Some(10),
+            },
+            Some(&alice),
+        )
+        .await;
+    assert!(discussion.success, "{:?}", discussion.error);
+    runtime2.sessions.flush_persistence();
+    assert_eq!(
+        persisted_session_authority_fingerprint(&ledger, &session_id).as_deref(),
+        Some(expected_fingerprint.as_str())
+    );
+    drop(runtime2);
+
+    let runtime3 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    register_agent_project_at_path_with_auth(
+        &runtime3,
+        "legacy-migration-agent",
+        "proj",
+        &project_root,
+        &alice,
+    )
+    .await;
+    assert_eq!(
+        runtime3
+            .sessions
+            .session_target_authority(&session_id)
+            .unwrap()
+            .1
+            .as_deref(),
+        Some(expected_fingerprint.as_str())
+    );
+    let alice_read = runtime3
+        .dispatch_with_auth(
+            ToolCall::SessionSummary {
+                session_id: session_id.clone(),
+                limit: None,
+            },
+            Some(&alice),
+        )
+        .await;
+    assert!(alice_read.success, "{:?}", alice_read.error);
+
+    let oauth_read = runtime3
+        .dispatch_with_auth(
+            ToolCall::SessionSummary {
+                session_id,
+                limit: None,
+            },
+            Some(&alice_oauth),
+        )
+        .await;
+    assert!(oauth_read.success, "{:?}", oauth_read.error);
+}
+
+#[tokio::test]
+async fn legacy_project_session_authority_requires_historical_durable_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let project_root = dir.path().join("proj");
+    std::fs::create_dir_all(&project_root).unwrap();
+    init_git_repo(&project_root);
+    let alice = shared_key_auth_context("legacy-no-proof-alice");
+
+    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    let project = register_agent_project_at_path_with_auth(
+        &runtime1,
+        "legacy-no-proof-agent",
+        "proj",
+        &project_root,
+        &alice,
+    )
+    .await;
+    let started = dispatch_start_coding_task_in_window(
+        &runtime1,
+        "legacy-no-proof-agent",
+        coding_start_call(&project, "legacy root", SessionMode::Normal, false),
+        Some(&alice),
+        "legacy-no-proof-window",
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    runtime1.sessions.flush_persistence();
+    drop(runtime1);
+    rewrite_persisted_session_as_legacy(&ledger, &session_id, false);
+
+    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    register_agent_project_at_path_with_auth(
+        &runtime2,
+        "legacy-no-proof-agent",
+        "proj",
+        &project_root,
+        &alice,
+    )
+    .await;
+    assert_eq!(runtime2.sessions.status().durable_binding_count, 0);
+    let process_local_key = super::super::session_context::current_session_key(
+        Some(&alice),
+        crate::tool_runtime::sessions::SessionTransport::Mcp,
+        &project,
+        &project_root.to_string_lossy(),
+        Some(&ClientWindow::for_test("legacy-no-proof-window")),
+    )
+    .unwrap();
+    runtime2
+        .sessions
+        .insert_process_local_binding_only_for_test(process_local_key, &session_id);
+    assert_eq!(runtime2.sessions.process_local_binding_count_for_test(), 1);
+    assert_eq!(runtime2.sessions.status().durable_binding_count, 0);
+    let before = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    let denied = dispatch_start_coding_task_in_window(
+        &runtime2,
+        "legacy-no-proof-agent",
+        coding_resume_call(&project, "must not claim by id", &session_id, false),
+        Some(&alice),
+        "legacy-no-proof-window",
+    )
+    .await;
+    assert!(!denied.success);
+    assert_eq!(
+        denied.output["error_kind"],
+        "legacy_session_authority_unverifiable"
+    );
+    assert_eq!(denied.output["state_changed"], false);
+    assert_eq!(
+        runtime2
+            .sessions
+            .session_target_authority(&session_id)
+            .unwrap()
+            .1,
+        None
+    );
+    let after = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    assert_eq!(after.events.len(), before.events.len());
+    assert_eq!(
+        runtime2
+            .sessions
+            .active_session_count_for_test(Some(&project)),
+        1
+    );
+}
+
+#[tokio::test]
+async fn legacy_project_session_authority_malformed_fingerprint_is_not_migratable() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let project_root = dir.path().join("proj");
+    std::fs::create_dir_all(&project_root).unwrap();
+    init_git_repo(&project_root);
+    let alice = shared_key_auth_context("legacy-malformed-alice");
+
+    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    let project = register_agent_project_at_path_with_auth(
+        &runtime1,
+        "legacy-malformed-agent",
+        "proj",
+        &project_root,
+        &alice,
+    )
+    .await;
+    let started = dispatch_start_coding_task_in_window(
+        &runtime1,
+        "legacy-malformed-agent",
+        coding_start_call(&project, "malformed root", SessionMode::Normal, false),
+        Some(&alice),
+        "legacy-malformed-window",
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    runtime1.sessions.flush_persistence();
+    drop(runtime1);
+    rewrite_persisted_session_with_malformed_authority(&ledger, &session_id);
+
+    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    register_agent_project_at_path_with_auth(
+        &runtime2,
+        "legacy-malformed-agent",
+        "proj",
+        &project_root,
+        &alice,
+    )
+    .await;
+    let restored_authority = runtime2
+        .sessions
+        .session_target_authority(&session_id)
+        .unwrap()
+        .1;
+    assert!(restored_authority.is_some());
+    assert_ne!(
+        restored_authority.as_deref(),
+        Some(
+            super::super::session_context::workflow_session_authority_fingerprint(Some(&alice))
+                .unwrap()
+                .as_str()
+        )
+    );
+    let before = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    let denied = dispatch_start_coding_task_in_window(
+        &runtime2,
+        "legacy-malformed-agent",
+        coding_resume_call(&project, "must not migrate malformed", &session_id, false),
+        Some(&alice),
+        "legacy-malformed-window",
+    )
+    .await;
+    assert!(!denied.success);
+    assert_eq!(denied.output["error_kind"], "session_authority_denied");
+    assert_eq!(denied.output["state_changed"], false);
+    let after = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    assert_eq!(after.events.len(), before.events.len());
+    assert_eq!(
+        runtime2
+            .sessions
+            .session_target_authority(&session_id)
+            .unwrap()
+            .1,
+        restored_authority
+    );
+    runtime2.sessions.flush_persistence();
+    drop(runtime2);
+
+    let runtime3 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    assert!(runtime3
+        .sessions
+        .session_target_authority(&session_id)
+        .unwrap()
+        .1
+        .is_some());
+}
+
+#[tokio::test]
+async fn legacy_project_session_authority_binding_proof_is_window_and_transport_exact() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let project_root = dir.path().join("proj");
+    std::fs::create_dir_all(&project_root).unwrap();
+    init_git_repo(&project_root);
+    let alice = shared_key_auth_context("legacy-exact-proof-alice");
+
+    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    let project = register_agent_project_at_path_with_auth(
+        &runtime1,
+        "legacy-exact-proof-agent",
+        "proj",
+        &project_root,
+        &alice,
+    )
+    .await;
+    let started = dispatch_start_coding_task_in_window(
+        &runtime1,
+        "legacy-exact-proof-agent",
+        coding_start_call(&project, "legacy root", SessionMode::Normal, false),
+        Some(&alice),
+        "legacy-exact-window",
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    runtime1.sessions.flush_persistence();
+    drop(runtime1);
+    rewrite_persisted_session_as_legacy(&ledger, &session_id, true);
+
+    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    register_agent_project_at_path_with_auth(
+        &runtime2,
+        "legacy-exact-proof-agent",
+        "proj",
+        &project_root,
+        &alice,
+    )
+    .await;
+    let before = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    let wrong_window = dispatch_start_coding_task_in_window(
+        &runtime2,
+        "legacy-exact-proof-agent",
+        coding_resume_call(&project, "wrong window", &session_id, false),
+        Some(&alice),
+        "legacy-other-window",
+    )
+    .await;
+    assert!(!wrong_window.success);
+    assert_eq!(
+        wrong_window.output["error_kind"],
+        "legacy_session_authority_unverifiable"
+    );
+    assert_eq!(
+        runtime2
+            .sessions
+            .session_target_authority(&session_id)
+            .unwrap()
+            .1,
+        None
+    );
+
+    let wrong_transport = dispatch_start_coding_task_in_window_with_transport(
+        &runtime2,
+        "legacy-exact-proof-agent",
+        coding_resume_call(&project, "wrong transport", &session_id, false),
+        Some(&alice),
+        "legacy-exact-window",
+        crate::tool_runtime::sessions::SessionTransport::Api,
+    )
+    .await;
+    assert!(!wrong_transport.success);
+    assert_eq!(
+        wrong_transport.output["error_kind"],
+        "legacy_session_authority_unverifiable"
+    );
+    let after_denials = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    assert_eq!(after_denials.events.len(), before.events.len());
+    assert_eq!(
+        runtime2
+            .sessions
+            .session_target_authority(&session_id)
+            .unwrap()
+            .1,
+        None
+    );
+
+    let exact = dispatch_start_coding_task_in_window(
+        &runtime2,
+        "legacy-exact-proof-agent",
+        coding_resume_call(&project, "exact historical proof", &session_id, false),
+        Some(&alice),
+        "legacy-exact-window",
+    )
+    .await;
+    assert!(exact.success, "{:?}", exact.error);
+    assert_eq!(exact.output["session"]["session_id"], session_id);
+    assert!(runtime2
+        .sessions
+        .session_target_authority(&session_id)
+        .unwrap()
+        .1
+        .is_some());
+}
+
+#[tokio::test]
+async fn legacy_project_session_authority_upgrade_is_atomic_with_failed_continuation() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let project_root = dir.path().join("proj");
+    std::fs::create_dir_all(&project_root).unwrap();
+    init_git_repo(&project_root);
+    let alice = shared_key_auth_context("legacy-atomic-alice");
+
+    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    let project = register_agent_project_at_path_with_auth(
+        &runtime1,
+        "legacy-atomic-agent",
+        "proj",
+        &project_root,
+        &alice,
+    )
+    .await;
+    let started = dispatch_start_coding_task_in_window(
+        &runtime1,
+        "legacy-atomic-agent",
+        coding_start_call(&project, "legacy root", SessionMode::Normal, false),
+        Some(&alice),
+        "legacy-atomic-window",
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    runtime1.sessions.flush_persistence();
+    drop(runtime1);
+    rewrite_persisted_session_as_legacy(&ledger, &session_id, true);
+    let ledger_before_failure = std::fs::read(&ledger).unwrap();
+
+    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
+    register_agent_project_at_path_with_auth(
+        &runtime2,
+        "legacy-atomic-agent",
+        "proj",
+        &project_root,
+        &alice,
+    )
+    .await;
+    let before = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    runtime2
+        .sessions
+        .fail_next_coding_continuity_precommit_for_test();
+    let failed = dispatch_start_coding_task_in_window(
+        &runtime2,
+        "legacy-atomic-agent",
+        coding_resume_call(&project, "atomic migration", &session_id, false),
+        Some(&alice),
+        "legacy-atomic-window",
+    )
+    .await;
+    assert!(!failed.success);
+    assert_eq!(
+        failed.output["error_kind"],
+        "coding_continuity_commit_failed"
+    );
+    assert_eq!(
+        runtime2
+            .sessions
+            .session_target_authority(&session_id)
+            .unwrap()
+            .1,
+        None
+    );
+    let after_failure = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    assert_eq!(after_failure.events.len(), before.events.len());
+    assert_eq!(runtime2.sessions.status().durable_binding_count, 1);
+    runtime2.sessions.flush_persistence();
+    assert_eq!(std::fs::read(&ledger).unwrap(), ledger_before_failure);
+
+    let retried = dispatch_start_coding_task_in_window(
+        &runtime2,
+        "legacy-atomic-agent",
+        coding_resume_call(&project, "atomic migration", &session_id, false),
+        Some(&alice),
+        "legacy-atomic-window",
+    )
+    .await;
+    assert!(retried.success, "{:?}", retried.error);
+    assert!(runtime2
+        .sessions
+        .session_target_authority(&session_id)
+        .unwrap()
+        .1
+        .is_some());
+    let after_retry = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    assert_eq!(
+        after_retry
+            .events
+            .iter()
+            .filter(|event| event.instruction.as_deref() == Some("atomic migration"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn legacy_project_session_authority_rejects_recycled_project_without_exact_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let project_root = dir.path().join("proj");
+    std::fs::create_dir_all(&project_root).unwrap();
+    init_git_repo(&project_root);
+    let shell_clients = Arc::new(
+        crate::shell_client::ShellClientRegistry::with_shared_key_limits_for_test(4, 8, 1),
+    );
+    let alice = shared_key_auth_context("legacy-recycled-authority-a");
+    let bob = shared_key_auth_context("legacy-recycled-authority-b");
+
+    let runtime1 = ToolRuntime::new_for_tests_with_shell_clients(shell_clients.clone())
+        .with_session_ledger(&ledger);
+    let project = register_agent_project_at_path_with_auth(
+        &runtime1,
+        "legacy-recycled-client",
+        "recycled-project",
+        &project_root,
+        &alice,
+    )
+    .await;
+    let started = dispatch_start_coding_task_in_window(
+        &runtime1,
+        "legacy-recycled-client",
+        coding_start_call(&project, "legacy recycled root", SessionMode::Normal, false),
+        Some(&alice),
+        "legacy-recycled-window",
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    runtime1.sessions.flush_persistence();
+    drop(runtime1);
+    rewrite_persisted_session_as_legacy(&ledger, &session_id, true);
+
+    let runtime2 = ToolRuntime::new_for_tests_with_shell_clients(shell_clients.clone())
+        .with_session_ledger(&ledger);
+    let expired_at = chrono::Utc::now().timestamp() - 100;
+    shell_clients
+        .set_last_seen_for_test("legacy-recycled-client", expired_at)
+        .await;
+    let _ = shell_clients.list_clients_for_auth(Some(&alice)).await;
+    assert!(shell_clients
+        .get_client_view("legacy-recycled-client")
+        .await
+        .is_none());
+    let recycled_project = register_agent_project_at_path_with_auth(
+        &runtime2,
+        "legacy-recycled-client",
+        "recycled-project",
+        &project_root,
+        &bob,
+    )
+    .await;
+    assert_eq!(recycled_project, project);
+
+    let before = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    let denied_resume = dispatch_start_coding_task_in_window(
+        &runtime2,
+        "legacy-recycled-client",
+        coding_resume_call(&project, "Bob must not claim", &session_id, false),
+        Some(&bob),
+        "legacy-recycled-window",
+    )
+    .await;
+    assert!(!denied_resume.success);
+    assert_eq!(
+        denied_resume.output["error_kind"],
+        "legacy_session_authority_unverifiable"
+    );
+    assert_eq!(denied_resume.output["state_changed"], false);
+
+    let denied_read = runtime2
+        .dispatch_with_auth(
+            ToolCall::SessionSummary {
+                session_id: session_id.clone(),
+                limit: None,
+            },
+            Some(&bob),
+        )
+        .await;
+    assert!(!denied_read.success);
+    assert_eq!(denied_read.output["error_kind"], "session_authority_denied");
+    assert_eq!(
+        runtime2
+            .sessions
+            .session_target_authority(&session_id)
+            .unwrap()
+            .1,
+        None
+    );
+    let after = runtime2.sessions.summary(&session_id, Some(20)).unwrap();
+    assert_eq!(after.events.len(), before.events.len());
+    assert_eq!(after.messages.total, before.messages.total);
+    assert_eq!(after.lifecycle, before.lifecycle);
 }
 
 #[tokio::test]
@@ -1040,6 +1785,25 @@ pub(in crate::tool_runtime::tests) async fn dispatch_start_coding_task_in_window
     auth: Option<&AuthContext>,
     window_id: &str,
 ) -> crate::tool_runtime::ToolResult {
+    dispatch_start_coding_task_in_window_with_transport(
+        runtime,
+        client_id,
+        call,
+        auth,
+        window_id,
+        crate::tool_runtime::sessions::SessionTransport::Mcp,
+    )
+    .await
+}
+
+async fn dispatch_start_coding_task_in_window_with_transport(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    call: ToolCall,
+    auth: Option<&AuthContext>,
+    window_id: &str,
+    transport: crate::tool_runtime::sessions::SessionTransport,
+) -> crate::tool_runtime::ToolResult {
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let auth = auth.cloned();
@@ -1050,7 +1814,7 @@ pub(in crate::tool_runtime::tests) async fn dispatch_start_coding_task_in_window
                 .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
                     call,
                     auth.as_ref(),
-                    crate::tool_runtime::sessions::SessionTransport::Mcp,
+                    transport,
                     true,
                     false,
                     Default::default(),
@@ -1108,6 +1872,41 @@ fn coding_start_call(
         bind_current: true,
         new_session,
         execution_context: None,
+    }
+}
+
+fn coding_resume_call(
+    project: &str,
+    instruction: &str,
+    session_id: &str,
+    bind_current: bool,
+) -> ToolCall {
+    ToolCall::StartCodingTask {
+        project: project.to_string(),
+        client_id: None,
+        path: None,
+        temporary_project_name: None,
+        title: Some(instruction.to_string()),
+        mode: SessionMode::Normal,
+        deny_write_tools: false,
+        deny_shell_tools: false,
+        detail: StartupDetail::Standard,
+        resume_session_id: Some(session_id.to_string()),
+        bind_current,
+        new_session: false,
+        execution_context: None,
+    }
+}
+
+fn work_on_project_resume_call(project: &str, instruction: &str, session_id: &str) -> ToolCall {
+    ToolCall::WorkOnProject {
+        project: project.to_string(),
+        client_id: None,
+        path: None,
+        instruction: instruction.to_string(),
+        include_project_instructions: true,
+        include_workflow_guidance: true,
+        session_id: Some(session_id.to_string()),
     }
 }
 

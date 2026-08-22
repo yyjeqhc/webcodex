@@ -349,8 +349,18 @@ pub(crate) fn project_log_stream(
     let lines = retained_text.lines().collect::<Vec<_>>();
     let first_retained_line = first_retained_line.max(1);
     let expected_next = first_retained_line.saturating_add(lines.len());
-    let next_line = next_line.max(1);
-    let snapshot_consistent = next_line == expected_next;
+    let observed_next_line = next_line.max(1);
+    let snapshot_consistent = observed_next_line == expected_next;
+    // A visible final partial line is not conclusively consumed: later bytes
+    // may extend the same logical line without changing its absolute line count.
+    let next_line =
+        if snapshot_consistent && !retained_text.is_empty() && !retained_text.ends_with('\n') {
+            observed_next_line
+                .saturating_sub(1)
+                .max(first_retained_line)
+        } else {
+            observed_next_line
+        };
     let tail_bound = tail_lines.filter(|lines| *lines > 0);
 
     let baseline_start = || {
@@ -364,8 +374,9 @@ pub(crate) fn project_log_stream(
         JobLogSelectionMode::Delta { cursor } => {
             let cursor = usize::try_from(cursor).ok();
             let continuous = snapshot_consistent
-                && cursor
-                    .is_some_and(|cursor| cursor >= first_retained_line && cursor <= next_line);
+                && cursor.is_some_and(|cursor| {
+                    cursor >= first_retained_line && cursor <= observed_next_line
+                });
             if !continuous {
                 (baseline_start(), true)
             } else {
@@ -390,13 +401,12 @@ pub(crate) fn project_log_stream(
         mode,
         JobLogSelectionMode::Baseline | JobLogSelectionMode::Reset
     );
-    let truncated = baseline_or_reset
-        && (storage_truncated || first_retained_line > 1 || start > 0)
-        || delta_reset && matches!(mode, JobLogSelectionMode::Delta { .. }) && start > 0;
+    let truncated = (baseline_or_reset || delta_reset)
+        && (storage_truncated || first_retained_line > 1 || start > 0);
     JobLogStreamProjection {
         text,
         next_line,
-        total_lines: next_line.saturating_sub(1),
+        total_lines: observed_next_line.saturating_sub(1),
         returned_lines: lines.len().saturating_sub(start),
         first_retained_line,
         truncated,
@@ -606,5 +616,127 @@ mod tests {
         assert_eq!(inconsistent_snapshot.text, "l9\nl10");
         assert_eq!(inconsistent_snapshot.next_line, 99);
         assert!(inconsistent_snapshot.delta_reset);
+    }
+
+    #[test]
+    fn partial_final_line_remains_the_next_delta_cursor_until_completed() {
+        let baseline = project_log_stream(
+            "abc",
+            1,
+            2,
+            false,
+            Some(10),
+            JobLogSelectionMode::Baseline,
+            false,
+        );
+        assert_eq!(baseline.text, "abc");
+        assert_eq!(baseline.next_line, 1);
+        assert_eq!(baseline.total_lines, 1);
+
+        let first_growth = project_log_stream(
+            "abcdef",
+            1,
+            2,
+            false,
+            Some(10),
+            JobLogSelectionMode::Delta {
+                cursor: baseline.next_line as u64,
+            },
+            false,
+        );
+        assert_eq!(first_growth.text, "abcdef");
+        assert_eq!(first_growth.next_line, 1);
+        assert!(!first_growth.delta_reset);
+
+        let second_growth = project_log_stream(
+            "abcdefgh",
+            1,
+            2,
+            false,
+            Some(10),
+            JobLogSelectionMode::Delta {
+                cursor: first_growth.next_line as u64,
+            },
+            false,
+        );
+        assert_eq!(second_growth.text, "abcdefgh");
+        assert_eq!(second_growth.next_line, 1);
+
+        let completed = project_log_stream(
+            "abcdefgh\n",
+            1,
+            2,
+            false,
+            Some(10),
+            JobLogSelectionMode::Delta {
+                cursor: second_growth.next_line as u64,
+            },
+            false,
+        );
+        assert_eq!(completed.text, "abcdefgh");
+        assert_eq!(completed.next_line, 2);
+        assert_eq!(completed.total_lines, 1);
+
+        let unchanged = project_log_stream(
+            "abcdefgh\n",
+            1,
+            2,
+            false,
+            Some(10),
+            JobLogSelectionMode::Delta {
+                cursor: completed.next_line as u64,
+            },
+            false,
+        );
+        assert_eq!(unchanged.text, "");
+        assert_eq!(unchanged.next_line, 2);
+    }
+
+    #[test]
+    fn partial_line_cursors_remain_independent_between_streams() {
+        let stdout = project_log_stream(
+            "stdout partial",
+            1,
+            2,
+            false,
+            Some(10),
+            JobLogSelectionMode::Delta { cursor: 1 },
+            false,
+        );
+        let stderr = project_log_stream(
+            "stderr complete\n",
+            1,
+            2,
+            false,
+            Some(10),
+            JobLogSelectionMode::Delta { cursor: 2 },
+            false,
+        );
+        assert_eq!(stdout.text, "stdout partial");
+        assert_eq!(stdout.next_line, 1);
+        assert_eq!(stderr.text, "");
+        assert_eq!(stderr.next_line, 2);
+        assert_eq!(
+            combined_delta_status(JobLogSelectionMode::Delta { cursor: 1 }, &stdout, &stderr),
+            JobLogDeltaStatus::Delta
+        );
+    }
+
+    #[test]
+    fn retention_gap_reset_reports_truncation_even_when_all_retained_lines_fit() {
+        let reset = project_log_stream(
+            "l8\nl9\nl10\n",
+            8,
+            11,
+            true,
+            Some(10),
+            JobLogSelectionMode::Delta { cursor: 3 },
+            false,
+        );
+        assert_eq!(reset.text, "l8\nl9\nl10");
+        assert!(reset.delta_reset);
+        assert!(reset.truncated);
+        assert_eq!(reset.first_retained_line, 8);
+        assert_eq!(reset.returned_lines, 3);
     }
 }

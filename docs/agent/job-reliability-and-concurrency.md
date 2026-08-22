@@ -213,6 +213,8 @@ description plus observation-field schemas should make clear that:
 - `after_observation_token` is an opaque observation cursor, not Job identity;
 - first log observation is a bounded baseline and cursor-aware follow-ups are
   delta-only when continuity is provable;
+- an unterminated final line is not conclusively consumed; a follow-up may
+  conservatively repeat that bounded partial line until a line boundary is observed;
 - `reset` is a bounded recovery refresh, not proof that no intervening output
   existed;
 - Control Server restart may invalidate the token while leaving `job_id` valid;

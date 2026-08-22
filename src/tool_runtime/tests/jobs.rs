@@ -2292,7 +2292,9 @@ async fn job_log_returns_bounded_output_for_in_memory_local_job() {
     assert!(result.output["exit_code"].is_null());
     assert_eq!(result.output["stdout_lines"], 1000);
     assert_eq!(result.output["stdout_truncated"], true);
-    assert_eq!(result.output["cursor"]["stdout"], 1001);
+    // The final line is unterminated, so automatic observation must leave it
+    // as the next line to inspect rather than conclusively consuming it.
+    assert_eq!(result.output["cursor"]["stdout"], 1000);
     assert_eq!(result.output["command_summary"], "echo test");
     assert_eq!(result.output["detected_summary"]["kind"], "operation");
     assert_eq!(result.output["detected_summary"]["outcome"], "failed");
@@ -3909,6 +3911,227 @@ async fn local_job_log_observation_is_baseline_then_independent_deltas() {
 }
 
 #[tokio::test]
+async fn local_job_log_replays_partial_lines_and_keeps_stream_cursors_independent() {
+    let (_temp, record, _) = make_local_record("job-partial-local");
+    let stdout_path = record.dir.join("stdout.log");
+    let stderr_path = record.dir.join("stderr.log");
+    fs::write(&stdout_path, "abc").unwrap();
+
+    let baseline = super::super::jobs::local_job_log(
+        "job-partial-local",
+        &record,
+        &SystemJobKiller,
+        None,
+        Some(10),
+        None,
+        None,
+    )
+    .await;
+    assert!(baseline.success, "{:?}", baseline.error);
+    assert_eq!(baseline.output["log_delta_status"], "baseline");
+    assert_eq!(baseline.output["stdout_tail"], "abc");
+    let token0 = baseline.output["observation_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let parsed0 = crate::job_observation::JobObservationToken::parse(&token0).unwrap();
+    assert_eq!(parsed0.stdout_cursor, Some(1));
+    assert_eq!(parsed0.stderr_cursor, Some(1));
+
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&stdout_path)
+        .unwrap()
+        .write_all(b"def")
+        .unwrap();
+    let first_growth = super::super::jobs::local_job_log(
+        "job-partial-local",
+        &record,
+        &SystemJobKiller,
+        None,
+        Some(10),
+        Some(token0),
+        None,
+    )
+    .await;
+    assert_eq!(first_growth.output["log_delta_status"], "delta");
+    assert_eq!(first_growth.output["stdout_tail"], "abcdef");
+    let token1 = first_growth.output["observation_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        crate::job_observation::JobObservationToken::parse(&token1)
+            .unwrap()
+            .stdout_cursor,
+        Some(1)
+    );
+
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&stdout_path)
+        .unwrap()
+        .write_all(b"ghi")
+        .unwrap();
+    let second_growth = super::super::jobs::local_job_log(
+        "job-partial-local",
+        &record,
+        &SystemJobKiller,
+        None,
+        Some(10),
+        Some(token1),
+        None,
+    )
+    .await;
+    assert_eq!(second_growth.output["stdout_tail"], "abcdefghi");
+    let token2 = second_growth.output["observation_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        crate::job_observation::JobObservationToken::parse(&token2)
+            .unwrap()
+            .stdout_cursor,
+        Some(1)
+    );
+
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&stdout_path)
+        .unwrap()
+        .write_all(b"\n")
+        .unwrap();
+    let completed_stdout = super::super::jobs::local_job_log(
+        "job-partial-local",
+        &record,
+        &SystemJobKiller,
+        None,
+        Some(10),
+        Some(token2),
+        None,
+    )
+    .await;
+    assert_eq!(completed_stdout.output["stdout_tail"], "abcdefghi");
+    let token3 = completed_stdout.output["observation_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let parsed3 = crate::job_observation::JobObservationToken::parse(&token3).unwrap();
+    assert_eq!(parsed3.stdout_cursor, Some(2));
+    assert_eq!(parsed3.stderr_cursor, Some(1));
+
+    fs::write(&stderr_path, "err").unwrap();
+    let stderr_partial = super::super::jobs::local_job_log(
+        "job-partial-local",
+        &record,
+        &SystemJobKiller,
+        None,
+        Some(10),
+        Some(token3),
+        None,
+    )
+    .await;
+    assert_eq!(stderr_partial.output["stdout_tail"], "");
+    assert_eq!(stderr_partial.output["stderr_tail"], "err");
+    let token4 = stderr_partial.output["observation_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let parsed4 = crate::job_observation::JobObservationToken::parse(&token4).unwrap();
+    assert_eq!(parsed4.stdout_cursor, Some(2));
+    assert_eq!(parsed4.stderr_cursor, Some(1));
+
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&stderr_path)
+        .unwrap()
+        .write_all(b"or\n")
+        .unwrap();
+    fs::write(record.dir.join("exit_code"), "0").unwrap();
+    fs::write(record.dir.join("status"), "completed").unwrap();
+    let terminal = super::super::jobs::local_job_log(
+        "job-partial-local",
+        &record,
+        &SystemJobKiller,
+        None,
+        Some(10),
+        Some(token4),
+        None,
+    )
+    .await;
+    assert!(terminal.success, "{:?}", terminal.error);
+    assert_eq!(terminal.output["terminal"], true);
+    assert_eq!(terminal.output["log_delta_status"], "delta");
+    assert_eq!(terminal.output["stdout_tail"], "");
+    assert_eq!(terminal.output["stderr_tail"], "error");
+    let terminal_token = terminal.output["observation_token"].as_str().unwrap();
+    let parsed_terminal =
+        crate::job_observation::JobObservationToken::parse(terminal_token).unwrap();
+    assert_eq!(parsed_terminal.stdout_cursor, Some(2));
+    assert_eq!(parsed_terminal.stderr_cursor, Some(2));
+}
+
+#[tokio::test]
+async fn local_job_log_long_partial_line_stays_bounded_without_silent_omission() {
+    let (_temp, record, _) = make_local_record("job-long-partial-local");
+    let stdout_path = record.dir.join("stdout.log");
+    fs::write(
+        &stdout_path,
+        "x".repeat(super::super::local_jobs::MAX_LOCAL_LOG_BYTES_PER_STREAM + 4096),
+    )
+    .unwrap();
+
+    let baseline = super::super::jobs::local_job_log(
+        "job-long-partial-local",
+        &record,
+        &SystemJobKiller,
+        None,
+        Some(10),
+        None,
+        None,
+    )
+    .await;
+    assert!(baseline.success, "{:?}", baseline.error);
+    let baseline_tail = baseline.output["stdout_tail"].as_str().unwrap();
+    assert!(baseline_tail.len() <= super::super::local_jobs::MAX_LOCAL_LOG_BYTES_PER_STREAM);
+    assert_eq!(baseline.output["stdout_truncated"], true);
+    assert_eq!(baseline.output["earlier_stdout_unavailable"], true);
+    let token = baseline.output["observation_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        crate::job_observation::JobObservationToken::parse(&token)
+            .unwrap()
+            .stdout_cursor,
+        Some(1)
+    );
+
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&stdout_path)
+        .unwrap()
+        .write_all(b"tail\n")
+        .unwrap();
+    let follow = super::super::jobs::local_job_log(
+        "job-long-partial-local",
+        &record,
+        &SystemJobKiller,
+        None,
+        Some(10),
+        Some(token),
+        None,
+    )
+    .await;
+    assert!(follow.success, "{:?}", follow.error);
+    let follow_tail = follow.output["stdout_tail"].as_str().unwrap();
+    assert!(!(follow.output["log_delta_status"] == "unchanged" && follow_tail.is_empty()));
+    assert!(follow_tail.len() <= super::super::local_jobs::MAX_LOCAL_LOG_BYTES_PER_STREAM);
+    assert!(follow_tail.ends_with("tail"));
+    assert_eq!(follow.output["earlier_stdout_unavailable"], true);
+}
+
+#[tokio::test]
 async fn local_job_log_resets_on_retention_epoch_and_legacy_boundaries() {
     let (_temp, record, initial) = make_local_record("job-reset-local");
     let stdout_path = record.dir.join("stdout.log");
@@ -4003,6 +4226,54 @@ async fn local_job_log_resets_on_retention_epoch_and_legacy_boundaries() {
         .unwrap()
         .starts_with("wj2l:"));
     assert_ne!(initial.epoch, "old-server-epoch");
+}
+
+#[tokio::test]
+async fn local_job_log_retention_gap_all_retained_lines_fit_is_still_truncated() {
+    let (_temp, record, _) = make_local_record("job-retention-all-fit-local");
+    let stdout_path = record.dir.join("stdout.log");
+    fs::write(&stdout_path, "first\n").unwrap();
+    let baseline = super::super::jobs::local_job_log(
+        "job-retention-all-fit-local",
+        &record,
+        &SystemJobKiller,
+        None,
+        Some(10),
+        None,
+        None,
+    )
+    .await;
+    let token = baseline.output["observation_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let replacement = (1..=MAX_LOCAL_LOG_LINES + 100)
+        .map(|line| format!("line {line}\n"))
+        .collect::<String>();
+    fs::write(&stdout_path, replacement).unwrap();
+    let reset = super::super::jobs::local_job_log(
+        "job-retention-all-fit-local",
+        &record,
+        &SystemJobKiller,
+        None,
+        Some(MAX_LOCAL_LOG_LINES),
+        Some(token),
+        None,
+    )
+    .await;
+
+    assert!(reset.success, "{:?}", reset.error);
+    assert_eq!(reset.output["log_delta_status"], "reset");
+    assert_eq!(reset.output["stdout_delta_reset"], true);
+    assert_eq!(reset.output["stdout_truncated"], true);
+    assert_eq!(reset.output["earlier_stdout_unavailable"], true);
+    assert_eq!(reset.output["stdout_returned_lines"], MAX_LOCAL_LOG_LINES);
+    assert_eq!(reset.output["stdout_retained_from_line"], 101);
+    assert!(reset.output["stdout_tail"]
+        .as_str()
+        .unwrap()
+        .starts_with("line 101\n"));
 }
 
 #[tokio::test]

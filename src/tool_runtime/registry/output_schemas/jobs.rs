@@ -364,8 +364,8 @@ fn observe_jobs_output_schema() -> Value {
             "exit_code": nullable_schema("integer", "Process exit code, when terminal and available."),
             "command_execution_state": job_command_execution_state_schema(),
             "structured_execution": job_structured_execution_metadata_schema(),
-            "stdout_tail": schema_type("string", "Bounded stdout baseline, delta, or reset-recovery tail. Empty for a continuous observation with no new stdout."),
-            "stderr_tail": schema_type("string", "Bounded stderr baseline, delta, or reset-recovery tail. Empty for a continuous observation with no new stderr."),
+            "stdout_tail": schema_type("string", "Bounded stdout baseline, delta, conservative partial-line replay, or reset-recovery tail. A previously observed unterminated final line may repeat until its line boundary is observed."),
+            "stderr_tail": schema_type("string", "Bounded stderr baseline, delta, conservative partial-line replay, or reset-recovery tail. A previously observed unterminated final line may repeat until its line boundary is observed."),
             "stdout_lines": schema_type("integer", "Total observed stdout line count."),
             "stderr_lines": schema_type("integer", "Total observed stderr line count."),
             "stdout_truncated": schema_type("boolean", "Whether the requested stdout baseline/delta/reset projection was bounded or unavailable."),
@@ -373,7 +373,7 @@ fn observe_jobs_output_schema() -> Value {
             "log_delta_status": {
                 "type": "string",
                 "enum": ["baseline", "delta", "unchanged", "reset"],
-                "description": "baseline is a bounded non-delta selection (first observation or explicit pagination); delta contains only new output; unchanged has no new output; reset is a bounded recovery tail because exact continuity could not be proved."
+                "description": "baseline is a bounded non-delta selection (first observation or explicit pagination); delta contains newly observable output and may conservatively replay an unterminated final line; unchanged has no model-facing output; reset is a bounded recovery tail because exact continuity could not be proved."
             },
             "stdout_delta_reset": schema_type("boolean", "Whether stdout automatic delta continuity was reset for this observation."),
             "stderr_delta_reset": schema_type("boolean", "Whether stderr automatic delta continuity was reset for this observation."),
@@ -395,8 +395,8 @@ fn observe_jobs_output_schema() -> Value {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                    "stdout": {"type": "integer", "minimum": 1},
-                    "stderr": {"type": "integer", "minimum": 1}
+                    "stdout": {"type": "integer", "minimum": 1, "description": "Next absolute stdout line requiring automatic inspection; may remain on a returned unterminated final line."},
+                    "stderr": {"type": "integer", "minimum": 1, "description": "Next absolute stderr line requiring automatic inspection; may remain on a returned unterminated final line."}
                 },
                 "required": ["stdout", "stderr"]
             },
@@ -1134,11 +1134,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "stdout_tail",
-                schema_type("string", "Bounded stdout baseline, automatic delta, explicit cursor segment, or reset-recovery tail. Empty when no new stdout is available."),
+                schema_type("string", "Bounded stdout baseline, automatic delta, conservative partial-line replay, explicit cursor segment, or reset-recovery tail. An unterminated final line may repeat until its line boundary is observed."),
             ),
             (
                 "stderr_tail",
-                schema_type("string", "Bounded stderr baseline, automatic delta, explicit cursor segment, or reset-recovery tail. Empty when no new stderr is available."),
+                schema_type("string", "Bounded stderr baseline, automatic delta, conservative partial-line replay, explicit cursor segment, or reset-recovery tail. An unterminated final line may repeat until its line boundary is observed."),
             ),
             (
                 "stdout_lines",
@@ -1161,7 +1161,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 json!({
                     "type": "string",
                     "enum": ["baseline", "delta", "unchanged", "reset"],
-                    "description": "baseline is a bounded non-delta selection (first observation or explicit pagination); delta contains only new output; unchanged has no new output; reset is a bounded recovery tail because exact continuity could not be proved."
+                    "description": "baseline is a bounded non-delta selection (first observation or explicit pagination); delta contains newly observable output and may conservatively replay an unterminated final line; unchanged has no model-facing output; reset is a bounded recovery tail because exact continuity could not be proved."
                 }),
             ),
             (
@@ -1212,7 +1212,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "cursor",
                 super::common::open_object_schema(
-                    "Next 1-based stdout/stderr cursors for bounded continuation.",
+                    "Next 1-based stdout/stderr cursors for bounded continuation; an unterminated final line remains pending until its boundary is observed.",
                 ),
             ),
             (

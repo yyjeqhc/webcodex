@@ -682,6 +682,196 @@ async fn agent_job_log_observation_is_baseline_then_independent_deltas() {
 }
 
 #[tokio::test]
+async fn agent_job_log_replays_partial_lines_until_each_stream_completes() {
+    let registry = ShellClientRegistry::default();
+    let job = start_wait_job(&registry).await;
+    registry
+        .update_job(wait_job_update(
+            "inst-wait",
+            &job.job_id,
+            1,
+            "running",
+            Some("abc"),
+            false,
+        ))
+        .await
+        .unwrap();
+
+    let (baseline_job, stdout, stderr, _, _, baseline) = registry
+        .job_log_for_auth(None, &job.job_id, None, None, Some(10), None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        baseline.log_delta_status,
+        crate::job_observation::JobLogDeltaStatus::Baseline
+    );
+    assert_eq!(stdout.as_deref(), Some("abc\n"));
+    assert_eq!(stderr.as_deref(), Some(""));
+    let token0 = baseline_job.observation_token.unwrap();
+    let parsed0 = crate::job_observation::JobObservationToken::parse(&token0).unwrap();
+    assert_eq!(parsed0.stdout_cursor, Some(1));
+    assert_eq!(parsed0.stderr_cursor, Some(1));
+
+    registry
+        .update_job(wait_job_update(
+            "inst-wait",
+            &job.job_id,
+            2,
+            "running",
+            Some("def"),
+            false,
+        ))
+        .await
+        .unwrap();
+    let (first_job, stdout, _, _, _, first_growth) = registry
+        .job_log_for_auth(None, &job.job_id, None, None, Some(10), Some(&token0), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        first_growth.log_delta_status,
+        crate::job_observation::JobLogDeltaStatus::Delta
+    );
+    assert_eq!(stdout.as_deref(), Some("abcdef\n"));
+    let token1 = first_job.observation_token.unwrap();
+    assert_eq!(
+        crate::job_observation::JobObservationToken::parse(&token1)
+            .unwrap()
+            .stdout_cursor,
+        Some(1)
+    );
+
+    registry
+        .update_job(wait_job_update(
+            "inst-wait",
+            &job.job_id,
+            3,
+            "running",
+            Some("ghi"),
+            false,
+        ))
+        .await
+        .unwrap();
+    let (second_job, stdout, _, _, _, second_growth) = registry
+        .job_log_for_auth(None, &job.job_id, None, None, Some(10), Some(&token1), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        second_growth.log_delta_status,
+        crate::job_observation::JobLogDeltaStatus::Delta
+    );
+    assert_eq!(stdout.as_deref(), Some("abcdefghi\n"));
+    let token2 = second_job.observation_token.unwrap();
+    assert_eq!(
+        crate::job_observation::JobObservationToken::parse(&token2)
+            .unwrap()
+            .stdout_cursor,
+        Some(1)
+    );
+
+    registry
+        .update_job(wait_job_update(
+            "inst-wait",
+            &job.job_id,
+            4,
+            "running",
+            Some("\n"),
+            false,
+        ))
+        .await
+        .unwrap();
+    let (completed_stdout_job, stdout, _, _, _, completed_stdout) = registry
+        .job_log_for_auth(None, &job.job_id, None, None, Some(10), Some(&token2), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        completed_stdout.log_delta_status,
+        crate::job_observation::JobLogDeltaStatus::Delta
+    );
+    assert_eq!(stdout.as_deref(), Some("abcdefghi\n"));
+    let token3 = completed_stdout_job.observation_token.unwrap();
+    let parsed3 = crate::job_observation::JobObservationToken::parse(&token3).unwrap();
+    assert_eq!(parsed3.stdout_cursor, Some(2));
+    assert_eq!(parsed3.stderr_cursor, Some(1));
+
+    registry
+        .update_job(ShellAgentJobUpdateRequest {
+            client_id: "oe".into(),
+            agent_instance_id: "inst-wait".into(),
+            job_id: job.job_id.clone(),
+            request_id: None,
+            update_seq: Some(5),
+            status: "running".into(),
+            stdout_chunk: None,
+            stderr_chunk: Some("err".into()),
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code: None,
+            duration_ms: None,
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            finished: false,
+        })
+        .await
+        .unwrap();
+    let (stderr_job, stdout, stderr, _, _, stderr_growth) = registry
+        .job_log_for_auth(None, &job.job_id, None, None, Some(10), Some(&token3), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        stderr_growth.log_delta_status,
+        crate::job_observation::JobLogDeltaStatus::Delta
+    );
+    assert_eq!(stdout.as_deref(), Some(""));
+    assert_eq!(stderr.as_deref(), Some("err\n"));
+    let token4 = stderr_job.observation_token.unwrap();
+    let parsed4 = crate::job_observation::JobObservationToken::parse(&token4).unwrap();
+    assert_eq!(parsed4.stdout_cursor, Some(2));
+    assert_eq!(parsed4.stderr_cursor, Some(1));
+
+    registry
+        .update_job(ShellAgentJobUpdateRequest {
+            client_id: "oe".into(),
+            agent_instance_id: "inst-wait".into(),
+            job_id: job.job_id.clone(),
+            request_id: None,
+            update_seq: Some(6),
+            status: "completed".into(),
+            stdout_chunk: None,
+            stderr_chunk: Some("or\n".into()),
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code: Some(0),
+            duration_ms: Some(2_000),
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            finished: true,
+        })
+        .await
+        .unwrap();
+    let (terminal_job, stdout, stderr, _, _, terminal) = registry
+        .job_log_for_auth(None, &job.job_id, None, None, Some(10), Some(&token4), None)
+        .await
+        .unwrap();
+    assert!(terminal.terminal);
+    assert_eq!(terminal_job.status, "completed");
+    assert_eq!(
+        terminal.log_delta_status,
+        crate::job_observation::JobLogDeltaStatus::Delta
+    );
+    assert_eq!(stdout.as_deref(), Some(""));
+    assert_eq!(stderr.as_deref(), Some("error\n"));
+    let terminal_token = terminal_job.observation_token.unwrap();
+    let parsed_terminal =
+        crate::job_observation::JobObservationToken::parse(&terminal_token).unwrap();
+    assert_eq!(parsed_terminal.stdout_cursor, Some(2));
+    assert_eq!(parsed_terminal.stderr_cursor, Some(2));
+}
+
+#[tokio::test]
 async fn agent_job_log_resets_when_retention_advances_past_token_cursor() {
     let registry = ShellClientRegistry::default();
     let job = start_wait_job(&registry).await;

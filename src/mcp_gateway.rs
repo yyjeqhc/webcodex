@@ -22,6 +22,7 @@ const GATEWAY_WAIT_TIMEOUT: Duration = Duration::from_secs(125);
 struct ObservationKey {
     client_id: String,
     provider_id: String,
+    provider_instance_id: String,
     tool_name: String,
 }
 
@@ -301,6 +302,7 @@ async fn describe(
         ObservationKey {
             client_id: provider.client_id.clone(),
             provider_id: provider.provider_id.clone(),
+            provider_instance_id: provider.provider_instance_id.clone(),
             tool_name: tool.name.clone(),
         },
         tool.schema_observation(),
@@ -348,6 +350,7 @@ async fn call_upstream(
     let observation_key = ObservationKey {
         client_id: provider.client_id.clone(),
         provider_id: provider.provider_id.clone(),
+        provider_instance_id: provider.provider_instance_id.clone(),
         tool_name: tool_name.to_string(),
     };
     let expected_schema = runtime
@@ -694,6 +697,30 @@ mod tests {
     }
 
     #[test]
+    fn observations_are_bound_to_exact_provider_instance() {
+        let runtime = McpGatewayRuntime::default();
+        let observed = McpGatewaySchemaObservation {
+            input_schema: json!({"type": "object"}),
+            output_schema: None,
+            annotations: None,
+        };
+        let original = ObservationKey {
+            client_id: "runner".to_string(),
+            provider_id: "provider".to_string(),
+            provider_instance_id: "instance-a".to_string(),
+            tool_name: "echo".to_string(),
+        };
+        runtime.remember(original.clone(), observed.clone());
+        assert_eq!(runtime.observed(&original), Some(observed));
+
+        let replacement = ObservationKey {
+            provider_instance_id: "instance-b".to_string(),
+            ..original
+        };
+        assert!(runtime.observed(&replacement).is_none());
+    }
+
+    #[test]
     fn observations_are_bounded_and_internal() {
         let runtime = McpGatewayRuntime::default();
         for index in 0..=MAX_SCHEMA_OBSERVATIONS {
@@ -701,6 +728,7 @@ mod tests {
                 ObservationKey {
                     client_id: "runner".to_string(),
                     provider_id: "provider".to_string(),
+                    provider_instance_id: "provider-instance".to_string(),
                     tool_name: format!("tool-{index}"),
                 },
                 McpGatewaySchemaObservation {

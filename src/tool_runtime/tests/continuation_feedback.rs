@@ -29,19 +29,19 @@ use serde_json::{json, Value};
 #[test]
 fn continuation_feedback_output_schemas_are_synchronized() {
     let specs = registered_tool_specs();
-    for name in [
-        "start_coding_task",
-        "finish_coding_task",
-        "session_handoff_summary",
-    ] {
+    let start = crate::tool_runtime::start_coding_task_compatibility_spec();
+    let start_props = start_full_output_schema(&start)
+        .get("properties")
+        .expect("full startup properties");
+    assert!(
+        start_props
+            .as_object()
+            .is_some_and(|p| p.contains_key("continuation_feedback")),
+        "advanced start_coding_task output schema should expose continuation_feedback"
+    );
+    for name in ["finish_coding_task", "session_handoff_summary"] {
         let spec = spec_named(&specs, name);
-        let props = if name == "start_coding_task" {
-            start_full_output_schema(spec)
-                .get("properties")
-                .expect("full startup properties")
-        } else {
-            &spec.output_schema["properties"]["output"]["properties"]
-        };
+        let props = &spec.output_schema["properties"]["output"]["properties"];
         assert!(
             props
                 .as_object()
@@ -61,12 +61,12 @@ fn continuation_feedback_output_schemas_are_synchronized() {
 
 /// Locate the `continuation_feedback` strict sub-schema inside a tool output.
 fn continuation_feedback_subschema(specs: &[ToolSpec], tool: &str) -> Value {
-    let spec = spec_named(specs, tool);
     if tool == "start_coding_task" {
-        start_full_output_schema(spec)["properties"]["continuation_feedback"].clone()
-    } else {
-        spec.output_schema["properties"]["output"]["properties"]["continuation_feedback"].clone()
+        let spec = crate::tool_runtime::start_coding_task_compatibility_spec();
+        return start_full_output_schema(&spec)["properties"]["continuation_feedback"].clone();
     }
+    let spec = spec_named(specs, tool);
+    spec.output_schema["properties"]["output"]["properties"]["continuation_feedback"].clone()
 }
 
 fn start_full_output_schema(spec: &ToolSpec) -> &Value {

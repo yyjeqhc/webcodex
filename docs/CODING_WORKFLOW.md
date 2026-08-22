@@ -9,10 +9,10 @@ developing WebCodex itself.
 
 ## Canonical mental model
 
-`start_coding_task` and `work_on_project` are **bootstrap and continuity tools**.
-They establish or continue project-scoped Workflow Session evidence and return
-bounded workflow guidance plus project-local instructions. They are not role
-selectors.
+`work_on_project` is the **canonical model bootstrap** for ordinary coding and
+review work. It establishes or continues project-scoped Workflow Session evidence
+and returns bounded workflow guidance plus project-local instructions. It is not a
+role selector.
 
 - Use `work_on_project` for the normal coding bootstrap. Its task `instruction`
   is the natural place to state what the agent should do.
@@ -32,8 +32,10 @@ selectors.
   path/fingerprint identity; false/null/empty body-projection fields are omitted.
   Positive warnings, blockers, truncation, non-default resolution, and noteworthy
   Job state remain explicit.
-- Use `start_coding_task` when you need its advanced continuity controls, such
-  as exact `resume_session_id` or deliberate `new_session=true` isolation.
+- `start_coding_task` remains an advanced/direct compatibility bootstrap for callers
+  that explicitly need managed temporary projects, Session mode/guards, execution
+  context, startup detail, exact resume, current binding, or new-session isolation.
+  Ordinary model coding/review should use `work_on_project`.
 - Choose behavioral roles in the **task instruction**. For implementation work,
   explicitly say to use `implementation_owner` guidance. For a separate review,
   explicitly say to use `independent_review` guidance.
@@ -70,7 +72,7 @@ whether the change is acceptable.
 ```
 
 The role names belong in the instruction text. Do not look for a role parameter
-on `start_coding_task` or `work_on_project`.
+on `work_on_project`; advanced `start_coding_task` does not add one either.
 
 ## Manual multi-window collaboration
 
@@ -130,7 +132,7 @@ the final user-facing acceptance decision.
 ## A typical broader-runtime loop
 
 ```text
-work_on_project (or start_coding_task for advanced continuity)
+work_on_project
 → inspect/search/read
 → guarded edits
 → structured focused validation

@@ -531,10 +531,7 @@ fn coding_task_semantic_navigation_output_schema_is_explicit_and_surface_counts_
         known_tool_names().count(),
         "visible runtime tool count + hidden tools must cover every known tool"
     );
-    let start = specs
-        .iter()
-        .find(|spec| spec.name == "start_coding_task")
-        .unwrap();
+    let start = crate::tool_runtime::start_coding_task_compatibility_spec();
     assert!(start.input_schema["properties"]
         .as_object()
         .unwrap()

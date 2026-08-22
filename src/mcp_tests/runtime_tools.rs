@@ -5,7 +5,7 @@ use super::*;
 // =========================================================================
 
 #[tokio::test]
-async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
+async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux_flags() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     let outcome = handle_mcp_request(
         &runtime,
@@ -24,41 +24,30 @@ async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
             .find(|tool| tool["name"] == name)
             .unwrap_or_else(|| panic!("missing MCP tool {name}"))
     };
-    for name in ["start_coding_task", "work_on_project"] {
-        let description = tool(name)["description"].as_str().unwrap();
-        assert!(
-            description.contains("built-in workflow guidance"),
-            "{name}: {description}"
-        );
-        assert!(
-            description.contains("project-local instructions"),
-            "{name}: {description}"
-        );
-        assert!(
-            description.contains("task instruction"),
-            "tool-only consumers must learn that behavioral role is instruction-selected: {name}: {description}"
-        );
-        assert!(
-            description.contains("grants no authority"),
-            "tool-only consumers must not mistake guidance for authority: {name}: {description}"
-        );
-    }
-
-    let start_schema = &tool("start_coding_task")["inputSchema"];
     assert!(
-        start_schema["properties"].get("role").is_none(),
-        "start_coding_task must not grow a role wire field"
+        tools.iter().all(|tool| tool["name"] != "start_coding_task"),
+        "advanced compatibility bootstrap must stay out of MCP tools/list"
     );
+    let description = tool("work_on_project")["description"].as_str().unwrap();
+    assert!(
+        description.contains("Canonical model entry"),
+        "{description}"
+    );
+    assert!(
+        description.contains("ordinary coding/review"),
+        "{description}"
+    );
+    assert!(description.contains("Git not required"), "{description}");
+    assert!(
+        description.contains("exact Session continuation"),
+        "{description}"
+    );
+
     let work_schema = &tool("work_on_project")["inputSchema"];
-    for (name, schema) in [
-        ("start_coding_task", start_schema),
-        ("work_on_project", work_schema),
-    ] {
-        assert!(
-            schema["properties"]["path"].get("pattern").is_none(),
-            "{name} path schema must not encode Control-host POSIX path semantics"
-        );
-    }
+    assert!(
+        work_schema["properties"]["path"].get("pattern").is_none(),
+        "work_on_project path schema must not encode Control-host POSIX path semantics"
+    );
     let work_props = work_schema["properties"]
         .as_object()
         .expect("work_on_project MCP properties");
@@ -114,9 +103,10 @@ async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
         "include_workspace must not be required in MCP schema"
     );
 
-    let start_props = tool("start_coding_task")["inputSchema"]["properties"]
+    let start_compat = crate::tool_runtime::start_coding_task_compatibility_spec();
+    let start_props = start_compat.input_schema["properties"]
         .as_object()
-        .expect("start_coding_task inputSchema properties");
+        .expect("advanced start_coding_task compatibility properties");
     assert_eq!(start_props["detail"]["type"], "string");
     assert_eq!(
         start_props["detail"]["enum"],

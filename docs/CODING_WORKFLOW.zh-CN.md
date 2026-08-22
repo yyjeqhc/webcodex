@@ -8,9 +8,9 @@ bootstrap coding task、选择模型行为、做验证，以及如何理解 clos
 
 ## 唯一的 canonical mental model
 
-`start_coding_task` 与 `work_on_project` 都是 **bootstrap 与 continuity 工具**。它们建立
-或延续 project-scoped Workflow Session evidence，并返回有界 workflow guidance 与
-project-local instructions；它们不是 role selector。
+`work_on_project` 是普通 coding/review 的 **canonical model bootstrap**。它建立或延续
+project-scoped Workflow Session evidence，并返回有界 workflow guidance 与 project-local
+instructions；它不是 role selector。
 
 - 普通 coding bootstrap 优先用 `work_on_project`；它的 task `instruction` 正是描述模型
   应该做什么的自然位置。
@@ -28,8 +28,10 @@ project-local instructions；它们不是 role selector。
   为空。Instruction source 始终保留 path/fingerprint identity；false/null/empty 的正文投影
   字段会省略。真实 warning、blocker、truncation、非默认 project resolution 和值得报告的
   Job state 仍会显式返回。
-- 需要精确 `resume_session_id`、显式 `new_session=true` 隔离等高级 continuity 控制时，
-  使用 `start_coding_task`。
+- `start_coding_task` 保留为 advanced/direct compatibility bootstrap，只供明确需要 managed
+  temporary project、Session mode/guards、execution context、startup detail、精确 resume、
+  current binding 或 new-session isolation 的 caller 使用。普通模型 coding/review 使用
+  `work_on_project`。
 - behavioral role 由 **task instruction** 显式选择。实现任务明确写使用
   `implementation_owner` guidance；独立评审明确写使用 `independent_review` guidance。
 - 返回的 role guidance 永远只是 model guidance。它不会创建 authority、permission、
@@ -60,8 +62,8 @@ guidance。沿现有架构实现 <任务>，运行聚焦的 structured validatio
 该改动是否可接受。
 ```
 
-role 名称应写在 instruction 文本中，不要在 `start_coding_task` 或 `work_on_project` 上寻找
-role 参数。
+role 名称应写在 instruction 文本中，不要在 `work_on_project` 上寻找 role 参数；advanced
+`start_coding_task` 同样没有 role 参数。
 
 ## 手动多窗口协作
 
@@ -111,7 +113,7 @@ jobs 与 tool history。它不决定任务已经完成，不替代直接的 diff
 ## broader runtime 的典型循环
 
 ```text
-work_on_project（高级 continuity 时用 start_coding_task）
+work_on_project
 → inspect/search/read
 → guarded edits
 → structured focused validation

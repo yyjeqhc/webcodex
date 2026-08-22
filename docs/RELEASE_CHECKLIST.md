@@ -123,7 +123,7 @@ After deploying a new server, agent, or runtime build:
 2. Run compact `runtime_status`.
 3. Run focused tool discovery.
 4. Run `list_projects` and pick an agent-registered project marked appropriate for smoke when available.
-5. Run a read-only coding task: `start_coding_task`, `read_file` or `search_project_text`, `show_changes(include_diff=false)`, `workspace_hygiene_check`, and `finish_coding_task(summary_only=true)`.
+5. Run a read-only coding task: `work_on_project`, `read_file` or `search_project_text`, `show_changes(include_diff=false)`, `workspace_hygiene_check`, and `finish_coding_task(summary_only=true)`.
 6. Run one small reversible edit task on a safe project and review the diff before accepting it.
 
 Do not run production mutations as acceptance smoke.

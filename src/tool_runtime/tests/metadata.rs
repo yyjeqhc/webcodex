@@ -1626,6 +1626,10 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
     assert!(result.output["count"].as_u64().unwrap() > 0);
 
     let tools = result.output["tools"].as_array().unwrap();
+    assert!(
+        tools.iter().all(|tool| tool["name"] != "start_coding_task"),
+        "advanced compatibility bootstrap must stay out of the model manifest"
+    );
     for tool in tools {
         assert!(
             tool.get("inputSchema").is_none() && tool.get("outputSchema").is_none(),
@@ -1673,6 +1677,8 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
     for field in ["compact", "summary_only"] {
         assert!(accepted("runtime_status").contains(&field.to_string()));
     }
+    let start = crate::tool_runtime::start_coding_task_compatibility_spec();
+    let start_accepted = crate::tool_runtime::registry::accepted_flattened_args_for_spec(&start);
     for field in [
         "project",
         "client_id",
@@ -1682,13 +1688,18 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
         "mode",
         "deny_write_tools",
         "deny_shell_tools",
+        "execution_context",
         "detail",
+        "resume_session_id",
         "bind_current",
         "new_session",
         "session_id",
         TOOL_CALL_RECORDING_SESSION_ID_FIELD,
     ] {
-        assert!(accepted("start_coding_task").contains(&field.to_string()));
+        assert!(
+            start_accepted.contains(&field.to_string()),
+            "advanced start_coding_task compatibility spec missing {field}"
+        );
     }
     for field in [
         "project",
@@ -1774,7 +1785,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
 }
 
 #[tokio::test]
-async fn tool_manifest_flattened_args_are_declared_in_action_schema() {
+async fn tool_manifest_and_advanced_compat_flattened_args_are_declared_in_action_schema() {
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
@@ -1812,13 +1823,25 @@ async fn tool_manifest_flattened_args_are_declared_in_action_schema() {
         }
     }
 
+    let start = crate::tool_runtime::start_coding_task_compatibility_spec();
+    let compatibility_fields =
+        crate::tool_runtime::registry::accepted_flattened_args_for_spec(&start)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+    for field in &compatibility_fields {
+        assert!(
+            properties.contains_key(field),
+            "advanced start_coding_task flattened arg {field} must remain declared by ToolCallRequest.properties"
+        );
+    }
+
     for field in properties.keys() {
         if TOOL_CALL_WRAPPER_FIELDS.contains(&field.as_str()) {
             continue;
         }
         assert!(
-            accepted_fields.contains(field),
-            "ToolCallRequest.properties declares flattened field {field}, but no tool_manifest entry accepts it"
+            accepted_fields.contains(field) || compatibility_fields.contains(field),
+            "ToolCallRequest.properties declares flattened field {field}, but neither a model manifest entry nor the advanced start_coding_task compatibility spec accepts it"
         );
     }
 }

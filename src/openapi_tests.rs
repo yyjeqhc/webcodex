@@ -3,7 +3,9 @@ use crate::tool_runtime::TOOL_CALL_WRAPPER_FIELDS;
 
 fn runtime_accepted_flattened_action_fields() -> std::collections::BTreeSet<String> {
     let mut fields = std::collections::BTreeSet::new();
-    for spec in registered_tool_specs() {
+    let mut specs = registered_tool_specs();
+    specs.push(crate::tool_runtime::start_coding_task_compatibility_spec());
+    for spec in specs {
         fields.extend(accepted_flattened_args_for_spec(&spec));
     }
     fields

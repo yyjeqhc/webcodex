@@ -54,8 +54,8 @@ Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS
 匹配的本地项目 registration。其他项目、profile credential 和 `agent.toml` 都会保留。
 
 接入 MCP coding client 后，可阅读 [Coding 工作流](CODING_WORKFLOW.zh-CN.md)，了解 canonical
-`work_on_project` / `start_coding_task` bootstrap 心智模型、behavioral guidance、validation 与
-closeout evidence。
+`work_on_project` model bootstrap、behavioral guidance、validation 与 closeout evidence。
+`start_coding_task` 继续供显式 advanced/direct caller 使用。
 
 ### 设备接入
 

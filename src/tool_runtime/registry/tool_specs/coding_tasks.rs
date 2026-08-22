@@ -4,16 +4,21 @@ use super::super::input_schemas::{
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
 
+/// Non-model-facing contract retained for direct/API compatibility. This is
+/// intentionally not returned by `tool_specs()` or ordinary MCP discovery.
+pub(super) fn start_coding_task_compatibility_spec() -> ToolSpec {
+    tool_spec(
+        "start_coding_task",
+        "Advanced coding-session bootstrap for direct/API compatibility. Prefer work_on_project for ordinary model coding/review; use this entry for managed temporary projects, mode/guards, execution context, startup detail, exact resume_session_id, current binding, or new-session controls.",
+        start_coding_task_input_schema(),
+    )
+}
+
 pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
-            "start_coding_task",
-            "Starts/resumes coding Session evidence; returns built-in workflow guidance, project-local instructions, and startup context. Choose implementation_owner or independent_review in the task instruction; guidance grants no authority. resume_session_id selects exact resume.",
-            start_coding_task_input_schema(),
-        ),
-        tool_spec(
             "work_on_project",
-            "Bootstrap coding via project or Runner path; Git not required. Returns built-in workflow guidance plus project-local instructions. Select implementation/review in task instruction; guidance grants no authority.",
+            "Canonical model entry for ordinary coding/review via an existing project or Runner path; Git not required. Supports exact Session continuation and returns compact workflow plus project instructions.",
             work_on_project_input_schema(),
         ),
         tool_spec(

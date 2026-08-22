@@ -1,6 +1,12 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
+fn flattened_compatibility_specs() -> Vec<ToolSpec> {
+    let mut specs = registered_tool_specs();
+    specs.push(crate::tool_runtime::start_coding_task_compatibility_spec());
+    specs
+}
+
 #[test]
 fn accepted_flattened_arg_preferred_order_is_unique_and_declared() {
     use crate::tool_runtime::registry::ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER;
@@ -11,7 +17,7 @@ fn accepted_flattened_arg_preferred_order_is_unique_and_declared() {
     }
 
     let mut schema_fields = BTreeSet::new();
-    for spec in registered_tool_specs() {
+    for spec in flattened_compatibility_specs() {
         let Some(properties) = spec.input_schema["properties"].as_object() else {
             continue;
         };
@@ -58,9 +64,9 @@ fn accepted_flattened_args_appends_recorder_field_once() {
 }
 
 #[test]
-fn model_facing_flattened_args_exclude_testing_and_debug_metadata() {
+fn call_runtime_tool_flattened_args_exclude_testing_and_debug_metadata() {
     let mut accepted_fields = BTreeSet::new();
-    for spec in registered_tool_specs() {
+    for spec in flattened_compatibility_specs() {
         accepted_fields
             .extend(crate::tool_runtime::registry::accepted_flattened_args_for_spec(&spec));
     }
@@ -97,7 +103,7 @@ fn accepted_flattened_args_cover_each_tool_spec_input_property() {
         .as_object()
         .expect("ToolCallRequest properties");
 
-    for spec in registered_tool_specs() {
+    for spec in flattened_compatibility_specs() {
         let input_properties = spec.input_schema["properties"]
             .as_object()
             .unwrap_or_else(|| panic!("{} input schema properties", spec.name));
@@ -234,7 +240,7 @@ fn openapi_generic_call_runtime_tool_schema_remains_strict_model_visible_surface
 
 fn accepted_flattened_action_fields() -> BTreeSet<String> {
     let mut fields = BTreeSet::new();
-    for spec in registered_tool_specs() {
+    for spec in flattened_compatibility_specs() {
         fields.extend(crate::tool_runtime::registry::accepted_flattened_args_for_spec(&spec));
     }
     fields
@@ -242,7 +248,7 @@ fn accepted_flattened_action_fields() -> BTreeSet<String> {
 
 fn tool_spec_input_property_fields() -> BTreeSet<String> {
     let mut fields = BTreeSet::new();
-    for spec in registered_tool_specs() {
+    for spec in flattened_compatibility_specs() {
         let properties = spec.input_schema["properties"]
             .as_object()
             .unwrap_or_else(|| panic!("{} input schema properties", spec.name));

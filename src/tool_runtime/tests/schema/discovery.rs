@@ -324,7 +324,6 @@ fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'stat
         | "close_session_shell" => Some(&["jobs", "shell"]),
         "runtime_status" => Some(&["inspect", "runtime"]),
         "show_changes" => Some(&["git", "inspect", "review"]),
-        "start_coding_task" => Some(&["inspect", "runtime"]),
         "validate_patch" => Some(&["patch", "validation"]),
         "work_on_project" => Some(&["inspect", "runtime"]),
         "workspace_checkpoint_create" => Some(&["checkpoint", "git", "runtime"]),
@@ -456,7 +455,6 @@ fn tool_discovery_groups_drive_tool_categories() {
         "run_script",
         "runtime_status",
         "show_changes",
-        "start_coding_task",
         "validate_patch",
         "work_on_project",
         "workspace_checkpoint_create",
@@ -1354,9 +1352,13 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
                 "{intent} must not include {forbidden}: {names:?}"
             );
         }
+        assert!(
+            !names.contains(&"start_coding_task"),
+            "{intent} must not expose the advanced compatibility bootstrap: {names:?}"
+        );
         if intent == "audit" {
             for required in [
-                "start_coding_task",
+                "work_on_project",
                 "project_overview",
                 "read_file",
                 "search_project_text",
@@ -1454,6 +1456,22 @@ fn coding_intent_matches_local_coding_canonical_tools() {
         .find(|intent| intent.name == "coding")
         .expect("coding intent");
     assert_eq!(coding.tools, LOCAL_CODING_TOOL_NAMES);
+    assert_eq!(coding.tools.first().copied(), Some("work_on_project"));
+    assert_eq!(coding.tools.last().copied(), Some("finish_coding_task"));
+    assert!(!coding.tools.contains(&"start_coding_task"));
+    for middle in [
+        "project_overview",
+        "apply_text_edits",
+        "cargo_test",
+        "show_changes",
+    ] {
+        let position = coding
+            .tools
+            .iter()
+            .position(|tool| *tool == middle)
+            .unwrap();
+        assert!(position > 0 && position + 1 < coding.tools.len());
+    }
     assert!(coding.tools.contains(&"run_shell"));
     assert!(coding.tools.contains(&"run_job"));
     assert!(!coding.tools.contains(&"git_restore_paths"));

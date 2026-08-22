@@ -60,8 +60,8 @@ with a stopped Runner it removes only the exact local project registration. Othe
 profile credentials, and `agent.toml` are preserved.
 
 After connecting an MCP coding client, see the [Coding Workflow](CODING_WORKFLOW.md) for the
-canonical `work_on_project` / `start_coding_task` bootstrap model, behavioral guidance, validation,
-and closeout evidence.
+canonical `work_on_project` model bootstrap, behavioral guidance, validation, and closeout
+evidence. `start_coding_task` remains available to explicit advanced/direct callers.
 
 ### Enrollment
 

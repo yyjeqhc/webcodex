@@ -343,7 +343,8 @@ large-file download path. Office artifacts such as DOCX/PPTX/XLSX and PDFs use
 the same artifact transport and can therefore move between a project and a
 supporting ChatGPT host without a model manually carrying their Base64.
 
-When a broader coding surface exposes `work_on_project` or `start_coding_task`,
-use the [Coding Workflow](CODING_WORKFLOW.md) for the canonical bootstrap versus
-behavioral-role mental model and validation/closeout guidance. See
+When a broader model coding surface exposes `work_on_project`, use the
+[Coding Workflow](CODING_WORKFLOW.md) for the canonical bootstrap, behavioral-role
+mental model, and validation/closeout guidance. `start_coding_task` remains an
+advanced direct/API compatibility entry rather than a peer model bootstrap. See
 [Architecture](ARCHITECTURE.md) and the `webcodex` CLI for operator tooling.

@@ -4,9 +4,7 @@ use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
 use crate::shell_protocol::ShellClientCapabilities;
 use crate::tool_runtime::sessions::{SessionEvent, SessionGuards, SessionTransport};
-use crate::tool_runtime::{
-    registered_tool_specs, SessionMode, StartupDetail, ToolCall, ToolResult, ToolRuntime,
-};
+use crate::tool_runtime::{SessionMode, StartupDetail, ToolCall, ToolResult, ToolRuntime};
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -994,11 +992,7 @@ async fn explicit_resume_fault_rolls_back_session_event_and_both_binding_layers(
 
 #[test]
 fn explicit_resume_schema_metadata_and_business_input_are_distinct() {
-    let specs = registered_tool_specs();
-    let spec = specs
-        .iter()
-        .find(|spec| spec.name == "start_coding_task")
-        .unwrap();
+    let spec = crate::tool_runtime::start_coding_task_compatibility_spec();
     let property = &spec.input_schema["properties"]["resume_session_id"];
     assert_eq!(property["type"], "string");
     assert_eq!(property["pattern"], "^wc_sess_[A-Za-z0-9_]+$");
@@ -1024,7 +1018,7 @@ fn explicit_resume_schema_metadata_and_business_input_are_distinct() {
         true
     );
     assert!(spec.description.contains("resume_session_id"));
-    let accepted = crate::tool_runtime::registry::accepted_flattened_args_for_spec(spec);
+    let accepted = crate::tool_runtime::registry::accepted_flattened_args_for_spec(&spec);
     assert!(accepted.contains(&"resume_session_id".to_string()));
     assert!(accepted.contains(&"session_id".to_string()));
     assert!(accepted.contains(&"recording_session_id".to_string()));

@@ -121,7 +121,9 @@ use serde_json::json;
 #[cfg(test)]
 pub(crate) use project_resolution::ProjectResolverErrorKind;
 pub(crate) use project_resolution::{agent_project_runtime_id, ProjectResolverError};
-pub(crate) use registry::{accepted_flattened_args_for_spec, registered_tool_specs};
+pub(crate) use registry::{
+    accepted_flattened_args_for_spec, registered_tool_specs, start_coding_task_compatibility_spec,
+};
 #[cfg(test)]
 pub(crate) use session_context::current_session_principal;
 pub(crate) use session_context::{

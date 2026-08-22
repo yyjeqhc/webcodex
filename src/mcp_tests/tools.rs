@@ -615,16 +615,17 @@ fn mcp_tools_list_default_retains_output_schema() {
 }
 
 #[test]
-fn explicit_resume_mcp_schema_and_metadata_are_exposed() {
-    // Explicit non-compact rendering: no env involvement.
+fn explicit_resume_advanced_compatibility_schema_and_metadata_are_retained() {
+    // Ordinary MCP discovery must hide the advanced compatibility bootstrap.
     let payload = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
-    let tool = payload["tools"]
+    assert!(payload["tools"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|tool| tool["name"] == "start_coding_task")
-        .expect("start_coding_task MCP metadata");
-    let property = &tool["inputSchema"]["properties"]["resume_session_id"];
+        .all(|tool| tool["name"] != "start_coding_task"));
+
+    let spec = crate::tool_runtime::start_coding_task_compatibility_spec();
+    let property = &spec.input_schema["properties"]["resume_session_id"];
     assert_eq!(property["type"], "string");
     assert_eq!(property["pattern"], "^wc_sess_[A-Za-z0-9_]+$");
     let description = property["description"].as_str().unwrap();
@@ -632,13 +633,13 @@ fn explicit_resume_mcp_schema_and_metadata_are_exposed() {
     assert!(description.contains("no current binding"));
     assert!(description.contains("recording_session_id"));
     assert_eq!(
-        tool["inputSchema"]["not"]["required"],
+        spec.input_schema["not"]["required"],
         json!(["resume_session_id", "new_session"])
     );
-    assert!(tool["description"]
-        .as_str()
-        .unwrap()
-        .contains("resume_session_id"));
+    assert!(spec.description.contains("resume_session_id"));
+    assert!(spec
+        .description
+        .contains("Advanced coding-session bootstrap"));
 }
 
 #[test]

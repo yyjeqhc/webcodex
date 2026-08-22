@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::{
-    accepted_flattened_args_for_spec, registered_tool_specs, TOOL_CALL_ARGUMENTS_FIELD,
-    TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
+    accepted_flattened_args_for_spec, registered_tool_specs, start_coding_task_compatibility_spec,
+    TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
 };
 
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
@@ -2039,7 +2039,11 @@ fn tool_call_request_properties_mut(
 }
 
 fn insert_tool_call_request_flattened_arg_properties(schemas: &mut Value) {
-    insert_tool_call_request_flattened_arg_properties_for_specs(schemas, registered_tool_specs());
+    let mut specs = registered_tool_specs();
+    // Hidden from ordinary model discovery, but retained here so legacy generic
+    // API callers keep the advanced flattened start_coding_task argument schema.
+    specs.push(start_coding_task_compatibility_spec());
+    insert_tool_call_request_flattened_arg_properties_for_specs(schemas, specs);
 }
 
 fn insert_tool_call_request_flattened_arg_properties_for_specs(

@@ -310,7 +310,8 @@ DOCX/PPTX/XLSX 等 Office artifact 与 PDF 复用同一 artifact transport，因
 支持这些 host 能力的 ChatGPT 中，可以在 project 与 host 之间直接传递，而不需要
 模型手工搬运 Base64。
 
-更宽的 coding surface 暴露 `work_on_project` 或 `start_coding_task` 时，请阅读
-[Coding 工作流](CODING_WORKFLOW.zh-CN.md)，按 canonical mental model 区分 bootstrap
-与 behavioral role，并遵循其中的 validation/closeout guidance。运维工具见
+更宽的 model coding surface 暴露 `work_on_project` 时，请阅读
+[Coding 工作流](CODING_WORKFLOW.zh-CN.md)，使用 canonical bootstrap / behavioral role
+心智模型，并遵循其中的 validation/closeout guidance。`start_coding_task` 保留为 advanced
+direct/API compatibility 入口，不再作为平级 model bootstrap。运维工具见
 [架构](ARCHITECTURE.md)与 `webcodex` CLI。

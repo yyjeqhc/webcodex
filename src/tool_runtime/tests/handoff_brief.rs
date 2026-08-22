@@ -1037,7 +1037,7 @@ fn handoff_brief_schema_is_shared_strict_and_absent_from_startup() {
     let specs = registered_tool_specs();
     let finish = spec_named(&specs, "finish_coding_task");
     let handoff = spec_named(&specs, "session_handoff_summary");
-    let start = spec_named(&specs, "start_coding_task");
+    let start = crate::tool_runtime::start_coding_task_compatibility_spec();
     let finish_schema =
         &finish.output_schema["properties"]["output"]["properties"]["handoff_brief"];
     let handoff_schema =

@@ -24,26 +24,26 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
 
     for name in ["start_coding_task", "finish_coding_task"] {
         assert!(is_known_tool_name(name), "{name} missing from known names");
-        assert!(names.contains(&name), "{name} missing from tool specs");
-
         let metadata = lookup_tool_metadata(name).expect("metadata");
         assert!(metadata.read_only);
         assert!(!metadata.destructive);
         assert!(!metadata.shell_like);
         assert_eq!(metadata.oauth_scope, Some("runtime:read"));
-
-        let spec = specs
-            .iter()
-            .find(|spec| spec.name == name)
-            .expect("tool spec");
-        assert_eq!(spec.annotations["readOnlyHint"], true);
-        assert_eq!(spec.annotations["destructiveHint"], false);
-        assert_eq!(spec.annotations["openWorldHint"], false);
     }
+    assert!(!names.contains(&"start_coding_task"));
+    assert!(names.contains(&"finish_coding_task"));
+    let start_definition =
+        crate::tool_runtime::tool_definition::lookup_tool_definition("start_coding_task").unwrap();
+    assert!(start_definition.visibility.is_model_hidden());
 
-    let start = spec_named(&specs, "start_coding_task");
-    assert_eq!(required_fields(start), Vec::<String>::new());
-    let start_props = start.input_schema["properties"].as_object().unwrap();
+    let start_compat = crate::tool_runtime::start_coding_task_compatibility_spec();
+    assert!(start_compat
+        .description
+        .contains("Advanced coding-session bootstrap"));
+    assert!(start_compat.description.contains("Prefer work_on_project"));
+    let start_schema = start_compat.input_schema;
+    assert!(start_schema["required"].as_array().unwrap().is_empty());
+    let start_props = start_schema["properties"].as_object().unwrap();
     for field in [
         "project",
         "client_id",
@@ -53,7 +53,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     ] {
         assert!(start_props.contains_key(field), "missing {field}");
     }
-    assert_eq!(start.input_schema["oneOf"].as_array().unwrap().len(), 3);
+    assert_eq!(start_schema["oneOf"].as_array().unwrap().len(), 3);
     assert_eq!(start_props["bind_current"]["default"], true);
     assert_eq!(start_props["new_session"]["default"], false);
     for removed in [
@@ -154,7 +154,8 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     let tool_desc = tool_call["properties"]["tool"]["description"]
         .as_str()
         .unwrap();
-    assert!(tool_desc.contains("start_coding_task"));
+    assert!(!tool_desc.contains("start_coding_task"));
+    assert!(tool_desc.contains("work_on_project"));
     assert!(tool_desc.contains("finish_coding_task"));
     let properties = tool_call["properties"].as_object().unwrap();
     for field in [
@@ -205,6 +206,48 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "full",
         "ToolCall audit serialization must preserve detail"
     );
+}
+
+#[tokio::test]
+async fn hidden_start_coding_task_keeps_direct_advanced_parse_and_dispatch() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let runtime = test_runtime();
+    let client_id = "advanced-hidden-start";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+    let params = json!({
+        "project": project,
+        "title": "advanced hidden compatibility",
+        "mode": "read_only",
+        "detail": "minimal",
+        "bind_current": false
+    });
+
+    let parsed = ToolCall::from_tool_name("start_coding_task", params.clone())
+        .expect("hidden advanced bootstrap must remain parser-known");
+    match parsed {
+        ToolCall::StartCodingTask {
+            mode,
+            detail,
+            bind_current,
+            ..
+        } => {
+            assert_eq!(mode, SessionMode::ReadOnly);
+            assert_eq!(detail, crate::tool_runtime::StartupDetail::Minimal);
+            assert!(!bind_current);
+        }
+        other => panic!("expected StartCodingTask, got {}", other.tool_name()),
+    }
+
+    let result = start_coding_task_serviced(&runtime, client_id, params, &auth).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["detail"], "minimal");
+    let session_id = result.output["session"]["session_id"].as_str().unwrap();
+    let summary = runtime.sessions.summary(session_id, Some(20)).unwrap();
+    assert_eq!(summary.mode, SessionMode::ReadOnly);
+    assert!(summary.guards.deny_write_tools);
+    assert!(summary.guards.deny_shell_tools);
 }
 
 #[tokio::test]
@@ -530,42 +573,38 @@ async fn start_coding_task_can_explicitly_disable_current_binding() {
     assert_eq!(manifest["limit"], Value::Null);
     assert_eq!(manifest["truncated"], false);
     assert!(manifest["count"].as_u64().unwrap() > 0);
-    let start_tool = manifest["tools"]
-        .as_array()
-        .unwrap()
+    let manifest_tools = manifest["tools"].as_array().unwrap();
+    assert!(manifest_tools
         .iter()
-        .find(|tool| tool["name"] == "start_coding_task")
-        .expect("start_coding_task manifest entry");
-    assert!(start_tool["accepted_flattened_args"]
-        .as_array()
-        .unwrap()
+        .all(|tool| tool["name"] != "start_coding_task"));
+    let work_tool = manifest_tools
         .iter()
-        .any(|field| field == "detail"));
-    for field in ["project", "client_id", "path", "temporary_project_name"] {
+        .find(|tool| tool["name"] == "work_on_project")
+        .expect("canonical work_on_project manifest entry");
+    for field in ["project", "client_id", "path", "instruction", "session_id"] {
         assert!(
-            start_tool["accepted_flattened_args"]
+            work_tool["accepted_flattened_args"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .any(|accepted| accepted == field),
-            "start_coding_task manifest entry missing {field}"
+            "work_on_project manifest entry missing {field}"
         );
     }
-    for removed in [
-        "include_tool_manifest",
-        "tool_manifest_intent",
-        "compact_startup",
-        "tool_manifest_categories",
-        "tool_manifest_limit",
+    for advanced in [
+        "detail",
+        "temporary_project_name",
+        "bind_current",
+        "new_session",
     ] {
-        assert!(!start_tool["accepted_flattened_args"]
+        assert!(!work_tool["accepted_flattened_args"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|field| field == removed));
+            .any(|field| field == advanced));
     }
-    assert!(start_tool.get("inputSchema").is_none());
-    assert!(start_tool.get("outputSchema").is_none());
+    assert!(work_tool.get("inputSchema").is_none());
+    assert!(work_tool.get("outputSchema").is_none());
     assert_eq!(result.output["git"]["clean"], true);
     assert!(!result.output["git"]["recent_commits"]
         .as_array()

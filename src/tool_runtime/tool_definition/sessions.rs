@@ -27,7 +27,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     extra_accepted_flattened_args(
         creates_or_binds_session(def(
             "start_coding_task",
-            ModelVisible,
+            ModelHidden,
             "workflow",
             Some(GitOrShell),
             TOOL_PROVIDER_CONTROL,

@@ -4818,24 +4818,56 @@ async fn quic_graceful_writer_waits_for_flush_and_stuck_writer_is_bounded() {
         _ = tokio::task::yield_now() => {}
     }
     release_tx.send(()).unwrap();
-    finish.await;
+    assert!(
+        finish.await,
+        "graceful writer must report a flushed Goodbye"
+    );
     flushed_rx.await.expect("writer flush marker");
 
     let stuck = tokio::spawn(async { std::future::pending::<StreamWriterExit>().await });
-    tokio::time::timeout(
+    let stuck_graceful = tokio::time::timeout(
         Duration::from_millis(100),
         finish_quic_writer(Some(stuck), true, Duration::from_millis(10)),
     )
     .await
     .expect("stuck graceful QUIC writer must be bounded");
+    assert!(!stuck_graceful);
 
     let broken = tokio::spawn(async { std::future::pending::<StreamWriterExit>().await });
-    tokio::time::timeout(
+    let broken_graceful = tokio::time::timeout(
         Duration::from_millis(100),
         finish_quic_writer(Some(broken), false, Duration::from_secs(1)),
     )
     .await
     .expect("non-graceful QUIC writer teardown must abort promptly");
+    assert!(!broken_graceful);
+}
+
+#[tokio::test]
+async fn quic_graceful_close_waits_for_peer_within_remaining_budget() {
+    let (peer_closed_tx, peer_closed_rx) = tokio::sync::oneshot::channel::<()>();
+    let wait = wait_for_quic_peer_close(
+        async {
+            let _ = peer_closed_rx.await;
+        },
+        Duration::from_secs(1),
+    );
+    tokio::pin!(wait);
+
+    tokio::select! {
+        _ = &mut wait => panic!("graceful QUIC close skipped the peer-close grace period"),
+        _ = tokio::task::yield_now() => {}
+    }
+
+    peer_closed_tx.send(()).unwrap();
+    wait.await;
+
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        wait_for_quic_peer_close(std::future::pending::<()>(), Duration::from_millis(10)),
+    )
+    .await
+    .expect("non-responsive QUIC peer grace wait must remain bounded");
 }
 
 #[tokio::test]

@@ -2573,9 +2573,26 @@ impl RegisteredStream {
             } => {
                 // Graceful order is deliberate: serve_registered_stream has
                 // already queued Goodbye and dropped all producers. Let the
-                // writer drain it and finish the SendStream before closing the
-                // QUIC connection. Broken transports skip that flush wait.
-                finish_quic_writer(writer, graceful, STREAM_WRITER_CLOSE_TIMEOUT).await;
+                // writer drain it and finish the SendStream first. Quinn's
+                // SendStream::finish only queues the FIN; Connection::close is
+                // immediate and can discard buffered stream data. Use the same
+                // absolute close budget to give the peer a chance to close the
+                // connection after receiving Goodbye, then force-close if it
+                // does not cooperate. Broken transports skip this grace wait.
+                let close_started = tokio::time::Instant::now();
+                let writer_graceful =
+                    finish_quic_writer(writer, graceful, STREAM_WRITER_CLOSE_TIMEOUT).await;
+                if graceful && writer_graceful {
+                    let remaining =
+                        STREAM_WRITER_CLOSE_TIMEOUT.saturating_sub(close_started.elapsed());
+                    wait_for_quic_peer_close(
+                        async {
+                            let _ = connection.closed().await;
+                        },
+                        remaining,
+                    )
+                    .await;
+                }
                 connection.close(quinn::VarInt::from_u32(0), b"process shutdown");
                 endpoint.close(quinn::VarInt::from_u32(0), b"process shutdown");
             }
@@ -2598,17 +2615,32 @@ async fn finish_quic_writer(
     writer: Option<tokio::task::JoinHandle<StreamWriterExit>>,
     graceful: bool,
     timeout: Duration,
-) {
+) -> bool {
     let Some(mut writer) = writer else {
-        return;
+        return false;
     };
     if !graceful {
         writer.abort();
+        return false;
+    }
+    match tokio::time::timeout(timeout, &mut writer).await {
+        Ok(Ok(StreamWriterExit::GracefulClose)) => true,
+        Ok(_) => false,
+        Err(_) => {
+            writer.abort();
+            false
+        }
+    }
+}
+
+async fn wait_for_quic_peer_close<F>(peer_closed: F, timeout: Duration)
+where
+    F: std::future::Future<Output = ()>,
+{
+    if timeout.is_zero() {
         return;
     }
-    if tokio::time::timeout(timeout, &mut writer).await.is_err() {
-        writer.abort();
-    }
+    let _ = tokio::time::timeout(timeout, peer_closed).await;
 }
 
 fn registered_ack(ack: AgentEnvelope) -> Result<Option<ShellProjectInventoryStatus>, String> {
@@ -3408,12 +3440,24 @@ async fn quic_session(
         let goodbye = AgentEnvelope::Goodbye {
             reason: Some("once complete".to_string()),
         };
+        let close_started = tokio::time::Instant::now();
         let goodbye_result = tokio::time::timeout(
             STREAM_WRITER_CLOSE_TIMEOUT,
             write_quic_frame(&mut send, &goodbye),
         )
         .await;
+        let goodbye_sent = matches!(&goodbye_result, Ok(Ok(())));
         let finish_result = send.finish();
+        if goodbye_sent && finish_result.is_ok() {
+            let remaining = STREAM_WRITER_CLOSE_TIMEOUT.saturating_sub(close_started.elapsed());
+            wait_for_quic_peer_close(
+                async {
+                    let _ = conn.closed().await;
+                },
+                remaining,
+            )
+            .await;
+        }
         conn.close(quinn::VarInt::from_u32(0), b"once complete");
         client_endpoint.close(quinn::VarInt::from_u32(0), b"once complete");
         goodbye_result

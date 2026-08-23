@@ -3598,7 +3598,7 @@ async fn project_overview_routes_to_owning_agent_and_returns_structured_metadata
 }
 
 #[tokio::test]
-async fn project_read_adapters_reject_parent_traversal_before_agent_dispatch() {
+async fn project_read_adapters_reject_out_of_project_paths_before_agent_dispatch() {
     let runtime = runtime_with_agent_project("path-boundary");
     register_agent(
         &runtime,
@@ -3613,12 +3613,12 @@ async fn project_read_adapters_reject_parent_traversal_before_agent_dispatch() {
     .await;
     let bootstrap = auth_context(None, true);
     let project = agent_test_project_id("path-boundary");
-    let calls = [
+    let calls = vec![
         (
-            "read_file",
+            "read_file parent traversal",
             ToolCall::ReadFile {
                 project: project.clone(),
-                path: "../outside".to_string(),
+                path: "../outside.txt".to_string(),
                 session_id: None,
                 start_line: None,
                 limit: None,
@@ -3627,7 +3627,53 @@ async fn project_read_adapters_reject_parent_traversal_before_agent_dispatch() {
             None,
         ),
         (
-            "list_project_files",
+            "read_file nested parent traversal",
+            ToolCall::ReadFile {
+                project: project.clone(),
+                path: "src/../../outside.txt".to_string(),
+                session_id: None,
+                start_line: None,
+                limit: None,
+                with_line_numbers: None,
+            },
+            None,
+        ),
+        (
+            "read_file absolute path",
+            ToolCall::ReadFile {
+                project: project.clone(),
+                path: "/etc/passwd".to_string(),
+                session_id: None,
+                start_line: None,
+                limit: None,
+                with_line_numbers: None,
+            },
+            None,
+        ),
+        (
+            "read_file deep parent traversal",
+            ToolCall::ReadFile {
+                project: project.clone(),
+                path: "sub/../../../etc/passwd".to_string(),
+                session_id: None,
+                start_line: None,
+                limit: None,
+                with_line_numbers: None,
+            },
+            None,
+        ),
+        (
+            "list_project_files absolute path",
+            ToolCall::ListProjectFiles {
+                project: project.clone(),
+                session_id: None,
+                path: Some("/etc".to_string()),
+                limit: None,
+            },
+            None,
+        ),
+        (
+            "list_project_files parent traversal",
             ToolCall::ListProjectFiles {
                 project: project.clone(),
                 session_id: None,
@@ -3637,7 +3683,18 @@ async fn project_read_adapters_reject_parent_traversal_before_agent_dispatch() {
             None,
         ),
         (
-            "project_overview",
+            "project_overview absolute path",
+            ToolCall::ProjectOverview {
+                project: project.clone(),
+                session_id: None,
+                path: Some("/etc".to_string()),
+                max_depth: None,
+                limit: None,
+            },
+            None,
+        ),
+        (
+            "project_overview parent traversal",
             ToolCall::ProjectOverview {
                 project: project.clone(),
                 session_id: None,
@@ -3648,7 +3705,24 @@ async fn project_read_adapters_reject_parent_traversal_before_agent_dispatch() {
             None,
         ),
         (
-            "search_project_text",
+            "search_project_text absolute path",
+            ToolCall::SearchProjectText {
+                project: project.clone(),
+                pattern: "needle".to_string(),
+                session_id: None,
+                path: Some("/etc".to_string()),
+                limit: None,
+                context_before: None,
+                context_after: None,
+                include_globs: None,
+                exclude_globs: None,
+                result_mode: None,
+                timeout_secs: None,
+            },
+            Some("path"),
+        ),
+        (
+            "search_project_text parent traversal",
             ToolCall::SearchProjectText {
                 project,
                 pattern: "needle".to_string(),
@@ -3666,25 +3740,25 @@ async fn project_read_adapters_reject_parent_traversal_before_agent_dispatch() {
         ),
     ];
 
-    for (tool, call, structured_field) in calls {
+    for (case, call, structured_field) in calls {
         let result = runtime.dispatch_with_auth(call, Some(&bootstrap)).await;
-        assert!(!result.success, "{tool} accepted parent traversal");
+        assert!(!result.success, "{case} escaped the project boundary");
         let error = result.error.as_deref().unwrap_or("");
         assert!(
             error.contains("project-relative")
                 || error.contains("parent traversal")
                 || error.contains("path"),
-            "{tool}: {error}"
+            "{case}: {error}"
         );
         if let Some(field) = structured_field {
-            assert_eq!(result.output["code"], "invalid_search_request", "{tool}");
-            assert_eq!(result.output["field"], field, "{tool}");
+            assert_eq!(result.output["code"], "invalid_search_request", "{case}");
+            assert_eq!(result.output["field"], field, "{case}");
         }
         assert!(
             next_patch_agent_request(&runtime, "path-boundary")
                 .await
                 .is_none(),
-            "{tool} must reject before Agent dispatch"
+            "{case} must reject before Agent dispatch"
         );
     }
 }

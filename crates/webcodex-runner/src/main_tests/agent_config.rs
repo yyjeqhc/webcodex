@@ -167,6 +167,36 @@ fn resolve_quic_config_errors_when_server_addr_or_name_missing() {
 }
 
 #[test]
+fn resolve_quic_config_rejects_keepalive_outside_supported_range() {
+    let mut cfg = test_config(PathBuf::from("/tmp/x"));
+    cfg.transport = Some(TRANSPORT_QUIC.to_string());
+
+    let mut zero = quic_client_config();
+    zero.keepalive_interval_secs = 0;
+    cfg.quic = Some(zero);
+    assert_eq!(
+        resolve_quic_config(&cfg).unwrap_err(),
+        "[quic] keepalive_interval_secs must be > 0"
+    );
+
+    let mut oversized = quic_client_config();
+    oversized.keepalive_interval_secs = 26;
+    cfg.quic = Some(oversized);
+    assert_eq!(
+        resolve_quic_config(&cfg).unwrap_err(),
+        "[quic] keepalive_interval_secs must be <= 25"
+    );
+
+    let mut upper_bound = quic_client_config();
+    upper_bound.keepalive_interval_secs = 25;
+    cfg.quic = Some(upper_bound);
+    assert_eq!(
+        resolve_quic_config(&cfg).unwrap().keepalive_interval_secs,
+        25
+    );
+}
+
+#[test]
 fn resolve_quic_config_accepts_valid_section() {
     let mut cfg = test_config(PathBuf::from("/tmp/x"));
     cfg.transport = Some("quic".to_string());

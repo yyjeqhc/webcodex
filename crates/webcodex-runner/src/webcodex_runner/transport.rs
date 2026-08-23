@@ -68,14 +68,15 @@ const PROJECT_INVENTORY_STAGING_RETRY_BACKOFF_STEPS: [Duration; 5] = [
 /// Reset reconnect backoff after a connection stayed up long enough to prove
 /// the endpoint is healthy. Immediate flapping still escalates.
 const RECONNECT_STABLE_RESET_AFTER: Duration = Duration::from_secs(60);
-/// Bounded wait for the writer task to flush its last frame and close the
-/// sink during shutdown. A split WebSocket sink's `close()` waits for the
-/// peer's close acknowledgement, which is delivered through the read half;
-/// once the read loop has broken the read half is no longer polled, so
-/// `close()` can hang indefinitely on a half-closed socket. Bounding it
-/// guarantees `websocket_session` (and therefore the reconnect loop) always
-/// makes progress instead of stalling forever after a disconnect.
-const WS_WRITER_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+/// Bounded wait for a streaming writer to flush its final control frame and
+/// close its send side during graceful shutdown. WebSocket additionally polls
+/// the read half for its close handshake; QUIC waits for the writer to finish
+/// the SendStream before closing the connection. Neither path may hang process
+/// shutdown on a non-responsive peer.
+const STREAM_WRITER_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+/// Quinn's default peer idle timeout is 30 seconds. Keep this explicit on the
+/// Runner side so the configured QUIC keepalive contract has a stable bound.
+const QUIC_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Process-shutdown control frames are best effort, but enqueueing them must
 /// never wait behind a permanently full transport channel.
 const TRANSPORT_CONTROL_SEND_TIMEOUT: Duration = Duration::from_millis(250);
@@ -2534,7 +2535,7 @@ impl RegisteredStream {
                 // Continue polling the read half while the writer flushes
                 // Goodbye and the close frame. One absolute deadline bounds
                 // both the writer and peer-close observation.
-                let close_deadline = tokio::time::Instant::now() + WS_WRITER_CLOSE_TIMEOUT;
+                let close_deadline = tokio::time::Instant::now() + STREAM_WRITER_CLOSE_TIMEOUT;
                 let mut reader_open = true;
                 let mut writer_finished = false;
                 loop {
@@ -2570,33 +2571,43 @@ impl RegisteredStream {
                 endpoint,
                 ..
             } => {
-                let Some(mut writer) = writer else {
-                    return;
-                };
-                if graceful {
-                    connection.close(quinn::VarInt::from_u32(0), b"process shutdown");
-                    endpoint.close(quinn::VarInt::from_u32(0), b"process shutdown");
-                    if tokio::time::timeout(WS_WRITER_CLOSE_TIMEOUT, &mut writer)
-                        .await
-                        .is_err()
-                    {
-                        writer.abort();
-                    }
-                } else {
-                    writer.abort();
-                }
+                // Graceful order is deliberate: serve_registered_stream has
+                // already queued Goodbye and dropped all producers. Let the
+                // writer drain it and finish the SendStream before closing the
+                // QUIC connection. Broken transports skip that flush wait.
+                finish_quic_writer(writer, graceful, STREAM_WRITER_CLOSE_TIMEOUT).await;
+                connection.close(quinn::VarInt::from_u32(0), b"process shutdown");
+                endpoint.close(quinn::VarInt::from_u32(0), b"process shutdown");
             }
             #[cfg(test)]
             Self::Test { .. } => {
                 if let Some(mut writer) = writer {
                     if graceful {
-                        let _ = tokio::time::timeout(WS_WRITER_CLOSE_TIMEOUT, &mut writer).await;
+                        let _ =
+                            tokio::time::timeout(STREAM_WRITER_CLOSE_TIMEOUT, &mut writer).await;
                     } else {
                         writer.abort();
                     }
                 }
             }
         }
+    }
+}
+
+async fn finish_quic_writer(
+    writer: Option<tokio::task::JoinHandle<StreamWriterExit>>,
+    graceful: bool,
+    timeout: Duration,
+) {
+    let Some(mut writer) = writer else {
+        return;
+    };
+    if !graceful {
+        writer.abort();
+        return;
+    }
+    if tokio::time::timeout(timeout, &mut writer).await.is_err() {
+        writer.abort();
     }
 }
 
@@ -3177,6 +3188,16 @@ fn build_quic_client_crypto(
         .map_err(|e| format!("failed to build quinn client crypto: {}", e))
 }
 
+fn build_quic_transport_config(quic: &QuicClientConfig) -> Result<quinn::TransportConfig, String> {
+    let idle_timeout: quinn::IdleTimeout = QUIC_IDLE_TIMEOUT
+        .try_into()
+        .map_err(|_| "failed to encode QUIC idle timeout".to_string())?;
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(idle_timeout));
+    transport.keep_alive_interval(Some(Duration::from_secs(quic.keepalive_interval_secs)));
+    Ok(transport)
+}
+
 fn classify_quic_agent_connect_error(error: &str) -> &'static str {
     let lower = error.to_ascii_lowercase();
     if lower.contains("certificate")
@@ -3212,7 +3233,8 @@ async fn quic_session(
 ) -> Result<AgentSessionExit, String> {
     let quic = resolve_quic_config(cfg)?;
     let client_crypto = build_quic_client_crypto(&quic)?;
-    let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
+    let mut client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
+    client_config.transport_config(Arc::new(build_quic_transport_config(&quic)?));
     let server_addrs = resolve_quic_server_addrs(&quic.server_addr)?;
     let mut connect_errors = Vec::new();
     let mut client_endpoint = None;
@@ -3383,14 +3405,21 @@ async fn quic_session(
             AgentEnvelope::Pong { .. } => {}
             other => return Err(format!("expected pong, got {}", other.kind())),
         }
-        let _ = write_quic_frame(
-            &mut send,
-            &AgentEnvelope::Goodbye {
-                reason: Some("once complete".to_string()),
-            },
+        let goodbye = AgentEnvelope::Goodbye {
+            reason: Some("once complete".to_string()),
+        };
+        let goodbye_result = tokio::time::timeout(
+            STREAM_WRITER_CLOSE_TIMEOUT,
+            write_quic_frame(&mut send, &goodbye),
         )
         .await;
-        let _ = send.finish();
+        let finish_result = send.finish();
+        conn.close(quinn::VarInt::from_u32(0), b"once complete");
+        client_endpoint.close(quinn::VarInt::from_u32(0), b"once complete");
+        goodbye_result
+            .map_err(|_| "quic once goodbye flush timed out".to_string())?
+            .map_err(|e| format!("quic once goodbye send failed: {e}"))?;
+        finish_result.map_err(|e| format!("quic once send finish failed: {e}"))?;
         return Ok(AgentSessionExit::Completed);
     }
 

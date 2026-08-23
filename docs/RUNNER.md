@@ -253,6 +253,13 @@ WEBCODEX_QUIC_ALPN=webcodex-runner/1
 The certificate SAN must match the `server_name` configured on the Runner.
 `auto` tries QUIC first when `[quic]` is present, then WebSocket, then polling.
 
+`[quic].keepalive_interval_secs` controls Quinn's transport-level UDP/QUIC
+keepalive. It defaults to 20 seconds and accepts 1 through 25 seconds; values
+outside that range are rejected rather than clamped. This is separate from
+WebCodex application `Ping`/`Pong` liveness, which remains on its own 30-second
+cadence. QUIC connects directly over UDP and does not use the Runner's HTTP
+proxy settings.
+
 ### Outbound proxy for the Runner
 
 If the Runner host needs an outbound HTTP proxy, set the proxy variables in

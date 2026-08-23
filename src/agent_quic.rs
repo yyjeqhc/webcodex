@@ -404,6 +404,11 @@ async fn handle_quic_connection(
         writer_task,
     )
     .await;
+    // The shared session has already drained/stopped its stream writer and
+    // reconciled the exact lease. Explicitly close this connection so a
+    // graceful Goodbye or reader/writer termination does not leave connection
+    // lifetime to object-drop timing.
+    conn.close(quinn::VarInt::from_u32(0), b"session complete");
     tracing::info!(client_id = %client_id, "agent quic disconnected");
 }
 

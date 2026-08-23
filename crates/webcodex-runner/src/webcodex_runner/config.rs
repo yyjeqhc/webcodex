@@ -241,6 +241,11 @@ pub(crate) struct QuicClientConfig {
     pub(crate) keepalive_interval_secs: u64,
 }
 
+/// Quinn's Server/Client default idle timeout is 30 seconds. Keep the
+/// operator-configured transport keepalive below it with explicit scheduling
+/// slack so current and rolling-upgrade peers do not time out first.
+pub(crate) const MAX_QUIC_KEEPALIVE_INTERVAL_SECS: u64 = 25;
+
 pub(crate) fn default_quic_alpn() -> String {
     crate::shell_protocol::AGENT_QUIC_ALPN_V1.to_string()
 }
@@ -933,6 +938,11 @@ pub(crate) fn validate_quic_config(quic: &QuicClientConfig) -> Result<(), String
     }
     if quic.keepalive_interval_secs == 0 {
         return Err("[quic] keepalive_interval_secs must be > 0".to_string());
+    }
+    if quic.keepalive_interval_secs > MAX_QUIC_KEEPALIVE_INTERVAL_SECS {
+        return Err(format!(
+            "[quic] keepalive_interval_secs must be <= {MAX_QUIC_KEEPALIVE_INTERVAL_SECS}"
+        ));
     }
     Ok(())
 }

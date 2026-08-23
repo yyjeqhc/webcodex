@@ -145,17 +145,27 @@ async fn handle_agent_ws(
         }
     };
 
-    // 3. Acknowledge the register.
-    send_envelope_or_log(
+    // 3. Acknowledge the register. A failed post-commit ack means this
+    //    concrete connection never completed its handshake, so revoke only
+    //    this exact connection lease before returning. A same-instance newer
+    //    reconnect remains protected by the connection_id fence.
+    if send_envelope(
         &mut ws,
         AgentEnvelope::Registered {
             success: true,
             client: Some(view),
             error: None,
         },
-        "registered",
     )
-    .await;
+    .await
+    .is_err()
+    {
+        tracing::debug!(client_id = %client_id, "agent websocket registered ack send failed");
+        registry
+            .reconcile_disconnect_for_connection(&client_id, &agent_instance_id, &connection_id)
+            .await;
+        return;
+    }
     tracing::info!(client_id = %client_id, "agent websocket connected");
 
     // 4. Split the socket into a writer (owned by a writer task) and a reader

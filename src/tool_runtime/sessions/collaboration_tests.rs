@@ -1131,3 +1131,91 @@ fn collaboration_session_message_partial_persisted_completion_fails_closed() {
         .unwrap();
     assert_eq!(persisted_todo.status, SessionMessageStatus::Resolved);
 }
+
+#[tokio::test]
+async fn observe_session_messages_duplicate_persisted_message_ids_fail_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let session = store.start_session(Some("proj".to_string()), None);
+    let before = baseline(&store, &session.session_id).await;
+    let first = post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Note,
+        "first retained state",
+        SessionMessagePriority::Normal,
+    );
+    let second = post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Note,
+        "second retained state",
+        SessionMessagePriority::Normal,
+    );
+    store.flush_persistence();
+    drop(store);
+
+    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let record = raw["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|record| record["session_id"] == session.session_id)
+        .unwrap();
+    let messages = record["messages"].as_array_mut().unwrap();
+    let duplicate = messages
+        .iter_mut()
+        .find(|message| message["message_id"] == second.message_id)
+        .unwrap();
+    duplicate["message_id"] = Value::String(first.message_id.clone());
+    let revisions = record["message_observation_revisions"]
+        .as_object_mut()
+        .unwrap();
+    revisions.remove(&second.message_id);
+    revisions.insert(first.message_id.clone(), Value::from(2));
+    std::fs::write(&ledger, serde_json::to_vec(&raw).unwrap()).unwrap();
+
+    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let recovered = restored
+        .observe_messages(
+            &session.session_id,
+            Some(&before.observation_token),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+    assert!(recovered.changed);
+    assert!(recovered.history_lost);
+    assert!(!recovered.has_more);
+    assert!(recovered.messages.is_empty());
+    let retained = restored
+        .list_messages(&session.session_id, Default::default())
+        .unwrap();
+    assert!(
+        retained
+            .iter()
+            .all(|message| message.message_id != first.message_id),
+        "ambiguous duplicate identities must not survive restore"
+    );
+
+    let after_restore = post(
+        &restored,
+        &session.session_id,
+        SessionMessageKind::Progress,
+        "new unique state after duplicate-id sanitization",
+        SessionMessagePriority::Normal,
+    );
+    let delta = restored
+        .observe_messages(
+            &session.session_id,
+            Some(&recovered.observation_token),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delta.messages.len(), 1);
+    assert_eq!(delta.messages[0].message_id, after_restore.message_id);
+}

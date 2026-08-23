@@ -155,6 +155,36 @@ async fn observe_session_messages_collaboration_recorder_target_scope_fences() {
         wait_without_token.output["error_kind"],
         "invalid_session_message_observation_request"
     );
+    assert_eq!(
+        wait_without_token.output["failure_kind"],
+        "invalid_arguments"
+    );
+    assert_eq!(wait_without_token.output["state_changed"], false);
+    assert_eq!(wait_without_token.output["recovery_kind"], "fix_input");
+    assert!(wait_without_token.output.get("recovery_tool").is_none());
+
+    let invalid_token = call_with_recorder(
+        &runtime,
+        "observe_session_messages",
+        json!({
+            "session_id": coordinator.session_id,
+            "after_observation_token": "not-a-token"
+        }),
+        Some(&same_project_worker.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(!invalid_token.success);
+    assert_eq!(
+        invalid_token.output["error_kind"],
+        "invalid_session_message_observation_token"
+    );
+    assert_eq!(invalid_token.output["failure_kind"], "invalid_arguments");
+    assert_eq!(invalid_token.output["state_changed"], false);
+    assert_eq!(invalid_token.output["recovery_kind"], "fix_input");
+    assert!(invalid_token.output.get("recovery_tool").is_none());
+    assert!(invalid_token.output.get("observation_token").is_none());
 
     let cross_project = call_with_recorder(
         &runtime,

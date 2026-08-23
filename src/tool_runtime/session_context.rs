@@ -277,7 +277,8 @@ pub(crate) fn session_message_error_result(
                 "message_id": message_id,
                 "state_changed": false,
             }),
-        ),
+        )
+        .with_recovery(RecoveryKind::NoAction, None),
         sessions::SessionMessageError::PersistenceUncertain => ToolResult::err_with_output(
             "completion_persistence_uncertain",
             json!({

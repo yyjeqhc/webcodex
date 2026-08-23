@@ -8,7 +8,7 @@ use super::session_context::{
     workflow_session_authority_fingerprint, SessionProjectMismatch,
 };
 use super::tool_inputs::SessionMode;
-use super::{sessions, ToolCall, ToolResult, ToolRuntime};
+use super::{sessions, RecoveryKind, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -912,6 +912,7 @@ fn invalid_session_message_observation_request(session_id: &str, message: &str) 
             "state_changed": false,
         }),
     )
+    .with_recovery(RecoveryKind::FixInput, None)
 }
 
 fn session_message_observation_error_result(
@@ -929,10 +930,12 @@ fn session_message_observation_error_result(
             "invalid_session_message_observation_token",
             json!({
                 "error_kind": "invalid_session_message_observation_token",
+                "failure_kind": "invalid_arguments",
                 "session_id": session_id,
                 "state_changed": false,
             }),
-        ),
+        )
+        .with_recovery(RecoveryKind::FixInput, None),
         sessions::SessionMessageObservationError::InvalidObservationState => {
             ToolResult::err_with_output(
                 "invalid_message_observation_state",
@@ -942,6 +945,7 @@ fn session_message_observation_error_result(
                     "state_changed": false,
                 }),
             )
+            .with_recovery(RecoveryKind::NoAction, None)
         }
     }
 }

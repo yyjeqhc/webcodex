@@ -43,7 +43,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "observe_session_messages",
-            "Observe only message-state delta after an opaque durable Session-bound cursor. Without a token, establishes the current message-board baseline and returns no history; with a token, optionally waits once for relevant change. Retention loss is explicit and this is never a subscription, delivery receipt, or model-context proof.",
+            "Observe Session message-state delta after an opaque durable cursor. No token establishes the current baseline and returns no history; token calls may wait once for change. Reports retention loss; never a subscription, delivery receipt, or model-context proof.",
             observe_session_messages_input_schema(),
         ),
         tool_spec(

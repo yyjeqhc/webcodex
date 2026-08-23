@@ -336,7 +336,7 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "handoff",
-        summary: "Handoff: use session_summary / session_handoff_summary. Coordinator posts todo; independent worker reads handoff + exact todo, works in its own Session, then complete_session_message atomically answers+resolves. A caller may establish an observe_session_messages baseline and later read only message-state delta; coordinator still revalidates authoritative state.",
+        summary: "Handoff: use session_summary / session_handoff_summary. Coordinator posts todo; worker handles the exact todo in its own Session and complete_session_message atomically answers+resolves. Use observe_session_messages baseline/token for later delta; coordinator revalidates state.",
         manifest_purpose: "Coordinate independent Workflow Sessions through bounded todos, atomic completions, and explicit message-state delta observation without sharing execution history, authority, subscriptions, or automatic wake-up.",
         tools: &[
             "session_summary",

@@ -121,7 +121,7 @@ impl PersistedSessionRecord {
             .into_iter()
             .rev()
             .collect();
-        let messages: VecDeque<Arc<SessionMessage>> = self
+        let mut messages: VecDeque<Arc<SessionMessage>> = self
             .messages
             .into_iter()
             .map(|message| Arc::try_unwrap(message).unwrap_or_else(|message| (*message).clone()))
@@ -133,6 +133,21 @@ impl PersistedSessionRecord {
             .into_iter()
             .rev()
             .collect();
+        // Canonical writers mint one unique message_id per retained message. A
+        // duplicate persisted id is structurally ambiguous for message mutation
+        // and for revision-only pagination. Do not guess which conflicting body
+        // is authoritative: discard every retained message carrying that id.
+        let mut seen_message_ids = HashSet::new();
+        let mut duplicate_message_ids = HashSet::new();
+        for message in &messages {
+            if !seen_message_ids.insert(message.message_id.clone()) {
+                duplicate_message_ids.insert(message.message_id.clone());
+            }
+        }
+        let duplicate_retained_message_ids = !duplicate_message_ids.is_empty();
+        if duplicate_retained_message_ids {
+            messages.retain(|message| !duplicate_message_ids.contains(&message.message_id));
+        }
         let retained_message_ids = messages
             .iter()
             .map(|message| message.message_id.clone())
@@ -143,7 +158,7 @@ impl PersistedSessionRecord {
             .min(current_observation_revision);
         let mut observation_revisions = BTreeMap::new();
         if current_observation_revision > 0 {
-            let mut inconsistent = false;
+            let mut inconsistent = duplicate_retained_message_ids;
             let mut retained_positive_revisions = HashSet::new();
             for (message_id, revision) in self.message_observation_revisions {
                 if revision > current_observation_revision {

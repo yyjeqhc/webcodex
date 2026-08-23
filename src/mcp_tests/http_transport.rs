@@ -117,19 +117,70 @@ async fn stateless_observation_shell_clients() -> Arc<crate::shell_client::Shell
     shell_clients
 }
 
+fn spawn_stateless_observation_agent_executor(
+    registry: Arc<crate::shell_client::ShellClientRegistry>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            if let Some(request) = registry
+                .poll(crate::shell_protocol::ShellAgentPollRequest {
+                    client_id: "mcp-observation-agent".to_string(),
+                    agent_instance_id: "inst-mcp-observation".to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap()
+            {
+                let (exit_code, stderr) = if request.kind == "file_read" {
+                    (1, "No such file or directory")
+                } else {
+                    (-1, "unexpected observation fixture agent request")
+                };
+                registry
+                    .complete(crate::shell_protocol::ShellAgentResultRequest {
+                        client_id: "mcp-observation-agent".to_string(),
+                        agent_instance_id: "inst-mcp-observation".to_string(),
+                        request_id: request.request_id,
+                        exit_code: Some(exit_code),
+                        stdout: Some(String::new()),
+                        stderr: Some(stderr.to_string()),
+                        duration_ms: Some(1),
+                        error: None,
+                    })
+                    .await
+                    .unwrap();
+            } else {
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
+        }
+    })
+}
+
 fn stateless_tool_output(body: &Value) -> &Value {
     &body["result"]["structuredContent"]["output"]
 }
 
-fn start_stateless_observation_session(
-    runtime: &ToolRuntime,
+async fn start_stateless_observation_session(
+    service: &Service,
+    id: i64,
     project: &str,
     title: &str,
 ) -> String {
-    runtime
-        .sessions
-        .start_session(Some(project.to_string()), Some(title.to_string()))
-        .session_id
+    let (status, body) = stateless_2026_tool_call(
+        service,
+        "secret",
+        id,
+        "start_session",
+        json!({"project": project, "title": title}),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["isError"], false, "{body}");
+    stateless_tool_output(&body)["session_id"]
+        .as_str()
+        .expect("stateless project Workflow Session")
+        .to_string()
 }
 
 #[tokio::test]
@@ -666,6 +717,7 @@ async fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contra
     let ledger_dir = tempfile::tempdir().unwrap();
     let ledger = ledger_dir.path().join("sessions.json");
     let shell_clients = stateless_observation_shell_clients().await;
+    let agent_executor = spawn_stateless_observation_agent_executor(shell_clients.clone());
     let shared_project =
         crate::tool_runtime::agent_project_runtime_id("mcp-observation-agent", "shared");
     let foreign_project =
@@ -681,25 +733,33 @@ async fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contra
         runtime.clone(),
     ));
 
-    // Session creation is fixture setup, not part of the transport contract under
-    // test. Build exact project-scoped Sessions directly; the cfg(test) Session
-    // fixture marker is accepted only in tests, while every HTTP observation still
-    // exercises real project resolution plus recorder/target scope authorization.
-    // This avoids unrelated project-instruction file probes on the fake Runner.
-    let coordinator_id =
-        start_stateless_observation_session(&runtime, &shared_project, "Observation coordinator C");
+    // Create every project-scoped participant through the real stateless MCP
+    // start_session path so target and recorder authorization exercise both
+    // project resolution and the immutable caller authority-group fingerprint.
+    let coordinator_id = start_stateless_observation_session(
+        &service,
+        240,
+        &shared_project,
+        "Observation coordinator C",
+    )
+    .await;
     let worker_id =
-        start_stateless_observation_session(&runtime, &shared_project, "Observation worker W");
+        start_stateless_observation_session(&service, 241, &shared_project, "Observation worker W")
+            .await;
     let second_coordinator_id = start_stateless_observation_session(
-        &runtime,
+        &service,
+        242,
         &shared_project,
         "Observation coordinator C2",
-    );
+    )
+    .await;
     let foreign_worker_id = start_stateless_observation_session(
-        &runtime,
+        &service,
+        243,
         &foreign_project,
         "Foreign observation worker W2",
-    );
+    )
+    .await;
 
     let pre_baseline_body_marker = "pre-baseline-history-must-not-replay";
     let (status, pre_baseline_body) = stateless_2026_tool_call(
@@ -1066,6 +1126,7 @@ async fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contra
     assert_eq!(restart_messages.len(), 1);
     assert_eq!(restart_messages[0]["message_id"], restart_message_id);
     assert_eq!(restart_messages[0]["message"], restart_body_marker);
+    agent_executor.abort();
 }
 
 #[tokio::test]

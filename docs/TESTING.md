@@ -94,10 +94,16 @@ Run the current heuristic inventory with:
 bash scripts/test_inventory.sh
 ```
 
-The script is intentionally heuristic. It scans only `src`, `docs`, and `tests`
-when those directories exist, does not access the network, does not modify the
-workspace, and reports counts plus sanitized risk clues. Use
-`bash scripts/test_inventory.sh --details` for a full sanitized file/line list.
+The script is intentionally heuristic. It scans all Git-tracked Rust files across
+the workspace, so crate-local tests (including Runner tests) are included. Using
+the Git index as the source set excludes ordinary untracked `target/` output and
+scratch files without maintaining a second ignore list. It does not access the
+network or modify the workspace. The output includes a
+stable tab-separated area summary for the root `webcodex` package and each
+`crates/*` member, plus sanitized risk clues. Use
+`bash scripts/test_inventory.sh --details` for a full sanitized file/line list,
+and `bash scripts/test_inventory.sh --self-test` to exercise the inventory
+contract against a temporary Git fixture.
 
 ## Current Test Layout Notes
 

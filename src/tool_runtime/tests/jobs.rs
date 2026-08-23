@@ -2576,10 +2576,44 @@ fn listed_job_ids(result: &ToolResult) -> Vec<String> {
 
 fn assert_unknown_job(result: ToolResult) {
     assert!(!result.success, "unexpected success: {:?}", result.output);
+    assert_eq!(result.output["error_kind"], "unknown_job");
+    assert_eq!(result.output["failure_kind"], "job_not_found");
+    assert_eq!(result.output["state_changed"], false);
+    assert_eq!(result.output["recovery_kind"], "reobserve");
+    assert_eq!(result.output["recovery_tool"], "list_jobs");
     assert!(
         result.error.unwrap_or_default().contains("unknown job"),
         "unauthorized job lookup should be hidden as unknown"
     );
+}
+
+#[tokio::test]
+async fn agent_job_log_invalid_token_is_fix_input_not_unknown_job() {
+    let runtime = test_runtime();
+    let auth = shared_key_auth_context("hash-token");
+    register_job_agent_for_auth(&runtime, "client-token", "proj-token", &auth).await;
+    let job_id = start_agent_runtime_job(&runtime, "client-token", "proj-token", &auth).await;
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::JobLog {
+                job_id,
+                offset: None,
+                tail_lines: None,
+                after_observation_token: Some("bad".to_string()),
+                wait_secs: Some(1),
+            },
+            Some(&auth),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "invalid_observation_token");
+    assert_eq!(result.output["failure_kind"], "invalid_arguments");
+    assert_eq!(result.output["state_changed"], false);
+    assert_eq!(result.output["recovery_kind"], "fix_input");
+    assert!(result.output.get("recovery_tool").is_none());
+    assert!(result.error.unwrap_or_default().contains("malformed"));
 }
 
 #[tokio::test]
@@ -3357,6 +3391,39 @@ async fn list_jobs_respects_limit_bound() {
 }
 
 #[tokio::test]
+async fn list_jobs_invalid_filters_are_fix_input() {
+    let runtime = test_runtime();
+    for (call, error_kind) in [
+        (
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+                project: Some(" ".to_string()),
+                session_id: None,
+            },
+            "invalid_project_filter",
+        ),
+        (
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+                project: None,
+                session_id: Some(" ".to_string()),
+            },
+            "invalid_session_filter",
+        ),
+    ] {
+        let result = runtime.dispatch(call).await;
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], error_kind);
+        assert_eq!(result.output["failure_kind"], "invalid_arguments");
+        assert_eq!(result.output["state_changed"], false);
+        assert_eq!(result.output["recovery_kind"], "fix_input");
+        assert!(result.output.get("recovery_tool").is_none());
+    }
+}
+
+#[tokio::test]
 async fn list_jobs_requires_no_agent_capability() {
     // list_jobs has no project and no agent capability requirement, so it
     // succeeds even with no registered agent.
@@ -3387,11 +3454,7 @@ async fn job_tail_reaches_job_logic_without_agent_auth() {
             wait_secs: None,
         })
         .await;
-    assert!(!result.success);
-    assert!(
-        result.error.unwrap().contains("unknown job"),
-        "job_tail should report unknown job"
-    );
+    assert_unknown_job(result);
 }
 
 // ============================================================================
@@ -3434,8 +3497,36 @@ async fn job_log_wait_rejects_invalid_wait_secs_before_execution() {
             )
             .await;
         assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "invalid_wait_secs");
+        assert_eq!(result.output["failure_kind"], "invalid_arguments");
+        assert_eq!(result.output["state_changed"], false);
+        assert_eq!(result.output["recovery_kind"], "fix_input");
+        assert!(result.output.get("recovery_tool").is_none());
         assert!(result.error.as_deref().unwrap_or("").contains("wait_secs"));
     }
+}
+
+#[tokio::test]
+async fn local_job_log_invalid_token_is_fix_input() {
+    let (_temp, record, _) = make_local_record("job-invalid-token");
+    let result = super::super::jobs::local_job_log(
+        "job-invalid-token",
+        &record,
+        &SystemJobKiller,
+        None,
+        None,
+        Some("bad".to_string()),
+        None,
+    )
+    .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "invalid_observation_token");
+    assert_eq!(result.output["failure_kind"], "invalid_arguments");
+    assert_eq!(result.output["state_changed"], false);
+    assert_eq!(result.output["recovery_kind"], "fix_input");
+    assert!(result.output.get("recovery_tool").is_none());
+    assert!(result.error.unwrap_or_default().contains("malformed"));
 }
 
 #[test]

@@ -577,7 +577,7 @@ pub(crate) async fn local_job_log(
         .transpose()
     {
         Ok(token) => token,
-        Err(error) => return ToolResult::err(error),
+        Err(error) => return invalid_job_observation_result("invalid_observation_token", error),
     };
     let mut timeout_note = enforce_local_job_timeout(record, killer);
     let meta = record.read_json("metadata.json");
@@ -1023,6 +1023,39 @@ fn local_job_session_id(record: &LocalJobRecord) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn invalid_job_observation_result(error_kind: &str, message: String) -> ToolResult {
+    ToolResult::err_with_output(
+        message,
+        json!({
+            "error_kind": error_kind,
+            "failure_kind": "invalid_arguments",
+            "state_changed": false,
+        }),
+    )
+    .with_recovery(RecoveryKind::FixInput, None)
+}
+
+fn unknown_job_observation_result(job_id: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        format!("unknown job: {}", job_id),
+        json!({
+            "error_kind": "unknown_job",
+            "failure_kind": "job_not_found",
+            "job_id": job_id,
+            "state_changed": false,
+        }),
+    )
+    .with_recovery(RecoveryKind::Reobserve, Some(RecoveryTool::ListJobs))
+}
+
+fn agent_job_log_error_result(job_id: &str, error: String) -> ToolResult {
+    if error.starts_with("invalid after_observation_token:") {
+        invalid_job_observation_result("invalid_observation_token", error)
+    } else {
+        unknown_job_observation_result(job_id)
+    }
 }
 
 fn confirmation_required_result(project: &str, job_id: &str) -> ToolResult {
@@ -1672,7 +1705,7 @@ impl ToolRuntime {
         let killer = self.job_killer.as_ref();
         if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
             if !record.is_public() || !local_jobs_visible_to_auth(auth) {
-                return ToolResult::err(format!("unknown job: {}", job_id));
+                return unknown_job_observation_result(&job_id);
             }
             return local_job_status(&job_id, &record, killer, include_command_preview);
         }
@@ -1687,11 +1720,11 @@ impl ToolRuntime {
         {
             if let Some(record) = self.recover_local_job(&job_id).await {
                 if !local_jobs_visible_to_auth(auth) {
-                    return ToolResult::err(format!("unknown job: {}", job_id));
+                    return unknown_job_observation_result(&job_id);
                 }
                 return local_job_status(&job_id, &record, killer, include_command_preview);
             }
-            return ToolResult::err(format!("unknown job: {}", job_id));
+            return unknown_job_observation_result(&job_id);
         }
         match self.shell_clients.get_job_for_auth(auth, &job_id).await {
             Ok(job) => {
@@ -1773,7 +1806,7 @@ impl ToolRuntime {
                 }
                 ToolResult::ok(output)
             }
-            Err(_) => ToolResult::err(format!("unknown job: {}", job_id)),
+            Err(_) => unknown_job_observation_result(&job_id),
         }
     }
 
@@ -1813,7 +1846,7 @@ impl ToolRuntime {
         wait_secs: Option<u64>,
     ) -> ToolResult {
         if let Err(message) = Self::validate_job_log_wait(wait_secs) {
-            return ToolResult::err(message);
+            return invalid_job_observation_result("invalid_wait_secs", message);
         }
         let tail_lines = if offset.is_none() && tail_lines.is_none() {
             Some(super::helpers::DEFAULT_JOB_LOG_TAIL_LINES)
@@ -1823,7 +1856,7 @@ impl ToolRuntime {
         let killer = self.job_killer.as_ref();
         if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
             if !record.is_public() || !local_jobs_visible_to_auth(auth) {
-                return ToolResult::err(format!("unknown job: {}", job_id));
+                return unknown_job_observation_result(&job_id);
             }
             return local_job_log(
                 &job_id,
@@ -1844,7 +1877,7 @@ impl ToolRuntime {
         {
             if let Some(record) = self.recover_local_job(&job_id).await {
                 if !local_jobs_visible_to_auth(auth) {
-                    return ToolResult::err(format!("unknown job: {}", job_id));
+                    return unknown_job_observation_result(&job_id);
                 }
                 return local_job_log(
                     &job_id,
@@ -1857,7 +1890,7 @@ impl ToolRuntime {
                 )
                 .await;
             }
-            return ToolResult::err(format!("unknown job: {}", job_id));
+            return unknown_job_observation_result(&job_id);
         }
         match self
             .shell_clients
@@ -1956,7 +1989,7 @@ impl ToolRuntime {
                     "validation": validation,
                 }))
             }
-            Err(_) => ToolResult::err(format!("unknown job: {}", job_id)),
+            Err(error) => agent_job_log_error_result(&job_id, error),
         }
     }
 
@@ -1987,10 +2020,10 @@ impl ToolRuntime {
             Some(value) => {
                 let value = value.trim();
                 if value.is_empty() || value.chars().count() > 512 {
-                    return ToolResult::err_with_output(
+                    return invalid_job_observation_result(
+                        "invalid_project_filter",
                         "invalid_project_filter: project must contain 1..=512 characters"
                             .to_string(),
-                        json!({"error_kind": "invalid_project_filter"}),
                     );
                 }
                 Some(value.to_string())
@@ -2001,10 +2034,10 @@ impl ToolRuntime {
             Some(value) => {
                 let value = value.trim();
                 if value.is_empty() || value.chars().count() > 128 {
-                    return ToolResult::err_with_output(
+                    return invalid_job_observation_result(
+                        "invalid_session_filter",
                         "invalid_session_filter: session_id must contain 1..=128 characters"
                             .to_string(),
-                        json!({"error_kind": "invalid_session_filter"}),
                     );
                 }
                 Some(value.to_string())

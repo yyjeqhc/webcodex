@@ -173,9 +173,11 @@ fn shell_config_dialect_field_parses_and_validates() {
 server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
+projects_dir = "projects.d"
 
 [policy]
 allow_cwd_anywhere = true
+allowed_roots = ["."]
 
 [shell]
 dialect = "powershell"
@@ -201,9 +203,11 @@ args = ["-c"]
 server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
+projects_dir = "projects.d"
 
 [policy]
 allow_cwd_anywhere = true
+allowed_roots = ["."]
 
 [shell]
 dialect = "cmd"
@@ -217,7 +221,7 @@ dialect = "cmd"
 
 #[test]
 fn shell_config_default_environment_is_inherited() {
-    let _guard = TEST_ENV_LOCK.lock().unwrap();
+    let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/projects.d"));
     let cwd = tmp.path().to_string_lossy().to_string();

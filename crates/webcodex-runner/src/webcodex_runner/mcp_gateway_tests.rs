@@ -222,9 +222,7 @@ fn tools_call_sends_only_gateway_owned_name_and_arguments() {
 
 #[test]
 fn provider_execution_context_is_explicit_cleared_and_private() {
-    let _guard = crate::tests::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = crate::tests::test_env_lock();
     let _env = crate::tests::EnvGuard::new()
         .set("GITHUB_TOKEN", "github-provider-secret-value")
         .set("WEBCODEX_MCP_MAPPED_SOURCE", "mapped-provider-secret-value")
@@ -267,9 +265,7 @@ fn provider_execution_context_is_explicit_cleared_and_private() {
 
 #[test]
 fn missing_mapped_source_fails_before_provider_spawn() {
-    let _guard = crate::tests::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = crate::tests::test_env_lock();
     let _env = crate::tests::EnvGuard::new().remove("WEBCODEX_MCP_TEST_MISSING_SOURCE");
     let fixture = Fixture::with_execution_context(
         "normal",

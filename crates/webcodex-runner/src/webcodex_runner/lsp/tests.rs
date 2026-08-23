@@ -791,6 +791,7 @@ fn lsp_initialize_pre_exit_with_stderr_surfaces_component_missing_diagnostic() {
 #[cfg(unix)]
 #[test]
 fn lsp_rustup_proxy_without_component_is_not_available() {
+    let _env_lock = crate::tests::test_env_lock();
     let _serial = super::super::serialize_fake_lsp_test();
     let temp = tempfile::tempdir().unwrap();
     let bin = temp.path().join("bin");
@@ -816,10 +817,9 @@ fn lsp_rustup_proxy_without_component_is_not_available() {
 
     let command = LspCommand::new(bin.join("rust-analyzer"));
     // Point detection at the fixture rustup home without spawning anything.
-    let previous_home = env::var_os("RUSTUP_HOME");
-    let previous_toolchain = env::var_os("RUSTUP_TOOLCHAIN");
-    env::set_var("RUSTUP_HOME", &rustup_home);
-    env::remove_var("RUSTUP_TOOLCHAIN");
+    let _env = crate::tests::EnvGuard::new()
+        .set("RUSTUP_HOME", &rustup_home)
+        .remove("RUSTUP_TOOLCHAIN");
     let available_missing = command.is_available(LspServerKind::RustAnalyzer);
 
     // Installing the component binary under the active toolchain restores
@@ -839,16 +839,6 @@ fn lsp_rustup_proxy_without_component_is_not_available() {
     }
     let available_installed = command.is_available(LspServerKind::RustAnalyzer);
 
-    // Always restore process env before assertions so a failure cannot leak.
-    match previous_home {
-        Some(value) => env::set_var("RUSTUP_HOME", value),
-        None => env::remove_var("RUSTUP_HOME"),
-    }
-    match previous_toolchain {
-        Some(value) => env::set_var("RUSTUP_TOOLCHAIN", value),
-        None => env::remove_var("RUSTUP_TOOLCHAIN"),
-    }
-
     assert!(
         !available_missing,
         "rustup shim without component must not report available"
@@ -862,29 +852,14 @@ fn lsp_rustup_proxy_without_component_is_not_available() {
 #[cfg(windows)]
 #[test]
 fn rustup_home_falls_back_to_userprofile_on_windows() {
+    let _env_lock = crate::tests::test_env_lock();
     let _serial = super::super::serialize_fake_lsp_test();
     let temp = tempfile::tempdir().unwrap();
-    let previous_rustup_home = env::var_os("RUSTUP_HOME");
-    let previous_home = env::var_os("HOME");
-    let previous_userprofile = env::var_os("USERPROFILE");
-
-    env::remove_var("RUSTUP_HOME");
-    env::remove_var("HOME");
-    env::set_var("USERPROFILE", temp.path());
+    let _env = crate::tests::EnvGuard::new()
+        .remove("RUSTUP_HOME")
+        .remove("HOME")
+        .set("USERPROFILE", temp.path());
     let detected = rustup_home_dir();
-
-    match previous_rustup_home {
-        Some(value) => env::set_var("RUSTUP_HOME", value),
-        None => env::remove_var("RUSTUP_HOME"),
-    }
-    match previous_home {
-        Some(value) => env::set_var("HOME", value),
-        None => env::remove_var("HOME"),
-    }
-    match previous_userprofile {
-        Some(value) => env::set_var("USERPROFILE", value),
-        None => env::remove_var("USERPROFILE"),
-    }
 
     assert_eq!(detected, Some(temp.path().join(".rustup")));
 }

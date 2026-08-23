@@ -217,6 +217,9 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             persistent_shell: false,
             ssh_persistent_shell: false,
             structured_validation_argv: true,
+            // Durable assertion metadata is advertised by the running binary,
+            // not inferred from generic validation argv support.
+            structured_cargo_test_count_assertion: false,
             // The running binary advertises this process-lifetime protocol
             // capability after installing its exact Go argv boundary.
             structured_go_test_json: false,

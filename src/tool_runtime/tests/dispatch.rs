@@ -35,10 +35,20 @@ fn structured_validation_tools_are_known_and_parse() {
     assert!(matches!(
         ToolCall::from_tool_name(
             "cargo_test",
-            json!({"project":"agent:oe:webcodex","filter":"tool_runtime"})
+            json!({
+                "project":"agent:oe:webcodex",
+                "filter":"tool_runtime",
+                "require_tests": true,
+                "min_tests": 6
+            })
         )
         .unwrap(),
-        ToolCall::CargoTest { filter: Some(filter), .. } if filter == "tool_runtime"
+        ToolCall::CargoTest {
+            filter: Some(filter),
+            require_tests: Some(true),
+            min_tests: Some(6),
+            ..
+        } if filter == "tool_runtime"
     ));
     assert!(matches!(
         ToolCall::from_tool_name(

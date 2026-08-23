@@ -1,9 +1,30 @@
 use serde_json::{json, Value};
 
 use super::common::{
-    array_schema, nullable_schema, permission_decision_schema, recovery_kind_schema, schema_type,
-    session_hint_schema, wrapped_output_schema,
+    array_schema, cargo_test_count_assertion_schema, nullable_schema, permission_decision_schema,
+    recovery_kind_schema, schema_type, session_hint_schema, wrapped_output_schema,
 };
+
+fn validation_job_projection_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Structured validation lifecycle and bounded parsed evidence for validation Jobs.",
+        "additionalProperties": true,
+        "properties": {
+            "tool": {"type": "string"},
+            "kind": {"type": "string"},
+            "state": {"type": "string", "enum": ["pending", "running", "completed", "timed_out", "cancelled", "lost"]},
+            "passed": {
+                "anyOf": [
+                    {"type": "boolean"},
+                    {"type": "null"}
+                ]
+            },
+            "truncated": {"type": "boolean"},
+            "test_count_assertion": cargo_test_count_assertion_schema()
+        }
+    })
+}
 
 fn process_execution_state_schema() -> Value {
     json!({
@@ -1052,6 +1073,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "stderr_log_truncated",
                 schema_type("boolean", "True when the retained stderr begins after discarded bytes."),
             ),
+            ("validation", validation_job_projection_schema()),
             (
                 "command_preview_included",
                 schema_type("boolean", "True only when include_command_preview=true was requested."),
@@ -1214,6 +1236,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "last_update_seq",
                 nullable_schema("integer", "Agent Runner protocol diagnostic sequence; not a bounded-wait token. Omitted for local jobs."),
             ),
+            ("validation", validation_job_projection_schema()),
             (
                 "cursor",
                 super::common::open_object_schema(

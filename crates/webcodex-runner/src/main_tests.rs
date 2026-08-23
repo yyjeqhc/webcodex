@@ -484,6 +484,7 @@ fn runner_recovery_context_rejects_cross_product_go_test_metadata() {
         sync_wait_secs: 10,
         adapter: "go_test".to_string(),
         validation_target_id: None,
+        minimum_tests: None,
     });
     let context = context.clone();
 

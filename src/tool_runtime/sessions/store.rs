@@ -1556,6 +1556,7 @@ impl SessionStore {
         validation_target_id: &str,
         job_status: &str,
         exit_code: Option<i64>,
+        validation_passed: Option<bool>,
         started_at: Option<i64>,
         finished_at: Option<i64>,
         duration_ms: Option<u64>,
@@ -1594,11 +1595,13 @@ impl SessionStore {
         {
             return false;
         }
-        let succeeded = job_status == "completed" && exit_code == Some(0);
+        let process_succeeded = job_status == "completed" && exit_code == Some(0);
+        let succeeded = process_succeeded && validation_passed.unwrap_or(true);
         let failure_kind = (!succeeded).then(|| match job_status {
             "timeout" | "timed_out" => "timeout".to_string(),
             "stopped" | "cancelled" => "cancelled".to_string(),
             "lost" => "execution_lost".to_string(),
+            _ if process_succeeded => "validation_failed".to_string(),
             _ => "command_exit_nonzero".to_string(),
         });
         let classification = SessionToolClassification::for_tool(tool_name);

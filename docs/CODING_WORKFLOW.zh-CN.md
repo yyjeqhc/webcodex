@@ -110,6 +110,13 @@ logical validation 在修复后重跑，应复用原 `assertion_name`。这样 v
 能够表达目标检查时，优先使用它们；只有结构化 surface 无法覆盖时才用 shell。结构化
 结果能给 Session ledger 更安全的 evidence，而不必解析任意 command text。
 
+当 focused `cargo_test` 必须证明测试确实运行过时，使用 `require_tests: true` 要求至少一个
+test，或使用 `min_tests: N` 声明更大的 bounded minimum；两者同时存在时取更严格的要求。
+两者都省略时，exit code 为零但运行零个 test 的 invocation 仍保持 execution success，并
+返回 `tests_run_count: 0` 与 `zero_tests_run: true`。显式 count assertion 只有在完整 parser
+evidence 能证明达到 minimum 时才通过；evidence 缺失或被截断时 validation contract 会失败，
+但不会改写真实 process exit code。count assertion 不能与 `no_run: true` 同时使用。
+
 **把 closeout 当 evidence，不当 completion authority。** `finish_coding_task` 返回 recorded
 Session evidence 的 deterministic advisory snapshot；按请求可包含 validation、workspace、
 jobs 与 tool history。它不决定任务已经完成，不替代直接的 diff/test review，也不替代最后

@@ -864,6 +864,7 @@ fn validation_job_terminal_identity_survives_event_eviction_and_restart_without_
         target,
         "completed",
         Some(0),
+        Some(true),
         Some(authoritative_finished_at.saturating_sub(1)),
         Some(authoritative_finished_at),
         Some(1000),
@@ -915,6 +916,7 @@ fn validation_job_terminal_identity_survives_event_eviction_and_restart_without_
             target,
             "completed",
             Some(0),
+            Some(true),
             Some(authoritative_finished_at.saturating_sub(1)),
             Some(authoritative_finished_at),
             Some(1000),
@@ -948,6 +950,7 @@ fn validation_job_terminal_identity_survives_event_eviction_and_restart_without_
             target,
             "completed",
             Some(0),
+            Some(true),
             Some(authoritative_finished_at.saturating_sub(1)),
             Some(authoritative_finished_at),
             Some(1000),
@@ -1090,6 +1093,37 @@ fn structured_validation_target_resolves_equivalent_semantic_arguments() {
         .as_str()
         .unwrap();
     assert!(identity.starts_with("target:"), "{identity}");
+}
+
+#[test]
+fn cargo_test_target_identity_includes_effective_count_contract() {
+    let target = |arguments| {
+        super::super::tool_audit::structured_validation_target_identity("cargo_test", &arguments)
+            .unwrap()
+    };
+    let require_one = target(json!({
+        "cwd": ".",
+        "filter": "focused",
+        "require_tests": true
+    }));
+    let min_one = target(json!({
+        "cwd": ".",
+        "filter": "focused",
+        "min_tests": 1
+    }));
+    let min_six = target(json!({
+        "cwd": ".",
+        "filter": "focused",
+        "require_tests": true,
+        "min_tests": 6
+    }));
+    let compatible_default = target(json!({
+        "cwd": ".",
+        "filter": "focused"
+    }));
+    assert_eq!(require_one, min_one);
+    assert_ne!(require_one, min_six);
+    assert_ne!(require_one, compatible_default);
 }
 
 #[test]
@@ -1528,6 +1562,8 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                         features: None,
                         package: None,
                         no_run: None,
+                        require_tests: None,
+                        min_tests: None,
                         timeout_secs: Some(60),
                     },
                     Some(&auth),

@@ -71,6 +71,8 @@ impl ToolRuntime {
                 features,
                 package,
                 no_run,
+                require_tests,
+                min_tests,
                 timeout_secs,
             } => {
                 self.cargo_test_with_context(
@@ -83,6 +85,8 @@ impl ToolRuntime {
                     features,
                     package,
                     no_run,
+                    require_tests,
+                    min_tests,
                     timeout_secs,
                     session_id,
                     ssh_resource,

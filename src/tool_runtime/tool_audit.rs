@@ -600,6 +600,8 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                     "no_default_features",
                     "package",
                     "no_run",
+                    "require_tests",
+                    "min_tests",
                     "timeout_secs",
                 ],
             );
@@ -1197,6 +1199,21 @@ pub(crate) fn structured_validation_target_identity(
             let filter = normalized_rust_test_target_filter(obj.get("filter"))?;
             let features = normalized_cargo_target_value(obj.get("features"))?;
             let package = normalized_cargo_target_value(obj.get("package"))?;
+            let require_tests = obj
+                .get("require_tests")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let min_tests = obj.get("min_tests").and_then(Value::as_u64);
+            if min_tests.is_some_and(|minimum| {
+                !(1..=crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX).contains(&minimum)
+            }) {
+                return None;
+            }
+            let minimum_tests = match (require_tests, min_tests) {
+                (true, Some(minimum)) => Some(minimum.max(1)),
+                (true, None) => Some(1),
+                (false, minimum) => minimum,
+            };
             serde_json::json!({
                 "tool": tool_name,
                 "kind": "test",
@@ -1208,6 +1225,7 @@ pub(crate) fn structured_validation_target_identity(
                 "all_features": obj.get("all_features").and_then(Value::as_bool).unwrap_or(false),
                 "no_default_features": obj.get("no_default_features").and_then(Value::as_bool).unwrap_or(false),
                 "no_run": obj.get("no_run").and_then(Value::as_bool).unwrap_or(false),
+                "minimum_tests": minimum_tests,
             })
         }
         "go_test" => {
@@ -2533,6 +2551,8 @@ impl ToolCall {
                 features,
                 package,
                 no_run,
+                require_tests,
+                min_tests,
                 timeout_secs,
                 ..
             } => session_log_arguments_for_tool_request(
@@ -2547,6 +2567,8 @@ impl ToolCall {
                     "features": features,
                     "package": package,
                     "no_run": no_run,
+                    "require_tests": require_tests,
+                    "min_tests": min_tests,
                     "timeout_secs": timeout_secs,
                 }),
             ),

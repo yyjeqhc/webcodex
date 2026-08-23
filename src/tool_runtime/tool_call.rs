@@ -896,6 +896,10 @@ pub enum ToolCall {
         #[serde(default)]
         no_run: Option<bool>,
         #[serde(default)]
+        require_tests: Option<bool>,
+        #[serde(default)]
+        min_tests: Option<u64>,
+        #[serde(default)]
         timeout_secs: Option<u64>,
     },
 

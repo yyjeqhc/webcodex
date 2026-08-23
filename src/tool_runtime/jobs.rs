@@ -173,6 +173,7 @@ pub(crate) fn validation_job_projection(
     stdout: &str,
     stderr: &str,
     truncated: bool,
+    minimum_tests: Option<u64>,
 ) -> Option<Value> {
     let tool = tool?;
     let kind = kind.unwrap_or(match tool {
@@ -222,8 +223,9 @@ pub(crate) fn validation_job_projection(
         }
         return Some(value);
     }
-    let passed = status == "completed" && exit_code == Some(0);
+    let process_passed = status == "completed" && exit_code == Some(0);
     let evidence = structured_validation_evidence(tool, kind, stdout, stderr, truncated);
+    let mut passed = process_passed;
     let mut value = json!({
         "tool": tool,
         "kind": kind,
@@ -241,6 +243,28 @@ pub(crate) fn validation_job_projection(
             value["tests_passed"] = json!(evidence.tests_passed);
             value["tests_failed"] = json!(evidence.tests_failed);
             value["zero_tests_run"] = json!(evidence.zero_tests_run);
+            if tool == "cargo_test" && process_passed {
+                if let Some(minimum_tests) = minimum_tests {
+                    let (status, reason_code) = match evidence.tests_run_count {
+                        Some(actual) if actual >= minimum_tests => ("passed", "minimum_satisfied"),
+                        Some(_) => {
+                            passed = false;
+                            ("failed", "minimum_not_met")
+                        }
+                        None => {
+                            passed = false;
+                            ("unproven", "test_count_unproven")
+                        }
+                    };
+                    value["passed"] = json!(passed);
+                    value["test_count_assertion"] = json!({
+                        "minimum_tests": minimum_tests,
+                        "actual_tests_run": evidence.tests_run_count,
+                        "status": status,
+                        "reason_code": reason_code,
+                    });
+                }
+            }
         }
         "check" => {
             value["warnings_count"] = json!(evidence.warnings_count);
@@ -542,6 +566,7 @@ pub(crate) fn local_job_status(
         &stdout.0,
         &stderr.0,
         stdout.3 || stderr.3,
+        meta.get("minimum_tests").and_then(Value::as_u64),
     ) {
         if let Some(target_id) = meta.get("validation_target_id").and_then(Value::as_str) {
             validation["validation_target_id"] = json!(target_id);
@@ -818,6 +843,7 @@ pub(crate) async fn local_job_log(
         &analysis_stdout.text,
         &analysis_stderr.text,
         analysis_stdout.truncated || analysis_stderr.truncated,
+        meta.get("minimum_tests").and_then(Value::as_u64),
     );
     if let (Some(validation), Some(target_id)) = (
         validation.as_mut(),
@@ -1812,6 +1838,7 @@ impl ToolRuntime {
                         &stdout,
                         &stderr,
                         truncated,
+                        validation_metadata.and_then(|metadata| metadata.minimum_tests),
                     ) {
                         if let Some(target_id) = validation_metadata
                             .and_then(|metadata| metadata.validation_target_id.as_deref())
@@ -1951,6 +1978,9 @@ impl ToolRuntime {
                     &wait.analysis_stdout,
                     &wait.analysis_stderr,
                     wait.analysis_truncated,
+                    job.validation
+                        .as_ref()
+                        .and_then(|metadata| metadata.minimum_tests),
                 );
                 if let (Some(validation), Some(target_id)) = (
                     validation.as_mut(),
@@ -2727,6 +2757,7 @@ mod recovery_projection_tests {
             "running 3 tests\n\ntest result: ok. 3 passed; 0 failed; 0 ignored\n",
             "",
             false,
+            None,
         )
         .unwrap();
         assert_eq!(success["passed"], true);
@@ -2744,12 +2775,98 @@ mod recovery_projection_tests {
             "",
             "error[E0308]: mismatched types\n --> src/lib.rs:1:1\n",
             false,
+            None,
         )
         .unwrap();
         assert_eq!(compile_error["passed"], false);
         assert_eq!(compile_error["tests_detected"], false);
         assert!(compile_error["tests_run_count"].is_null());
         assert_eq!(compile_error["diagnostics"]["available"], true);
+    }
+
+    #[test]
+    fn cargo_test_count_assertion_requires_complete_minimum_evidence() {
+        let project = |stdout: &str, truncated: bool, minimum_tests: Option<u64>| {
+            validation_job_projection(
+                Some("cargo_test"),
+                Some("test"),
+                "completed",
+                Some(0),
+                stdout,
+                "",
+                truncated,
+                minimum_tests,
+            )
+            .unwrap()
+        };
+
+        let compatible_zero = project(
+            "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored\n",
+            false,
+            None,
+        );
+        assert_eq!(compatible_zero["passed"], true);
+        assert_eq!(compatible_zero["tests_run_count"], 0);
+        assert_eq!(compatible_zero["zero_tests_run"], true);
+        assert!(compatible_zero.get("test_count_assertion").is_none());
+
+        for (actual, minimum, status, passed) in [
+            (0, 1, "failed", false),
+            (5, 6, "failed", false),
+            (6, 6, "passed", true),
+            (10, 6, "passed", true),
+        ] {
+            let value = project(
+                &format!(
+                    "running {actual} tests\n\ntest result: ok. {actual} passed; 0 failed; 0 ignored\n"
+                ),
+                false,
+                Some(minimum),
+            );
+            assert_eq!(value["passed"], passed);
+            assert_eq!(value["test_count_assertion"]["minimum_tests"], minimum);
+            assert_eq!(value["test_count_assertion"]["actual_tests_run"], actual);
+            assert_eq!(value["test_count_assertion"]["status"], status);
+            assert_eq!(
+                value["test_count_assertion"]["reason_code"],
+                if passed {
+                    "minimum_satisfied"
+                } else {
+                    "minimum_not_met"
+                }
+            );
+        }
+
+        for unproven in [
+            project("", false, Some(1)),
+            project("running 10 tests\n", true, Some(6)),
+        ] {
+            assert_eq!(unproven["passed"], false);
+            assert!(unproven["tests_run_count"].is_null());
+            assert_eq!(unproven["test_count_assertion"]["status"], "unproven");
+            assert_eq!(
+                unproven["test_count_assertion"]["reason_code"],
+                "test_count_unproven"
+            );
+            assert!(unproven["test_count_assertion"]["actual_tests_run"].is_null());
+        }
+
+        let command_failure = validation_job_projection(
+            Some("cargo_test"),
+            Some("test"),
+            "failed",
+            Some(101),
+            "",
+            "error: could not compile",
+            false,
+            Some(6),
+        )
+        .unwrap();
+        assert_eq!(command_failure["passed"], false);
+        assert!(
+            command_failure.get("test_count_assertion").is_none(),
+            "a real Cargo failure must not be overwritten by postcondition evaluation"
+        );
     }
 
     #[test]
@@ -2762,6 +2879,7 @@ mod recovery_projection_tests {
             "",
             "warning: unused import\nerror[E0308]: mismatched types\n",
             false,
+            None,
         )
         .unwrap();
         assert_eq!(complete["warnings_count"], 1);
@@ -2775,6 +2893,7 @@ mod recovery_projection_tests {
             "",
             "error[E0308]: mismatched types\n",
             true,
+            None,
         )
         .unwrap();
         assert!(truncated["warnings_count"].is_null());
@@ -2792,6 +2911,7 @@ mod recovery_projection_tests {
             "Diff in src/lib.rs\n",
             "",
             false,
+            None,
         )
         .unwrap();
         assert_eq!(fmt["passed"], false);
@@ -2810,6 +2930,7 @@ mod recovery_projection_tests {
                 "running 1 test\n",
                 "",
                 false,
+                None,
             )
             .unwrap();
             assert_eq!(value["state"], state);

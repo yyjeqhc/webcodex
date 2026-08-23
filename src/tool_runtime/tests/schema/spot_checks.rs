@@ -86,6 +86,81 @@ fn tool_specs_structured_validation_schema_and_output() {
             present: ["exit_code", "duration_ms", "stdout_tail", "stderr_tail", "passed"]
         );
     }
+    let cargo_test = spec_named(&specs, "cargo_test");
+    let cargo_test_input = cargo_test.input_schema["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        cargo_test_input,
+        "cargo_test input schema",
+        present: ["require_tests", "min_tests", "no_run"]
+    );
+    assert_eq!(cargo_test_input["min_tests"]["minimum"], 1);
+    assert_eq!(
+        cargo_test_input["min_tests"]["maximum"],
+        crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX
+    );
+    for valid in [
+        serde_json::json!({"project": "agent:demo:repo"}),
+        serde_json::json!({"project": "agent:demo:repo", "no_run": true}),
+        serde_json::json!({"project": "agent:demo:repo", "require_tests": true}),
+        serde_json::json!({"project": "agent:demo:repo", "require_tests": false, "min_tests": 6}),
+    ] {
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &valid,
+            &cargo_test.input_schema,
+        )
+        .unwrap_or_else(|error| panic!("valid cargo_test input rejected: {valid}: {error}"));
+    }
+    for invalid in [
+        serde_json::json!({"project": "agent:demo:repo", "min_tests": 0}),
+        serde_json::json!({"project": "agent:demo:repo", "min_tests": -1}),
+        serde_json::json!({"project": "agent:demo:repo", "min_tests": 1.5}),
+        serde_json::json!({"project": "agent:demo:repo", "min_tests": crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX + 1}),
+        serde_json::json!({"project": "agent:demo:repo", "no_run": true, "require_tests": true}),
+        serde_json::json!({"project": "agent:demo:repo", "no_run": true, "min_tests": 1}),
+    ] {
+        assert!(
+            crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+                &invalid,
+                &cargo_test.input_schema
+            )
+            .is_err(),
+            "invalid cargo_test input passed schema: {invalid}"
+        );
+    }
+    let cargo_test_output = cargo_test.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert!(cargo_test_output.contains_key("test_count_assertion"));
+    assert_eq!(
+        cargo_test_output["test_count_assertion"]["properties"]["reason_code"]["enum"],
+        serde_json::json!([
+            "minimum_satisfied",
+            "minimum_not_met",
+            "test_count_unproven"
+        ])
+    );
+    for name in ["job_status", "job_log"] {
+        let output = &spec_named(&specs, name).output_schema["properties"]["output"]["properties"];
+        assert_eq!(
+            output["validation"]["properties"]["test_count_assertion"]["properties"]["reason_code"]
+                ["enum"],
+            serde_json::json!([
+                "minimum_satisfied",
+                "minimum_not_met",
+                "test_count_unproven"
+            ]),
+            "{name} must expose the same durable assertion projection"
+        );
+    }
+    let openapi = crate::openapi::build_openapi_spec();
+    let flattened = &openapi["components"]["schemas"]["ToolCallRequest"]["properties"];
+    assert_eq!(flattened["require_tests"]["type"], "boolean");
+    assert_eq!(flattened["min_tests"]["type"], "integer");
+    assert_eq!(flattened["min_tests"]["minimum"], 1);
+    assert_eq!(
+        flattened["min_tests"]["maximum"],
+        crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX
+    );
     let go_props = spec_named(&specs, "go_test").input_schema["properties"]
         .as_object()
         .unwrap();

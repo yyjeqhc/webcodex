@@ -258,6 +258,8 @@ async fn dispatched_shared_capture_wait_timeout_reports_outcome_unknown_without_
                         features: None,
                         package: None,
                         no_run: None,
+                        require_tests: None,
+                        min_tests: None,
                         timeout_secs: Some(1),
                     },
                     Some(&auth),

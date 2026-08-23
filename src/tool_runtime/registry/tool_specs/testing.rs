@@ -18,7 +18,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "cargo_test",
-            "Preferred structured cargo test with filter, features, package, no-run, timeout, and bounded output. A long validation continues as the same execution and returns job_id.",
+            "Preferred structured cargo test with scoped args and bounded output. require_tests/min_tests add a proven minimum executed-test postcondition; a long validation continues as the same Job.",
             cargo_test_input_schema(),
         ),
         tool_spec(

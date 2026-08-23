@@ -208,6 +208,50 @@ fn sync_timeout_out_of_range_result_with_range(
     )
 }
 
+fn cargo_test_assertion_rejection(reason: impl AsRef<str>, guidance: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        command_rejected_message(reason, guidance),
+        json!({
+            "execution_source": "cargo_test",
+            "execution_state": "not_started",
+            "command_started": false,
+            "command_completed": false,
+            "failure_kind": "invalid_arguments",
+            "tool_failure": true,
+        }),
+    )
+}
+
+fn resolve_cargo_test_minimum(
+    require_tests: Option<bool>,
+    min_tests: Option<u64>,
+    no_run: Option<bool>,
+) -> Result<Option<u64>, ToolResult> {
+    if let Some(minimum) = min_tests {
+        if !(1..=crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX).contains(&minimum) {
+            return Err(cargo_test_assertion_rejection(
+                format!(
+                    "cargo_test min_tests must be between 1 and {}",
+                    crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX
+                ),
+                "pass a bounded positive min_tests value, or omit it.",
+            ));
+        }
+    }
+    let minimum = match (require_tests.unwrap_or(false), min_tests) {
+        (true, Some(minimum)) => Some(minimum.max(1)),
+        (true, None) => Some(1),
+        (false, minimum) => minimum,
+    };
+    if minimum.is_some() && no_run.unwrap_or(false) {
+        return Err(cargo_test_assertion_rejection(
+            "cargo_test test-count assertions cannot be combined with no_run=true",
+            "remove no_run to execute tests, or omit require_tests and min_tests when only compiling tests.",
+        ));
+    }
+    Ok(minimum)
+}
+
 fn reject_structured_validation_ssh_resource(ssh_resource: Option<&str>) -> Option<ToolResult> {
     ssh_resource.map(|_| {
         ToolResult::err(command_rejected_message(
@@ -334,6 +378,7 @@ impl ToolRuntime {
                     features: None,
                     package: None,
                     no_run: None,
+                    minimum_tests: None,
                     go_packages: None,
                     timeout_secs,
                     session_id,
@@ -438,6 +483,7 @@ impl ToolRuntime {
                 features,
                 package,
                 no_run: None,
+                minimum_tests: None,
                 go_packages: None,
                 timeout_secs,
                 session_id,
@@ -474,6 +520,8 @@ impl ToolRuntime {
             features,
             package,
             no_run,
+            None,
+            None,
             timeout_secs,
             None,
             None,
@@ -495,6 +543,8 @@ impl ToolRuntime {
         features: Option<String>,
         package: Option<String>,
         no_run: Option<bool>,
+        require_tests: Option<bool>,
+        min_tests: Option<u64>,
         timeout_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
@@ -511,6 +561,8 @@ impl ToolRuntime {
             features,
             package,
             no_run,
+            require_tests,
+            min_tests,
             timeout_secs,
             sandbox,
             session_id,
@@ -532,12 +584,18 @@ impl ToolRuntime {
         features: Option<String>,
         package: Option<String>,
         no_run: Option<bool>,
+        require_tests: Option<bool>,
+        min_tests: Option<u64>,
         timeout_secs: Option<u64>,
         sandbox: Option<&str>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        let minimum_tests = match resolve_cargo_test_minimum(require_tests, min_tests, no_run) {
+            Ok(minimum) => minimum,
+            Err(result) => return result,
+        };
         self.run_readonly_validation(
             "cargo_test",
             ValidationRunRequest {
@@ -551,6 +609,7 @@ impl ToolRuntime {
                 features,
                 package,
                 no_run,
+                minimum_tests,
                 go_packages: None,
                 timeout_secs,
                 session_id,
@@ -597,6 +656,7 @@ impl ToolRuntime {
                 features: None,
                 package: None,
                 no_run: None,
+                minimum_tests: None,
                 go_packages: packages,
                 timeout_secs,
                 session_id,
@@ -649,6 +709,7 @@ impl ToolRuntime {
                 "features": request.features.as_deref(),
                 "package": request.package.as_deref(),
                 "no_run": request.no_run,
+                "min_tests": request.minimum_tests,
                 "packages": request.go_packages.as_ref(),
             }),
         );
@@ -727,6 +788,29 @@ impl ToolRuntime {
             let async_handoff_available = (capabilities.async_jobs
                 || capabilities.async_shell_jobs)
                 && capabilities.structured_validation_argv;
+            if tool_name == "cargo_test"
+                && request.minimum_tests.is_some()
+                && timeout_secs > SYNC_VALIDATION_WAIT_SECS
+                && async_handoff_available
+                && !capabilities.structured_cargo_test_count_assertion
+            {
+                return ToolResult::err_with_output(
+                    command_rejected_message(
+                        "capability_unavailable: this Runner does not advertise structured_cargo_test_count_assertion",
+                        "upgrade and reconnect a Runner that durably preserves Cargo test-count assertions, then retry cargo_test.",
+                    ),
+                    json!({
+                        "execution_source": tool_name,
+                        "execution_state": "not_started",
+                        "command_started": false,
+                        "command_completed": false,
+                        "command_ok": false,
+                        "failure_kind": "capability_unavailable",
+                        "tool_failure": true,
+                        "async_handoff_available": async_handoff_available,
+                    }),
+                );
+            }
             if tool_name == "go_test" && !capabilities.structured_go_test_json {
                 return ToolResult::err_with_output(
                     command_rejected_message(
@@ -846,6 +930,7 @@ impl ToolRuntime {
                         false,
                         false,
                         false,
+                        request.minimum_tests,
                     )
                     .await;
                 result.output["async_handoff_available"] = json!(false);
@@ -869,6 +954,7 @@ impl ToolRuntime {
                     sync_wait_secs,
                     session_id,
                     validation_target_id,
+                    request.minimum_tests,
                     ssh_resource.as_deref(),
                     request.sandbox.as_deref(),
                     request.auth,
@@ -910,6 +996,7 @@ impl ToolRuntime {
                     false,
                     false,
                     false,
+                    request.minimum_tests,
                 )
                 .await
             }
@@ -927,6 +1014,7 @@ impl ToolRuntime {
                 sync_wait_secs,
                 session_id,
                 validation_target_id,
+                request.minimum_tests,
                 request.sandbox.as_deref(),
             )
             .await
@@ -952,6 +1040,7 @@ impl ToolRuntime {
         sync_wait_secs: u64,
         session_id: Option<String>,
         validation_target_id: Option<String>,
+        minimum_tests: Option<u64>,
         ssh_resource: Option<&str>,
         sandbox: Option<&str>,
         auth: Option<&AuthContext>,
@@ -1032,6 +1121,7 @@ impl ToolRuntime {
                         sync_wait_secs,
                         adapter: adapter.tool_identity().to_string(),
                         validation_target_id: validation_target_id.clone(),
+                        minimum_tests,
                     }),
                     visibility: crate::shell_client::ShellJobVisibility::HiddenUntilHandoff,
                     sandbox: sandbox.map(str::to_string),
@@ -1063,6 +1153,7 @@ impl ToolRuntime {
             shell: actual_shell.to_string(),
             executor: "agent".to_string(),
             command_summary: crate::shell_client::command_preview(command),
+            minimum_tests,
             auth: auth.cloned(),
         };
         self.await_validation_job(job_id, sync_wait_secs, adapter, handoff)
@@ -1088,6 +1179,7 @@ impl ToolRuntime {
         sync_wait_secs: u64,
         session_id: Option<String>,
         validation_target_id: Option<String>,
+        minimum_tests: Option<u64>,
         sandbox: Option<&str>,
     ) -> ToolResult {
         if local_validation_should_handoff(timeout_secs, sync_wait_secs, sandbox) {
@@ -1105,6 +1197,7 @@ impl ToolRuntime {
                     sync_wait_secs,
                     session_id,
                     validation_target_id,
+                    minimum_tests,
                 )
                 .await;
         }
@@ -1145,6 +1238,7 @@ impl ToolRuntime {
             false,
             false,
             false,
+            minimum_tests,
         )
         .await
     }
@@ -1163,6 +1257,7 @@ impl ToolRuntime {
         purpose: ExecutionPurpose,
         timeout_secs: u64,
         sync_wait_secs: u64,
+        minimum_tests: Option<u64>,
     ) -> ToolResult {
         self.run_readonly_validation_local_job_with_context(
             tool_name,
@@ -1177,6 +1272,7 @@ impl ToolRuntime {
             sync_wait_secs,
             None,
             None,
+            minimum_tests,
         )
         .await
     }
@@ -1196,6 +1292,7 @@ impl ToolRuntime {
         sync_wait_secs: u64,
         session_id: Option<String>,
         validation_target_id: Option<String>,
+        minimum_tests: Option<u64>,
     ) -> ToolResult {
         let cwd_path = match resolve_local_cwd(config, cwd) {
             Ok(path) => path,
@@ -1308,6 +1405,7 @@ impl ToolRuntime {
             "validation_adapter": adapter.tool_identity(),
             "session_id": session_id,
             "validation_target_id": validation_target_id,
+            "minimum_tests": minimum_tests,
             "visibility": "hidden_until_handoff",
         });
         if let Err(error) = std::fs::write(
@@ -1521,6 +1619,7 @@ impl ToolRuntime {
                         false,
                         stdout_source_truncated,
                         stderr_source_truncated,
+                        minimum_tests,
                     )
                     .await;
                 result.output["cwd"] = json!(resolved_cwd.clone());
@@ -1752,7 +1851,7 @@ impl ToolRuntime {
         let stderr_truncated = stderr_source_truncated || bounded_stderr_truncated;
         let exit_code = job.as_ref().and_then(|job| job.exit_code);
         let timed_out = matches!(job_status, "timeout" | "timed_out");
-        let passed = job_status == "completed" && exit_code == Some(0);
+        let process_passed = job_status == "completed" && exit_code == Some(0);
         let mut payload = json!({
             "project": handoff.project,
             "command_summary": handoff.command_summary,
@@ -1770,7 +1869,7 @@ impl ToolRuntime {
             "stderr_lines": stderr.lines().count(),
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
-            "passed": passed,
+            "passed": process_passed,
             "command_started": true,
             "command_completed": !timed_out,
             "promoted_to_job": false,
@@ -1786,10 +1885,15 @@ impl ToolRuntime {
             &stdout_tail,
             &stderr_tail,
             stdout_truncated || stderr_truncated,
+            handoff.minimum_tests,
         ) {
             apply_validation_projection_fields(&mut payload, &projection);
         }
-        if passed {
+        let validation_passed = payload
+            .get("passed")
+            .and_then(Value::as_bool)
+            .unwrap_or(process_passed);
+        if validation_passed {
             // Discard the hidden Job record so a fast validation never leaves a
             // redundant visible job in list_jobs.
             self.shell_clients
@@ -1813,7 +1917,13 @@ impl ToolRuntime {
                         &stderr_tail,
                     )
                 } else {
-                    format!("structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}")
+                    if process_passed {
+                        "cargo_test test-count assertion was not proven; inspect test_count_assertion and rerun with a scope that executes enough tests.".to_string()
+                    } else {
+                        format!(
+                            "structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}"
+                        )
+                    }
                 }),
             };
             self.shell_clients
@@ -1839,6 +1949,7 @@ impl ToolRuntime {
         promoted_to_job: bool,
         source_stdout_truncated: bool,
         source_stderr_truncated: bool,
+        minimum_tests: Option<u64>,
     ) -> ToolResult {
         let execution_state = output.execution_state;
         let (stdout_tail, bounded_stdout_truncated) =
@@ -1847,7 +1958,7 @@ impl ToolRuntime {
             bounded_tail(&output.stderr, CARGO_STDIO_TAIL_CHARS);
         let stdout_truncated = source_stdout_truncated || bounded_stdout_truncated;
         let stderr_truncated = source_stderr_truncated || bounded_stderr_truncated;
-        let passed =
+        let process_passed =
             execution_state == ShellCommandExecutionState::Completed && output.exit_code == Some(0);
         let validation_failed = is_cargo_validation_failure(&output, timeout_secs);
         let (resolved_cwd, shell, executor) = if config.is_agent() {
@@ -1883,7 +1994,7 @@ impl ToolRuntime {
             "stderr_lines": output.stderr.lines().count(),
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
-            "passed": passed,
+            "passed": process_passed,
             "command_started": execution_state != ShellCommandExecutionState::NotStarted,
             "command_completed": execution_state == ShellCommandExecutionState::Completed,
             "promoted_to_job": promoted_to_job,
@@ -1896,7 +2007,7 @@ impl ToolRuntime {
                 "lost"
             }
             ShellCommandExecutionState::TimedOut => "timeout",
-            ShellCommandExecutionState::Completed if passed => "completed",
+            ShellCommandExecutionState::Completed if process_passed => "completed",
             ShellCommandExecutionState::Completed => "failed",
         };
         if let Some(projection) = crate::tool_runtime::jobs::validation_job_projection(
@@ -1907,11 +2018,16 @@ impl ToolRuntime {
             &stdout_tail,
             &stderr_tail,
             stdout_truncated || stderr_truncated,
+            minimum_tests,
         ) {
             apply_validation_projection_fields(&mut payload, &projection);
         }
+        let validation_passed = payload
+            .get("passed")
+            .and_then(Value::as_bool)
+            .unwrap_or(process_passed);
         match execution_state {
-            ShellCommandExecutionState::Completed if passed => ToolResult::ok(payload),
+            ShellCommandExecutionState::Completed if validation_passed => ToolResult::ok(payload),
             ShellCommandExecutionState::NotStarted => {
                 payload["failure_kind"] =
                     json!(cargo_prestart_failure_kind(output.error.as_deref()));
@@ -1954,15 +2070,21 @@ impl ToolRuntime {
             ShellCommandExecutionState::Completed => {
                 payload["failure_kind"] = json!(if validation_failed {
                     CARGO_VALIDATION_FAILURE_KIND
+                } else if process_passed {
+                    CARGO_VALIDATION_FAILURE_KIND
                 } else {
                     "process_exit"
                 });
                 ToolResult {
                     success: false,
                     output: payload,
-                    error: Some(format!(
-                        "structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}"
-                    )),
+                    error: Some(if process_passed {
+                        "cargo_test test-count assertion was not proven; inspect test_count_assertion and rerun with a scope that executes enough tests.".to_string()
+                    } else {
+                        format!(
+                            "structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}"
+                        )
+                    }),
                 }
             }
         }
@@ -2019,6 +2141,7 @@ impl ToolRuntime {
             false,
             false,
             false,
+            None,
         )
         .await
     }
@@ -2044,6 +2167,7 @@ struct ValidationRunRequest<'a> {
     features: Option<String>,
     package: Option<String>,
     no_run: Option<bool>,
+    minimum_tests: Option<u64>,
     go_packages: Option<Vec<String>>,
     timeout_secs: Option<u64>,
     session_id: Option<String>,
@@ -2064,6 +2188,7 @@ struct ValidationHandoff {
     shell: String,
     executor: String,
     command_summary: String,
+    minimum_tests: Option<u64>,
     auth: Option<AuthContext>,
 }
 
@@ -2174,6 +2299,7 @@ fn apply_validation_projection_fields(payload: &mut Value, projection: &Value) {
         "tests_passed",
         "tests_failed",
         "zero_tests_run",
+        "test_count_assertion",
         "diagnostics",
     ] {
         if let Some(value) = projection.get(field) {
@@ -2409,6 +2535,43 @@ impl Drop for ValidationCleanupGuard {
 #[cfg(test)]
 mod structured_cargo_arg_parity_tests {
     use super::*;
+
+    #[test]
+    fn cargo_test_count_inputs_resolve_to_the_stricter_bounded_minimum() {
+        assert_eq!(resolve_cargo_test_minimum(None, None, None).unwrap(), None);
+        assert_eq!(
+            resolve_cargo_test_minimum(Some(false), None, None).unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_cargo_test_minimum(Some(true), None, None).unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            resolve_cargo_test_minimum(Some(true), Some(6), None).unwrap(),
+            Some(6)
+        );
+        assert_eq!(
+            resolve_cargo_test_minimum(Some(false), Some(6), None).unwrap(),
+            Some(6)
+        );
+        for result in [
+            resolve_cargo_test_minimum(None, Some(0), None),
+            resolve_cargo_test_minimum(
+                None,
+                Some(crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX + 1),
+                None,
+            ),
+            resolve_cargo_test_minimum(Some(true), None, Some(true)),
+            resolve_cargo_test_minimum(None, Some(6), Some(true)),
+        ] {
+            let rejection = result.expect_err("invalid assertion input must fail closed");
+            assert!(!rejection.success);
+            assert_eq!(rejection.output["execution_state"], "not_started");
+            assert_eq!(rejection.output["command_started"], false);
+            assert_eq!(rejection.output["failure_kind"], "invalid_arguments");
+        }
+    }
 
     #[derive(Default)]
     struct RecordingJobKiller {

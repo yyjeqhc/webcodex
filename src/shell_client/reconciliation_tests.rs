@@ -34,6 +34,7 @@ fn reconciliation_capabilities() -> ShellClientCapabilities {
         structured_script_payload: true,
         structured_execution_jobs: true,
         structured_validation_argv: true,
+        structured_cargo_test_count_assertion: true,
         job_state_reconciliation: true,
         coding_agent_runs: false,
         ..Default::default()
@@ -327,6 +328,96 @@ async fn validation_progress_accepts_coalesced_sequence_gaps_without_skipping_st
 }
 
 #[tokio::test]
+async fn cargo_test_count_assertion_survives_inventory_roundtrip_and_server_restart() {
+    let registry_a = ShellClientRegistry::default();
+    register(&registry_a, INSTANCE_A, empty_inventory()).await;
+    let step = ShellJobValidationStep {
+        name: "test".to_string(),
+        program: "cargo".to_string(),
+        args: vec!["test".to_string(), "focused".to_string()],
+        env: Vec::new(),
+    };
+    let target = "target:0123456789abcdef01234567";
+    let job = registry_a
+        .start_job_with_metadata(
+            start_request("validation"),
+            "tester".to_string(),
+            ShellJobStartMetadata {
+                project_id: Some(RUNTIME_PROJECT_ID.to_string()),
+                session_id: Some(SESSION_ID.to_string()),
+                project_cwd: Some("/srv/demo".to_string()),
+                purpose: Some("test".to_string()),
+                shell: Some("direct_argv".to_string()),
+                validation_steps: vec![step.clone()],
+                validation: Some(ShellJobValidationMetadata {
+                    tool: "cargo_test".to_string(),
+                    kind: "test".to_string(),
+                    steps: vec![step],
+                    effective_timeout_secs: 1800,
+                    sync_wait_secs: 30,
+                    adapter: "cargo_test".to_string(),
+                    validation_target_id: Some(target.to_string()),
+                    minimum_tests: Some(6),
+                }),
+                visibility: ShellJobVisibility::Public,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let request = registry_a
+        .poll(ShellAgentPollRequest {
+            client_id: CLIENT_ID.to_string(),
+            agent_instance_id: INSTANCE_A.to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .expect("validation Job request");
+    assert_eq!(request.kind, "start_validation_job");
+    assert_eq!(
+        request
+            .job_context
+            .as_ref()
+            .and_then(|context| context.validation.as_ref())
+            .and_then(|validation| validation.minimum_tests),
+        Some(6)
+    );
+
+    let mut snapshot = snapshot_from_request(
+        &job,
+        &request,
+        "running",
+        2,
+        stream("running 4 tests\n", 1, false),
+    );
+    snapshot.validation_progress = Some(ShellJobValidationProgress {
+        completed: 0,
+        current_step: Some("test".to_string()),
+        failed_step: None,
+    });
+    let inventory: ShellJobInventory = serde_json::from_value(
+        serde_json::to_value(ShellJobInventory {
+            active_complete: true,
+            jobs: vec![snapshot],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let registry_b = ShellClientRegistry::default();
+    register(&registry_b, INSTANCE_A, inventory).await;
+    let restored = registry_b.get_job(&job.job_id).await.unwrap();
+    let restored_validation = restored.validation.expect("restored validation metadata");
+    assert_eq!(restored_validation.minimum_tests, Some(6));
+    assert_eq!(
+        restored_validation.validation_target_id.as_deref(),
+        Some(target)
+    );
+    assert_eq!(restored.status, "running");
+    assert!(restored.recovered_after_server_restart);
+}
+
+#[tokio::test]
 async fn reconciliation_rejects_cross_product_first_class_go_test_metadata() {
     let registry = ShellClientRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
@@ -348,6 +439,7 @@ async fn reconciliation_rejects_cross_product_first_class_go_test_metadata() {
         sync_wait_secs: 10,
         adapter: "go_test".to_string(),
         validation_target_id: None,
+        minimum_tests: None,
     });
     let inventory = ShellJobInventory {
         active_complete: true,

@@ -839,6 +839,12 @@ pub(crate) fn validation_output_summary_for_tool_result(
         summary["tests_run_count"] = cargo_test_tests_run_count(output);
         summary["zero_tests_run"] = cargo_test_zero_tests_run(output);
     }
+    if tool_name == "cargo_test" {
+        if let Some(assertion) = sanitized_test_count_assertion(output.get("test_count_assertion"))
+        {
+            summary["test_count_assertion"] = assertion;
+        }
+    }
     Some(summary)
 }
 
@@ -897,7 +903,41 @@ pub(super) fn sanitize_persisted_validation_output_summary(
         summary["tests_run_count"] = persisted_cargo_test_tests_run_count(object);
         summary["zero_tests_run"] = persisted_cargo_test_zero_tests_run(object);
     }
+    if tool_name == "cargo_test" {
+        if let Some(assertion) = sanitized_test_count_assertion(object.get("test_count_assertion"))
+        {
+            summary["test_count_assertion"] = assertion;
+        }
+    }
     Some(summary)
+}
+
+fn sanitized_test_count_assertion(value: Option<&Value>) -> Option<Value> {
+    let object = value?.as_object()?;
+    let minimum_tests = object.get("minimum_tests")?.as_u64()?;
+    if !(1..=crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX).contains(&minimum_tests) {
+        return None;
+    }
+    let actual_tests_run = match object.get("actual_tests_run") {
+        Some(Value::Null) | None => None,
+        Some(value) => Some(value.as_u64()?),
+    };
+    let status = object.get("status")?.as_str()?;
+    let reason_code = object.get("reason_code")?.as_str()?;
+    let valid = match (status, reason_code, actual_tests_run) {
+        ("passed", "minimum_satisfied", Some(actual)) => actual >= minimum_tests,
+        ("failed", "minimum_not_met", Some(actual)) => actual < minimum_tests,
+        ("unproven", "test_count_unproven", None) => true,
+        _ => false,
+    };
+    valid.then(|| {
+        json!({
+            "minimum_tests": minimum_tests,
+            "actual_tests_run": actual_tests_run,
+            "status": status,
+            "reason_code": reason_code,
+        })
+    })
 }
 
 pub(super) fn is_cargo_validation_tool(tool_name: &str) -> bool {

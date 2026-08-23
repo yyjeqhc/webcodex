@@ -5,10 +5,10 @@ use super::super::input_schemas::{
     session_mode_schema,
 };
 use super::common::{
-    array_schema, continuation_feedback_schema, evidence_history_schema, evidence_integrity_schema,
-    handoff_brief_schema, job_lifecycle_summary_schema, nullable_schema, open_object_schema,
-    permission_summary_schema, schema_type, task_outcome_schema, validation_delta_schema,
-    wrapped_output_schema,
+    array_schema, cargo_test_count_assertion_schema, continuation_feedback_schema,
+    evidence_history_schema, evidence_integrity_schema, handoff_brief_schema,
+    job_lifecycle_summary_schema, nullable_schema, open_object_schema, permission_summary_schema,
+    schema_type, task_outcome_schema, validation_delta_schema, wrapped_output_schema,
 };
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
@@ -751,8 +751,8 @@ fn validation_event_schema() -> Value {
             "purpose": { "type": "string", "enum": ["validation", "test", "build", "format", "release"] },
             "validation_kind": { "type": "string", "enum": ["format", "check", "test", "build", "release", "validation", "patch_preflight", "patch_apply_checked"] },
             "success": { "type": "boolean" },
-            "failure_kind": { "type": "string", "enum": ["compile_error", "test_failure", "timeout", "process_exit", "format_diff", "unknown"] },
-            "failure_category": { "type": "string", "enum": ["compile_error", "test_failure", "timeout", "process_exit", "format_diff", "unknown"] },
+            "failure_kind": { "type": "string", "enum": ["compile_error", "test_failure", "validation_failed", "timeout", "process_exit", "format_diff", "unknown"] },
+            "failure_category": { "type": "string", "enum": ["compile_error", "test_failure", "validation_failed", "timeout", "process_exit", "format_diff", "unknown"] },
             "unresolved_failure": { "type": "boolean" },
             "exit_code": { "type": "integer" },
             "summary": { "type": "string", "maxLength": 80 },
@@ -778,6 +778,7 @@ fn validation_event_schema() -> Value {
             "tests_detected": { "type": "boolean" },
             "tests_run_count": { "type": "integer", "minimum": 0 },
             "zero_tests_run": { "type": "boolean" },
+            "test_count_assertion": cargo_test_count_assertion_schema(),
             "stdout_lines": { "type": "integer", "minimum": 0 },
             "stderr_lines": { "type": "integer", "minimum": 0 },
             "stdout_truncated": { "type": "boolean" },

@@ -110,7 +110,7 @@ pub(crate) fn cargo_check_input_schema() -> Value {
 }
 
 pub(crate) fn cargo_test_input_schema() -> Value {
-    with_validation_timeout_bounds(
+    let mut schema = with_validation_timeout_bounds(
         object_schema(with_optional_session_id(vec![
             ("project", "string", "Agent-registered project id.", true),
             (
@@ -137,6 +137,18 @@ pub(crate) fn cargo_test_input_schema() -> Value {
             ("package", "string", "Package passed to -p.", false),
             ("no_run", "boolean", "Include --no-run.", false),
             (
+                "require_tests",
+                "boolean",
+                "Require proof that at least one test executed. Compatible default is false.",
+                false,
+            ),
+            (
+                "min_tests",
+                "integer",
+                "Require proof that at least this many tests executed. Combined with require_tests using the stricter minimum.",
+                false,
+            ),
+            (
                 "timeout_secs",
                 "integer",
                 VALIDATION_TIMEOUT_SECS_DESCRIPTION,
@@ -144,7 +156,23 @@ pub(crate) fn cargo_test_input_schema() -> Value {
             ),
         ])),
         1800,
-    )
+    );
+    schema["properties"]["min_tests"]["minimum"] = json!(1);
+    schema["properties"]["min_tests"]["maximum"] =
+        json!(crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX);
+    schema["allOf"] = json!([{
+        "if": {
+            "properties": { "no_run": { "const": true } },
+            "required": ["no_run"]
+        },
+        "then": {
+            "properties": {
+                "require_tests": { "enum": [false] },
+                "min_tests": { "enum": [] }
+            }
+        }
+    }]);
+    schema
 }
 
 pub(crate) fn go_test_input_schema() -> Value {

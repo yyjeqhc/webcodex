@@ -88,6 +88,11 @@ impl ValidationAdapter for RustValidationAdapter {
         ) {
             return "timeout";
         }
+        if evidence.reported_failure_kind == Some("validation_failed")
+            && evidence.exit_code == Some(0)
+        {
+            return "validation_failed";
+        }
 
         let has_compile_error = evidence.diagnostics.is_some_and(|diagnostics| {
             diagnostics

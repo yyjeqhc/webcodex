@@ -112,6 +112,9 @@ pub const RUST_TEST_FILTER_MAX_BYTES: usize = 200;
 /// `-p`). Matches the `is_canonical` per-argument bound.
 pub const CARGO_VALUE_MAX_BYTES: usize = 500;
 
+/// Largest caller-declared Cargo test-count minimum.
+pub const CARGO_TEST_MIN_TESTS_MAX: u64 = 1_000_000;
+
 /// Maximum number of project-relative package patterns accepted by the
 /// first-class focused `go_test` validation tool.
 pub const GO_TEST_PACKAGE_MAX_ITEMS: usize = 8;
@@ -185,6 +188,12 @@ pub const SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL: &str = "persistent_shell";
 /// must reject the request rather than silently opening a local shell.
 pub const SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL: &str = "ssh_persistent_shell";
 pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV: &str = "structured_validation_argv";
+/// The Runner preserves the optional Cargo test-count postcondition in durable
+/// validation Job metadata and returns it unchanged through reconciliation.
+/// Missing on older Runners is false; Control must not start a validation Job
+/// whose assertion could disappear after a Server restart.
+pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION: &str =
+    "structured_cargo_test_count_assertion";
 /// The Runner accepts the canonical machine-readable `go test -json` validation
 /// shape. Older implementations may support only the historical fixed `./...`
 /// scope; expanded caller-selected packages are fenced separately.
@@ -323,6 +332,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
     SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
@@ -439,6 +449,9 @@ pub struct ShellClientCapabilities {
     /// Missing on older agents and therefore fail-closed.
     #[serde(default)]
     pub structured_validation_argv: bool,
+    /// Durable round-trip support for Cargo test-count postconditions.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub structured_cargo_test_count_assertion: bool,
     /// Machine-readable canonical `go test -json` validation. Older Runners may
     /// support only the historical fixed `./...` scope; focused package argv is
     /// an independent additive capability.
@@ -607,6 +620,7 @@ impl Default for ShellClientCapabilities {
             persistent_shell: false,
             ssh_persistent_shell: false,
             structured_validation_argv: false,
+            structured_cargo_test_count_assertion: false,
             structured_go_test_json: false,
             structured_go_test_tool: false,
             structured_go_test_packages: false,
@@ -2185,6 +2199,10 @@ pub struct ShellJobValidationMetadata {
     pub adapter: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validation_target_id: Option<String>,
+    /// Effective caller-requested minimum Cargo test count. This is an
+    /// observation postcondition, not part of the executable argv.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_tests: Option<u64>,
 }
 
 impl ShellJobValidationMetadata {
@@ -2200,7 +2218,13 @@ impl ShellJobValidationMetadata {
                 };
                 suffix.len() != 24 || !suffix.as_bytes().iter().all(u8::is_ascii_hexdigit)
             })
+            || self
+                .minimum_tests
+                .is_some_and(|minimum| !(1..=CARGO_TEST_MIN_TESTS_MAX).contains(&minimum))
         {
+            return false;
+        }
+        if self.minimum_tests.is_some() && self.tool != "cargo_test" {
             return false;
         }
         let step = &self.steps[0];
@@ -2990,6 +3014,7 @@ mod envelope_tests {
                 persistent_shell: true,
                 ssh_persistent_shell: true,
                 structured_validation_argv: true,
+                structured_cargo_test_count_assertion: true,
                 structured_go_test_json: true,
                 structured_go_test_tool: true,
                 structured_go_test_packages: true,
@@ -4391,6 +4416,7 @@ mod filter_canonical_tests {
             sync_wait_secs: 10,
             adapter: tool.to_string(),
             validation_target_id: None,
+            minimum_tests: None,
         }
     }
 
@@ -4430,6 +4456,25 @@ mod filter_canonical_tests {
         let mut wrong_kind = metadata.clone();
         wrong_kind.kind = "check".to_string();
         assert!(!wrong_kind.is_valid());
+
+        let mut cargo_assertion = validation_metadata(
+            "cargo_test",
+            "test",
+            validation_step("test", "cargo", &["test", "tool_runtime"]),
+        );
+        cargo_assertion.minimum_tests = Some(6);
+        assert!(cargo_assertion.is_valid());
+        cargo_assertion.minimum_tests = Some(0);
+        assert!(!cargo_assertion.is_valid());
+        cargo_assertion.minimum_tests = Some(CARGO_TEST_MIN_TESTS_MAX + 1);
+        assert!(!cargo_assertion.is_valid());
+
+        let mut go_assertion = metadata.clone();
+        go_assertion.minimum_tests = Some(1);
+        assert!(
+            !go_assertion.is_valid(),
+            "Cargo-specific assertion metadata must not cross validation adapters"
+        );
 
         let plain_go = validation_step("test", "go", &["test", "./..."]);
         assert!(plain_go.is_canonical());

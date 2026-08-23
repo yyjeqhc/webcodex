@@ -6,6 +6,8 @@
 //! same execution to a queryable Job and return a `job_id`. `cargo_fmt`
 //! (mutating) never auto-promotes.
 
+mod cargo_test_assertions;
+
 use super::support::*;
 use crate::shell_client::{ShellJobStartMetadata, ShellJobVisibility};
 use crate::shell_protocol::{
@@ -204,6 +206,7 @@ async fn seed_retained_terminal_validation_job(
                     sync_wait_secs: 10,
                     adapter: "cargo_check".to_string(),
                     validation_target_id: Some(validation_target_id.clone()),
+                    minimum_tests: None,
                 }),
                 visibility: ShellJobVisibility::Public,
                 ..Default::default()
@@ -1334,6 +1337,8 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
                         features: None,
                         package: None,
                         no_run: None,
+                        require_tests: None,
+                        min_tests: None,
                         timeout_secs: Some(1800),
                     },
                     Some(&auth),
@@ -1481,6 +1486,7 @@ async fn stale_validation_terminal_snapshot_cannot_evict_newer_materialization_m
             &job.validation_target_id,
             "completed",
             Some(0),
+            Some(true),
             Some(job.ended_at.saturating_sub(1)),
             Some(job.ended_at),
             Some(25),
@@ -1854,6 +1860,8 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
                         features: None,
                         package: None,
                         no_run: None,
+                        require_tests: None,
+                        min_tests: None,
                         timeout_secs: Some(1800),
                     },
                     Some(&auth),
@@ -2349,6 +2357,8 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
                 features: Some("line\nbreak".to_string()),
                 package: None,
                 no_run: None,
+                require_tests: None,
+                min_tests: None,
                 timeout_secs: Some(1800),
             },
         ),
@@ -2366,6 +2376,60 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
                 timeout_secs: Some(1800),
             },
         ),
+        (
+            "test-count assertion with no-run",
+            ToolCall::CargoTest {
+                project: project.clone(),
+                session_id: None,
+                cwd: None,
+                filter: None,
+                all_targets: None,
+                all_features: None,
+                no_default_features: None,
+                features: None,
+                package: None,
+                no_run: Some(true),
+                require_tests: Some(true),
+                min_tests: None,
+                timeout_secs: Some(1800),
+            },
+        ),
+        (
+            "zero test-count minimum",
+            ToolCall::CargoTest {
+                project: project.clone(),
+                session_id: None,
+                cwd: None,
+                filter: None,
+                all_targets: None,
+                all_features: None,
+                no_default_features: None,
+                features: None,
+                package: None,
+                no_run: None,
+                require_tests: None,
+                min_tests: Some(0),
+                timeout_secs: Some(1800),
+            },
+        ),
+        (
+            "oversized test-count minimum",
+            ToolCall::CargoTest {
+                project: project.clone(),
+                session_id: None,
+                cwd: None,
+                filter: None,
+                all_targets: None,
+                all_features: None,
+                no_default_features: None,
+                features: None,
+                package: None,
+                no_run: None,
+                require_tests: None,
+                min_tests: Some(crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX + 1),
+                timeout_secs: Some(1800),
+            },
+        ),
     ] {
         let result = runtime.dispatch_with_auth(call, Some(&auth)).await;
         assert!(!result.success, "{label} must fail");
@@ -2374,6 +2438,7 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
             serde_json::json!(false),
             "{label}: command must not start"
         );
+        assert_eq!(result.output["failure_kind"], "invalid_arguments");
         // No agent request may have been enqueued for the rejected call.
         assert!(
             probe_patch_agent_request(&runtime, client_id)
@@ -2611,6 +2676,8 @@ async fn stop_job_stops_a_handoff_job() {
                         features: None,
                         package: None,
                         no_run: None,
+                        require_tests: None,
+                        min_tests: None,
                         timeout_secs: Some(1800),
                     },
                     Some(&auth),
@@ -2768,6 +2835,8 @@ async fn legacy_agent_default_check_and_test_use_one_synchronous_120_second_exec
                                 features: None,
                                 package: None,
                                 no_run: None,
+                                require_tests: None,
+                                min_tests: None,
                                 timeout_secs: None,
                             },
                             Some(&auth),
@@ -2933,6 +3002,7 @@ async fn local_fast_fmt_check_returns_terminal_without_public_job() {
             ExecutionPurpose::Format,
             10,
             5,
+            None,
         )
         .await;
     assert!(result.success, "{:?}", result.error);
@@ -2987,6 +3057,7 @@ mod tests {
                     ExecutionPurpose::Test,
                     10,
                     1,
+                    None,
                 )
                 .await
         }
@@ -3129,6 +3200,7 @@ mod tests {
                     ExecutionPurpose::Test,
                     30,
                     5,
+                    None,
                 )
                 .await
         }
@@ -3201,6 +3273,7 @@ mod tests {
                     ExecutionPurpose::Test,
                     3,
                     5,
+                    None,
                 )
                 .await
         }
@@ -3223,72 +3296,6 @@ mod tests {
         !unix_process_is_alive(pid),
         "expired absolute deadline must terminate and reap the Child"
     );
-}
-
-#[tokio::test]
-async fn local_job_status_uses_bounded_logs_and_nulls_complete_counts() {
-    let tmp = tempfile::tempdir().unwrap();
-    let runtime = runtime_with_project(tmp.path(), "demo");
-    let job_id = "bounded-local-validation";
-    let dir = tmp.path().join(".codex/jobs").join(job_id);
-    std::fs::create_dir_all(&dir).unwrap();
-    let (record, _) = crate::tool_runtime::local_jobs::LocalJobRecord::initialize(
-        "demo".to_string(),
-        dir.clone(),
-    )
-    .unwrap();
-    std::fs::write(
-        dir.join("metadata.json"),
-        serde_json::to_string(&json!({
-            "job_id": job_id,
-            "project": "demo",
-            "command": "cargo test",
-            "kind": "validation",
-            "created_at": 1,
-            "started_at": 1,
-            "validation_tool": "cargo_test",
-            "validation_kind": "test",
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    std::fs::write(dir.join("status"), "completed").unwrap();
-    std::fs::write(dir.join("exit_code"), "0").unwrap();
-    std::fs::write(dir.join("finished_at"), "2").unwrap();
-    let mut stdout = (0..(crate::tool_runtime::helpers::MAX_LOCAL_LOG_LINES + 100))
-        .map(|index| format!("progress line {index}\n"))
-        .collect::<String>();
-    stdout.push_str("test result: ok. 7 passed; 0 failed; 0 ignored\n");
-    std::fs::write(dir.join("stdout.log"), stdout).unwrap();
-    std::fs::write(dir.join("stderr.log"), "").unwrap();
-    record.observe().unwrap();
-    record.mark_terminal();
-    runtime
-        .local_jobs
-        .lock()
-        .await
-        .insert(job_id.to_string(), record.clone());
-
-    let bounded = record.read_log_lines(
-        "stdout.log",
-        None,
-        Some(crate::tool_runtime::helpers::MAX_LOCAL_LOG_LINES),
-    );
-    assert!(bounded.3);
-    assert!(bounded.0.lines().count() <= crate::tool_runtime::helpers::MAX_LOCAL_LOG_LINES);
-
-    let status = runtime.job_status(job_id.to_string()).await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["validation"]["passed"], true);
-    assert_eq!(status.output["validation"]["truncated"], true);
-    for field in [
-        "tests_run_count",
-        "tests_passed",
-        "tests_failed",
-        "zero_tests_run",
-    ] {
-        assert!(status.output["validation"][field].is_null(), "{field}");
-    }
 }
 
 #[cfg(unix)]
@@ -3328,6 +3335,7 @@ mod tests {
             ExecutionPurpose::Test,
             60,
             1,
+            None,
         )
         .await;
     assert!(handoff.success, "{:?}", handoff.error);
@@ -3397,6 +3405,7 @@ mod tests {
             ExecutionPurpose::Test,
             1,
             1,
+            None,
         )
         .await;
     assert!(handoff.success, "{:?}", handoff.error);

@@ -631,6 +631,7 @@ mod tests {
                     persistent_shell: false,
                     ssh_persistent_shell: false,
                     structured_validation_argv: true,
+                    structured_cargo_test_count_assertion: true,
                     structured_go_test_json: true,
                     structured_go_test_tool: true,
                     structured_go_test_packages: true,

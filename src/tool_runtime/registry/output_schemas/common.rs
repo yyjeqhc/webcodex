@@ -411,6 +411,37 @@ pub(crate) fn default_output_schema() -> Value {
     wrapped_output_schema(vec![])
 }
 
+pub(crate) fn cargo_test_count_assertion_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "minimum_tests": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX,
+                "description": "Effective caller-requested minimum after combining require_tests and min_tests."
+            },
+            "actual_tests_run": {
+                "anyOf": [
+                    {"type": "integer", "minimum": 0},
+                    {"type": "null"}
+                ],
+                "description": "Proven executed test count, or null when complete count evidence was unavailable."
+            },
+            "status": {
+                "type": "string",
+                "enum": ["passed", "failed", "unproven"]
+            },
+            "reason_code": {
+                "type": "string",
+                "enum": ["minimum_satisfied", "minimum_not_met", "test_count_unproven"]
+            }
+        },
+        "required": ["minimum_tests", "actual_tests_run", "status", "reason_code"]
+    })
+}
+
 /// Deterministic continuation-feedback projection: an attempt summary plus a
 /// validation delta over comparable prior evidence. Always bounded and
 /// read-only; never an LLM summary, never a new verdict. Core sub-objects use

@@ -1,7 +1,8 @@
 use serde_json::{json, Value};
 
 use super::common::{
-    nullable_schema, permission_decision_schema, schema_type, session_hint_schema,
+    cargo_test_count_assertion_schema, nullable_schema, permission_decision_schema, schema_type,
+    session_hint_schema,
 };
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
@@ -43,7 +44,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ),
             (
                 "passed",
-                nullable_schema("boolean", "Whether exit_code was zero. Absent when the command is still running after promotion to a Job."),
+                nullable_schema("boolean", "Whether command execution succeeded and every requested structured validation postcondition was proven. Absent while a promoted Job is still running."),
             ),
             (
                 "command_started",
@@ -57,7 +58,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                 "failure_kind",
                 schema_type(
                     "string",
-                    "Stable failure kind. Non-zero cargo_fmt, cargo_check, cargo_test, and go_test command exits use validation_failed; outcome_unknown, pre-start rejection, guard denial, timeout, and runtime errors remain distinct.",
+                    "Stable failure kind. Non-zero structured validation exits and an unmet/unproven Cargo test-count assertion use validation_failed; outcome_unknown, pre-start rejection, guard denial, timeout, and runtime errors remain distinct.",
                 ),
             ),
             (
@@ -161,6 +162,9 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                 ),
             ),
         ]);
+    }
+    if tool_name == "cargo_test" {
+        fields.push(("test_count_assertion", cargo_test_count_assertion_schema()));
     }
     let properties = fields
         .into_iter()

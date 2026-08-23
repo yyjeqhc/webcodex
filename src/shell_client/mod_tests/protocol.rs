@@ -449,6 +449,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 persistent_shell: true,
                 ssh_persistent_shell: true,
                 structured_validation_argv: true,
+                structured_cargo_test_count_assertion: true,
                 structured_go_test_json: true,
                 structured_go_test_tool: true,
                 structured_go_test_packages: true,

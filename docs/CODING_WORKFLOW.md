@@ -137,6 +137,16 @@ Use a shell only when the structured surface does not cover the validation.
 Structured results give the Session ledger safer evidence than parsing arbitrary
 command text.
 
+When a focused `cargo_test` must prove that tests actually ran, set
+`require_tests: true` for a minimum of one test or `min_tests: N` for a larger
+bounded minimum. When both are present, the stricter minimum applies. Without
+either field, an exit-zero invocation that runs zero tests remains execution
+success and reports `tests_run_count: 0` plus `zero_tests_run: true`. An
+explicit count assertion passes only when complete parser evidence proves the
+minimum; incomplete or truncated evidence fails the validation contract without
+rewriting the process exit code. Count assertions cannot be combined with
+`no_run: true`.
+
 **Read closeout as evidence, not completion authority.** `finish_coding_task`
 returns a deterministic advisory snapshot of recorded Session evidence,
 including validation, workspace, jobs, and tool history when requested. It does

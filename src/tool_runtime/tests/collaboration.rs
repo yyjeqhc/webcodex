@@ -102,6 +102,297 @@ fn start_authorized_project_session(
         .unwrap()
 }
 
+fn start_authorized_unscoped_session(
+    runtime: &ToolRuntime,
+    title: &str,
+    auth: &AuthContext,
+) -> sessions::SessionSummary {
+    let fingerprint =
+        super::super::session_context::workflow_session_authority_fingerprint(Some(auth))
+            .expect("test authority must have a stable identity");
+    runtime
+        .sessions
+        .start_session_with_options(
+            sessions::SessionCreateOptions::new(
+                None,
+                Some(title.to_string()),
+                super::super::SessionMode::Normal,
+                sessions::SessionGuards::default(),
+            )
+            .with_owner_authority_fingerprint(Some(fingerprint)),
+        )
+        .unwrap()
+}
+
+#[tokio::test]
+async fn request_scoped_ack_suppresses_only_current_response_and_records_first_observation_once() {
+    let runtime = test_runtime();
+    let auth = auth_context(None, true);
+    let session = start_authorized_unscoped_session(&runtime, "ack recorder", &auth);
+    let foreign = start_authorized_unscoped_session(&runtime, "foreign ack", &auth);
+    let guidance = runtime
+        .sessions
+        .post_message_with_ack(
+            PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                message: "Keep the compatibility fence intact.".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+    let foreign_guidance = runtime
+        .sessions
+        .post_message_with_ack(
+            PostSessionMessageInput {
+                session_id: foreign.session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                message: "foreign secret guidance".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+
+    let first = call_with_recorder(
+        &runtime,
+        "list_tools",
+        json!({}),
+        Some(&session.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(first.success, "{:?}", first.error);
+    assert_eq!(
+        first.output["session_attention"]["messages"][0]["message_id"],
+        guidance.message_id
+    );
+    assert_eq!(
+        first.output["session_attention"]["messages"][0]["message"],
+        "Keep the compatibility fence intact."
+    );
+
+    let acknowledged = call_with_recorder(
+        &runtime,
+        "list_tools",
+        json!({
+            sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: [guidance.message_id]
+        }),
+        Some(&session.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(acknowledged.success, "{:?}", acknowledged.error);
+    assert_eq!(
+        acknowledged.output["session_attention"]["ack"]["accepted_count"],
+        1
+    );
+    assert!(acknowledged.output["session_attention"]["messages"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let stored = runtime
+        .sessions
+        .list_messages(
+            &session.session_id,
+            sessions::ListSessionMessagesFilter {
+                message_id: Some(guidance.message_id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(stored[0].status, sessions::SessionMessageStatus::Open);
+    let first_ack_at = stored[0]
+        .first_ack_observed_at
+        .expect("first ACK timestamp");
+    let after_first_ack = runtime
+        .sessions
+        .observe_messages(&session.session_id, None, None, None)
+        .await
+        .unwrap();
+
+    let repeated = call_with_recorder(
+        &runtime,
+        "list_tools",
+        json!({
+            sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: [guidance.message_id]
+        }),
+        Some(&session.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(repeated.success);
+    let after_repeat = runtime
+        .sessions
+        .observe_messages(
+            &session.session_id,
+            Some(&after_first_ack.observation_token),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        !after_repeat.changed,
+        "repeated ACK must not churn observation revision"
+    );
+    let stored_after_repeat = runtime
+        .sessions
+        .list_messages(
+            &session.session_id,
+            sessions::ListSessionMessagesFilter {
+                message_id: Some(guidance.message_id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        stored_after_repeat[0].first_ack_observed_at,
+        Some(first_ack_at)
+    );
+
+    let forgotten = call_with_recorder(
+        &runtime,
+        "list_tools",
+        json!({}),
+        Some(&session.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(forgotten.success, "business tool must still execute");
+    assert_eq!(
+        forgotten.output["session_attention"]["messages"][0]["message_id"],
+        guidance.message_id
+    );
+
+    let foreign_ack = call_with_recorder(
+        &runtime,
+        "list_tools",
+        json!({
+            sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: [foreign_guidance.message_id, "wc_msg_unknown"]
+        }),
+        Some(&session.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(foreign_ack.success, "ignored ACK must not block the tool");
+    assert_eq!(
+        foreign_ack.output["session_attention"]["ack"]["accepted_count"],
+        0
+    );
+    assert_eq!(
+        foreign_ack.output["session_attention"]["ack"]["ignored_count"],
+        2
+    );
+    assert_eq!(
+        foreign_ack.output["session_attention"]["messages"][0]["message_id"],
+        guidance.message_id
+    );
+    let foreign_stored = runtime
+        .sessions
+        .list_messages(
+            &foreign.session_id,
+            sessions::ListSessionMessagesFilter {
+                message_id: Some(foreign_guidance.message_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(foreign_stored[0].first_ack_observed_at.is_none());
+
+    runtime
+        .sessions
+        .resolve_message(
+            &session.session_id,
+            &guidance.message_id,
+            Some("handled".to_string()),
+        )
+        .unwrap();
+    let resolved = call_with_recorder(
+        &runtime,
+        "list_tools",
+        json!({}),
+        Some(&session.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(resolved.success);
+    assert!(resolved.output.get("session_attention").is_none());
+}
+
+#[test]
+fn urgent_guidance_attention_is_bounded_safe_and_also_decorates_failure_results() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("attention bounds".to_string()));
+    for index in 0..5 {
+        runtime
+            .sessions
+            .post_message_with_ack(
+                PostSessionMessageInput {
+                    session_id: session.session_id.clone(),
+                    kind: SessionMessageKind::Guidance,
+                    message: format!("guidance-{index}-{}", "x".repeat(1800)),
+                    tags: vec!["must-not-piggyback".to_string()],
+                    reply_to: None,
+                    priority: SessionMessagePriority::High,
+                },
+                true,
+            )
+            .unwrap();
+    }
+    let mut failed = super::super::ToolResult::err_with_output(
+        "synthetic failure",
+        json!({"error_kind": "synthetic"}),
+    );
+    super::super::session_context::add_session_attention(
+        &mut failed,
+        &runtime.sessions,
+        &session.session_id,
+        &[],
+    );
+    assert!(!failed.success);
+    assert_eq!(failed.output["error_kind"], "synthetic");
+    let attention = &failed.output["session_attention"];
+    assert_eq!(attention["requires_ack"], true);
+    assert_eq!(attention["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(attention["omitted_count"], 3);
+    assert_eq!(attention["truncated"], true);
+    let body_bytes: usize = attention["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|message| message["message"].as_str().unwrap().len())
+        .sum();
+    assert!(body_bytes <= 3072);
+    let serialized = serde_json::to_string(attention).unwrap();
+    assert!(!serialized.contains("must-not-piggyback"));
+    for forbidden in [
+        "tags",
+        "completion_id",
+        "completion_key",
+        "tool_arguments",
+        "credentials",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "leaked {forbidden}: {serialized}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn observe_session_messages_collaboration_recorder_target_scope_fences() {
     let runtime = runtime_with_resolver_projects().await;

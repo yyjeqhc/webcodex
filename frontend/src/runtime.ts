@@ -1,7 +1,7 @@
 import {
   workflowSessionListOverviewFacts,
   workflowSessionOverviewPresentation,
-  workflowSessionIdleAttentionLabel,
+  workflowSessionLivenessPresentation,
   updateWorkflowSessionFollowFromScroll,
   workflowSessionScrollTopAfterRender,
   jumpWorkflowSessionToLatest,
@@ -11,6 +11,7 @@ import {
   initialRuntimeConsoleState,
   runtimeDeviceIds,
   runtimeProjectsForDevice,
+  filterAndSortRuntimeProjects,
   preferredRuntimeProjectSelection,
   invalidateRuntimeCredential,
   beginRuntimeCredential,
@@ -33,6 +34,8 @@ import {
   adoptRuntimeCollaborationList,
   adoptRuntimeCollaborationObservation,
   setRuntimeCollaborationAvailable,
+  setRuntimeCollaborationPhase,
+  runtimeCollaborationNeedsRefreshRecovery,
   runtimeCollaborationObservationAction,
 } from "./runtime_console_state.js";
 
@@ -49,6 +52,10 @@ let sessionsAbort: AbortController | null = null;
 let detailAbort: AbortController | null = null;
 let collaborationAbort: AbortController | null = null;
 let projectRows: any[] = [];
+let runnerProjectRows: any[] = [];
+let projectSearch = "";
+let collaborationReplyTo = "";
+let refreshInFlight = false;
 let projectRowsTruncated = false;
 let sessionRows: any[] = [];
 const state = initialRuntimeConsoleState();
@@ -71,11 +78,12 @@ function clearNode(node: any): void {
   while (node && node.firstChild) node.removeChild(node.firstChild);
 }
 
-function appendChip(parent: HTMLElement, text: string, extraClass = ""): void {
+function appendChip(parent: HTMLElement, text: string, extraClass = ""): HTMLElement {
   const chip = document.createElement("span");
   chip.className = "chip" + (extraClass ? " " + extraClass : "");
   chip.textContent = text;
   parent.appendChild(chip);
+  return chip;
 }
 
 function abort(controller: AbortController | null): void {
@@ -143,14 +151,18 @@ function lock(message = ""): void {
   abortAll();
   invalidateRuntimeCredential(state);
   projectRows = [];
+  runnerProjectRows = [];
   projectRowsTruncated = false;
+  projectSearch = "";
+  collaborationReplyTo = "";
   clearSessionSurface();
-  clearNode(el("runtime-runner-projects"));
+  clearNode(el("runtime-project-list"));
   show("runtime-token-gate", true);
   show("runtime-console", false);
   show("runtime-topbar-controls", false);
   stopAuto();
   setText("runtime-token-error", message);
+  setText("runtime-refresh-status", "");
   const input = el("runtime-token-input") as HTMLInputElement | null;
   if (input) { input.value = ""; input.focus(); }
 }
@@ -182,22 +194,22 @@ function attentionLabel(attention: any): string {
   return parts.length ? parts.join(" · ") : "No retained pending attention";
 }
 
-async function fetchOverview(request: any): Promise<void> {
+async function fetchOverview(request: any): Promise<boolean> {
   abort(overviewAbort);
   const controller = new AbortController();
   overviewAbort = controller;
   const response = await api("overview", {}, controller.signal);
   if (overviewAbort === controller) overviewAbort = null;
-  if (!response || !isCurrentRuntimeOverviewRequest(state, request)) return;
-  if (response.status === 401) return lock("Credential rejected.");
+  if (!response || !isCurrentRuntimeOverviewRequest(state, request)) return false;
+  if (response.status === 401) { lock("Credential rejected."); return false; }
   if (response.status === 403) {
     show("runtime-overview-unavailable", true);
     setText("runtime-overview-access", "runtime:read unavailable");
-    return;
+    return true;
   }
   if (!response.ok || !response.data) {
     setText("runtime-overview-access", "refresh unavailable");
-    return;
+    return false;
   }
   show("runtime-overview-unavailable", false);
   setText("runtime-overview-access", "runtime:read");
@@ -210,6 +222,7 @@ async function fetchOverview(request: any): Promise<void> {
   setText("runtime-server-jobs", countLabel(data.active_jobs, "active Job") + (data.mixed_builds_present ? " · mixed builds" : ""));
   setText("runtime-server-attention", attentionLabel(data.workflow_sessions));
   setText("runtime-server-sessions", countLabel(data.workflow_sessions?.active, "active Session") + " · " + countLabel(data.workflow_sessions?.running, "running call") + (data.workflow_sessions?.truncated ? " · bounded aggregate" : ""));
+  return true;
 }
 
 function projectLabel(project: any): string {
@@ -220,27 +233,26 @@ function projectLabel(project: any): string {
   return identity + " · " + status;
 }
 
-async function fetchProjects(request: any, unlocking = false): Promise<void> {
+async function fetchProjects(request: any, unlocking = false): Promise<boolean> {
   abort(projectsAbort);
   const controller = new AbortController();
   projectsAbort = controller;
   const response = await api("projects", { limit: 100 }, controller.signal);
   if (projectsAbort === controller) projectsAbort = null;
-  if (!response || !isCurrentRuntimeProjectsRequest(state, request)) return;
+  if (!response || !isCurrentRuntimeProjectsRequest(state, request)) return false;
   if (response.status === 401 || response.status === 403) {
     lock("Credential does not have Runtime Console project access.");
-    return;
+    return false;
   }
   if (!response.ok || !response.data) {
     if (unlocking) lock("Runtime Console is unavailable.");
     else showError("Could not refresh projects.");
-    return;
+    return false;
   }
   projectRows = Array.isArray(response.data.projects) ? response.data.projects : [];
   projectRowsTruncated = !!response.data.truncated;
   unlockUi();
   showError("");
-  void fetchOverview(refreshRuntimeOverview(state));
 
   const currentDevice = String(state.selectedDevice || "");
   const currentProject = String(state.selectedProject || "");
@@ -255,7 +267,7 @@ async function fetchProjects(request: any, unlocking = false): Promise<void> {
     setText("runtime-selected-project", "No project selected");
     const runnerRequest = refreshRuntimeRunner(state);
     if (runnerRequest) void fetchRunner(runnerRequest);
-    return;
+    return true;
   }
   if (selection.device !== currentDevice || selection.project !== currentProject) {
     switchProject(selection.device, selection.project);
@@ -266,12 +278,24 @@ async function fetchProjects(request: any, unlocking = false): Promise<void> {
     const listRequest = refreshRuntimeSessionList(state);
     if (listRequest) void fetchSessions(listRequest);
   }
+  return true;
+}
+
+function effectiveProjects(projects: any[]): any[] {
+  const aggregates = new Map<string, any>();
+  for (const row of runnerProjectRows) {
+    if (row && typeof row.id === "string") aggregates.set(row.id, row);
+  }
+  return (Array.isArray(projects) ? projects : []).map((project) => {
+    const aggregate = aggregates.get(String(project?.id || ""));
+    return aggregate ? { ...project, sessions: aggregate.sessions } : project;
+  });
 }
 
 function renderProjectSelectors(projects: any[], truncated: boolean): void {
   const deviceSelect = el("runtime-device-select") as HTMLSelectElement | null;
-  const projectSelect = el("runtime-project-select") as HTMLSelectElement | null;
-  if (!deviceSelect || !projectSelect) return;
+  const projectList = el("runtime-project-list");
+  if (!deviceSelect || !projectList) return;
   const devices = runtimeDeviceIds(projects);
   clearNode(deviceSelect);
   for (const clientId of devices) {
@@ -281,22 +305,51 @@ function renderProjectSelectors(projects: any[], truncated: boolean): void {
     deviceSelect.appendChild(option);
   }
   if (state.selectedDevice) deviceSelect.value = state.selectedDevice;
-  const deviceProjects = runtimeProjectsForDevice(projects, String(state.selectedDevice || ""));
-  clearNode(projectSelect);
-  for (const project of deviceProjects) {
-    const option = document.createElement("option");
-    option.value = project.id;
-    option.textContent = projectLabel(project);
-    projectSelect.appendChild(option);
+  const rows = filterAndSortRuntimeProjects(
+    effectiveProjects(projects),
+    String(state.selectedDevice || ""),
+    projectSearch,
+  );
+  clearNode(projectList);
+  show("runtime-projects-empty", !!state.selectedDevice && rows.length === 0);
+  for (const project of rows) {
+    const row = document.createElement("div");
+    row.className = "project-row" + (project.id === state.selectedProject ? " selected" : "");
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", project.id === state.selectedProject ? "true" : "false");
+    row.tabIndex = 0;
+    const main = document.createElement("div"); main.className = "project-row-main";
+    const title = document.createElement("div"); title.className = "project-row-title"; title.textContent = project.name || project.id;
+    const id = document.createElement("div"); id.className = "project-row-id"; id.textContent = String(project.id || "");
+    main.appendChild(title); main.appendChild(id);
+    const facts = document.createElement("div"); facts.className = "project-row-facts";
+    appendChip(facts, project.connected ? String(project.agent_status || "online") : "offline");
+    if (project.sessions) {
+      appendChip(facts, countLabel(project.sessions.retained_sessions, "retained Session"));
+      if (project.sessions.running_sessions) appendChip(facts, countLabel(project.sessions.running_sessions, "working"), "tone-runtime");
+      const attention = attentionLabel(project.sessions.attention);
+      if (!attention.startsWith("No retained")) appendChip(facts, attention, "tone-warn");
+      if (typeof project.sessions.latest_updated_at === "number") appendChip(facts, "updated " + updatedLabel(project.sessions.latest_updated_at));
+    }
+    row.appendChild(main); row.appendChild(facts);
+    const select = (): void => switchProject(String(state.selectedDevice || ""), String(project.id || ""));
+    row.addEventListener("click", select);
+    row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } });
+    projectList.appendChild(row);
   }
-  if (state.selectedProject) projectSelect.value = state.selectedProject;
+  const deviceProjects = runtimeProjectsForDevice(projects, String(state.selectedDevice || ""));
   setText("runtime-device-status", devices.length ? countLabel(devices.length, "authorized Runner") + (truncated ? " · bounded project list" : "") : "No authorized Runners");
   setText("runtime-project-status", state.selectedDevice ? countLabel(deviceProjects.length, "authorized Project") + " on this Runner" + (truncated ? " · bounded list" : "") : "No authorized Projects");
 }
 
 function switchProject(device: string, project: string): void {
   abortProjectWork();
-  if (state.selectedDevice !== device) { abort(runnerAbort); runnerAbort = null; }
+  if (state.selectedDevice !== device) {
+    abort(runnerAbort);
+    runnerAbort = null;
+    runnerProjectRows = [];
+  }
+  collaborationReplyTo = "";
   clearSessionSurface();
   const request = selectRuntimeProject(state, device, project);
   renderProjectSelectors(projectRows, projectRowsTruncated);
@@ -317,7 +370,8 @@ async function fetchRunner(request: any): Promise<void> {
   if (response.status === 403) {
     show("runtime-runner-unavailable", true);
     setText("runtime-runner-access", "runtime:read unavailable");
-    clearNode(el("runtime-runner-projects"));
+    runnerProjectRows = [];
+    renderProjectSelectors(projectRows, projectRowsTruncated);
     return;
   }
   if (!response.ok || !response.data) {
@@ -327,7 +381,9 @@ async function fetchRunner(request: any): Promise<void> {
   }
   show("runtime-runner-unavailable", false);
   setText("runtime-runner-access", response.data.projects_truncated ? "bounded Project aggregate" : "runtime:read");
+  runnerProjectRows = Array.isArray(response.data.projects) ? response.data.projects : [];
   renderRunner(response.data);
+  renderProjectSelectors(projectRows, projectRowsTruncated);
 }
 
 function renderRunner(data: any): void {
@@ -339,28 +395,6 @@ function renderRunner(data: any): void {
   setText("runtime-runner-concurrency", countLabel(data.jobs_running, "running") + " · " + countLabel(data.jobs_queued, "queued") + (typeof data.job_concurrency_limit === "number" ? " · limit " + data.job_concurrency_limit : ""));
   setText("runtime-runner-alignment", data.source_alignment || "unknown");
   setText("runtime-runner-project-count", data.projects_available ? countLabel(data.visible_project_count, "visible Project") : "project:read unavailable");
-  const node = el("runtime-runner-projects");
-  clearNode(node);
-  if (!node || !Array.isArray(data.projects)) return;
-  for (const project of data.projects) {
-    const card = document.createElement("div");
-    card.className = "runner-project-card" + (project.id === state.selectedProject ? " selected" : "");
-    const title = document.createElement("div");
-    title.className = "runner-project-title";
-    title.textContent = project.name && project.name !== project.id ? String(project.name) + " — " + String(project.id) : String(project.id || "");
-    const meta = document.createElement("div");
-    meta.className = "muted small";
-    meta.textContent = (project.connected ? String(project.agent_status || "online") : "offline") + " · " + countLabel(project.sessions?.retained_sessions, "retained Session") + (project.sessions?.sessions_truncated ? " · bounded" : "");
-    const facts = document.createElement("div");
-    facts.className = "summary-facts";
-    appendChip(facts, countLabel(project.sessions?.running_sessions, "running"), "tone-runtime");
-    const attention = attentionLabel(project.sessions?.attention);
-    if (!attention.startsWith("No retained")) appendChip(facts, attention, "tone-warn");
-    if (typeof project.sessions?.latest_updated_at === "number") appendChip(facts, "updated " + updatedLabel(project.sessions.latest_updated_at));
-    card.appendChild(title); card.appendChild(meta); card.appendChild(facts);
-    card.addEventListener("click", () => switchProject(String(data.client_id || state.selectedDevice), String(project.id || "")));
-    node.appendChild(card);
-  }
 }
 
 async function fetchSessions(request: any): Promise<void> {
@@ -447,7 +481,9 @@ function renderSessionList(sessions: any[], payload: any): void {
     const title = document.createElement("div"); title.className = "session-title"; title.textContent = session.title ? String(session.title) : id;
     const meta = document.createElement("div"); meta.className = "chips";
     appendChip(meta, String(session.lifecycle || "unknown"));
-    appendChip(meta, workflowSessionIdleAttentionLabel(!!session.running_call, session.overview));
+    const liveness = workflowSessionLivenessPresentation(session);
+    const livenessChip = appendChip(meta, liveness.label, liveness.state === "working" ? "tone-runtime" : liveness.state === "attention" ? "tone-warn" : "");
+    livenessChip.title = liveness.tooltip;
     appendChip(meta, updatedLabel(session.updated_at));
     item.appendChild(title); item.appendChild(meta);
     const facts = workflowSessionListOverviewFacts(session.overview);
@@ -505,7 +541,9 @@ function renderDetail(detail: any): void {
   show("runtime-session-detail-empty", false); show("runtime-session-detail", true);
   setText("runtime-session-title", detail.title); setText("runtime-session-lifecycle", detail.lifecycle);
   setText("runtime-session-mode", "mode " + String(detail.mode || "unknown"));
-  setText("runtime-session-running", workflowSessionIdleAttentionLabel(!!detail.running_call, detail.overview));
+  const liveness = workflowSessionLivenessPresentation(detail);
+  setText("runtime-session-running", liveness.label);
+  const livenessNode = el("runtime-session-running"); if (livenessNode) livenessNode.title = liveness.tooltip;
   setText("runtime-session-updated", "Updated " + updatedLabel(detail.updated_at)); renderOverview(detail.overview);
   renderCollaboration();
   const activities = Array.isArray(detail.activity) ? detail.activity : [];
@@ -527,12 +565,32 @@ function renderDetail(detail: any): void {
   node.scrollTop = workflowSessionScrollTopAfterRender(state.workflow, previousScrollTop, node.clientHeight, node.scrollHeight); syncFollowUi();
 }
 
+function collaborationPhaseLabel(): string {
+  switch (state.collaboration.phase) {
+    case "live": return "Live";
+    case "reconnecting": return "Reconnecting";
+    case "paused": return "Paused";
+    default: return "Idle";
+  }
+}
+
+function setCollaborationReplyTarget(messageId: string): void {
+  collaborationReplyTo = messageId;
+  const reply = el("runtime-message-reply");
+  if (reply) reply.hidden = !messageId;
+  setText("runtime-message-reply-text", messageId ? "Reply to " + messageId : "");
+}
+
 function renderCollaboration(statusText?: string): void {
   const available = state.collaboration.available !== false;
   show("runtime-collaboration-unavailable", !available);
+  show("runtime-collaboration-form", available);
   const messages = available && Array.isArray(state.collaboration.messages) ? state.collaboration.messages : [];
   show("runtime-collaboration-empty", available && messages.length === 0);
-  setText("runtime-collaboration-status", statusText || (available ? countLabel(messages.length, "retained message") : "runtime:read unavailable"));
+  const status = available
+    ? "Collaboration: " + collaborationPhaseLabel() + " · " + countLabel(messages.length, "retained message") + (statusText ? " · " + statusText : "")
+    : "runtime:read unavailable";
+  setText("runtime-collaboration-status", status);
   const node = el("runtime-collaboration-board"); clearNode(node);
   if (!node || !available) return;
   const byId = new Map<string, any>();
@@ -553,7 +611,7 @@ function renderCollaboration(statusText?: string): void {
     card.className = "message-card " + String(message?.kind || "note") + (String(message?.status || "") === "resolved" ? " resolved" : "") + (parentUnavailable ? " retained-reply" : "");
     if (depth > 0) card.classList.add("message-thread");
     const head = document.createElement("div"); head.className = "message-head";
-    const kind = document.createElement("span"); kind.className = "message-kind"; kind.textContent = String(message?.kind || "message") + " · " + String(message?.status || "unknown") + " · " + String(message?.priority || "normal");
+    const kind = document.createElement("span"); kind.className = "message-kind"; kind.textContent = String(message?.kind || "message") + " · " + String(message?.priority || "normal") + " · " + String(message?.status || "unknown");
     const time = document.createElement("span"); time.className = "muted small"; time.textContent = updatedLabel(message?.created_at);
     head.appendChild(kind); head.appendChild(time); card.appendChild(head);
     const meta = document.createElement("div"); meta.className = "message-meta";
@@ -562,11 +620,22 @@ function renderCollaboration(statusText?: string): void {
     if (parentUnavailable) { const unavailable = document.createElement("div"); unavailable.className = "message-links"; unavailable.textContent = "retained reply · parent unavailable"; card.appendChild(unavailable); }
     else if (message?.reply_to) { const reply = document.createElement("div"); reply.className = "message-links"; reply.textContent = "reply to " + String(message.reply_to); card.appendChild(reply); }
     const body = document.createElement("div"); body.className = "message-body"; body.textContent = String(message?.message || ""); card.appendChild(body);
+    if (message?.requires_ack) {
+      const ack = document.createElement("div"); ack.className = "message-ack";
+      ack.textContent = typeof message?.first_ack_observed_at === "number"
+        ? "ACK required · First ACK observed " + updatedLabel(message.first_ack_observed_at)
+        : "ACK required";
+      card.appendChild(ack);
+    }
     if (message?.resolved_at || message?.resolution || message?.resolved_by_message_id) {
       const resolution = document.createElement("div"); resolution.className = "message-resolution";
       const parts: string[] = []; if (message.resolved_at) parts.push("resolved " + updatedLabel(message.resolved_at)); if (message.resolution) parts.push(String(message.resolution)); if (message.resolved_by_message_id) parts.push("by " + String(message.resolved_by_message_id));
       resolution.textContent = parts.join(" · "); card.appendChild(resolution);
     }
+    const actions = document.createElement("div"); actions.className = "message-actions";
+    const replyButton = document.createElement("button"); replyButton.type = "button"; replyButton.className = "text-button"; replyButton.textContent = "Reply";
+    replyButton.addEventListener("click", () => setCollaborationReplyTarget(id));
+    actions.appendChild(replyButton); card.appendChild(actions);
     node.appendChild(card);
     for (const child of children.get(id) || []) appendMessage(child, depth + 1, false);
   };
@@ -582,24 +651,26 @@ async function loadRetainedCollaboration(request: any, controller: AbortControll
   // two reads is then present in the snapshot, the subsequent delta, or both;
   // merge-by-id makes the overlap harmless. Listing first and baselining second
   // would permanently skip a mutation that lands in that gap.
-  renderCollaboration("Establishing live baseline…");
+  setRuntimeCollaborationPhase(state, request, "reconnecting");
+  renderCollaboration("establishing retained baseline");
   const baseline = await api("workflow-session-observe", { project: request.project, session_id: request.sessionId, limit: 100 }, controller.signal);
   if (!baseline || !isCurrentRuntimeCollaborationRequest(state, request)) return null;
   if (baseline.status === 401) { lock("Credential rejected."); return null; }
-  if (baseline.status === 403) { setRuntimeCollaborationAvailable(state, request, false); renderCollaboration(); return null; }
-  if (baseline.status === 404) { setRuntimeCollaborationAvailable(state, request, false); renderCollaboration("Session collaboration unavailable"); return null; }
-  if (!baseline.ok || !baseline.data || typeof baseline.data.observation_token !== "string") { renderCollaboration("Live observation unavailable"); return null; }
+  if (baseline.status === 403) { setRuntimeCollaborationAvailable(state, request, false); setRuntimeCollaborationPhase(state, request, "paused"); renderCollaboration(); return null; }
+  if (baseline.status === 404) { setRuntimeCollaborationAvailable(state, request, false); setRuntimeCollaborationPhase(state, request, "paused"); renderCollaboration("Session unavailable"); return null; }
+  if (!baseline.ok || !baseline.data || typeof baseline.data.observation_token !== "string") { setRuntimeCollaborationPhase(state, request, "paused"); renderCollaboration("observation unavailable"); return null; }
 
   const response = await api("workflow-session-messages", { project: request.project, session_id: request.sessionId, limit: 100 }, controller.signal);
   if (!response || !isCurrentRuntimeCollaborationRequest(state, request)) return null;
   if (response.status === 401) { lock("Credential rejected."); return null; }
-  if (response.status === 403) { setRuntimeCollaborationAvailable(state, request, false); renderCollaboration(); return null; }
-  if (response.status === 404) { setRuntimeCollaborationAvailable(state, request, false); renderCollaboration("Session collaboration unavailable"); return null; }
-  if (!response.ok || !response.data) { renderCollaboration("Collaboration refresh failed"); return null; }
+  if (response.status === 403) { setRuntimeCollaborationAvailable(state, request, false); setRuntimeCollaborationPhase(state, request, "paused"); renderCollaboration(); return null; }
+  if (response.status === 404) { setRuntimeCollaborationAvailable(state, request, false); setRuntimeCollaborationPhase(state, request, "paused"); renderCollaboration("Session unavailable"); return null; }
+  if (!response.ok || !response.data) { setRuntimeCollaborationPhase(state, request, "paused"); renderCollaboration("retained snapshot failed"); return null; }
   setRuntimeCollaborationAvailable(state, request, true);
   if (!adoptRuntimeCollaborationList(state, request, Array.isArray(response.data.messages) ? response.data.messages : [])) return null;
   adoptRuntimeCollaborationObservation(state, request, baseline.data);
-  renderCollaboration("Live · bounded long-poll");
+  setRuntimeCollaborationPhase(state, request, "live");
+  renderCollaboration("bounded long-poll");
   return baseline.data.observation_token;
 }
 
@@ -617,41 +688,39 @@ async function startCollaboration(request: any): Promise<void> {
     }, controller.signal);
     if (!response || collaborationAbort !== controller || !isCurrentRuntimeCollaborationRequest(state, request)) break;
     if (response.status === 401) { lock("Credential rejected."); break; }
-    if (response.status === 403) { setRuntimeCollaborationAvailable(state, request, false); renderCollaboration(); break; }
-    if (!response.ok || !response.data) { renderCollaboration("Live refresh paused after request failure"); break; }
+    if (response.status === 403) { setRuntimeCollaborationAvailable(state, request, false); setRuntimeCollaborationPhase(state, request, "paused"); renderCollaboration(); break; }
+    if (!response.ok || !response.data) { setRuntimeCollaborationPhase(state, request, "paused"); renderCollaboration("request failed"); break; }
     const action = runtimeCollaborationObservationAction(response.data);
     if (action === "reload") {
-      renderCollaboration("Retention changed · reloading retained board…");
+      renderCollaboration("retention changed · reloading");
       observationToken = await loadRetainedCollaboration(request, controller);
       continue;
     }
     if (!adoptRuntimeCollaborationObservation(state, request, response.data)) break;
     observationToken = String(response.data.observation_token || observationToken);
-    renderCollaboration(action === "drain" ? "Live · draining retained changes…" : "Live · bounded long-poll");
+    setRuntimeCollaborationPhase(state, request, "live");
+    renderCollaboration(action === "drain" ? "draining retained changes" : "bounded long-poll");
     if (action === "drain") {
-      const drain = await api("workflow-session-observe", {
-        project: request.project,
-        session_id: request.sessionId,
-        after_observation_token: observationToken,
-        limit: 100,
-      }, controller.signal);
-      if (!drain || collaborationAbort !== controller || !isCurrentRuntimeCollaborationRequest(state, request)) break;
-      if (!drain.ok || !drain.data) { renderCollaboration("Delta drain failed"); break; }
-      if (runtimeCollaborationObservationAction(drain.data) === "reload") {
-        observationToken = await loadRetainedCollaboration(request, controller);
-        continue;
-      }
-      adoptRuntimeCollaborationObservation(state, request, drain.data);
-      observationToken = String(drain.data.observation_token || observationToken);
-      renderCollaboration(drain.data.has_more ? "Live · draining retained changes…" : "Live · bounded long-poll");
-      while (drain.data.has_more) {
-        const more = await api("workflow-session-observe", { project: request.project, session_id: request.sessionId, after_observation_token: observationToken, limit: 100 }, controller.signal);
-        if (!more || !more.ok || !more.data || collaborationAbort !== controller || !isCurrentRuntimeCollaborationRequest(state, request)) return;
-        if (more.data.history_lost) { observationToken = await loadRetainedCollaboration(request, controller); break; }
-        adoptRuntimeCollaborationObservation(state, request, more.data);
-        observationToken = String(more.data.observation_token || observationToken);
-        drain.data = more.data;
-        renderCollaboration(more.data.has_more ? "Live · draining retained changes…" : "Live · bounded long-poll");
+      let draining = true;
+      while (draining && observationToken && collaborationAbort === controller && isCurrentRuntimeCollaborationRequest(state, request)) {
+        const drain = await api("workflow-session-observe", {
+          project: request.project,
+          session_id: request.sessionId,
+          after_observation_token: observationToken,
+          limit: 100,
+        }, controller.signal);
+        if (!drain || collaborationAbort !== controller || !isCurrentRuntimeCollaborationRequest(state, request)) break;
+        if (!drain.ok || !drain.data) { setRuntimeCollaborationPhase(state, request, "paused"); renderCollaboration("delta drain failed"); observationToken = null; break; }
+        if (runtimeCollaborationObservationAction(drain.data) === "reload") {
+          observationToken = await loadRetainedCollaboration(request, controller);
+          draining = false;
+          continue;
+        }
+        adoptRuntimeCollaborationObservation(state, request, drain.data);
+        observationToken = String(drain.data.observation_token || observationToken);
+        draining = !!drain.data.has_more;
+        setRuntimeCollaborationPhase(state, request, "live");
+        renderCollaboration(draining ? "draining retained changes" : "bounded long-poll");
       }
     }
   }
@@ -663,10 +732,85 @@ function jumpLatest(): void {
   const node = el("runtime-timeline"); if (node) node.scrollTop = node.scrollHeight; syncFollowUi();
 }
 
+function syncAckComposer(): void {
+  const kind = el("runtime-message-kind") as HTMLSelectElement | null;
+  const priority = el("runtime-message-priority") as HTMLSelectElement | null;
+  const checkbox = el("runtime-message-requires-ack") as HTMLInputElement | null;
+  const guidance = kind?.value === "guidance";
+  show("runtime-message-ack-label", guidance);
+  if (!checkbox) return;
+  checkbox.disabled = !guidance || priority?.value !== "high";
+  if (checkbox.disabled) checkbox.checked = false;
+  checkbox.title = guidance && priority?.value !== "high" ? "ACK requirement is available for High priority guidance." : "";
+}
+
+async function postHumanCollaborationMessage(event: Event): Promise<void> {
+  event.preventDefault();
+  const request = runtimeCollaborationRequest(state);
+  if (!request || state.collaboration.available === false) return;
+  const kind = el("runtime-message-kind") as HTMLSelectElement | null;
+  const priority = el("runtime-message-priority") as HTMLSelectElement | null;
+  const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+  const checkbox = el("runtime-message-requires-ack") as HTMLInputElement | null;
+  const send = el("runtime-message-send") as HTMLButtonElement | null;
+  const message = body?.value.trim() || "";
+  if (!message) { setText("runtime-message-send-status", "Enter a message."); return; }
+  if (send) send.disabled = true;
+  setText("runtime-message-send-status", "Sending…");
+  const response = await api("workflow-session-post-message", {
+    project: request.project,
+    session_id: request.sessionId,
+    kind: kind?.value || "note",
+    priority: priority?.value || "normal",
+    message,
+    reply_to: collaborationReplyTo || null,
+    requires_ack: !!checkbox?.checked,
+  });
+  if (send) send.disabled = false;
+  if (!isCurrentRuntimeCollaborationRequest(state, request)) return;
+  if (response?.status === 401) { lock("Credential rejected."); return; }
+  if (!response?.ok || !response.data) { setText("runtime-message-send-status", "Send failed."); return; }
+  adoptRuntimeCollaborationObservation(state, request, { messages: [response.data] });
+  if (body) body.value = "";
+  setCollaborationReplyTarget("");
+  setText("runtime-message-send-status", "Sent.");
+  renderCollaboration();
+}
+
+function setRefreshBusy(active: boolean): void {
+  refreshInFlight = active;
+  const button = el("runtime-refresh") as HTMLButtonElement | null;
+  if (button) {
+    button.disabled = active;
+    button.textContent = active ? "Refreshing…" : "Refresh";
+  }
+}
+
 async function refreshAll(): Promise<void> {
-  if (!token) return;
-  void fetchOverview(refreshRuntimeOverview(state));
-  await fetchProjects(refreshRuntimeProjects(state));
+  if (!token || refreshInFlight) return;
+  setRefreshBusy(true);
+  setText("runtime-refresh-status", "Refreshing…");
+  const recoverCollaboration = runtimeCollaborationNeedsRefreshRecovery(state);
+  const overviewRequest = refreshRuntimeOverview(state);
+  const projectsRequest = refreshRuntimeProjects(state);
+  try {
+    const [overviewOk, projectsOk] = await Promise.all([
+      fetchOverview(overviewRequest),
+      fetchProjects(projectsRequest),
+    ]);
+    if (!token) return;
+    if (overviewOk && projectsOk) {
+      setText("runtime-refresh-status", "Refreshed " + new Date().toLocaleTimeString());
+    } else {
+      setText("runtime-refresh-status", "Refresh failed · showing previous data");
+    }
+    if (recoverCollaboration && runtimeCollaborationNeedsRefreshRecovery(state)) {
+      const collaborationRequest = runtimeCollaborationRequest(state);
+      if (collaborationRequest) void startCollaboration(collaborationRequest);
+    }
+  } finally {
+    setRefreshBusy(false);
+  }
 }
 
 function startAuto(): void {
@@ -682,18 +826,26 @@ el("runtime-token-form")?.addEventListener("submit", (event) => {
   const input = el("runtime-token-input") as HTMLInputElement | null;
   const nextToken = input ? input.value.trim() : ""; if (input) input.value = "";
   if (!nextToken) { setText("runtime-token-error", "Enter a runtime Bearer credential."); return; }
-  token = nextToken; const request = beginRuntimeCredential(state); void fetchProjects(request, true);
+  token = nextToken;
+  const request = beginRuntimeCredential(state);
+  void fetchOverview(refreshRuntimeOverview(state));
+  void fetchProjects(request, true);
 });
 
 el("runtime-device-select")?.addEventListener("change", () => {
   const select = el("runtime-device-select") as HTMLSelectElement | null; if (!select) return;
-  const projects = runtimeProjectsForDevice(projectRows, select.value);
+  const projects = filterAndSortRuntimeProjects(effectiveProjects(projectRows), select.value, "");
   switchProject(select.value, projects.length ? String(projects[0].id) : "");
 });
-el("runtime-project-select")?.addEventListener("change", () => {
-  const select = el("runtime-project-select") as HTMLSelectElement | null;
-  if (select) switchProject(String(state.selectedDevice || ""), select.value);
+el("runtime-project-search")?.addEventListener("input", () => {
+  const input = el("runtime-project-search") as HTMLInputElement | null;
+  projectSearch = input?.value || "";
+  renderProjectSelectors(projectRows, projectRowsTruncated);
 });
+el("runtime-message-kind")?.addEventListener("change", syncAckComposer);
+el("runtime-message-priority")?.addEventListener("change", syncAckComposer);
+el("runtime-message-reply-clear")?.addEventListener("click", () => setCollaborationReplyTarget(""));
+el("runtime-collaboration-form")?.addEventListener("submit", (event) => void postHumanCollaborationMessage(event));
 el("runtime-refresh")?.addEventListener("click", () => void refreshAll());
 el("runtime-lock")?.addEventListener("click", () => lock());
 el("runtime-jump-latest")?.addEventListener("click", jumpLatest);
@@ -701,6 +853,7 @@ el("runtime-timeline")?.addEventListener("scroll", () => {
   const node = el("runtime-timeline"); if (!node) return;
   updateWorkflowSessionFollowFromScroll(state.workflow, node.scrollTop, node.clientHeight, node.scrollHeight); syncFollowUi();
 });
+syncAckComposer();
 window.addEventListener("pagehide", () => { token = ""; abortAll(); stopAuto(); });
 
 lock();

@@ -6,12 +6,14 @@
 
 use crate::auth::{AuthContext, SCOPE_PROJECT_READ, SCOPE_RUNTIME_READ};
 use crate::tool_runtime::sessions::{
-    aggregate_console_list, is_valid_session_id, WorkflowSessionConsoleAggregate,
+    aggregate_console_list, is_valid_session_id, SessionMessageKind, SessionMessagePriority,
+    WorkflowSessionConsoleAggregate, WorkflowSessionConsoleList,
 };
 use crate::tool_runtime::{ToolCall, ToolRuntime};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 const DEFAULT_PROJECT_LIMIT: usize = 50;
@@ -36,6 +38,9 @@ pub(crate) fn routes() -> Router {
         .push(Router::with_path("workflow-session").post(workflow_session))
         .push(Router::with_path("workflow-session-messages").post(workflow_session_messages))
         .push(Router::with_path("workflow-session-observe").post(workflow_session_observe))
+        .push(
+            Router::with_path("workflow-session-post-message").post(workflow_session_post_message),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +99,21 @@ struct WorkflowSessionObserveInput {
     wait_secs: Option<u64>,
     #[serde(default)]
     limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkflowSessionPostMessageInput {
+    project: String,
+    session_id: String,
+    kind: SessionMessageKind,
+    #[serde(default)]
+    priority: SessionMessagePriority,
+    message: String,
+    #[serde(default)]
+    reply_to: Option<String>,
+    #[serde(default)]
+    requires_ack: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -185,6 +205,9 @@ struct RuntimeConsoleMessage {
     priority: String,
     created_at: i64,
     message: String,
+    requires_ack: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    first_ack_observed_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     author_session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -348,6 +371,8 @@ fn message_from_value(value: &Value) -> Option<RuntimeConsoleMessage> {
         priority,
         created_at,
         message,
+        requires_ack: safe_bool(value.get("requires_ack")),
+        first_ack_observed_at: value.get("first_ack_observed_at").and_then(Value::as_i64),
         author_session_id: safe_string(value.get("author_session_id"), 160),
         reply_to: safe_string(value.get("reply_to"), 160),
         resolved_at: value.get("resolved_at").and_then(Value::as_i64),
@@ -538,14 +563,103 @@ async fn authorize_exact_project(
     }
 }
 
+#[derive(Debug, Default)]
+struct RunningJobSnapshot {
+    counts: HashMap<(String, String), usize>,
+    truncated: bool,
+}
+
+impl RunningJobSnapshot {
+    fn count(&self, project: &str, session_id: &str) -> usize {
+        self.counts
+            .get(&(project.to_string(), session_id.to_string()))
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+async fn running_jobs_for_auth(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    project: Option<&str>,
+) -> Result<RunningJobSnapshot, RuntimeConsoleError> {
+    if !auth.has_scope(SCOPE_RUNTIME_READ) {
+        return Ok(RunningJobSnapshot::default());
+    }
+    let result = runtime
+        .list_jobs_for_auth_with_filters(
+            Some(100),
+            Some("running".to_string()),
+            project.map(str::to_string),
+            None,
+            Some(auth),
+        )
+        .await;
+    if !result.success {
+        return Err(RuntimeConsoleError::Internal);
+    }
+    let mut snapshot = RunningJobSnapshot {
+        truncated: safe_bool(result.output.get("truncated")),
+        ..Default::default()
+    };
+    for job in result
+        .output
+        .get("jobs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(project) = safe_string(job.get("project"), MAX_PROJECT_ID_CHARS) else {
+            continue;
+        };
+        let Some(session_id) = safe_string(job.get("session_id"), 160) else {
+            continue;
+        };
+        if !valid_project_id(&project) || !is_valid_session_id(&session_id) {
+            continue;
+        }
+        snapshot
+            .counts
+            .entry((project, session_id))
+            .and_modify(|count| *count = count.saturating_add(1))
+            .or_insert(1);
+    }
+    Ok(snapshot)
+}
+
+fn apply_running_jobs_to_list(
+    list: &mut WorkflowSessionConsoleList,
+    project: &str,
+    jobs: &RunningJobSnapshot,
+) {
+    for session in &mut list.sessions {
+        session.running_jobs = jobs.count(project, &session.session_id);
+        session.running_jobs_complete = !jobs.truncated;
+    }
+}
+
 async fn workflow_sessions_for_auth(
     runtime: &ToolRuntime,
     auth: &AuthContext,
     project: &str,
     limit: Option<usize>,
-) -> Result<crate::tool_runtime::sessions::WorkflowSessionConsoleList, RuntimeConsoleError> {
+) -> Result<WorkflowSessionConsoleList, RuntimeConsoleError> {
     authorize_exact_project(runtime, auth, project).await?;
-    Ok(runtime.workflow_sessions_console_list(project, limit))
+    let mut list = runtime.workflow_sessions_console_list(project, limit);
+    if auth.has_scope(SCOPE_RUNTIME_READ) {
+        let session_ids = list
+            .sessions
+            .iter()
+            .map(|session| session.session_id.clone())
+            .collect::<Vec<_>>();
+        runtime
+            .materialize_validation_job_terminals_for_sessions(project, &session_ids, Some(auth))
+            .await;
+        list = runtime.workflow_sessions_console_list(project, limit);
+        let jobs = running_jobs_for_auth(runtime, auth, Some(project)).await?;
+        apply_running_jobs_to_list(&mut list, project, &jobs);
+    }
+    Ok(list)
 }
 
 async fn workflow_session_for_auth(
@@ -559,9 +673,24 @@ async fn workflow_session_for_auth(
         return Err(RuntimeConsoleError::Invalid);
     }
     authorize_exact_project(runtime, auth, project).await?;
-    runtime
+    if auth.has_scope(SCOPE_RUNTIME_READ) {
+        runtime
+            .materialize_validation_job_terminals_for_sessions(
+                project,
+                &[session_id.to_string()],
+                Some(auth),
+            )
+            .await;
+    }
+    let mut detail = runtime
         .workflow_session_console_detail(project, session_id, limit)
-        .ok_or(RuntimeConsoleError::NotFound)
+        .ok_or(RuntimeConsoleError::NotFound)?;
+    if auth.has_scope(SCOPE_RUNTIME_READ) {
+        let jobs = running_jobs_for_auth(runtime, auth, Some(project)).await?;
+        detail.running_jobs = jobs.count(project, session_id);
+        detail.running_jobs_complete = !jobs.truncated;
+    }
+    Ok(detail)
 }
 
 async fn runtime_status_value(
@@ -725,6 +854,7 @@ async fn runner_for_auth(
     let visible_projects_truncated = visible_projects
         .as_ref()
         .is_some_and(|visible| visible.truncated);
+    let running_jobs = running_jobs_for_auth(runtime, auth, None).await?;
     let mut project_summaries = Vec::new();
     for project in visible_projects
         .map(|visible| visible.projects)
@@ -732,8 +862,9 @@ async fn runner_for_auth(
         .into_iter()
         .take(project_limit)
     {
-        let list = runtime
+        let mut list = runtime
             .workflow_sessions_console_list(&project.id, Some(CONSOLE_AGGREGATE_SESSION_LIMIT));
+        apply_running_jobs_to_list(&mut list, &project.id, &running_jobs);
         project_summaries.push(RuntimeConsoleRunnerProject {
             id: project.id,
             name: project.name,
@@ -873,6 +1004,53 @@ async fn session_observe_for_auth(
     })
 }
 
+async fn session_post_message_for_auth(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    input: WorkflowSessionPostMessageInput,
+) -> Result<RuntimeConsoleMessage, RuntimeConsoleError> {
+    require_runtime_read(auth)?;
+    if !matches!(
+        input.kind,
+        SessionMessageKind::Note
+            | SessionMessageKind::Guidance
+            | SessionMessageKind::Question
+            | SessionMessageKind::Todo
+    ) {
+        return Err(RuntimeConsoleError::Invalid);
+    }
+    authorize_runtime_session_project(
+        runtime,
+        auth,
+        &input.project,
+        &input.session_id,
+        "post_session_message",
+    )
+    .await?;
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::PostSessionMessage {
+                session_id: input.session_id,
+                kind: input.kind,
+                message: input.message,
+                tags: Vec::new(),
+                reply_to: input.reply_to,
+                priority: input.priority,
+                requires_ack: input.requires_ack,
+            },
+            Some(auth),
+        )
+        .await;
+    if !result.success {
+        return Err(RuntimeConsoleError::Invalid);
+    }
+    result
+        .output
+        .get("message")
+        .and_then(message_from_value)
+        .ok_or(RuntimeConsoleError::Internal)
+}
+
 #[handler]
 async fn overview(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let (runtime, auth) = match prepared(req, depot).await {
@@ -987,6 +1165,22 @@ async fn workflow_session_observe(req: &mut Request, depot: &mut Depot, res: &mu
         Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
     };
     match session_observe_for_auth(&runtime, &auth, input).await {
+        Ok(output) => res.render(Json(output)),
+        Err(error) => render_error(res, error),
+    }
+}
+
+#[handler]
+async fn workflow_session_post_message(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    let input = match req.parse_json::<WorkflowSessionPostMessageInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    match session_post_message_for_auth(&runtime, &auth, input).await {
         Ok(output) => res.render(Json(output)),
         Err(error) => render_error(res, error),
     }
@@ -1300,10 +1494,18 @@ mod tests {
             .await
             .unwrap();
         let direct_list = runtime.workflow_sessions_console_list(project_id, Some(20));
-        assert_eq!(
-            serde_json::to_value(hosted_list).unwrap(),
-            serde_json::to_value(direct_list).unwrap()
-        );
+        let mut hosted_list_value = serde_json::to_value(&hosted_list).unwrap();
+        let mut direct_list_value = serde_json::to_value(&direct_list).unwrap();
+        for value in [&mut hosted_list_value, &mut direct_list_value] {
+            for session in value["sessions"].as_array_mut().unwrap() {
+                let session = session.as_object_mut().unwrap();
+                session.remove("running_jobs");
+                session.remove("running_jobs_complete");
+            }
+        }
+        assert_eq!(hosted_list_value, direct_list_value);
+        assert_eq!(hosted_list.sessions[0].running_jobs, 0);
+        assert!(hosted_list.sessions[0].running_jobs_complete);
 
         let hosted_detail =
             workflow_session_for_auth(&runtime, &auth, project_id, &session.session_id, Some(20))
@@ -1312,10 +1514,16 @@ mod tests {
         let direct_detail = runtime
             .workflow_session_console_detail(project_id, &session.session_id, Some(20))
             .unwrap();
-        assert_eq!(
-            serde_json::to_value(&hosted_detail).unwrap(),
-            serde_json::to_value(&direct_detail).unwrap()
-        );
+        let mut hosted_detail_value = serde_json::to_value(&hosted_detail).unwrap();
+        let mut direct_detail_value = serde_json::to_value(&direct_detail).unwrap();
+        for value in [&mut hosted_detail_value, &mut direct_detail_value] {
+            let detail = value.as_object_mut().unwrap();
+            detail.remove("running_jobs");
+            detail.remove("running_jobs_complete");
+        }
+        assert_eq!(hosted_detail_value, direct_detail_value);
+        assert_eq!(hosted_detail.running_jobs, 0);
+        assert!(hosted_detail.running_jobs_complete);
         let serialized = serde_json::to_string(&hosted_detail).unwrap();
         assert!(!serialized.contains("/root/private/source.rs"));
         assert!(serialized.contains("[private path]"));
@@ -1503,6 +1711,131 @@ mod tests {
             .unwrap_err(),
             RuntimeConsoleError::NotFound
         );
+    }
+
+    #[tokio::test]
+    async fn human_join_reuses_formal_session_authority_and_ack_validation() {
+        let runtime = test_runtime();
+        let auth_a = crate::auth::shared_key_context("runtime-console-human-a");
+        let auth_b = crate::auth::shared_key_context("runtime-console-human-b");
+        let project_id = "agent:client-a:proj-a";
+        register_project(&runtime, "client-a", "proj-a", "/private/a", Some(&auth_a)).await;
+        let session = start_authorized_session(&runtime, project_id, &auth_a);
+
+        let posted = session_post_message_for_auth(
+            &runtime,
+            &auth_a,
+            WorkflowSessionPostMessageInput {
+                project: project_id.to_string(),
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                priority: SessionMessagePriority::High,
+                message: "Please preserve the exact authority fence.".to_string(),
+                reply_to: None,
+                requires_ack: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(posted.kind, "guidance");
+        assert_eq!(posted.priority, "high");
+        assert!(posted.requires_ack);
+        assert!(posted.first_ack_observed_at.is_none());
+
+        assert_eq!(
+            session_post_message_for_auth(
+                &runtime,
+                &auth_a,
+                WorkflowSessionPostMessageInput {
+                    project: "agent:client-a:wrong".to_string(),
+                    session_id: session.session_id.clone(),
+                    kind: SessionMessageKind::Note,
+                    priority: SessionMessagePriority::Normal,
+                    message: "wrong project".to_string(),
+                    reply_to: None,
+                    requires_ack: false,
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::NotFound
+        );
+        assert_eq!(
+            session_post_message_for_auth(
+                &runtime,
+                &auth_b,
+                WorkflowSessionPostMessageInput {
+                    project: project_id.to_string(),
+                    session_id: session.session_id.clone(),
+                    kind: SessionMessageKind::Note,
+                    priority: SessionMessagePriority::Normal,
+                    message: "foreign authority".to_string(),
+                    reply_to: None,
+                    requires_ack: false,
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::NotFound
+        );
+        assert_eq!(
+            session_post_message_for_auth(
+                &runtime,
+                &auth_a,
+                WorkflowSessionPostMessageInput {
+                    project: project_id.to_string(),
+                    session_id: session.session_id.clone(),
+                    kind: SessionMessageKind::Note,
+                    priority: SessionMessagePriority::High,
+                    message: "invalid ack mode".to_string(),
+                    reply_to: None,
+                    requires_ack: true,
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::Invalid
+        );
+        assert_eq!(
+            session_post_message_for_auth(
+                &runtime,
+                &auth_a,
+                WorkflowSessionPostMessageInput {
+                    project: project_id.to_string(),
+                    session_id: session.session_id.clone(),
+                    kind: SessionMessageKind::Progress,
+                    priority: SessionMessagePriority::Normal,
+                    message: "progress is not a Human Join kind".to_string(),
+                    reply_to: None,
+                    requires_ack: false,
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::Invalid
+        );
+        assert_eq!(
+            session_post_message_for_auth(
+                &runtime,
+                &auth_a,
+                WorkflowSessionPostMessageInput {
+                    project: project_id.to_string(),
+                    session_id: session.session_id.clone(),
+                    kind: SessionMessageKind::Guidance,
+                    priority: SessionMessagePriority::High,
+                    message: "x".repeat(8001),
+                    reply_to: None,
+                    requires_ack: true,
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::Invalid
+        );
+        let openapi = crate::openapi::build_openapi_spec();
+        assert!(openapi["paths"]
+            .get("/api/runtime-console/workflow-session-post-message")
+            .is_none());
     }
 
     #[tokio::test]

@@ -3,7 +3,14 @@ function compareText(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
 function emptyCollaborationState() {
-    return { generation: 0, sessionId: "", messages: [], observationToken: "", available: true };
+    return {
+        generation: 0,
+        sessionId: "",
+        messages: [],
+        observationToken: "",
+        available: true,
+        phase: "idle",
+    };
 }
 function messageCreatedAt(message) {
     return typeof message?.created_at === "number" ? message.created_at : 0;
@@ -49,6 +56,39 @@ export function runtimeProjectsForDevice(projects, clientId) {
         return compareText(leftName, rightName) || compareText(left.id, right.id);
     });
 }
+function projectAttentionCount(project) {
+    const attention = project?.sessions?.attention;
+    return ["open_guidance", "open_questions", "open_risks", "open_todos"]
+        .reduce((total, key) => total + (typeof attention?.[key] === "number" ? Math.max(0, attention[key]) : 0), 0);
+}
+export function filterAndSortRuntimeProjects(projects, clientId, query) {
+    const needle = String(query || "").trim().toLocaleLowerCase();
+    return runtimeProjectsForDevice(projects, clientId)
+        .filter((project) => {
+        if (!needle)
+            return true;
+        return [project?.name, project?.id]
+            .filter((value) => typeof value === "string")
+            .some((value) => String(value).toLocaleLowerCase().includes(needle));
+    })
+        .sort((left, right) => {
+        const leftRunning = typeof left?.sessions?.running_sessions === "number" ? left.sessions.running_sessions : 0;
+        const rightRunning = typeof right?.sessions?.running_sessions === "number" ? right.sessions.running_sessions : 0;
+        if (!!rightRunning !== !!leftRunning)
+            return rightRunning ? 1 : -1;
+        const leftAttention = projectAttentionCount(left);
+        const rightAttention = projectAttentionCount(right);
+        if (!!rightAttention !== !!leftAttention)
+            return rightAttention ? 1 : -1;
+        const leftUpdated = typeof left?.sessions?.latest_updated_at === "number" ? left.sessions.latest_updated_at : 0;
+        const rightUpdated = typeof right?.sessions?.latest_updated_at === "number" ? right.sessions.latest_updated_at : 0;
+        if (leftUpdated !== rightUpdated)
+            return rightUpdated - leftUpdated;
+        const leftName = typeof left?.name === "string" && left.name ? left.name : left.id;
+        const rightName = typeof right?.name === "string" && right.name ? right.name : right.id;
+        return compareText(String(leftName || ""), String(rightName || "")) || compareText(String(left?.id || ""), String(right?.id || ""));
+    });
+}
 export function preferredRuntimeProjectSelection(projects, selectedDevice, selectedProject) {
     const rows = Array.isArray(projects) ? projects : [];
     if (selectedProject) {
@@ -90,6 +130,7 @@ export function invalidateRuntimeCredential(state) {
     state.collaboration.messages = [];
     state.collaboration.observationToken = "";
     state.collaboration.available = true;
+    state.collaboration.phase = "idle";
 }
 export function beginRuntimeCredential(state) {
     invalidateRuntimeCredential(state);
@@ -139,6 +180,7 @@ export function selectRuntimeProject(state, device, project) {
     state.collaboration.messages = [];
     state.collaboration.observationToken = "";
     state.collaboration.available = true;
+    state.collaboration.phase = "idle";
     return refreshRuntimeSessionList(state);
 }
 export function refreshRuntimeSessionList(state) {
@@ -174,6 +216,7 @@ export function selectRuntimeWorkflowSession(state, sessionId) {
     state.collaboration.messages = [];
     state.collaboration.observationToken = "";
     state.collaboration.available = true;
+    state.collaboration.phase = "idle";
     return wrapWorkflowRequest(state, selectWorkflowSession(state.workflow, sessionId));
 }
 export function refreshRuntimeWorkflowSession(state) {
@@ -221,6 +264,15 @@ export function setRuntimeCollaborationAvailable(state, request, available) {
         return false;
     state.collaboration.available = available;
     return true;
+}
+export function setRuntimeCollaborationPhase(state, request, phase) {
+    if (!isCurrentRuntimeCollaborationRequest(state, request))
+        return false;
+    state.collaboration.phase = phase;
+    return true;
+}
+export function runtimeCollaborationNeedsRefreshRecovery(state) {
+    return state?.collaboration?.phase === "paused";
 }
 export function isCurrentRuntimeWorkflowSessionRequest(state, request) {
     return !!request && request.credentialGeneration === state.credentialGeneration &&

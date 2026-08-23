@@ -201,106 +201,146 @@ impl ToolRuntime {
         limit: usize,
         auth: Option<&AuthContext>,
     ) -> Value {
-        let mut events = summary.events.clone();
-        let accepted_jobs = summary
-            .events
-            .iter()
-            .filter(|event| {
-                event.kind == "tool_call_finished"
-                    && event.job_id.is_some()
-                    && (event.tool_name == "run_job"
-                        || validation_adapter_for_tool(&event.tool_name).is_some())
-                    && job_acceptance_only(event)
-            })
-            .filter_map(|event| event.job_id.clone())
-            .collect::<Vec<_>>();
-        for job_id in accepted_jobs {
-            let status = self.job_status_for_auth(job_id.clone(), false, auth).await;
+        self.materialize_session_validation_job_terminals(summary, auth)
+            .await;
+        let refreshed = self
+            .sessions
+            .summary(
+                &summary.session_id,
+                Some(PUBLIC_VALIDATION_SESSION_EVENT_LIMIT),
+            )
+            .unwrap_or_else(|| summary.clone());
+        validation_summary_from_events(&refreshed.events, limit)
+    }
+
+    async fn materialize_session_validation_job_terminals(
+        &self,
+        summary: &SessionSummary,
+        auth: Option<&AuthContext>,
+    ) {
+        let Some(project) = summary.project.as_deref() else {
+            return;
+        };
+        self.materialize_validation_job_terminals_for_sessions(
+            project,
+            std::slice::from_ref(&summary.session_id),
+            auth,
+        )
+        .await;
+    }
+
+    pub(crate) async fn materialize_validation_job_terminals_for_sessions(
+        &self,
+        project: &str,
+        session_ids: &[String],
+        auth: Option<&AuthContext>,
+    ) {
+        let mut grouped = self
+            .validation_job_candidates_for_sessions(project, session_ids, auth)
+            .await;
+        for session_id in session_ids {
+            let Some(jobs) = grouped.remove(session_id) else {
+                continue;
+            };
+            self.materialize_validation_job_candidates(project, session_id, &jobs, auth)
+                .await;
+        }
+    }
+
+    async fn materialize_validation_job_candidates(
+        &self,
+        project: &str,
+        session_id: &str,
+        jobs: &[Value],
+        auth: Option<&AuthContext>,
+    ) {
+        for job in jobs {
+            let Some(job_id) = job.get("job_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let status_name = job
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !matches!(
+                status_name,
+                "completed" | "failed" | "timeout" | "timed_out" | "stopped" | "cancelled" | "lost"
+            ) {
+                continue;
+            }
+            let status = self
+                .job_status_for_auth(job_id.to_string(), false, auth)
+                .await;
             if !status.success
-                || !status
-                    .output
-                    .get("terminal")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
+                || status.output.get("terminal").and_then(Value::as_bool) != Some(true)
+                || status.output.get("session_id").and_then(Value::as_str) != Some(session_id)
+                || status.output.get("project").and_then(Value::as_str) != Some(project)
             {
                 continue;
             }
-            let log = self
-                .job_log_for_auth(job_id.clone(), None, Some(200), auth, None, None)
-                .await;
-            let Some(accepted) = summary.events.iter().find(|event| {
-                event.kind == "tool_call_finished"
-                    && event.job_id.as_deref() == Some(job_id.as_str())
-                    && (event.tool_name == "run_job"
-                        || validation_adapter_for_tool(&event.tool_name).is_some())
-            }) else {
+            let Some(validation) = status.output.get("validation").and_then(Value::as_object)
+            else {
                 continue;
             };
-            let mut observed = accepted.clone();
-            let job_status = status
-                .output
-                .get("status")
+            let Some(tool_name) = validation
+                .get("tool")
                 .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            let exit_code = status.output.get("exit_code").and_then(Value::as_i64);
-            let succeeded = job_status == "completed" && exit_code == Some(0);
-            observed.status = Some(if succeeded { "succeeded" } else { "failed" }.to_string());
-            observed.exit_code = exit_code;
-            observed.started_at = status.output.get("started_at").and_then(Value::as_i64);
-            observed.finished_at = status.output.get("ended_at").and_then(Value::as_i64);
-            if let Some(completed_at) = observed.finished_at {
-                observed.timestamp = completed_at;
-            }
-            observed.duration_ms = status.output.get("duration_ms").and_then(Value::as_u64);
-            observed.failure_kind = (!succeeded).then(|| match job_status {
-                "timeout" | "timed_out" => "timeout".to_string(),
-                "stopped" | "cancelled" => "cancelled".to_string(),
-                "lost" => "execution_lost".to_string(),
-                _ => "command_exit_nonzero".to_string(),
-            });
+                .filter(|tool| validation_adapter_for_tool(tool).is_some())
+            else {
+                continue;
+            };
+            let Some(validation_target_id) = validation
+                .get("validation_target_id")
+                .and_then(Value::as_str)
+                .filter(|value| is_structured_validation_target_identity(value))
+            else {
+                continue;
+            };
+            let log = self
+                .job_log_for_auth(job_id.to_string(), None, Some(200), auth, None, None)
+                .await;
             let mut output = if log.success {
                 log.output
             } else {
                 json!({
                     "stdout_tail": "",
                     "stderr_tail": "",
-                    "stdout_truncated": false,
-                    "stderr_truncated": false,
+                    "stdout_truncated": true,
+                    "stderr_truncated": true,
                 })
             };
-            if let Some(validation) = status.output.get("validation").and_then(Value::as_object) {
-                for field in [
-                    "passed",
-                    "warnings_count",
-                    "errors_count",
-                    "tests_detected",
-                    "tests_run_count",
-                    "tests_passed",
-                    "tests_failed",
-                    "zero_tests_run",
-                    "diagnostics",
-                ] {
-                    if let Some(value) = validation.get(field) {
-                        output[field] = value.clone();
-                    }
+            for field in [
+                "passed",
+                "warnings_count",
+                "errors_count",
+                "tests_detected",
+                "tests_run_count",
+                "tests_passed",
+                "tests_failed",
+                "zero_tests_run",
+                "diagnostics",
+            ] {
+                if let Some(value) = validation.get(field) {
+                    output[field] = value.clone();
                 }
             }
             for field in ["purpose", "command_summary", "cwd", "shell", "executor"] {
                 if output.get(field).is_none_or(Value::is_null) {
-                    output[field] = accepted
-                        .validation_output_summary
-                        .as_ref()
-                        .and_then(|value| value.get(field))
-                        .cloned()
-                        .unwrap_or(Value::Null);
+                    output[field] = status.output.get(field).cloned().unwrap_or(Value::Null);
                 }
             }
             if output.get("purpose").is_none_or(Value::is_null) {
-                output["purpose"] = json!("other");
+                output["purpose"] = json!("validation");
             }
-            output["execution_state"] = json!(match job_status {
+            let terminal_status = status
+                .output
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or(status_name);
+            output["execution_state"] = json!(match terminal_status {
                 "timeout" | "timed_out" => "timed_out",
                 "stopped" | "cancelled" => "cancelled",
+                "lost" => "lost",
                 _ => "completed",
             });
             output["exit_code"] = status
@@ -308,20 +348,22 @@ impl ToolRuntime {
                 .get("exit_code")
                 .cloned()
                 .unwrap_or(Value::Null);
-            observed.validation_output_summary =
-                super::sessions::execution_output_summary_for_tool_result(
-                    &accepted.tool_name,
-                    &output,
-                );
-            events.push(observed);
+            let validation_output_summary =
+                super::sessions::execution_output_summary_for_tool_result(tool_name, &output);
+            self.sessions.record_validation_job_terminal(
+                session_id,
+                job_id,
+                tool_name,
+                Some(project.to_string()),
+                validation_target_id,
+                terminal_status,
+                status.output.get("exit_code").and_then(Value::as_i64),
+                status.output.get("started_at").and_then(Value::as_i64),
+                status.output.get("ended_at").and_then(Value::as_i64),
+                status.output.get("duration_ms").and_then(Value::as_u64),
+                validation_output_summary,
+            );
         }
-        events.sort_by_key(|event| {
-            (
-                event.timestamp,
-                event.finished_at.unwrap_or(event.timestamp),
-            )
-        });
-        validation_summary_from_events(&events, limit)
     }
 }
 
@@ -528,6 +570,7 @@ fn no_failures() -> ValidationFailureSet {
 pub(crate) fn extract_validation_events(events: &[SessionEvent]) -> Vec<ValidationEvent> {
     let mut started = Vec::new();
     let mut validation_events = Vec::new();
+    let mut terminal_jobs = std::collections::HashSet::new();
 
     for event in events {
         match event.kind.as_str() {
@@ -546,6 +589,17 @@ pub(crate) fn extract_validation_events(events: &[SessionEvent]) -> Vec<Validati
                 if let Some(validation_event) =
                     validation_event_from_finished(event, start.as_ref())
                 {
+                    validation_events.push(validation_event);
+                }
+            }
+            "validation_job_terminal" => {
+                let Some(job_id) = event.job_id.as_deref() else {
+                    continue;
+                };
+                if !terminal_jobs.insert(job_id) {
+                    continue;
+                }
+                if let Some(validation_event) = validation_event_from_finished(event, Some(event)) {
                     validation_events.push(validation_event);
                 }
             }

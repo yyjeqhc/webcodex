@@ -519,6 +519,18 @@ fn add_stateless_workflow_recorder_metadata(payload: &mut Value, model_surface: 
                 "description": "MCP wrapper metadata only. Optional explicit existing Workflow Session that records this tools/call and supplies trusted collaboration provenance. It is distinct from any concrete tool business session_id, grants no authority, and is removed before concrete tool parsing."
             }),
         );
+        properties.insert(
+            crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD.to_string(),
+            json!({
+                "type": "array",
+                "maxItems": crate::tool_runtime::sessions::MAX_TOOL_CALL_ACK_MESSAGE_IDS,
+                "items": {
+                    "type": "string",
+                    "pattern": "^wc_msg_[A-Za-z0-9_]+$"
+                },
+                "description": "MCP wrapper metadata only. ACK means the current model context still remembers the referenced open Session message. Repeat ACK ids on subsequent calls while remembered. If omitted later, unresolved ACK-required guidance may be returned again. ACK does not resolve the message."
+            }),
+        );
     }
 }
 
@@ -3057,6 +3069,39 @@ async fn handle_mcp_request_with_lifecycle(
                     return McpOutcome::BadRequest(rpc_error(id, -32602, message));
                 }
             };
+            let ack_session_message_ids = if stateless_2026 {
+                match strip_stateless_ack_session_message_ids(&mut params.arguments) {
+                    Ok(ids) => ids,
+                    Err(message) => {
+                        if let Some(lc) = lifecycle.as_deref() {
+                            lc.dispatch_failed("invalid_arguments");
+                            lc.dispatch_finished(false, Some(false), "invalid_arguments");
+                        }
+                        if let (Some(slot), Some(timer)) = (
+                            model_ergonomics_out.as_deref_mut(),
+                            pre_kernel_model_ergonomics.take(),
+                        ) {
+                            *slot = Some(
+                                timer
+                                    .finish()
+                                    .record_for_pre_result_failure("invalid_arguments"),
+                            );
+                        }
+                        return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+            if !ack_session_message_ids.is_empty() {
+                if let Some(arguments) = params.arguments.as_object_mut() {
+                    arguments.insert(
+                        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD
+                            .to_string(),
+                        json!(ack_session_message_ids),
+                    );
+                }
+            }
             let as_image_requested = params.name == "read_project_artifact"
                 && params.arguments.get("as_image").and_then(Value::as_bool) == Some(true);
             let outcome = runtime
@@ -3466,6 +3511,58 @@ fn strip_reserved_session_id(arguments: &mut Value) -> Result<Option<String>, St
         }
     }
     Ok(canonical.or(legacy))
+}
+
+fn strip_stateless_ack_session_message_ids(arguments: &mut Value) -> Result<Vec<String>, String> {
+    let Some(object) = arguments.as_object_mut() else {
+        return Ok(Vec::new());
+    };
+    let Some(value) =
+        object.remove(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD)
+    else {
+        return Ok(Vec::new());
+    };
+    let Value::Array(values) = value else {
+        return Err(format!(
+            "field '{}' must be an array of wc_msg_* ids",
+            crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD
+        ));
+    };
+    if values.len() > crate::tool_runtime::sessions::MAX_TOOL_CALL_ACK_MESSAGE_IDS {
+        return Err(format!(
+            "field '{}' accepts at most {} message ids",
+            crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
+            crate::tool_runtime::sessions::MAX_TOOL_CALL_ACK_MESSAGE_IDS
+        ));
+    }
+    let mut normalized = Vec::with_capacity(values.len());
+    let mut seen = std::collections::HashSet::new();
+    for value in values {
+        let Value::String(value) = value else {
+            return Err(format!(
+                "field '{}' must contain only wc_msg_* strings",
+                crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD
+            ));
+        };
+        let value = value.trim();
+        let valid = value.strip_prefix("wc_msg_").is_some_and(|suffix| {
+            !suffix.is_empty()
+                && suffix
+                    .as_bytes()
+                    .iter()
+                    .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        });
+        if !valid {
+            return Err(format!(
+                "field '{}' must contain only valid wc_msg_* ids",
+                crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD
+            ));
+        }
+        if seen.insert(value.to_string()) {
+            normalized.push(value.to_string());
+        }
+    }
+    Ok(normalized)
 }
 
 fn scope_forbidden(

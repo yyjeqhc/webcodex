@@ -590,6 +590,148 @@ async fn http_mcp_accepts_chatgpt_2025_11_25_protocol_header() {
 }
 
 #[tokio::test]
+async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db, runtime.clone()));
+
+    let (status, session_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        220,
+        "start_session",
+        json!({"title": "ACK dogfood"}),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{session_body}");
+    let session_id = stateless_tool_output(&session_body)["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, post_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        221,
+        "post_session_message",
+        json!({
+            "session_id": session_id,
+            "kind": "guidance",
+            "priority": "high",
+            "requires_ack": true,
+            "message": "Keep the exact request-scoped ACK contract."
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{post_body}");
+    let message_id = stateless_tool_output(&post_body)["message_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let first_args = with_mcp_recording_session(json!({}), &session_id);
+    let (status, first_body) =
+        stateless_2026_tool_call(&service, "secret", 222, "list_tools", first_args, None).await;
+    assert_eq!(status, StatusCode::OK, "{first_body}");
+    let first = stateless_tool_output(&first_body);
+    assert_eq!(
+        first["session_attention"]["messages"][0]["message_id"],
+        message_id
+    );
+    assert_eq!(
+        first["session_attention"]["messages"][0]["message"],
+        "Keep the exact request-scoped ACK contract."
+    );
+
+    let mut ack_args = with_mcp_recording_session(json!({}), &session_id);
+    ack_args.as_object_mut().unwrap().insert(
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD.to_string(),
+        json!([message_id, message_id]),
+    );
+    let (status, ack_body) =
+        stateless_2026_tool_call(&service, "secret", 223, "list_tools", ack_args, None).await;
+    assert_eq!(status, StatusCode::OK, "{ack_body}");
+    let acknowledged = stateless_tool_output(&ack_body);
+    assert_eq!(
+        acknowledged["session_attention"]["ack"]["accepted_count"],
+        1
+    );
+    assert_eq!(acknowledged["session_attention"]["ack"]["ignored_count"], 0);
+    assert!(acknowledged["session_attention"]["messages"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let retained = runtime
+        .sessions
+        .list_messages(
+            &session_id,
+            crate::tool_runtime::sessions::ListSessionMessagesFilter {
+                message_id: Some(message_id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        retained[0].status,
+        crate::tool_runtime::sessions::SessionMessageStatus::Open
+    );
+    assert!(retained[0].first_ack_observed_at.is_some());
+
+    let forgotten_args = with_mcp_recording_session(json!({}), &session_id);
+    let (status, forgotten_body) =
+        stateless_2026_tool_call(&service, "secret", 224, "list_tools", forgotten_args, None).await;
+    assert_eq!(status, StatusCode::OK, "{forgotten_body}");
+    assert_eq!(
+        stateless_tool_output(&forgotten_body)["session_attention"]["messages"][0]["message_id"],
+        message_id
+    );
+
+    let (status, resolve_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        225,
+        "resolve_session_message",
+        json!({"session_id": session_id, "message_id": message_id, "resolution": "handled"}),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resolve_body}");
+    assert_eq!(
+        stateless_tool_output(&resolve_body)["message"]["status"],
+        "resolved"
+    );
+
+    let after_resolve_args = with_mcp_recording_session(json!({}), &session_id);
+    let (status, after_resolve_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        226,
+        "list_tools",
+        after_resolve_args,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{after_resolve_body}");
+    assert!(stateless_tool_output(&after_resolve_body)
+        .get("session_attention")
+        .is_none());
+
+    let audit = serde_json::to_string(
+        &runtime
+            .sessions
+            .summary(&session_id, Some(100))
+            .unwrap()
+            .events,
+    )
+    .unwrap();
+    assert!(!audit.contains("ack_session_message_ids"));
+    assert!(!audit.contains("__webcodex_stateless_ack_session_message_ids"));
+}
+
+#[tokio::test]
 async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_provenance() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();

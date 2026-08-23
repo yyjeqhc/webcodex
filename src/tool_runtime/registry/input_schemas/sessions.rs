@@ -120,7 +120,12 @@ pub(crate) fn post_session_message_input_schema() -> Value {
                 "anyOf": [{ "type": "string" }, { "type": "null" }],
                 "description": "Optional message id in the same session."
             },
-            "priority": session_message_priority_schema("Optional priority; defaults to normal.")
+            "priority": session_message_priority_schema("Optional priority; defaults to normal."),
+            "requires_ack": {
+                "type": "boolean",
+                "default": false,
+                "description": "Optional acknowledgement requirement. In this version only high-priority guidance may require acknowledgement. ACK is context-scoped and never resolves or gates work."
+            }
         },
         "required": ["session_id", "kind", "message"],
         "additionalProperties": false,

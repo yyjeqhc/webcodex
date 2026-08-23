@@ -76,9 +76,17 @@ impl ToolRuntime {
                 tags,
                 reply_to,
                 priority,
+                requires_ack,
             } => {
                 self.post_session_message_tool(
-                    session_id, kind, message, tags, reply_to, priority, auth,
+                    session_id,
+                    kind,
+                    message,
+                    tags,
+                    reply_to,
+                    priority,
+                    requires_ack,
+                    auth,
                 )
                 .await
             }
@@ -530,6 +538,7 @@ impl ToolRuntime {
         tags: Vec<String>,
         reply_to: Option<String>,
         priority: sessions::SessionMessagePriority,
+        requires_ack: bool,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         if let Err(result) = self
@@ -538,16 +547,17 @@ impl ToolRuntime {
         {
             return result;
         }
-        match self
-            .sessions
-            .post_message(sessions::PostSessionMessageInput {
+        match self.sessions.post_message_with_ack(
+            sessions::PostSessionMessageInput {
                 session_id: session_id.clone(),
                 kind,
                 message,
                 tags,
                 reply_to,
                 priority,
-            }) {
+            },
+            requires_ack,
+        ) {
             Ok(message) => ToolResult::ok(json!({
                 "success": true,
                 "session_id": session_id,

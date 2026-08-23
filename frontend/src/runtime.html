@@ -15,6 +15,7 @@
         <p class="muted">Server, Runner, Project, Workflow Session, and collaboration observability</p>
       </div>
       <div id="runtime-topbar-controls" class="topbar-controls" hidden>
+        <span id="runtime-refresh-status" class="muted small" aria-live="polite"></span>
         <button id="runtime-refresh" class="btn" type="button">Refresh</button>
         <button id="runtime-lock" class="btn" type="button">Lock</button>
       </div>
@@ -63,14 +64,19 @@
           <div class="metric"><span class="metric-label">Source alignment</span><strong id="runtime-runner-alignment">—</strong><span id="runtime-runner-project-count" class="muted small">—</span></div>
         </div>
         <p id="runtime-runner-unavailable" class="muted small" hidden>Runtime-wide Runner facts are unavailable to this credential.</p>
-        <div id="runtime-runner-projects" class="runner-projects"></div>
       </section>
 
-      <section class="panel project-panel">
-        <label for="runtime-project-select">Project</label>
-        <select id="runtime-project-select"></select>
-        <span id="runtime-project-status" class="muted small">—</span>
-        <span id="runtime-selected-project" class="project-id small">—</span>
+      <section class="panel projects-panel">
+        <div class="panel-head">
+          <h2>Projects</h2>
+          <span id="runtime-project-status" class="muted small">—</span>
+        </div>
+        <div class="project-search-row">
+          <input id="runtime-project-search" type="search" placeholder="Filter by Project name or id" autocomplete="off" spellcheck="false" />
+          <span id="runtime-selected-project" class="project-id small">—</span>
+        </div>
+        <div id="runtime-project-list" class="project-list" role="listbox" aria-label="Projects"></div>
+        <p id="runtime-projects-empty" class="muted small" hidden>No Projects match this filter.</p>
       </section>
 
       <section class="panel">
@@ -103,9 +109,40 @@
               <section class="detail-section" aria-labelledby="runtime-collaboration-heading">
                 <div class="section-head"><strong id="runtime-collaboration-heading">Collaboration</strong><span id="runtime-collaboration-status" class="muted small">—</span></div>
                 <p id="runtime-collaboration-unavailable" class="muted small" hidden>Collaboration messages require runtime:read. Existing project/session observability remains available.</p>
+                <form id="runtime-collaboration-form" class="collaboration-composer">
+                  <div class="composer-fields">
+                    <label>Kind
+                      <select id="runtime-message-kind">
+                        <option value="note">Note</option>
+                        <option value="guidance">Guidance</option>
+                        <option value="question">Question</option>
+                        <option value="todo">Todo</option>
+                      </select>
+                    </label>
+                    <label>Priority
+                      <select id="runtime-message-priority">
+                        <option value="low">Low</option>
+                        <option value="normal" selected>Normal</option>
+                        <option value="high">High</option>
+                      </select>
+                    </label>
+                    <label id="runtime-message-ack-label" class="ack-field" hidden>
+                      <input id="runtime-message-requires-ack" type="checkbox" /> Require acknowledgement
+                    </label>
+                  </div>
+                  <div id="runtime-message-reply" class="reply-target muted small" hidden>
+                    <span id="runtime-message-reply-text"></span>
+                    <button id="runtime-message-reply-clear" class="text-button" type="button">Clear reply</button>
+                  </div>
+                  <textarea id="runtime-message-body" rows="3" maxlength="4000" placeholder="Join this Session collaboration…"></textarea>
+                  <div class="composer-actions">
+                    <span id="runtime-message-send-status" class="muted small" aria-live="polite"></span>
+                    <button id="runtime-message-send" class="btn primary" type="submit">Send</button>
+                  </div>
+                </form>
                 <div id="runtime-collaboration-board" class="collaboration-board"></div>
                 <p id="runtime-collaboration-empty" class="muted small" hidden>No retained collaboration messages.</p>
-                <p class="muted small retention-note">Retained board only; this is not a permanent or complete chat history.</p>
+                <p class="muted small retention-note">Retained board only; this is not a permanent or complete chat history. ACK observed is server-side evidence of an explicit echo, not a delivery or read receipt.</p>
               </section>
 
               <section class="detail-section" aria-labelledby="runtime-activity-heading">

@@ -42,6 +42,8 @@ pub(crate) struct WorkflowSessionConsoleListItem {
     pub(crate) mode: String,
     pub(crate) updated_at: i64,
     pub(crate) running_call: bool,
+    pub(crate) running_jobs: usize,
+    pub(crate) running_jobs_complete: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) current_activity: Option<WorkflowSessionConsoleActivityPreview>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -135,6 +137,8 @@ pub(crate) struct WorkflowSessionConsoleDetail {
     pub(crate) created_at: i64,
     pub(crate) updated_at: i64,
     pub(crate) running_call: bool,
+    pub(crate) running_jobs: usize,
+    pub(crate) running_jobs_complete: bool,
     pub(crate) overview: WorkflowSessionConsoleOverview,
     pub(crate) activity: Vec<WorkflowSessionConsoleActivity>,
     pub(crate) activity_total: usize,
@@ -231,6 +235,8 @@ pub(super) fn build_list_item(
         mode: record.mode.as_str().to_string(),
         updated_at: record.updated_at,
         running_call,
+        running_jobs: 0,
+        running_jobs_complete: false,
         current_activity: current.map(|interaction| activity_preview(interaction, project)),
         last_activity: last.map(|interaction| activity_preview(interaction, project)),
         overview,
@@ -302,6 +308,8 @@ pub(super) fn build_detail(
         created_at: record.created_at,
         updated_at: record.updated_at,
         running_call,
+        running_jobs: 0,
+        running_jobs_complete: false,
         overview,
         activity,
         activity_total,
@@ -457,7 +465,7 @@ pub(crate) fn aggregate_console_list(
         if session.lifecycle == "active" {
             active_sessions = active_sessions.saturating_add(1);
         }
-        if session.running_call {
+        if session.running_call || session.running_jobs > 0 {
             running_sessions = running_sessions.saturating_add(1);
         }
         latest_updated_at = Some(
@@ -1206,6 +1214,8 @@ mod tests {
                 mode: "normal".to_string(),
                 updated_at: 42,
                 running_call: true,
+                running_jobs: 0,
+                running_jobs_complete: true,
                 current_activity: None,
                 last_activity: None,
                 overview,

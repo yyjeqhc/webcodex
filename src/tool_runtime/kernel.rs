@@ -282,6 +282,12 @@ impl ToolRuntime {
                     session_id,
                     event_id,
                 );
+                session_context::add_session_attention(
+                    &mut result,
+                    &self.sessions,
+                    session_id,
+                    &recorder_metadata.ack_session_message_ids,
+                );
                 return ToolCallOutcome {
                     success: false,
                     result: Some(result),
@@ -321,6 +327,12 @@ impl ToolRuntime {
                     &self.sessions,
                     session_id,
                     event_id,
+                );
+                session_context::add_session_attention(
+                    &mut result,
+                    &self.sessions,
+                    session_id,
+                    &recorder_metadata.ack_session_message_ids,
                 );
             }
             return ToolCallOutcome {
@@ -377,6 +389,12 @@ impl ToolRuntime {
                     session_id,
                     event_id,
                 );
+                session_context::add_session_attention(
+                    &mut result,
+                    &self.sessions,
+                    session_id,
+                    &recorder_metadata.ack_session_message_ids,
+                );
                 return ToolCallOutcome {
                     success: false,
                     result: Some(result),
@@ -416,6 +434,12 @@ impl ToolRuntime {
                     &self.sessions,
                     session_id,
                     event_id,
+                );
+                session_context::add_session_attention(
+                    &mut result,
+                    &self.sessions,
+                    session_id,
+                    &recorder_metadata.ack_session_message_ids,
                 );
                 return ToolCallOutcome {
                     success: false,
@@ -547,7 +571,7 @@ impl ToolRuntime {
                 context.transport.into(),
                 context.session_id.is_none(),
                 allow_cross_project_session,
-                recorder_metadata,
+                recorder_metadata.clone(),
                 inherited_sandbox,
                 context.window,
             )
@@ -617,6 +641,12 @@ impl ToolRuntime {
                 &self.sessions,
                 session_id,
                 outer_event_id,
+            );
+            session_context::add_session_attention(
+                &mut result,
+                &self.sessions,
+                session_id,
+                &recorder_metadata.ack_session_message_ids,
             );
         }
         ToolCallOutcome {

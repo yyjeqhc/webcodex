@@ -4,9 +4,11 @@
 
 use super::model::{
     CompleteSessionMessageInput, CompleteSessionMessageOutcome, ListSessionMessagesFilter,
-    PostSessionMessageInput, SessionDiscussionSummary, SessionInboxHint, SessionMessage,
-    SessionMessageError, SessionMessageObservationError, SessionMessageObservationOutcome,
-    DEFAULT_MESSAGE_LIST_LIMIT, MAX_MESSAGE_LIST_LIMIT, MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN,
+    PostSessionMessageInput, SessionAckObservation, SessionAttentionSnapshot,
+    SessionDiscussionSummary, SessionInboxHint, SessionMessage, SessionMessageError,
+    SessionMessageKind, SessionMessageObservationError, SessionMessageObservationOutcome,
+    SessionMessagePriority, SessionMessageStatus, DEFAULT_MESSAGE_LIST_LIMIT,
+    MAX_MESSAGE_LIST_LIMIT, MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN,
 };
 use super::query::{build_discussion_summary, build_inbox_hint};
 use super::store::SessionStore;
@@ -14,13 +16,22 @@ use base64::{engine::general_purpose, Engine as _};
 use sha2::{Digest, Sha256};
 
 impl SessionStore {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn post_message(
         &self,
         input: PostSessionMessageInput,
     ) -> Result<SessionMessage, SessionMessageError> {
+        self.post_message_with_ack(input, false)
+    }
+
+    pub(crate) fn post_message_with_ack(
+        &self,
+        input: PostSessionMessageInput,
+        requires_ack: bool,
+    ) -> Result<SessionMessage, SessionMessageError> {
         let (message, changed) = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
-            inner.post_message(input)?
+            inner.post_message(input, requires_ack)?
         };
         self.persist_after_mutation();
         if changed {
@@ -62,6 +73,61 @@ impl SessionStore {
                 .collect()
         })
         .ok_or(SessionMessageError::UnknownSession)
+    }
+
+    pub(crate) fn observe_message_acks(
+        &self,
+        session_id: &str,
+        message_ids: &[String],
+    ) -> SessionAckObservation {
+        if message_ids.is_empty() {
+            return SessionAckObservation::default();
+        }
+        let outcome = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            inner.observe_message_acks(session_id, message_ids)
+        };
+        if outcome.first_observed_count > 0 {
+            self.persist_after_mutation();
+            self.notify_message_observation();
+        }
+        outcome
+    }
+
+    pub(crate) fn ack_required_guidance(
+        &self,
+        session_id: &str,
+        suppressed_ids: &[String],
+    ) -> SessionAttentionSnapshot {
+        let suppressed = suppressed_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        self.with_record_for_query(session_id, |record, _| {
+            let mut open = record
+                .messages
+                .iter()
+                .filter(|message| {
+                    message.status == SessionMessageStatus::Open
+                        && message.kind == SessionMessageKind::Guidance
+                        && message.priority == SessionMessagePriority::High
+                        && message.requires_ack
+                })
+                .map(|message| message.as_ref().clone())
+                .collect::<Vec<_>>();
+            open.sort_by(|left, right| {
+                left.created_at
+                    .cmp(&right.created_at)
+                    .then_with(|| left.message_id.cmp(&right.message_id))
+            });
+            let total_open_requires_ack = open.len();
+            open.retain(|message| !suppressed.contains(message.message_id.as_str()));
+            SessionAttentionSnapshot {
+                messages: open,
+                total_open_requires_ack,
+            }
+        })
+        .unwrap_or_default()
     }
 
     pub(crate) fn resolve_message(

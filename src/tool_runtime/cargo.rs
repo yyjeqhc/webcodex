@@ -637,6 +637,21 @@ impl ToolRuntime {
         };
         let adapter = validation_adapter_for_tool(tool_name)
             .expect("structured validation profile must register the read-only tool");
+        let validation_target_id = super::tool_audit::structured_validation_target_identity(
+            tool_name,
+            &json!({
+                "cwd": cwd.as_deref(),
+                "check": request.check,
+                "filter": request.filter.as_deref(),
+                "all_targets": request.all_targets,
+                "all_features": request.all_features,
+                "no_default_features": request.no_default_features,
+                "features": request.features.as_deref(),
+                "package": request.package.as_deref(),
+                "no_run": request.no_run,
+                "packages": request.go_packages.as_ref(),
+            }),
+        );
         let options = ValidationCommandOptions {
             check: request.check,
             filter: request.filter,
@@ -853,6 +868,7 @@ impl ToolRuntime {
                     timeout_secs,
                     sync_wait_secs,
                     session_id,
+                    validation_target_id,
                     ssh_resource.as_deref(),
                     request.sandbox.as_deref(),
                     request.auth,
@@ -909,6 +925,8 @@ impl ToolRuntime {
                 purpose,
                 timeout_secs,
                 sync_wait_secs,
+                session_id,
+                validation_target_id,
                 request.sandbox.as_deref(),
             )
             .await
@@ -933,6 +951,7 @@ impl ToolRuntime {
         timeout_secs: u64,
         sync_wait_secs: u64,
         session_id: Option<String>,
+        validation_target_id: Option<String>,
         ssh_resource: Option<&str>,
         sandbox: Option<&str>,
         auth: Option<&AuthContext>,
@@ -1012,6 +1031,7 @@ impl ToolRuntime {
                         effective_timeout_secs: timeout_secs,
                         sync_wait_secs,
                         adapter: adapter.tool_identity().to_string(),
+                        validation_target_id: validation_target_id.clone(),
                     }),
                     visibility: crate::shell_client::ShellJobVisibility::HiddenUntilHandoff,
                     sandbox: sandbox.map(str::to_string),
@@ -1066,11 +1086,13 @@ impl ToolRuntime {
         purpose: ExecutionPurpose,
         timeout_secs: u64,
         sync_wait_secs: u64,
+        session_id: Option<String>,
+        validation_target_id: Option<String>,
         sandbox: Option<&str>,
     ) -> ToolResult {
         if local_validation_should_handoff(timeout_secs, sync_wait_secs, sandbox) {
             return self
-                .run_readonly_validation_local_job(
+                .run_readonly_validation_local_job_with_context(
                     _tool_name,
                     project,
                     config,
@@ -1081,6 +1103,8 @@ impl ToolRuntime {
                     purpose,
                     timeout_secs,
                     sync_wait_secs,
+                    session_id,
+                    validation_target_id,
                 )
                 .await;
         }
@@ -1125,6 +1149,7 @@ impl ToolRuntime {
         .await
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_readonly_validation_local_job(
         &self,
@@ -1138,6 +1163,39 @@ impl ToolRuntime {
         purpose: ExecutionPurpose,
         timeout_secs: u64,
         sync_wait_secs: u64,
+    ) -> ToolResult {
+        self.run_readonly_validation_local_job_with_context(
+            tool_name,
+            project,
+            config,
+            cwd,
+            command,
+            adapter,
+            options,
+            purpose,
+            timeout_secs,
+            sync_wait_secs,
+            None,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_readonly_validation_local_job_with_context(
+        &self,
+        tool_name: &str,
+        project: &str,
+        config: &crate::projects::ProjectConfig,
+        cwd: Option<&str>,
+        command: &str,
+        adapter: &'static dyn ValidationAdapter,
+        options: ValidationCommandOptions,
+        purpose: ExecutionPurpose,
+        timeout_secs: u64,
+        sync_wait_secs: u64,
+        session_id: Option<String>,
+        validation_target_id: Option<String>,
     ) -> ToolResult {
         let cwd_path = match resolve_local_cwd(config, cwd) {
             Ok(path) => path,
@@ -1248,6 +1306,8 @@ impl ToolRuntime {
             "effective_timeout_secs": timeout_secs,
             "sync_wait_secs": sync_wait_secs,
             "validation_adapter": adapter.tool_identity(),
+            "session_id": session_id,
+            "validation_target_id": validation_target_id,
             "visibility": "hidden_until_handoff",
         });
         if let Err(error) = std::fs::write(

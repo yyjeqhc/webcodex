@@ -71,7 +71,11 @@ async function assertRequiredAssets(outputDirectory) {
   const runtimeHtml = await readFile(resolve(outputDirectory, "runtime.html"), "utf8");
   assert.match(runtimeHtml, /WebCodex Runtime Console/);
   assert.match(runtimeHtml, /runtime-device-select/);
-  assert.match(runtimeHtml, /runtime-project-select/);
+  assert.match(runtimeHtml, /runtime-project-list/);
+  assert.equal(runtimeHtml.includes("runtime-project-" + "select"), false);
+  assert.match(runtimeHtml, /runtime-project-search/);
+  assert.match(runtimeHtml, /runtime-collaboration-form/);
+  assert.match(runtimeHtml, /runtime-refresh-status/);
   assert.match(runtimeHtml, /runtime-token-form/);
   assert.match(runtimeHtml, /Jump to latest/);
   assert.match(runtimeHtml, /Reported progress/);
@@ -80,6 +84,9 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(runtime, /\/api\/runtime-console\//);
   assert.match(runtime, /runtimeDeviceIds/);
   assert.match(runtime, /runtimeProjectsForDevice/);
+  assert.match(runtime, /filterAndSortRuntimeProjects/);
+  assert.match(runtime, /workflow-session-post-message/);
+  assert.match(runtime, /Refresh failed · showing previous data/);
   assert.match(runtime, /preferredRuntimeProjectSelection/);
   assert.match(runtime, /workflowSessionListOverviewFacts/);
   assert.match(runtime, /isCurrentRuntimeWorkflowSessionRequest/);

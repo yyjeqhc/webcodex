@@ -33,7 +33,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "post_session_message",
-            "Create an ordinary bounded collaboration message such as todo, question, progress, guidance, risk, or decision. Use complete_session_message instead when a worker finishes an exact todo and must atomically answer+resolve it.",
+            "Create an ordinary bounded collaboration message such as todo, question, progress, guidance, risk, or decision. High-priority guidance may set requires_ack; ACK is request-scoped context evidence and does not resolve or gate work. Use complete_session_message instead when a worker finishes an exact todo and must atomically answer+resolve it.",
             post_session_message_input_schema(),
         ),
         tool_spec(

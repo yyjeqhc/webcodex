@@ -195,6 +195,19 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
                 value["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
                 "webcodex"
             );
+            let read_files = value["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == "read_files")
+                .expect("read_files stateless schema");
+            let ack = &read_files["inputSchema"]["properties"]["ack_session_message_ids"];
+            assert_eq!(ack["type"], "array");
+            assert_eq!(ack["maxItems"], 8);
+            assert_eq!(ack["items"]["pattern"], "^wc_msg_[A-Za-z0-9_]+$");
+            let description = ack["description"].as_str().unwrap();
+            assert!(description.contains("current model context still remembers"));
+            assert!(description.contains("ACK does not resolve"));
         }
         other => panic!("expected Ok for stateless tools/list, got {:?}", other),
     }
@@ -215,6 +228,13 @@ async fn mcp_legacy_tools_list_omits_2026_only_result_fields() {
             assert!(value["result"].get("resultType").is_none());
             assert!(value["result"].get("ttlMs").is_none());
             assert!(value["result"].get("cacheScope").is_none());
+            assert!(value["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|tool| tool["inputSchema"]["properties"]
+                    .get("ack_session_message_ids")
+                    .is_none()));
         }
         other => panic!("expected Ok for legacy tools/list, got {:?}", other),
     }

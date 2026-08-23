@@ -419,6 +419,8 @@ pub enum ToolCall {
         reply_to: Option<String>,
         #[serde(default)]
         priority: SessionMessagePriority,
+        #[serde(default)]
+        requires_ack: bool,
     },
 
     /// List session-local ledger messages in stable newest-first order.

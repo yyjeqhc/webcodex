@@ -1304,6 +1304,186 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
 }
 
 #[tokio::test]
+async fn async_same_cargo_check_target_success_resolves_prior_failure_without_duplicate_bookkeeping(
+) {
+    let client_id = "vhandoff-resolve-prior";
+    let runtime = runtime_with_agent_project(client_id)
+        .with_validation_sync_wait(std::time::Duration::from_millis(50));
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let auth = auth_context(None, true);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
+
+    let failed_task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::CargoCheck {
+                        project,
+                        session_id: Some(session_id),
+                        cwd: None,
+                        all_targets: Some(true),
+                        all_features: None,
+                        no_default_features: None,
+                        features: None,
+                        package: None,
+                        timeout_secs: Some(600),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let (failed_request, failed_job_id) = poll_start_validation_job(&runtime, client_id).await;
+    runtime
+        .shell_clients
+        .update_job(cargo_test_update(
+            client_id,
+            &failed_request.request_id,
+            &failed_job_id,
+            "failed",
+            "",
+            "error[E0308]: mismatched types\n --> src/lib.rs:1:1\n",
+            Some(101),
+            ShellJobValidationProgress {
+                completed: 0,
+                current_step: None,
+                failed_step: Some("check".to_string()),
+            },
+            true,
+        ))
+        .await
+        .unwrap();
+    let failed = failed_task.await.unwrap();
+    assert!(
+        !failed.success,
+        "the first check must retain a real failure"
+    );
+    let failed_summary = runtime.sessions.summary(&session_id, None).unwrap();
+    let failed_validation = validation_summary_for_session(&failed_summary);
+    assert_eq!(failed_validation["unresolved_failures"]["count"], 1);
+
+    let success_task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::CargoCheck {
+                        project,
+                        session_id: Some(session_id),
+                        cwd: None,
+                        all_targets: Some(true),
+                        all_features: None,
+                        no_default_features: None,
+                        features: None,
+                        package: None,
+                        timeout_secs: Some(600),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let (success_request, success_job_id) = poll_start_validation_job(&runtime, client_id).await;
+    runtime
+        .shell_clients
+        .update_job(cargo_test_update(
+            client_id,
+            &success_request.request_id,
+            &success_job_id,
+            "running",
+            "Checking demo v0.1.0\n",
+            "",
+            None,
+            running_progress("check"),
+            false,
+        ))
+        .await
+        .unwrap();
+    let handoff = success_task.await.unwrap();
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["promoted_to_job"], true);
+    assert_eq!(handoff.output["job_id"], success_job_id);
+
+    runtime
+        .shell_clients
+        .update_job(cargo_test_update(
+            client_id,
+            &success_request.request_id,
+            &success_job_id,
+            "completed",
+            "Finished `dev` profile [unoptimized + debuginfo] target(s)\n",
+            "",
+            Some(0),
+            completed_progress(),
+            true,
+        ))
+        .await
+        .unwrap();
+
+    let before_materialize = runtime.sessions.summary(&session_id, None).unwrap();
+    let validation = runtime
+        .validation_summary_for_session_with_jobs(&before_materialize, 50, Some(&auth))
+        .await;
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["resolved_failures"]["count"], 1);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+
+    let materialized = runtime.sessions.summary(&session_id, None).unwrap();
+    let durable_validation = validation_summary_for_session(&materialized);
+    assert_eq!(durable_validation["unresolved_failures"]["count"], 0);
+    assert_eq!(durable_validation["resolved_failures"]["count"], 1);
+    assert_eq!(
+        materialized
+            .events
+            .iter()
+            .filter(|event| {
+                event.kind == "validation_job_terminal"
+                    && event.job_id.as_deref() == Some(success_job_id.as_str())
+            })
+            .count(),
+        1
+    );
+
+    let second_projection = runtime
+        .validation_summary_for_session_with_jobs(&materialized, 50, Some(&auth))
+        .await;
+    assert_eq!(second_projection["unresolved_failures"]["count"], 0);
+    let after_repeat = runtime.sessions.summary(&session_id, None).unwrap();
+    assert_eq!(
+        after_repeat
+            .events
+            .iter()
+            .filter(|event| {
+                event.kind == "validation_job_terminal"
+                    && event.job_id.as_deref() == Some(success_job_id.as_str())
+            })
+            .count(),
+        1,
+        "repeated projection must not duplicate terminal evidence"
+    );
+}
+
+#[tokio::test]
 async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_validation_context() {
     let client_id = "vhandoff-partial-counts";
     let runtime = runtime_with_agent_project(client_id)

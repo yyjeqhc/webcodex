@@ -284,6 +284,106 @@ async fn validation_summary_preserves_history_bounds_and_safe_diagnostics() {
     );
 }
 
+#[test]
+fn durable_async_validation_terminal_success_resolves_same_target_without_acceptance_event() {
+    let runtime = test_runtime();
+    let project = "agent:validation-terminal:project".to_string();
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("async terminal".to_string()));
+    let target = "target:0123456789abcdef01234567";
+    let start = runtime.sessions.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_check",
+        &json!({"project": project, "validation_target_id": target}),
+    );
+    runtime.sessions.record_tool_call_finished(
+        start,
+        false,
+        &json!({
+            "exit_code": 101,
+            "purpose": "validation",
+            "stdout_tail": "",
+            "stderr_tail": "error: compile failed\n",
+            "stdout_truncated": false,
+            "stderr_truncated": false
+        }),
+        Some("validation failed"),
+        None,
+    );
+    let terminal_output = json!({
+        "purpose": "validation",
+        "execution_state": "completed",
+        "exit_code": 0,
+        "stdout_tail": "Finished dev profile\n",
+        "stderr_tail": "",
+        "stdout_truncated": false,
+        "stderr_truncated": false,
+        "passed": true,
+        "errors_count": 0,
+        "warnings_count": 0
+    });
+    let terminal_summary = crate::tool_runtime::sessions::execution_output_summary_for_tool_result(
+        "cargo_check",
+        &terminal_output,
+    );
+    assert!(runtime.sessions.record_validation_job_terminal(
+        &session.session_id,
+        "job-terminal-success",
+        "cargo_check",
+        Some(project.clone()),
+        target,
+        "completed",
+        Some(0),
+        Some(100),
+        Some(110),
+        Some(10_000),
+        terminal_summary.clone(),
+    ));
+    assert!(
+        !runtime.sessions.record_validation_job_terminal(
+            &session.session_id,
+            "job-terminal-success",
+            "cargo_check",
+            Some(project),
+            target,
+            "completed",
+            Some(0),
+            Some(100),
+            Some(110),
+            Some(10_000),
+            terminal_summary,
+        ),
+        "same Job terminal must materialize only once"
+    );
+    let summary = runtime.sessions.summary(&session.session_id, None).unwrap();
+    assert_eq!(
+        summary
+            .events
+            .iter()
+            .filter(|event| event.kind == "validation_job_terminal")
+            .count(),
+        1
+    );
+    assert!(
+        !summary.events.iter().any(|event| {
+            event.job_id.as_deref() == Some("job-terminal-success")
+                && event.kind == "tool_call_finished"
+        }),
+        "terminal correctness must not require a retained acceptance event"
+    );
+    let validation =
+        crate::tool_runtime::validation_events::validation_summary_from_events(&summary.events, 20);
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["historical_failures"]["resolved"], true);
+    assert_eq!(validation["historical_failures"]["unresolved"], false);
+    assert_eq!(validation["resolved_failures"]["count"], 1);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+    assert_eq!(validation["events_total"], 2);
+}
+
 #[tokio::test]
 async fn validation_summary_keeps_zero_tests_from_resolving_cargo_test_failure() {
     let tmp = tempfile::tempdir().unwrap();

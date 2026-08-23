@@ -14,7 +14,14 @@ function compareText(left: string, right: string): number {
 }
 
 function emptyCollaborationState(): any {
-  return { generation: 0, sessionId: "", messages: [], observationToken: "", available: true };
+  return {
+    generation: 0,
+    sessionId: "",
+    messages: [],
+    observationToken: "",
+    available: true,
+    phase: "idle",
+  };
 }
 
 function messageCreatedAt(message: any): number {
@@ -60,6 +67,37 @@ export function runtimeProjectsForDevice(projects: any[], clientId: string): any
       const leftName = typeof left.name === "string" && left.name ? left.name : left.id;
       const rightName = typeof right.name === "string" && right.name ? right.name : right.id;
       return compareText(leftName, rightName) || compareText(left.id, right.id);
+    });
+}
+
+function projectAttentionCount(project: any): number {
+  const attention = project?.sessions?.attention;
+  return ["open_guidance", "open_questions", "open_risks", "open_todos"]
+    .reduce((total, key) => total + (typeof attention?.[key] === "number" ? Math.max(0, attention[key]) : 0), 0);
+}
+
+export function filterAndSortRuntimeProjects(projects: any[], clientId: string, query: string): any[] {
+  const needle = String(query || "").trim().toLocaleLowerCase();
+  return runtimeProjectsForDevice(projects, clientId)
+    .filter((project) => {
+      if (!needle) return true;
+      return [project?.name, project?.id]
+        .filter((value) => typeof value === "string")
+        .some((value) => String(value).toLocaleLowerCase().includes(needle));
+    })
+    .sort((left, right) => {
+      const leftRunning = typeof left?.sessions?.running_sessions === "number" ? left.sessions.running_sessions : 0;
+      const rightRunning = typeof right?.sessions?.running_sessions === "number" ? right.sessions.running_sessions : 0;
+      if (!!rightRunning !== !!leftRunning) return rightRunning ? 1 : -1;
+      const leftAttention = projectAttentionCount(left);
+      const rightAttention = projectAttentionCount(right);
+      if (!!rightAttention !== !!leftAttention) return rightAttention ? 1 : -1;
+      const leftUpdated = typeof left?.sessions?.latest_updated_at === "number" ? left.sessions.latest_updated_at : 0;
+      const rightUpdated = typeof right?.sessions?.latest_updated_at === "number" ? right.sessions.latest_updated_at : 0;
+      if (leftUpdated !== rightUpdated) return rightUpdated - leftUpdated;
+      const leftName = typeof left?.name === "string" && left.name ? left.name : left.id;
+      const rightName = typeof right?.name === "string" && right.name ? right.name : right.id;
+      return compareText(String(leftName || ""), String(rightName || "")) || compareText(String(left?.id || ""), String(right?.id || ""));
     });
 }
 
@@ -111,6 +149,7 @@ export function invalidateRuntimeCredential(state: any): void {
   state.collaboration.messages = [];
   state.collaboration.observationToken = "";
   state.collaboration.available = true;
+  state.collaboration.phase = "idle";
 }
 
 export function beginRuntimeCredential(state: any): any {
@@ -166,6 +205,7 @@ export function selectRuntimeProject(state: any, device: string, project: string
   state.collaboration.messages = [];
   state.collaboration.observationToken = "";
   state.collaboration.available = true;
+  state.collaboration.phase = "idle";
   return refreshRuntimeSessionList(state);
 }
 
@@ -203,6 +243,7 @@ export function selectRuntimeWorkflowSession(state: any, sessionId: string): any
   state.collaboration.messages = [];
   state.collaboration.observationToken = "";
   state.collaboration.available = true;
+  state.collaboration.phase = "idle";
   return wrapWorkflowRequest(state, selectWorkflowSession(state.workflow, sessionId));
 }
 
@@ -255,6 +296,20 @@ export function setRuntimeCollaborationAvailable(state: any, request: any, avail
   if (!isCurrentRuntimeCollaborationRequest(state, request)) return false;
   state.collaboration.available = available;
   return true;
+}
+
+export function setRuntimeCollaborationPhase(
+  state: any,
+  request: any,
+  phase: "idle" | "reconnecting" | "live" | "paused"
+): boolean {
+  if (!isCurrentRuntimeCollaborationRequest(state, request)) return false;
+  state.collaboration.phase = phase;
+  return true;
+}
+
+export function runtimeCollaborationNeedsRefreshRecovery(state: any): boolean {
+  return state?.collaboration?.phase === "paused";
 }
 
 export function isCurrentRuntimeWorkflowSessionRequest(state: any, request: any): boolean {

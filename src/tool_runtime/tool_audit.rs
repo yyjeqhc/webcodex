@@ -599,7 +599,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             copy_keys(
                 obj,
                 &mut out,
-                &["session_id", "kind", "reply_to", "priority"],
+                &["session_id", "kind", "reply_to", "priority", "requires_ack"],
             );
             out.insert(
                 "body_present".to_string(),
@@ -807,6 +807,7 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "message_id": output.get("message_id").cloned().unwrap_or(Value::Null),
             "kind": output.pointer("/message/kind").cloned().unwrap_or(Value::Null),
             "status": output.pointer("/message/status").cloned().unwrap_or(Value::Null),
+            "requires_ack": output.pointer("/message/requires_ack").cloned().unwrap_or(Value::Null),
             "author_session_id": output.pointer("/message/author_session_id").cloned().unwrap_or(Value::Null),
         }),
         "list_session_messages" => serde_json::json!({
@@ -2766,6 +2767,7 @@ impl ToolCall {
                 tags,
                 reply_to,
                 priority,
+                requires_ack,
             } => serde_json::json!({
                 "session_id": session_id,
                 "kind": kind,
@@ -2774,6 +2776,7 @@ impl ToolCall {
                 "tags_count": tags.len(),
                 "reply_to": reply_to,
                 "priority": priority,
+                "requires_ack": requires_ack,
             }),
             Self::ListSessionMessages {
                 session_id,

@@ -113,6 +113,19 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             let description = recorder["description"].as_str().unwrap();
             assert!(description.contains("wrapper metadata"));
             assert!(description.contains("distinct from any concrete tool business session_id"));
+            let ack = properties
+                .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD)
+                .unwrap_or_else(|| panic!("stateless ACK metadata missing for {}", tool["name"]));
+            assert_eq!(ack["type"], "array");
+            assert_eq!(
+                ack["maxItems"],
+                crate::tool_runtime::sessions::MAX_TOOL_CALL_ACK_MESSAGE_IDS
+            );
+            assert_eq!(ack["items"]["pattern"], "^wc_msg_[A-Za-z0-9_]+$");
+            let ack_description = ack["description"].as_str().unwrap();
+            assert!(ack_description.contains("current model context still remembers"));
+            assert!(ack_description.contains("If omitted later"));
+            assert!(ack_description.contains("does not resolve"));
             assert!(!properties.contains_key(MCP_RESERVED_SESSION_ID_FIELD));
         }
         // Exercise the real env adapter, not just the pure renderer: compact
@@ -150,20 +163,65 @@ fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_too
         mcp_tools_list_payload_with_compact(ModelSurface::CanonicalConnector, false);
     add_stateless_workflow_recorder_metadata(&mut connector, ModelSurface::CanonicalConnector);
     for tool in connector["tools"].as_array().unwrap() {
-        assert!(!tool["inputSchema"]["properties"]
-            .as_object()
-            .unwrap()
+        let properties = tool["inputSchema"]["properties"].as_object().unwrap();
+        assert!(!properties
             .contains_key(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD));
+        assert!(!properties
+            .contains_key(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD));
     }
 
     let generic = registered_tool_specs()
         .into_iter()
         .find(|tool| tool.name == "complete_session_message")
         .expect("generic complete_session_message spec");
-    assert!(!generic.input_schema["properties"]
-        .as_object()
-        .unwrap()
+    let generic_properties = generic.input_schema["properties"].as_object().unwrap();
+    assert!(!generic_properties
         .contains_key(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD));
+    assert!(!generic_properties
+        .contains_key(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD));
+}
+
+#[test]
+fn stateless_ack_wrapper_normalizes_and_is_removed_before_concrete_tool_parsing() {
+    let mut arguments = json!({
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: [
+            "wc_msg_beta",
+            "wc_msg_beta",
+            "wc_msg_alpha"
+        ]
+    });
+    let normalized = strip_stateless_ack_session_message_ids(&mut arguments).unwrap();
+    assert_eq!(normalized, vec!["wc_msg_beta", "wc_msg_alpha"]);
+    assert!(arguments
+        .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD)
+        .is_none());
+
+    arguments[crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD] =
+        json!(normalized);
+    let recorder =
+        crate::tool_runtime::sessions::ToolCallRecorderMetadata::from_arguments(&arguments);
+    assert_eq!(
+        recorder.ack_session_message_ids,
+        vec!["wc_msg_beta", "wc_msg_alpha"]
+    );
+    let concrete = crate::tool_runtime::sessions::strip_tool_call_expectation_metadata(arguments);
+    assert!(concrete
+        .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD)
+        .is_none());
+    crate::tool_runtime::ToolCall::from_tool_name("list_tools", concrete)
+        .expect("wrapper ACK metadata must be gone before concrete parsing");
+
+    let mut malformed = json!({
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: ["not-a-message-id"]
+    });
+    assert!(strip_stateless_ack_session_message_ids(&mut malformed).is_err());
+    let mut oversized = json!({
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD:
+            (0..=crate::tool_runtime::sessions::MAX_TOOL_CALL_ACK_MESSAGE_IDS)
+                .map(|index| format!("wc_msg_{index}"))
+                .collect::<Vec<_>>()
+    });
+    assert!(strip_stateless_ack_session_message_ids(&mut oversized).is_err());
 }
 
 #[test]
@@ -947,6 +1005,86 @@ async fn mcp_tools_call_strips_reserved_session_id_before_dispatch() {
             .contains(MCP_RESERVED_SESSION_ID_FIELD),
         "_session_id must be stripped before recording/dispatch"
     );
+}
+
+#[tokio::test]
+async fn stateless_mcp_ack_wrapper_is_removed_before_concrete_dispatch_and_is_request_scoped() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("stateless ack wrapper".to_string()));
+    let guidance = runtime
+        .sessions
+        .post_message_with_ack(
+            crate::tool_runtime::sessions::PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: crate::tool_runtime::sessions::SessionMessageKind::Guidance,
+                message: "Remember this guidance for the current context.".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: crate::tool_runtime::sessions::SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+
+    let call = |ack: Option<&str>, id: i64| {
+        let mut arguments = json!({
+            crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &session.session_id
+        });
+        if let Some(message_id) = ack {
+            arguments[crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD] =
+                json!([message_id, message_id]);
+        }
+        rpc(
+            "tools/call",
+            Some(Value::from(id)),
+            mcp_2026_params(json!({"name": "list_projects", "arguments": arguments})),
+        )
+    };
+
+    let acknowledged =
+        handle_mcp_request(&runtime, call(Some(&guidance.message_id), 321), None).await;
+    let acknowledged = match acknowledged {
+        McpOutcome::Ok(value) => value,
+        other => panic!("expected ACK call success, got {other:?}"),
+    };
+    assert_eq!(acknowledged["result"]["structuredContent"]["success"], true);
+    assert_eq!(
+        acknowledged["result"]["structuredContent"]["output"]["session_attention"]["ack"]
+            ["accepted_count"],
+        1
+    );
+    assert!(
+        acknowledged["result"]["structuredContent"]["output"]["session_attention"]["messages"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let forgotten = handle_mcp_request(&runtime, call(None, 322), None).await;
+    let forgotten = match forgotten {
+        McpOutcome::Ok(value) => value,
+        other => panic!("expected forgotten-ACK call success, got {other:?}"),
+    };
+    assert_eq!(forgotten["result"]["structuredContent"]["success"], true);
+    assert_eq!(
+        forgotten["result"]["structuredContent"]["output"]["session_attention"]["messages"][0]
+            ["message_id"],
+        guidance.message_id
+    );
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let started = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "tool_call_started")
+        .unwrap();
+    let input = serde_json::to_string(&started.input_summary).unwrap();
+    assert!(!input.contains("ack_session_message_ids"));
+    assert!(!input.contains("__webcodex_stateless_ack_session_message_ids"));
 }
 
 #[tokio::test]

@@ -5,6 +5,7 @@ import {
   initialRuntimeConsoleState,
   runtimeDeviceIds,
   runtimeProjectsForDevice,
+  filterAndSortRuntimeProjects,
   preferredRuntimeProjectSelection,
   beginRuntimeCredential,
   refreshRuntimeOverview,
@@ -24,6 +25,8 @@ import {
   adoptRuntimeCollaborationList,
   adoptRuntimeCollaborationObservation,
   setRuntimeCollaborationAvailable,
+  setRuntimeCollaborationPhase,
+  runtimeCollaborationNeedsRefreshRecovery,
   mergeRuntimeCollaborationMessages,
   runtimeCollaborationObservationAction,
 } from "../dist/runtime_console_state.js";
@@ -94,6 +97,28 @@ test("runtime refresh preserves an authorized selected device and project", () =
     { id: "project-3", client_id: "device-a", name: "Other" },
   ];
   assert.deepEqual(preferredRuntimeProjectSelection(projects, "device-z", "project-2"), { device: "device-z", project: "project-2" });
+});
+
+test("Project list filters and prioritizes running attention then recent activity", () => {
+  const projects = [
+    { id: "agent:r:idle", client_id: "runner", name: "Idle", sessions: { running_sessions: 0, attention: {}, latest_updated_at: 100 } },
+    { id: "agent:r:recent", client_id: "runner", name: "Recent", sessions: { running_sessions: 0, attention: {}, latest_updated_at: 400 } },
+    { id: "agent:r:attention", client_id: "runner", name: "Needs review", sessions: { running_sessions: 0, attention: { open_guidance: 1 }, latest_updated_at: 50 } },
+    { id: "agent:r:working", client_id: "runner", name: "Working", sessions: { running_sessions: 1, attention: {}, latest_updated_at: 10 } },
+    { id: "agent:other:x", client_id: "other", name: "Other" },
+  ];
+  assert.deepEqual(
+    filterAndSortRuntimeProjects(projects, "runner", "").map((project) => project.id),
+    ["agent:r:working", "agent:r:attention", "agent:r:recent", "agent:r:idle"]
+  );
+  assert.deepEqual(
+    filterAndSortRuntimeProjects(projects, "runner", "REVIEW").map((project) => project.id),
+    ["agent:r:attention"]
+  );
+  assert.deepEqual(
+    filterAndSortRuntimeProjects(projects, "runner", "agent:r:recent").map((project) => project.id),
+    ["agent:r:recent"]
+  );
 });
 
 test("runtime workflow detail identity includes project plus session id", () => {
@@ -176,13 +201,50 @@ test("project-read-only degradation keeps project selection while collaboration 
   assert.equal(state.collaboration.available, false);
 });
 
+test("manual Refresh recovery is required only after collaboration is paused", () => {
+  const state = initialRuntimeConsoleState();
+  beginRuntimeCredential(state);
+  selectRuntimeProject(state, "runner", "agent:runner:project");
+  selectRuntimeWorkflowSession(state, "wc_sess_a");
+  const requestA = runtimeCollaborationRequest(state);
+  assert.equal(setRuntimeCollaborationPhase(state, requestA, "live"), true);
+  assert.equal(runtimeCollaborationNeedsRefreshRecovery(state), false);
+  assert.equal(setRuntimeCollaborationPhase(state, requestA, "paused"), true);
+  assert.equal(runtimeCollaborationNeedsRefreshRecovery(state), true);
+  selectRuntimeWorkflowSession(state, "wc_sess_b");
+  assert.equal(state.collaboration.phase, "idle");
+  assert.equal(setRuntimeCollaborationPhase(state, requestA, "paused"), false);
+  assert.equal(runtimeCollaborationNeedsRefreshRecovery(state), false);
+});
+
 test("runtime collaboration rendering uses textContent and explicitly reloads on history loss", async () => {
   const source = await readFile(new URL("../src/runtime.ts", import.meta.url), "utf8");
+  const html = await readFile(new URL("../src/runtime.html", import.meta.url), "utf8");
+  const css = await readFile(new URL("../src/runtime.css", import.meta.url), "utf8");
+  assert.equal(html.includes("runtime-project-" + "select"), false);
+  assert.match(html, /runtime-project-list/);
+  assert.match(html, /runtime-project-search/);
+  assert.match(html, /runtime-collaboration-form/);
+  assert.match(html, /runtime-message-requires-ack/);
+  assert.match(css, /-webkit-line-clamp:\s*4/);
   assert.equal(source.includes("innerHTML"), false);
   assert.match(source, /body\.textContent = String\(message\?\.message \|\| ""\)/);
   assert.match(source, /action === "reload"[\s\S]*loadRetainedCollaboration/);
   assert.match(source, /action === "drain"/);
   assert.match(source, /abortCollaboration\(\)/);
+  assert.match(source, /workflow-session-post-message/);
+  assert.match(source, /kind\?\.value === "guidance"/);
+  assert.match(source, /priority\?\.value !== "high"/);
+  assert.match(source, /First ACK observed/);
+  assert.doesNotMatch(source, /Delivered|Read by model|Currently acknowledged/);
+  assert.match(source, /Refresh failed · showing previous data/);
+  assert.match(source, /runtimeCollaborationNeedsRefreshRecovery/);
+  const fetchProjectsStart = source.indexOf("async function fetchProjects");
+  const fetchProjectsEnd = source.indexOf("function effectiveProjects", fetchProjectsStart);
+  assert.doesNotMatch(source.slice(fetchProjectsStart, fetchProjectsEnd), /fetchOverview\(/);
+  const refreshStart = source.indexOf("async function refreshAll");
+  const refreshEnd = source.indexOf("function startAuto", refreshStart);
+  assert.equal((source.slice(refreshStart, refreshEnd).match(/fetchOverview\(/g) || []).length, 1);
   const bootstrapStart = source.indexOf("async function loadRetainedCollaboration");
   const bootstrapEnd = source.indexOf("async function startCollaboration", bootstrapStart);
   const bootstrap = source.slice(bootstrapStart, bootstrapEnd);

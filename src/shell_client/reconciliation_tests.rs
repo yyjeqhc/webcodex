@@ -344,6 +344,7 @@ async fn reconciliation_rejects_cross_product_first_class_go_test_metadata() {
         effective_timeout_secs: 1800,
         sync_wait_secs: 10,
         adapter: "go_test".to_string(),
+        validation_target_id: None,
     });
     let inventory = ShellJobInventory {
         active_complete: true,

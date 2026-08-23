@@ -13,6 +13,7 @@ import {
   workflowSessionListOverviewFacts,
   workflowSessionOverviewPresentation,
   workflowSessionIdleAttentionLabel,
+  workflowSessionLivenessPresentation,
 } from "../dist/workflow_session_state.js";
 
 test("workflow session list overview stays compact and labels retained evidence", () => {
@@ -77,12 +78,25 @@ test("workflow session detail overview separates runtime validation attention an
   assert.equal(unavailable.progressText, "No retained model-reported progress.");
 });
 
-test("idle pending-attention presentation stays factual and never calls a Session stalled", () => {
+test("Session liveness stays factual across working recent idle and attention states", () => {
   const overview = { attention: { open_guidance: 0, open_questions: 1, open_risks: 0, open_todos: 1 } };
+  const workingCall = workflowSessionLivenessPresentation({ running_call: true, running_jobs: 0, updated_at: 100, overview }, 1000);
+  const workingJob = workflowSessionLivenessPresentation({ running_call: false, running_jobs: 1, updated_at: 100, overview }, 1000);
+  const recent = workflowSessionLivenessPresentation({ running_call: false, running_jobs: 0, updated_at: 950, overview: { attention: {} } }, 1000);
+  const attention = workflowSessionLivenessPresentation({ running_call: false, running_jobs: 0, updated_at: 700, overview }, 1000);
+  const idle = workflowSessionLivenessPresentation({ running_call: false, running_jobs: 0, updated_at: 700, overview: { attention: {} } }, 1000);
+  assert.equal(workingCall.label, "working");
+  assert.equal(workingJob.label, "working");
+  assert.equal(recent.label, "recently active");
+  assert.equal(attention.label, "idle · pending attention");
+  assert.equal(idle.label, "idle · 5m");
+  assert.equal(idle.tooltip, "WebCodex activity only; host/model state is unknown.");
+  for (const view of [workingCall, workingJob, recent, attention, idle]) {
+    assert.equal(/stalled|abandoned|model failed|host frozen/i.test(view.label), false);
+  }
   assert.equal(workflowSessionIdleAttentionLabel(false, overview), "idle · pending attention");
-  assert.equal(workflowSessionIdleAttentionLabel(true, overview), "running call");
-  assert.equal(workflowSessionIdleAttentionLabel(false, { attention: {} }), "no running call");
-  assert.equal(workflowSessionIdleAttentionLabel(false, overview).includes("stalled"), false);
+  assert.equal(workflowSessionIdleAttentionLabel(true, overview), "working");
+  assert.equal(workflowSessionIdleAttentionLabel(false, { attention: {} }), "idle");
 });
 
 test("stale same-session detail response cannot overwrite newer snapshot", () => {

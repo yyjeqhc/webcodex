@@ -10,6 +10,8 @@ use sha2::{Digest, Sha256};
 
 pub(crate) const SESSION_PROJECT_MISMATCH_KIND: &str = "session_project_mismatch";
 pub(crate) const ALLOW_CROSS_PROJECT_SESSION_FIELD: &str = "allow_cross_project_session";
+const SESSION_ATTENTION_MAX_MESSAGES: usize = 3;
+const SESSION_ATTENTION_MAX_BODY_BYTES: usize = 3072;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionProjectMismatch {
@@ -386,6 +388,75 @@ pub(crate) fn add_session_telemetry_hint(
         );
     }
     result.output = Value::Object(output);
+}
+
+pub(crate) fn add_session_attention(
+    result: &mut ToolResult,
+    sessions: &sessions::SessionStore,
+    session_id: &str,
+    ack_message_ids: &[String],
+) {
+    let ack = sessions.observe_message_acks(session_id, ack_message_ids);
+    let attention = sessions.ack_required_guidance(session_id, &ack.accepted_ids);
+    let unsuppressed_count = attention.messages.len();
+    let mut remaining_bytes = SESSION_ATTENTION_MAX_BODY_BYTES;
+    let mut messages = Vec::new();
+    for message in attention
+        .messages
+        .into_iter()
+        .take(SESSION_ATTENTION_MAX_MESSAGES)
+    {
+        if remaining_bytes == 0 {
+            break;
+        }
+        let (body, truncated) = bound_utf8_bytes(&message.message, remaining_bytes);
+        remaining_bytes = remaining_bytes.saturating_sub(body.len());
+        messages.push(json!({
+            "message_id": message.message_id,
+            "kind": message.kind.as_str(),
+            "priority": message.priority,
+            "created_at": message.created_at,
+            "message": body,
+            "message_truncated": truncated,
+        }));
+    }
+    if attention.total_open_requires_ack == 0 && ack_message_ids.is_empty() {
+        return;
+    }
+    let omitted_count = unsuppressed_count.saturating_sub(messages.len());
+    let mut output = match std::mem::take(&mut result.output) {
+        Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("value".to_string(), other);
+            map
+        }
+    };
+    output.insert(
+        "session_attention".to_string(),
+        json!({
+            "requires_ack": attention.total_open_requires_ack > 0,
+            "messages": messages,
+            "omitted_count": omitted_count,
+            "truncated": omitted_count > 0,
+            "ack": {
+                "accepted_count": ack.accepted_count,
+                "ignored_count": ack.ignored_count,
+            }
+        }),
+    );
+    result.output = Value::Object(output);
+}
+
+fn bound_utf8_bytes(value: &str, max_bytes: usize) -> (String, bool) {
+    if value.len() <= max_bytes {
+        return (value.to_string(), false);
+    }
+    let mut end = max_bytes.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    (value[..end].to_string(), true)
 }
 
 pub(crate) fn is_current_session_eligible(call: &ToolCall) -> bool {

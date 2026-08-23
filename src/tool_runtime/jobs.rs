@@ -465,6 +465,7 @@ pub(crate) fn local_job_summary_value(
         "kind": kind,
         "status": status,
         "project": record.project,
+        "session_id": meta.get("session_id").cloned().unwrap_or(Value::Null),
         "executor": "local",
         "created_at": created_at,
         "started_at": started_at,
@@ -517,6 +518,7 @@ pub(crate) fn local_job_status(
     let mut output = json!({
         "job_id": job_id,
         "project": record.project,
+        "session_id": meta.get("session_id").cloned().unwrap_or(Value::Null),
         "status": status,
         "exit_code": exit_code,
         "created_at": created_at,
@@ -532,7 +534,7 @@ pub(crate) fn local_job_status(
     let (validation_tool, validation_kind) = local_validation_identity(&meta);
     let stdout = record.read_log_lines("stdout.log", None, Some(MAX_LOCAL_LOG_LINES));
     let stderr = record.read_log_lines("stderr.log", None, Some(MAX_LOCAL_LOG_LINES));
-    if let Some(validation) = validation_job_projection(
+    if let Some(mut validation) = validation_job_projection(
         validation_tool,
         validation_kind,
         &status,
@@ -541,6 +543,9 @@ pub(crate) fn local_job_status(
         &stderr.0,
         stdout.3 || stderr.3,
     ) {
+        if let Some(target_id) = meta.get("validation_target_id").and_then(Value::as_str) {
+            validation["validation_target_id"] = json!(target_id);
+        }
         output["validation"] = validation;
     }
     add_job_lifecycle_fields(&mut output, &status, None, None);
@@ -805,7 +810,7 @@ pub(crate) async fn local_job_log(
         &analysis_stderr.text,
     );
     let (validation_tool, validation_kind) = local_validation_identity(&meta);
-    let validation = validation_job_projection(
+    let mut validation = validation_job_projection(
         validation_tool,
         validation_kind,
         &final_status,
@@ -814,8 +819,15 @@ pub(crate) async fn local_job_log(
         &analysis_stderr.text,
         analysis_stdout.truncated || analysis_stderr.truncated,
     );
+    if let (Some(validation), Some(target_id)) = (
+        validation.as_mut(),
+        meta.get("validation_target_id").and_then(Value::as_str),
+    ) {
+        validation["validation_target_id"] = json!(target_id);
+    }
     let mut output = json!({
         "job_id": job_id, "status": final_status, "exit_code": final_exit_code,
+        "session_id": meta.get("session_id").cloned().unwrap_or(Value::Null),
         "stdout_tail": stdout.text, "stderr_tail": stderr.text,
         "stdout_lines": stdout.total_lines, "stderr_lines": stderr.total_lines,
         "stdout_returned_lines": stdout.returned_lines,
@@ -1792,7 +1804,7 @@ impl ToolRuntime {
                         }
                         Err(_) => (String::new(), String::new(), true),
                     };
-                    if let Some(validation) = validation_job_projection(
+                    if let Some(mut validation) = validation_job_projection(
                         tool,
                         kind,
                         &status,
@@ -1801,6 +1813,11 @@ impl ToolRuntime {
                         &stderr,
                         truncated,
                     ) {
+                        if let Some(target_id) = validation_metadata
+                            .and_then(|metadata| metadata.validation_target_id.as_deref())
+                        {
+                            validation["validation_target_id"] = json!(target_id);
+                        }
                         output["validation"] = validation;
                     }
                 }
@@ -1926,7 +1943,7 @@ impl ToolRuntime {
                     .validation
                     .as_ref()
                     .map(|metadata| metadata.kind.as_str());
-                let validation = validation_job_projection(
+                let mut validation = validation_job_projection(
                     validation_tool,
                     validation_kind,
                     &job.status,
@@ -1935,6 +1952,14 @@ impl ToolRuntime {
                     &wait.analysis_stderr,
                     wait.analysis_truncated,
                 );
+                if let (Some(validation), Some(target_id)) = (
+                    validation.as_mut(),
+                    job.validation
+                        .as_ref()
+                        .and_then(|metadata| metadata.validation_target_id.as_deref()),
+                ) {
+                    validation["validation_target_id"] = json!(target_id);
+                }
                 ToolResult::ok(json!({
                     "job_id": job.job_id,
                     "status": job.status,
@@ -2116,6 +2141,70 @@ impl ToolRuntime {
             "matched_count": matched_count,
             "truncated": truncated,
         }))
+    }
+
+    pub(crate) async fn validation_job_candidates_for_sessions(
+        &self,
+        project: &str,
+        session_ids: &[String],
+        auth: Option<&AuthContext>,
+    ) -> std::collections::HashMap<String, Vec<Value>> {
+        let requested = session_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        let mut grouped = std::collections::HashMap::<String, Vec<Value>>::new();
+        if requested.is_empty() {
+            return grouped;
+        }
+        for job in self.shell_clients.list_all_jobs_for_auth(auth).await.iter() {
+            let Some(session_id) = job.session_id.as_deref() else {
+                continue;
+            };
+            if job.project_id.as_deref() == Some(project)
+                && requested.contains(session_id)
+                && job.validation.is_some()
+            {
+                grouped
+                    .entry(session_id.to_string())
+                    .or_default()
+                    .push(agent_job_summary_value(job));
+            }
+        }
+        if local_jobs_visible_to_auth(auth) {
+            let local_jobs_map = self.local_jobs.lock().await;
+            for (job_id, record) in local_jobs_map
+                .iter()
+                .filter(|(_, record)| record.is_public() && record.project == project)
+            {
+                let Some(session_id) = local_job_session_id(record) else {
+                    continue;
+                };
+                if !requested.contains(session_id.as_str()) {
+                    continue;
+                }
+                if let Some(summary) = local_job_summary_value(job_id, record, &None) {
+                    if summary.get("validation").is_some_and(Value::is_object) {
+                        grouped.entry(session_id).or_default().push(summary);
+                    }
+                }
+            }
+        }
+        for summaries in grouped.values_mut() {
+            summaries.sort_by(|a, b| {
+                b["created_at"]
+                    .as_i64()
+                    .unwrap_or(0)
+                    .cmp(&a["created_at"].as_i64().unwrap_or(0))
+                    .then_with(|| {
+                        a["job_id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .cmp(b["job_id"].as_str().unwrap_or_default())
+                    })
+            });
+        }
+        grouped
     }
 
     /// `job_tail`: bounded stdout/stderr tails for a job. Reuses the bounded

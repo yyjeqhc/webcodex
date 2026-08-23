@@ -830,6 +830,80 @@ fn same_validation_identity_success_resolves_failure_without_deleting_history() 
 }
 
 #[test]
+fn validation_job_terminal_success_is_durable_idempotent_and_resolves_prior_failure_after_restore()
+{
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let target = "target:aaaaaaaaaaaaaaaaaaaaaaaa";
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_check",
+        json!({
+            "project": "agent:eval:demo",
+            "validation_target_id": target,
+        }),
+        false,
+        json!({"exit_code": 101}),
+    );
+    assert!(store.record_validation_job_terminal(
+        &session.session_id,
+        "job_terminal_success",
+        "cargo_check",
+        Some("agent:eval:demo".to_string()),
+        target,
+        "completed",
+        Some(0),
+        Some(100),
+        Some(110),
+        Some(10),
+        None,
+    ));
+    assert!(
+        !store.record_validation_job_terminal(
+            &session.session_id,
+            "job_terminal_success",
+            "cargo_check",
+            Some("agent:eval:demo".to_string()),
+            target,
+            "completed",
+            Some(0),
+            Some(100),
+            Some(110),
+            Some(10),
+            None,
+        ),
+        "terminal materialization must be idempotent per Job"
+    );
+
+    let before_restart = store.summary(&session.session_id, None).unwrap();
+    let validation = validation_summary_for_session(&before_restart);
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["resolved_failures"]["count"], 1);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+    assert_eq!(validation["events_total"], 2);
+    assert_eq!(
+        before_restart
+            .events
+            .iter()
+            .filter(|event| event.kind == "validation_job_terminal")
+            .count(),
+        1
+    );
+
+    store.flush_persistence();
+    drop(store);
+    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let restored_summary = restored.summary(&session.session_id, None).unwrap();
+    let restored_validation = validation_summary_for_session(&restored_summary);
+    assert_eq!(restored_validation["resolved_failures"]["count"], 1);
+    assert_eq!(restored_validation["unresolved_failures"]["count"], 0);
+    assert_eq!(restored_validation["events_total"], 2);
+}
+
+#[test]
 fn structured_validation_target_resolves_equivalent_semantic_arguments() {
     let store = SessionStore::default();
     let session = store.start_session(Some("agent:eval:demo".to_string()), None);

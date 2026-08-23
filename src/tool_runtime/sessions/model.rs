@@ -49,6 +49,10 @@ pub(crate) const TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE: &str = "unexpected_
 pub(crate) const TOOL_EXPECTATION_RESULT_MISMATCH: &str = "expectation_mismatch";
 pub(crate) const TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS: &str = "unexpected_success";
 pub(crate) const TOOL_CALL_RECORDING_SESSION_ID_FIELD: &str = "recording_session_id";
+pub(crate) const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: &str = "ack_session_message_ids";
+pub(crate) const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: &str =
+    "__webcodex_stateless_ack_session_message_ids";
+pub(crate) const MAX_TOOL_CALL_ACK_MESSAGE_IDS: usize = 8;
 pub(crate) const TOOL_EXPECTED_FAILURE_FIELD: &str = "expected_failure";
 pub(crate) const TOOL_EXPECTED_FAILURE_KIND_FIELD: &str = "expected_failure_kind";
 pub(crate) const TOOL_ASSERTION_NAME_FIELD: &str = "assertion_name";
@@ -749,6 +753,7 @@ pub(crate) struct ToolCallExpectation {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ToolCallRecorderMetadata {
     pub(crate) expectation: ToolCallExpectation,
+    pub(crate) ack_session_message_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -957,6 +962,10 @@ pub(crate) struct SessionMessage {
     pub(crate) tags: Vec<String>,
     pub(crate) reply_to: Option<String>,
     #[serde(default)]
+    pub(crate) requires_ack: bool,
+    #[serde(default)]
+    pub(crate) first_ack_observed_at: Option<i64>,
+    #[serde(default)]
     pub(crate) author_session_id: Option<String>,
     pub(crate) resolved_at: Option<i64>,
     pub(crate) resolution: Option<String>,
@@ -974,6 +983,20 @@ pub(crate) struct PostSessionMessageInput {
     pub(crate) tags: Vec<String>,
     pub(crate) reply_to: Option<String>,
     pub(crate) priority: SessionMessagePriority,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SessionAckObservation {
+    pub(crate) accepted_ids: Vec<String>,
+    pub(crate) accepted_count: usize,
+    pub(crate) ignored_count: usize,
+    pub(crate) first_observed_count: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SessionAttentionSnapshot {
+    pub(crate) messages: Vec<SessionMessage>,
+    pub(crate) total_open_requires_ack: usize,
 }
 
 #[derive(Debug, Clone)]

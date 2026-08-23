@@ -15,11 +15,11 @@ use serde_json::{json, Value};
 use super::model::{
     PersistentShellEventEvidence, SessionEvent, ToolCallExpectation, ToolCallRecorderMetadata,
     MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS, SESSION_ID_PREFIX,
-    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_EXPECTATION_METADATA_FIELDS,
-    TOOL_EXPECTATION_RESULT_MATCHED, TOOL_EXPECTATION_RESULT_MISMATCH,
-    TOOL_EXPECTATION_RESULT_NONE, TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
-    TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS, TOOL_EXPECTED_FAILURE_FIELD,
-    TOOL_EXPECTED_FAILURE_KIND_FIELD,
+    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD,
+    TOOL_CALL_EXPECTATION_METADATA_FIELDS, TOOL_EXPECTATION_RESULT_MATCHED,
+    TOOL_EXPECTATION_RESULT_MISMATCH, TOOL_EXPECTATION_RESULT_NONE,
+    TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE, TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS,
+    TOOL_EXPECTED_FAILURE_FIELD, TOOL_EXPECTED_FAILURE_KIND_FIELD,
 };
 use super::util::redact_and_bound_value;
 use super::util::{bound_summary_string, validation_excerpt};
@@ -28,6 +28,18 @@ impl ToolCallRecorderMetadata {
     pub(crate) fn from_arguments(arguments: &Value) -> Self {
         Self {
             expectation: tool_call_expectation_from_arguments(arguments),
+            ack_session_message_ids: arguments
+                .as_object()
+                .and_then(|obj| obj.get(TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD))
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 }
@@ -86,6 +98,7 @@ pub(crate) fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
     for &key in TOOL_CALL_EXPECTATION_METADATA_FIELDS {
         obj.remove(key);
     }
+    obj.remove(TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD);
     Value::Object(obj)
 }
 

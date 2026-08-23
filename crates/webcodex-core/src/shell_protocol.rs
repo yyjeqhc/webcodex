@@ -2154,6 +2154,8 @@ pub struct ShellJobValidationMetadata {
     pub effective_timeout_secs: u64,
     pub sync_wait_secs: u64,
     pub adapter: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_target_id: Option<String>,
 }
 
 impl ShellJobValidationMetadata {
@@ -2163,6 +2165,12 @@ impl ShellJobValidationMetadata {
             || !self.steps[0].is_canonical()
             || self.effective_timeout_secs < 1
             || self.sync_wait_secs > self.effective_timeout_secs
+            || self.validation_target_id.as_deref().is_some_and(|value| {
+                let Some(suffix) = value.strip_prefix("target:") else {
+                    return true;
+                };
+                suffix.len() != 24 || !suffix.as_bytes().iter().all(u8::is_ascii_hexdigit)
+            })
         {
             return false;
         }
@@ -4344,6 +4352,7 @@ mod filter_canonical_tests {
             effective_timeout_secs: 1800,
             sync_wait_secs: 10,
             adapter: tool.to_string(),
+            validation_target_id: None,
         }
     }
 

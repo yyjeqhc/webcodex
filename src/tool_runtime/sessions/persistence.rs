@@ -630,6 +630,15 @@ pub(super) fn sanitize_persisted_message(
     }
     message.message = bound_chars(message.message.trim(), MAX_MESSAGE_CHARS);
     message.tags = validate_message_tags(message.tags).unwrap_or_default();
+    if message.requires_ack
+        && (message.kind != super::model::SessionMessageKind::Guidance
+            || message.priority != super::model::SessionMessagePriority::High)
+    {
+        message.requires_ack = false;
+    }
+    message.first_ack_observed_at = message
+        .first_ack_observed_at
+        .filter(|value| *value > 0 && message.requires_ack);
     message.reply_to = message.reply_to.and_then(|reply_to| {
         let reply_to = reply_to.trim().to_string();
         if reply_to.starts_with(MESSAGE_ID_PREFIX) {

@@ -242,10 +242,13 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   const fetchProjectsStart = source.indexOf("async function fetchProjects");
   const fetchProjectsEnd = source.indexOf("function effectiveProjects", fetchProjectsStart);
   assert.doesNotMatch(source.slice(fetchProjectsStart, fetchProjectsEnd), /fetchOverview\(/);
+  const selectStart = source.indexOf("function selectSession");
+  const selectEnd = source.indexOf("async function fetchSessionDetail", selectStart);
+  assert.match(source.slice(selectStart, selectEnd), /setHumanJoinSendEnabled\(false\)[\s\S]*startCollaboration/);
   const postStart = source.indexOf("async function postHumanCollaborationMessage");
   const postEnd = source.indexOf("function setRefreshBusy", postStart);
   const post = source.slice(postStart, postEnd);
-  assert.match(post, /if \(!isCurrentRuntimeCollaborationRequest\(state, request\)\)[\s\S]*return; \}[\s\S]*if \(response\?\.status === 0\)[\s\S]*return;\s*\}[\s\S]*if \(send\) send\.disabled = false;/);
+  assert.match(post, /if \(!isCurrentRuntimeCollaborationRequest\(state, request\)\) return;\s*if \(response\?\.status === 0\)[\s\S]*return;\s*\}[\s\S]*if \(send\) send\.disabled = false;/);
   assert.match(post, /Send outcome unknown\. Refresh and review retained messages before retrying\./);
   assert.match(post, /abortCollaboration\(\)[\s\S]*setRuntimeCollaborationPhase\(state, request, "paused"\)/);
   const refreshStart = source.indexOf("async function refreshAll");

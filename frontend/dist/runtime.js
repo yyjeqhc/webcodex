@@ -1053,6 +1053,7 @@ function selectSession(sessionId) {
     detailAbort = null;
     abortCollaboration();
     hideDetail();
+    setHumanJoinSendEnabled(false);
     const request = selectRuntimeWorkflowSession(state, sessionId);
     renderSessionList(sessionRows, { total: sessionRows.length, truncated: false });
     if (request)
@@ -1481,11 +1482,8 @@ async function postHumanCollaborationMessage(event) {
         reply_to: collaborationReplyTo || null,
         requires_ack: !!checkbox?.checked,
     });
-    if (!isCurrentRuntimeCollaborationRequest(state, request)) {
-        if (send)
-            send.disabled = false;
+    if (!isCurrentRuntimeCollaborationRequest(state, request))
         return;
-    }
     if (response?.status === 0) {
         abortCollaboration();
         setRuntimeCollaborationPhase(state, request, "paused");

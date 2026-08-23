@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 
+use super::super::helpers::is_safe_job_id;
 use super::super::project_instructions::ProjectInstructionsSummarySnapshot;
 use super::events::{
     exploration_tool_kind, is_valid_session_id, sanitize_failure_expectation_result,
@@ -18,8 +19,8 @@ use super::model::{
     ColdSessionRecord, DurableCurrentBinding, PersistedCurrentBindings, PersistedSessionLedger,
     PersistedSessionRecord, SessionEvent, SessionGuards, SessionLifecycle, SessionMessage,
     SessionRecord, StoredSession, DEFAULT_MAX_MESSAGES_PER_SESSION, EVENT_ID_PREFIX,
-    MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS, MAX_MESSAGE_CHARS,
-    MAX_MESSAGE_RESOLUTION_CHARS, MESSAGE_ID_PREFIX, SESSION_LEDGER_VERSION,
+    MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS, MAX_MATERIALIZED_VALIDATION_JOB_IDS,
+    MAX_MESSAGE_CHARS, MAX_MESSAGE_RESOLUTION_CHARS, MESSAGE_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::query::{is_valid_completion_id, validate_message_tags};
 use super::util::{
@@ -69,6 +70,11 @@ impl PersistedSessionRecord {
             events,
             messages,
             events_observed: record.events_observed,
+            materialized_validation_job_ids: record
+                .materialized_validation_job_ids
+                .iter()
+                .cloned()
+                .collect(),
             message_observation_revision: record.message_observation_revision,
             message_observation_floor: record.message_observation_floor,
             message_observation_revisions: record.message_observation_revisions.clone(),
@@ -87,6 +93,10 @@ impl PersistedSessionRecord {
             && self.created_at == record.created_at
             && self.updated_at == record.updated_at
             && self.events_observed == record.events_observed
+            && self
+                .materialized_validation_job_ids
+                .iter()
+                .eq(record.materialized_validation_job_ids.iter())
             && self.message_observation_revision == record.message_observation_revision
             && self.message_observation_floor == record.message_observation_floor
             && self.message_observation_revisions == record.message_observation_revisions
@@ -224,6 +234,8 @@ impl PersistedSessionRecord {
             );
             observation_floor = 0;
         }
+        let materialized_validation_job_ids =
+            sanitize_materialized_validation_job_ids(self.materialized_validation_job_ids);
         // On restore, `events_observed` is at least the count of events we just
         // retained, so a freshly-restored legacy ledger does not falsely report
         // eviction. A live ledger that exceeded the cap has the true cumulative
@@ -251,6 +263,7 @@ impl PersistedSessionRecord {
             updated_at: self.updated_at.max(self.created_at),
             events,
             events_observed: self.events_observed.max(retained_events),
+            materialized_validation_job_ids,
             messages,
             project_instructions: None,
             message_observation_revision: current_observation_revision,
@@ -258,6 +271,28 @@ impl PersistedSessionRecord {
             message_observation_revisions: observation_revisions,
         })
     }
+}
+
+fn sanitize_materialized_validation_job_ids(values: Vec<String>) -> VecDeque<String> {
+    // Canonical writers keep this exact set bounded to the authoritative Runner
+    // terminal inventory. Restore is deliberately tolerant of legacy/corrupt
+    // semantic entries: malformed or duplicate ids never become suppression
+    // authority, and an oversized list keeps only the newest valid identities.
+    let mut seen = HashSet::new();
+    let mut newest = values
+        .into_iter()
+        .rev()
+        .filter_map(|value| {
+            let trimmed = value.trim();
+            if trimmed != value || !is_safe_job_id(trimmed) || !seen.insert(value.clone()) {
+                return None;
+            }
+            Some(value)
+        })
+        .take(MAX_MATERIALIZED_VALIDATION_JOB_IDS)
+        .collect::<Vec<_>>();
+    newest.reverse();
+    newest.into()
 }
 
 // Preserve the distinction between a genuinely absent legacy field and a

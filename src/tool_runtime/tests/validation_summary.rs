@@ -331,6 +331,7 @@ fn durable_async_validation_terminal_success_resolves_same_target_without_accept
     assert!(runtime.sessions.record_validation_job_terminal(
         &session.session_id,
         "job-terminal-success",
+        &["job-terminal-success"],
         "cargo_check",
         Some(project.clone()),
         target,
@@ -345,6 +346,7 @@ fn durable_async_validation_terminal_success_resolves_same_target_without_accept
         !runtime.sessions.record_validation_job_terminal(
             &session.session_id,
             "job-terminal-success",
+            &["job-terminal-success"],
             "cargo_check",
             Some(project),
             target,

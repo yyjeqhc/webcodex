@@ -11,6 +11,7 @@ use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentResultPayload, ShellAgentResultRequest,
     ShellClientCapabilities, ShellCommandExecutionState, ShellJobValidationProgress,
 };
+use crate::tool_runtime::sessions::{SessionTransport, DEFAULT_MAX_EVENTS_PER_SESSION};
 #[cfg(unix)]
 use crate::tool_runtime::tool_inputs::ExecutionPurpose;
 use crate::tool_runtime::validation_events::validation_summary_for_session;
@@ -1440,13 +1441,18 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
         .unwrap();
 
     let before_materialize = runtime.sessions.summary(&session_id, None).unwrap();
-    let validation = runtime
-        .validation_summary_for_session_with_jobs(&before_materialize, 50, Some(&auth))
-        .await;
-    assert_eq!(validation["latest_status"], "passed");
-    assert_eq!(validation["historical_failures"]["count"], 1);
-    assert_eq!(validation["resolved_failures"]["count"], 1);
-    assert_eq!(validation["unresolved_failures"]["count"], 0);
+    // Two independent read-driven reconcilers may race on the same terminal Job.
+    // The Session-store marker check + mark + append must commit atomically.
+    let (validation_a, validation_b) = tokio::join!(
+        runtime.validation_summary_for_session_with_jobs(&before_materialize, 50, Some(&auth)),
+        runtime.validation_summary_for_session_with_jobs(&before_materialize, 50, Some(&auth)),
+    );
+    for validation in [&validation_a, &validation_b] {
+        assert_eq!(validation["latest_status"], "passed");
+        assert_eq!(validation["historical_failures"]["count"], 1);
+        assert_eq!(validation["resolved_failures"]["count"], 1);
+        assert_eq!(validation["unresolved_failures"]["count"], 0);
+    }
 
     let materialized = runtime.sessions.summary(&session_id, None).unwrap();
     let durable_validation = validation_summary_for_session(&materialized);
@@ -1461,26 +1467,50 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
                     && event.job_id.as_deref() == Some(success_job_id.as_str())
             })
             .count(),
-        1
+        1,
+        "concurrent reconciliation must append exactly one terminal evidence event"
     );
 
-    let second_projection = runtime
-        .validation_summary_for_session_with_jobs(&materialized, 50, Some(&auth))
+    // Evict that evidence from the bounded Session event FIFO without touching
+    // the authoritative Job registry. The retained Job must remain a candidate,
+    // but reconciliation must not resurrect its terminal evidence or refresh
+    // Session activity merely because a read path ran later.
+    for index in 0..=DEFAULT_MAX_EVENTS_PER_SESSION {
+        let started = runtime.sessions.record_tool_call_started(
+            Some(&session_id),
+            SessionTransport::Api,
+            "read_file",
+            &json!({"project": project, "path": format!("src/filler-{index}.rs")}),
+        );
+        runtime
+            .sessions
+            .record_tool_call_finished(started, true, &json!({}), None, None);
+    }
+    let evicted = runtime.sessions.summary(&session_id, None).unwrap();
+    assert!(evicted.events.iter().all(|event| {
+        event.kind != "validation_job_terminal"
+            || event.job_id.as_deref() != Some(success_job_id.as_str())
+    }));
+    let candidates = runtime
+        .validation_job_candidates_for_sessions(&project, &[session_id.clone()], Some(&auth))
         .await;
-    assert_eq!(second_projection["unresolved_failures"]["count"], 0);
+    assert!(candidates
+        .get(&session_id)
+        .into_iter()
+        .flatten()
+        .any(|job| job["job_id"].as_str() == Some(success_job_id.as_str())));
+    let events_total_before_repeat = evicted.events_total;
+    let updated_at_before_repeat = evicted.updated_at;
+    let _ = runtime
+        .validation_summary_for_session_with_jobs(&evicted, 50, Some(&auth))
+        .await;
     let after_repeat = runtime.sessions.summary(&session_id, None).unwrap();
-    assert_eq!(
-        after_repeat
-            .events
-            .iter()
-            .filter(|event| {
-                event.kind == "validation_job_terminal"
-                    && event.job_id.as_deref() == Some(success_job_id.as_str())
-            })
-            .count(),
-        1,
-        "repeated projection must not duplicate terminal evidence"
-    );
+    assert_eq!(after_repeat.events_total, events_total_before_repeat);
+    assert_eq!(after_repeat.updated_at, updated_at_before_repeat);
+    assert!(after_repeat.events.iter().all(|event| {
+        event.kind != "validation_job_terminal"
+            || event.job_id.as_deref() != Some(success_job_id.as_str())
+    }));
 }
 
 #[tokio::test]

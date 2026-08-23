@@ -830,13 +830,15 @@ fn same_validation_identity_success_resolves_failure_without_deleting_history() 
 }
 
 #[test]
-fn validation_job_terminal_success_is_durable_idempotent_and_resolves_prior_failure_after_restore()
-{
+fn validation_job_terminal_identity_survives_event_eviction_and_restart_without_refreshing_activity(
+) {
     let dir = tempfile::tempdir().unwrap();
     let ledger = dir.path().join("sessions.json");
-    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let store = SessionStore::with_persistence(&ledger, 10, 4);
     let session = store.start_session(Some("agent:eval:demo".to_string()), None);
     let target = "target:aaaaaaaaaaaaaaaaaaaaaaaa";
+    let job_id = "job_terminal_success";
+    let retained = [job_id];
     record_finished_tool(
         &store,
         &session.session_id,
@@ -848,44 +850,34 @@ fn validation_job_terminal_success_is_durable_idempotent_and_resolves_prior_fail
         false,
         json!({"exit_code": 101}),
     );
+    let before_materialize = store.summary(&session.session_id, None).unwrap();
+    let authoritative_finished_at = before_materialize.updated_at;
+    // Force reconciliation wall-clock time into a later second. Synthetic Job
+    // terminal evidence must still use the authoritative execution timestamp.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     assert!(store.record_validation_job_terminal(
         &session.session_id,
-        "job_terminal_success",
+        job_id,
+        &retained,
         "cargo_check",
         Some("agent:eval:demo".to_string()),
         target,
         "completed",
         Some(0),
-        Some(100),
-        Some(110),
-        Some(10),
+        Some(authoritative_finished_at.saturating_sub(1)),
+        Some(authoritative_finished_at),
+        Some(1000),
         None,
     ));
-    assert!(
-        !store.record_validation_job_terminal(
-            &session.session_id,
-            "job_terminal_success",
-            "cargo_check",
-            Some("agent:eval:demo".to_string()),
-            target,
-            "completed",
-            Some(0),
-            Some(100),
-            Some(110),
-            Some(10),
-            None,
-        ),
-        "terminal materialization must be idempotent per Job"
-    );
 
-    let before_restart = store.summary(&session.session_id, None).unwrap();
-    let validation = validation_summary_for_session(&before_restart);
+    let materialized = store.summary(&session.session_id, None).unwrap();
+    assert_eq!(materialized.updated_at, authoritative_finished_at);
+    let validation = validation_summary_for_session(&materialized);
     assert_eq!(validation["historical_failures"]["count"], 1);
     assert_eq!(validation["resolved_failures"]["count"], 1);
     assert_eq!(validation["unresolved_failures"]["count"], 0);
-    assert_eq!(validation["events_total"], 2);
     assert_eq!(
-        before_restart
+        materialized
             .events
             .iter()
             .filter(|event| event.kind == "validation_job_terminal")
@@ -893,14 +885,158 @@ fn validation_job_terminal_success_is_durable_idempotent_and_resolves_prior_fail
         1
     );
 
+    // Push well beyond this test store's four-event retention cap. The durable
+    // materialization identity must outlive the evidence event itself while the
+    // authoritative Job can still be a reconciliation candidate.
+    for index in 0..3 {
+        record_finished_tool(
+            &store,
+            &session.session_id,
+            "read_file",
+            json!({"project": "agent:eval:demo", "path": format!("src/{index}.rs")}),
+            true,
+            json!({}),
+        );
+    }
+    let after_eviction = store.summary(&session.session_id, None).unwrap();
+    assert!(after_eviction
+        .events
+        .iter()
+        .all(|event| event.kind != "validation_job_terminal"));
+    let events_total_before_repeat = after_eviction.events_total;
+    let updated_at_before_repeat = after_eviction.updated_at;
+    assert!(
+        !store.record_validation_job_terminal(
+            &session.session_id,
+            job_id,
+            &retained,
+            "cargo_check",
+            Some("agent:eval:demo".to_string()),
+            target,
+            "completed",
+            Some(0),
+            Some(authoritative_finished_at.saturating_sub(1)),
+            Some(authoritative_finished_at),
+            Some(1000),
+            None,
+        ),
+        "FIFO eviction must not make an authoritative terminal Job materializable again"
+    );
+    let after_repeat = store.summary(&session.session_id, None).unwrap();
+    assert_eq!(after_repeat.events_total, events_total_before_repeat);
+    assert_eq!(after_repeat.updated_at, updated_at_before_repeat);
+    assert!(after_repeat
+        .events
+        .iter()
+        .all(|event| event.kind != "validation_job_terminal"));
+
     store.flush_persistence();
     drop(store);
-    let restored = SessionStore::with_persistence(&ledger, 10, 50);
-    let restored_summary = restored.summary(&session.session_id, None).unwrap();
-    let restored_validation = validation_summary_for_session(&restored_summary);
-    assert_eq!(restored_validation["resolved_failures"]["count"], 1);
-    assert_eq!(restored_validation["unresolved_failures"]["count"], 0);
-    assert_eq!(restored_validation["events_total"], 2);
+    let restored = SessionStore::with_persistence(&ledger, 10, 4);
+    let restored_before_repeat = restored.summary(&session.session_id, None).unwrap();
+    assert!(restored_before_repeat
+        .events
+        .iter()
+        .all(|event| event.kind != "validation_job_terminal"));
+    assert!(
+        !restored.record_validation_job_terminal(
+            &session.session_id,
+            job_id,
+            &retained,
+            "cargo_check",
+            Some("agent:eval:demo".to_string()),
+            target,
+            "completed",
+            Some(0),
+            Some(authoritative_finished_at.saturating_sub(1)),
+            Some(authoritative_finished_at),
+            Some(1000),
+            None,
+        ),
+        "restart within authoritative Job retention must preserve idempotence"
+    );
+    let restored_after_repeat = restored.summary(&session.session_id, None).unwrap();
+    assert_eq!(
+        restored_after_repeat.events_total,
+        restored_before_repeat.events_total
+    );
+    assert_eq!(
+        restored_after_repeat.updated_at,
+        restored_before_repeat.updated_at
+    );
+}
+
+#[test]
+fn persisted_validation_job_materialization_ids_are_additive_sanitized_and_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 10);
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    store.flush_persistence();
+    drop(store);
+
+    let mut ledger_json: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let record = ledger_json["sessions"][0].as_object_mut().unwrap();
+    // Missing field remains valid for pre-feature ledgers.
+    record.remove("materialized_validation_job_ids");
+    std::fs::write(&ledger, serde_json::to_vec(&ledger_json).unwrap()).unwrap();
+    let legacy = SessionStore::with_persistence(&ledger, 10, 10);
+    assert!(legacy.summary(&session.session_id, None).is_some());
+    legacy.flush_persistence();
+    drop(legacy);
+
+    let mut ledger_json: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let record = ledger_json["sessions"][0].as_object_mut().unwrap();
+    let mut ids = (0..70)
+        .map(|index| Value::String(format!("restored-job-{index:02}")))
+        .collect::<Vec<_>>();
+    ids.extend([
+        Value::String("bad/id".to_string()),
+        Value::String(" padded-job".to_string()),
+        Value::String("duplicate-job".to_string()),
+        Value::String("duplicate-job".to_string()),
+    ]);
+    record.insert(
+        "materialized_validation_job_ids".to_string(),
+        Value::Array(ids),
+    );
+    std::fs::write(&ledger, serde_json::to_vec(&ledger_json).unwrap()).unwrap();
+
+    let restored = SessionStore::with_persistence(&ledger, 10, 10);
+    record_finished_tool(
+        &restored,
+        &session.session_id,
+        "read_file",
+        json!({"project": "agent:eval:demo", "path": "src/sanitize.rs"}),
+        true,
+        json!({}),
+    );
+    restored.flush_persistence();
+    drop(restored);
+    let canonical: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let ids = canonical["sessions"][0]["materialized_validation_job_ids"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        ids.len(),
+        crate::shell_protocol::JOB_INVENTORY_MAX_TERMINAL_JOBS
+    );
+    assert!(ids.iter().all(|value| {
+        value
+            .as_str()
+            .is_some_and(crate::tool_runtime::helpers::is_safe_job_id)
+    }));
+    assert_eq!(ids.first().and_then(Value::as_str), Some("restored-job-07"));
+    assert_eq!(ids.last().and_then(Value::as_str), Some("duplicate-job"));
+    assert_eq!(
+        ids.iter()
+            .filter(|value| value.as_str() == Some("duplicate-job"))
+            .count(),
+        1
+    );
 }
 
 #[test]

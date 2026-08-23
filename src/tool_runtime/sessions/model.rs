@@ -16,6 +16,13 @@ pub(super) const EVENT_ID_PREFIX: &str = "evt_";
 pub(super) const CALL_ID_PREFIX: &str = "wc_call_";
 pub(crate) const DEFAULT_MAX_SESSIONS: usize = 100;
 pub(crate) const DEFAULT_MAX_EVENTS_PER_SESSION: usize = 200;
+/// Exact terminal-validation Job identities retained per Workflow Session. This
+/// matches the Runner's authoritative terminal Job inventory bound: while a
+/// terminal Job can still be a reconciliation candidate, one of these bounded
+/// identities can represent it without turning the Session ledger into an
+/// unbounded Job-id history.
+pub(super) const MAX_MATERIALIZED_VALIDATION_JOB_IDS: usize =
+    crate::shell_protocol::JOB_INVENTORY_MAX_TERMINAL_JOBS;
 /// Maximum project-relative exploration paths retained on one ledger event.
 /// This covers the largest currently supported structured search/LSP result
 /// while keeping every event independently bounded.
@@ -318,6 +325,10 @@ pub(super) struct SessionRecord {
     /// than are retained now". The persisted counterpart carries the additive
     /// serde default; the in-memory record is always constructed explicitly.
     pub(super) events_observed: u64,
+    /// Bounded durable exact identities for terminal structured-validation Jobs
+    /// already synthesized into this Session. Independent of the retained event
+    /// deque so event FIFO eviction cannot resurrect an authoritative Job.
+    pub(super) materialized_validation_job_ids: VecDeque<String>,
     pub(super) messages: VecDeque<Arc<SessionMessage>>,
     /// Durable Session-local monotonic message-state revision. This is never
     /// exposed as a public cursor; callers receive an opaque Session-bound token.
@@ -684,6 +695,10 @@ pub(super) struct PersistedSessionRecord {
     /// persisted events" for legacy compatibility.
     #[serde(default)]
     pub(super) events_observed: u64,
+    /// Additive ledger-v1 field. Exact identities are sanitized and bounded on
+    /// restore; old ledgers deserialize to an empty set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) materialized_validation_job_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]

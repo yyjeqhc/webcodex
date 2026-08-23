@@ -254,6 +254,24 @@ impl ToolRuntime {
         jobs: &[Value],
         auth: Option<&AuthContext>,
     ) {
+        let retained_terminal_job_ids = jobs
+            .iter()
+            .filter(|job| {
+                matches!(
+                    job.get("status").and_then(Value::as_str),
+                    Some(
+                        "completed"
+                            | "failed"
+                            | "timeout"
+                            | "timed_out"
+                            | "stopped"
+                            | "cancelled"
+                            | "lost"
+                    )
+                )
+            })
+            .filter_map(|job| job.get("job_id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
         for job in jobs {
             let Some(job_id) = job.get("job_id").and_then(Value::as_str) else {
                 continue;
@@ -353,6 +371,7 @@ impl ToolRuntime {
             self.sessions.record_validation_job_terminal(
                 session_id,
                 job_id,
+                &retained_terminal_job_ids,
                 tool_name,
                 Some(project.to_string()),
                 validation_target_id,

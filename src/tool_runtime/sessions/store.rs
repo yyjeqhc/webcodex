@@ -37,8 +37,8 @@ use super::model::{
     StoredSession, ToolCallRecorderMetadata, ToolCallStart, ToolEffectEventEvidence,
     CALL_ID_PREFIX, DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION,
     DEFAULT_MAX_SESSIONS, DEFAULT_SUMMARY_LIMIT, DURABLE_CURRENT_BINDINGS_PER_SESSION,
-    EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX,
-    SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
+    EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_MATERIALIZED_VALIDATION_JOB_IDS,
+    MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::persistence::{
     cold_session_from_persisted, load_persisted_ledger, materialize_cold_session,
@@ -554,6 +554,7 @@ impl SessionStore {
             messages: VecDeque::new(),
             events: VecDeque::new(),
             events_observed: 0,
+            materialized_validation_job_ids: VecDeque::new(),
             message_observation_revision: 0,
             message_observation_floor: 0,
             message_observation_revisions: Default::default(),
@@ -843,6 +844,7 @@ impl SessionStore {
                     messages: VecDeque::new(),
                     events: VecDeque::from([Arc::new(event)]),
                     events_observed: 1,
+                    materialized_validation_job_ids: VecDeque::new(),
                     message_observation_revision: 0,
                     message_observation_floor: 0,
                     message_observation_revisions: Default::default(),
@@ -1548,6 +1550,7 @@ impl SessionStore {
         &self,
         session_id: &str,
         job_id: &str,
+        retained_terminal_job_ids: &[&str],
         tool_name: &str,
         project: Option<String>,
         validation_target_id: &str,
@@ -1565,8 +1568,20 @@ impl SessionStore {
             .is_some_and(|suffix| {
                 suffix.len() == 24 && suffix.as_bytes().iter().all(u8::is_ascii_hexdigit)
             });
+        let Some(timestamp) = finished_at else {
+            // Reconciliation must never substitute wall-clock read time for
+            // authoritative execution activity.
+            return false;
+        };
         if !is_valid_session_id(session_id)
-            || job_id.is_empty()
+            || !super::super::helpers::is_safe_job_id(job_id)
+            || retained_terminal_job_ids.len() > MAX_MATERIALIZED_VALIDATION_JOB_IDS
+            || retained_terminal_job_ids.iter().any(|candidate| {
+                *candidate != candidate.trim() || !super::super::helpers::is_safe_job_id(candidate)
+            })
+            || !retained_terminal_job_ids
+                .iter()
+                .any(|candidate| *candidate == job_id)
             || !matches!(
                 tool_name,
                 "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test"
@@ -1579,23 +1594,6 @@ impl SessionStore {
         {
             return false;
         }
-        let Some(session_project) = self.session_project(session_id) else {
-            return false;
-        };
-        if project.as_deref() != session_project.as_deref() {
-            return false;
-        }
-        let already_recorded = self
-            .with_record_for_query(session_id, |record, _| {
-                record.events.iter().any(|event| {
-                    event.kind == "validation_job_terminal"
-                        && event.job_id.as_deref() == Some(job_id)
-                })
-            })
-            .unwrap_or(false);
-        if already_recorded {
-            return false;
-        }
         let succeeded = job_status == "completed" && exit_code == Some(0);
         let failure_kind = (!succeeded).then(|| match job_status {
             "timeout" | "timed_out" => "timeout".to_string(),
@@ -1604,8 +1602,7 @@ impl SessionStore {
             _ => "command_exit_nonzero".to_string(),
         });
         let classification = SessionToolClassification::for_tool(tool_name);
-        let timestamp = finished_at.unwrap_or_else(now_ts);
-        self.push_event(SessionEvent {
+        let event = SessionEvent {
             event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
             call_id: None,
             session_id: session_id.to_string(),
@@ -1614,7 +1611,7 @@ impl SessionStore {
             transport: "job_terminal".to_string(),
             tool_name: tool_name.to_string(),
             project: project.clone(),
-            resolved_project: project,
+            resolved_project: project.clone(),
             risk_class: classification.risk_class.to_string(),
             read_like: classification.read_like,
             write_like: classification.write_like,
@@ -1660,7 +1657,105 @@ impl SessionStore {
             execution_context: None,
             previous_execution_context: None,
             execution_context_changed: None,
-        });
+        };
+
+        let (cold, hot_closed, recorded) = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            let max_events = inner.max_events_per_session;
+            let Some(stored) = inner.sessions.get_mut(session_id) else {
+                return false;
+            };
+            match stored {
+                StoredSession::Hot(record) => {
+                    let recorded = Self::append_validation_job_terminal_to_record(
+                        record,
+                        job_id,
+                        retained_terminal_job_ids,
+                        project.as_deref(),
+                        &event,
+                        timestamp,
+                        max_events,
+                    );
+                    let hot_closed = recorded && !record.lifecycle.allows_mutation();
+                    (None, hot_closed, recorded)
+                }
+                StoredSession::Cold(record) => (Some(record.clone()), false, false),
+            }
+        };
+        let recorded = match cold {
+            Some(cold) => {
+                self.rewrite_cold_record(session_id, cold, false, |record, max_events| {
+                    Self::append_validation_job_terminal_to_record(
+                        record,
+                        job_id,
+                        retained_terminal_job_ids,
+                        project.as_deref(),
+                        &event,
+                        timestamp,
+                        max_events,
+                    )
+                })
+            }
+            None => recorded,
+        };
+        if !recorded {
+            return false;
+        }
+        if hot_closed {
+            self.coldify_closed_session(session_id);
+        }
+        self.persist_after_mutation();
+        true
+    }
+
+    fn append_validation_job_terminal_to_record(
+        record: &mut SessionRecord,
+        job_id: &str,
+        retained_terminal_job_ids: &[&str],
+        project: Option<&str>,
+        event: &SessionEvent,
+        timestamp: i64,
+        max_events: usize,
+    ) -> bool {
+        if record.project.as_deref() != project
+            || record
+                .materialized_validation_job_ids
+                .iter()
+                .any(|materialized| materialized == job_id)
+        {
+            return false;
+        }
+
+        // The Runner can retain at most 64 authoritative terminal Jobs. Keep an
+        // exact marker for every Job still present in this reconciliation snapshot;
+        // if stale markers fill the bound, discard one that the authoritative
+        // snapshot can no longer name before inserting the new identity.
+        while record.materialized_validation_job_ids.len() >= MAX_MATERIALIZED_VALIDATION_JOB_IDS {
+            let Some(stale_index) =
+                record
+                    .materialized_validation_job_ids
+                    .iter()
+                    .position(|materialized| {
+                        !retained_terminal_job_ids
+                            .iter()
+                            .any(|candidate| *candidate == materialized.as_str())
+                    })
+            else {
+                // A complete valid terminal snapshot cannot name more than the
+                // bound. Fail closed rather than evicting a still-retained Job.
+                return false;
+            };
+            record.materialized_validation_job_ids.remove(stale_index);
+        }
+        record
+            .materialized_validation_job_ids
+            .push_back(job_id.to_string());
+        record.updated_at = record.updated_at.max(timestamp);
+        record.events.push_back(Arc::new(event.clone()));
+        record.events_observed = record.events_observed.saturating_add(1);
+        while record.events.len() > max_events {
+            record.events.pop_front();
+        }
         true
     }
 

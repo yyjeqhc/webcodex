@@ -41,6 +41,9 @@ Product direction: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 - Implementation ownership and independent adversarial review are separate passes. In an implementation-owner pass, prioritize a complete authoritative vertical slice and strong first delivery within the current contract; resolve known correctness issues, including concrete authority/identity boundaries created by the feature, but do not fragment the implementation around speculative reviewer concerns. A later review pass independently challenges the resulting design and implementation.
 - Keep only the interfaces actually affected by the change consistent. Do not touch or revalidate unrelated projections merely because they exist.
 - Add focused tests for changed behavior when practical. Update documentation when public behavior or operations change.
+- When a subsystem already has a dedicated `tests/` module tree, put ordinary new tests there instead of growing production facade files. Keep inline `#[cfg(test)]` blocks small and tightly coupled to private implementation helpers; process, network, and integration fixtures belong in dedicated test modules.
+- Do not grow one test file into a multi-domain catch-all. When an already-large test module needs coverage for a distinct lifecycle or contract domain, create or reuse a domain-specific test module and split by canonical ownership, not arbitrary line-count chunks.
+- In async tests, required readiness must use a `wait_*` path with one absolute deadline that partial progress never resets. `probe_*` helpers are only for observations where immediate absence is valid or for one iteration inside an already-owned outer deadline; never use a probe when absence means test failure.
 - Ask only when required information cannot be discovered, instructions materially conflict, or proceeding could destroy work. Otherwise continue and report any material deviation.
 
 ## 4. Validate only changed behavior

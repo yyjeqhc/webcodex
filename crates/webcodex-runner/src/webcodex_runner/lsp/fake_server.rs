@@ -1,6 +1,7 @@
-// Standalone Rust fake LSP server used by `tests.rs`. The test suite compiles
-// this file directly with rustc so it never depends on rust-analyzer or a
-// scripting runtime and never becomes a production binary target.
+// Standalone Rust fake LSP server used by the lifecycle and navigation tests.
+// The test suite compiles this file directly with rustc so it never depends on
+// a real language server or scripting runtime and never becomes a production
+// binary target.
 
 use std::env;
 use std::fs::{self, OpenOptions};
@@ -248,6 +249,12 @@ fn run() -> io::Result<()> {
                 "call_hierarchy_shared_deadline" if method == "callHierarchy/incomingCalls" => {
                     thread::sleep(Duration::from_millis(1600));
                     write_result(&mut writer, id, method, &body)?;
+                    if let Some(marker) = &marker {
+                        append_marker(
+                            marker,
+                            "hierarchy-complete:callHierarchy/incomingCalls\n",
+                        )?;
+                    }
                 }
                 "call_hierarchy_method_unsupported"
                     if method == "textDocument/prepareCallHierarchy"

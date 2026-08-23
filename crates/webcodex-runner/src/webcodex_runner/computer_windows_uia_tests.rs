@@ -411,6 +411,33 @@ $form.Add_Shown({ $form.Activate(); $button.Focus() })
             .expect("launch private WinForms foreground probe");
         Self { child }
     }
+
+    fn wait_for_window(&mut self, title: &str, context: &str) -> PlatformWindow {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = self
+                .child
+                .try_wait()
+                .unwrap_or_else(|error| panic!("query {context} process: {error}"))
+            {
+                panic!("{context} exited before discovery: {status}");
+            }
+            if let Some(candidate) = platform::list_windows(4096)
+                .unwrap_or_else(|error| panic!("list Windows windows for {context}: {error}"))
+                .into_iter()
+                .find(|candidate| candidate.title == title)
+            {
+                return candidate;
+            }
+            let now = Instant::now();
+            assert!(now < deadline, "timed out discovering {context}");
+            thread::sleep(
+                deadline
+                    .saturating_duration_since(now)
+                    .min(Duration::from_millis(20)),
+            );
+        }
+    }
 }
 
 impl Drop for WindowsControlFixture {
@@ -664,25 +691,10 @@ fn computer_windows_window_activation_live_smoke() {
 #[ignore = "requires an interactive Windows desktop; creates and closes a private WinForms control fixture"]
 fn computer_windows_control_fixture_live_smoke() {
     let mut fixture = WindowsControlFixture::start();
-    let candidate = (0..500)
-        .find_map(|_| {
-            if let Some(status) = fixture
-                .child
-                .try_wait()
-                .expect("query private WinForms fixture process")
-            {
-                panic!("private WinForms fixture exited before discovery: {status}");
-            }
-            let candidate = platform::list_windows(4096)
-                .expect("list Windows windows for control fixture")
-                .into_iter()
-                .find(|candidate| candidate.title == WINDOWS_CONTROL_FIXTURE_TITLE);
-            if candidate.is_none() {
-                thread::sleep(Duration::from_millis(20));
-            }
-            candidate
-        })
-        .expect("discover private WinForms control fixture");
+    let candidate = fixture.wait_for_window(
+        WINDOWS_CONTROL_FIXTURE_TITLE,
+        "private WinForms control fixture",
+    );
     let record = surface_record(candidate);
     let activation = platform::activate_window("surface_windows_control_fixture_activate", &record)
         .expect("activate private WinForms control fixture");
@@ -812,25 +824,10 @@ fn computer_windows_control_fixture_live_smoke() {
 #[ignore = "requires an interactive Windows desktop; creates and closes a private scrollable WinForms fixture"]
 fn computer_windows_scroll_to_element_fixture_live_smoke() {
     let mut fixture = WindowsControlFixture::start();
-    let candidate = (0..500)
-        .find_map(|_| {
-            if let Some(status) = fixture
-                .child
-                .try_wait()
-                .expect("query private WinForms scroll fixture process")
-            {
-                panic!("private WinForms scroll fixture exited before discovery: {status}");
-            }
-            let candidate = platform::list_windows(4096)
-                .expect("list Windows windows for scroll fixture")
-                .into_iter()
-                .find(|candidate| candidate.title == WINDOWS_CONTROL_FIXTURE_TITLE);
-            if candidate.is_none() {
-                thread::sleep(Duration::from_millis(20));
-            }
-            candidate
-        })
-        .expect("discover private WinForms scroll fixture");
+    let candidate = fixture.wait_for_window(
+        WINDOWS_CONTROL_FIXTURE_TITLE,
+        "private WinForms scroll fixture",
+    );
     let record = surface_record(candidate);
     platform::activate_window("surface_windows_scroll_fixture_activate", &record)
         .expect("activate private WinForms scroll fixture");
@@ -904,25 +901,10 @@ fn computer_windows_scroll_to_element_fixture_live_smoke() {
 #[ignore = "requires an interactive Windows desktop; creates and closes only private WinForms key-input fixtures"]
 fn computer_windows_key_input_fixture_live_smoke() {
     let mut fixture = WindowsControlFixture::start();
-    let candidate = (0..500)
-        .find_map(|_| {
-            if let Some(status) = fixture
-                .child
-                .try_wait()
-                .expect("query private WinForms key-input fixture process")
-            {
-                panic!("private WinForms key-input fixture exited before discovery: {status}");
-            }
-            let candidate = platform::list_windows(4096)
-                .expect("list Windows windows for key-input fixture")
-                .into_iter()
-                .find(|candidate| candidate.title == WINDOWS_CONTROL_FIXTURE_TITLE);
-            if candidate.is_none() {
-                thread::sleep(Duration::from_millis(20));
-            }
-            candidate
-        })
-        .expect("discover private WinForms key-input fixture");
+    let candidate = fixture.wait_for_window(
+        WINDOWS_CONTROL_FIXTURE_TITLE,
+        "private WinForms key-input fixture",
+    );
     let record = surface_record(candidate);
     let hwnd = platform::win_hwnd(record.native_id).expect("resolve key fixture HWND");
     let foreground_deadline = Instant::now() + Duration::from_secs(2);
@@ -1073,25 +1055,8 @@ fn computer_windows_key_input_fixture_live_smoke() {
     assert!(protected.starts_with("permission_denied:"), "{protected}");
 
     let mut foreground_probe = WindowsControlFixture::start_foreground_probe();
-    let probe_candidate = (0..500)
-        .find_map(|_| {
-            if let Some(status) = foreground_probe
-                .child
-                .try_wait()
-                .expect("query private foreground probe process")
-            {
-                panic!("private foreground probe exited before discovery: {status}");
-            }
-            let candidate = platform::list_windows(4096)
-                .expect("list Windows windows for foreground probe")
-                .into_iter()
-                .find(|candidate| candidate.title == WINDOWS_FOREGROUND_PROBE_TITLE);
-            if candidate.is_none() {
-                thread::sleep(Duration::from_millis(20));
-            }
-            candidate
-        })
-        .expect("discover private foreground probe");
+    let probe_candidate = foreground_probe
+        .wait_for_window(WINDOWS_FOREGROUND_PROBE_TITLE, "private foreground probe");
     let probe_record = surface_record(probe_candidate);
     let probe_hwnd =
         platform::win_hwnd(probe_record.native_id).expect("resolve foreground probe HWND");
@@ -1118,25 +1083,10 @@ fn computer_windows_key_input_fixture_live_smoke() {
 #[ignore = "requires an interactive Windows desktop; creates and replaces indistinguishable private WinForms controls"]
 fn computer_windows_uia_stale_identity_rejects_indistinguishable_replacement_live() {
     let mut fixture = WindowsControlFixture::start();
-    let candidate = (0..500)
-        .find_map(|_| {
-            if let Some(status) = fixture
-                .child
-                .try_wait()
-                .expect("query private WinForms fixture process")
-            {
-                panic!("private WinForms fixture exited before discovery: {status}");
-            }
-            let candidate = platform::list_windows(4096)
-                .expect("list Windows windows for identity fixture")
-                .into_iter()
-                .find(|candidate| candidate.title == WINDOWS_CONTROL_FIXTURE_TITLE);
-            if candidate.is_none() {
-                thread::sleep(Duration::from_millis(20));
-            }
-            candidate
-        })
-        .expect("discover private WinForms identity fixture");
+    let candidate = fixture.wait_for_window(
+        WINDOWS_CONTROL_FIXTURE_TITLE,
+        "private WinForms identity fixture",
+    );
     let record = surface_record(candidate);
     platform::activate_window("surface_windows_identity_fixture_activate", &record)
         .expect("activate private WinForms identity fixture");

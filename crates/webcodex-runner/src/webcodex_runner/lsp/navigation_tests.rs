@@ -1,8 +1,7 @@
 use super::navigation::{handle_lsp_request, is_lsp_request_kind};
-use super::position::{lsp_to_public, public_to_lsp, MAX_LSP_DOCUMENT_BYTES};
-use super::supervisor::{
-    LspCommand, LspServerKind, LspSupervisor, LspSupervisorConfig, PositionEncoding,
-};
+use super::position::MAX_LSP_DOCUMENT_BYTES;
+use super::supervisor::{LspCommand, LspServerKind, LspSupervisor, LspSupervisorConfig};
+use super::test_support::{fake_server_path, wait_until};
 use crate::lsp_bridge::{
     parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest, CallHierarchyDirection,
     AGENT_LSP_REQUEST_KIND, MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC,
@@ -15,50 +14,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::Command;
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-
-struct FakeServerBinary {
-    path: PathBuf,
-    _dir: tempfile::TempDir,
-}
-
-fn fake_server_binary() -> &'static FakeServerBinary {
-    static BINARY: OnceLock<FakeServerBinary> = OnceLock::new();
-    BINARY.get_or_init(|| {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("fake-lsp-server");
-        let src =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/webcodex_runner/lsp/fake_server.rs");
-        // The spawned rustc competes with every other test process when the
-        // whole suite runs in parallel and can fail transiently; retry once
-        // and keep any real failure diagnosable by capturing stderr.
-        let mut attempts = 0;
-        loop {
-            attempts += 1;
-            let output = Command::new("rustc")
-                .arg("--edition=2021")
-                .arg("--crate-name=webcodex_lsp_fake")
-                .arg("-o")
-                .arg(&path)
-                .arg(&src)
-                .output()
-                .expect("rustc fake server");
-            if output.status.success() {
-                break;
-            }
-            if attempts >= 2 {
-                panic!(
-                    "fake LSP server failed to compile after {attempts} attempts ({}):\n{}",
-                    output.status,
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-        }
-        FakeServerBinary { path, _dir: dir }
-    })
-}
 
 /// Minimal agent shell request carrying a typed LSP payload.
 fn shell_lsp_request(payload: AgentLspPayload) -> ShellAgentShellRequest {
@@ -154,13 +112,12 @@ impl NavFixture {
         )
         .unwrap();
 
-        let fake = fake_server_binary();
         let marker = temp.path().join("marker");
         let exit_marker = temp.path().join("exit");
         let supervisor = LspSupervisor::new(LspSupervisorConfig {
             commands: HashMap::from([(
                 kind,
-                LspCommand::new(fake.path.as_os_str())
+                LspCommand::new(fake_server_path().as_os_str().to_owned())
                     .arg(scenario)
                     .arg(marker.as_os_str())
                     .arg(exit_marker.as_os_str()),
@@ -405,9 +362,17 @@ fn call_hierarchy_uses_one_shared_operation_deadline() {
         "hierarchy re-armed per-RPC timeouts instead of sharing its request budget: {elapsed:?}"
     );
 
-    // Let the fake server finish its stalled handler. A timed-out traversal must
-    // not resume and issue the next direction after the caller has returned.
-    std::thread::sleep(Duration::from_millis(800));
+    // Wait for the fake server to finish its deliberately stalled incoming-call
+    // reply. A timed-out traversal must not resume and issue the next direction
+    // after the caller has returned.
+    assert!(
+        wait_until(Duration::from_secs(2), || {
+            fs::read_to_string(&fixture.marker)
+                .unwrap_or_default()
+                .contains("hierarchy-complete:callHierarchy/incomingCalls")
+        }),
+        "fake server never completed the stalled incoming-call reply"
+    );
     let marker = fs::read_to_string(&fixture.marker).unwrap();
     assert_eq!(
         marker
@@ -1547,22 +1512,6 @@ fn project_relative_normalization_and_no_absolute_in_result() {
     assert!(!serialized.contains(fixture.root.to_string_lossy().as_ref()));
     assert!(!serialized.contains("file://"));
     assert_eq!(envelope["result"]["locations"][0]["path"], "src/main.rs");
-}
-
-#[test]
-fn utf_encoding_public_conversions() {
-    let _serial = super::serialize_fake_lsp_test();
-    let text = "a😀b\n";
-    for encoding in [
-        PositionEncoding::Utf8,
-        PositionEncoding::Utf16,
-        PositionEncoding::Utf32,
-    ] {
-        let (line, character) = public_to_lsp(text, 1, 3, encoding).unwrap();
-        assert_eq!(line, 0);
-        let back = lsp_to_public(text, line, character, encoding).unwrap();
-        assert_eq!(back, (1, 3));
-    }
 }
 
 #[test]

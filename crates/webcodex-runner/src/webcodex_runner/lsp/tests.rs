@@ -1,61 +1,19 @@
+use super::super::test_support::{fake_server_path, wait_until};
 use super::*;
 use serde_json::{json, Value};
 use std::fs;
 #[cfg(target_os = "linux")]
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Barrier, OnceLock, Weak};
+use std::sync::{mpsc, Arc, Barrier};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
-
-static FAKE_SERVER: OnceLock<Mutex<Weak<FakeServerBinary>>> = OnceLock::new();
-
-struct FakeServerBinary {
-    _temp: TempDir,
-    path: PathBuf,
-}
-
-fn fake_server_binary() -> Arc<FakeServerBinary> {
-    let cache = FAKE_SERVER.get_or_init(|| Mutex::new(Weak::new()));
-    let mut cached = cache.lock().unwrap();
-    if let Some(binary) = cached.upgrade() {
-        return binary;
-    }
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source = manifest.join("src/webcodex_runner/lsp/fake_server.rs");
-    let temp = tempfile::tempdir().unwrap();
-    let output = temp
-        .path()
-        .join(format!("webcodex-lsp-fake{}", env::consts::EXE_SUFFIX));
-    let rustc = env::var_os("RUSTC").unwrap_or_else(|| OsString::from("rustc"));
-    let result = Command::new(rustc)
-        .arg("--edition=2021")
-        .arg("--crate-name=webcodex_lsp_fake")
-        .arg(&source)
-        .arg("-o")
-        .arg(&output)
-        .output()
-        .expect("run rustc for fake LSP server");
-    assert!(
-        result.status.success(),
-        "fake LSP server compilation failed: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    let binary = Arc::new(FakeServerBinary {
-        _temp: temp,
-        path: output,
-    });
-    *cached = Arc::downgrade(&binary);
-    binary
-}
 
 struct Fixture {
     // Drop the supervisor before the temporary directory so the fake server
     // can persist its graceful-exit marker during supervisor Drop.
     supervisor: LspSupervisor,
-    _fake: Arc<FakeServerBinary>,
     _temp: TempDir,
     root: PathBuf,
     marker: PathBuf,
@@ -101,8 +59,7 @@ impl Fixture {
         fs::create_dir(&root).unwrap();
         let marker = temp.path().join("starts.marker");
         let exit_marker = temp.path().join("exit.marker");
-        let fake = fake_server_binary();
-        let command = LspCommand::new(fake.path.clone())
+        let command = LspCommand::new(fake_server_path().as_os_str().to_owned())
             .arg(scenario)
             .arg(marker.as_os_str())
             .arg(exit_marker.as_os_str())
@@ -119,7 +76,6 @@ impl Fixture {
         });
         Self {
             supervisor,
-            _fake: fake,
             _temp: temp,
             root,
             marker,
@@ -153,17 +109,6 @@ impl Fixture {
             .filter_map(|pid| pid.parse().ok())
             .collect()
     }
-}
-
-fn wait_until(timeout: Duration, condition: impl Fn() -> bool) -> bool {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if condition() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    condition()
 }
 
 #[test]
@@ -1031,8 +976,7 @@ fn captured_initialize_options(kind: LspServerKind) -> Value {
     fs::create_dir(&root).unwrap();
     let marker = temp.path().join("starts.marker");
     let exit_marker = temp.path().join("exit.marker");
-    let fake = fake_server_binary();
-    let command = LspCommand::new(fake.path.clone())
+    let command = LspCommand::new(fake_server_path().as_os_str().to_owned())
         .arg("normal")
         .arg(marker.as_os_str())
         .arg(exit_marker.as_os_str());
@@ -1163,8 +1107,7 @@ fn gopls_process_environment_overrides_ambient_network_settings() {
     fs::create_dir(&root).unwrap();
     let marker = temp.path().join("starts.marker");
     let exit_marker = temp.path().join("exit.marker");
-    let fake = fake_server_binary();
-    let command = LspCommand::new(fake.path.clone())
+    let command = LspCommand::new(fake_server_path().as_os_str().to_owned())
         .arg("capture_safety_env")
         .arg(marker.as_os_str())
         .arg(exit_marker.as_os_str())
@@ -1389,7 +1332,6 @@ fn lsp_shutdown_and_drop_reap_the_child_process() {
     let pid = server.process_id();
     let Fixture {
         supervisor,
-        _fake,
         _temp,
         root: _,
         marker: _,
@@ -1399,7 +1341,6 @@ fn lsp_shutdown_and_drop_reap_the_child_process() {
     drop(supervisor);
     assert!(wait_until(Duration::from_secs(1), || exit_marker.exists()));
     assert!(wait_until(Duration::from_secs(1), || !process_exists(pid)));
-    drop(_fake);
     drop(_temp);
 }
 
@@ -1513,7 +1454,6 @@ fn lsp_multiple_hanging_servers_share_one_supervisor_deadline() {
     );
     let Fixture {
         supervisor,
-        _fake,
         _temp,
         root: _,
         marker: _,
@@ -1525,7 +1465,6 @@ fn lsp_multiple_hanging_servers_share_one_supervisor_deadline() {
         supervisor_drop_started.elapsed() < Duration::from_millis(100),
         "supervisor Drop re-armed the configured shutdown timeout"
     );
-    drop(_fake);
     drop(_temp);
 }
 
@@ -1563,7 +1502,6 @@ fn lsp_reaper_timeout_does_not_rearm_supervisor_drop_budget() {
 
     let Fixture {
         supervisor,
-        _fake,
         _temp,
         root: _,
         marker: _,
@@ -1579,7 +1517,6 @@ fn lsp_reaper_timeout_does_not_rearm_supervisor_drop_budget() {
 
     release_tx.send(()).unwrap();
     assert!(wait_until(Duration::from_secs(1), || exited.load(Ordering::SeqCst)));
-    drop(_fake);
     drop(_temp);
 }
 
@@ -1592,8 +1529,7 @@ fn lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
     fs::create_dir(&root).unwrap();
     let marker = temp.path().join("starts.marker");
     let exit_marker = temp.path().join("exit.marker");
-    let fake = fake_server_binary();
-    let command = LspCommand::new(fake.path.clone())
+    let command = LspCommand::new(fake_server_path().as_os_str().to_owned())
         .arg("initialize_hang")
         .arg(marker.as_os_str())
         .arg(exit_marker.as_os_str());
@@ -1644,7 +1580,6 @@ fn lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
         }
     }
     drop(supervisor);
-    drop(fake);
     drop(temp);
 }
 
@@ -1844,11 +1779,11 @@ fn lsp_rejects_missing_or_non_directory_project_roots_before_spawn() {
 #[test]
 fn lsp_command_resolution_uses_explicit_env_then_path_without_shell() {
     let _serial = super::super::serialize_fake_lsp_test();
-    let fake = fake_server_binary();
+    let fake = fake_server_path();
     let explicit = LspSupervisor::new(LspSupervisorConfig {
         commands: HashMap::from([(
             LspServerKind::RustAnalyzer,
-            LspCommand::new(fake.path.as_os_str()),
+            LspCommand::new(fake.as_os_str().to_owned()),
         )]),
         ..LspSupervisorConfig::default()
     });
@@ -1865,16 +1800,16 @@ fn lsp_command_resolution_uses_explicit_env_then_path_without_shell() {
     let (from_env, env_source) = supervisor
         .resolve_command_from_sources(
             LspServerKind::RustAnalyzer,
-            Some(fake.path.as_os_str().to_owned()),
+            Some(fake.as_os_str().to_owned()),
             Some(OsStr::new("")),
         )
         .unwrap();
-    assert_eq!(from_env.program, fake.path.as_os_str());
+    assert_eq!(from_env.program, fake.as_os_str());
     assert_eq!(env_source, crate::lsp_bridge::LspCommandSource::Environment);
 
     let path_dir = tempfile::tempdir().unwrap();
     let analyzer = path_dir.path().join("rust-analyzer");
-    fs::copy(&fake.path, &analyzer).unwrap();
+    fs::copy(fake, &analyzer).unwrap();
     let path = env::join_paths([path_dir.path()]).unwrap();
     let (from_path, path_source) = supervisor
         .resolve_command_from_sources(LspServerKind::RustAnalyzer, None, Some(&path))
@@ -1892,7 +1827,7 @@ fn lsp_command_resolution_uses_explicit_env_then_path_without_shell() {
 
     let spaced = tempfile::tempdir().unwrap();
     let program = spaced.path().join("fake server with spaces");
-    fs::hard_link(&fake.path, &program).unwrap();
+    fs::hard_link(fake, &program).unwrap();
     let project = tempfile::tempdir().unwrap();
     let marker = spaced.path().join("marker");
     let exit_marker = spaced.path().join("exit");

@@ -30,5 +30,8 @@ fn serialize_fake_lsp_test() -> FakeLspTestSerialGuard {
 }
 
 #[cfg(test)]
+mod test_support;
+
+#[cfg(test)]
 #[path = "navigation_tests.rs"]
 mod navigation_tests;

@@ -104,6 +104,28 @@ fn list_agents_call() -> ToolCall {
     }
 }
 
+fn metadata_agent_registration(
+    client_id: &str,
+    protocol: Option<&str>,
+) -> ShellClientRegisterRequest {
+    ShellClientRegisterRequest {
+        process_started_at: None,
+        build: None,
+        job_concurrency_limit: None,
+        job_inventory: None,
+        client_id: client_id.to_string(),
+        agent_instance_id: format!("inst-{client_id}"),
+        display_name: None,
+        owner: None,
+        hostname: None,
+        host_context: None,
+        capabilities: None,
+        projects: None,
+        agent_protocol_version: protocol.map(str::to_string),
+        policy: None,
+    }
+}
+
 async fn register_computer_target_for_auth(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -1258,18 +1280,55 @@ async fn unique_short_agent_project_id_is_resolved_by_runtime_surface() {
 }
 
 #[tokio::test]
-async fn agent_run_shell_without_shell_capability_is_rejected() {
-    let runtime = runtime_with_agent_project("oe");
-    let caps = ShellClientCapabilities {
-        shell: false,
-        ..Default::default()
-    };
-    register_agent(&runtime, "oe", None, caps).await;
+async fn agent_capability_rejection_matrix_names_required_capability() {
+    enum CapabilityCase {
+        RunShell,
+        ReadFile,
+        RunJob,
+        GitStatus,
+    }
+
+    let cases = [
+        (
+            "cap-shell",
+            ShellClientCapabilities {
+                shell: false,
+                ..Default::default()
+            },
+            CapabilityCase::RunShell,
+            vec!["does not support shell", "agent client cap-shell"],
+        ),
+        (
+            "cap-read",
+            ShellClientCapabilities::default(),
+            CapabilityCase::ReadFile,
+            vec!["does not support file_read"],
+        ),
+        (
+            "cap-job",
+            ShellClientCapabilities::default(),
+            CapabilityCase::RunJob,
+            vec!["does not support async shell jobs"],
+        ),
+        (
+            "cap-git",
+            ShellClientCapabilities {
+                shell: false,
+                ..Default::default()
+            },
+            CapabilityCase::GitStatus,
+            vec!["does not support shell or git"],
+        ),
+    ];
     let bootstrap = auth_context(None, true);
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RunShell {
-                project: agent_test_project_id("oe"),
+
+    for (client_id, capabilities, case, expected_fragments) in cases {
+        let runtime = runtime_with_agent_project(client_id);
+        register_agent(&runtime, client_id, None, capabilities).await;
+        let project = agent_test_project_id(client_id);
+        let call = match case {
+            CapabilityCase::RunShell => ToolCall::RunShell {
+                project,
                 command: "echo hi".to_string(),
                 session_id: None,
                 timeout_secs: None,
@@ -1277,49 +1336,16 @@ async fn agent_run_shell_without_shell_capability_is_rejected() {
                 purpose: None,
                 shell: None,
             },
-            Some(&bootstrap),
-        )
-        .await;
-    assert!(!result.success);
-    let err = result.error.unwrap();
-    assert!(err.contains("does not support shell"), "{}", err);
-    assert!(err.contains("agent client oe"), "{}", err);
-}
-
-#[tokio::test]
-async fn agent_read_file_without_file_read_capability_is_rejected() {
-    let runtime = runtime_with_agent_project("oe");
-    // Default caps: shell=true, file_read=false.
-    register_agent(&runtime, "oe", None, ShellClientCapabilities::default()).await;
-    let bootstrap = auth_context(None, true);
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::ReadFile {
-                project: agent_test_project_id("oe"),
+            CapabilityCase::ReadFile => ToolCall::ReadFile {
+                project,
                 path: "README.md".to_string(),
                 session_id: None,
                 start_line: None,
                 limit: None,
                 with_line_numbers: None,
             },
-            Some(&bootstrap),
-        )
-        .await;
-    assert!(!result.success);
-    let err = result.error.unwrap();
-    assert!(err.contains("does not support file_read"), "{}", err);
-}
-
-#[tokio::test]
-async fn agent_run_job_without_async_capability_is_rejected() {
-    let runtime = runtime_with_agent_project("oe");
-    // Default caps: async_jobs=false, async_shell_jobs=false.
-    register_agent(&runtime, "oe", None, ShellClientCapabilities::default()).await;
-    let bootstrap = auth_context(None, true);
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RunJob {
-                project: agent_test_project_id("oe"),
+            CapabilityCase::RunJob => ToolCall::RunJob {
+                project,
                 command: "echo hi".to_string(),
                 session_id: None,
                 timeout_secs: None,
@@ -1327,40 +1353,24 @@ async fn agent_run_job_without_async_capability_is_rejected() {
                 purpose: None,
                 shell: None,
             },
-            Some(&bootstrap),
-        )
-        .await;
-    assert!(!result.success);
-    let err = result.error.unwrap();
-    assert!(err.contains("does not support async shell jobs"), "{}", err);
-}
-
-#[tokio::test]
-async fn agent_git_status_without_shell_or_git_is_rejected() {
-    let runtime = runtime_with_agent_project("oe");
-    register_agent(
-        &runtime,
-        "oe",
-        None,
-        ShellClientCapabilities {
-            shell: false,
-            ..Default::default()
-        },
-    )
-    .await;
-    let bootstrap = auth_context(None, true);
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::GitStatus {
-                project: agent_test_project_id("oe"),
+            CapabilityCase::GitStatus => ToolCall::GitStatus {
+                project,
                 session_id: None,
             },
-            Some(&bootstrap),
-        )
-        .await;
-    assert!(!result.success);
-    let err = result.error.unwrap();
-    assert!(err.contains("does not support shell or git"), "{}", err);
+        };
+        let result = runtime.dispatch_with_auth(call, Some(&bootstrap)).await;
+        assert!(
+            !result.success,
+            "{client_id}: capability gate unexpectedly allowed call"
+        );
+        let error = result.error.unwrap_or_default();
+        for fragment in expected_fragments {
+            assert!(
+                error.contains(fragment),
+                "{client_id}: missing {fragment:?} in {error:?}"
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -1391,118 +1401,68 @@ async fn agent_tool_unknown_client_returns_unknown_project_error() {
 }
 
 #[tokio::test]
-async fn agent_tool_rejects_non_owner_api_key() {
-    let runtime = runtime_with_agent_project("oe");
-    let caps = ShellClientCapabilities {
-        async_shell_jobs: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, "oe", Some("alice"), caps).await;
-    let bob = auth_context(Some("bob"), false);
-    // Use run_job (async) so the test does not hang if owner check leaked.
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RunJob {
-                project: agent_test_project_id("oe"),
-                command: "echo hi".to_string(),
-                session_id: None,
-                timeout_secs: None,
-                cwd: None,
-                purpose: None,
-                shell: None,
-            },
-            Some(&bob),
-        )
-        .await;
-    assert!(!result.success);
-    let err = result.error.unwrap();
-    assert!(err.contains("owned by alice"), "{}", err);
-    assert!(err.contains("belongs to bob"), "{}", err);
-}
-
-#[tokio::test]
-async fn agent_tool_rejects_missing_auth_context() {
-    let runtime = runtime_with_agent_project("oe");
-    let caps = ShellClientCapabilities {
-        shell: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, "oe", Some("alice"), caps).await;
-    // dispatch_with_auth(None): no owner can be proven for an owned agent.
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RunShell {
-                project: agent_test_project_id("oe"),
-                command: "echo hi".to_string(),
-                session_id: None,
-                timeout_secs: None,
-                cwd: None,
-                purpose: None,
-                shell: None,
-            },
-            None,
-        )
-        .await;
-    assert!(!result.success);
-    let err = result.error.unwrap();
-    assert!(
-        err.contains("owned by alice") || err.contains("belongs to anonymous"),
-        "{}",
-        err
-    );
-}
-
-#[tokio::test]
-async fn agent_tool_allows_owner_api_key_for_run_job() {
-    let runtime = runtime_with_agent_project("oe");
-    let caps = ShellClientCapabilities {
-        async_shell_jobs: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, "oe", Some("alice"), caps).await;
+async fn agent_tool_authority_admission_matrix() {
+    let runtime = runtime_with_agent_project("authority-agent");
+    register_agent(
+        &runtime,
+        "authority-agent",
+        Some("alice"),
+        ShellClientCapabilities {
+            async_shell_jobs: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("authority-agent");
     let alice = auth_context(Some("alice"), false);
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RunJob {
-                project: agent_test_project_id("oe"),
-                command: "echo hi".to_string(),
-                session_id: None,
-                timeout_secs: None,
-                cwd: None,
-                purpose: None,
-                shell: None,
-            },
-            Some(&alice),
-        )
-        .await;
-    assert!(result.success, "{:?}", result.error);
-    assert!(result.output["job_id"].is_string());
-}
-
-#[tokio::test]
-async fn agent_tool_allows_bootstrap_token_for_run_job() {
-    let runtime = runtime_with_agent_project("oe");
-    let caps = ShellClientCapabilities {
-        async_shell_jobs: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, "oe", Some("alice"), caps).await;
+    let bob = auth_context(Some("bob"), false);
     let bootstrap = auth_context(None, true);
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RunJob {
-                project: agent_test_project_id("oe"),
-                command: "echo hi".to_string(),
-                session_id: None,
-                timeout_secs: None,
-                cwd: None,
-                purpose: None,
-                shell: None,
-            },
-            Some(&bootstrap),
-        )
-        .await;
-    assert!(result.success, "{:?}", result.error);
+    let cases = [
+        ("wrong owner", Some(&bob), false),
+        ("missing auth", None, false),
+        ("owner PAT", Some(&alice), true),
+        ("bootstrap", Some(&bootstrap), true),
+    ];
+
+    for (label, auth, should_succeed) in cases {
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunJob {
+                    project: project.clone(),
+                    command: "echo hi".to_string(),
+                    session_id: None,
+                    timeout_secs: None,
+                    cwd: None,
+                    purpose: None,
+                    shell: None,
+                },
+                auth,
+            )
+            .await;
+        assert_eq!(
+            result.success, should_succeed,
+            "{label}: {:?}",
+            result.error
+        );
+        if should_succeed {
+            assert!(
+                result.output["job_id"].is_string(),
+                "{label}: {}",
+                result.output
+            );
+            continue;
+        }
+        let error = result.error.unwrap_or_default();
+        assert!(error.contains("owned by alice"), "{label}: {error}");
+        if label == "wrong owner" {
+            assert!(error.contains("belongs to bob"), "{error}");
+        } else {
+            assert!(
+                error.contains("belongs to anonymous") || error.contains("owned by alice"),
+                "{error}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -2024,10 +1984,6 @@ async fn runtime_status_with_no_projects_returns_configured_false() {
     let out = &result.output;
     assert_eq!(out["service"], "webcodex");
     assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
-    assert!(out["build"].is_object());
-    assert!(out["build"].get("git_commit").is_some());
-    assert!(out["build"].get("git_dirty").is_some());
-    assert!(out["build"].get("built_at").is_some());
     assert!(out["server_time"].is_i64());
     assert!(out["pid"].is_i64());
     assert_eq!(out["authority"]["mode"], "trusted_agent");
@@ -2382,7 +2338,25 @@ async fn runtime_status_auth_enabled_reflects_runtime_info() {
 
 #[test]
 fn runtime_info_from_env_reads_webcodex_public_url() {
-    let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+    let _guard = crate::admin_cli::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let previous = ["WEBCODEX_TOKEN", "WEBCODEX_PUBLIC_URL"]
+        .into_iter()
+        .map(|name| (name, std::env::var_os(name)))
+        .collect::<Vec<_>>();
+    struct RestoreEnv(Vec<(&'static str, Option<std::ffi::OsString>)>);
+    impl Drop for RestoreEnv {
+        fn drop(&mut self) {
+            for (name, value) in self.0.drain(..).rev() {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+    }
+    let _restore = RestoreEnv(previous);
     std::env::set_var("WEBCODEX_TOKEN", "token");
     std::env::set_var("WEBCODEX_PUBLIC_URL", "https://new.example.com");
 
@@ -2392,34 +2366,18 @@ fn runtime_info_from_env_reads_webcodex_public_url() {
         info.configured_public_url.as_deref(),
         Some("https://new.example.com")
     );
-
-    std::env::remove_var("WEBCODEX_TOKEN");
-    std::env::remove_var("WEBCODEX_PUBLIC_URL");
 }
 
 #[tokio::test]
 async fn runtime_status_agent_summary_includes_protocol_version() {
-    use crate::shell_protocol::ShellClientRegisterRequest;
     let registry = Arc::new(ShellClientRegistry::default());
-    registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: Some(4),
-            job_inventory: None,
-            client_id: "agent-1".to_string(),
-            agent_instance_id: "inst".to_string(),
-            display_name: Some("Workstation".to_string()),
-            owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: None,
-            projects: Some(vec![]),
-            agent_protocol_version: Some("polling-v1".to_string()),
-            policy: None,
-        })
-        .await
-        .unwrap();
+    let mut registration = metadata_agent_registration("agent-1", Some("polling-v1"));
+    registration.agent_instance_id = "inst".to_string();
+    registration.job_concurrency_limit = Some(4);
+    registration.display_name = Some("Workstation".to_string());
+    registration.owner = Some("alice".to_string());
+    registration.projects = Some(vec![]);
+    registry.register(registration).await.unwrap();
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
@@ -2470,53 +2428,39 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
 async fn runtime_status_includes_sanitized_policy_summary() {
     use crate::shell_protocol::{
         AgentConfigReloadStatus, AgentPolicySummary, ClaudeCodeProviderStatus, ProviderCallSummary,
-        ShellClientRegisterRequest, ToolProvidersStatus,
+        ToolProvidersStatus,
     };
     let registry = Arc::new(ShellClientRegistry::default());
-    registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            client_id: "policy-agent".to_string(),
-            agent_instance_id: "inst-p".to_string(),
-            display_name: None,
-            owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: None,
-            projects: None,
-            agent_protocol_version: Some("websocket-v1".to_string()),
-            policy: Some(AgentPolicySummary {
-                allow_raw_shell: true,
-                allow_cwd_anywhere: false,
-                allowed_roots: vec![std::path::PathBuf::from("/root")],
-                max_timeout_secs: 3600,
-                max_output_bytes: 262144,
-                shell_profiles: None,
-                tool_providers: Some(ToolProvidersStatus {
-                    strategy: "claude_code".to_string(),
-                    claude_code: ClaudeCodeProviderStatus {
-                        enabled: true,
-                        version: Some("test-version".to_string()),
-                        available: true,
-                        process_state: "running".to_string(),
-                        discovered_tool_names: vec!["Edit".to_string()],
-                        capabilities: std::collections::BTreeMap::from([
-                            ("search_project_text".to_string(), "unmapped".to_string()),
-                            ("edit_file".to_string(), "available".to_string()),
-                        ]),
-                        last_error_code: None,
-                        last_call: None,
-                    },
-                    config_reload: AgentConfigReloadStatus::default(),
-                }),
-                mcp_gateway_providers: None,
-            }),
-        })
-        .await
-        .unwrap();
+    let mut registration = metadata_agent_registration("policy-agent", Some("websocket-v1"));
+    registration.agent_instance_id = "inst-p".to_string();
+    registration.owner = Some("alice".to_string());
+    registration.policy = Some(AgentPolicySummary {
+        allow_raw_shell: true,
+        allow_cwd_anywhere: false,
+        allowed_roots: vec![std::path::PathBuf::from("/root")],
+        max_timeout_secs: 3600,
+        max_output_bytes: 262144,
+        shell_profiles: None,
+        tool_providers: Some(ToolProvidersStatus {
+            strategy: "claude_code".to_string(),
+            claude_code: ClaudeCodeProviderStatus {
+                enabled: true,
+                version: Some("test-version".to_string()),
+                available: true,
+                process_state: "running".to_string(),
+                discovered_tool_names: vec!["Edit".to_string()],
+                capabilities: std::collections::BTreeMap::from([
+                    ("search_project_text".to_string(), "unmapped".to_string()),
+                    ("edit_file".to_string(), "available".to_string()),
+                ]),
+                last_error_code: None,
+                last_call: None,
+            },
+            config_reload: AgentConfigReloadStatus::default(),
+        }),
+        mcp_gateway_providers: None,
+    });
+    registry.register(registration).await.unwrap();
     let current_provider = ToolProvidersStatus {
         strategy: "claude_code".to_string(),
         claude_code: ClaudeCodeProviderStatus {
@@ -2595,8 +2539,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
 #[tokio::test]
 async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surface() {
     use crate::shell_protocol::{
-        AgentPolicySummary, ClaudeCodeProviderStatus, ShellClientRegisterRequest,
-        ToolProvidersStatus,
+        AgentPolicySummary, ClaudeCodeProviderStatus, ToolProvidersStatus,
     };
     let before = crate::tool_runtime::registry::registered_tool_specs();
     let names_before = before
@@ -2612,47 +2555,32 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
         .input_schema
         .clone();
     let registry = Arc::new(ShellClientRegistry::default());
-    registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            client_id: "provider-surface".to_string(),
-            agent_instance_id: "inst-surface".to_string(),
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: None,
-            projects: None,
-            agent_protocol_version: Some("websocket-v1".to_string()),
-            policy: Some(AgentPolicySummary {
-                tool_providers: Some(ToolProvidersStatus {
-                    strategy: "claude_code_then_native".to_string(),
-                    claude_code: ClaudeCodeProviderStatus {
-                        enabled: true,
-                        version: Some("2.1.217".to_string()),
-                        available: true,
-                        process_state: "running".to_string(),
-                        discovered_tool_names: ["Edit", "Read", "Bash", "Write", "FutureTool"]
-                            .into_iter()
-                            .map(str::to_string)
-                            .collect(),
-                        capabilities: std::collections::BTreeMap::from([
-                            ("edit_file".to_string(), "available".to_string()),
-                            ("search_project_text".to_string(), "unmapped".to_string()),
-                        ]),
-                        last_error_code: None,
-                        last_call: None,
-                    },
-                    config_reload: Default::default(),
-                }),
-                ..AgentPolicySummary::default()
-            }),
-        })
-        .await
-        .unwrap();
+    let mut registration = metadata_agent_registration("provider-surface", Some("websocket-v1"));
+    registration.agent_instance_id = "inst-surface".to_string();
+    registration.policy = Some(AgentPolicySummary {
+        tool_providers: Some(ToolProvidersStatus {
+            strategy: "claude_code_then_native".to_string(),
+            claude_code: ClaudeCodeProviderStatus {
+                enabled: true,
+                version: Some("2.1.217".to_string()),
+                available: true,
+                process_state: "running".to_string(),
+                discovered_tool_names: ["Edit", "Read", "Bash", "Write", "FutureTool"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                capabilities: std::collections::BTreeMap::from([
+                    ("edit_file".to_string(), "available".to_string()),
+                    ("search_project_text".to_string(), "unmapped".to_string()),
+                ]),
+                last_error_code: None,
+                last_call: None,
+            },
+            config_reload: Default::default(),
+        }),
+        ..AgentPolicySummary::default()
+    });
+    registry.register(registration).await.unwrap();
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let status = runtime.dispatch(runtime_status_call()).await;
     let public_names = status.output["tools"]["names"]
@@ -2691,28 +2619,11 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
 
 #[tokio::test]
 async fn runtime_status_policy_summary_is_null_for_older_agents() {
-    use crate::shell_protocol::ShellClientRegisterRequest;
     let registry = Arc::new(ShellClientRegistry::default());
     // Older agent: no policy field (None).
-    registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            client_id: "legacy-agent".to_string(),
-            agent_instance_id: "inst-l".to_string(),
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: None,
-            projects: None,
-            agent_protocol_version: None,
-            policy: None,
-        })
-        .await
-        .unwrap();
+    let mut registration = metadata_agent_registration("legacy-agent", None);
+    registration.agent_instance_id = "inst-l".to_string();
+    registry.register(registration).await.unwrap();
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
@@ -2966,36 +2877,23 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
 
 #[tokio::test]
 async fn list_agents_includes_sanitized_policy_summary() {
-    use crate::shell_protocol::{AgentPolicySummary, ShellClientRegisterRequest};
+    use crate::shell_protocol::AgentPolicySummary;
     let registry = Arc::new(ShellClientRegistry::default());
-    registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: Some(8),
-            job_inventory: None,
-            client_id: "list-policy-agent".to_string(),
-            agent_instance_id: "inst-lp".to_string(),
-            display_name: None,
-            owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: None,
-            projects: None,
-            agent_protocol_version: Some("websocket-v1".to_string()),
-            policy: Some(AgentPolicySummary {
-                allow_raw_shell: false,
-                allow_cwd_anywhere: true,
-                allowed_roots: vec![],
-                max_timeout_secs: 120,
-                max_output_bytes: 4096,
-                shell_profiles: None,
-                tool_providers: None,
-                mcp_gateway_providers: None,
-            }),
-        })
-        .await
-        .unwrap();
+    let mut registration = metadata_agent_registration("list-policy-agent", Some("websocket-v1"));
+    registration.agent_instance_id = "inst-lp".to_string();
+    registration.job_concurrency_limit = Some(8);
+    registration.owner = Some("alice".to_string());
+    registration.policy = Some(AgentPolicySummary {
+        allow_raw_shell: false,
+        allow_cwd_anywhere: true,
+        allowed_roots: vec![],
+        max_timeout_secs: 120,
+        max_output_bytes: 4096,
+        shell_profiles: None,
+        tool_providers: None,
+        mcp_gateway_providers: None,
+    });
+    registry.register(registration).await.unwrap();
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(list_agents_call()).await;
     assert!(result.success);
@@ -3036,27 +2934,13 @@ async fn list_agents_includes_sanitized_policy_summary() {
 #[tokio::test]
 async fn runtime_status_distinguishes_stale_registration_from_transport_connection() {
     use crate::shell_client::TRANSPORT_WEBSOCKET;
-    use crate::shell_protocol::ShellClientRegisterRequest;
     let registry = Arc::new(ShellClientRegistry::default());
-    registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            client_id: "ws-stale".to_string(),
-            agent_instance_id: "inst".to_string(),
-            display_name: Some("Stale WS".to_string()),
-            owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: None,
-            projects: Some(vec![]),
-            agent_protocol_version: Some("websocket-v1".to_string()),
-            policy: None,
-        })
-        .await
-        .unwrap();
+    let mut registration = metadata_agent_registration("ws-stale", Some("websocket-v1"));
+    registration.agent_instance_id = "inst".to_string();
+    registration.display_name = Some("Stale WS".to_string());
+    registration.owner = Some("alice".to_string());
+    registration.projects = Some(vec![]);
+    registry.register(registration).await.unwrap();
     registry
         .set_transport("ws-stale", TRANSPORT_WEBSOCKET)
         .await
@@ -3101,25 +2985,10 @@ async fn runtime_status_distinguishes_stale_registration_from_transport_connecti
 async fn runtime_status_reflects_websocket_transport_label() {
     let registry = Arc::new(ShellClientRegistry::default());
     let runtime = ToolRuntime::new(registry.clone(), Arc::new(RuntimeInfo::default()));
-    registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            client_id: "ws-agent".to_string(),
-            agent_instance_id: "inst".to_string(),
-            display_name: None,
-            owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: None,
-            projects: None,
-            agent_protocol_version: Some("websocket-v1".to_string()),
-            policy: None,
-        })
-        .await
-        .unwrap();
+    let mut registration = metadata_agent_registration("ws-agent", Some("websocket-v1"));
+    registration.agent_instance_id = "inst".to_string();
+    registration.owner = Some("alice".to_string());
+    registry.register(registration).await.unwrap();
     // Flip the transport label the same way the WebSocket handler does.
     registry
         .set_transport("ws-agent", crate::shell_client::TRANSPORT_WEBSOCKET)

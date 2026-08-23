@@ -351,25 +351,18 @@ async fn gate_send(
 }
 
 #[tokio::test]
-async fn gate_agent_token_can_call_agent_transport_register() {
+async fn gate_token_class_route_matrix_preserves_authority_boundaries() {
     let config = gate_test_config(Some("secret"));
     let (_tmp, db) = gate_test_db();
     let user = gate_seed_user(&db, "alice");
     let agent_token = gate_mint_agent_token(&db, &user, "alice-laptop");
+    let user_token = gate_mint_user_token(&db, &user);
     let service = Service::new(gate_router(config, db));
-    // /api/shell/agent/register is an allowed transport path.
-    let (status, body) = gate_send(&service, "/api/shell/agent/register", Some(&agent_token)).await;
-    assert_eq!(status, salvo::http::StatusCode::OK, "body: {:?}", body);
-    assert_eq!(body["ok"], true);
-}
 
-#[tokio::test]
-async fn gate_agent_token_cannot_call_non_transport_paths() {
-    let config = gate_test_config(Some("secret"));
-    let (_tmp, db) = gate_test_db();
-    let user = gate_seed_user(&db, "alice");
-    let agent_token = gate_mint_agent_token(&db, &user, "alice-laptop");
-    let service = Service::new(gate_router(config, db));
+    let (status, body) = gate_send(&service, "/api/shell/agent/register", Some(&agent_token)).await;
+    assert_eq!(status, salvo::http::StatusCode::OK, "body: {body:?}");
+    assert_eq!(body["ok"], true);
+
     for path in [
         "/api/runtime/status",
         "/api/tools/list",
@@ -382,49 +375,39 @@ async fn gate_agent_token_cannot_call_non_transport_paths() {
         assert_eq!(
             status,
             salvo::http::StatusCode::FORBIDDEN,
-            "agent token should be forbidden on {}: {:?}",
-            path,
-            body
+            "agent token should be forbidden on {path}: {body:?}"
         );
+        if path == "/api/runtime/status" {
+            assert!(body["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("agent tokens are only allowed"));
+        }
     }
-    // Verify the error message is descriptive for at least one path.
-    let (_, body) = gate_send(&service, "/api/runtime/status", Some(&agent_token)).await;
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap_or("")
-            .contains("agent tokens are only allowed"),
-        "body: {:?}",
-        body
-    );
-}
 
-#[tokio::test]
-async fn gate_user_token_can_call_normal_apis() {
-    let config = gate_test_config(Some("secret"));
-    let (_tmp, db) = gate_test_db();
-    let user = gate_seed_user(&db, "alice");
-    let user_token = gate_mint_user_token(&db, &user);
-    let service = Service::new(gate_router(config, db));
-    // User tokens must still reach normal runtime/project APIs.
     for path in [
         "/api/runtime/status",
         "/api/tools/list",
         "/api/projects/list",
     ] {
         let (status, body) = gate_send(&service, path, Some(&user_token)).await;
+        assert_eq!(status, salvo::http::StatusCode::OK, "{path}: {body:?}");
+    }
+
+    for path in [
+        "/api/runtime/status",
+        "/api/tools/list",
+        "/api/projects/list",
+        "/api/shell/agent/register",
+        "/api/agent-tokens/list",
+    ] {
+        let (status, body) = gate_send(&service, path, Some("secret")).await;
         assert_eq!(
             status,
             salvo::http::StatusCode::OK,
-            "{} body: {:?}",
-            path,
-            body
+            "bootstrap should reach {path}: {body:?}"
         );
     }
-    // And must NOT reach agent transport endpoints (enforced per-handler in
-    // Phase 3, but here the central gate lets them through; the per-handler
-    // agent transport check rejects them). For this gate test we only
-    // assert the central gate does not block user tokens on normal APIs.
 }
 
 #[test]
@@ -515,61 +498,23 @@ async fn gate_disabled_user_account_credential_is_rejected() {
 }
 
 #[tokio::test]
-async fn query_token_is_rejected_on_runtime_status() {
+async fn gate_query_token_is_websocket_only_and_bearer_header_stays_general() {
     let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = gate_test_config(Some("secret"));
     let (_tmp, db) = gate_test_db();
     let service = Service::new(gate_router(config, db));
-    let mut resp = TestClient::post("http://localhost/api/runtime/status?token=secret")
-        .send(&service)
-        .await;
-    assert_eq!(gate_status(&resp), salvo::http::StatusCode::UNAUTHORIZED);
-    let body = resp.take_json::<serde_json::Value>().await.unwrap();
+
+    let (status, body) = gate_send(&service, "/api/runtime/status?token=secret", None).await;
+    assert_eq!(status, salvo::http::StatusCode::UNAUTHORIZED);
     assert_eq!(body["error"], "Unauthorized");
-}
 
-#[tokio::test]
-async fn query_token_still_works_for_agent_websocket_path() {
-    let config = gate_test_config(Some("secret"));
-    let (_tmp, db) = gate_test_db();
-    let service = Service::new(gate_router(config, db));
     let (status, body) = gate_send(&service, "/api/agents/ws?token=secret", None).await;
-    assert_eq!(status, salvo::http::StatusCode::OK, "body: {:?}", body);
+    assert_eq!(status, salvo::http::StatusCode::OK, "body: {body:?}");
     assert_eq!(body["ok"], true);
-}
 
-#[tokio::test]
-async fn authorization_header_still_works_on_runtime_status() {
-    let config = gate_test_config(Some("secret"));
-    let (_tmp, db) = gate_test_db();
-    let service = Service::new(gate_router(config, db));
     let (status, body) = gate_send(&service, "/api/runtime/status", Some("secret")).await;
-    assert_eq!(status, salvo::http::StatusCode::OK, "body: {:?}", body);
+    assert_eq!(status, salvo::http::StatusCode::OK, "body: {body:?}");
     assert_eq!(body["ok"], true);
-}
-
-#[tokio::test]
-async fn gate_bootstrap_can_call_all_apis() {
-    let config = gate_test_config(Some("secret"));
-    let (_tmp, db) = gate_test_db();
-    let service = Service::new(gate_router(config, db));
-    // Bootstrap reaches normal APIs and agent transport paths alike.
-    for path in [
-        "/api/runtime/status",
-        "/api/tools/list",
-        "/api/projects/list",
-        "/api/shell/agent/register",
-        "/api/agent-tokens/list",
-    ] {
-        let (status, body) = gate_send(&service, path, Some("secret")).await;
-        assert_eq!(
-            status,
-            salvo::http::StatusCode::OK,
-            "{} body: {:?}",
-            path,
-            body
-        );
-    }
 }
 
 #[tokio::test]
@@ -933,85 +878,97 @@ async fn oauth2_verifier_rejects_invalid_subject_combinations() {
 }
 
 #[tokio::test]
-async fn oauth2_verifier_rejects_unknown_access_token() {
-    let config = gate_test_config_oauth2(Some("secret"));
-    let (_tmp, db) = gate_test_db();
+async fn oauth2_verifier_rejects_invalid_access_token_state_matrix() {
+    enum InvalidAccessToken {
+        Unknown,
+        Expired,
+        Revoked,
+        RevokedClient,
+        DisabledUser,
+    }
 
-    let verifier = OAuth2Verifier;
-    let result = verifier
-        .verify(&config, Some(&db), "wc_oat_nonexistenttoken")
-        .await;
-    assert!(result.is_err(), "unknown access token should return Err");
+    for (label, case) in [
+        ("unknown", InvalidAccessToken::Unknown),
+        ("expired", InvalidAccessToken::Expired),
+        ("revoked", InvalidAccessToken::Revoked),
+        ("revoked client", InvalidAccessToken::RevokedClient),
+        ("disabled user", InvalidAccessToken::DisabledUser),
+    ] {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let plaintext = match case {
+            InvalidAccessToken::Unknown => "wc_oat_nonexistenttoken".to_string(),
+            InvalidAccessToken::Expired => {
+                let user = gate_seed_user(&db, "alice");
+                let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+                let now = chrono::Utc::now().timestamp();
+                let plaintext = generate_oauth_access_token();
+                db.insert_oauth_access_token(&crate::models::OAuthAccessTokenRecord {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    token_hash: hash_token(&plaintext),
+                    client_id: client.client_id,
+                    subject_kind: "managed_user".to_string(),
+                    subject_id: user.id.clone(),
+                    user_id: Some(user.id),
+                    scopes: "runtime:read".to_string(),
+                    resource: None,
+                    shared_key_hash: None,
+                    created_at: now - 7200,
+                    expires_at: now - 1,
+                    revoked_at: None,
+                    last_used_at: None,
+                })
+                .unwrap();
+                plaintext
+            }
+            InvalidAccessToken::Revoked => {
+                let user = gate_seed_user(&db, "alice");
+                let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+                let (token, plaintext) =
+                    gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+                db.revoke_oauth_access_token(&token.id, chrono::Utc::now().timestamp())
+                    .unwrap();
+                plaintext
+            }
+            InvalidAccessToken::RevokedClient => {
+                let user = gate_seed_user(&db, "alice");
+                let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+                let (_token, plaintext) =
+                    gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+                db.revoke_oauth_client(&client.id, chrono::Utc::now().timestamp())
+                    .unwrap();
+                plaintext
+            }
+            InvalidAccessToken::DisabledUser => {
+                let user = gate_seed_user(&db, "alice");
+                let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+                let (_token, plaintext) =
+                    gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+                db.set_user_disabled(&user.id, true, chrono::Utc::now().timestamp())
+                    .unwrap();
+                plaintext
+            }
+        };
+        let result = OAuth2Verifier.verify(&config, Some(&db), &plaintext).await;
+        assert!(result.is_err(), "{label} access token should return Err");
+    }
 }
 
 #[tokio::test]
-async fn oauth2_verifier_rejects_expired_access_token() {
+async fn oauth2_verifier_ignores_non_access_oauth_credential_kinds() {
     let config = gate_test_config_oauth2(Some("secret"));
     let (_tmp, db) = gate_test_db();
     let user = gate_seed_user(&db, "alice");
     let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-
-    // Create an expired access token.
     let now = chrono::Utc::now().timestamp();
-    let plaintext = generate_oauth_access_token();
-    let token_hash = hash_token(&plaintext);
-    let record = crate::models::OAuthAccessTokenRecord {
+    let refresh = generate_oauth_refresh_token();
+    db.insert_oauth_refresh_token(&crate::models::OAuthRefreshTokenRecord {
         id: uuid::Uuid::new_v4().to_string(),
-        token_hash,
+        token_hash: hash_token(&refresh),
         client_id: client.client_id.clone(),
         subject_kind: "managed_user".to_string(),
         subject_id: user.id.clone(),
-        user_id: Some(user.id.clone()),
-        scopes: "runtime:read".to_string(),
-        resource: None,
-        shared_key_hash: None,
-        created_at: now - 7200,
-        expires_at: now - 1, // already expired
-        revoked_at: None,
-        last_used_at: None,
-    };
-    db.insert_oauth_access_token(&record).unwrap();
-
-    let verifier = OAuth2Verifier;
-    let result = verifier.verify(&config, Some(&db), &plaintext).await;
-    assert!(result.is_err(), "expired access token should return Err");
-}
-
-#[tokio::test]
-async fn oauth2_verifier_rejects_revoked_access_token() {
-    let config = gate_test_config_oauth2(Some("secret"));
-    let (_tmp, db) = gate_test_db();
-    let user = gate_seed_user(&db, "alice");
-    let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-    let (at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
-
-    // Revoke the token.
-    let now = chrono::Utc::now().timestamp();
-    db.revoke_oauth_access_token(&at.id, now).unwrap();
-
-    let verifier = OAuth2Verifier;
-    let result = verifier.verify(&config, Some(&db), &plaintext).await;
-    assert!(result.is_err(), "revoked access token should return Err");
-}
-
-#[tokio::test]
-async fn oauth2_verifier_rejects_refresh_token() {
-    let config = gate_test_config_oauth2(Some("secret"));
-    let (_tmp, db) = gate_test_db();
-    let user = gate_seed_user(&db, "alice");
-    let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-
-    // Create a refresh token (wc_ort_*).
-    let now = chrono::Utc::now().timestamp();
-    let plaintext = generate_oauth_refresh_token();
-    let token_hash = hash_token(&plaintext);
-    let record = crate::models::OAuthRefreshTokenRecord {
-        id: uuid::Uuid::new_v4().to_string(),
-        token_hash,
-        client_id: client.client_id.clone(),
-        subject_kind: "managed_user".to_string(),
-        subject_id: user.id.clone(),
-        user_id: Some(user.id.clone()),
+        user_id: Some(user.id),
         scopes: "runtime:read".to_string(),
         resource: None,
         shared_key_hash: None,
@@ -1020,46 +977,23 @@ async fn oauth2_verifier_rejects_refresh_token() {
         revoked_at: None,
         last_used_at: None,
         rotated_from_id: None,
-    };
-    db.insert_oauth_refresh_token(&record).unwrap();
+    })
+    .unwrap();
 
-    let verifier = OAuth2Verifier;
-    let result = verifier
-        .verify(&config, Some(&db), &plaintext)
-        .await
-        .unwrap();
-    assert!(
-        result.is_none(),
-        "refresh token (wc_ort_*) should return None"
-    );
-}
-
-#[tokio::test]
-async fn oauth2_verifier_rejects_authorization_code() {
-    let config = gate_test_config_oauth2(Some("secret"));
-    let verifier = OAuth2Verifier;
-    let result = verifier
-        .verify(&config, None, "wc_oac_sometoken")
-        .await
-        .unwrap();
-    assert!(
-        result.is_none(),
-        "authorization code (wc_oac_*) should return None"
-    );
-}
-
-#[tokio::test]
-async fn oauth2_verifier_rejects_client_secret() {
-    let config = gate_test_config_oauth2(Some("secret"));
-    let verifier = OAuth2Verifier;
-    let result = verifier
-        .verify(&config, None, "wc_csec_sometoken")
-        .await
-        .unwrap();
-    assert!(
-        result.is_none(),
-        "client secret (wc_csec_*) should return None"
-    );
+    for (label, token) in [
+        ("refresh token", refresh.as_str()),
+        ("authorization code", "wc_oac_sometoken"),
+        ("client secret", "wc_csec_sometoken"),
+    ] {
+        let result = OAuth2Verifier
+            .verify(&config, Some(&db), token)
+            .await
+            .unwrap();
+        assert!(
+            result.is_none(),
+            "{label} must not authenticate as an access token"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1115,43 +1049,6 @@ async fn oauth2_verifier_does_not_update_last_used_on_failure() {
     // update it. Note: the token is revoked so get_oauth_access_token_by_hash
     // returns None, so we can't directly check. But we verify the error path
     // doesn't panic or succeed.
-}
-
-#[tokio::test]
-async fn oauth2_verifier_rejects_token_for_revoked_client() {
-    let config = gate_test_config_oauth2(Some("secret"));
-    let (_tmp, db) = gate_test_db();
-    let user = gate_seed_user(&db, "alice");
-    let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-    let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
-
-    // Revoke the client.
-    let now = chrono::Utc::now().timestamp();
-    db.revoke_oauth_client(&client.id, now).unwrap();
-
-    let verifier = OAuth2Verifier;
-    let result = verifier.verify(&config, Some(&db), &plaintext).await;
-    assert!(
-        result.is_err(),
-        "token for revoked client should return Err"
-    );
-}
-
-#[tokio::test]
-async fn oauth2_verifier_rejects_token_for_disabled_user() {
-    let config = gate_test_config_oauth2(Some("secret"));
-    let (_tmp, db) = gate_test_db();
-    let user = gate_seed_user(&db, "alice");
-    let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-    let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
-
-    // Disable the user.
-    let now = chrono::Utc::now().timestamp();
-    db.set_user_disabled(&user.id, true, now).unwrap();
-
-    let verifier = OAuth2Verifier;
-    let result = verifier.verify(&config, Some(&db), &plaintext).await;
-    assert!(result.is_err(), "token for disabled user should return Err");
 }
 
 #[tokio::test]

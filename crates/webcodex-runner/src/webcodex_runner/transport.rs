@@ -3252,6 +3252,9 @@ async fn quic_session(
     let projects_count = enabled_projects_count(&projects);
     let registered_jobs = runtime.jobs.inventory();
     let bootstrap = project_registration_bootstrap(&cfg.client_id, &projects, &registered_jobs);
+    // Preserve the legacy QUIC `v1/v2` label solely as the old-Server
+    // projection of inline versus paged registration inventory. Current Servers
+    // normalize it before registry/business decisions.
     let protocol_version = if bootstrap.paged_inventory {
         AGENT_PROTOCOL_VERSION_QUIC_V2
     } else {
@@ -3841,6 +3844,9 @@ where
     let projects_count = enabled_projects_count(&projects);
     let registered_jobs = runtime.jobs.inventory();
     let bootstrap = project_registration_bootstrap(&cfg.client_id, &projects, &registered_jobs);
+    // Preserve the legacy WebSocket `v1/v2` label solely as the old-Server
+    // projection of inline versus paged registration inventory. Current Servers
+    // normalize it before registry/business decisions.
     let protocol_version = if bootstrap.paged_inventory {
         AGENT_PROTOCOL_VERSION_WEBSOCKET_V2
     } else {

@@ -708,18 +708,6 @@ fn project_projection_reconcile_required(
     )
 }
 
-fn agent_protocol_reports_project_git(protocol: &str) -> bool {
-    matches!(
-        protocol,
-        crate::shell_protocol::AGENT_PROTOCOL_VERSION_POLLING_V1
-            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_POLLING_V2
-            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_WEBSOCKET_V1
-            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_WEBSOCKET_V2
-            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_QUIC_V1
-            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_QUIC_V2
-    )
-}
-
 fn project_query_matches(
     needle: &str,
     runtime_id: &str,
@@ -751,7 +739,11 @@ fn project_git_available(
 ) -> Option<bool> {
     if project.git_branch.is_some() || project.git_head.is_some() || project.git_dirty.is_some() {
         Some(true)
-    } else if agent_protocol_reports_project_git(&client.agent_protocol_version) {
+    } else if client
+        .agent_protocol_semantics
+        .compatibility
+        .reports_project_git_metadata()
+    {
         Some(false)
     } else {
         None

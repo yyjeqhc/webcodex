@@ -43,10 +43,12 @@ fn default_transport_polling() -> String {
     "polling".to_string()
 }
 
-/// Protocol version announced by current `webcodex-runner` polling builds.
+/// Legacy polling wire label for inline project registration. The `v1`/`v2`
+/// suffix is a rolling-compatibility projection of project inventory strategy,
+/// not the canonical agent protocol generation.
 pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
-/// Polling registration uses bounded project bootstrap summaries followed by
-/// negotiated paged project-inventory synchronization.
+/// Legacy polling wire label for paged project inventory. Current Servers
+/// normalize this label at registration ingress before business logic sees it.
 pub const AGENT_PROTOCOL_VERSION_POLLING_V2: &str = "polling-v2";
 /// Model/user-authored raw shell command ceiling. Raw shell remains a bounded
 /// escape hatch; larger program text belongs in `run_script`, while large
@@ -122,34 +124,95 @@ pub const GO_TEST_PACKAGE_MAX_ITEMS: usize = 8;
 /// Maximum byte length of one focused `go_test` package pattern.
 pub const GO_TEST_PACKAGE_MAX_BYTES: usize = 256;
 
-/// Protocol version announced by `webcodex-runner` builds that connect over
-/// WebSocket. Kept in the shared protocol module so both the server and the
-/// agent binary reference the same literal.
+/// Legacy WebSocket wire label for inline project registration. Kept in the
+/// shared protocol module so Server and Runner agree on the rolling-compatibility
+/// representation without treating the label as canonical transport semantics.
 pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V1: &str = "websocket-v1";
-/// WebSocket registration uses bounded project bootstrap summaries followed by
-/// `project_inventory_page` envelopes.
+/// Legacy WebSocket wire label for paged project inventory. The `v2` suffix is
+/// compatibility metadata rather than a distinct canonical protocol generation.
 pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V2: &str = "websocket-v2";
 
-/// Protocol version announced by `webcodex-runner` builds that connect over the
-/// custom QUIC stream transport. Kept in the shared protocol module so the
-/// server and the agent binary reference the same literal.
-///
-/// `quic-v1` is the custom QUIC stream transport protocol version. It uses the
-/// same `AgentEnvelope` model for registration, keepalive, request dispatch,
-/// results, and job updates. The transport label remains `"quic"` (see
-/// `TRANSPORT_QUIC`).
+/// Legacy QUIC wire label for inline project registration. QUIC still uses the
+/// shared `AgentEnvelope` grammar; the actual transport identity remains the
+/// separate `"quic"` transport state maintained by the Server connection path.
 pub const AGENT_PROTOCOL_VERSION_QUIC_V1: &str = "quic-v1";
-/// QUIC registration uses bounded project bootstrap summaries followed by
-/// `project_inventory_page` envelopes.
+/// Legacy QUIC wire label for paged project inventory. The `v2` suffix is
+/// compatibility metadata rather than a distinct canonical protocol generation.
 pub const AGENT_PROTOCOL_VERSION_QUIC_V2: &str = "quic-v2";
 
-pub fn agent_protocol_uses_paged_project_inventory(version: &str) -> bool {
-    matches!(
-        version,
+/// Canonical compatibility identity for the agent request/response grammar.
+///
+/// All six historical transport x `v1`/`v2` labels below describe the same
+/// compatibility generation. Their suffix difference only projects registration
+/// inventory strategy for rolling compatibility with older Servers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentProtocolCompatibility {
+    V1,
+    Unsupported,
+}
+
+impl Default for AgentProtocolCompatibility {
+    fn default() -> Self {
+        Self::Unsupported
+    }
+}
+
+impl AgentProtocolCompatibility {
+    pub fn is_supported(self) -> bool {
+        matches!(self, Self::V1)
+    }
+
+    /// V1 project summaries have an explicit optional Git metadata contract, so
+    /// absent Git fields mean "not a Git project" rather than "old peer unknown".
+    pub fn reports_project_git_metadata(self) -> bool {
+        matches!(self, Self::V1)
+    }
+}
+
+/// Canonical project inventory synchronization strategy for one registration.
+/// This is deliberately independent from transport and protocol compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentProjectInventoryStrategy {
+    Inline,
+    Paged,
+}
+
+impl Default for AgentProjectInventoryStrategy {
+    fn default() -> Self {
+        Self::Inline
+    }
+}
+
+/// Server-normalized semantics derived once from the legacy announced wire label.
+/// Business logic must consume this representation rather than reinterpreting the
+/// raw transport/version string.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentProtocolSemantics {
+    pub compatibility: AgentProtocolCompatibility,
+    pub project_inventory: AgentProjectInventoryStrategy,
+}
+
+/// Compatibility ingress adapter for historical `transport-v1/v2` labels.
+/// Unknown labels fail closed to an unsupported compatibility identity and do
+/// not opt into paged inventory by suffix guessing.
+pub fn normalize_agent_protocol_semantics(version: &str) -> AgentProtocolSemantics {
+    match version {
+        AGENT_PROTOCOL_VERSION_POLLING_V1
+        | AGENT_PROTOCOL_VERSION_WEBSOCKET_V1
+        | AGENT_PROTOCOL_VERSION_QUIC_V1 => AgentProtocolSemantics {
+            compatibility: AgentProtocolCompatibility::V1,
+            project_inventory: AgentProjectInventoryStrategy::Inline,
+        },
         AGENT_PROTOCOL_VERSION_POLLING_V2
-            | AGENT_PROTOCOL_VERSION_WEBSOCKET_V2
-            | AGENT_PROTOCOL_VERSION_QUIC_V2
-    )
+        | AGENT_PROTOCOL_VERSION_WEBSOCKET_V2
+        | AGENT_PROTOCOL_VERSION_QUIC_V2 => AgentProtocolSemantics {
+            compatibility: AgentProtocolCompatibility::V1,
+            project_inventory: AgentProjectInventoryStrategy::Paged,
+        },
+        _ => AgentProtocolSemantics::default(),
+    }
 }
 pub const AGENT_QUIC_ALPN_V1: &str = "webcodex-runner/1";
 
@@ -1099,6 +1162,10 @@ pub struct ShellClientView {
     /// that registered before this field existed.
     #[serde(default = "default_agent_protocol_version")]
     pub agent_protocol_version: String,
+    /// Canonical Server-normalized semantics for business decisions. The raw
+    /// announced label above remains diagnostics-only after registration ingress.
+    #[serde(skip)]
+    pub agent_protocol_semantics: AgentProtocolSemantics,
     /// Transport the agent is currently connected over: `"polling"`,
     /// `"websocket"`, or `"quic"`. Defaults to `"polling"` for older
     /// agents/views.
@@ -2819,6 +2886,48 @@ where
 #[cfg(test)]
 mod envelope_tests {
     use super::*;
+
+    #[test]
+    fn legacy_agent_protocol_labels_normalize_into_one_protocol_generation() {
+        for version in [
+            AGENT_PROTOCOL_VERSION_POLLING_V1,
+            AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+            AGENT_PROTOCOL_VERSION_QUIC_V1,
+        ] {
+            let semantics = normalize_agent_protocol_semantics(version);
+            assert_eq!(semantics.compatibility, AgentProtocolCompatibility::V1);
+            assert!(semantics.compatibility.reports_project_git_metadata());
+            assert_eq!(
+                semantics.project_inventory,
+                AgentProjectInventoryStrategy::Inline
+            );
+        }
+        for version in [
+            AGENT_PROTOCOL_VERSION_POLLING_V2,
+            AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
+            AGENT_PROTOCOL_VERSION_QUIC_V2,
+        ] {
+            let semantics = normalize_agent_protocol_semantics(version);
+            assert_eq!(semantics.compatibility, AgentProtocolCompatibility::V1);
+            assert!(semantics.compatibility.reports_project_git_metadata());
+            assert_eq!(
+                semantics.project_inventory,
+                AgentProjectInventoryStrategy::Paged
+            );
+        }
+
+        let unknown = normalize_agent_protocol_semantics("future-v2");
+        assert_eq!(
+            unknown.compatibility,
+            AgentProtocolCompatibility::Unsupported
+        );
+        assert!(!unknown.compatibility.reports_project_git_metadata());
+        assert_eq!(
+            unknown.project_inventory,
+            AgentProjectInventoryStrategy::Inline,
+            "unknown suffixes must not opt into paged inventory"
+        );
+    }
 
     fn sample_process_request() -> ShellAgentShellRequest {
         ShellAgentShellRequest {

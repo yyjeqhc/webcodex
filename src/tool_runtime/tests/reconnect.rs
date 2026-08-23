@@ -7,7 +7,9 @@ use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
 use crate::shell_protocol::{
     AgentBuildInfo, AgentHostContext, ShellClientCapabilities, ShellClientRegisterRequest,
-    ShellJobOpRequest,
+    ShellJobOpRequest, AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_POLLING_V2,
+    AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_QUIC_V2,
+    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
 };
 use crate::tool_runtime::tool_inputs::{SessionMode, StartupDetail};
 use crate::tool_runtime::{ToolCall, ToolRuntime};
@@ -1552,6 +1554,86 @@ async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
         .expect("job still queryable after reconnect");
     assert_eq!(still_lost.status, "lost");
     assert_eq!(still_lost.ended_at, Some(first_ended_at));
+}
+
+#[tokio::test]
+async fn version_compatibility_accepts_all_normalized_legacy_wire_forms() {
+    let runtime = test_runtime();
+    let cases = [
+        (
+            "polling-inline",
+            AGENT_PROTOCOL_VERSION_POLLING_V1,
+            "polling",
+            "inline",
+        ),
+        (
+            "polling-paged",
+            AGENT_PROTOCOL_VERSION_POLLING_V2,
+            "polling",
+            "paged",
+        ),
+        (
+            "websocket-inline",
+            AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+            "websocket",
+            "inline",
+        ),
+        (
+            "websocket-paged",
+            AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
+            "websocket",
+            "paged",
+        ),
+        (
+            "quic-inline",
+            AGENT_PROTOCOL_VERSION_QUIC_V1,
+            "quic",
+            "inline",
+        ),
+        (
+            "quic-paged",
+            AGENT_PROTOCOL_VERSION_QUIC_V2,
+            "quic",
+            "paged",
+        ),
+    ];
+
+    for (client_id, protocol, transport, _) in cases.iter().copied() {
+        runtime
+            .shell_clients
+            .register(register_request(client_id, "inst", None, None, protocol))
+            .await
+            .unwrap();
+        runtime
+            .shell_clients
+            .set_transport(client_id, transport)
+            .await
+            .unwrap();
+    }
+
+    let status = runtime.runtime_status(None).await;
+    assert!(status.success);
+    let runners = status.output["version_compatibility"]["runners"]
+        .as_array()
+        .unwrap();
+    let clients = status.output["agents"]["clients"].as_array().unwrap();
+    for (client_id, raw_protocol, transport, inventory_strategy) in cases.iter().copied() {
+        let runner = runners
+            .iter()
+            .find(|runner| runner["client_id"] == client_id)
+            .unwrap_or_else(|| panic!("runner {client_id} missing"));
+        assert_eq!(runner["agent_protocol_version"], raw_protocol);
+        assert_eq!(runner["protocol_supported"], true);
+        assert_eq!(runner["protocol_compatibility"], "v1");
+        assert_eq!(runner["project_inventory_strategy"], inventory_strategy);
+        assert_eq!(runner["status"], "compatible");
+
+        let client = clients
+            .iter()
+            .find(|client| client["client_id"] == client_id)
+            .unwrap_or_else(|| panic!("client {client_id} missing"));
+        assert_eq!(client["transport"], transport);
+    }
 }
 
 #[tokio::test]

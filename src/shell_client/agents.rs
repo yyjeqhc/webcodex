@@ -20,7 +20,7 @@ use super::{
 };
 use crate::mcp_gateway::validate_providers;
 use crate::shell_protocol::{
-    agent_protocol_uses_paged_project_inventory, ShellClientCapabilities,
+    normalize_agent_protocol_semantics, AgentProjectInventoryStrategy, ShellClientCapabilities,
     ShellClientRegisterRequest, ShellClientView, JOB_INVENTORY_MAX_ACTIVE_JOBS,
 };
 use std::collections::{HashSet, VecDeque};
@@ -166,8 +166,11 @@ impl ShellClientRegistry {
             .filter(|version| !version.is_empty())
             .unwrap_or("unknown")
             .to_string();
-        let paged_project_inventory =
-            agent_protocol_uses_paged_project_inventory(&agent_protocol_version);
+        let agent_protocol_semantics = normalize_agent_protocol_semantics(&agent_protocol_version);
+        let paged_project_inventory = matches!(
+            agent_protocol_semantics.project_inventory,
+            AgentProjectInventoryStrategy::Paged
+        );
         let host_context = body
             .host_context
             .clone()
@@ -216,6 +219,7 @@ impl ShellClientRegistry {
             last_seen: now,
             agent_protocol_version,
             transport: TRANSPORT_POLLING.to_string(),
+            agent_protocol_semantics,
             policy,
             auth_group: auth.and_then(ShellClientAuthGroup::from_auth),
             registered_at: now,
@@ -1250,6 +1254,7 @@ impl ShellClientRegistry {
             project_inventory: Some(client.project_inventory.status.clone()),
             agent_protocol_version: client.agent_protocol_version.clone(),
             transport: client.transport.clone(),
+            agent_protocol_semantics: client.agent_protocol_semantics,
             policy: client.policy.clone(),
             registered_at: client.registered_at,
             connected_at: client.connected_at,

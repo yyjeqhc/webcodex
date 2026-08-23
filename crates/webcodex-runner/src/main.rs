@@ -2325,6 +2325,10 @@ fn register(
     let projects_count = projects.iter().filter(|project| !project.disabled).count();
     let job_inventory = jobs.inventory();
     let bootstrap = project_registration_bootstrap(&cfg.client_id, &projects, &job_inventory);
+    // Keep projecting inline/paged inventory through the historical `*-v1/v2`
+    // wire label so older Servers preserve their registration behavior. Current
+    // Servers normalize this compatibility encoding at ingress; it is not a
+    // canonical protocol-generation switch.
     let protocol_version = if bootstrap.paged_inventory {
         AGENT_PROTOCOL_VERSION_POLLING_V2
     } else {

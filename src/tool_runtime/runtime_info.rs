@@ -826,9 +826,6 @@ const RUNNER_STALE_AFTER_SECS: i64 = crate::shell_client::CLIENT_ONLINE_WINDOW_S
 /// Stale threshold for connector/tool-call activity observations.
 const ACTIVITY_STALE_AFTER_SECS: i64 = 600;
 
-/// Supported runner protocol versions for the current server build.
-const SUPPORTED_AGENT_PROTOCOL_VERSIONS: &[&str] = &["polling-v1", "websocket-v1", "quic-v1"];
-
 /// One connection-layer observation with the canonical contract fields:
 /// `status`, `observed_at`, `source`, `age_secs`, `stale_after_secs`,
 /// `reason_code`. Extra layer-specific facts are merged on top.
@@ -1186,8 +1183,7 @@ fn version_compatibility_against(
     let runners: Vec<Value> = clients
         .iter()
         .map(|client| {
-            let protocol_supported =
-                SUPPORTED_AGENT_PROTOCOL_VERSIONS.contains(&client.agent_protocol_version.as_str());
+            let protocol_supported = client.agent_protocol_semantics.compatibility.is_supported();
             let build_version = client.build.as_ref().and_then(|b| b.version.clone());
             let build_git_commit = client.build.as_ref().and_then(|b| b.git_commit.clone());
             let build_git_dirty = client.build.as_ref().and_then(|b| b.git_dirty);
@@ -1258,6 +1254,8 @@ fn version_compatibility_against(
                 "client_id": client.client_id,
                 "agent_protocol_version": client.agent_protocol_version,
                 "protocol_supported": protocol_supported,
+                "protocol_compatibility": client.agent_protocol_semantics.compatibility,
+                "project_inventory_strategy": client.agent_protocol_semantics.project_inventory,
                 "build_version": build_version,
                 "build_git_commit": build_git_commit,
                 "build_git_dirty": build_git_dirty,
@@ -1569,6 +1567,9 @@ mod phase_e2_status_tests {
             project_inventory: None,
             agent_protocol_version: "websocket-v1".to_string(),
             transport: "websocket".to_string(),
+            agent_protocol_semantics: crate::shell_protocol::normalize_agent_protocol_semantics(
+                "websocket-v1",
+            ),
             policy: None,
             registered_at: 0,
             connected_at: 0,

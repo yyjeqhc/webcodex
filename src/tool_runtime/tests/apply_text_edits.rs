@@ -2,9 +2,7 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{
-    ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,
-};
+use crate::shell_protocol::{ShellAgentResultRequest, ShellClientCapabilities};
 use serde_json::Value;
 
 #[test]
@@ -343,23 +341,7 @@ async fn apply_text_edits_dry_run_does_not_write() {
             .await
     });
 
-    let mut req = None;
-    for _ in 0..20 {
-        req = runtime
-            .shell_clients
-            .poll(ShellAgentPollRequest {
-                client_id: "ate-dry".to_string(),
-                agent_instance_id: "inst".to_string(),
-                projects: None,
-            })
-            .await
-            .unwrap();
-        if req.is_some() {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    let req = req.expect("apply_text_edits should enqueue an agent file op");
+    let req = wait_for_patch_agent_request(&runtime, "ate-dry").await;
     assert_eq!(req.kind, "file_apply_text_edits");
     // The payload carries dry_run and the edits.
     let payload: Value = serde_json::from_str(req.content.as_deref().unwrap()).unwrap();
@@ -486,23 +468,7 @@ async fn apply_text_edits_session_event_summary() {
             .await
     });
 
-    let mut req = None;
-    for _ in 0..20 {
-        req = runtime
-            .shell_clients
-            .poll(ShellAgentPollRequest {
-                client_id: "ate-sess".to_string(),
-                agent_instance_id: "inst".to_string(),
-                projects: None,
-            })
-            .await
-            .unwrap();
-        if req.is_some() {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    let req = req.expect("apply_text_edits should enqueue an agent file op");
+    let req = wait_for_patch_agent_request(&runtime, "ate-sess").await;
     assert_eq!(req.kind, "file_apply_text_edits");
     runtime
         .shell_clients

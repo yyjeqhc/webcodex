@@ -37,10 +37,12 @@ async fn dispatch_hygiene_with_agent(
     });
 
     let forbidden = ["python3", "-c"].join(" ");
-    for _ in 0..200 {
-        if task.is_finished() {
-            break;
-        }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !task.is_finished() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "hygiene check did not finish within 10 seconds for client {client_id}"
+        );
         if let Some(req) = next_patch_agent_request(runtime, client_id).await {
             assert_eq!(req.kind, "run_internal_posix_script");
             assert!(req.command.is_empty());
@@ -63,10 +65,6 @@ async fn dispatch_hygiene_with_agent(
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
-    assert!(
-        task.is_finished(),
-        "hygiene check did not finish after read-only agent requests"
-    );
 
     task.await.unwrap()
 }

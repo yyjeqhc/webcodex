@@ -6,7 +6,7 @@ use super::super::patch::*;
 use super::super::*;
 use super::support::*;
 use crate::shell_protocol::{
-    ShellAgentPollRequest, ShellAgentResultRequest, ShellAgentShellRequest, ShellClientCapabilities,
+    ShellAgentResultRequest, ShellAgentShellRequest, ShellClientCapabilities,
 };
 use serde_json::{json, Value};
 #[cfg(unix)]
@@ -47,9 +47,7 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "telemetry-write")
-        .await
-        .expect("write_project_file should enqueue a native file-op request");
+    let req = wait_for_patch_agent_request(&runtime, "telemetry-write").await;
     assert_eq!(req.kind, "file_write_project_file");
     assert!(req.command.is_empty());
     assert!(req.stdin.is_none());
@@ -142,9 +140,7 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "telemetry-write")
-        .await
-        .expect("finish_coding_task should inspect changes");
+    let req = wait_for_patch_agent_request(&runtime, "telemetry-write").await;
     assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
     complete_patch_agent_request(
         &runtime,
@@ -188,9 +184,7 @@ async fn delete_project_files_capable_agent_uses_structured_delete_without_outpu
         }
     });
 
-    let req = next_patch_agent_request(&runtime, "cleanup-delete")
-        .await
-        .expect("delete_project_files should enqueue a structured file request");
+    let req = wait_for_patch_agent_request(&runtime, "cleanup-delete").await;
     assert_eq!(req.kind, "file_delete_project_files");
     assert!(req.command.is_empty());
     assert_eq!(req.path.as_deref(), Some("."));
@@ -240,9 +234,7 @@ async fn delete_project_files_old_agent_keeps_legacy_shell_fallback() {
         }
     });
 
-    let req = next_patch_agent_request(&runtime, "cleanup-delete-legacy")
-        .await
-        .expect("old agent should receive the legacy shell request");
+    let req = wait_for_patch_agent_request(&runtime, "cleanup-delete-legacy").await;
     assert_eq!(req.kind, "run_shell");
     assert!(req.command.contains("rm -f --"));
     complete_patch_agent_request(
@@ -403,22 +395,28 @@ async fn delete_project_files_capability_revoked_before_enqueue_falls_back_to_le
     );
 }
 
-/// Spin (yield, never sleep) until the client has at least `expected` pending
-/// requests, without polling/dispatching any of them. Used to synchronize
-/// replacement/timeout tests deterministically on the queue being populated.
+/// Wait until the client has at least `expected` pending requests without
+/// polling/dispatching them. The single wall-clock deadline is deliberately
+/// independent of scheduler yield counts.
 async fn wait_for_pending_requests(runtime: &ToolRuntime, client_id: &str, expected: usize) {
-    for _ in 0..200 {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
         let view = runtime
             .shell_clients
             .get_client_view(client_id)
             .await
             .unwrap_or_else(|| panic!("client {client_id} must be registered"));
-        if view.pending_requests >= expected {
+        let pending = view.pending_requests;
+        if pending >= expected {
             return;
         }
-        tokio::task::yield_now().await;
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "pending requests did not reach {expected} within 10 seconds for {client_id}; last pending count={pending}"
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    panic!("pending requests did not reach {expected} for {client_id}");
 }
 
 #[tokio::test]
@@ -859,9 +857,7 @@ async fn artifact_upload_chunk_session_log_arguments_do_not_store_base64() {
         }
     });
 
-    let req = next_patch_agent_request(&runtime, "telemetry-artifact-chunk")
-        .await
-        .expect("artifact_upload_chunk should enqueue a native file-op request");
+    let req = wait_for_patch_agent_request(&runtime, "telemetry-artifact-chunk").await;
     let payload: serde_json::Value =
         serde_json::from_str(req.content.as_deref().expect("file-op payload")).unwrap();
     assert_eq!(payload["content_base64"], content_base64);
@@ -1046,9 +1042,7 @@ async fn read_project_artifact_metadata_allow_missing_does_not_count_as_failed()
         }
     });
 
-    let req = next_patch_agent_request(&runtime, "artifact-missing-session")
-        .await
-        .expect("read_project_artifact_metadata should enqueue file-op");
+    let req = wait_for_patch_agent_request(&runtime, "artifact-missing-session").await;
     complete_patch_agent_request(
         &runtime,
         "artifact-missing-session",
@@ -1149,9 +1143,7 @@ async fn validate_patch_never_enqueues_mutating_apply_command() {
     });
 
     // 1) `git apply --check -` (read-only applicability test).
-    let check_req = next_patch_agent_request(&runtime, "patcher")
-        .await
-        .expect("validate_patch should enqueue a check request");
+    let check_req = wait_for_patch_agent_request(&runtime, "patcher").await;
     assert_safe_patch_command(&check_req.command, marker);
     assert_eq!(check_req.command, "git apply --check -");
     assert_ne!(check_req.command, "git apply -");
@@ -1159,9 +1151,7 @@ async fn validate_patch_never_enqueues_mutating_apply_command() {
     complete_patch_agent_request(&runtime, "patcher", &check_req.request_id, 0, "", "").await;
 
     // 2) `git apply --stat -` (read-only summary).
-    let stat_req = next_patch_agent_request(&runtime, "patcher")
-        .await
-        .expect("validate_patch should enqueue a stat request");
+    let stat_req = wait_for_patch_agent_request(&runtime, "patcher").await;
     assert_safe_patch_command(&stat_req.command, marker);
     assert_eq!(stat_req.command, "git apply --stat -");
     complete_patch_agent_request(&runtime, "patcher", &stat_req.request_id, 0, "stat", "").await;
@@ -1740,9 +1730,7 @@ async fn execute_agent_search(
                 .await
         }
     });
-    let req = next_patch_agent_request(runtime, client_id)
-        .await
-        .expect("search_project_text agent request");
+    let req = wait_for_patch_agent_request(runtime, client_id).await;
     let inspected = req.clone();
     complete_agent_request_by_running_locally(runtime, client_id, req).await;
     let result = task.await.unwrap();
@@ -2705,9 +2693,7 @@ async fn search_agent_command_timeout_returns_search_timeout() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "search-cmd-timeout")
-        .await
-        .expect("search request");
+    let req = wait_for_patch_agent_request(&runtime, "search-cmd-timeout").await;
     assert_eq!(req.timeout_secs, 1);
     // Simulate agent-side command timeout response (lowercase message + error field).
     runtime
@@ -2764,9 +2750,7 @@ async fn search_agent_timeout_with_complete_records_returns_partial_success() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "search-ptimeout")
-        .await
-        .expect("search request");
+    let req = wait_for_patch_agent_request(&runtime, "search-ptimeout").await;
     runtime
         .shell_clients
         .complete(ShellAgentResultRequest {
@@ -2826,9 +2810,7 @@ async fn search_agent_outer_timeout_returns_search_timeout_and_cancels() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "search-outer-timeout")
-        .await
-        .expect("search request");
+    let req = wait_for_patch_agent_request(&runtime, "search-outer-timeout").await;
     let request_id = req.request_id.clone();
     assert_eq!(req.timeout_secs, 1);
     // Do not complete the agent request; outer tokio timeout should fire.
@@ -2888,9 +2870,7 @@ async fn search_agent_request_dropped_returns_structured_error() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "search-dropped")
-        .await
-        .expect("search request");
+    let req = wait_for_patch_agent_request(&runtime, "search-dropped").await;
     // Drop the oneshot waiter without completing — agent disconnect / channel drop.
     runtime.shell_clients.cancel_request(&req.request_id).await;
     let result = task.await.unwrap();
@@ -2945,9 +2925,7 @@ async fn search_timeout_only_without_rg_still_allows_grep_fallback() {
                 .await
         }
     });
-    let mut req = next_patch_agent_request(&runtime, "search-timeout-fallback")
-        .await
-        .expect("search request");
+    let mut req = wait_for_patch_agent_request(&runtime, "search-timeout-fallback").await;
     // Force grep path (no rg in PATH).
     req.command = format!(
         "PATH={}; export PATH\n{}",
@@ -3371,9 +3349,7 @@ async fn advanced_search_without_rg_returns_structured_capability_error() {
                 .await
         }
     });
-    let mut req = next_patch_agent_request(&runtime, "search-no-rg")
-        .await
-        .expect("advanced search agent request");
+    let mut req = wait_for_patch_agent_request(&runtime, "search-no-rg").await;
     req.command = format!(
         "PATH={}; export PATH\n{}",
         shell_escape_simple(&bin.to_string_lossy()),
@@ -3425,9 +3401,7 @@ async fn search_project_text_no_matches_returns_empty_matches() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "search-empty")
-        .await
-        .expect("search_project_text should enqueue an agent search request");
+    let req = wait_for_patch_agent_request(&runtime, "search-empty").await;
     assert_eq!(req.timeout_secs, 30);
     complete_agent_request_by_running_locally(&runtime, "search-empty", req).await;
     let result = task.await.unwrap();
@@ -3483,9 +3457,7 @@ async fn search_project_text_excludes_sensitive_and_build_dirs() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "search-excludes")
-        .await
-        .expect("search_project_text should enqueue an agent search request");
+    let req = wait_for_patch_agent_request(&runtime, "search-excludes").await;
     complete_agent_request_by_running_locally(&runtime, "search-excludes", req).await;
     let result = task.await.unwrap();
 
@@ -3495,54 +3467,57 @@ async fn search_project_text_excludes_sensitive_and_build_dirs() {
 }
 
 #[tokio::test]
-async fn list_project_files_requires_file_read_capability() {
-    let runtime = runtime_with_agent_project("oe");
-    // Default capabilities have file_read = false.
-    register_agent(&runtime, "oe", None, ShellClientCapabilities::default()).await;
-    let bootstrap = auth_context(None, true);
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::ListProjectFiles {
-                project: agent_test_project_id("oe"),
-                session_id: None,
-                path: None,
-                limit: None,
-            },
-            Some(&bootstrap),
-        )
-        .await;
-    assert!(!result.success);
-    assert!(
-        result.error.unwrap().contains("file_read"),
-        "list_project_files should require file_read capability"
-    );
-}
-
-#[tokio::test]
-async fn project_overview_requires_file_read_capability() {
-    let runtime = runtime_with_agent_project("overview-capability");
+async fn file_read_project_tools_require_file_read_capability() {
+    let runtime = runtime_with_agent_project("file-read-capability");
     register_agent(
         &runtime,
-        "overview-capability",
+        "file-read-capability",
         None,
         ShellClientCapabilities::default(),
     )
     .await;
     let bootstrap = auth_context(None, true);
-    let result = runtime
-        .dispatch_with_auth(
+    let project = agent_test_project_id("file-read-capability");
+    let calls = [
+        (
+            "list_project_files",
+            ToolCall::ListProjectFiles {
+                project: project.clone(),
+                session_id: None,
+                path: None,
+                limit: None,
+            },
+        ),
+        (
+            "project_overview",
             ToolCall::ProjectOverview {
-                project: agent_test_project_id("overview-capability"),
+                project,
                 session_id: None,
                 path: None,
                 max_depth: None,
                 limit: None,
             },
-            Some(&bootstrap),
-        )
-        .await;
-    assert!(!result.success);
-    assert!(result.error.unwrap().contains("file_read"));
+        ),
+    ];
+
+    for (tool, call) in calls {
+        let result = runtime.dispatch_with_auth(call, Some(&bootstrap)).await;
+        assert!(
+            !result.success,
+            "{tool} must reject a Runner without file_read"
+        );
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("file_read")),
+            "{tool}: {:?}",
+            result.error
+        );
+    }
+    assert!(next_patch_agent_request(&runtime, "file-read-capability")
+        .await
+        .is_none());
 }
 
 #[tokio::test]
@@ -3582,9 +3557,7 @@ async fn project_overview_routes_to_owning_agent_and_returns_structured_metadata
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "overview-agent")
-        .await
-        .expect("project_overview owning-agent request");
+    let request = wait_for_patch_agent_request(&runtime, "overview-agent").await;
     assert_eq!(request.kind, "file_project_overview");
     assert!(
         request.command.is_empty(),
@@ -3625,38 +3598,95 @@ async fn project_overview_routes_to_owning_agent_and_returns_structured_metadata
 }
 
 #[tokio::test]
-async fn project_overview_rejects_invalid_paths_before_agent_request() {
-    let runtime = runtime_with_agent_project("overview-path");
+async fn project_read_adapters_reject_parent_traversal_before_agent_dispatch() {
+    let runtime = runtime_with_agent_project("path-boundary");
     register_agent(
         &runtime,
-        "overview-path",
+        "path-boundary",
         None,
         ShellClientCapabilities {
             file_read: true,
+            shell: true,
             ..Default::default()
         },
     )
     .await;
     let bootstrap = auth_context(None, true);
-    for path in ["/etc", "../outside"] {
-        let result = runtime
-            .dispatch_with_auth(
-                ToolCall::ProjectOverview {
-                    project: agent_test_project_id("overview-path"),
-                    session_id: None,
-                    path: Some(path.to_string()),
-                    max_depth: None,
-                    limit: None,
-                },
-                Some(&bootstrap),
-            )
-            .await;
-        assert!(!result.success, "{path} must be rejected");
-        assert!(result.error.unwrap().contains("path"));
+    let project = agent_test_project_id("path-boundary");
+    let calls = [
+        (
+            "read_file",
+            ToolCall::ReadFile {
+                project: project.clone(),
+                path: "../outside".to_string(),
+                session_id: None,
+                start_line: None,
+                limit: None,
+                with_line_numbers: None,
+            },
+            None,
+        ),
+        (
+            "list_project_files",
+            ToolCall::ListProjectFiles {
+                project: project.clone(),
+                session_id: None,
+                path: Some("../outside".to_string()),
+                limit: None,
+            },
+            None,
+        ),
+        (
+            "project_overview",
+            ToolCall::ProjectOverview {
+                project: project.clone(),
+                session_id: None,
+                path: Some("../outside".to_string()),
+                max_depth: None,
+                limit: None,
+            },
+            None,
+        ),
+        (
+            "search_project_text",
+            ToolCall::SearchProjectText {
+                project,
+                pattern: "needle".to_string(),
+                session_id: None,
+                path: Some("../outside".to_string()),
+                limit: None,
+                context_before: None,
+                context_after: None,
+                include_globs: None,
+                exclude_globs: None,
+                result_mode: None,
+                timeout_secs: None,
+            },
+            Some("path"),
+        ),
+    ];
+
+    for (tool, call, structured_field) in calls {
+        let result = runtime.dispatch_with_auth(call, Some(&bootstrap)).await;
+        assert!(!result.success, "{tool} accepted parent traversal");
+        let error = result.error.as_deref().unwrap_or("");
+        assert!(
+            error.contains("project-relative")
+                || error.contains("parent traversal")
+                || error.contains("path"),
+            "{tool}: {error}"
+        );
+        if let Some(field) = structured_field {
+            assert_eq!(result.output["code"], "invalid_search_request", "{tool}");
+            assert_eq!(result.output["field"], field, "{tool}");
+        }
+        assert!(
+            next_patch_agent_request(&runtime, "path-boundary")
+                .await
+                .is_none(),
+            "{tool} must reject before Agent dispatch"
+        );
     }
-    assert!(next_patch_agent_request(&runtime, "overview-path")
-        .await
-        .is_none());
 }
 
 #[tokio::test]
@@ -3729,9 +3759,7 @@ async fn search_project_text_context_does_not_enqueue_python_helper() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "search-native")
-        .await
-        .expect("search_project_text should enqueue an agent search request");
+    let req = wait_for_patch_agent_request(&runtime, "search-native").await;
     let forbidden = ["python3", "-c"].join(" ");
     assert!(
         !req.command.contains(&forbidden),
@@ -3784,43 +3812,6 @@ async fn list_project_files_rejects_non_agent_project_id() {
 }
 
 #[tokio::test]
-async fn list_project_files_rejects_absolute_or_parent_paths_before_agent_request() {
-    let runtime = runtime_with_agent_project("oe");
-    register_agent(
-        &runtime,
-        "oe",
-        None,
-        ShellClientCapabilities {
-            file_read: true,
-            ..Default::default()
-        },
-    )
-    .await;
-    let bootstrap = auth_context(None, true);
-    for path in ["/etc", "../outside"] {
-        let result = runtime
-            .dispatch_with_auth(
-                ToolCall::ListProjectFiles {
-                    project: agent_test_project_id("oe"),
-                    session_id: None,
-                    path: Some(path.to_string()),
-                    limit: None,
-                },
-                Some(&bootstrap),
-            )
-            .await;
-        assert!(!result.success, "path {} should be rejected", path);
-        let err = result.error.unwrap();
-        assert!(
-            err.contains("project-relative") || err.contains("parent traversal"),
-            "unexpected error for {}: {}",
-            path,
-            err
-        );
-    }
-}
-
-#[tokio::test]
 async fn search_project_text_rejects_empty_pattern() {
     // Authorization runs before the tool body, so register an agent with
     // shell capability to reach the empty-pattern validation.
@@ -3858,52 +3849,6 @@ async fn search_project_text_rejects_empty_pattern() {
     assert!(result.error.unwrap().contains("pattern"));
     assert_eq!(result.output["code"], "invalid_search_request");
     assert_eq!(result.output["field"], "pattern");
-}
-
-#[tokio::test]
-async fn search_project_text_rejects_absolute_or_parent_paths_before_agent_request() {
-    let runtime = runtime_with_agent_project("oe");
-    register_agent(
-        &runtime,
-        "oe",
-        None,
-        ShellClientCapabilities {
-            shell: true,
-            ..Default::default()
-        },
-    )
-    .await;
-    let bootstrap = auth_context(None, true);
-    for path in ["/etc", "../outside"] {
-        let result = runtime
-            .dispatch_with_auth(
-                ToolCall::SearchProjectText {
-                    project: agent_test_project_id("oe"),
-                    pattern: "needle".to_string(),
-                    session_id: None,
-                    path: Some(path.to_string()),
-                    limit: None,
-                    context_before: None,
-                    context_after: None,
-                    include_globs: None,
-                    exclude_globs: None,
-                    result_mode: None,
-                    timeout_secs: None,
-                },
-                Some(&bootstrap),
-            )
-            .await;
-        assert!(!result.success, "path {} should be rejected", path);
-        let err = result.error.unwrap();
-        assert!(
-            err.contains("project-relative") || err.contains("parent traversal"),
-            "unexpected error for {}: {}",
-            path,
-            err
-        );
-        assert_eq!(result.output["code"], "invalid_search_request");
-        assert_eq!(result.output["field"], "path");
-    }
 }
 
 #[test]
@@ -4360,94 +4305,36 @@ async fn artifact_upload_finish_and_abort_reject_invalid_upload_id_before_resolv
 }
 
 #[tokio::test]
-async fn read_file_rejects_parent_traversal_before_reaching_agent() {
-    // The agent host scopes file ops to `allowed_roots`, which is broader than
-    // the project, so a traversal that stays inside `allowed_roots` would read
-    // a file the caller was never granted. The project boundary therefore has
-    // to be enforced server-side, before the request is queued for the agent.
-    let runtime = runtime_with_agent_project("traversal-read");
-    let caps = ShellClientCapabilities {
-        file_read: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, "traversal-read", None, caps).await;
-    let project = agent_test_project_id("traversal-read");
-
-    for path in [
-        "../outside.txt",
-        "src/../../outside.txt",
-        "/etc/passwd",
-        "sub/../../../etc/passwd",
+async fn read_file_routes_safe_and_bulk_skipped_explicit_paths_to_agent() {
+    for (client_id, path, content) in [
+        ("relative-read", "src/main.rs", "fn main() {}\n"),
+        ("bulk-explicit-read", ".git/HEAD", "ref: refs/heads/main\n"),
     ] {
-        let result = runtime
-            .read_file(project.clone(), path.to_string(), None, None, None)
-            .await;
-        assert!(
-            !result.success,
-            "read_file accepted out-of-project path {path:?}"
-        );
+        let runtime = runtime_with_agent_project(client_id);
+        register_agent(
+            &runtime,
+            client_id,
+            None,
+            ShellClientCapabilities {
+                file_read: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id(client_id);
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let path = path.to_string();
+            async move { runtime.read_file(project, path, None, None, None).await }
+        });
+
+        let request = wait_for_patch_agent_request(&runtime, client_id).await;
+        assert_eq!(request.kind, "file_read", "{path}");
+        assert_eq!(request.path.as_deref(), Some(path), "{path}");
+        complete_agent_ranged_file_read_request(&runtime, client_id, &request, content).await;
+        let result = task.await.unwrap();
+        assert!(result.success, "{path}: {:?}", result.error);
     }
-
-    // Nothing may have been queued for the agent for any rejected path.
-    let queued = runtime
-        .shell_clients
-        .poll(ShellAgentPollRequest {
-            client_id: "traversal-read".to_string(),
-            agent_instance_id: "inst".to_string(),
-            projects: None,
-        })
-        .await
-        .unwrap();
-    assert!(
-        queued.is_none(),
-        "rejected traversal still reached the agent queue: {queued:?}"
-    );
-}
-
-#[tokio::test]
-async fn read_file_still_routes_project_relative_paths_to_agent() {
-    let runtime = runtime_with_agent_project("traversal-ok");
-    let caps = ShellClientCapabilities {
-        file_read: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, "traversal-ok", None, caps).await;
-    let project = agent_test_project_id("traversal-ok");
-
-    let runtime_for_task = runtime.clone();
-    let project_for_task = project.clone();
-    let task = tokio::spawn(async move {
-        runtime_for_task
-            .read_file(
-                project_for_task,
-                "src/main.rs".to_string(),
-                None,
-                None,
-                None,
-            )
-            .await
-    });
-
-    let mut req = None;
-    for _ in 0..20 {
-        req = runtime
-            .shell_clients
-            .poll(ShellAgentPollRequest {
-                client_id: "traversal-ok".to_string(),
-                agent_instance_id: "inst".to_string(),
-                projects: None,
-            })
-            .await
-            .unwrap();
-        if req.is_some() {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    let req = req.expect("a project-relative read must still reach the agent");
-    assert_eq!(req.kind, "file_read");
-    assert_eq!(req.path.as_deref(), Some("src/main.rs"));
-    task.abort();
 }
 
 #[tokio::test]
@@ -4490,59 +4377,12 @@ async fn read_file_refuses_secret_paths_before_reaching_agent() {
         );
     }
 
-    let queued = runtime
-        .shell_clients
-        .poll(ShellAgentPollRequest {
-            client_id: "secret-read".to_string(),
-            agent_instance_id: "inst".to_string(),
-            projects: None,
-        })
-        .await
-        .unwrap();
     assert!(
-        queued.is_none(),
-        "a refused secret path still reached the agent: {queued:?}"
+        next_patch_agent_request(&runtime, "secret-read")
+            .await
+            .is_none(),
+        "a refused secret path still reached the agent"
     );
-}
-
-#[tokio::test]
-async fn read_file_still_allows_bulk_tree_paths_by_explicit_path() {
-    // `.git` and `target` are skipped by bulk operations for cost, not
-    // secrecy. Reading one by explicit path must keep working.
-    let runtime = runtime_with_agent_project("bulk-read");
-    let caps = ShellClientCapabilities {
-        file_read: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, "bulk-read", None, caps).await;
-    let project = agent_test_project_id("bulk-read");
-
-    let runtime_for_task = runtime.clone();
-    let task = tokio::spawn(async move {
-        runtime_for_task
-            .read_file(project, ".git/HEAD".to_string(), None, None, None)
-            .await
-    });
-
-    let mut req = None;
-    for _ in 0..20 {
-        req = runtime
-            .shell_clients
-            .poll(ShellAgentPollRequest {
-                client_id: "bulk-read".to_string(),
-                agent_instance_id: "inst".to_string(),
-                projects: None,
-            })
-            .await
-            .unwrap();
-        if req.is_some() {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    let req = req.expect(".git/HEAD must still reach the agent");
-    assert_eq!(req.path.as_deref(), Some(".git/HEAD"));
-    task.abort();
 }
 
 /// `--no-ignore` used to be passed to ripgrep, so a search walked straight

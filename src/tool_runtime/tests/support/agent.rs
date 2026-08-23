@@ -11,6 +11,7 @@ use crate::workspace_checkpoint::{create_workspace_checkpoint, restore_workspace
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
     runtime: &ToolRuntime,
@@ -375,14 +376,17 @@ pub(in crate::tool_runtime::tests) async fn dispatch_checkpoint_with_local_agent
             runtime.dispatch_with_auth(call, Some(&bootstrap)).await
         }
     });
-    let mut req = None;
-    for _ in 0..200 {
-        req = next_patch_agent_request(runtime, client_id).await;
-        if req.is_some() || task.is_finished() {
-            break;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let req = loop {
+        let request = next_patch_agent_request(runtime, client_id).await;
+        if request.is_some() || task.is_finished() {
+            break request;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
+        if Instant::now() >= deadline {
+            panic!("checkpoint Agent request readiness failed for client {client_id} within 10 seconds");
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    };
     let req = match req {
         Some(req) => req,
         None => {
@@ -721,6 +725,36 @@ pub(in crate::tool_runtime::tests) async fn next_patch_agent_request(
     None
 }
 
+/// Wait for a request that the test requires to be dispatched. Unlike
+/// `next_patch_agent_request`, which is intentionally a short probe for
+/// negative/no-dispatch assertions, this positive readiness wait uses one
+/// absolute wall-clock deadline so scheduler contention cannot turn a fixed
+/// yield count into a flaky failure.
+pub(in crate::tool_runtime::tests) async fn wait_for_patch_agent_request(
+    runtime: &ToolRuntime,
+    client_id: &str,
+) -> ShellAgentShellRequest {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(request) = runtime
+            .shell_clients
+            .poll(ShellAgentPollRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+        {
+            return request;
+        }
+        if Instant::now() >= deadline {
+            panic!("Agent request readiness failed for client {client_id} within 10 seconds");
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 pub(in crate::tool_runtime::tests) fn assert_internal_posix_script_contains(
     request: &ShellAgentShellRequest,
     needle: &str,
@@ -781,6 +815,30 @@ pub(in crate::tool_runtime::tests) async fn complete_patch_agent_request_for_ins
         })
         .await
         .unwrap();
+}
+
+pub(in crate::tool_runtime::tests) async fn complete_agent_ranged_file_read_request(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    request: &ShellAgentShellRequest,
+    content: &str,
+) {
+    let start = request
+        .start_line
+        .expect("ToolRuntime file_read test request must include start_line");
+    let end = request
+        .end_line
+        .expect("ToolRuntime file_read test request must include end_line");
+    let limit = end.saturating_sub(start).saturating_add(1);
+    complete_patch_agent_request(
+        runtime,
+        client_id,
+        &request.request_id,
+        0,
+        &canonical_agent_file_read_range(content, start, limit),
+        "",
+    )
+    .await;
 }
 
 pub(in crate::tool_runtime::tests) async fn register_agent_with_projects(

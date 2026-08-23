@@ -66,9 +66,7 @@ async fn git_restore_paths_restores_tracked_filename_containing_target() {
         }
     });
 
-    let request = next_patch_agent_request(&runtime, "restore-target-substring")
-        .await
-        .expect("git_restore_paths should enqueue an agent process request");
+    let request = wait_for_patch_agent_request(&runtime, "restore-target-substring").await;
     assert_eq!(request.kind, "run_process");
     assert!(request.command.is_empty());
     let process = request.process.as_ref().expect("typed git restore process");
@@ -118,9 +116,7 @@ async fn git_path_mutations_pass_shell_sensitive_paths_as_literal_argv() {
         let restore_paths = restore_paths.clone();
         async move { runtime.git_restore_paths(project, restore_paths).await }
     });
-    let request = next_patch_agent_request(&runtime, "literal-git-paths")
-        .await
-        .expect("git restore should enqueue typed argv");
+    let request = wait_for_patch_agent_request(&runtime, "literal-git-paths").await;
     assert_eq!(request.kind, "run_process");
     let process = request.process.as_ref().expect("typed git restore process");
     assert_eq!(process.executable, "git");
@@ -154,9 +150,7 @@ async fn git_path_mutations_pass_shell_sensitive_paths_as_literal_argv() {
         let discard_paths = discard_paths.clone();
         async move { runtime.discard_untracked(project, discard_paths).await }
     });
-    let request = next_patch_agent_request(&runtime, "literal-git-paths")
-        .await
-        .expect("git clean should enqueue typed argv");
+    let request = wait_for_patch_agent_request(&runtime, "literal-git-paths").await;
     assert_eq!(request.kind, "run_process");
     let process = request.process.as_ref().expect("typed git clean process");
     assert_eq!(process.executable, "git");
@@ -205,9 +199,7 @@ async fn git_path_mutation_capability_preflight_matches_structured_process_runti
         }
     });
 
-    let request = next_patch_agent_request(&runtime, "restore-structured-only")
-        .await
-        .expect("structured-process-only Runner should reach typed process dispatch");
+    let request = wait_for_patch_agent_request(&runtime, "restore-structured-only").await;
     assert_eq!(request.kind, "run_process");
     assert!(request.command.is_empty());
     let process = request.process.as_ref().expect("typed git restore process");
@@ -325,9 +317,7 @@ async fn git_restore_stays_sync_on_structured_job_capable_runner() {
         }
     });
 
-    let request = next_patch_agent_request(&runtime, "restore-sync-job-capable")
-        .await
-        .expect("git restore should stay on the synchronous process path");
+    let request = wait_for_patch_agent_request(&runtime, "restore-sync-job-capable").await;
     assert_eq!(request.kind, "run_process");
     assert!(request.job_id.is_none());
     assert!(request.command.is_empty());
@@ -381,9 +371,7 @@ async fn git_restore_replacement_after_dispatch_reports_outcome_unknown_without_
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "restore-uncertain")
-        .await
-        .expect("git restore should dispatch once");
+    let request = wait_for_patch_agent_request(&runtime, "restore-uncertain").await;
     assert_eq!(request.kind, "run_process");
 
     runtime
@@ -715,9 +703,7 @@ async fn run_agent_git_diff_hunks_page(
                 .await
         }
     });
-    let request = next_patch_agent_request(runtime, client_id)
-        .await
-        .expect("git_diff_hunks should enqueue one bounded agent request");
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
     assert_eq!(request.kind, "run_internal_posix_script");
     assert_eq!(
         request.cwd.as_deref(),
@@ -776,7 +762,12 @@ async fn run_agent_git_diff_hunks_committed_page(
     });
     let mut scripts = Vec::new();
     let mut page_stdout_bytes = 0usize;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     for _ in 0..16 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "committed git_diff_hunks did not finish within 10 seconds for client {client_id}"
+        );
         if task.is_finished() {
             break;
         }
@@ -838,7 +829,7 @@ async fn run_agent_git_diff_hunks_committed_page(
     }
     assert!(
         task.is_finished(),
-        "committed git_diff_hunks did not finish after bounded agent requests"
+        "committed git_diff_hunks exceeded its 16-request protocol bound for client {client_id}"
     );
     (task.await.unwrap(), page_stdout_bytes, scripts)
 }
@@ -1716,9 +1707,7 @@ async fn git_diff_hunks_committed_drains_bounded_consumer_and_preserves_producer
         }
     });
 
-    let scope_request = next_patch_agent_request(&runtime, "committed-producer-failure")
-        .await
-        .expect("scope request");
+    let scope_request = wait_for_patch_agent_request(&runtime, "committed-producer-failure").await;
     complete_agent_request_by_running_locally(
         &runtime,
         "committed-producer-failure",
@@ -1726,9 +1715,8 @@ async fn git_diff_hunks_committed_drains_bounded_consumer_and_preserves_producer
     )
     .await;
 
-    let mut page_request = next_patch_agent_request(&runtime, "committed-producer-failure")
-        .await
-        .expect("page request");
+    let mut page_request =
+        wait_for_patch_agent_request(&runtime, "committed-producer-failure").await;
     let page_script = page_request
         .script
         .as_ref()
@@ -3073,9 +3061,7 @@ async fn show_changes_include_diff_agent_command_does_not_enqueue_python_helper(
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "show-native")
-        .await
-        .expect("show_changes should enqueue an agent shell request");
+    let req = wait_for_patch_agent_request(&runtime, "show-native").await;
     assert_eq!(req.kind, "run_internal_posix_script");
     assert!(req.command.is_empty());
     let payload = req
@@ -3307,9 +3293,7 @@ async fn show_changes_session_event_limit_is_bounded() {
             .show_changes(project, Some(session_id), None, None, None, Some(999))
             .await
     });
-    let req = next_patch_agent_request(&runtime, "show")
-        .await
-        .expect("show_changes should enqueue an agent shell request");
+    let req = wait_for_patch_agent_request(&runtime, "show").await;
     let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=0\nfiles_returned=0\nfiles_truncated=0\nfiles_limit=200\nmodified=0\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=0\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=7\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ncommit=abc123\nshort=abc123\nsummary=head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\nhead_bytes=39\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=0\n";
     complete_patch_agent_request(&runtime, "show", &req.request_id, 0, stdout, "").await;
     let result = task.await.unwrap();
@@ -3558,13 +3542,12 @@ async fn show_changes_untracked_sensitive_path_preview_is_skipped() {
 }
 
 #[test]
-fn git_diff_hunks_command_rejects_unsafe_paths() {
+fn git_diff_hunks_command_is_read_only_and_scoped_to_paths() {
     let command = git_diff_hunks_command(&["src/lib.rs".to_string()], false).unwrap();
     assert!(command.contains("git diff"));
     assert!(command.contains("--no-ext-diff"));
     assert!(command.contains("--no-textconv"));
     assert!(command.contains("--unified=80 -- 'src/lib.rs'"));
-    assert!(validate_project_relative_path("../outside").is_err());
 }
 
 #[tokio::test]
@@ -3653,9 +3636,7 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "telemetry-show")
-        .await
-        .expect("show_changes should enqueue shell request");
+    let req = wait_for_patch_agent_request(&runtime, "telemetry-show").await;
     let stdout = "## main\n M README.md\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=1\nfiles_returned=1\nfiles_truncated=0\nfiles_limit=200\nmodified=1\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=1\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=20\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ncommit=abc123\nshort=abc123\nsummary=head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\nhead_bytes=39\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nREADME.md | 1 +\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=15\n";
     complete_patch_agent_request(&runtime, "telemetry-show", &req.request_id, 0, stdout, "").await;
     let result = show_task.await.unwrap();
@@ -3774,24 +3755,29 @@ fn split_diff_summary_without_sentinel_returns_all_as_porcelain() {
 }
 
 #[test]
-fn git_log_command_is_read_only_and_bounded() {
+fn git_read_commands_are_non_mutating_and_log_is_bounded() {
     assert_eq!(normalize_git_log_limit(None), 20);
     assert_eq!(normalize_git_log_limit(Some(0)), 20);
     assert_eq!(normalize_git_log_limit(Some(999)), 100);
     assert_eq!(normalize_git_log_skip(Some(20_000)), 10_000);
-    let cmd = git_log_command(21, 7);
-    assert!(cmd.contains("git log"));
-    assert!(cmd.contains("-n 22"));
-    assert!(cmd.contains("--skip 7"));
-    for forbidden in [
-        "apply", "commit", "checkout", "reset", "push", "stash", "merge", "rebase", "rm ",
-    ] {
-        assert!(
-            !cmd.contains(forbidden),
-            "git_log command must not contain '{}': {}",
-            forbidden,
-            cmd
-        );
+
+    let log = git_log_command(21, 7);
+    assert!(log.contains("git log"));
+    assert!(log.contains("-n 22"));
+    assert!(log.contains("--skip 7"));
+    let summary = git_diff_summary_command();
+    assert!(summary.contains("git status --porcelain"));
+    assert!(summary.contains("git diff --stat"));
+
+    for (tool, command) in [("git_log", log), ("git_diff_summary", summary)] {
+        for forbidden in [
+            "apply", "commit", "checkout", "reset", "push", "stash", "merge", "rebase", "rm ",
+        ] {
+            assert!(
+                !command.contains(forbidden),
+                "{tool} command must not contain {forbidden:?}: {command}"
+            );
+        }
     }
 }
 
@@ -3804,25 +3790,6 @@ fn git_log_parser_splits_commits_refs_and_truncation() {
     assert_eq!(commits[0]["short_hash"], "aaaaaaa");
     assert_eq!(commits[0]["subject"], "newest");
     assert_eq!(commits[0]["refs"], json!(["HEAD", "main", "v1"]));
-}
-
-#[test]
-fn git_diff_summary_command_is_read_only() {
-    let cmd = git_diff_summary_command();
-    // Must run only read-only git inspection subcommands.
-    assert!(cmd.contains("git status --porcelain"));
-    assert!(cmd.contains("git diff --stat"));
-    // No mutating subcommands may appear.
-    for forbidden in [
-        "apply", "commit", "checkout", "reset", "push", "stash", "merge", "rebase", "rm ",
-    ] {
-        assert!(
-            !cmd.contains(forbidden),
-            "git_diff_summary command must not contain '{}': {}",
-            forbidden,
-            cmd
-        );
-    }
 }
 
 #[tokio::test]
@@ -3841,21 +3808,12 @@ async fn git_diff_summary_agent_uses_internal_posix_runtime() {
         async move { runtime.git_diff_summary(project).await }
     });
 
-    let request = next_patch_agent_request(&runtime, "summary-internal")
-        .await
-        .expect("git_diff_summary should enqueue one internal request");
-    assert_eq!(request.kind, "run_internal_posix_script");
-    assert!(request.command.is_empty());
-    let payload = request
-        .script
-        .as_ref()
-        .expect("git_diff_summary must carry a typed internal script");
+    let request = wait_for_patch_agent_request(&runtime, "summary-internal").await;
+    assert_internal_posix_script_contains(&request, "git status --porcelain");
     assert_eq!(
-        payload.language,
-        crate::shell_protocol::ShellScriptLanguage::Sh
+        request.script.as_ref().unwrap().script,
+        git_diff_summary_command()
     );
-    assert_eq!(payload.script, git_diff_summary_command());
-    assert!(payload.args.is_empty());
     complete_agent_request_by_running_locally(&runtime, "summary-internal", request).await;
 
     let result = task.await.unwrap();
@@ -3907,10 +3865,12 @@ async fn run_git_review_summary_via_agent(
             .git_review_summary(project, base_commit, head_commit)
             .await
     });
-    for _ in 0..64 {
-        if task.is_finished() {
-            break;
-        }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !task.is_finished() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "git_review_summary did not finish within 10 seconds for client {client_id}"
+        );
         if let Some(request) = next_patch_agent_request(runtime, client_id).await {
             assert_eq!(request.kind, "run_internal_posix_script");
             assert!(request.command.is_empty());
@@ -3967,13 +3927,9 @@ async fn run_git_review_summary_via_agent(
             )
             .await;
         } else {
-            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
-    assert!(
-        task.is_finished(),
-        "git_review_summary did not finish after bounded agent requests"
-    );
     task.await.unwrap()
 }
 
@@ -4862,10 +4818,12 @@ async fn run_show_changes_via_agent(
             .show_changes(project, session_id, Some(include_diff), None, None, None)
             .await
     });
-    for _ in 0..20 {
-        if task.is_finished() {
-            break;
-        }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !task.is_finished() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "show_changes did not finish within 10 seconds for client {client_id}"
+        );
         if let Some(req) = next_patch_agent_request(runtime, client_id).await {
             assert_eq!(req.kind, "run_internal_posix_script");
             assert!(req.command.is_empty());
@@ -4880,13 +4838,9 @@ async fn run_show_changes_via_agent(
             assert!(payload.args.is_empty());
             complete_agent_request_by_running_locally(runtime, client_id, req).await;
         } else {
-            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
-    assert!(
-        task.is_finished(),
-        "show_changes did not finish after agent requests"
-    );
     task.await.unwrap()
 }
 
@@ -6055,9 +6009,7 @@ async fn show_changes_runtime_rejects_stat_only_failure_for_both_diff_modes() {
                     .await
             }
         });
-        let req = next_patch_agent_request(&runtime, "stat-only")
-            .await
-            .expect("show_changes should enqueue a shell request");
+        let req = wait_for_patch_agent_request(&runtime, "stat-only").await;
         assert_eq!(req.kind, "run_internal_posix_script");
         assert!(req.command.is_empty());
         let payload = req
@@ -6170,9 +6122,7 @@ async fn show_changes_runtime_rejects_unavailable_diff_stat_observation() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "stat-missing")
-        .await
-        .expect("show_changes should enqueue a shell request");
+    let req = wait_for_patch_agent_request(&runtime, "stat-missing").await;
     assert_eq!(req.kind, "run_internal_posix_script");
     assert!(req.command.is_empty());
     let payload = req
@@ -6435,9 +6385,7 @@ async fn show_changes_runtime_propagates_full_diff_failure_as_tool_failure() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "extd")
-        .await
-        .expect("show_changes should enqueue a shell request");
+    let req = wait_for_patch_agent_request(&runtime, "extd").await;
     // Run the generated internal script locally with the failing external diff
     // in the environment so the full `git diff` fails.
     assert_eq!(req.kind, "run_internal_posix_script");

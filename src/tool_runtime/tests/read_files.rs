@@ -19,9 +19,7 @@ async fn next_read_request(
     runtime: &ToolRuntime,
     client_id: &str,
 ) -> crate::shell_protocol::ShellAgentShellRequest {
-    next_patch_agent_request(runtime, client_id)
-        .await
-        .expect("read_files should enqueue a file_read request")
+    wait_for_patch_agent_request(runtime, client_id).await
 }
 
 async fn complete_read(
@@ -30,18 +28,7 @@ async fn complete_read(
     request: &crate::shell_protocol::ShellAgentShellRequest,
     content: &str,
 ) {
-    let start = request.start_line.unwrap_or(1);
-    let end = request.end_line.unwrap_or(start);
-    let limit = end.saturating_sub(start).saturating_add(1);
-    complete_patch_agent_request(
-        runtime,
-        client_id,
-        &request.request_id,
-        0,
-        &canonical_agent_file_read_range(content, start, limit),
-        "",
-    )
-    .await;
+    complete_agent_ranged_file_read_request(runtime, client_id, request, content).await;
 }
 
 #[test]

@@ -59,14 +59,14 @@ fn register_project_rejects_dangerous_subpaths_without_explicit_root() {
 
 #[test]
 fn load_config_defaults_empty_allowed_roots_to_home() {
-    let _guard = agent_init::TEST_ENV_LOCK.lock().unwrap();
+    let _guard = test_env_lock();
     let home = std::env::var_os("HOME").map(PathBuf::from);
     if let Some(home) = home {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("agent.toml");
         std::fs::write(
             &path,
-            "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\n",
+            "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\nprojects_dir = \"projects.d\"\n",
         )
         .unwrap();
         let cfg = load_config(&path).unwrap();
@@ -79,15 +79,11 @@ fn load_config_defaults_empty_allowed_roots_to_home() {
 }
 
 #[test]
-fn load_config_defaults_allow_cwd_anywhere_to_false() {
-    let _guard = agent_init::TEST_ENV_LOCK.lock().unwrap();
-    let tmp = tempfile::tempdir().unwrap();
-    let base = "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\n";
+fn agent_config_defaults_allow_cwd_anywhere_to_false() {
+    let base = "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\nprojects_dir = \"projects.d\"\n";
 
-    // A config that omits `[policy]` entirely falls back to
-    // `AgentPolicy::default()`; one that has `[policy]` without the field
-    // falls back to the per-field serde default. Both must fail closed —
-    // otherwise the agent runs with no filesystem boundary at all.
+    // This is a serde/default-policy invariant, not a per-user path test. Parse
+    // the fixture directly so it cannot observe ambient HOME/USERPROFILE.
     for (label, body) in [
         ("no [policy] section", base.to_string()),
         (
@@ -95,9 +91,7 @@ fn load_config_defaults_allow_cwd_anywhere_to_false() {
             format!("{base}\n[policy]\nallow_raw_shell = true\n"),
         ),
     ] {
-        let path = tmp.path().join("agent.toml");
-        std::fs::write(&path, body).unwrap();
-        let cfg = load_config(&path).unwrap();
+        let cfg: AgentConfig = toml::from_str(&body).unwrap();
         assert!(
             !cfg.policy.allow_cwd_anywhere,
             "{label}: allow_cwd_anywhere must default to false"
@@ -132,12 +126,12 @@ fn default_policy_denies_paths_outside_allowed_roots() {
 
 #[test]
 fn load_config_explicit_allowed_roots_override_home_default() {
-    let _guard = agent_init::TEST_ENV_LOCK.lock().unwrap();
+    let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     std::fs::write(
             &path,
-            "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\n[policy]\nallowed_roots = [\"/root/git\"]\n",
+            "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\nprojects_dir = \"projects.d\"\n[policy]\nallowed_roots = [\"/root/git\"]\n",
         )
         .unwrap();
     let cfg = load_config(&path).unwrap();
@@ -150,7 +144,7 @@ fn load_config_explicit_allowed_roots_override_home_default() {
 
 #[test]
 fn load_config_empty_roots_without_home_and_no_cwd_anywhere_errors() {
-    let _guard = agent_init::TEST_ENV_LOCK.lock().unwrap();
+    let _guard = test_env_lock();
     // Windows derives the allowed-root default from USERPROFILE, so both
     // home sources must be absent to exercise the fail-closed branch.
     let _env = EnvGuard::new()
@@ -161,7 +155,7 @@ fn load_config_empty_roots_without_home_and_no_cwd_anywhere_errors() {
     let path = tmp.path().join("agent.toml");
     std::fs::write(
         &path,
-        "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\n\
+        "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\nprojects_dir = \"projects.d\"\n\
              [policy]\nallow_cwd_anywhere = false\n",
     )
     .unwrap();

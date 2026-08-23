@@ -17,10 +17,9 @@ env:
 
 jobs:
   contract:
-    # Every PR gets this cheap contract lane, including owner-authored PRs that
-    # have not opted into the heavier `run-ci` jobs below. Keep it limited to
-    # deterministic, in-process/static checks so feedback stays fast.
-    if: github.event_name == 'pull_request'
+    # Mandatory first lane for every workflow invocation: pull requests and
+    # pushes to main. Owner-authored PRs do not need `run-ci` for this cheap gate.
+    # Keep it limited to deterministic, in-process/static checks so feedback stays fast.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -49,6 +48,16 @@ jobs:
           bash scripts/workspace_boundary_check.sh
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Ensure test inventory dependency
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y ripgrep
+          fi
+      - name: Check test inventory contract
+        run: |
+          bash scripts/test_inventory.sh --self-test
+          bash scripts/test_inventory.sh
       - name: Check schema and metadata contracts
         run: |
           cargo test --locked -p webcodex --lib -- \
@@ -60,12 +69,43 @@ jobs:
             explicit_resume_mcp_schema_and_metadata_are_exposed \
             http_project_connector_lists_and_dispatches_only_canonical_capabilities
 
-  test:
-    # External PRs run automatically (subject to GitHub's normal fork approval
-    # protections). PRs authored by the repository owner are intentionally
-    # opt-in: adding the `run-ci` label triggers this workflow again and enables
-    # the heavy jobs. Removing the label also cancels an in-progress PR run via
-    # the concurrency group above. Pushes to main always run.
+  test-linux-rust:
+    needs: contract
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.user.login != github.repository_owner ||
+      contains(github.event.pull_request.labels.*.name, 'run-ci')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: server
+            packages: "-p webcodex"
+          - shard: runner
+            packages: "-p webcodex-runner"
+          - shard: workspace-crates
+            packages: >-
+              -p webcodex-admin
+              -p webcodex-agent-config
+              -p webcodex-core
+              -p webcodex-cli
+              -p webcodex-persistent-shell
+              -p webcodex-sandbox
+              -p webcodex-workspace
+              -p webcodex-process
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-ci
+      - name: Run ${{ matrix.shard }} Rust tests
+        run: cargo test --locked ${{ matrix.packages }}
+
+  test-linux-tooling:
+    needs: contract
     if: >-
       github.event_name == 'push' ||
       github.event.pull_request.user.login != github.repository_owner ||
@@ -74,29 +114,12 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-ci
+      # The retained npm release-smoke tooling below invokes node/npm directly.
+      # Frontend dependency installation and frontend-specific npm caching remain
+      # contract-lane responsibilities and are intentionally not repeated here.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install frontend dependencies
-        run: npm ci --prefix frontend
-      - name: Type-check frontend
-        run: npm --prefix frontend run typecheck
-      - name: Test frontend
-        run: npm --prefix frontend test
-      - name: Verify committed frontend build
-        run: npm --prefix frontend run check:dist
-      - name: Verify workspace boundaries
-        run: |
-          bash scripts/workspace_boundary_check.sh --self-test
-          bash scripts/workspace_boundary_check.sh
       - name: Test release verification tooling
         run: |
           python3 -m unittest scripts.tests.test_verify_public_release scripts.tests.test_collect_release_bundle scripts.tests.test_release_readiness scripts.tests.test_release_publication scripts.tests.test_check_markdown_links
@@ -114,12 +137,38 @@ jobs:
           bash -n scripts/npm_package_smoke.sh scripts/tests/test_npm_package_smoke_existing_binaries.sh
           bash scripts/npm_package_smoke.sh --help >/dev/null
           bash scripts/tests/test_npm_package_smoke_existing_binaries.sh
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Run tests
-        run: cargo test --locked --workspace
+
+  test:
+    needs: [contract, test-linux-rust, test-linux-tooling]
+    # Preserve the historical aggregate status check. Eligible heavy runs always
+    # evaluate upstream results so a failed or unexpectedly skipped Linux lane
+    # cannot turn this required status into a successful or skipped check.
+    if: >-
+      always() &&
+      (
+        github.event_name == 'push' ||
+        github.event.pull_request.user.login != github.repository_owner ||
+        contains(github.event.pull_request.labels.*.name, 'run-ci')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require successful Linux lanes
+        env:
+          CONTRACT_RESULT: ${{ needs.contract.result }}
+          RUST_RESULT: ${{ needs.test-linux-rust.result }}
+          TOOLING_RESULT: ${{ needs.test-linux-tooling.result }}
+        run: |
+          echo "contract=$CONTRACT_RESULT rust=$RUST_RESULT tooling=$TOOLING_RESULT"
+          if [ "$CONTRACT_RESULT" != success ] || \
+             [ "$RUST_RESULT" != success ] || \
+             [ "$TOOLING_RESULT" != success ]; then
+            echo "required Linux CI lane did not succeed" >&2
+            exit 1
+          fi
 
   test-macos:
+    needs: contract
     if: >-
       github.event_name == 'push' ||
       github.event.pull_request.user.login != github.repository_owner ||
@@ -131,19 +180,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: macos-ci
-      - name: Check formatting
-        run: cargo fmt --all -- --check
       - name: Check macOS release production surfaces
         run: cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
       - name: Run native macOS Runner tests
         run: cargo test --locked -p webcodex-runner
 
   test-windows:
+    needs: contract
     if: >-
       github.event_name == 'push' ||
       github.event.pull_request.user.login != github.repository_owner ||
@@ -158,14 +204,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Check formatting
-        run: cargo fmt --all -- --check
       - name: Run Windows library and CLI tests
         run: cargo test --locked -p webcodex-agent-config -p webcodex-process -p webcodex-persistent-shell -p webcodex-cli
       - name: Run Windows Runner tests

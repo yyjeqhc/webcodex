@@ -478,7 +478,7 @@ fn prepared_profile_errors_do_not_leak_init_script_body() {
 
 #[test]
 fn prepared_profile_filters_webcodex_token_env() {
-    let _guard = TEST_ENV_LOCK.lock().unwrap();
+    let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let shell = shell_with_profiles(Some("test"), vec![("test", ShellProfileConfig::default())]);
     // Windows environment names are case-insensitive, so mixed-case spellings
@@ -489,8 +489,7 @@ fn prepared_profile_filters_webcodex_token_env() {
     #[cfg(not(windows))]
     let spellings = ["WEBCODEX_TOKEN"];
     for spelling in spellings {
-        let saved = std::env::var_os(spelling);
-        std::env::set_var(spelling, "secret-token");
+        let _env = EnvGuard::new().set(spelling, "secret-token");
         let result = run_profile_shell(
             &unrestricted_test_policy(),
             &shell,
@@ -499,10 +498,6 @@ fn prepared_profile_filters_webcodex_token_env() {
             tmp.path(),
             &shell_if_else_env_present(spelling),
         );
-        match saved {
-            Some(value) => std::env::set_var(spelling, value),
-            None => std::env::remove_var(spelling),
-        }
         assert_eq!(result.exit_code, Some(0), "{result:?}");
         assert_eq!(result.stdout.as_deref(), Some("absent"), "{result:?}");
     }

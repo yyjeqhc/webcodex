@@ -7,22 +7,6 @@ use crate::validation_bridge::{
 };
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
-
-static VALIDATION_ENV_LOCK: Mutex<()> = Mutex::new(());
-
-struct ValidationEnvRestore {
-    pyright: Option<std::ffi::OsString>,
-}
-
-impl Drop for ValidationEnvRestore {
-    fn drop(&mut self) {
-        match self.pyright.take() {
-            Some(value) => std::env::set_var("WEBCODEX_PYRIGHT", value),
-            None => std::env::remove_var("WEBCODEX_PYRIGHT"),
-        }
-    }
-}
 
 fn typecheck_request(project_id: &str) -> ValidationBridgeRequest {
     ValidationBridgeRequest {
@@ -134,12 +118,7 @@ fn with_path<T>(bin_dir: &std::path::Path, f: impl FnOnce() -> T) -> T {
 /// the validation fixture. `available = false` points at a guaranteed-missing
 /// path to exercise the tool-unavailable branch without exposing real tools.
 fn with_path_mode<T>(bin_dir: &std::path::Path, available: bool, f: impl FnOnce() -> T) -> T {
-    let _lock = VALIDATION_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let _restore = ValidationEnvRestore {
-        pyright: std::env::var_os("WEBCODEX_PYRIGHT"),
-    };
+    let _env_lock = crate::tests::test_env_lock();
     let program = if available {
         #[cfg(unix)]
         {
@@ -157,7 +136,7 @@ fn with_path_mode<T>(bin_dir: &std::path::Path, available: bool, f: impl FnOnce(
     } else {
         bin_dir.join("webcodex-missing-pyright")
     };
-    std::env::set_var("WEBCODEX_PYRIGHT", program);
+    let _env = crate::tests::EnvGuard::new().set("WEBCODEX_PYRIGHT", &program);
     f()
 }
 
@@ -323,7 +302,7 @@ fn end_to_end_exit_zero_no_diagnostics_is_success() {
 fn fake_pyright_missing_reports_tool_unavailable() {
     let project = tempfile::tempdir().unwrap();
     let empty_bin = tempfile::tempdir().unwrap();
-    // PATH with empty dir only — no pyright (do not prepend system PATH).
+    // Point directly at a guaranteed-missing pyright; process PATH stays untouched.
     let response = with_path_mode(empty_bin.path(), false, || {
         execute_validation_at_root(project.path(), &typecheck_request("demo"), 120).unwrap()
     });

@@ -7,7 +7,7 @@ use crate::webcodex_runner::detached_job::{
 use serde_json::json;
 use std::ffi::OsString;
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 use tempfile::TempDir;
@@ -151,6 +151,7 @@ fn job_reconciliation_local_snapshot_advances_before_best_effort_send() {
     );
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    tx.try_send(AgentEnvelope::Ping { ts: 17 }).unwrap();
     manager.install_sink(AgentSink::WebSocket {
         tx,
         client_id: "test-agent".to_string(),
@@ -575,11 +576,11 @@ fn detached_recovery_stop_uses_durable_control_without_managed_child() {
         )],
     );
     let _ = handoff_detached_job(&store, request.clone()).unwrap();
-    assert!(wait_until(Duration::from_secs(5), || pid_marker.exists()));
-    let payload_pid: u32 = std::fs::read_to_string(&pid_marker)
-        .unwrap()
-        .parse()
-        .unwrap();
+    let payload_pid = wait_for_pid_marker(
+        &pid_marker,
+        Instant::now() + Duration::from_secs(5),
+        "detached recovery payload",
+    );
     assert!(process_running(payload_pid));
 
     let manager = JobManager::new(1);
@@ -618,11 +619,11 @@ fn detached_recovery_observer_start_failure_retains_durable_control_and_stop_rou
         )],
     );
     let _ = handoff_detached_job(&store, request.clone()).unwrap();
-    assert!(wait_until(Duration::from_secs(5), || pid_marker.exists()));
-    let payload_pid: u32 = std::fs::read_to_string(&pid_marker)
-        .unwrap()
-        .parse()
-        .unwrap();
+    let payload_pid = wait_for_pid_marker(
+        &pid_marker,
+        Instant::now() + Duration::from_secs(5),
+        "detached observer start-failure payload",
+    );
     assert!(process_running(payload_pid));
 
     let manager = JobManager::new(1);
@@ -675,11 +676,11 @@ fn detached_recovery_observer_marks_later_supervisor_loss() {
         )],
     );
     let _ = handoff_detached_job(&store, request.clone()).unwrap();
-    assert!(wait_until(Duration::from_secs(5), || pid_marker.exists()));
-    let payload_pid: u32 = std::fs::read_to_string(&pid_marker)
-        .unwrap()
-        .parse()
-        .unwrap();
+    let payload_pid = wait_for_pid_marker(
+        &pid_marker,
+        Instant::now() + Duration::from_secs(5),
+        "detached supervisor-loss payload",
+    );
     let supervisor_pid = store.read(&request.job_id).unwrap().supervisor.unwrap().pid;
 
     let manager = JobManager::new(1);
@@ -739,17 +740,11 @@ fn job_manager_stop_terminates_the_process_group() {
     let child = Arc::new(Mutex::new(ManagedChild::spawn(&mut command).unwrap()));
     let leader_pid = child.lock().unwrap().id();
     let pid_file = temp.path().join("descendant.pid");
-    let descendant_pid = (0..200)
-        .find_map(|_| {
-            let pid = std::fs::read_to_string(&pid_file)
-                .ok()
-                .and_then(|text| text.trim().parse::<u32>().ok());
-            if pid.is_none() {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            pid
-        })
-        .expect("descendant pid marker was not ready");
+    let descendant_pid = wait_for_pid_marker(
+        &pid_file,
+        Instant::now() + Duration::from_secs(5),
+        "process-group descendant",
+    );
     assert!(process_running(leader_pid));
     assert!(process_running(descendant_pid));
 
@@ -769,13 +764,13 @@ fn job_manager_stop_terminates_the_process_group() {
     manager.stop("process-group-job").unwrap();
     assert!(stop_requested.load(Ordering::SeqCst));
 
-    for _ in 0..200 {
-        let leader_exited = child.lock().unwrap().try_wait().unwrap().is_some();
-        if leader_exited && !process_running(descendant_pid) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert!(
+        wait_until(Duration::from_secs(5), || {
+            child.lock().unwrap().try_wait().unwrap().is_some()
+                && !process_running(descendant_pid)
+        }),
+        "process-group cancellation did not terminate leader {leader_pid} and descendant {descendant_pid} within the deadline"
+    );
     assert!(child.lock().unwrap().try_wait().unwrap().is_some());
     assert!(
         !process_running(descendant_pid),
@@ -799,7 +794,7 @@ fn job_shutdown_reaps_a_sigterm_responsive_child() {
         .stderr(Stdio::null());
     let child = Arc::new(Mutex::new(ManagedChild::spawn(&mut command).unwrap()));
     let leader_pid = child.lock().unwrap().id();
-    assert!(wait_until(Duration::from_secs(1), || ready.exists()));
+    assert!(wait_until(Duration::from_secs(5), || ready.exists()));
     let manager = JobManager::new(1);
     let stop_requested = Arc::new(AtomicBool::new(false));
     lock_unpoison(&manager.jobs).insert(
@@ -840,12 +835,11 @@ fn job_shutdown_escalates_ignored_sigterm_for_parent_and_descendant() {
     let child = Arc::new(Mutex::new(ManagedChild::spawn(&mut command).unwrap()));
     let leader_pid = child.lock().unwrap().id();
     let pid_file = temp.path().join("descendant.pid");
-    assert!(wait_until(Duration::from_secs(2), || pid_file.exists()));
-    let descendant_pid = std::fs::read_to_string(&pid_file)
-        .unwrap()
-        .trim()
-        .parse::<u32>()
-        .unwrap();
+    let descendant_pid = wait_for_pid_marker(
+        &pid_file,
+        Instant::now() + Duration::from_secs(5),
+        "SIGTERM-ignoring descendant",
+    );
     assert!(process_running(leader_pid));
     assert!(process_running(descendant_pid));
 
@@ -908,27 +902,37 @@ struct FailFastAttempt {
     test_step_ran: bool,
 }
 
-/// Drain job updates until the job reports `finished`, or the deadline passes.
-///
-/// The deadline is wall-clock rather than a sleep count: under a loaded machine
-/// a 10ms sleep is not 10ms, so a counting loop silently shortens its own
-/// patience exactly when the job needs more of it.
+fn recv_envelope_until(
+    runtime: &tokio::runtime::Runtime,
+    rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
+    deadline: Instant,
+) -> Result<Option<AgentEnvelope>, tokio::time::error::Elapsed> {
+    runtime.block_on(async {
+        tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), rx.recv()).await
+    })
+}
+
+/// Drain ordered JobUpdates until one reports `finished`, the channel closes,
+/// or one absolute wall-clock deadline expires. Unrelated envelopes are ignored.
 fn collect_job_updates(
     rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
-    deadline: Duration,
+    timeout: Duration,
 ) -> Vec<ShellAgentJobUpdateRequest> {
-    let started = Instant::now();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("JobUpdate collection runtime");
+    let deadline = Instant::now() + timeout;
     let mut updates: Vec<ShellAgentJobUpdateRequest> = Vec::new();
-    while started.elapsed() < deadline {
-        while let Ok(envelope) = rx.try_recv() {
-            if let AgentEnvelope::JobUpdate { payload } = envelope {
-                updates.push(payload);
-            }
-        }
+    loop {
         if updates.last().is_some_and(|update| update.finished) {
             break;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        match recv_envelope_until(&runtime, rx, deadline) {
+            Ok(Some(AgentEnvelope::JobUpdate { payload })) => updates.push(payload),
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break,
+        }
     }
     updates
 }
@@ -938,15 +942,18 @@ fn recv_job_update(
     timeout: Duration,
     label: &str,
 ) -> ShellAgentJobUpdateRequest {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("JobUpdate receive runtime");
     let deadline = Instant::now() + timeout;
     loop {
-        while let Ok(envelope) = rx.try_recv() {
-            if let AgentEnvelope::JobUpdate { payload } = envelope {
-                return payload;
-            }
+        match recv_envelope_until(&runtime, rx, deadline) {
+            Ok(Some(AgentEnvelope::JobUpdate { payload })) => return payload,
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("channel closed while waiting for {label}"),
+            Err(_) => panic!("timed out waiting for {label}"),
         }
-        assert!(Instant::now() < deadline, "timed out waiting for {label}");
-        std::thread::yield_now();
     }
 }
 
@@ -2605,10 +2612,10 @@ fn structured_process_job_handoff_observation_does_not_reset_the_original_total_
     // still prove the original timeout is not reset at handoff.
     assert!(wait_until(Duration::from_secs(30), || marker.exists()));
 
-    // Model the Server's short sync grace ending by observing the retained
-    // active Job after the one child has already started. This observation is
-    // deliberately read-only: it cannot replace the process or its deadline.
-    std::thread::sleep(Duration::from_millis(300));
+    // Once the marker proves the child started, the JobManager has no further
+    // sync-grace state transition to wait for: ToolRuntime handoff only exposes
+    // this same execution. Inventory observation is deliberately read-only and
+    // cannot replace the process or reset its original deadline.
     let handoff = manager
         .inventory()
         .jobs
@@ -2618,7 +2625,8 @@ fn structured_process_job_handoff_observation_does_not_reset_the_original_total_
     assert_eq!(handoff.status, "running");
     assert_eq!(handoff.command_execution_state, None);
 
-    let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
+    let observation_timeout = Duration::from_secs(25).saturating_sub(original_start.elapsed());
+    let updates = collect_job_updates(&mut rx, observation_timeout);
     let final_update = updates.last().expect("original timeout terminal update");
     assert_eq!(final_update.status, "timeout", "{final_update:?}");
     assert_eq!(
@@ -3630,17 +3638,9 @@ fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
             .unwrap(),
         },
     );
-    let update = (0..100)
-        .find_map(|_| {
-            let update = rx.try_recv().ok().and_then(|envelope| match envelope {
-                AgentEnvelope::JobUpdate { payload } if payload.finished => Some(payload),
-                _ => None,
-            });
-            if update.is_none() {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            update
-        })
+    let update = collect_job_updates(&mut rx, Duration::from_secs(5))
+        .into_iter()
+        .find(|update| update.finished)
         .expect("validation spawn failure update");
     assert!(update.finished);
     assert_eq!(update.status, "failed");
@@ -3791,6 +3791,35 @@ fn wait_until(timeout: Duration, condition: impl Fn() -> bool) -> bool {
         std::thread::sleep(Duration::from_millis(10));
     }
     condition()
+}
+
+fn wait_for_pid_marker(path: &Path, deadline: Instant, tag: &str) -> u32 {
+    loop {
+        let observed = std::fs::read_to_string(path)
+            .map_err(|error| format!("read failed: {error}"))
+            .and_then(|text| {
+                text.trim()
+                    .parse::<u32>()
+                    .map_err(|error| format!("invalid PID contents {text:?}: {error}"))
+            });
+        match observed {
+            Ok(pid) => return pid,
+            Err(error) => {
+                let now = Instant::now();
+                if now >= deadline {
+                    panic!(
+                        "timed out waiting for {tag} PID marker {}: {error}",
+                        path.display()
+                    );
+                }
+                std::thread::sleep(
+                    deadline
+                        .saturating_duration_since(now)
+                        .min(Duration::from_millis(10)),
+                );
+            }
+        }
+    }
 }
 
 /// Poll `process_running(pid)` until the process is gone or `timeout` elapses.
@@ -4062,21 +4091,29 @@ fn job_cleanup_after_parent_exit_terminates_descendant_and_reaches_eof() {
     // The direct child exits on its own right after spawning the grandchild;
     // collect its pid line from the production reader's chunk stream.
     let mut accumulated = String::new();
-    let mut grandchild_pid = None;
     let read_deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < read_deadline {
-        while let Ok(chunk) = rx.try_recv() {
-            if let OutputChunk::Stdout(text) = chunk {
+    let grandchild_pid = loop {
+        let remaining = read_deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "timed out waiting for GRANDCHILD_PID in job stdout"
+        );
+        match rx.recv_timeout(remaining) {
+            Ok(OutputChunk::Stdout(text)) => {
                 accumulated.push_str(&text);
+                if let Some(pid) = extract_grandchild_pid(&accumulated) {
+                    break pid;
+                }
+            }
+            Ok(_) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!("timed out waiting for GRANDCHILD_PID in job stdout");
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("job stdout disconnected before GRANDCHILD_PID was observed");
             }
         }
-        if let Some(pid) = extract_grandchild_pid(&accumulated) {
-            grandchild_pid = Some(pid);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let grandchild_pid = grandchild_pid.expect("GRANDCHILD_PID in job stdout");
+    };
     assert!(
         wait_until(Duration::from_secs(30), || lock_unpoison(&child)
             .try_wait()

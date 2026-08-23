@@ -4,7 +4,8 @@ set -euo pipefail
 # Heuristic, read-only test inventory for WebCodex.
 #
 # Scope:
-#   - scans only src, docs, and tests when those directories exist
+#   - scans Git-tracked Rust files across the whole workspace
+#   - groups the root package and crates/* sources for later lane work
 #   - does not access the network
 #   - does not modify the repository
 #   - avoids printing matched source lines so token-looking fixture values are
@@ -12,43 +13,94 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$PROJECT_DIR"
+
+usage() {
+    printf 'usage: bash scripts/test_inventory.sh [--details|--self-test]\n'
+}
+
+if [ "${1:-}" = "--self-test" ]; then
+    if [ "$#" -ne 1 ]; then
+        usage >&2
+        exit 2
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        printf '[inventory][FAIL] python3 is required for --self-test\n' >&2
+        exit 2
+    fi
+    cd "$PROJECT_DIR"
+    PYTHONDONTWRITEBYTECODE=1 \
+        exec python3 -m unittest scripts.tests.test_test_inventory_script
+fi
 
 DETAILS=0
 if [ "$#" -gt 0 ]; then
     case "$1" in
         --details)
+            if [ "$#" -ne 1 ]; then
+                usage >&2
+                exit 2
+            fi
             DETAILS=1
             ;;
         -h|--help)
-            printf 'usage: bash scripts/test_inventory.sh [--details]\n'
+            if [ "$#" -ne 1 ]; then
+                usage >&2
+                exit 2
+            fi
+            usage
             exit 0
             ;;
         *)
             printf '[inventory] unknown argument: %s\n' "$1" >&2
-            printf 'usage: bash scripts/test_inventory.sh [--details]\n' >&2
+            usage >&2
             exit 2
             ;;
     esac
 fi
 
-ROOTS=()
-for dir in src docs tests; do
-    if [ -d "$dir" ]; then
-        ROOTS+=("$dir")
+for required in git rg; do
+    if ! command -v "$required" >/dev/null 2>&1; then
+        printf '[inventory][FAIL] %s is required\n' "$required" >&2
+        exit 2
     fi
 done
 
-if [ "${#ROOTS[@]}" -eq 0 ]; then
-    printf '[inventory] no scan roots found\n' >&2
+cd "$PROJECT_DIR"
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf '[inventory][FAIL] project root is not a Git worktree\n' >&2
+    exit 2
+fi
+
+rust_files=()
+while IFS= read -r -d '' file; do
+    rust_files+=("$file")
+done < <(git ls-files -z -- '*.rs')
+
+if [ "${#rust_files[@]}" -eq 0 ]; then
+    printf '[inventory] no Git-tracked Rust files found\n' >&2
     exit 1
 fi
 
-rg_count() {
+TEST_PATTERN='^[[:space:]]*#\[test'
+TOKIO_TEST_PATTERN='^[[:space:]]*#\[tokio::test'
+IGNORE_PATTERN='^[[:space:]]*#\[ignore'
+SLEEP_PATTERN='sleep[[:space:]]*\('
+TIMEOUT_PATTERN='timeout[[:space:]]*\('
+LOOPBACK_PATTERN='localhost|127\.0\.0\.1|TcpListener'
+ENV_MUTATION_PATTERN='(std::)?env::(set_var|remove_var)'
+TEST_ENV_LOCK_PATTERN='TEST_ENV_LOCK'
+
+rg_count_files() {
     local pattern="$1"
+    shift
+    if [ "$#" -eq 0 ]; then
+        printf '0\n'
+        return 0
+    fi
+
     local output status
     set +e
-    output="$(rg --count-matches "$pattern" "${ROOTS[@]}" 2>/dev/null)"
+    output="$(rg --count-matches "$pattern" -- "$@" 2>/dev/null)"
     status=$?
     set -e
     if [ "$status" -eq 1 ]; then
@@ -62,12 +114,17 @@ rg_count() {
     printf '%s\n' "$output" | awk -F: '{ sum += $NF } END { print sum + 0 }'
 }
 
+rg_count() {
+    local pattern="$1"
+    rg_count_files "$pattern" "${rust_files[@]}"
+}
+
 rg_locations() {
     local label="$1"
     local pattern="$2"
     local status
     set +e
-    rg --line-number --no-heading "$pattern" "${ROOTS[@]}" 2>/dev/null \
+    rg --line-number --no-heading "$pattern" -- "${rust_files[@]}" 2>/dev/null \
         | awk -F: -v label="$label" '{ print $1 ":" $2 ":" label }'
     status=${PIPESTATUS[0]}
     set -e
@@ -85,9 +142,9 @@ rg_file_counts() {
     local pattern="$2"
     local status
     set +e
-    rg --line-number --no-heading "$pattern" "${ROOTS[@]}" 2>/dev/null \
+    rg --line-number --no-heading "$pattern" -- "${rust_files[@]}" 2>/dev/null \
         | awk -F: -v label="$label" '{ count[$1]++ } END { for (file in count) print count[file] "\t" file "\t" label }' \
-        | sort -nr \
+        | sort -t $'\t' -k1,1nr -k2,2 \
         | head -n 10 \
         | awk -F'\t' '{ print "  " $3 " " $2 ": " $1 }'
     status=${PIPESTATUS[0]}
@@ -101,15 +158,34 @@ rg_file_counts() {
     fi
 }
 
-rust_files=()
-while IFS= read -r file; do
-    rust_files+=("$file")
-done < <(find "${ROOTS[@]}" -type f -name '*.rs' 2>/dev/null | sort)
+area_for_file() {
+    local file="$1"
+    local rest crate
+    case "$file" in
+        crates/*/*)
+            rest="${file#crates/}"
+            crate="${rest%%/*}"
+            printf 'crates/%s\n' "$crate"
+            ;;
+        src/*|tests/*)
+            printf 'webcodex\n'
+            ;;
+        *)
+            printf 'other\n'
+            ;;
+    esac
+}
+
+areas=()
+while IFS= read -r area; do
+    areas+=("$area")
+done < <(
+    for file in "${rust_files[@]}"; do
+        area_for_file "$file"
+    done | sort -u
+)
 
 print_ignored_tests() {
-    if [ "${#rust_files[@]}" -eq 0 ]; then
-        return 0
-    fi
     awk '
         /^[[:space:]]*#\[ignore/ {
             pending = 1
@@ -135,23 +211,46 @@ print_ignored_tests() {
     ' "${rust_files[@]}"
 }
 
-printf '[inventory] roots:'
-printf ' %s' "${ROOTS[@]}"
-printf '\n\n'
+printf '[inventory] source\n'
+printf '  scope: Git-tracked Rust files across the workspace\n'
+printf '  rust files: %s\n' "${#rust_files[@]}"
+printf '\n'
 
 printf '[inventory] test attributes\n'
-printf '  rust files: %s\n' "${#rust_files[@]}"
-printf '  #[test]: %s\n' "$(rg_count '^[[:space:]]*#\[test')"
-printf '  #[tokio::test]: %s\n' "$(rg_count '^[[:space:]]*#\[tokio::test')"
-printf '  #[ignore]: %s\n' "$(rg_count '^[[:space:]]*#\[ignore')"
+printf '  #[test]: %s\n' "$(rg_count "$TEST_PATTERN")"
+printf '  #[tokio::test]: %s\n' "$(rg_count "$TOKIO_TEST_PATTERN")"
+printf '  #[ignore]: %s\n' "$(rg_count "$IGNORE_PATTERN")"
 printf '\n'
 
 printf '[inventory] risk clue counts\n'
-printf '  sleep calls: %s\n' "$(rg_count 'sleep[[:space:]]*\(')"
-printf '  timeout calls: %s\n' "$(rg_count 'timeout[[:space:]]*\(')"
-printf '  loopback strings or TcpListener: %s\n' "$(rg_count 'localhost|127\.0\.0\.1|TcpListener')"
-printf '  env set/remove calls: %s\n' "$(rg_count '(std::)?env::(set_var|remove_var)')"
-printf '  TEST_ENV_LOCK mentions: %s\n' "$(rg_count 'TEST_ENV_LOCK')"
+printf '  sleep calls: %s\n' "$(rg_count "$SLEEP_PATTERN")"
+printf '  timeout calls: %s\n' "$(rg_count "$TIMEOUT_PATTERN")"
+printf '  loopback strings or TcpListener: %s\n' "$(rg_count "$LOOPBACK_PATTERN")"
+printf '  env set/remove calls: %s\n' "$(rg_count "$ENV_MUTATION_PATTERN")"
+printf '  TEST_ENV_LOCK mentions: %s\n' "$(rg_count "$TEST_ENV_LOCK_PATTERN")"
+printf '\n'
+
+printf '[inventory] area summary (tab-separated)\n'
+printf 'area\trust_files\ttest\ttokio_test\tignore\tsleep\ttimeout\tloopback_or_listener\tenv_mutation\ttest_env_lock\n'
+for area in "${areas[@]}"; do
+    area_files=()
+    for file in "${rust_files[@]}"; do
+        if [ "$(area_for_file "$file")" = "$area" ]; then
+            area_files+=("$file")
+        fi
+    done
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$area" \
+        "${#area_files[@]}" \
+        "$(rg_count_files "$TEST_PATTERN" "${area_files[@]}")" \
+        "$(rg_count_files "$TOKIO_TEST_PATTERN" "${area_files[@]}")" \
+        "$(rg_count_files "$IGNORE_PATTERN" "${area_files[@]}")" \
+        "$(rg_count_files "$SLEEP_PATTERN" "${area_files[@]}")" \
+        "$(rg_count_files "$TIMEOUT_PATTERN" "${area_files[@]}")" \
+        "$(rg_count_files "$LOOPBACK_PATTERN" "${area_files[@]}")" \
+        "$(rg_count_files "$ENV_MUTATION_PATTERN" "${area_files[@]}")" \
+        "$(rg_count_files "$TEST_ENV_LOCK_PATTERN" "${area_files[@]}")"
+done
 printf '\n'
 
 printf '[inventory] ignored tests\n'
@@ -166,20 +265,20 @@ printf '\n'
 if [ "$DETAILS" -eq 1 ]; then
     printf '[inventory] sanitized risk locations\n'
     {
-        rg_locations sleep 'sleep[[:space:]]*\('
-        rg_locations timeout 'timeout[[:space:]]*\('
-        rg_locations loopback_or_listener 'localhost|127\.0\.0\.1|TcpListener'
-        rg_locations env_mutation '(std::)?env::(set_var|remove_var)'
-        rg_locations test_env_lock 'TEST_ENV_LOCK'
+        rg_locations sleep "$SLEEP_PATTERN"
+        rg_locations timeout "$TIMEOUT_PATTERN"
+        rg_locations loopback_or_listener "$LOOPBACK_PATTERN"
+        rg_locations env_mutation "$ENV_MUTATION_PATTERN"
+        rg_locations test_env_lock "$TEST_ENV_LOCK_PATTERN"
     } | sort | sed 's/^/  /'
 else
     printf '[inventory] top risk files by clue type\n'
     {
-        rg_file_counts sleep 'sleep[[:space:]]*\('
-        rg_file_counts timeout 'timeout[[:space:]]*\('
-        rg_file_counts loopback_or_listener 'localhost|127\.0\.0\.1|TcpListener'
-        rg_file_counts env_mutation '(std::)?env::(set_var|remove_var)'
-        rg_file_counts test_env_lock 'TEST_ENV_LOCK'
+        rg_file_counts sleep "$SLEEP_PATTERN"
+        rg_file_counts timeout "$TIMEOUT_PATTERN"
+        rg_file_counts loopback_or_listener "$LOOPBACK_PATTERN"
+        rg_file_counts env_mutation "$ENV_MUTATION_PATTERN"
+        rg_file_counts test_env_lock "$TEST_ENV_LOCK_PATTERN"
     }
     printf '\n[inventory] rerun with --details for sanitized file:line locations\n'
 fi

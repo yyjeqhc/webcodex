@@ -3,7 +3,7 @@ use super::*;
 #[cfg(windows)]
 #[test]
 fn shell_job_filters_sensitive_env_case_insensitive() {
-    let _guard = TEST_ENV_LOCK.lock().unwrap();
+    let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/projects.d"));
     let cwd = tmp.path().to_string_lossy().to_string();

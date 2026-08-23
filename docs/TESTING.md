@@ -29,25 +29,42 @@ tests with different cost profiles sharing the same default lane.
 
 The lanes above define test semantics; workflows decide when to run them.
 
-- `.github/workflows/ci.yml` is the ordinary repository gate. Every configured
-  pull-request workflow run gets the lightweight `contract` job without requiring
-  the `run-ci` label. It covers frontend type/test/dist checks, workspace-boundary
-  checks, formatting, and focused registry/OpenAPI/MCP schema and metadata parity.
-- The heavier Linux `test`, native macOS `test-macos`, and native Windows
-  `test-windows` jobs run on every push to `main`. External pull requests run
-  them automatically subject to GitHub fork protections; owner-authored pull
-  requests opt in with the `run-ci` label.
-- Heavy Linux CI runs frontend checks, workspace-boundary and release-tooling
-  checks, Markdown-link validation, formatting, and the locked workspace test
-  suite. macOS CI compiles the release production surfaces and runs the native
+- `.github/workflows/ci.yml` is the ordinary repository gate. Its lightweight
+  `contract` job is the mandatory first lane for every configured pull request
+  and every push to `main`; it never requires the owner-only `run-ci` label. The
+  lane owns frontend install/type/test/dist validation, workspace-boundary
+  self-test/checks, formatting, the heuristic test-inventory self-test/report
+  (without count thresholds), and focused registry/OpenAPI/MCP schema and metadata parity.
+- The heavy Linux Rust matrix `test-linux-rust`, Linux tooling lane
+  `test-linux-tooling`, native macOS `test-macos`, and native Windows
+  `test-windows` jobs all depend on a successful `contract` job and retain the
+  existing main/external-PR/owner-`run-ci` policy. The historical `test` job id
+  remains the aggregate Linux status check: on an eligible heavy run it waits for
+  `contract` plus both Linux lanes and fails unless every required result is
+  `success`. Owner-authored pull requests without `run-ci` still intentionally
+  skip the heavy Linux lanes and aggregate. This is CI orchestration, not a claim
+  that the repository now has perfectly pure fast/integration/platform suites.
+- Linux Rust execution is package-sharded without test-name filters: the server
+  package `webcodex`, the integration-rich Runner package `webcodex-runner`, and
+  the remaining workspace crates run as three complete package groups in
+  parallel. Each workspace package appears in exactly one group, so sharding is
+  an execution optimization rather than a semantic coverage reduction. Package
+  boundaries do not imply that every test inside a shard has the same cost or
+  integration characteristics.
+- Linux tooling runs in parallel with the Rust shards and retains
+  release-verification tooling, Markdown-link validation, and npm package-smoke
+  tooling; within the Linux heavy split, only this tooling lane installs Node
+  because those smoke scripts invoke Node/npm directly. macOS still owns release-surface compilation and the native
   Runner suite, including detached ownership/restart recovery. The local-`sshd`
   SSH integration fixture remains Linux-only because it depends on Linux daemon
-  account/auth configuration; macOS still compiles and tests the SSH client and
-  pure command-shaping surface. Windows CI runs formatting, native Windows
-  package tests, npm checks, and the Windows artifact-to-install smoke.
-- Exact-source release acceptance is separate from ordinary pull-request CI.
-  Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
-  `.github/workflows/release-readiness.yml`.
+  account/auth configuration; Windows still owns its native library, CLI and
+  serialized Runner suites, npm tests, and artifact-to-install smoke.
+- Exact-source release acceptance is a separate trust boundary from ordinary CI
+  and intentionally keeps its independent full locked workspace acceptance suite
+  together with frontend/E2E/native release evidence. Follow
+  [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
+  `.github/workflows/release-readiness.yml`; ordinary-CI package sharding does not
+  reduce that workflow or `scripts/release_check.sh`.
 - Slow/manual and real-process lanes remain explicit targeted evidence unless
   a workflow names them. Do not infer that one lane ran merely because another CI
   job passed.
@@ -94,10 +111,16 @@ Run the current heuristic inventory with:
 bash scripts/test_inventory.sh
 ```
 
-The script is intentionally heuristic. It scans only `src`, `docs`, and `tests`
-when those directories exist, does not access the network, does not modify the
-workspace, and reports counts plus sanitized risk clues. Use
-`bash scripts/test_inventory.sh --details` for a full sanitized file/line list.
+The script is intentionally heuristic. It scans all Git-tracked Rust files across
+the workspace, so crate-local tests (including Runner tests) are included. Using
+the Git index as the source set excludes ordinary untracked `target/` output and
+scratch files without maintaining a second ignore list. It does not access the
+network or modify the workspace. The output includes a
+stable tab-separated area summary for the root `webcodex` package and each
+`crates/*` member, plus sanitized risk clues. Use
+`bash scripts/test_inventory.sh --details` for a full sanitized file/line list,
+and `bash scripts/test_inventory.sh --self-test` to exercise the inventory
+contract against a temporary Git fixture.
 
 ## Current Test Layout Notes
 

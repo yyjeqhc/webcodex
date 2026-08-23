@@ -34,6 +34,7 @@ fn agent_config_rejects_zero_websocket_connect_timeout() {
 server_url = "http://127.0.0.1:8000"
 token = "t"
 client_id = "oe"
+projects_dir = "projects.d"
 websocket_connect_timeout_secs = 0
 "#,
     )
@@ -56,6 +57,7 @@ fn agent_config_rejects_relative_temporary_projects_root() {
 server_url = "http://127.0.0.1:8000"
 token = "t"
 client_id = "oe"
+projects_dir = "projects.d"
 temporary_projects_root = "temporary"
 "#,
     )
@@ -196,6 +198,7 @@ fn quic_client_bind_addr_matches_remote_address_family() {
 
 #[test]
 fn agent_cli_help_and_version_exit_before_runtime() {
+    let _guard = test_env_lock();
     match parse_agent_args(["--help"]).unwrap() {
         AgentCliAction::Exit {
             code,
@@ -233,12 +236,14 @@ fn agent_cli_help_and_version_exit_before_runtime() {
 
 #[test]
 fn agent_cli_has_no_init_alias() {
+    let _guard = test_env_lock();
     let error = parse_agent_args(["init"]).unwrap_err();
     assert!(error.contains("unknown argument: init"));
 }
 
 #[test]
 fn agent_version_output_includes_build_metadata() {
+    let _guard = test_env_lock();
     match parse_agent_args(["-V"]).unwrap() {
         AgentCliAction::Exit {
             code,
@@ -256,6 +261,7 @@ fn agent_version_output_includes_build_metadata() {
 
 #[test]
 fn agent_cli_legacy_runtime_args_are_preserved() {
+    let _guard = test_env_lock();
     let action = parse_agent_args(["--config", "/tmp/agent.toml", "--once"]).unwrap();
     assert_eq!(
         action,
@@ -268,6 +274,7 @@ fn agent_cli_legacy_runtime_args_are_preserved() {
 
 #[test]
 fn agent_cli_profile_derives_default_config_path() {
+    let _guard = test_env_lock();
     let action = parse_agent_args(["--profile", "special"]).unwrap();
     assert_eq!(
         action,
@@ -280,6 +287,7 @@ fn agent_cli_profile_derives_default_config_path() {
 
 #[test]
 fn agent_cli_explicit_config_overrides_profile() {
+    let _guard = test_env_lock();
     let action = parse_agent_args(["--profile", "special", "--config", "/tmp/agent.toml"]).unwrap();
     assert_eq!(
         action,
@@ -292,6 +300,7 @@ fn agent_cli_explicit_config_overrides_profile() {
 
 #[test]
 fn agent_cli_rejects_unsafe_profile() {
+    let _guard = test_env_lock();
     let err = parse_agent_args(["--profile", "../x"]).unwrap_err();
     assert_eq!(err, CLIENT_PROFILE_ERROR);
 }
@@ -304,7 +313,7 @@ fn empty_tokens_config_parser_accepts_empty_and_whitespace_token() {
         std::fs::write(
                 &path,
                 format!(
-                    "server_url = \"http://127.0.0.1:8000\"\ntoken = \"{}\"\nclient_id = \"open-agent\"\n[policy]\nallow_cwd_anywhere = true\n",
+                    "server_url = \"http://127.0.0.1:8000\"\ntoken = \"{}\"\nclient_id = \"open-agent\"\nprojects_dir = \"projects.d\"\n[policy]\nallow_cwd_anywhere = true\nallowed_roots = [\".\"]\n",
                     token
                 ),
             )
@@ -335,6 +344,7 @@ service = "Use the ordinary host-local service mechanism."
 
 [policy]
 allow_cwd_anywhere = true
+allowed_roots = ["."]
 "#,
     )
     .unwrap();
@@ -376,9 +386,11 @@ fn agent_config_without_shell_section_parses() {
 server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
+projects_dir = "projects.d"
 
 [policy]
 allow_cwd_anywhere = true
+allowed_roots = ["."]
 "#,
     )
     .unwrap();
@@ -426,6 +438,10 @@ fn agent_config_loads_named_ssh_resources_without_authentication_material() {
 server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
+projects_dir = "projects.d"
+
+[policy]
+allowed_roots = ["."]
 
 [ssh.resources.tmp]
 host = "tmp"
@@ -460,9 +476,11 @@ fn agent_config_shell_profiles_parse() {
 server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
+projects_dir = "projects.d"
 
 [policy]
 allow_cwd_anywhere = true
+allowed_roots = ["."]
 
 [shell]
 default_profile = "rust"
@@ -519,9 +537,11 @@ fn agent_config_shell_default_profile_must_exist() {
 server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
+projects_dir = "projects.d"
 
 [policy]
 allow_cwd_anywhere = true
+allowed_roots = ["."]
 
 [shell]
 default_profile = "missing"
@@ -547,9 +567,11 @@ fn agent_config_shell_profile_name_must_be_safe() {
 server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
+projects_dir = "projects.d"
 
 [policy]
 allow_cwd_anywhere = true
+allowed_roots = ["."]
 
 [shell.profiles."bad/name"]
 program = "sh"
@@ -572,6 +594,7 @@ fn agent_config_shell_profile_type_errors_are_reported() {
 server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
+projects_dir = "projects.d"
 
 [policy]
 allow_cwd_anywhere = true
@@ -597,6 +620,7 @@ fn agent_config_shell_profile_env_type_errors_are_reported() {
 server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
+projects_dir = "projects.d"
 
 [policy]
 allow_cwd_anywhere = true
@@ -624,9 +648,11 @@ fn agent_config_shell_errors_do_not_include_init_script_body() {
 server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
+projects_dir = "projects.d"
 
 [policy]
 allow_cwd_anywhere = true
+allowed_roots = ["."]
 
 [shell]
 default_profile = "missing"
@@ -781,6 +807,10 @@ fn agent_config_accepts_static_literal_mcp_gateway_provider() {
 server_url = "http://127.0.0.1:8000"
 token = "t"
 client_id = "oe"
+projects_dir = "projects.d"
+
+[policy]
+allowed_roots = ["."]
 
 [mcp]
 request_timeout_secs = 7
@@ -831,6 +861,10 @@ fn agent_config_mcp_gateway_provider_timeout_defaults_to_gateway_timeout() {
 server_url = "http://127.0.0.1:8000"
 token = "t"
 client_id = "oe"
+projects_dir = "projects.d"
+
+[policy]
+allowed_roots = ["."]
 
 [mcp]
 request_timeout_secs = 11
@@ -901,6 +935,10 @@ executable = {executable}
 server_url = "http://127.0.0.1:8000"
 token = "t"
 client_id = "oe"
+projects_dir = "projects.d"
+
+[policy]
+allowed_roots = ["."]
 
 [mcp]
 request_timeout_secs = 30

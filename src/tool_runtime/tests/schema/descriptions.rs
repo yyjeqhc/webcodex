@@ -47,6 +47,35 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
+    let git_diff_hunks = spec_named(&specs, "git_diff_hunks");
+    let git_diff_hunks_desc = git_diff_hunks.description.to_lowercase();
+    for phrase in ["scope-bound", "replay", "scope", "paging inputs"] {
+        assert!(
+            git_diff_hunks_desc.contains(phrase),
+            "git_diff_hunks description should mention {phrase}: {git_diff_hunks_desc}"
+        );
+    }
+    let continuation_desc = git_diff_hunks.input_schema["properties"]["continuation"]
+        ["description"]
+        .as_str()
+        .expect("git_diff_hunks continuation description")
+        .to_lowercase();
+    for phrase in [
+        "repeat the exact original",
+        "base_commit/head_commit",
+        "cached/worktree mode",
+        "paths",
+        "max_hunks",
+        "max_hunk_lines",
+        "scope-bound",
+        "does not reconstruct",
+    ] {
+        assert!(
+            continuation_desc.contains(phrase),
+            "git_diff_hunks continuation description should mention {phrase}: {continuation_desc}"
+        );
+    }
+
     // Canonical transactional edit path.
     let apply_text_edits_desc = desc("apply_text_edits");
     for phrase in [

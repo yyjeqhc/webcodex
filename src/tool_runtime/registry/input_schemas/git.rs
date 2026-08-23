@@ -129,7 +129,7 @@ pub(crate) fn git_diff_hunks_input_schema() -> Value {
         (
             "continuation",
             "string",
-            "Optional opaque continuation returned by a previous git_diff_hunks page.",
+            "Opaque continuation returned by a previous git_diff_hunks page. When continuing, repeat the exact original diff scope and paging inputs unchanged (base_commit/head_commit for committed mode, cached/worktree mode, paths, max_hunks, and max_hunk_lines); the token is scope-bound and does not reconstruct omitted request fields.",
             false,
         ),
     ]));

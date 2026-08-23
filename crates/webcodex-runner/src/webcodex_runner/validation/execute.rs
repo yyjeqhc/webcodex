@@ -404,21 +404,21 @@ mod tests {
 
         const ENV: &str = "WEBCODEX_TEST_VALIDATION_EXECUTABLE";
         const MISSING_NAME: &str = "webcodex-validation-executable-that-does-not-exist";
+        let _env_lock = crate::tests::test_env_lock();
         let temp = tempfile::tempdir().unwrap();
 
-        std::env::set_var(ENV, temp.path());
+        let env = crate::tests::EnvGuard::new().set(ENV, temp.path());
         assert!(resolve_executable(ENV, MISSING_NAME).is_none());
 
         let file = temp.path().join("tool");
         std::fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
-        std::env::set_var(ENV, &file);
+        let _env = env.set(ENV, &file);
         assert!(resolve_executable(ENV, MISSING_NAME).is_none());
 
         let mut permissions = std::fs::metadata(&file).unwrap().permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(&file, permissions).unwrap();
         assert_eq!(resolve_executable(ENV, MISSING_NAME), Some(file));
-        std::env::remove_var(ENV);
     }
 
     // -----------------------------------------------------------------------

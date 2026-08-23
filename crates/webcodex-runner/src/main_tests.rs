@@ -8,6 +8,12 @@ use crate::webcodex_runner::{
 };
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// RAII restore for environment variables mutated by tests: restores the
 /// previous value (or absence) on drop, even when the test panics, so a
 /// failure cannot leak env state into later tests.
@@ -22,9 +28,9 @@ impl EnvGuard {
         }
     }
 
-    pub(crate) fn set(mut self, name: &'static str, value: &str) -> Self {
+    pub(crate) fn set(mut self, name: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         self.capture(name);
-        std::env::set_var(name, value);
+        std::env::set_var(name, value.as_ref());
         self
     }
 
@@ -1016,7 +1022,7 @@ fn shell_job_native_exe_nonzero_exit_code_is_preserved() {
 #[cfg(windows)]
 #[test]
 fn shell_job_unicode_stdout_stderr_env_and_cwd() {
-    let _guard = TEST_ENV_LOCK.lock().unwrap();
+    let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/projects.d"));
     let unicode_cwd = tmp.path().join("unicode cwd 测试");
@@ -1040,8 +1046,7 @@ fn shell_job_unicode_stdout_stderr_env_and_cwd() {
     assert_eq!(result.stderr.as_deref(), Some("err 測試"));
 
     // Unicode environment value inherited from the parent process.
-    let saved = std::env::var_os("WEBCODEX_UNICODE_ENV");
-    std::env::set_var("WEBCODEX_UNICODE_ENV", "值 测试");
+    let _env = EnvGuard::new().set("WEBCODEX_UNICODE_ENV", "值 测试");
     let result = run_shell(
         &cfg.policy,
         &ShellConfig::default(),
@@ -1051,10 +1056,6 @@ fn shell_job_unicode_stdout_stderr_env_and_cwd() {
         10,
         None,
     );
-    match saved {
-        Some(value) => std::env::set_var("WEBCODEX_UNICODE_ENV", value),
-        None => std::env::remove_var("WEBCODEX_UNICODE_ENV"),
-    }
     assert_eq!(result.exit_code, Some(0), "{result:?}");
     assert_eq!(result.stdout.as_deref(), Some("值 测试"));
 

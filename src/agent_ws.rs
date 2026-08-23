@@ -418,7 +418,6 @@ mod tests {
                 ),
                 policy: Some(AgentPolicySummary::default()),
             },
-            auth_token: None,
         }
     }
 
@@ -560,10 +559,7 @@ mod tests {
             updated_at: chrono::Utc::now().timestamp(),
             shell_profile: None,
         }]);
-        AgentEnvelope::Register {
-            payload,
-            auth_token: None,
-        }
+        AgentEnvelope::Register { payload }
     }
 
     #[tokio::test]

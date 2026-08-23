@@ -15,14 +15,14 @@ use super::util::contains_any;
 use super::{PersistentShellManager, ShellCommandResult};
 use crate::agent_init::{TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET};
 use crate::shell_protocol::{
-    read_quic_frame, write_quic_frame, AgentEnvelope, QuicFrameError, ShellAgentJobUpdateRequest,
-    ShellAgentJobUpdateResponse, ShellAgentPersistentShellResultRequest,
-    ShellAgentPersistentShellResultResponse, ShellAgentProjectSummary, ShellAgentResultPayload,
-    ShellAgentResultRequest, ShellAgentResultResponse, ShellJobInventory,
-    ShellProjectInventoryPage, ShellProjectInventoryStatus, AGENT_PROTOCOL_VERSION_QUIC_V1,
-    AGENT_PROTOCOL_VERSION_QUIC_V2, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
-    AGENT_PROTOCOL_VERSION_WEBSOCKET_V2, PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
-    PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+    read_quic_frame, write_quic_frame, write_quic_register_frame, AgentEnvelope, QuicFrameError,
+    QuicRegisterFrame, ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse,
+    ShellAgentPersistentShellResultRequest, ShellAgentPersistentShellResultResponse,
+    ShellAgentProjectSummary, ShellAgentResultPayload, ShellAgentResultRequest,
+    ShellAgentResultResponse, ShellJobInventory, ShellProjectInventoryPage,
+    ShellProjectInventoryStatus, AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_QUIC_V2,
+    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
+    PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
 };
 use crate::{
     build_register_request_with_provider_status, dispatch_request, handle_one_poll, is_project_op,
@@ -3347,8 +3347,9 @@ async fn quic_session(
     let (mut send, mut recv) =
         open_result.map_err(|e| format!("failed to open quic bidirectional stream: {}", e))?;
 
-    // Register. The token is carried in `auth_token`; the server authenticates
-    // it exactly like the websocket/polling paths. It is never logged.
+    // QUIC-v1 transport registration retains the legacy first-frame JSON shape
+    // for rolling-old Servers, but credential ownership stays outside the
+    // transport-neutral AgentEnvelope lifecycle. The token is never logged.
     let projects_count = enabled_projects_count(&projects);
     let registered_jobs = runtime.jobs.inventory();
     let bootstrap = project_registration_bootstrap(&cfg.client_id, &projects, &registered_jobs);
@@ -3370,12 +3371,12 @@ async fn quic_session(
             0,
             bootstrap.job_inventory,
         );
-    let reg_env = AgentEnvelope::Register {
-        payload: register_payload,
-        auth_token: non_empty_token(&cfg.token),
-    };
-    let Some(register_write) =
-        future_or_shutdown(write_quic_frame(&mut send, &reg_env), runtime).await
+    let register_frame = QuicRegisterFrame::new(register_payload, non_empty_token(&cfg.token));
+    let Some(register_write) = future_or_shutdown(
+        write_quic_register_frame(&mut send, &register_frame),
+        runtime,
+    )
+    .await
     else {
         conn.close(quinn::VarInt::from_u32(0), b"process shutdown");
         client_endpoint.close(quinn::VarInt::from_u32(0), b"process shutdown");
@@ -3995,7 +3996,6 @@ where
         );
     let reg_env = AgentEnvelope::Register {
         payload: register_payload,
-        auth_token: None,
     };
     let reg_json =
         serde_json::to_string(&reg_env).map_err(|e| format!("failed to encode register: {}", e))?;

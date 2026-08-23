@@ -151,6 +151,7 @@ fn job_reconciliation_local_snapshot_advances_before_best_effort_send() {
     );
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    tx.try_send(AgentEnvelope::Ping { ts: 17 }).unwrap();
     manager.install_sink(AgentSink::WebSocket {
         tx,
         client_id: "test-agent".to_string(),
@@ -901,27 +902,37 @@ struct FailFastAttempt {
     test_step_ran: bool,
 }
 
-/// Drain job updates until the job reports `finished`, or the deadline passes.
-///
-/// The deadline is wall-clock rather than a sleep count: under a loaded machine
-/// a 10ms sleep is not 10ms, so a counting loop silently shortens its own
-/// patience exactly when the job needs more of it.
+fn recv_envelope_until(
+    runtime: &tokio::runtime::Runtime,
+    rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
+    deadline: Instant,
+) -> Result<Option<AgentEnvelope>, tokio::time::error::Elapsed> {
+    runtime.block_on(async {
+        tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), rx.recv()).await
+    })
+}
+
+/// Drain ordered JobUpdates until one reports `finished`, the channel closes,
+/// or one absolute wall-clock deadline expires. Unrelated envelopes are ignored.
 fn collect_job_updates(
     rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
-    deadline: Duration,
+    timeout: Duration,
 ) -> Vec<ShellAgentJobUpdateRequest> {
-    let started = Instant::now();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("JobUpdate collection runtime");
+    let deadline = Instant::now() + timeout;
     let mut updates: Vec<ShellAgentJobUpdateRequest> = Vec::new();
-    while started.elapsed() < deadline {
-        while let Ok(envelope) = rx.try_recv() {
-            if let AgentEnvelope::JobUpdate { payload } = envelope {
-                updates.push(payload);
-            }
-        }
+    loop {
         if updates.last().is_some_and(|update| update.finished) {
             break;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        match recv_envelope_until(&runtime, rx, deadline) {
+            Ok(Some(AgentEnvelope::JobUpdate { payload })) => updates.push(payload),
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break,
+        }
     }
     updates
 }
@@ -931,15 +942,18 @@ fn recv_job_update(
     timeout: Duration,
     label: &str,
 ) -> ShellAgentJobUpdateRequest {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("JobUpdate receive runtime");
     let deadline = Instant::now() + timeout;
     loop {
-        while let Ok(envelope) = rx.try_recv() {
-            if let AgentEnvelope::JobUpdate { payload } = envelope {
-                return payload;
-            }
+        match recv_envelope_until(&runtime, rx, deadline) {
+            Ok(Some(AgentEnvelope::JobUpdate { payload })) => return payload,
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("channel closed while waiting for {label}"),
+            Err(_) => panic!("timed out waiting for {label}"),
         }
-        assert!(Instant::now() < deadline, "timed out waiting for {label}");
-        std::thread::yield_now();
     }
 }
 
@@ -2598,10 +2612,10 @@ fn structured_process_job_handoff_observation_does_not_reset_the_original_total_
     // still prove the original timeout is not reset at handoff.
     assert!(wait_until(Duration::from_secs(30), || marker.exists()));
 
-    // Model the Server's short sync grace ending by observing the retained
-    // active Job after the one child has already started. This observation is
-    // deliberately read-only: it cannot replace the process or its deadline.
-    std::thread::sleep(Duration::from_millis(300));
+    // Once the marker proves the child started, the JobManager has no further
+    // sync-grace state transition to wait for: ToolRuntime handoff only exposes
+    // this same execution. Inventory observation is deliberately read-only and
+    // cannot replace the process or reset its original deadline.
     let handoff = manager
         .inventory()
         .jobs
@@ -2611,7 +2625,8 @@ fn structured_process_job_handoff_observation_does_not_reset_the_original_total_
     assert_eq!(handoff.status, "running");
     assert_eq!(handoff.command_execution_state, None);
 
-    let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
+    let observation_timeout = Duration::from_secs(25).saturating_sub(original_start.elapsed());
+    let updates = collect_job_updates(&mut rx, observation_timeout);
     let final_update = updates.last().expect("original timeout terminal update");
     assert_eq!(final_update.status, "timeout", "{final_update:?}");
     assert_eq!(
@@ -3623,17 +3638,9 @@ fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
             .unwrap(),
         },
     );
-    let update = (0..100)
-        .find_map(|_| {
-            let update = rx.try_recv().ok().and_then(|envelope| match envelope {
-                AgentEnvelope::JobUpdate { payload } if payload.finished => Some(payload),
-                _ => None,
-            });
-            if update.is_none() {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            update
-        })
+    let update = collect_job_updates(&mut rx, Duration::from_secs(5))
+        .into_iter()
+        .find(|update| update.finished)
         .expect("validation spawn failure update");
     assert!(update.finished);
     assert_eq!(update.status, "failed");

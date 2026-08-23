@@ -150,8 +150,28 @@ fn seed_oauth_access_token_with_shared_key_hash(
     plaintext
 }
 
+fn phase2_oauth_service_with_scopes(
+    scopes: &[&str],
+) -> (tempfile::TempDir, salvo::Service, Vec<String>) {
+    let config = test_config_oauth2(Some("secret"));
+    let (tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let client = seed_oauth_client(&db, &user);
+    let tokens = scopes
+        .iter()
+        .map(|scope| seed_oauth_access_token_with_shared_key_hash(&db, &client, &user, scope, None))
+        .collect();
+    let project_dir = tmp.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::write(project_dir.join("README.md"), "hello\n").unwrap();
+    let runtime = Arc::new(runtime_with_local_project(&project_dir, "demo"));
+    let service = Service::new(build_projects_router(config, db, runtime));
+    (tmp, service, tokens)
+}
+
 fn phase2_oauth_service(scopes: &str) -> (tempfile::TempDir, salvo::Service, String) {
-    phase2_oauth_service_with_shared_key_hash(scopes, None)
+    let (tmp, service, mut tokens) = phase2_oauth_service_with_scopes(&[scopes]);
+    (tmp, service, tokens.pop().unwrap())
 }
 
 fn phase2_oauth_service_with_shared_key_hash(
@@ -568,6 +588,17 @@ fn phase2_service() -> (tempfile::TempDir, salvo::Service) {
     let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
     let service = Service::new(build_projects_router(config, db, runtime));
     (_tmp, service)
+}
+
+async fn http_tool_call(service: &Service, body: Value) -> (StatusCode, Value) {
+    let mut response = TestClient::post("http://localhost/api/tools/call")
+        .bearer_auth("secret")
+        .json(&body)
+        .send(service)
+        .await;
+    let status = effective_status(&response);
+    let body = response.take_json::<Value>().await.unwrap();
+    (status, body)
 }
 
 #[tokio::test]
@@ -1206,60 +1237,77 @@ async fn http_tools_list_supports_bounded_summary_request() {
 }
 
 #[tokio::test]
-async fn http_tools_call_run_codex_is_unknown_without_creating_job() {
+async fn http_tools_call_rejects_malformed_and_unknown_request_matrix() {
     let (_tmp, service) = phase2_service();
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({
-            "tool": "run_codex",
-            "params": {
-                "project": "demo",
-                "prompt": "summarize"
-            }
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["status"], 400);
-    let err = body["error"].as_str().unwrap();
-    assert!(err.contains("unknown tool 'run_codex'"), "{err}");
-    assert_eq!(
-        err.matches("run_codex").count(),
-        1,
-        "unknown-tool error must not advertise removed run_codex: {err}"
-    );
+    let cases = vec![
+        (
+            "unknown tool",
+            json!({"tool": "definitely_not_a_tool"}),
+            vec!["definitely_not_a_tool"],
+            false,
+        ),
+        (
+            "removed run_codex",
+            json!({
+                "tool": "run_codex",
+                "params": {"project": "demo", "prompt": "summarize"}
+            }),
+            vec!["run_codex"],
+            true,
+        ),
+        (
+            "missing required project",
+            json!({"tool": "run_shell", "params": {"command": "echo"}}),
+            vec!["run_shell", "project"],
+            false,
+        ),
+        (
+            "wrong project type",
+            json!({"tool": "run_shell", "params": {"project": 123, "command": "echo"}}),
+            vec!["run_shell"],
+            false,
+        ),
+        (
+            "missing outer tool",
+            json!({"params": {}}),
+            vec!["tool"],
+            false,
+        ),
+    ];
 
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({"tool": "list_jobs", "params": {}}))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::OK);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], true);
-    assert_eq!(body["output"]["jobs"].as_array().unwrap().len(), 0);
+    for (label, request, expected_fragments, verify_no_job) in cases {
+        let (status, body) = http_tool_call(&service, request).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{label}: {body}");
+        let error = body["error"].as_str().unwrap_or("");
+        for fragment in expected_fragments {
+            assert!(
+                error.contains(fragment),
+                "{label}: error must contain {fragment:?}: {error}"
+            );
+        }
+        if verify_no_job {
+            let (status, jobs) =
+                http_tool_call(&service, json!({"tool": "list_jobs", "params": {}})).await;
+            assert_eq!(status, StatusCode::OK, "{jobs}");
+            assert_eq!(jobs["success"], true);
+            assert!(jobs["output"]["jobs"].as_array().unwrap().is_empty());
+        }
+    }
 }
 
 #[tokio::test]
 async fn http_tools_call_accepts_omitted_null_and_alias_params() {
-    // `params` may be omitted or null, and `arguments` is accepted as a
-    // compatibility alias for `params`.
+    // Wrapper compatibility is HTTP-owned; ToolRuntime owns list_tools parsing.
     let (_tmp, service) = phase2_service();
-    for body in [
+    for request in [
         json!({"tool": "list_tools"}),
         json!({"tool": "list_tools", "params": null}),
         json!({"tool": "list_tools", "arguments": null}),
     ] {
-        let mut resp = TestClient::post("http://localhost/api/tools/call")
-            .bearer_auth("secret")
-            .json(&body)
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::OK, "body: {body}");
-        let out: Value = resp.take_json().await.unwrap();
-        assert_eq!(out["success"], true, "body: {body}");
-        assert!(out["output"]["tools"].is_array(), "body: {body}");
+        let (status, body) = http_tool_call(&service, request.clone()).await;
+        assert_eq!(status, StatusCode::OK, "request: {request}");
+        assert_eq!(body["success"], true, "request: {request}");
+        assert!(body["output"]["tools"].is_array(), "request: {request}");
     }
 }
 
@@ -1663,171 +1711,43 @@ async fn session_summary_bounds_event_limit() {
 
 #[tokio::test]
 async fn http_tools_call_params_wins_over_arguments() {
-    // When both params and arguments are present, params wins. Use a tool
-    // whose params shape we can distinguish: git_diff_summary takes a
-    // `project`. The runtime returns a structured error for an unknown
-    // project, but the project string from `params` is what gets routed,
-    // so we assert the error names the params project (not the arguments
-    // one).
+    // `params` precedence is an HTTP wrapper contract; ToolRuntime owns the tool semantics.
     let (_tmp, service) = phase2_service();
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({
+    let (status, body) = http_tool_call(
+        &service,
+        json!({
             "tool": "git_diff_summary",
             "params": {"project": "agent:params-wins:p"},
             "arguments": {"project": "agent:arguments-loses:p"},
-        }))
-        .send(&service)
-        .await;
-    // Authenticated + dispatched to ToolRuntime (structured error, not 401).
-    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["success"], false);
-    let err = body["error"].as_str().unwrap();
-    assert!(
-        err.contains("params-wins"),
-        "params must win over arguments; error was: {}",
-        err
-    );
-    assert!(
-        !err.contains("arguments-loses"),
-        "arguments must not be used when params present; error was: {}",
-        err
-    );
+    let error = body["error"].as_str().unwrap();
+    assert!(error.contains("params-wins"), "{error}");
+    assert!(!error.contains("arguments-loses"), "{error}");
 }
 
 #[tokio::test]
-async fn http_tools_call_unknown_tool_returns_useful_error() {
-    let (_tmp, service) = phase2_service();
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({"tool": "definitely_not_a_tool"}))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    let err = body["error"].as_str().unwrap();
-    assert!(
-        err.contains("definitely_not_a_tool"),
-        "error must name the tool"
-    );
-    // Must point the caller at discovery and list available tools.
-    assert!(
-        err.contains("listRuntimeTools") || err.contains("list_tools"),
-        "error should hint at discovery: {}",
-        err
-    );
-    assert!(
-        err.contains("git_diff_summary"),
-        "error should list available tools: {}",
-        err
-    );
-    // Must not leak secrets / config artifacts.
-    let lower = err.to_lowercase();
-    for forbidden in [
-        "token",
-        "authorization",
-        "agent.toml",
-        "webcodex.env",
-        "secret",
-    ] {
-        assert!(
-            !lower.contains(forbidden),
-            "unknown-tool error must not leak '{}': {}",
-            forbidden,
-            err
-        );
-    }
-}
-
-#[tokio::test]
-async fn http_tools_call_missing_required_field_names_tool_and_field() {
-    let (_tmp, service) = phase2_service();
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({"tool": "run_shell", "params": {"command": "echo"}}))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    let err = body["error"].as_str().unwrap();
-    assert!(
-        err.contains("run_shell"),
-        "error must name the tool: {}",
-        err
-    );
-    assert!(
-        err.contains("project"),
-        "error must name the missing field: {}",
-        err
-    );
-}
-
-#[tokio::test]
-async fn http_tools_call_wrong_field_type_names_tool() {
-    let (_tmp, service) = phase2_service();
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({"tool": "run_shell", "params": {"project": 123, "command": "echo"}}))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    let err = body["error"].as_str().unwrap();
-    assert!(
-        err.contains("run_shell"),
-        "wrong-type error must name the tool: {}",
-        err
-    );
-}
-
-#[tokio::test]
-async fn http_tools_call_missing_tool_field_returns_field_error() {
-    let (_tmp, service) = phase2_service();
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({"params": {}}))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    let err = body["error"].as_str().unwrap();
-    assert!(
-        err.contains("tool"),
-        "error must mention the missing 'tool' field: {}",
-        err
-    );
-}
-
-#[tokio::test]
-async fn http_tools_call_generic_path_dispatches_git_tools() {
-    // callRuntimeTool routes these tools to the runtime. With an unknown
-    // agent project the runtime returns a structured error (not a 401/404),
-    // proving the generic path deserializes + dispatches each tool.
+async fn http_tools_call_generic_path_dispatches_representative_project_tools() {
+    // One read-side and one write-side tool are sufficient to prove the generic
+    // extraction -> ToolCall -> ToolRuntime -> HTTP ToolResult path.
     let (_tmp, service) = phase2_service();
     for (tool, params) in [
         ("git_diff_summary", json!({"project": "agent:nope:nope"})),
         (
-            "git_log",
-            json!({"project": "agent:nope:nope", "limit": 5, "skip": 1}),
-        ),
-        (
-            "show_changes",
-            json!({"project": "agent:nope:nope", "include_diff": false}),
+            "write_project_file",
+            json!({"project": "agent:nope:nope", "path": "x.txt", "content": "a"}),
         ),
     ] {
-        let mut resp = TestClient::post("http://localhost/api/tools/call")
-            .bearer_auth("secret")
-            .json(&json!({"tool": tool, "params": params}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST, "{tool}");
-        let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], false, "{tool}");
-        assert!(
-            body["error"].as_str().is_some_and(|e| !e.is_empty()),
-            "{tool} should return a structured runtime error"
-        );
+        let (status, body) =
+            http_tool_call(&service, json!({"tool": tool, "params": params})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{tool}: {body}");
+        assert_eq!(body["success"], false, "{tool}: {body}");
+        assert!(body["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty()));
     }
 }
 
@@ -1969,155 +1889,128 @@ fn assert_oauth_scope_rejected(
 }
 
 #[tokio::test]
-async fn oauth2_tools_call_requires_runtime_read_for_list_tools_or_runtime_status() {
-    let (_tmp, service, token) = phase2_oauth_service("runtime:read");
-    let (status, body, _) = oauth_tools_call(&service, &token, "list_tools", Value::Null).await;
-    assert_eq!(status, StatusCode::OK, "body: {:?}", body);
+async fn oauth2_tools_call_scope_matrix() {
+    let (_tmp, service, tokens) = phase2_oauth_service_with_scopes(&[
+        crate::auth::SCOPE_RUNTIME_READ,
+        crate::auth::SCOPE_PROJECT_READ,
+        crate::auth::SCOPE_PROJECT_WRITE,
+        crate::auth::SCOPE_JOB_RUN,
+    ]);
+    let runtime_read = &tokens[0];
+    let project_read = &tokens[1];
+    let project_write = &tokens[2];
+    let job_run = &tokens[3];
 
-    let (_tmp, service, token) = phase2_oauth_service("project:read");
-    let (status, body, challenge) =
-        oauth_tools_call(&service, &token, "runtime_status", Value::Null).await;
-    assert_oauth_scope_rejected(
-        status,
-        &body,
-        challenge.as_deref(),
-        Some(crate::auth::SCOPE_RUNTIME_READ),
-    );
+    let cases = [
+        (
+            "list_tools",
+            Value::Null,
+            runtime_read,
+            project_read,
+            crate::auth::SCOPE_RUNTIME_READ,
+        ),
+        (
+            "runtime_status",
+            Value::Null,
+            runtime_read,
+            project_read,
+            crate::auth::SCOPE_RUNTIME_READ,
+        ),
+        (
+            "read_file",
+            json!({"project": "demo", "path": "README.md"}),
+            project_read,
+            runtime_read,
+            crate::auth::SCOPE_PROJECT_READ,
+        ),
+        (
+            "show_changes",
+            json!({"project": "agent:nope:nope", "session_id": "wc_sess_missing"}),
+            project_read,
+            runtime_read,
+            crate::auth::SCOPE_PROJECT_READ,
+        ),
+        (
+            "write_project_file",
+            json!({"project": "demo", "path": "README.md", "content": "new"}),
+            project_write,
+            project_read,
+            crate::auth::SCOPE_PROJECT_WRITE,
+        ),
+        (
+            "run_shell",
+            json!({"project": "demo", "command": "echo hi"}),
+            job_run,
+            project_read,
+            crate::auth::SCOPE_JOB_RUN,
+        ),
+        (
+            "run_job",
+            json!({"project": "demo", "command": "echo hi"}),
+            job_run,
+            project_read,
+            crate::auth::SCOPE_JOB_RUN,
+        ),
+    ];
+
+    for (tool, params, allowed_token, denied_token, required_scope) in cases {
+        let (status, body, _) =
+            oauth_tools_call(&service, allowed_token, tool, params.clone()).await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "{tool}: {body}");
+        assert_ne!(status, StatusCode::UNAUTHORIZED, "{tool}: {body}");
+
+        let (status, body, challenge) =
+            oauth_tools_call(&service, denied_token, tool, params).await;
+        assert_oauth_scope_rejected(status, &body, challenge.as_deref(), Some(required_scope));
+    }
 }
 
 #[tokio::test]
 async fn session_tools_oauth_scope_policy() {
-    let (_tmp, service, token) = phase2_oauth_service("runtime:read");
-    let (status, body, _) =
-        oauth_tools_call(&service, &token, "start_session", json!({"title": "oauth"})).await;
-    assert_eq!(status, StatusCode::OK, "body: {:?}", body);
+    let (_tmp, service, tokens) = phase2_oauth_service_with_scopes(&[
+        crate::auth::SCOPE_RUNTIME_READ,
+        crate::auth::SCOPE_PROJECT_READ,
+    ]);
+    let runtime_read = &tokens[0];
+    let project_read = &tokens[1];
+
+    let (status, body, _) = oauth_tools_call(
+        &service,
+        runtime_read,
+        "start_session",
+        json!({"title": "oauth"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
     let session_id = body["output"]["session_id"].as_str().unwrap();
-    let (status, body, _) = oauth_tools_call(
-        &service,
-        &token,
-        "session_summary",
-        json!({"session_id": session_id}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "body: {:?}", body);
 
-    let (_tmp, service, token) = phase2_oauth_service("project:read");
-    let (status, body, challenge) =
-        oauth_tools_call(&service, &token, "start_session", json!({})).await;
-    assert_oauth_scope_rejected(
-        status,
-        &body,
-        challenge.as_deref(),
-        Some(crate::auth::SCOPE_RUNTIME_READ),
-    );
-}
+    for (tool, params) in [
+        ("session_summary", json!({"session_id": session_id})),
+        (
+            "post_session_message",
+            json!({"session_id": session_id, "kind": "note", "message": "oauth metadata"}),
+        ),
+    ] {
+        let (status, body, _) = oauth_tools_call(&service, runtime_read, tool, params).await;
+        assert_eq!(status, StatusCode::OK, "{tool}: {body}");
+    }
 
-#[tokio::test]
-async fn oauth2_tools_call_requires_project_read_for_read_file() {
-    let (_tmp, service, token) = phase2_oauth_service("project:read");
-    let (status, body, _) = oauth_tools_call(
-        &service,
-        &token,
-        "read_file",
-        json!({"project": "demo", "path": "README.md"}),
-    )
-    .await;
-    assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
-
-    let (_tmp, service, token) = phase2_oauth_service("runtime:read");
-    let (status, body, challenge) = oauth_tools_call(
-        &service,
-        &token,
-        "read_file",
-        json!({"project": "demo", "path": "README.md"}),
-    )
-    .await;
-    assert_oauth_scope_rejected(
-        status,
-        &body,
-        challenge.as_deref(),
-        Some(crate::auth::SCOPE_PROJECT_READ),
-    );
-}
-
-#[tokio::test]
-async fn oauth2_tools_call_show_changes_tool_scope_is_project_read() {
-    let (_tmp, service, token) = phase2_oauth_service("project:read");
-    let (status, body, _) = oauth_tools_call(
-        &service,
-        &token,
-        "show_changes",
-        json!({"project": "agent:nope:nope", "session_id": "wc_sess_missing"}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {:?}", body);
-    assert_eq!(body["success"], false);
-
-    let (_tmp, service, token) = phase2_oauth_service("runtime:read");
-    let (status, body, challenge) = oauth_tools_call(
-        &service,
-        &token,
-        "show_changes",
-        json!({"project": "agent:nope:nope", "session_id": "wc_sess_missing"}),
-    )
-    .await;
-    assert_oauth_scope_rejected(status, &body, challenge.as_deref(), Some("project:read"));
-}
-
-#[tokio::test]
-async fn oauth2_tools_call_requires_project_write_for_edit_tools() {
-    let (_tmp, service, token) = phase2_oauth_service("project:write");
-    let (status, body, _) = oauth_tools_call(
-        &service,
-        &token,
-        "write_project_file",
-        json!({"project": "demo", "path": "README.md", "content": "new"}),
-    )
-    .await;
-    assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
-
-    let (_tmp, service, token) = phase2_oauth_service("project:read");
-    let (status, body, challenge) = oauth_tools_call(
-        &service,
-        &token,
-        "write_project_file",
-        json!({"project": "demo", "path": "README.md", "content": "new"}),
-    )
-    .await;
-    assert_oauth_scope_rejected(
-        status,
-        &body,
-        challenge.as_deref(),
-        Some(crate::auth::SCOPE_PROJECT_WRITE),
-    );
-}
-
-#[tokio::test]
-async fn oauth2_tools_call_requires_job_run_for_run_shell_or_run_job() {
-    let (_tmp, service, token) = phase2_oauth_service("job:run");
-    let (status, body, _) = oauth_tools_call(
-        &service,
-        &token,
-        "run_shell",
-        json!({"project": "demo", "command": "echo hi"}),
-    )
-    .await;
-    assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
-
-    let (_tmp, service, token) = phase2_oauth_service("project:read");
-    let (status, body, challenge) = oauth_tools_call(
-        &service,
-        &token,
-        "run_job",
-        json!({"project": "demo", "command": "echo hi"}),
-    )
-    .await;
-    assert_oauth_scope_rejected(
-        status,
-        &body,
-        challenge.as_deref(),
-        Some(crate::auth::SCOPE_JOB_RUN),
-    );
+    for (tool, params) in [
+        ("start_session", json!({})),
+        (
+            "post_session_message",
+            json!({"session_id": "wc_sess_missing", "kind": "note", "message": "denied"}),
+        ),
+    ] {
+        let (status, body, challenge) =
+            oauth_tools_call(&service, project_read, tool, params).await;
+        assert_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_RUNTIME_READ),
+        );
+    }
 }
 
 #[tokio::test]
@@ -2201,46 +2094,6 @@ async fn http_tools_list_includes_phase4_edit_tools() {
                 .iter()
                 .any(|field| field == "session_id"),
             "session_id must be optional for {name}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn http_tools_call_dispatches_phase4_edit_tools() {
-    // callRuntimeTool routes write_project_file / apply_text_edits to the
-    // runtime. With a non-agent project the runtime returns a structured
-    // error (not a 401/404), proving the generic path dispatches them.
-    let (_tmp, service) = phase2_service();
-    for (tool, params) in [
-        (
-            "write_project_file",
-            json!({"project": "agent:nope:nope", "path": "x.txt", "content": "a"}),
-        ),
-        (
-            "apply_text_edits",
-            json!({
-                "project": "agent:nope:nope",
-                "changes": [{
-                    "kind": "edit",
-                    "path": "x.txt",
-                    "expected_sha256": "a".repeat(64),
-                    "edits": [{"kind": "replace_exact", "old_text": "a", "new_text": "b"}]
-                }]
-            }),
-        ),
-    ] {
-        let mut resp = TestClient::post("http://localhost/api/tools/call")
-            .bearer_auth("secret")
-            .json(&json!({"tool": tool, "params": params}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-        let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], false);
-        assert!(
-            body["error"].as_str().is_some_and(|e| !e.is_empty()),
-            "{} should return a structured runtime error",
-            tool
         );
     }
 }

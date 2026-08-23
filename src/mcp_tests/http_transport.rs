@@ -11,27 +11,36 @@ fn with_mcp_recording_session(mut arguments: Value, session_id: &str) -> Value {
     arguments
 }
 
-async fn stateless_2026_tool_call(
+async fn legacy_mcp_jsonrpc(service: &Service, token: &str, body: Value) -> (StatusCode, Value) {
+    let mut response = TestClient::post("http://localhost/mcp")
+        .bearer_auth(token)
+        .json(&body)
+        .send(service)
+        .await;
+    let status = effective_status(&response);
+    let body = response.take_json::<Value>().await.unwrap();
+    (status, body)
+}
+
+async fn stateless_2026_jsonrpc(
     service: &Service,
     token: &str,
-    id: i64,
-    name: &str,
-    arguments: Value,
+    protocol_header: Option<&str>,
+    method_header: Option<&str>,
+    name_header: Option<&str>,
     legacy_session_id: Option<&str>,
+    body: Value,
 ) -> (StatusCode, Value) {
-    let params = mcp_2026_params(json!({
-        "name": name,
-        "arguments": arguments,
-    }));
-    let mut request = TestClient::post("http://localhost/mcp")
-        .bearer_auth(token)
-        .add_header(
-            MCP_PROTOCOL_VERSION_HEADER,
-            MCP_STATELESS_PROTOCOL_VERSION,
-            true,
-        )
-        .add_header(MCP_METHOD_HEADER, "tools/call", true)
-        .add_header(MCP_NAME_HEADER, name, true);
+    let mut request = TestClient::post("http://localhost/mcp").bearer_auth(token);
+    if let Some(protocol_header) = protocol_header {
+        request = request.add_header(MCP_PROTOCOL_VERSION_HEADER, protocol_header, true);
+    }
+    if let Some(method_header) = method_header {
+        request = request.add_header(MCP_METHOD_HEADER, method_header, true);
+    }
+    if let Some(name_header) = name_header {
+        request = request.add_header(MCP_NAME_HEADER, name_header, true);
+    }
     if let Some(legacy_session_id) = legacy_session_id {
         request = request.add_header(
             crate::client_window::MCP_SESSION_HEADER,
@@ -39,15 +48,7 @@ async fn stateless_2026_tool_call(
             true,
         );
     }
-    let mut response = request
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "tools/call",
-            "params": params,
-        }))
-        .send(service)
-        .await;
+    let mut response = request.json(&body).send(service).await;
     assert!(
         response
             .headers()
@@ -58,6 +59,31 @@ async fn stateless_2026_tool_call(
     let status = effective_status(&response);
     let body = response.take_json::<Value>().await.unwrap();
     (status, body)
+}
+
+async fn stateless_2026_tool_call(
+    service: &Service,
+    token: &str,
+    id: i64,
+    name: &str,
+    arguments: Value,
+    legacy_session_id: Option<&str>,
+) -> (StatusCode, Value) {
+    stateless_2026_jsonrpc(
+        service,
+        token,
+        Some(MCP_STATELESS_PROTOCOL_VERSION),
+        Some("tools/call"),
+        Some(name),
+        legacy_session_id,
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": mcp_2026_params(json!({"name": name, "arguments": arguments})),
+        }),
+    )
+    .await
 }
 
 async fn stateless_observation_shell_clients() -> Arc<crate::shell_client::ShellClientRegistry> {
@@ -1226,197 +1252,139 @@ async fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contra
 }
 
 #[tokio::test]
-async fn http_mcp_2026_validates_headers_and_ignores_legacy_session_id() {
+async fn http_mcp_2026_protocol_error_matrix_and_legacy_session_compatibility() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
     let service = Service::new(build_test_router(config, db, runtime));
     let params = mcp_2026_params(json!({}));
 
-    let mut missing_headers = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 200,
-            "method": "tools/list",
-            "params": params.clone()
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&missing_headers), StatusCode::BAD_REQUEST);
-    let missing_body: Value = missing_headers.take_json().await.unwrap();
-    assert_eq!(missing_body["error"]["code"], MCP_HEADER_MISMATCH);
-
-    let mut ok = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .add_header(
-            MCP_PROTOCOL_VERSION_HEADER,
-            MCP_STATELESS_PROTOCOL_VERSION,
-            true,
-        )
-        .add_header(MCP_METHOD_HEADER, "tools/list", true)
-        .add_header(
-            crate::client_window::MCP_SESSION_HEADER,
-            "legacy-session-must-be-ignored",
-            true,
-        )
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 201,
-            "method": "tools/list",
-            "params": params.clone()
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&ok), StatusCode::OK);
-    assert!(ok
-        .headers
-        .get(crate::client_window::MCP_SESSION_HEADER)
-        .is_none());
-    let ok_body: Value = ok.take_json().await.unwrap();
-    assert_eq!(ok_body["result"]["resultType"], "complete");
-    assert_eq!(ok_body["result"]["cacheScope"], "private");
-
-    let mut method_mismatch = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .add_header(
-            MCP_PROTOCOL_VERSION_HEADER,
-            MCP_STATELESS_PROTOCOL_VERSION,
-            true,
-        )
-        .add_header(MCP_METHOD_HEADER, "ping", true)
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 202,
-            "method": "tools/list",
-            "params": params.clone()
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&method_mismatch), StatusCode::BAD_REQUEST);
-    let mismatch_body: Value = method_mismatch.take_json().await.unwrap();
-    assert_eq!(mismatch_body["error"]["code"], MCP_HEADER_MISMATCH);
-
-    let mut missing_capabilities = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .add_header(
-            MCP_PROTOCOL_VERSION_HEADER,
-            MCP_STATELESS_PROTOCOL_VERSION,
-            true,
-        )
-        .add_header(MCP_METHOD_HEADER, "tools/list", true)
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 2021,
-            "method": "tools/list",
-            "params": {
-                "_meta": {
-                    "io.modelcontextprotocol/protocolVersion": MCP_STATELESS_PROTOCOL_VERSION
-                }
-            }
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(
-        effective_status(&missing_capabilities),
-        StatusCode::BAD_REQUEST
-    );
-    let missing_capabilities_body: Value = missing_capabilities.take_json().await.unwrap();
-    assert_eq!(missing_capabilities_body["error"]["code"], -32602);
-
-    let mut version_mismatch = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .add_header(MCP_PROTOCOL_VERSION_HEADER, "2099-01-01", true)
-        .add_header(MCP_METHOD_HEADER, "tools/list", true)
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 2022,
-            "method": "tools/list",
-            "params": params.clone()
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&version_mismatch), StatusCode::BAD_REQUEST);
-    let version_mismatch_body: Value = version_mismatch.take_json().await.unwrap();
-    assert_eq!(version_mismatch_body["error"]["code"], MCP_HEADER_MISMATCH);
-
-    let mut malformed_client_info = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .add_header(
-            MCP_PROTOCOL_VERSION_HEADER,
-            MCP_STATELESS_PROTOCOL_VERSION,
-            true,
-        )
-        .add_header(MCP_METHOD_HEADER, "tools/list", true)
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 2023,
-            "method": "tools/list",
-            "params": {
-                "_meta": {
+    let cases = vec![
+        (
+            "missing headers",
+            None,
+            None,
+            json!({"jsonrpc": "2.0", "id": 200, "method": "tools/list", "params": params.clone()}),
+            StatusCode::BAD_REQUEST,
+            json!(MCP_HEADER_MISMATCH),
+            200,
+        ),
+        (
+            "method header mismatch",
+            Some(MCP_STATELESS_PROTOCOL_VERSION),
+            Some("ping"),
+            json!({"jsonrpc": "2.0", "id": 202, "method": "tools/list", "params": params.clone()}),
+            StatusCode::BAD_REQUEST,
+            json!(MCP_HEADER_MISMATCH),
+            202,
+        ),
+        (
+            "missing client capabilities",
+            Some(MCP_STATELESS_PROTOCOL_VERSION),
+            Some("tools/list"),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2021,
+                "method": "tools/list",
+                "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": MCP_STATELESS_PROTOCOL_VERSION}}
+            }),
+            StatusCode::BAD_REQUEST,
+            json!(-32602),
+            2021,
+        ),
+        (
+            "protocol header mismatch",
+            Some("2099-01-01"),
+            Some("tools/list"),
+            json!({"jsonrpc": "2.0", "id": 2022, "method": "tools/list", "params": params.clone()}),
+            StatusCode::BAD_REQUEST,
+            json!(MCP_HEADER_MISMATCH),
+            2022,
+        ),
+        (
+            "malformed client info",
+            Some(MCP_STATELESS_PROTOCOL_VERSION),
+            Some("tools/list"),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2023,
+                "method": "tools/list",
+                "params": {"_meta": {
                     "io.modelcontextprotocol/protocolVersion": MCP_STATELESS_PROTOCOL_VERSION,
                     "io.modelcontextprotocol/clientCapabilities": {},
                     "io.modelcontextprotocol/clientInfo": {"name": "missing-version"}
-                }
-            }
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(
-        effective_status(&malformed_client_info),
-        StatusCode::BAD_REQUEST
-    );
-    let malformed_client_info_body: Value = malformed_client_info.take_json().await.unwrap();
-    assert_eq!(malformed_client_info_body["error"]["code"], -32602);
+                }}
+            }),
+            StatusCode::BAD_REQUEST,
+            json!(-32602),
+            2023,
+        ),
+        (
+            "invalid jsonrpc",
+            Some(MCP_STATELESS_PROTOCOL_VERSION),
+            Some("tools/list"),
+            json!({"id": 2024, "method": "tools/list", "params": params.clone()}),
+            StatusCode::BAD_REQUEST,
+            json!(-32600),
+            2024,
+        ),
+        (
+            "unsupported protocol",
+            Some("2099-01-01"),
+            Some("tools/list"),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 203,
+                "method": "tools/list",
+                "params": {"_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2099-01-01",
+                    "io.modelcontextprotocol/clientCapabilities": {}
+                }}
+            }),
+            StatusCode::BAD_REQUEST,
+            json!(MCP_UNSUPPORTED_PROTOCOL_VERSION),
+            203,
+        ),
+        (
+            "unknown method",
+            Some(MCP_STATELESS_PROTOCOL_VERSION),
+            Some("prompts/list"),
+            json!({"jsonrpc": "2.0", "id": 206, "method": "prompts/list", "params": params.clone()}),
+            StatusCode::NOT_FOUND,
+            json!(-32601),
+            206,
+        ),
+    ];
 
-    let mut missing_jsonrpc = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .add_header(
-            MCP_PROTOCOL_VERSION_HEADER,
-            MCP_STATELESS_PROTOCOL_VERSION,
-            true,
-        )
-        .add_header(MCP_METHOD_HEADER, "tools/list", true)
-        .json(&json!({
-            "id": 2024,
-            "method": "tools/list",
-            "params": params.clone()
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&missing_jsonrpc), StatusCode::BAD_REQUEST);
-    let missing_jsonrpc_body: Value = missing_jsonrpc.take_json().await.unwrap();
-    assert_eq!(missing_jsonrpc_body["error"]["code"], -32600);
-
-    let unsupported_params = json!({
-        "_meta": {
-            "io.modelcontextprotocol/protocolVersion": "2099-01-01",
-            "io.modelcontextprotocol/clientCapabilities": {}
+    for (label, protocol, method, request, expected_status, expected_code, expected_id) in cases {
+        let (status, body) =
+            stateless_2026_jsonrpc(&service, "secret", protocol, method, None, None, request).await;
+        assert_eq!(status, expected_status, "{label}: {body}");
+        assert_eq!(body["id"], expected_id, "{label}: {body}");
+        assert_eq!(body["error"]["code"], expected_code, "{label}: {body}");
+        if label == "unsupported protocol" {
+            assert_eq!(body["error"]["data"]["requested"], "2099-01-01");
+            assert_eq!(
+                body["error"]["data"]["supported"],
+                json!(MCP_SUPPORTED_PROTOCOL_VERSIONS)
+            );
         }
-    });
-    let mut unsupported = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .add_header(MCP_PROTOCOL_VERSION_HEADER, "2099-01-01", true)
-        .add_header(MCP_METHOD_HEADER, "tools/list", true)
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 203,
-            "method": "tools/list",
-            "params": unsupported_params
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&unsupported), StatusCode::BAD_REQUEST);
-    let unsupported_body: Value = unsupported.take_json().await.unwrap();
-    assert_eq!(
-        unsupported_body["error"]["code"],
-        MCP_UNSUPPORTED_PROTOCOL_VERSION
-    );
-    assert_eq!(unsupported_body["error"]["data"]["requested"], "2099-01-01");
-    assert_eq!(
-        unsupported_body["error"]["data"]["supported"],
-        json!(MCP_SUPPORTED_PROTOCOL_VERSIONS)
-    );
+    }
+
+    let (status, body) = stateless_2026_jsonrpc(
+        &service,
+        "secret",
+        Some(MCP_STATELESS_PROTOCOL_VERSION),
+        Some("tools/list"),
+        None,
+        Some("legacy-session-must-be-ignored"),
+        json!({"jsonrpc": "2.0", "id": 201, "method": "tools/list", "params": params}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["id"], 201);
+    assert_eq!(body["result"]["resultType"], "complete");
+    assert_eq!(body["result"]["cacheScope"], "private");
 }
 
 #[tokio::test]
@@ -1427,75 +1395,40 @@ async fn http_mcp_2026_tools_call_requires_matching_name_and_accepts_base64_sent
     let service = Service::new(build_test_router(config, db, runtime));
     let params = mcp_2026_params(json!({"name": "list_projects", "arguments": {}}));
 
-    let mut missing_name = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .add_header(
-            MCP_PROTOCOL_VERSION_HEADER,
-            MCP_STATELESS_PROTOCOL_VERSION,
-            true,
+    for (label, name_header, id) in [
+        ("missing name", None, 204),
+        ("mismatched name", Some("runtime_status"), 2041),
+    ] {
+        let (status, body) = stateless_2026_jsonrpc(
+            &service,
+            "secret",
+            Some(MCP_STATELESS_PROTOCOL_VERSION),
+            Some("tools/call"),
+            name_header,
+            None,
+            json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params.clone()}),
         )
-        .add_header(MCP_METHOD_HEADER, "tools/call", true)
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 204,
-            "method": "tools/call",
-            "params": params.clone()
-        }))
-        .send(&service)
         .await;
-    assert_eq!(effective_status(&missing_name), StatusCode::BAD_REQUEST);
-    let missing_name_body: Value = missing_name.take_json().await.unwrap();
-    assert_eq!(missing_name_body["error"]["code"], MCP_HEADER_MISMATCH);
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{label}: {body}");
+        assert_eq!(body["id"], id);
+        assert_eq!(body["error"]["code"], MCP_HEADER_MISMATCH);
+    }
 
     let encoded = general_purpose::STANDARD.encode("list_projects");
     let encoded = format!("=?base64?{encoded}?=");
-    let mut ok = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .add_header(
-            MCP_PROTOCOL_VERSION_HEADER,
-            MCP_STATELESS_PROTOCOL_VERSION,
-            true,
-        )
-        .add_header(MCP_METHOD_HEADER, "tools/call", true)
-        .add_header(MCP_NAME_HEADER, &encoded, true)
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 205,
-            "method": "tools/call",
-            "params": params
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&ok), StatusCode::OK);
-    let ok_body: Value = ok.take_json().await.unwrap();
-    assert_eq!(ok_body["result"]["resultType"], "complete");
-}
-
-#[tokio::test]
-async fn http_mcp_2026_unknown_method_is_404_jsonrpc_method_not_found() {
-    let config = test_config(Some("secret"));
-    let (_tmp, db) = test_db();
-    let runtime = Arc::new(test_runtime());
-    let service = Service::new(build_test_router(config, db, runtime));
-    let mut resp = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .add_header(
-            MCP_PROTOCOL_VERSION_HEADER,
-            MCP_STATELESS_PROTOCOL_VERSION,
-            true,
-        )
-        .add_header(MCP_METHOD_HEADER, "prompts/list", true)
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 206,
-            "method": "prompts/list",
-            "params": mcp_2026_params(json!({}))
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::NOT_FOUND);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["error"]["code"], -32601);
+    let (status, body) = stateless_2026_jsonrpc(
+        &service,
+        "secret",
+        Some(MCP_STATELESS_PROTOCOL_VERSION),
+        Some("tools/call"),
+        Some(&encoded),
+        None,
+        json!({"jsonrpc": "2.0", "id": 205, "method": "tools/call", "params": params}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["id"], 205);
+    assert_eq!(body["result"]["resultType"], "complete");
 }
 
 #[tokio::test]
@@ -1806,111 +1739,96 @@ async fn http_mcp_2026_rejects_legacy_lifecycle_and_cross_origin_transport() {
     );
 }
 #[tokio::test]
-async fn http_mcp_tools_call_list_projects_returns_mcp_content() {
+async fn http_mcp_tools_call_uses_result_envelope_for_success_and_business_failure() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());
     let service = Service::new(build_test_router(config, db, runtime));
-    let mut resp = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {"name": "list_projects", "arguments": {}}
-        }))
-        .send(&service)
+
+    for (id, name, arguments, expected_is_error) in [
+        (3, "list_projects", json!({}), false),
+        (
+            31,
+            "git_status",
+            json!({"project": "agent:nope:nope"}),
+            true,
+        ),
+    ] {
+        let (status, body) = legacy_mcp_jsonrpc(
+            &service,
+            "secret",
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments}
+            }),
+        )
         .await;
-    assert_eq!(effective_status(&resp), StatusCode::OK);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["id"], 3);
-    assert_eq!(body["result"]["content"][0]["type"], "text");
-    assert!(body["result"]["content"][0]["text"].is_string());
-    assert!(body["result"]["structuredContent"].is_object());
-    assert!(
-        body["result"]["structuredContent"]["success"].is_boolean(),
-        "structuredContent.success must be a bool"
-    );
-    assert!(
-        body["result"]["isError"].is_boolean(),
-        "isError must be a bool"
-    );
-    // A business failure (no projects configured) is an MCP tool error,
-    // not a JSON-RPC protocol error: the envelope is still a result.
-    assert!(body["result"].get("error").is_none());
-    assert!(body.get("error").is_none(), "no top-level JSON-RPC error");
+        assert_eq!(status, StatusCode::OK, "{name}: {body}");
+        assert_eq!(body["id"], id);
+        assert_eq!(body["result"]["content"][0]["type"], "text");
+        assert!(body["result"]["content"][0]["text"].is_string());
+        assert!(body["result"]["structuredContent"].is_object());
+        assert!(body["result"]["structuredContent"]["success"].is_boolean());
+        assert_eq!(body["result"]["isError"], expected_is_error);
+        assert_eq!(
+            body["result"]["structuredContent"]["success"],
+            !expected_is_error
+        );
+        assert!(body.get("error").is_none(), "{name}: {body}");
+    }
 }
 
 #[tokio::test]
-async fn http_mcp_tools_call_unknown_tool_returns_jsonrpc_error() {
+async fn http_mcp_protocol_error_matrix_preserves_ids() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());
     let service = Service::new(build_test_router(config, db, runtime));
-    let mut resp = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "tools/call",
-            "params": {"name": "no_such_tool", "arguments": {}}
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["error"]["code"], -32602);
-    assert!(body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("no_such_tool"));
-}
+    let cases = [
+        (
+            "unknown tool",
+            json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": "no_such_tool", "arguments": {}}
+            }),
+            4,
+            -32602,
+            Some("no_such_tool"),
+        ),
+        (
+            "unknown method",
+            json!({"jsonrpc": "2.0", "id": 5, "method": "resources/list", "params": {}}),
+            5,
+            -32601,
+            Some("resources/list"),
+        ),
+        (
+            "invalid jsonrpc",
+            json!({"jsonrpc": "1.0", "id": 6, "method": "initialize", "params": {}}),
+            6,
+            -32600,
+            None,
+        ),
+    ];
 
-#[tokio::test]
-async fn http_mcp_unknown_method_returns_jsonrpc_error() {
-    let config = test_config(Some("secret"));
-    let (_tmp, db) = test_db();
-    let runtime = Arc::new(test_runtime());
-    let service = Service::new(build_test_router(config, db, runtime));
-    let mut resp = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 5,
-            "method": "resources/list",
-            "params": {}
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["error"]["code"], -32601);
-    assert!(body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("resources/list"));
-}
-
-#[tokio::test]
-async fn http_mcp_invalid_jsonrpc_returns_jsonrpc_error() {
-    let config = test_config(Some("secret"));
-    let (_tmp, db) = test_db();
-    let runtime = Arc::new(test_runtime());
-    let service = Service::new(build_test_router(config, db, runtime));
-    let mut resp = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        .json(&json!({
-            "jsonrpc": "1.0",
-            "id": 6,
-            "method": "initialize",
-            "params": {}
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["error"]["code"], -32600);
-    assert_eq!(body["id"], 6);
+    for (label, request, expected_id, expected_code, message_fragment) in cases {
+        let (status, body) = legacy_mcp_jsonrpc(&service, "secret", request).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{label}: {body}");
+        assert_eq!(body["id"], expected_id, "{label}: {body}");
+        assert_eq!(body["error"]["code"], expected_code, "{label}: {body}");
+        if let Some(fragment) = message_fragment {
+            assert!(
+                body["error"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains(fragment)),
+                "{label}: {body}"
+            );
+        }
+    }
 }
 
 #[tokio::test]

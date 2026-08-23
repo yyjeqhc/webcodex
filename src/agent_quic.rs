@@ -347,8 +347,30 @@ async fn handle_quic_connection(
         }
     };
 
-    // 5. From this point on, all writes go through one writer task so the
-    //    request pump and keepalive replies never concurrently hold SendStream.
+    // 5. Acknowledge the committed registration before the writer task takes
+    //    ownership of SendStream. Queueing the ack into an mpsc would only prove
+    //    local admission, not that the handshake reached the QUIC stream. If the
+    //    actual write fails, revoke only this exact connection lease.
+    let ack = AgentEnvelope::Registered {
+        success: true,
+        client: Some(view),
+        error: None,
+    };
+    if let Err(e) = write_quic_frame(&mut send, &ack).await {
+        tracing::debug!(
+            client_id = %client_id,
+            error = %e,
+            "quic agent registered ack send failed"
+        );
+        registry
+            .reconcile_disconnect_for_connection(&client_id, &agent_instance_id, &connection_id)
+            .await;
+        return;
+    }
+
+    // 6. After the registration handshake, all writes go through one writer
+    //    task so the request pump and keepalive replies never concurrently hold
+    //    SendStream.
     let (out_tx, mut out_rx) =
         mpsc::channel::<AgentEnvelope>(crate::agent_session::OUTGOING_CHANNEL_CAPACITY);
     let writer_client_id = client_id.clone();
@@ -365,24 +387,6 @@ async fn handle_quic_connection(
         }
         let _ = send.finish();
     });
-
-    // 6. Acknowledge the register.
-    let ack = AgentEnvelope::Registered {
-        success: true,
-        client: Some(view),
-        error: None,
-    };
-    if out_tx.send(ack).await.is_err() {
-        tracing::debug!(
-            client_id = %client_id,
-            "quic agent register ack channel closed"
-        );
-        registry
-            .reconcile_disconnect_for_connection(&client_id, &agent_instance_id, &connection_id)
-            .await;
-        let _ = writer_task.await;
-        return;
-    }
     tracing::info!(client_id = %client_id, "agent quic connected");
 
     // 7-9. Pump, reader loop, and teardown are shared with the WebSocket

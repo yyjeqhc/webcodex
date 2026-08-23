@@ -210,7 +210,132 @@ impl ToolRuntime {
                 Some(PUBLIC_VALIDATION_SESSION_EVENT_LIMIT),
             )
             .unwrap_or_else(|| summary.clone());
-        validation_summary_from_events(&refreshed.events, limit)
+        let mut events = refreshed.events.clone();
+        self.append_terminal_run_job_validation_events(&refreshed, &mut events, auth)
+            .await;
+        events.sort_by_key(|event| {
+            (
+                event.timestamp,
+                event.finished_at.unwrap_or(event.timestamp),
+            )
+        });
+        validation_summary_from_events(&events, limit)
+    }
+
+    /// Preserve the pre-existing `run_job(purpose=validation|test|build|format|release)`
+    /// projection without mixing those generic Jobs into the durable structured-validation
+    /// marker ledger. Structured validation Jobs carry explicit validation metadata and are
+    /// materialized above; ordinary run_job evidence remains a read-time projection from the
+    /// retained acceptance event plus the authoritative terminal Job state.
+    async fn append_terminal_run_job_validation_events(
+        &self,
+        summary: &SessionSummary,
+        events: &mut Vec<SessionEvent>,
+        auth: Option<&AuthContext>,
+    ) {
+        let Some(project) = summary.project.as_deref() else {
+            return;
+        };
+        let accepted = summary
+            .events
+            .iter()
+            .filter(|event| {
+                event.kind == "tool_call_finished"
+                    && event.tool_name == "run_job"
+                    && event.job_id.is_some()
+                    && execution_purpose(event).is_some()
+                    && job_acceptance_only(event)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for mut observed in accepted {
+            let Some(job_id) = observed.job_id.as_deref() else {
+                continue;
+            };
+            let status = self
+                .job_status_for_auth(job_id.to_string(), false, auth)
+                .await;
+            if !status.success
+                || status.output.get("terminal").and_then(Value::as_bool) != Some(true)
+                || status.output.get("session_id").and_then(Value::as_str)
+                    != Some(summary.session_id.as_str())
+                || status.output.get("project").and_then(Value::as_str) != Some(project)
+            {
+                continue;
+            }
+            // A run_job carrying structured validation metadata belongs to the durable
+            // materialization path and must not be synthesized a second time here.
+            if status
+                .output
+                .get("validation")
+                .is_some_and(Value::is_object)
+            {
+                continue;
+            }
+
+            let log = self
+                .job_log_for_auth(job_id.to_string(), None, Some(200), auth, None, None)
+                .await;
+            let job_status = status
+                .output
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let exit_code = status.output.get("exit_code").and_then(Value::as_i64);
+            let succeeded = job_status == "completed" && exit_code == Some(0);
+            observed.status = Some(if succeeded { "succeeded" } else { "failed" }.to_string());
+            observed.exit_code = exit_code;
+            observed.started_at = status.output.get("started_at").and_then(Value::as_i64);
+            observed.finished_at = status.output.get("ended_at").and_then(Value::as_i64);
+            if let Some(completed_at) = observed.finished_at {
+                observed.timestamp = completed_at;
+            }
+            observed.duration_ms = status.output.get("duration_ms").and_then(Value::as_u64);
+            observed.failure_kind = (!succeeded).then(|| match job_status {
+                "timeout" | "timed_out" => "timeout".to_string(),
+                "stopped" | "cancelled" => "cancelled".to_string(),
+                "lost" => "execution_lost".to_string(),
+                _ => "command_exit_nonzero".to_string(),
+            });
+
+            let mut output = if log.success {
+                log.output
+            } else {
+                json!({
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                    "stdout_truncated": true,
+                    "stderr_truncated": true,
+                })
+            };
+            for field in ["purpose", "command_summary", "cwd", "shell", "executor"] {
+                if output.get(field).is_none_or(Value::is_null) {
+                    output[field] = observed
+                        .validation_output_summary
+                        .as_ref()
+                        .and_then(|value| value.get(field))
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                }
+            }
+            output["execution_state"] = json!(match job_status {
+                "timeout" | "timed_out" => "timed_out",
+                "stopped" | "cancelled" => "cancelled",
+                "lost" => "lost",
+                _ => "completed",
+            });
+            output["exit_code"] = status
+                .output
+                .get("exit_code")
+                .cloned()
+                .unwrap_or(Value::Null);
+            observed.validation_output_summary =
+                super::sessions::execution_output_summary_for_tool_result("run_job", &output);
+            if observed.validation_output_summary.is_some() {
+                events.push(observed);
+            }
+        }
     }
 
     async fn materialize_session_validation_job_terminals(

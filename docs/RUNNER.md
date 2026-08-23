@@ -55,10 +55,13 @@ The Runner authenticates with its agent token (or the direct shared key in
 hosted quick-start mode). The token is a Runner transport credential only; it
 is not used for MCP, REST, or GPT Actions.
 
-For WebSocket, the connection uses `Authorization: Bearer <token>` (with
-`?token=` accepted only for `/api/agents/ws` handshake compatibility). For
-polling, every request carries the bearer header. QUIC sends the token inside
-the registration envelope.
+For WebSocket, the first-party Runner uses `Authorization: Bearer <token>`.
+The Server still accepts the deprecated `/api/agents/ws?token=...` form only
+for the compatibility contract documented by v0.1.0; do not put new
+credentials in URLs. This fallback can be removed when that legacy transport
+support window is explicitly retired. Polling uses the bearer header. QUIC
+keeps its credential in the transport-specific v1 first-register frame while
+the shared agent envelope remains credential-free.
 
 ## Registering projects
 

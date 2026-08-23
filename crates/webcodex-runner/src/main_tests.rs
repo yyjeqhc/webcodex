@@ -1454,6 +1454,11 @@ fn empty_tokens_are_not_sent_as_credentials() {
         request.headers().get(AUTHORIZATION).unwrap(),
         "Bearer abc123"
     );
+    assert_eq!(request.uri().path(), "/api/agents/ws");
+    assert!(
+        request.uri().query().is_none(),
+        "first-party WebSocket auth must not put credentials in the URL"
+    );
 
     assert_eq!(non_empty_token(""), None);
     assert_eq!(non_empty_token("   \t"), None);

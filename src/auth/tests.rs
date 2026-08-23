@@ -359,9 +359,11 @@ async fn gate_token_class_route_matrix_preserves_authority_boundaries() {
     let user_token = gate_mint_user_token(&db, &user);
     let service = Service::new(gate_router(config, db));
 
-    let (status, body) = gate_send(&service, "/api/shell/agent/register", Some(&agent_token)).await;
-    assert_eq!(status, salvo::http::StatusCode::OK, "body: {body:?}");
-    assert_eq!(body["ok"], true);
+    for path in ["/api/shell/agent/register", "/api/agents/ws"] {
+        let (status, body) = gate_send(&service, path, Some(&agent_token)).await;
+        assert_eq!(status, salvo::http::StatusCode::OK, "{path}: {body:?}");
+        assert_eq!(body["ok"], true);
+    }
 
     for path in [
         "/api/runtime/status",
@@ -498,12 +500,13 @@ async fn gate_disabled_user_account_credential_is_rejected() {
 }
 
 #[tokio::test]
-async fn gate_query_token_is_websocket_only_and_bearer_header_stays_general() {
+async fn gate_query_token_compatibility_is_websocket_only_and_bearer_has_precedence() {
     let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = gate_test_config(Some("secret"));
     let (_tmp, db) = gate_test_db();
     let service = Service::new(gate_router(config, db));
 
+    // Query credentials remain an exact WS-only v0.1.0 compatibility surface.
     let (status, body) = gate_send(&service, "/api/runtime/status?token=secret", None).await;
     assert_eq!(status, salvo::http::StatusCode::UNAUTHORIZED);
     assert_eq!(body["error"], "Unauthorized");
@@ -511,6 +514,33 @@ async fn gate_query_token_is_websocket_only_and_bearer_header_stays_general() {
     let (status, body) = gate_send(&service, "/api/agents/ws?token=secret", None).await;
     assert_eq!(status, salvo::http::StatusCode::OK, "body: {body:?}");
     assert_eq!(body["ok"], true);
+
+    // Header authority wins even when a query token is also present.
+    let (status, body) = gate_send(
+        &service,
+        "/api/agents/ws?token=wrong-query-token",
+        Some("secret"),
+    )
+    .await;
+    assert_eq!(status, salvo::http::StatusCode::OK, "body: {body:?}");
+    assert_eq!(body["ok"], true);
+
+    let (status, body) = gate_send(
+        &service,
+        "/api/agents/ws?token=secret",
+        Some("wrong-header-token"),
+    )
+    .await;
+    assert_eq!(status, salvo::http::StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"], "Unauthorized");
+
+    let mut resp = TestClient::get("http://localhost/api/agents/ws?token=secret")
+        .add_header("authorization", "Basic ignored", true)
+        .send(&service)
+        .await;
+    assert_eq!(gate_status(&resp), salvo::http::StatusCode::UNAUTHORIZED);
+    let body = resp.take_json::<serde_json::Value>().await.unwrap();
+    assert_eq!(body["error"], "Unauthorized");
 
     let (status, body) = gate_send(&service, "/api/runtime/status", Some("secret")).await;
     assert_eq!(status, salvo::http::StatusCode::OK, "body: {body:?}");

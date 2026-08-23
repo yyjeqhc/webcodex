@@ -1,6 +1,9 @@
 //! HTTP request extraction, token surface gates, and Salvo auth middleware.
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use crate::{Config, Database};
 use salvo::prelude::*;
@@ -33,8 +36,40 @@ pub(crate) fn bearer_token(req: &Request) -> Option<String> {
         .map(|v| v.to_string())
 }
 
+// v0.1.0 publicly documented `/api/agents/ws?token=...` as handshake
+// compatibility even though the first-party Runner already used Authorization.
+// Keep that exact legacy surface until the project explicitly retires the
+// v0.1.0-era transport support window; do not add new callers or endpoints.
+static WS_QUERY_TOKEN_DEPRECATION_WARNED: AtomicBool = AtomicBool::new(false);
+
 pub(crate) fn allow_query_token_for_path(path: &str) -> bool {
     path == "/api/agents/ws"
+}
+
+fn claim_ws_query_token_deprecation_warning(flag: &AtomicBool) -> bool {
+    !flag.swap(true, Ordering::Relaxed)
+}
+
+fn warn_deprecated_ws_query_token_once() {
+    if claim_ws_query_token_deprecation_warning(&WS_QUERY_TOKEN_DEPRECATION_WARNED) {
+        tracing::warn!(
+            transport = "websocket",
+            reason_code = "deprecated_query_token_auth",
+            "deprecated WebSocket query-token authentication used; use Authorization: Bearer"
+        );
+    }
+}
+
+#[cfg(test)]
+mod query_token_deprecation_tests {
+    use super::{claim_ws_query_token_deprecation_warning, AtomicBool};
+
+    #[test]
+    fn query_token_deprecation_warning_claim_is_process_bounded() {
+        let flag = AtomicBool::new(false);
+        assert!(claim_ws_query_token_deprecation_warning(&flag));
+        assert!(!claim_ws_query_token_deprecation_warning(&flag));
+    }
 }
 
 /// Build a `WWW-Authenticate: Bearer` challenge value that includes the
@@ -109,13 +144,19 @@ pub(crate) fn render_scope_forbidden(
 }
 
 pub(crate) fn bearer_or_allowed_query_token(req: &Request) -> Option<String> {
-    bearer_token(req).or_else(|| {
-        if allow_query_token_for_path(req.uri().path()) {
-            req.query::<String>("token")
-        } else {
-            None
-        }
-    })
+    // Header authority always wins. A query credential must never rescue an
+    // invalid or malformed Authorization value.
+    if req.headers().contains_key("authorization") {
+        return bearer_token(req);
+    }
+    if !allow_query_token_for_path(req.uri().path()) {
+        return None;
+    }
+    let token = req.query::<String>("token");
+    if token.is_some() {
+        warn_deprecated_ws_query_token_once();
+    }
+    token
 }
 
 // ---------------------------------------------------------------------------

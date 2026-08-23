@@ -48,9 +48,11 @@ Runner 主动向外连接 Server，使用四种传输之一，由 `agent.toml` �
 Runner 使用 agent token（或在 hosted quick-start 模式中使用直接共享 key）认证。
 该令牌只是 Runner 传输凭据，不用于 MCP、REST 或 GPT Actions。
 
-WebSocket 使用 `Authorization: Bearer <token>`（`?token=` 仅兼容
-`/api/agents/ws` 握手）。Polling 每次请求都带 bearer 头。QUIC 在注册信封内发送
-token。
+WebSocket 的 first-party Runner 使用 `Authorization: Bearer <token>`。Server
+仍仅为 v0.1.0 已公开文档中的兼容约定保留已弃用的
+`/api/agents/ws?token=...`；新客户端不要把凭据放进 URL。明确结束这段 legacy
+transport 支持窗口后即可删除该 fallback。Polling 使用 bearer 头。QUIC 把凭据限制
+在 transport-specific v1 首个注册帧中，共享 agent envelope 不再携带凭据。
 
 ## 注册项目
 

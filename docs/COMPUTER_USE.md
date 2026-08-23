@@ -145,6 +145,8 @@ stale_element -> computer_find_elements(...) -> new element_id
 stale_surface -> computer_list_windows -> new surface_id
 ```
 
+The model-facing failure envelope now makes the same fact explicit as `recovery_kind=reobserve` with a bounded `recovery_tool` when the target is known. The current high-value mappings are `stale_element -> computer_find_elements`, `stale_surface -> computer_list_windows`, `stale_application -> computer_list_applications`, and `stale_display -> computer_list_displays`. This metadata is advisory control information only; it does not refresh or upgrade an old opaque identity.
+
 Do not add a `refresh_element` operation that upgrades an old handle into new authority.
 
 ### CU-7 — region snapshot
@@ -162,6 +164,7 @@ Use a separate `computer_save_snapshot(project, path, client_id, surface_id, reg
 The artifact write is create-only: callers cannot request overwrite, encoding format, quality, or arbitrary content. The target path is validated by the existing project-artifact policy, and the target Runner must still advertise `file_write` when the request is admitted under the registry lock. The source Computer Runner and target project Runner may be different devices.
 
 This operation crosses Computer observation and project artifact authority and therefore requires both `computer:read` and `project:write`. Capture remains observational, but artifact persistence is an effect. A definite pre-dispatch rejection reports `not_started`; if a write may have been dispatched and its result is lost or inconsistent, the result is `outcome_unknown` and includes the exact project/path plus expected digest, byte count, and MIME. Reconcile with `read_project_artifact_metadata` before deciding whether another create-only attempt is safe; never blind-retry by overwriting the path.
+The uncertain artifact-write response also exposes `recovery_kind=reconcile` and `recovery_tool=read_project_artifact_metadata` while retaining `execution_state=outcome_unknown`, the exact project/path, expected digest/byte-count/MIME evidence, and the existing `reconcile_with` compatibility field.
 
 ### CU-9 — bounded scroll
 

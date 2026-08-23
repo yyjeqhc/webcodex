@@ -37,7 +37,7 @@ use super::startup_brief::{
 };
 use super::tool_catalog::TOOL_RECOMMENDED_FLOWS;
 use super::tool_inputs::{SessionMode, StartupDetail};
-use super::tool_result::ToolResult;
+use super::tool_result::{RecoveryKind, ToolResult};
 use super::validation_events::skipped_validation_summary;
 use super::{current_session_key, unknown_session_result};
 use super::{ToolCall, ToolRuntime};
@@ -121,7 +121,19 @@ fn invalid_project_source(message: impl Into<String>, fields: Value) -> ToolResu
     if let (Some(output), Some(fields)) = (output.as_object_mut(), fields.as_object()) {
         output.extend(fields.clone());
     }
-    ToolResult::err_with_output(message, output)
+    ToolResult::err_with_output(message, output).with_recovery(RecoveryKind::FixInput, None)
+}
+
+#[cfg(test)]
+#[test]
+fn invalid_project_source_exposes_fix_input_recovery() {
+    let result = invalid_project_source("choose one project source", json!({"project": "demo"}));
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "invalid_arguments");
+    assert_eq!(result.output["failure_kind"], "invalid_arguments");
+    assert_eq!(result.output["state_changed"], false);
+    assert_eq!(result.output["recovery_kind"], "fix_input");
+    assert!(result.output.get("recovery_tool").is_none());
 }
 
 fn non_empty_optional_field(
@@ -245,6 +257,7 @@ fn registration_scope_denied(auth: Option<&AuthContext>, operation: &str) -> Opt
                     "state_changed": false,
                 }),
             )
+            .with_recovery(RecoveryKind::UserAction, None)
         })
 }
 

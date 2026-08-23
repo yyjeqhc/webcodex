@@ -1,6 +1,6 @@
 use super::project_resolution::ResolvedProject;
 use super::tool_definition::{runtime_tool_agent_capability, AgentCapability};
-use super::{ProjectResolverError, ToolCall, ToolResult, ToolRuntime};
+use super::{ProjectResolverError, RecoveryKind, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SSH_SHELL,
@@ -160,6 +160,7 @@ impl ToolRuntime {
                                 required.label()
                             ),
                             json!({
+                                "error_kind": "capability_unavailable",
                                 "command_started": false,
                                 "command_completed": false,
                                 "command_ok": false,
@@ -168,7 +169,8 @@ impl ToolRuntime {
                                 "failure_kind": "capability_unavailable",
                                 "tool_failure": true,
                             }),
-                        ));
+                        )
+                        .with_recovery(RecoveryKind::NoAction, None));
                     }
                     return Err(ToolResult::err(message));
                 }

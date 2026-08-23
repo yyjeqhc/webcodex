@@ -204,6 +204,8 @@ fn computer_application_launch_lifecycle_is_exact_and_never_blindly_retryable() 
     assert_eq!(unknown.output["error_kind"], "outcome_unknown");
     assert_eq!(unknown.output["execution_state"], "outcome_unknown");
     assert_eq!(unknown.output["reconcile_with"], "computer_list_windows");
+    assert_eq!(unknown.output["recovery_kind"], "reobserve");
+    assert_eq!(unknown.output["recovery_tool"], "computer_list_windows");
     assert!(unknown.output.get("state_changed").is_none());
     assert!(!serde_json::to_string(&unknown.output)
         .unwrap()
@@ -235,6 +237,12 @@ fn computer_application_launch_lifecycle_is_exact_and_never_blindly_retryable() 
         assert_eq!(result.output["execution_state"], "not_started");
         assert_eq!(result.output["state_changed"], false);
         let serialized = serde_json::to_string(&result.output).unwrap();
+        if error.starts_with("stale_application") {
+            assert_eq!(result.output["recovery_kind"], "reobserve");
+            assert_eq!(result.output["recovery_tool"], "computer_list_applications");
+        } else {
+            assert!(result.output.get("recovery_kind").is_none());
+        }
         assert!(!serialized.contains("PRIVATE_NATIVE_ID"));
         assert!(!result
             .error
@@ -1243,6 +1251,31 @@ fn computer_control_runner_errors_preserve_structured_error_kinds() {
     assert!(!result.success);
     assert_eq!(result.output["error_kind"], "outcome_unknown");
     assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["recovery_kind"], "reobserve");
+    assert!(result.output.get("recovery_tool").is_none());
+}
+
+#[test]
+fn stale_computer_identities_expose_bounded_reobserve_targets() {
+    for (error_kind, recovery_tool) in [
+        ("stale_element", "computer_find_elements"),
+        ("stale_surface", "computer_list_windows"),
+        ("stale_application", "computer_list_applications"),
+        ("stale_display", "computer_list_displays"),
+    ] {
+        let result = computer_error(error_kind, "stale observed identity");
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], error_kind);
+        assert_eq!(result.output["recovery_kind"], "reobserve");
+        assert_eq!(result.output["recovery_tool"], recovery_tool);
+        assert!(matches!(
+            result.output["recovery_tool"].as_str().unwrap(),
+            "computer_find_elements"
+                | "computer_list_windows"
+                | "computer_list_applications"
+                | "computer_list_displays"
+        ));
+    }
 }
 
 #[test]
@@ -1483,6 +1516,8 @@ fn computer_save_snapshot_lifecycle_distinguishes_not_started_from_unknown() {
     assert_eq!(not_started.output["execution_state"], "not_started");
     assert_eq!(not_started.output["state_changed"], false);
     assert!(not_started.output.get("reconcile_with").is_none());
+    assert!(not_started.output.get("recovery_kind").is_none());
+    assert!(not_started.output.get("recovery_tool").is_none());
 
     let unknown = computer_snapshot_artifact_lifecycle_failure(
         "response lost",
@@ -1498,6 +1533,11 @@ fn computer_save_snapshot_lifecycle_distinguishes_not_started_from_unknown() {
     assert_eq!(unknown.output["execution_state"], "outcome_unknown");
     assert_eq!(
         unknown.output["reconcile_with"],
+        "read_project_artifact_metadata"
+    );
+    assert_eq!(unknown.output["recovery_kind"], "reconcile");
+    assert_eq!(
+        unknown.output["recovery_tool"],
         "read_project_artifact_metadata"
     );
     assert_eq!(unknown.output["project"], "agent:target:demo");
@@ -1521,6 +1561,8 @@ fn computer_save_snapshot_definite_write_failure_is_not_retry_uncertainty() {
     assert_eq!(result.output["execution_state"], "completed");
     assert_eq!(result.output["state_changed"], false);
     assert!(result.output.get("reconcile_with").is_none());
+    assert!(result.output.get("recovery_kind").is_none());
+    assert!(result.output.get("recovery_tool").is_none());
 }
 
 #[test]

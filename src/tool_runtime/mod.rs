@@ -114,6 +114,9 @@ pub use tool_inputs::{
     StartupDetail,
 };
 pub use tool_result::ToolResult;
+pub(crate) use tool_result::{
+    RecoveryKind, RecoveryTool, RECOVERY_KIND_VALUES, RECOVERY_TOOL_VALUES,
+};
 pub use tool_spec::ToolSpec;
 
 use serde_json::json;
@@ -135,14 +138,17 @@ pub(crate) use session_shell::SessionShellRegistry;
 pub(crate) use surface::{recommended_flows, registered_tool_categories};
 
 pub(crate) fn tool_disabled_result(tool_name: &str, message: &'static str) -> ToolResult {
+    let error_kind = format!("{tool_name}_disabled");
     ToolResult::err_with_output(
         message,
         json!({
-            "code": format!("{tool_name}_disabled"),
+            "code": error_kind.clone(),
+            "error_kind": error_kind,
             "tool": tool_name,
             "message": message,
         }),
     )
+    .with_recovery(RecoveryKind::NoAction, None)
 }
 
 pub(crate) fn tool_disabled_result_from_definition(tool_name: &str) -> Option<ToolResult> {

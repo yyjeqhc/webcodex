@@ -1,7 +1,7 @@
 use super::files::{validate_artifact_file_path, validate_artifact_mime_for_path};
 use super::shell::{agent_command_lifecycle, dispatch_uncertainty_lifecycle};
 use super::tool_call::ComputerSnapshotRegion;
-use super::{ToolCall, ToolResult, ToolRuntime};
+use super::{RecoveryKind, RecoveryTool, ToolCall, ToolResult, ToolRuntime};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
@@ -1681,6 +1681,10 @@ fn computer_snapshot_artifact_lifecycle_failure(
             "reconcile_with": "read_project_artifact_metadata",
         }),
     )
+    .with_recovery(
+        RecoveryKind::Reconcile,
+        Some(RecoveryTool::ReadProjectArtifactMetadata),
+    )
 }
 
 fn computer_snapshot_artifact_definite_failure(
@@ -1843,10 +1847,31 @@ fn filter_accessibility_tree(
 }
 
 fn computer_error(kind: &str, message: &str) -> ToolResult {
-    ToolResult::err_with_output(
+    let result = ToolResult::err_with_output(
         message.to_string(),
         json!({"error_kind": kind, "message": bounded_text(message)}),
-    )
+    );
+    match kind {
+        "stale_element" => result.with_recovery(
+            RecoveryKind::Reobserve,
+            Some(RecoveryTool::ComputerFindElements),
+        ),
+        "stale_surface" => result.with_recovery(
+            RecoveryKind::Reobserve,
+            Some(RecoveryTool::ComputerListWindows),
+        ),
+        "stale_application" => result.with_recovery(
+            RecoveryKind::Reobserve,
+            Some(RecoveryTool::ComputerListApplications),
+        ),
+        "stale_display" => result.with_recovery(
+            RecoveryKind::Reobserve,
+            Some(RecoveryTool::ComputerListDisplays),
+        ),
+        "invalid_request" => result.with_recovery(RecoveryKind::FixInput, None),
+        "permission_denied" => result.with_recovery(RecoveryKind::UserAction, None),
+        _ => result,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1881,7 +1906,20 @@ fn computer_pointer_effect_not_started(
             json!(context.snapshot_generation),
         );
     }
-    ToolResult::err_with_output(message.to_string(), output)
+    let result = ToolResult::err_with_output(message.to_string(), output);
+    match error_kind {
+        "stale_display" => result.with_recovery(
+            RecoveryKind::Reobserve,
+            Some(RecoveryTool::ComputerListDisplays),
+        ),
+        "stale_snapshot_generation" => result.with_recovery(
+            RecoveryKind::Reobserve,
+            Some(RecoveryTool::ComputerSnapshotDisplay),
+        ),
+        "invalid_request" => result.with_recovery(RecoveryKind::FixInput, None),
+        "permission_denied" => result.with_recovery(RecoveryKind::UserAction, None),
+        _ => result,
+    }
 }
 
 fn computer_pointer_effect_spent_not_started(
@@ -1900,7 +1938,10 @@ fn computer_pointer_effect_spent_not_started(
             "reconcile_with".to_string(),
             json!("computer_snapshot_display"),
         );
-    result
+    result.with_recovery(
+        RecoveryKind::Reobserve,
+        Some(RecoveryTool::ComputerSnapshotDisplay),
+    )
 }
 
 fn computer_pointer_effect_outcome_unknown(
@@ -1921,6 +1962,10 @@ fn computer_pointer_effect_outcome_unknown(
             "execution_state": "outcome_unknown",
             "reconcile_with": "computer_snapshot_display",
         }),
+    )
+    .with_recovery(
+        RecoveryKind::Reobserve,
+        Some(RecoveryTool::ComputerSnapshotDisplay),
     )
 }
 
@@ -1987,7 +2032,12 @@ fn computer_clipboard_write_not_started(
     output.insert("error_kind".to_string(), json!(error_kind));
     output.insert("execution_state".to_string(), json!("not_started"));
     output.insert("state_changed".to_string(), json!(false));
-    ToolResult::err_with_output(message.to_string(), Value::Object(output))
+    let result = ToolResult::err_with_output(message.to_string(), Value::Object(output));
+    match error_kind {
+        "invalid_request" => result.with_recovery(RecoveryKind::FixInput, None),
+        "permission_denied" => result.with_recovery(RecoveryKind::UserAction, None),
+        _ => result,
+    }
 }
 
 fn computer_clipboard_write_outcome_unknown(
@@ -2005,6 +2055,7 @@ fn computer_clipboard_write_outcome_unknown(
         output.insert("state_changed".to_string(), json!(state_changed));
     }
     ToolResult::err_with_output(safe_message, Value::Object(output))
+        .with_recovery(RecoveryKind::Reobserve, None)
 }
 
 fn computer_clipboard_write_delivery_failure(
@@ -2060,6 +2111,7 @@ fn computer_effect_outcome_unknown(message: &str) -> ToolResult {
             "execution_state": "outcome_unknown"
         }),
     )
+    .with_recovery(RecoveryKind::Reobserve, None)
 }
 
 fn computer_effect_delivery_failure(message: &str, request_dispatched: Option<bool>) -> ToolResult {
@@ -2086,7 +2138,7 @@ fn computer_application_effect_not_started(
     application_id: &str,
 ) -> ToolResult {
     let application_id = valid_application_id(application_id).then(|| application_id.to_string());
-    ToolResult::err_with_output(
+    let result = ToolResult::err_with_output(
         message.to_string(),
         json!({
             "error_kind": error_kind,
@@ -2095,7 +2147,16 @@ fn computer_application_effect_not_started(
             "state_changed": false,
             "execution_state": "not_started",
         }),
-    )
+    );
+    match error_kind {
+        "stale_application" => result.with_recovery(
+            RecoveryKind::Reobserve,
+            Some(RecoveryTool::ComputerListApplications),
+        ),
+        "invalid_request" => result.with_recovery(RecoveryKind::FixInput, None),
+        "permission_denied" => result.with_recovery(RecoveryKind::UserAction, None),
+        _ => result,
+    }
 }
 
 fn computer_application_effect_outcome_unknown(message: &str, application_id: &str) -> ToolResult {
@@ -2111,6 +2172,10 @@ fn computer_application_effect_outcome_unknown(message: &str, application_id: &s
             "execution_state": "outcome_unknown",
             "reconcile_with": "computer_list_windows",
         }),
+    )
+    .with_recovery(
+        RecoveryKind::Reobserve,
+        Some(RecoveryTool::ComputerListWindows),
     )
 }
 

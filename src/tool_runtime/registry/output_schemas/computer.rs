@@ -3,6 +3,38 @@ use serde_json::{json, Value};
 
 fn strict_computer_output_schema(output_properties: Vec<(&str, Value)>) -> Value {
     let mut schema = wrapped_output_schema(output_properties);
+    let properties = schema["properties"]["output"]["properties"]
+        .as_object_mut()
+        .expect("wrapped Computer output properties");
+    properties
+        .entry("error_kind".to_string())
+        .or_insert_with(|| json!({"type": "string", "maxLength": 128}));
+    properties
+        .entry("failure_kind".to_string())
+        .or_insert_with(|| json!({"type": "string", "maxLength": 128}));
+    properties
+        .entry("message".to_string())
+        .or_insert_with(|| json!({"type": "string", "maxLength": 256}));
+    properties
+        .entry("execution_state".to_string())
+        .or_insert_with(
+            || json!({"type": "string", "enum": ["not_started", "completed", "outcome_unknown"]}),
+        );
+    properties
+        .entry("state_changed".to_string())
+        .or_insert_with(|| json!({"type": "boolean"}));
+    properties
+        .entry("reconcile_with".to_string())
+        .or_insert_with(|| {
+            json!({
+                "type": "string",
+                "enum": [
+                    "computer_list_windows",
+                    "computer_snapshot_display",
+                    "read_project_artifact_metadata"
+                ]
+            })
+        });
     schema["properties"]["output"]["additionalProperties"] = json!(false);
     schema
 }

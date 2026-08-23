@@ -10,7 +10,7 @@ use super::local_jobs::{
     retain_inspect_job_until_terminal, LocalJobKiller, LocalJobLogSnapshot, LocalJobRecord,
     TerminateOutcome, ACTIVE_JOB_STATUSES, ACTIVE_LOCAL_STATUSES,
 };
-use super::tool_result::ToolResult;
+use super::tool_result::{RecoveryKind, RecoveryTool, ToolResult};
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_client::{command_preview, ShellJobStartMetadata, COMMAND_PREVIEW_MAX_CHARS};
@@ -1044,6 +1044,7 @@ fn confirmation_required_result(project: &str, job_id: &str) -> ToolResult {
             "command_started": false,
         }),
     )
+    .with_recovery(RecoveryKind::UserAction, None)
 }
 
 fn job_not_found_result(project: &str, job_id: &str) -> ToolResult {
@@ -1065,6 +1066,7 @@ fn job_not_found_result(project: &str, job_id: &str) -> ToolResult {
             "command_started": false,
         }),
     )
+    .with_recovery(RecoveryKind::Reobserve, Some(RecoveryTool::ListJobs))
 }
 
 fn job_project_mismatch_result(
@@ -1094,6 +1096,7 @@ fn job_project_mismatch_result(
             "command_started": false,
         }),
     )
+    .with_recovery(RecoveryKind::FixInput, None)
 }
 
 fn job_stop_forbidden_result(
@@ -1125,6 +1128,7 @@ fn job_stop_forbidden_result(
             "command_started": false,
         }),
     )
+    .with_recovery(RecoveryKind::FixInput, None)
 }
 
 fn job_session_unknown_warning() -> Value {
@@ -1163,6 +1167,7 @@ fn job_recovering_stop_result(project: &str, job: &ShellJobInfo) -> ToolResult {
             "command_started": false,
         }),
     )
+    .with_recovery(RecoveryKind::Wait, None)
 }
 
 fn ownership_basis_for_stop(
@@ -2457,7 +2462,12 @@ impl ToolRuntime {
 
 #[cfg(test)]
 mod recovery_projection_tests {
-    use super::{recovery_reason_text, validation_job_projection};
+    use super::{
+        confirmation_required_result, job_not_found_result, job_project_mismatch_result,
+        job_recovering_stop_result, job_stop_forbidden_result, recovery_reason_text,
+        validation_job_projection,
+    };
+    use crate::shell_protocol::ShellJobInfo;
     use serde_json::json;
 
     #[test]
@@ -2537,6 +2547,52 @@ mod recovery_projection_tests {
     #[test]
     fn recovery_reason_text_none_when_no_state_or_code() {
         assert_eq!(recovery_reason_text(None, None), None);
+    }
+
+    #[test]
+    fn job_control_failures_expose_bounded_recovery_without_changing_lifecycle_fields() {
+        let confirmation = confirmation_required_result("agent:special:demo", "job-1");
+        assert_eq!(confirmation.output["error_kind"], "confirmation_required");
+        assert_eq!(confirmation.output["failure_kind"], "confirmation_required");
+        assert_eq!(confirmation.output["command_started"], false);
+        assert_eq!(confirmation.output["recovery_kind"], "user_action");
+
+        let missing = job_not_found_result("agent:special:demo", "job-missing");
+        assert_eq!(missing.output["failure_kind"], "job_not_found");
+        assert_eq!(missing.output["recovery_kind"], "reobserve");
+        assert_eq!(missing.output["recovery_tool"], "list_jobs");
+
+        let mismatch =
+            job_project_mismatch_result("agent:special:demo", "agent:special:other", "job-2");
+        assert_eq!(mismatch.output["failure_kind"], "job_project_mismatch");
+        assert_eq!(mismatch.output["recovery_kind"], "fix_input");
+
+        let forbidden = job_stop_forbidden_result(
+            "agent:special:demo",
+            "job-3",
+            Some("wc_sess_request"),
+            Some("wc_sess_owner"),
+        );
+        assert_eq!(forbidden.output["failure_kind"], "job_stop_forbidden");
+        assert_eq!(forbidden.output["recovery_kind"], "fix_input");
+
+        let recovering: ShellJobInfo = serde_json::from_value(json!({
+            "job_id": "job-recovering",
+            "client_id": "special",
+            "command_preview": "",
+            "status": "recovering",
+            "created_at": 1,
+            "recovery_state": "recovering",
+            "recovery_reason_code": "runner_transport_disconnected"
+        }))
+        .unwrap();
+        let wait = job_recovering_stop_result("agent:special:demo", &recovering);
+        assert_eq!(wait.output["error_kind"], "runner_unavailable_recovering");
+        assert_eq!(wait.output["failure_kind"], "runner_unavailable_recovering");
+        assert_eq!(wait.output["command_started"], false);
+        assert_eq!(wait.output["stop_effect"], "runner_unavailable");
+        assert_eq!(wait.output["recovery_kind"], "wait");
+        assert!(wait.output.get("recovery_tool").is_none());
     }
 
     #[test]

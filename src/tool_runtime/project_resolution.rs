@@ -1,4 +1,4 @@
-use super::{ToolResult, ToolRuntime};
+use super::{RecoveryKind, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::projects::ProjectConfig;
 use crate::shell_protocol::{ShellAgentProjectSummary, ShellClientView};
@@ -104,6 +104,7 @@ impl ProjectResolverError {
 
     pub(crate) fn into_tool_result(self) -> ToolResult {
         ToolResult::err_with_output(self.to_message(), self.to_output())
+            .with_recovery(RecoveryKind::FixInput, None)
     }
 }
 

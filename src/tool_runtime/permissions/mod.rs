@@ -39,7 +39,7 @@ pub(crate) use policy::{resolve_authority_mode, RESTRICTED_DENY_REASON};
 use serde_json::{json, Value};
 
 use super::sessions::SessionEvent;
-use super::tool_result::ToolResult;
+use super::tool_result::{RecoveryKind, ToolResult};
 
 /// Canonical authority profile (runtime_status / coding-task startup).
 pub(crate) fn authority_profile_payload() -> Value {
@@ -90,6 +90,7 @@ pub(crate) fn permission_execution_denied_result(decision: &PermissionDecision) 
             "permission_status": decision.status,
         }),
     )
+    .with_recovery(RecoveryKind::UserAction, None)
 }
 
 /// Deserialize a permission decision previously attached to tool output.

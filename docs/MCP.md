@@ -76,6 +76,8 @@ configuration, the default is the broader `local_coding` surface. Operators may
 explicitly select `full_operator_runtime`. These names describe protocol/tool
 contracts; a first-time user does not need to choose among them.
 
+Model-facing failures may add a small recovery-control vocabulary without replacing existing subsystem fields. `error_kind` identifies what failed. `failure_kind`, when present, retains execution/effect/validation semantics such as `not_started`, `timeout`, or `outcome_unknown`. `recovery_kind` is the closed class of the next safe action: `fix_input`, `retry_same`, `reobserve`, `reconcile`, `wait`, `user_action`, or `none`. `recovery_tool`, when present, is a bounded public WebCodex tool for an explicit re-observation or reconciliation step; it never grants authority or triggers execution. `outcome_unknown` is not retry permission. `retry_same` is reserved for an exact idempotent replay contract and must not be interpreted as an ordinary repeat of an effect.
+
 Hosted clients need public HTTPS. `share` supplies a temporary Cloudflare Quick
 Tunnel by default; `connect` uses an existing hosted Server; self-hosted
 deployments provide their own stable HTTPS origin. Do not use bootstrap/admin

@@ -1,6 +1,6 @@
 //! Bounded multi-Job observation composed from the canonical single-Job path.
 
-use super::{ObserveJobsItem, ToolResult, ToolRuntime};
+use super::{ObserveJobsItem, RecoveryKind, RecoveryTool, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
@@ -86,6 +86,14 @@ fn observation_error_kind(result: &ToolResult) -> &'static str {
     }
 }
 
+fn observation_recovery(error_kind: &str) -> (RecoveryKind, Option<RecoveryTool>) {
+    match error_kind {
+        "invalid_observation_token" | "output_budget_exceeded" => (RecoveryKind::FixInput, None),
+        "unknown_job" => (RecoveryKind::Reobserve, Some(RecoveryTool::ListJobs)),
+        _ => (RecoveryKind::NoAction, None),
+    }
+}
+
 fn batch_item(observed: ObservedJob) -> Value {
     if observed.result.success {
         json!({
@@ -97,14 +105,21 @@ fn batch_item(observed: ObservedJob) -> Value {
             "error": null,
         })
     } else {
-        json!({
+        let error_kind = observation_error_kind(&observed.result);
+        let (recovery_kind, recovery_tool) = observation_recovery(error_kind);
+        let mut item = json!({
             "index": observed.index,
             "job_id": observed.job_id,
             "success": false,
             "output": null,
-            "error_kind": observation_error_kind(&observed.result),
+            "error_kind": error_kind,
+            "recovery_kind": recovery_kind.as_str(),
             "error": bounded_error(observed.result.error.as_deref()),
-        })
+        });
+        if let Some(recovery_tool) = recovery_tool {
+            item["recovery_tool"] = json!(recovery_tool.as_str());
+        }
+        item
     }
 }
 
@@ -115,6 +130,7 @@ fn output_budget_failure_item(index: usize, job_id: String) -> Value {
         "success": false,
         "output": null,
         "error_kind": "output_budget_exceeded",
+        "recovery_kind": RecoveryKind::FixInput.as_str(),
         "error": "The bounded Job observation cannot fit in one model result; resubmit this Job with a smaller tail_lines value.",
     })
 }
@@ -475,6 +491,34 @@ mod tests {
     }
 
     #[test]
+    fn batch_item_failures_expose_bounded_recovery_and_success_omits_it() {
+        let missing = batch_item(ObservedJob {
+            index: 0,
+            job_id: "job-missing".to_string(),
+            result: ToolResult::err("unknown job: job-missing"),
+        });
+        assert_eq!(missing["error_kind"], "unknown_job");
+        assert_eq!(missing["recovery_kind"], "reobserve");
+        assert_eq!(missing["recovery_tool"], "list_jobs");
+
+        let invalid_token = batch_item(ObservedJob {
+            index: 1,
+            job_id: "job-token".to_string(),
+            result: ToolResult::err("invalid after_observation_token"),
+        });
+        assert_eq!(invalid_token["recovery_kind"], "fix_input");
+        assert!(invalid_token.get("recovery_tool").is_none());
+
+        let success = batch_item(ObservedJob {
+            index: 2,
+            job_id: "job-ok".to_string(),
+            result: ToolResult::ok(json!({"changed": false})),
+        });
+        assert!(success.get("recovery_kind").is_none());
+        assert!(success.get("recovery_tool").is_none());
+    }
+
+    #[test]
     fn output_budget_replaces_one_oversized_item_without_partial_json() {
         let item = json!({
             "index": 0,
@@ -492,6 +536,7 @@ mod tests {
         assert_eq!(output["returned_count"], 1);
         assert_eq!(output["items"][0]["success"], false);
         assert_eq!(output["items"][0]["error_kind"], "output_budget_exceeded");
+        assert_eq!(output["items"][0]["recovery_kind"], "fix_input");
         assert_eq!(output["output_truncated"], false);
         assert!(
             serde_json::to_vec(&ToolResult::ok(output)).unwrap().len()

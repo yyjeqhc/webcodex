@@ -61,6 +61,39 @@ fn computer_launch_application_output_schema_has_closed_native_platforms() {
         validate(&output).unwrap_or_else(|error| panic!("{platform}: {error}"));
     }
 
+    let stale = serde_json::to_value(
+        crate::tool_runtime::tool_result::ToolResult::err_with_output(
+            "stale application",
+            json!({
+                "error_kind": "stale_application",
+                "message": "application identity is stale",
+                "application_id": application_id,
+                "state_changed": false,
+                "execution_state": "not_started",
+                "recovery_kind": "reobserve",
+                "recovery_tool": "computer_list_applications"
+            }),
+        ),
+    )
+    .unwrap();
+    validate(&stale).unwrap();
+    let mut invalid_recovery = stale.clone();
+    invalid_recovery["output"]["recovery_kind"] = json!("blind_retry");
+    assert!(validate(&invalid_recovery).is_err());
+    let mut invalid_tool_class = stale.clone();
+    invalid_tool_class["output"]["recovery_kind"] = json!("fix_input");
+    assert!(validate(&invalid_tool_class).is_err());
+
+    let mut recovery_on_success =
+        serde_json::to_value(crate::tool_runtime::tool_result::ToolResult::ok(json!({
+            "platform": "macos",
+            "application_id": application_id,
+            "success": true,
+        })))
+        .unwrap();
+    recovery_on_success["output"]["recovery_kind"] = json!("none");
+    assert!(validate(&recovery_on_success).is_err());
+
     let unsupported =
         serde_json::to_value(crate::tool_runtime::tool_result::ToolResult::ok(json!({
             "platform": "linux",
@@ -78,6 +111,49 @@ fn computer_launch_application_output_schema_has_closed_native_platforms() {
     })))
     .unwrap();
     assert!(validate(&extra).is_err());
+}
+
+#[test]
+fn observe_jobs_failure_item_schema_closes_recovery_metadata() {
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("observe_jobs");
+    let validate = |value: &Value| {
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(value, &schema)
+    };
+    let result = json!({
+        "success": true,
+        "output": {
+            "requested_count": 1,
+            "returned_count": 1,
+            "succeeded_count": 0,
+            "failed_count": 1,
+            "items": [{
+                "index": 0,
+                "job_id": "job-missing",
+                "success": false,
+                "output": null,
+                "error_kind": "unknown_job",
+                "recovery_kind": "reobserve",
+                "recovery_tool": "list_jobs",
+                "error": "unknown job"
+            }],
+            "wake_reason": "item_error",
+            "waited_ms": 0,
+            "changed_count": 0,
+            "terminal_count": 0,
+            "output_truncated": false,
+            "next_index": null
+        },
+        "error": null
+    });
+    validate(&result).unwrap();
+
+    let mut invalid_kind = result.clone();
+    invalid_kind["output"]["items"][0]["recovery_kind"] = json!("blind_retry");
+    assert!(validate(&invalid_kind).is_err());
+
+    let mut invalid_tool = result;
+    invalid_tool["output"]["items"][0]["recovery_tool"] = json!("computer_list_windows");
+    assert!(validate(&invalid_tool).is_err());
 }
 
 #[test]
@@ -1554,6 +1630,8 @@ fn default_output_schema_field_names() -> BTreeSet<&'static str> {
         "session_event_id",
         "session_hint",
         "permission",
+        "recovery_kind",
+        "recovery_tool",
     ])
 }
 

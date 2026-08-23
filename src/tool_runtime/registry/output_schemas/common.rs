@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::tool_runtime::sessions::EXPLORATION_TOOL_NAMES;
+use crate::tool_runtime::{RECOVERY_KIND_VALUES, RECOVERY_TOOL_VALUES};
 
 pub(crate) fn schema_type(kind: &str, description: &str) -> Value {
     json!({
@@ -294,6 +295,22 @@ pub(super) fn session_hint_schema() -> Value {
     })
 }
 
+pub(crate) fn recovery_kind_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": RECOVERY_KIND_VALUES,
+        "description": "Closed model-facing class of the next safe recovery action. retry_same means exact idempotent replay only; outcome_unknown is never ordinary retry authority."
+    })
+}
+
+pub(crate) fn recovery_tool_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": RECOVERY_TOOL_VALUES,
+        "description": "Optional bounded public WebCodex tool to use for the declared reobserve or reconcile action. This field never grants authority or triggers execution."
+    })
+}
+
 pub(crate) fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Value {
     let mut output_properties = output_properties;
     output_properties.extend([
@@ -320,6 +337,8 @@ pub(crate) fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Va
         ),
         ("session_hint", session_hint_schema()),
         ("permission", permission_decision_schema()),
+        ("recovery_kind", recovery_kind_schema()),
+        ("recovery_tool", recovery_tool_schema()),
     ]);
     let properties = output_properties
         .into_iter()
@@ -343,6 +362,48 @@ pub(crate) fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Va
         },
         "required": ["success"],
         "additionalProperties": true,
+        "allOf": [
+            {
+                "if": {
+                    "properties": {"success": {"const": true}},
+                    "required": ["success"]
+                },
+                "then": {
+                    "properties": {
+                        "output": {
+                            "properties": {
+                                "recovery_kind": {
+                                    "type": "null",
+                                    "const": "__forbidden_on_success__"
+                                },
+                                "recovery_tool": {
+                                    "type": "null",
+                                    "const": "__forbidden_on_success__"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "if": {
+                    "properties": {
+                        "output": {"required": ["recovery_tool"]}
+                    },
+                    "required": ["output"]
+                },
+                "then": {
+                    "properties": {
+                        "output": {
+                            "required": ["recovery_kind"],
+                            "properties": {
+                                "recovery_kind": {"enum": ["reobserve", "reconcile"]}
+                            }
+                        }
+                    }
+                }
+            }
+        ]
     })
 }
 

@@ -3,7 +3,7 @@ use super::tool_definition::{
     runtime_tool_allows_current_session_fallback, runtime_tool_is_shell_like,
     runtime_tool_requires_session_project_escape,
 };
-use super::{ToolCall, ToolResult};
+use super::{RecoveryKind, ToolCall, ToolResult};
 use crate::auth::AuthContext;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -25,6 +25,7 @@ pub(crate) fn unknown_session_result(session_id: &str) -> ToolResult {
             "session_id": session_id,
         }),
     )
+    .with_recovery(RecoveryKind::FixInput, None)
 }
 
 pub(crate) fn session_authority_denied_result(session_id: &str, tool_name: &str) -> ToolResult {
@@ -38,6 +39,7 @@ pub(crate) fn session_authority_denied_result(session_id: &str, tool_name: &str)
             "state_changed": false,
         }),
     )
+    .with_recovery(RecoveryKind::UserAction, None)
 }
 
 pub(crate) fn session_project_mismatch_result(
@@ -60,6 +62,7 @@ pub(crate) fn session_project_mismatch_result(
             "command_started": false,
         }),
     )
+    .with_recovery(RecoveryKind::FixInput, None)
 }
 
 /// Project mismatch for a tool whose contract never permits cross-project
@@ -87,6 +90,7 @@ pub(crate) fn session_project_mismatch_no_escape_result(
             "state_changed": false,
         }),
     )
+    .with_recovery(RecoveryKind::FixInput, None)
 }
 
 pub(crate) fn session_project_mismatch_warning(
@@ -174,6 +178,7 @@ pub(crate) fn session_guard_denied_result(
         ),
         output,
     )
+    .with_recovery(RecoveryKind::NoAction, None)
 }
 
 /// Lifecycle denial for Closed/Archived workflow sessions (write/shell/mutation).
@@ -202,6 +207,7 @@ pub(crate) fn session_lifecycle_denied_result(
         format!("{error_kind}: {tool_name} blocked on {lifecycle} session"),
         output,
     )
+    .with_recovery(RecoveryKind::NoAction, None)
 }
 
 pub(crate) fn session_message_error_result(
@@ -273,7 +279,8 @@ pub(crate) fn session_message_error_result(
                 "state_changed": true,
                 "retry_same_completion": true,
             }),
-        ),
+        )
+        .with_recovery(RecoveryKind::RetrySame, None),
         sessions::SessionMessageError::SessionClosed { lifecycle } => {
             let error_kind = match lifecycle {
                 sessions::SessionLifecycle::Archived => "session_archived",
@@ -287,6 +294,7 @@ pub(crate) fn session_message_error_result(
                     "lifecycle": lifecycle.as_str(),
                 }),
             )
+            .with_recovery(RecoveryKind::NoAction, None)
         }
         sessions::SessionMessageError::InvalidInput(message) => ToolResult::err_with_output(
             message.clone(),
@@ -295,7 +303,8 @@ pub(crate) fn session_message_error_result(
                 "session_id": session_id,
                 "error": message,
             }),
-        ),
+        )
+        .with_recovery(RecoveryKind::FixInput, None),
     }
 }
 
@@ -306,6 +315,27 @@ pub(crate) fn current_session_unavailable_result(message: impl Into<String>) -> 
             "error_kind": "current_session_unavailable",
         }),
     )
+    .with_recovery(RecoveryKind::FixInput, None)
+}
+
+#[cfg(test)]
+#[test]
+fn completion_persistence_uncertain_exposes_exact_retry_same_recovery() {
+    let result = session_message_error_result(
+        "wc_sess_test",
+        Some("wc_msg_test"),
+        sessions::SessionMessageError::PersistenceUncertain,
+    );
+    assert!(!result.success);
+    assert_eq!(
+        result.output["error_kind"],
+        "completion_persistence_uncertain"
+    );
+    assert_eq!(result.output["failure_kind"], "outcome_unknown");
+    assert_eq!(result.output["state_changed"], true);
+    assert_eq!(result.output["retry_same_completion"], true);
+    assert_eq!(result.output["recovery_kind"], "retry_same");
+    assert!(result.output.get("recovery_tool").is_none());
 }
 
 pub(crate) fn add_session_telemetry_hint(

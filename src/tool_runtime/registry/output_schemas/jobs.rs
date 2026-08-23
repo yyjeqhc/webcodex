@@ -1,8 +1,8 @@
 use serde_json::{json, Value};
 
 use super::common::{
-    array_schema, nullable_schema, permission_decision_schema, schema_type, session_hint_schema,
-    wrapped_output_schema,
+    array_schema, nullable_schema, permission_decision_schema, recovery_kind_schema, schema_type,
+    session_hint_schema, wrapped_output_schema,
 };
 
 fn process_execution_state_schema() -> Value {
@@ -443,6 +443,8 @@ fn observe_jobs_output_schema() -> Value {
             "success": {"type": "boolean"},
             "output": {"anyOf": [job_observation.clone(), {"type": "null"}]},
             "error_kind": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "recovery_kind": recovery_kind_schema(),
+            "recovery_tool": {"type": "string", "const": "list_jobs", "description": "Optional bounded re-observation target for a missing Job."},
             "error": {"anyOf": [{"type": "string"}, {"type": "null"}]}
         },
         "required": ["index", "job_id", "success", "output", "error_kind", "error"],
@@ -452,10 +454,13 @@ fn observe_jobs_output_schema() -> Value {
                 "properties": {
                     "output": job_observation,
                     "error_kind": {"type": "null"},
+                    "recovery_kind": {"type": "null", "const": "__forbidden_on_success__"},
+                    "recovery_tool": {"type": "null", "const": "__forbidden_on_success__"},
                     "error": {"type": "null"}
                 }
             },
             "else": {
+                "required": ["recovery_kind"],
                 "properties": {
                     "output": {"type": "null"},
                     "error_kind": {"type": "string"},

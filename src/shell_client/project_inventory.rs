@@ -5,10 +5,11 @@ use super::validation::{
 };
 use super::{now_ts, ShellClientRegistry};
 use crate::shell_protocol::{
-    ShellAgentProjectSummary, ShellProjectInventoryPage, ShellProjectInventoryStatus,
-    PROJECT_INVENTORY_GENERATION_MAX_BYTES, PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS,
-    PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
-    PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES, PROJECT_INVENTORY_STAGING_TTL_SECS,
+    AgentProjectInventoryStrategy, ShellAgentProjectSummary, ShellProjectInventoryPage,
+    ShellProjectInventoryStatus, PROJECT_INVENTORY_GENERATION_MAX_BYTES,
+    PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS, PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
+    PROJECT_INVENTORY_PAGE_MAX_SUMMARIES, PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES,
+    PROJECT_INVENTORY_STAGING_TTL_SECS,
 };
 use std::collections::{HashSet, VecDeque};
 
@@ -354,6 +355,13 @@ impl ShellClientRegistry {
         // Inventory failure is deliberately subordinate to Runner liveness.
         client.last_seen = now;
         expire_staging(client, now);
+        if !matches!(
+            client.agent_protocol_semantics.project_inventory,
+            AgentProjectInventoryStrategy::Paged
+        ) {
+            note_nonfatal_error(client, "project_inventory_paging_not_negotiated");
+            return Ok(client.project_inventory.status.clone());
+        }
 
         let (page_bytes, page_digest) = match validate_page(&page) {
             Ok(validated) => validated,

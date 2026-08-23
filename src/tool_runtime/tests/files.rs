@@ -2124,6 +2124,12 @@ fn search_command_illegal_regex_is_not_swallowed_by_head() {
     let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
     assert!(!result.success);
     assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["failure_stage"], "backend_execution");
+    assert_eq!(result.output["reason_code"], "backend_process_failed");
+    assert_eq!(result.output["backend"], "rg");
+    assert_eq!(result.output["exit_code"], exit_code);
+    let rendered = serde_json::to_string(&result).unwrap();
+    assert!(!rendered.contains("[invalid"));
 }
 
 #[cfg(unix)]

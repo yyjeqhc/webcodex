@@ -64,6 +64,14 @@ call starts a fresh child lazily. It passes only a small environment allowlist
 needed for executable lookup, locale, temporary files, and Claude's local
 configuration. It does not inherit API-key or WebCodex credential variables.
 
+The search adapter normalizes provider output into project-relative records.
+A recognized, completed response with no records uses search exit status 1, so
+the server can distinguish affirmative no-match evidence from malformed or
+incomplete output. A provider record containing an absolute, parent-traversing,
+or otherwise untrusted path fails with a bounded provider error (or uses the
+configured Native fallback); it is never silently converted into an empty
+successful search.
+
 WebCodex `read_file` always keeps its existing Native implementation in ordinary
 provider routing. That routing path does not discover, map, or call Claude's
 `Read` tool.

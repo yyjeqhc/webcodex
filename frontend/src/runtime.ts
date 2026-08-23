@@ -670,6 +670,7 @@ async function loadRetainedCollaboration(request: any, controller: AbortControll
   if (!adoptRuntimeCollaborationList(state, request, Array.isArray(response.data.messages) ? response.data.messages : [])) return null;
   adoptRuntimeCollaborationObservation(state, request, baseline.data);
   setRuntimeCollaborationPhase(state, request, "live");
+  setHumanJoinSendEnabled(true);
   renderCollaboration("bounded long-poll");
   return baseline.data.observation_token;
 }
@@ -732,6 +733,11 @@ function jumpLatest(): void {
   const node = el("runtime-timeline"); if (node) node.scrollTop = node.scrollHeight; syncFollowUi();
 }
 
+function setHumanJoinSendEnabled(enabled: boolean): void {
+  const send = el("runtime-message-send") as HTMLButtonElement | null;
+  if (send) send.disabled = !enabled;
+}
+
 function syncAckComposer(): void {
   const kind = el("runtime-message-kind") as HTMLSelectElement | null;
   const priority = el("runtime-message-priority") as HTMLSelectElement | null;
@@ -766,8 +772,15 @@ async function postHumanCollaborationMessage(event: Event): Promise<void> {
     reply_to: collaborationReplyTo || null,
     requires_ack: !!checkbox?.checked,
   });
+  if (!isCurrentRuntimeCollaborationRequest(state, request)) { if (send) send.disabled = false; return; }
+  if (response?.status === 0) {
+    abortCollaboration();
+    setRuntimeCollaborationPhase(state, request, "paused");
+    setText("runtime-message-send-status", "Send outcome unknown. Refresh and review retained messages before retrying.");
+    renderCollaboration("send outcome unknown · refresh before retry");
+    return;
+  }
   if (send) send.disabled = false;
-  if (!isCurrentRuntimeCollaborationRequest(state, request)) return;
   if (response?.status === 401) { lock("Credential rejected."); return; }
   if (!response?.ok || !response.data) { setText("runtime-message-send-status", "Send failed."); return; }
   adoptRuntimeCollaborationObservation(state, request, { messages: [response.data] });

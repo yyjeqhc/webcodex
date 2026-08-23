@@ -1351,6 +1351,7 @@ async function loadRetainedCollaboration(request, controller) {
         return null;
     adoptRuntimeCollaborationObservation(state, request, baseline.data);
     setRuntimeCollaborationPhase(state, request, "live");
+    setHumanJoinSendEnabled(true);
     renderCollaboration("bounded long-poll");
     return baseline.data.observation_token;
 }
@@ -1435,6 +1436,11 @@ function jumpLatest() {
         node.scrollTop = node.scrollHeight;
     syncFollowUi();
 }
+function setHumanJoinSendEnabled(enabled) {
+    const send = el("runtime-message-send");
+    if (send)
+        send.disabled = !enabled;
+}
 function syncAckComposer() {
     const kind = el("runtime-message-kind");
     const priority = el("runtime-message-priority");
@@ -1475,10 +1481,20 @@ async function postHumanCollaborationMessage(event) {
         reply_to: collaborationReplyTo || null,
         requires_ack: !!checkbox?.checked,
     });
+    if (!isCurrentRuntimeCollaborationRequest(state, request)) {
+        if (send)
+            send.disabled = false;
+        return;
+    }
+    if (response?.status === 0) {
+        abortCollaboration();
+        setRuntimeCollaborationPhase(state, request, "paused");
+        setText("runtime-message-send-status", "Send outcome unknown. Refresh and review retained messages before retrying.");
+        renderCollaboration("send outcome unknown · refresh before retry");
+        return;
+    }
     if (send)
         send.disabled = false;
-    if (!isCurrentRuntimeCollaborationRequest(state, request))
-        return;
     if (response?.status === 401) {
         lock("Credential rejected.");
         return;

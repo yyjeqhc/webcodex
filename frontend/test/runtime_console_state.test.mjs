@@ -242,6 +242,12 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   const fetchProjectsStart = source.indexOf("async function fetchProjects");
   const fetchProjectsEnd = source.indexOf("function effectiveProjects", fetchProjectsStart);
   assert.doesNotMatch(source.slice(fetchProjectsStart, fetchProjectsEnd), /fetchOverview\(/);
+  const postStart = source.indexOf("async function postHumanCollaborationMessage");
+  const postEnd = source.indexOf("function setRefreshBusy", postStart);
+  const post = source.slice(postStart, postEnd);
+  assert.match(post, /if \(!isCurrentRuntimeCollaborationRequest\(state, request\)\)[\s\S]*return; \}[\s\S]*if \(response\?\.status === 0\)[\s\S]*return;\s*\}[\s\S]*if \(send\) send\.disabled = false;/);
+  assert.match(post, /Send outcome unknown\. Refresh and review retained messages before retrying\./);
+  assert.match(post, /abortCollaboration\(\)[\s\S]*setRuntimeCollaborationPhase\(state, request, "paused"\)/);
   const refreshStart = source.indexOf("async function refreshAll");
   const refreshEnd = source.indexOf("function startAuto", refreshStart);
   assert.equal((source.slice(refreshStart, refreshEnd).match(/fetchOverview\(/g) || []).length, 1);
@@ -251,4 +257,5 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   const baselineAt = bootstrap.indexOf('api("workflow-session-observe"');
   const retainedListAt = bootstrap.indexOf('api("workflow-session-messages"');
   assert.ok(baselineAt >= 0 && retainedListAt > baselineAt, "live baseline must precede the retained snapshot to avoid a lost-update gap");
+  assert.match(bootstrap, /setRuntimeCollaborationPhase\(state, request, "live"\);[\s\S]*setHumanJoinSendEnabled\(true\)/);
 });

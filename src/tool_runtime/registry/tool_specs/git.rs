@@ -38,7 +38,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "git_diff_hunks",
-            "Return producer-bounded structured git diff hunks for worktree/cached state or an exact committed base/head range, with fenced opaque continuation. Read-only.",
+            "Return producer-bounded structured git diff hunks for worktree/cached state or an exact committed base/head range, with scope-bound opaque continuation. Continuation calls must replay the original scope and paging inputs unchanged. Read-only.",
             git_diff_hunks_input_schema(),
         ),
         tool_spec(

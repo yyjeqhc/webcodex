@@ -316,6 +316,123 @@ async fn poll(registry: &ShellClientRegistry) -> Option<ShellAgentShellRequest> 
         .unwrap()
 }
 
+fn latest_execution(fixture: &Fixture) -> crate::db::ConnectorExecution {
+    fixture
+        .connector
+        .db
+        .latest_connector_execution(
+            &fixture.task_id,
+            &fixture.connector.context.project_id,
+            tests::PROJECT_SUBJECT_ID,
+            None,
+        )
+        .unwrap()
+        .expect("connector execution should exist")
+}
+
+fn execution_by_id(fixture: &Fixture, execution_id: &str) -> crate::db::ConnectorExecution {
+    fixture
+        .connector
+        .db
+        .connector_execution(execution_id)
+        .unwrap()
+}
+
+async fn wait_for_execution(
+    fixture: &Fixture,
+    execution_id: Option<&str>,
+    timeout: Duration,
+    description: &str,
+    predicate: impl Fn(&crate::db::ConnectorExecution) -> bool,
+) -> crate::db::ConnectorExecution {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let current = match execution_id {
+            Some(execution_id) => execution_by_id(fixture, execution_id),
+            None => latest_execution(fixture),
+        };
+        if predicate(&current) {
+            return current;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{description} did not become observable within {timeout:?}; last state={} status_failure={:?} executor_reference={:?}",
+                current.state, current.status_failure_code, current.executor_reference
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+async fn wait_for_monitor_count(
+    fixture: &Fixture,
+    expected: usize,
+    timeout: Duration,
+    description: &str,
+) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let current = fixture.connector.executions.active_monitor_count();
+        if current == expected {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{description} did not reach active monitor count {expected} within {timeout:?}; last count={current}"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+async fn wait_for_workspace_slot_state(
+    fixture: &Fixture,
+    expected: &str,
+    timeout: Duration,
+    description: &str,
+) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let resources = workspace::WorkspaceManager::resource_status(
+            Path::new(&fixture.connector.context.runs_root),
+            fixture._temp.path().join("cargo-target").as_path(),
+        );
+        if resources.slot_state == expected {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{description} did not reach workspace slot state {expected} within {timeout:?}; last state={}",
+                resources.slot_state
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+fn executor_status_observation<'a>(
+    executor_status: &'a str,
+    stdout_cursor: usize,
+    stderr_cursor: usize,
+    started_at: Option<i64>,
+    now: i64,
+) -> ConnectorExecutionObservation<'a> {
+    ConnectorExecutionObservation {
+        executor_status,
+        stdout_cursor,
+        stderr_cursor,
+        exit_code: None,
+        started_at,
+        finished_at: None,
+        check_completed: None,
+        failed_check: None,
+        assertion_evidence: None,
+        validated_workspace_sha256: None,
+        executor_failure_code: None,
+        now,
+    }
+}
+
 fn created(reservation: ConnectorExecutionReservation) -> crate::db::ConnectorExecution {
     match reservation {
         ConnectorExecutionReservation::Created(execution) => execution,
@@ -2480,21 +2597,7 @@ async fn starting_cancel_late_attach_binds_job_and_dispatches_compensating_stop(
     );
     assert_eq!(fixture.connector.executions.active_monitor_count(), 0);
     tokio::time::sleep(Duration::from_millis(120)).await;
-    assert_eq!(
-        fixture
-            .connector
-            .db
-            .latest_connector_execution(
-                &fixture.task_id,
-                &fixture.connector.context.project_id,
-                tests::PROJECT_SUBJECT_ID,
-                None,
-            )
-            .unwrap()
-            .unwrap()
-            .state,
-        "cancel_requested"
-    );
+    assert_eq!(latest_execution(&fixture).state, "cancel_requested");
 
     let stop_registry = fixture.registry.clone();
     let expected_job_id = job_id.clone();
@@ -2514,11 +2617,7 @@ async fn starting_cancel_late_attach_binds_job_and_dispatches_compensating_stop(
     let execution_id = completed.body["data"]["execution"]["execution_id"]
         .as_str()
         .unwrap();
-    let durable = fixture
-        .connector
-        .db
-        .connector_execution(execution_id)
-        .unwrap();
+    let durable = execution_by_id(&fixture, execution_id);
     assert_eq!(durable.executor_reference.as_deref(), Some(job_id.as_str()));
     assert_eq!(durable.state, "cancelled");
     assert_eq!(
@@ -2534,20 +2633,13 @@ async fn starting_cancel_late_attach_binds_job_and_dispatches_compensating_stop(
             job.status.as_str(),
             "queued" | "agent_queued" | "running" | "stop_requested"
         )));
-    let slot_release_deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let resources = workspace::WorkspaceManager::resource_status(
-            Path::new(&fixture.connector.context.runs_root),
-            fixture._temp.path().join("cargo-target").as_path(),
-        );
-        if resources.slot_state == "idle" {
-            return;
-        }
-        if Instant::now() >= slot_release_deadline {
-            panic!("cancelled workspace slot was not released within 10 seconds");
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    wait_for_workspace_slot_state(
+        &fixture,
+        "idle",
+        Duration::from_secs(10),
+        "late-attach cancellation",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -2592,37 +2684,29 @@ async fn retry_and_cancel_share_one_execution_monitor() {
     let cancelled_id = cancelled.body["data"]["execution"]["execution_id"]
         .as_str()
         .unwrap();
-    assert!(fixture
-        .connector
-        .db
-        .connector_execution(cancelled_id)
-        .unwrap()
+    assert!(execution_by_id(&fixture, cancelled_id)
         .validated_workspace_sha256
         .is_none());
     assert_eq!(fixture.connector.executions.monitor_start_count(), 1);
-    let monitor_shutdown_deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let active_monitors = fixture.connector.executions.active_monitor_count();
-        if active_monitors == 0 {
-            break;
-        }
-        if Instant::now() >= monitor_shutdown_deadline {
-            panic!(
-                "execution monitor did not stop within 10 seconds after cancellation; active monitors: {active_monitors}"
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(2)).await;
-    }
-    assert_eq!(fixture.connector.executions.active_monitor_count(), 0);
+    wait_for_monitor_count(
+        &fixture,
+        0,
+        Duration::from_secs(10),
+        "cancelled execution monitor shutdown",
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn transient_check_status_recovers_within_grace() {
-    // Grace must comfortably exceed scheduler starvation under full-suite
-    // parallelism, or the monitor finishes the execution as unknown before it
-    // can observe the recovery update. Recovery itself happens at the next
-    // successful poll (~fast_poll), so the wide grace does not slow the test.
-    let fixture = fixture_configured(20, |service| service.with_monitor_timing(2_000, 5)).await;
+    // Keep readiness comfortably inside the test-only grace so recovery can be
+    // injected before the monitor is allowed to finalize the execution unknown.
+    let monitor_grace_ms = 3_000;
+    let readiness = Duration::from_secs(2);
+    let fixture = fixture_configured(20, move |service| {
+        service.with_monitor_timing(monitor_grace_ms, 5)
+    })
+    .await;
     let arguments = checks(&fixture, "transient-status-1", &["check"]);
     let connector = fixture.connector.clone();
     let owner = fixture.owner.clone();
@@ -2639,31 +2723,16 @@ async fn transient_check_status_recovers_within_grace() {
         ))
         .await
         .unwrap();
-    // The degraded observation is asynchronous: wait for the monitor to record
-    // the failure instead of racing it with a fixed sleep. Grace only starts
-    // counting at the first observed failure, so waiting here is safe.
-    let mut observed = None;
-    for _ in 0..400 {
-        let current = fixture
-            .connector
-            .db
-            .latest_connector_execution(
-                &fixture.task_id,
-                &fixture.connector.context.project_id,
-                tests::PROJECT_SUBJECT_ID,
-                None,
-            )
-            .unwrap()
-            .unwrap();
-        if current.status_failure_code.is_some() {
-            observed = Some(current);
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    let degraded = observed.expect("monitor never recorded the unrecognized executor status");
+
+    let degraded = wait_for_execution(
+        &fixture,
+        None,
+        readiness,
+        "monitor degraded observation",
+        |current| current.status_failure_code.as_deref() == Some("executor_status_unrecognized"),
+    )
+    .await;
     assert!(degraded.is_active());
-    assert_ne!(degraded.state, "running");
     assert_eq!(
         degraded.status_failure_code.as_deref(),
         Some("executor_status_unrecognized")
@@ -2680,24 +2749,16 @@ async fn transient_check_status_recovers_within_grace() {
         check_progress(0, Some("check"), None),
     )
     .await;
-    for _ in 0..400 {
-        let recovered = fixture
-            .connector
-            .db
-            .connector_execution(&degraded.execution_id)
-            .unwrap();
-        if recovered.status_failure_code.is_none() && recovered.state == "running" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    let recovered = fixture
-        .connector
-        .db
-        .connector_execution(&degraded.execution_id)
-        .unwrap();
-    assert_eq!(recovered.state, "running");
+    let recovered = wait_for_execution(
+        &fixture,
+        Some(&degraded.execution_id),
+        readiness,
+        "monitor recovery observation",
+        |current| current.state == "running" && current.status_failure_code.is_none(),
+    )
+    .await;
     assert_eq!(recovered.status_failure_code, None);
+
     update_validation_job(
         &fixture.registry,
         &job_id,
@@ -2708,26 +2769,28 @@ async fn transient_check_status_recovers_within_grace() {
     )
     .await;
     let _quick_yield = check_call.await.unwrap();
-    for _ in 0..400 {
-        let completed = fixture
-            .connector
-            .db
-            .connector_execution(&degraded.execution_id)
-            .unwrap();
-        if completed.state == "succeeded" {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    panic!("recovered execution did not reach succeeded");
+    let completed = wait_for_execution(
+        &fixture,
+        Some(&degraded.execution_id),
+        Duration::from_secs(10),
+        "recovered execution success",
+        |current| current.state == "succeeded",
+    )
+    .await;
+    assert_eq!(completed.status_failure_code, None);
 }
 
 #[tokio::test]
 async fn check_transport_failure_becomes_unknown_only_after_grace() {
-    // Grace must comfortably exceed scheduler starvation under full-suite
-    // parallelism so the test can observe the degraded active state before the
-    // monitor legitimately finishes the execution as unknown.
-    let fixture = fixture_configured(5, |service| service.with_monitor_timing(2_000, 5)).await;
+    // The degraded observation must arrive inside the grace; terminal `unknown`
+    // is allowed only after that grace has elapsed from transport loss.
+    let monitor_grace = Duration::from_millis(3_000);
+    let degraded_readiness = Duration::from_secs(2);
+    let unknown_readiness = Duration::from_secs(6);
+    let fixture = fixture_configured(5, move |service| {
+        service.with_monitor_timing(monitor_grace.as_millis() as u64, 5)
+    })
+    .await;
     let arguments = checks(&fixture, "transport-grace-1", &["test"]);
     let connector = fixture.connector.clone();
     let owner = fixture.owner.clone();
@@ -2752,40 +2815,36 @@ async fn check_transport_failure_becomes_unknown_only_after_grace() {
         .registry
         .reconcile_disconnect("hosted", "instance")
         .await;
-    // The degraded observation is asynchronous. Poll for the recorded failure
-    // instead of assuming a fixed sleep lands inside the grace window.
-    let mut observed = None;
-    for _ in 0..400 {
-        let current = fixture
-            .connector
-            .db
-            .connector_execution(execution_id)
-            .unwrap();
-        if current.status_failure_code.as_deref() == Some("executor_status_unavailable") {
-            observed = Some(current);
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    let degraded = observed.expect("monitor never recorded the executor transport failure");
+
+    let degraded = wait_for_execution(
+        &fixture,
+        Some(execution_id),
+        degraded_readiness,
+        "executor transport degradation",
+        |current| current.status_failure_code.as_deref() == Some("executor_status_unavailable"),
+    )
+    .await;
+    let degraded_observed_at = Instant::now();
     assert!(degraded.is_active());
+    assert_ne!(degraded.state, "unknown");
     assert_eq!(
         degraded.status_failure_code.as_deref(),
         Some("executor_status_unavailable")
     );
-    for _ in 0..600 {
-        let current = fixture
-            .connector
-            .db
-            .connector_execution(execution_id)
-            .unwrap();
-        if current.state == "unknown" {
-            assert_eq!(current.executor_reference.as_deref(), Some(job_id.as_str()));
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    panic!("execution did not become unknown after the configured grace");
+
+    let unknown = wait_for_execution(
+        &fixture,
+        Some(execution_id),
+        unknown_readiness,
+        "executor transport grace expiry",
+        |current| current.state == "unknown",
+    )
+    .await;
+    assert_eq!(unknown.executor_reference.as_deref(), Some(job_id.as_str()));
+    assert!(
+        degraded_observed_at.elapsed() + Duration::from_millis(100) >= monitor_grace,
+        "execution became unknown before the configured {monitor_grace:?} transport grace"
+    );
 }
 
 #[tokio::test]
@@ -2901,11 +2960,20 @@ async fn running_check_allows_review_wait_cancel_and_releases_slot() {
         check.body["data"]["execution"]["execution_id"],
         cancelled.body["data"]["execution"]["execution_id"]
     );
-    let resources = workspace::WorkspaceManager::resource_status(
-        Path::new(&fixture.connector.context.runs_root),
-        fixture._temp.path().join("cargo-target").as_path(),
-    );
-    assert_eq!(resources.slot_state, "idle");
+    wait_for_monitor_count(
+        &fixture,
+        0,
+        Duration::from_secs(10),
+        "running validation cancellation monitor shutdown",
+    )
+    .await;
+    wait_for_workspace_slot_state(
+        &fixture,
+        "idle",
+        Duration::from_secs(10),
+        "running validation cancellation",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -2970,11 +3038,7 @@ async fn queued_cancel_never_dispatches_and_restart_is_fail_closed() {
         .reconcile_connector_executions(&second.connector.context.project_id, 11)
         .unwrap();
     assert_eq!(recovery.1, 1);
-    let interrupted = second
-        .connector
-        .db
-        .connector_execution(&execution.execution_id)
-        .unwrap();
+    let interrupted = execution_by_id(&second, &execution.execution_id);
     assert_eq!(interrupted.state, "interrupted");
     assert!(interrupted.validated_workspace_sha256.is_none());
     assert_eq!(task(&second).task_status, "needs_attention");
@@ -3057,11 +3121,7 @@ async fn cancellation_transport_unknown_preserves_executor_reference_and_blocks_
         cancelled.body["data"]["execution"]["execution_status"],
         "unknown"
     );
-    let durable = fixture
-        .connector
-        .db
-        .connector_execution(&execution.execution_id)
-        .unwrap();
+    let durable = execution_by_id(&fixture, &execution.execution_id);
     assert_eq!(durable.executor_reference.as_deref(), Some(job_id));
     let finish = finish(&fixture, "must stay blocked").await;
     assert_eq!(finish.body["error"]["code"], "execution_not_terminal");
@@ -3220,20 +3280,7 @@ async fn connector_execution_recovering_status_remains_active_without_duplicate_
     let queued_recovery = db
         .observe_connector_execution(
             &execution.execution_id,
-            ConnectorExecutionObservation {
-                executor_status: "recovering",
-                stdout_cursor: 1,
-                stderr_cursor: 1,
-                exit_code: None,
-                started_at: None,
-                finished_at: None,
-                check_completed: None,
-                failed_check: None,
-                assertion_evidence: None,
-                validated_workspace_sha256: None,
-                executor_failure_code: None,
-                now: 4,
-            },
+            executor_status_observation("recovering", 1, 1, None, 4),
         )
         .unwrap();
     assert_eq!(queued_recovery.state, "queued");
@@ -3244,46 +3291,18 @@ async fn connector_execution_recovering_status_remains_active_without_duplicate_
     let running = db
         .observe_connector_execution(
             &execution.execution_id,
-            ConnectorExecutionObservation {
-                executor_status: "running",
-                stdout_cursor: 2,
-                stderr_cursor: 1,
-                exit_code: None,
-                started_at: Some(5),
-                finished_at: None,
-                check_completed: None,
-                failed_check: None,
-                assertion_evidence: None,
-                validated_workspace_sha256: None,
-                executor_failure_code: None,
-                now: 5,
-            },
+            executor_status_observation("running", 2, 1, Some(5), 5),
         )
         .unwrap();
     assert_eq!(running.state, "running");
     let running_recovery = db
         .observe_connector_execution(
             &execution.execution_id,
-            ConnectorExecutionObservation {
-                executor_status: "recovering",
-                stdout_cursor: 2,
-                stderr_cursor: 1,
-                exit_code: None,
-                started_at: Some(5),
-                finished_at: None,
-                check_completed: None,
-                failed_check: None,
-                assertion_evidence: None,
-                validated_workspace_sha256: None,
-                executor_failure_code: None,
-                now: 6,
-            },
+            executor_status_observation("recovering", 2, 1, Some(5), 6),
         )
         .unwrap();
     assert_eq!(running_recovery.state, "running");
     assert!(running_recovery.is_active());
-    assert_ne!(running_recovery.state, "succeeded");
-    assert_ne!(running_recovery.state, "failed");
 
     match db
         .reserve_connector_execution(
@@ -3331,23 +3350,13 @@ async fn unrecognized_executor_status_is_degraded_instead_of_running() {
     let observed = db
         .observe_connector_execution(
             &execution.execution_id,
-            ConnectorExecutionObservation {
-                executor_status: "future-agent-state",
-                stdout_cursor: 1,
-                stderr_cursor: 1,
-                exit_code: None,
-                started_at: None,
-                finished_at: None,
-                check_completed: None,
-                failed_check: None,
-                assertion_evidence: None,
-                validated_workspace_sha256: None,
-                executor_failure_code: None,
-                now: 4,
-            },
+            executor_status_observation("future-agent-state", 1, 1, None, 4),
         )
         .unwrap();
     assert_eq!(observed.state, "queued");
+    assert!(observed.is_active());
+    assert!(observed.failure_code.is_none());
+    assert!(observed.terminal_reason.is_none());
     assert_eq!(
         observed.status_failure_code.as_deref(),
         Some("executor_status_unrecognized")
@@ -4492,29 +4501,14 @@ async fn provenance_mismatch_fails_honestly_with_evidence() {
 
     // Deterministic invariant failure: terminal quickly (no grace burn),
     // honestly categorized, with the evidence and the remedy in the message.
-    let terminal_deadline = Instant::now() + Duration::from_secs(10);
-    let execution = loop {
-        let execution = fixture
-            .connector
-            .db
-            .latest_connector_execution(
-                &fixture.task_id,
-                &fixture.connector.context.project_id,
-                tests::PROJECT_SUBJECT_ID,
-                None,
-            )
-            .unwrap()
-            .unwrap();
-        if execution.is_terminal() {
-            break execution;
-        }
-        if Instant::now() >= terminal_deadline {
-            panic!(
-                "workspace provenance mismatch execution did not become terminal within 10 seconds"
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    };
+    let execution = wait_for_execution(
+        &fixture,
+        None,
+        Duration::from_secs(10),
+        "workspace provenance mismatch terminal state",
+        |execution| execution.is_terminal(),
+    )
+    .await;
     assert_eq!(execution.state, "failed");
     assert_eq!(execution.failure_source.as_deref(), Some("workspace"));
     assert_eq!(
@@ -4607,27 +4601,14 @@ async fn provenance_mismatch_from_tracked_changes_keeps_gitignore_out_of_the_rem
     let outcome = check_call.await.unwrap();
     assert!(outcome.ok, "{}", outcome.body);
 
-    let terminal_deadline = Instant::now() + Duration::from_secs(10);
-    let execution = loop {
-        let execution = fixture
-            .connector
-            .db
-            .latest_connector_execution(
-                &fixture.task_id,
-                &fixture.connector.context.project_id,
-                tests::PROJECT_SUBJECT_ID,
-                None,
-            )
-            .unwrap()
-            .unwrap();
-        if execution.is_terminal() {
-            break execution;
-        }
-        if Instant::now() >= terminal_deadline {
-            panic!("tracked workspace provenance mismatch execution did not become terminal within 10 seconds");
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    };
+    let execution = wait_for_execution(
+        &fixture,
+        None,
+        Duration::from_secs(10),
+        "tracked workspace provenance mismatch terminal state",
+        |execution| execution.is_terminal(),
+    )
+    .await;
     assert_eq!(execution.state, "failed");
     assert_eq!(execution.failure_source.as_deref(), Some("workspace"));
     assert_eq!(

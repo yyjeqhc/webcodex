@@ -29,25 +29,34 @@ tests with different cost profiles sharing the same default lane.
 
 The lanes above define test semantics; workflows decide when to run them.
 
-- `.github/workflows/ci.yml` is the ordinary repository gate. Every configured
-  pull-request workflow run gets the lightweight `contract` job without requiring
-  the `run-ci` label. It covers frontend type/test/dist checks, workspace-boundary
-  checks, formatting, and focused registry/OpenAPI/MCP schema and metadata parity.
+- `.github/workflows/ci.yml` is the ordinary repository gate. Its lightweight
+  `contract` job is the mandatory first lane for every configured pull request
+  and every push to `main`; it never requires the owner-only `run-ci` label. The
+  lane owns frontend install/type/test/dist validation, workspace-boundary
+  self-test/checks, formatting, the heuristic test-inventory self-test/report
+  (without count thresholds), and focused registry/OpenAPI/MCP schema and metadata parity.
 - The heavier Linux `test`, native macOS `test-macos`, and native Windows
-  `test-windows` jobs run on every push to `main`. External pull requests run
-  them automatically subject to GitHub fork protections; owner-authored pull
-  requests opt in with the `run-ci` label.
-- Heavy Linux CI runs frontend checks, workspace-boundary and release-tooling
-  checks, Markdown-link validation, formatting, and the locked workspace test
-  suite. macOS CI compiles the release production surfaces and runs the native
-  Runner suite, including detached ownership/restart recovery. The local-`sshd`
-  SSH integration fixture remains Linux-only because it depends on Linux daemon
-  account/auth configuration; macOS still compiles and tests the SSH client and
-  pure command-shaping surface. Windows CI runs formatting, native Windows
-  package tests, npm checks, and the Windows artifact-to-install smoke.
-- Exact-source release acceptance is separate from ordinary pull-request CI.
-  Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
-  `.github/workflows/release-readiness.yml`.
+  `test-windows` jobs all depend on a successful `contract` job. They still run
+  on every push to `main`; external pull requests run them automatically subject
+  to GitHub fork protections, while owner-authored pull requests opt in with the
+  `run-ci` label. This dependency ordering is CI orchestration, not a claim that
+  the repository now has perfectly pure fast/integration/platform test suites.
+- Heavy Linux CI no longer repeats contract-owned frontend, workspace-boundary,
+  or formatting gates on the same SHA. It retains release-verification tooling,
+  Markdown-link validation, npm package-smoke tooling, and the full
+  `cargo test --locked --workspace` suite; Node remains installed there because the npm
+  smoke scripts invoke Node/npm directly. macOS owns release-surface compilation
+  and the native Runner suite, including detached ownership/restart recovery.
+  The local-`sshd` SSH integration fixture remains Linux-only because it depends
+  on Linux daemon account/auth configuration; macOS still compiles and tests the
+  SSH client and pure command-shaping surface. Windows owns its native library,
+  CLI and serialized Runner suites, npm tests, and artifact-to-install smoke.
+- Exact-source release acceptance is a separate trust boundary from ordinary CI
+  and intentionally repeats canonical acceptance checks for the selected source,
+  including full workspace/frontend/E2E/native release evidence. Follow
+  [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
+  `.github/workflows/release-readiness.yml`; ordinary-CI deduplication does not
+  reduce that workflow or `scripts/release_check.sh`.
 - Slow/manual and real-process lanes remain explicit targeted evidence unless
   a workflow names them. Do not infer that one lane ran merely because another CI
   job passed.

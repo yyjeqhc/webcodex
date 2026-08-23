@@ -28,6 +28,7 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE, SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, SHELL_CLIENT_CAPABILITY_SHELL,
     SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SSH_SHELL,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
@@ -74,6 +75,9 @@ pub(super) fn capability_enabled(caps: &ShellClientCapabilities, capability: &st
         SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL => caps.persistent_shell,
         SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL => caps.ssh_persistent_shell,
         SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV => caps.structured_validation_argv,
+        SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION => {
+            caps.structured_cargo_test_count_assertion
+        }
         SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON => caps.structured_go_test_json,
         SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL => caps.structured_go_test_tool,
         SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES => caps.structured_go_test_packages,
@@ -149,7 +153,8 @@ impl ShellClientRegistry {
     /// `structured_file_delete`,
     /// `git`, `jobs`, `async_jobs`, `async_shell_jobs`,
     /// `ssh_shell`, `persistent_shell`, `structured_validation_argv`,
-    /// `structured_go_test_json`, `structured_go_test_tool`,
+    /// `structured_cargo_test_count_assertion`, `structured_go_test_json`,
+    /// `structured_go_test_tool`,
     /// `structured_process_argv`, `structured_script_payload`,
     /// `internal_posix_script`, `structured_execution_jobs`,
     /// `lsp_read_only_navigation`, `lsp_call_hierarchy`,

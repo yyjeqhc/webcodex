@@ -29,12 +29,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "search_project_text",
-            "Default inspect/search tool for project text. Uses rg-first with grep fallback. Supports matches/files_with_matches/count modes, context, and bounded timeouts. Stops early when the result budget and byte cap are met. Returns structured success evidence or bounded failure_stage/reason_code provenance; an empty success means a recognized backend completed with no matches.",
+            "Default inspect/search tool for project text. Uses rg-first with grep fallback. Supports matches/files_with_matches/count modes and context. Returns structured output with backend/truncated metadata; failure_stage/reason_code distinguish failure from a proven empty result.",
             search_project_text_input_schema(),
         ),
         tool_spec(
             "search_project_texts",
-            "Run 1 to 8 independent bounded project-text searches in request order. Query failures are isolated and preserve failure_stage/detail_code provenance, so a failed search is distinct from a successful empty result. Runner searches have true two-request concurrency, one 30-second batch deadline, and a 256 KiB serialized-result cap with next_index continuation. Results never trigger automatic file reads.",
+            "Run 1 to 8 bounded searches in request order. Item failures stay isolated with failure_stage/detail_code, distinct from successful empty results. Uses two Runner requests concurrently, one 30-second batch deadline, and bounded output with next_index; never reads files automatically.",
             search_project_texts_input_schema(),
         ),
         tool_spec(

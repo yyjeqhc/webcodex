@@ -827,6 +827,7 @@ fn register_inventory_support_response() -> ConcurrentHttpResponse {
                 "capabilities": {},
                 "pending_requests": 0,
                 "projects": [],
+                "agent_protocol_version": crate::shell_protocol::AGENT_PROTOCOL_VERSION_POLLING_V2,
                 "project_inventory": {
                     "sync_state": "pending",
                     "generation": null,

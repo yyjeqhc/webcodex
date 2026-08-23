@@ -96,7 +96,7 @@ async fn computer_element_state_requires_its_own_additive_capability() {
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

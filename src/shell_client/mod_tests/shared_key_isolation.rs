@@ -52,7 +52,7 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
                     host_context: None,
                     capabilities: Some(async_job_capabilities()),
                     projects: Some(vec![project_summary(client_id, "/tmp/project")]),
-                    agent_protocol_version: None,
+                    agent_protocol_version: Some("polling-v1".to_string()),
                     policy: None,
                 },
                 Some(auth),
@@ -76,7 +76,7 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
             host_context: None,
             capabilities: Some(async_job_capabilities()),
             projects: Some(vec![project_summary("managed", "/tmp/managed")]),
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -194,7 +194,7 @@ async fn same_client_id_in_different_project_grants_is_isolated() {
         host_context: None,
         capabilities: Some(async_job_capabilities()),
         projects: Some(vec![project_summary(project, "/tmp/project")]),
-        agent_protocol_version: None,
+        agent_protocol_version: Some("polling-v1".to_string()),
         policy: None,
     };
     registry
@@ -257,7 +257,7 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             host_context: None,
             capabilities: Some(async_job_capabilities()),
             projects: Some(vec![project_summary("project", "/tmp/project")]),
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }
     };

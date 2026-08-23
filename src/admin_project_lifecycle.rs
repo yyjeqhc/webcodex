@@ -904,7 +904,7 @@ mod tests {
                     updated_at: 1,
                     shell_profile: None,
                 }]),
-                agent_protocol_version: None,
+                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
                 process_started_at: None,
                 build: None,

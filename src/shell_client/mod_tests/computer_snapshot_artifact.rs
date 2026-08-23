@@ -48,7 +48,7 @@ async fn computer_snapshot_artifact_requires_current_target_project_and_file_wri
                 ..Default::default()
             }),
             projects: Some(vec![project_summary("demo", project_path)]),
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }
     };

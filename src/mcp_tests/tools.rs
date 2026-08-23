@@ -1380,7 +1380,7 @@ async fn mcp_show_changes_distinguishes_reserved_session_id_from_query_session_i
                 updated_at: 0,
                 shell_profile: None,
             }]),
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

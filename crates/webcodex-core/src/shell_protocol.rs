@@ -28,14 +28,6 @@ fn default_shell_job_kind() -> String {
     "shell".to_string()
 }
 
-/// Default `agent_protocol_version` used when a client registers without
-/// declaring one. Old agents that predate the version field show up as
-/// `"unknown"` so operators can distinguish them from agents that explicitly
-/// announce `"polling-v1"`.
-fn default_agent_protocol_version() -> String {
-    "unknown".to_string()
-}
-
 /// Default `transport` for `ShellClientView` when deserializing views that
 /// predate the transport field (e.g. older snapshots). Polling is the legacy
 /// default.
@@ -973,8 +965,10 @@ pub struct ShellClientRegisterRequest {
     pub host_context: Option<AgentHostContext>,
     #[serde(default)]
     pub projects: Option<Vec<ShellAgentProjectSummary>>,
-    /// Protocol version announced by the agent during registration. Older
-    /// agents that omit this field are treated as `"unknown"` by the server.
+    /// Protocol identity announced by the agent during registration. The wire
+    /// field remains optional at deserialization so every transport can return
+    /// the same explicit registration-validation error for an omitted field;
+    /// successful registration requires a non-empty value.
     #[serde(default)]
     pub agent_protocol_version: Option<String>,
     /// Sanitized agent policy summary. Older agents that omit this field
@@ -1158,9 +1152,8 @@ pub struct ShellClientView {
     /// predates paged inventory synchronization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_inventory: Option<ShellProjectInventoryStatus>,
-    /// Agent-announced protocol version. Defaults to `"unknown"` for agents
-    /// that registered before this field existed.
-    #[serde(default = "default_agent_protocol_version")]
+    /// Agent-announced protocol identity preserved for diagnostics. Successful
+    /// registration always supplies this value; there is no omission fallback.
     pub agent_protocol_version: String,
     /// Canonical Server-normalized semantics for business decisions. The raw
     /// announced label above remains diagnostics-only after registration ingress.

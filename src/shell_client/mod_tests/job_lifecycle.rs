@@ -118,7 +118,7 @@ async fn terminal_observed_legacy_poll_complete_and_log() {
             host_context: None,
             capabilities: Some(async_job_capabilities()),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -237,7 +237,7 @@ async fn terminal_observed_queued_stop_records_server_time() {
             host_context: None,
             capabilities: Some(async_job_capabilities()),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -302,7 +302,7 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
             host_context: None,
             capabilities: Some(async_job_capabilities()),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -374,7 +374,7 @@ async fn registry_marks_running_job_lost_when_client_stale() {
             host_context: None,
             capabilities: Some(async_job_capabilities()),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

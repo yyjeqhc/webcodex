@@ -523,6 +523,7 @@ async fn http_agent_tokens_register_hash_enforces_transport_and_client_id_bindin
         .json(&json!({
             "client_id": "alice-laptop",
             "agent_instance_id": "inst-1",
+            "agent_protocol_version": "polling-v1",
             "owner": "alice",
         }))
         .send(&service)
@@ -538,6 +539,7 @@ async fn http_agent_tokens_register_hash_enforces_transport_and_client_id_bindin
         .json(&json!({
             "client_id": "other-laptop",
             "agent_instance_id": "inst-2",
+            "agent_protocol_version": "polling-v1",
             "owner": "alice",
         }))
         .send(&service)

@@ -19,7 +19,7 @@ async fn reconcile_disconnect_marks_running_jobs_lost() {
             host_context: None,
             capabilities: Some(async_job_capabilities()),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -78,7 +78,7 @@ async fn reconcile_disconnect_fails_pending_sync_requests_fast() {
             host_context: None,
             capabilities: None,
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

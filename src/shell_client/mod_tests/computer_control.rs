@@ -114,7 +114,7 @@ async fn computer_scroll_to_element_requires_independent_capability() {
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -194,7 +194,7 @@ async fn computer_key_input_requires_independent_capability() {
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -252,7 +252,7 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -294,7 +294,7 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -353,7 +353,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -402,7 +402,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -466,7 +466,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -564,7 +564,7 @@ async fn computer_window_activation_requires_its_own_additive_capability() {
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

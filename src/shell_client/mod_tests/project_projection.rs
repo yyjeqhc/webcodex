@@ -81,7 +81,7 @@ async fn registry_register_saves_projects() {
             host_context: None,
             capabilities: None,
             projects: Some(vec![project_summary("webcodex", "/root/git/webcodex")]),
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -114,7 +114,7 @@ async fn registry_poll_updates_projects() {
             host_context: None,
             capabilities: None,
             projects: Some(vec![project_summary("one", "/tmp/one")]),
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -157,7 +157,7 @@ async fn registry_poll_without_projects_preserves_existing_projection() {
             host_context: None,
             capabilities: None,
             projects: Some(vec![project_summary("one", "/tmp/one")]),
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -198,7 +198,7 @@ async fn registry_project_owner_check_enforces_boundary() {
             host_context: None,
             capabilities: None,
             projects: Some(vec![project_summary("webcodex", "/root/git/webcodex")]),
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -219,7 +219,7 @@ async fn registry_project_owner_check_enforces_boundary() {
             host_context: None,
             capabilities: None,
             projects: Some(vec![project_summary("secret", "/tmp/secret")]),
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

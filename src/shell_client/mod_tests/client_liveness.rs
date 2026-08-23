@@ -19,7 +19,7 @@ async fn touch_client_refreshes_stale_client_back_to_online() {
             host_context: None,
             capabilities: Some(async_job_capabilities()),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

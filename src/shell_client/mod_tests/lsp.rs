@@ -42,7 +42,7 @@ async fn register_lsp_test_client_capabilities(
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

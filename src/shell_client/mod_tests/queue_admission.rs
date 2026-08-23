@@ -19,7 +19,7 @@ async fn registry_rejects_enqueue_when_queue_full() {
             host_context: None,
             capabilities: None,
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -85,7 +85,7 @@ async fn registry_rejects_enqueue_when_client_offline() {
             host_context: None,
             capabilities: None,
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

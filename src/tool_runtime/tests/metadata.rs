@@ -104,10 +104,7 @@ fn list_agents_call() -> ToolCall {
     }
 }
 
-fn metadata_agent_registration(
-    client_id: &str,
-    protocol: Option<&str>,
-) -> ShellClientRegisterRequest {
+fn metadata_agent_registration(client_id: &str, protocol: &str) -> ShellClientRegisterRequest {
     ShellClientRegisterRequest {
         process_started_at: None,
         build: None,
@@ -123,7 +120,7 @@ fn metadata_agent_registration(
         host_context: None,
         capabilities: None,
         projects: None,
-        agent_protocol_version: protocol.map(str::to_string),
+        agent_protocol_version: Some(protocol.to_string()),
         policy: None,
     }
 }
@@ -2383,7 +2380,7 @@ fn runtime_info_from_env_reads_webcodex_public_url() {
 #[tokio::test]
 async fn runtime_status_agent_summary_includes_protocol_version() {
     let registry = Arc::new(ShellClientRegistry::default());
-    let mut registration = metadata_agent_registration("agent-1", Some("polling-v1"));
+    let mut registration = metadata_agent_registration("agent-1", "polling-v1");
     registration.agent_instance_id = "inst".to_string();
     registration.job_concurrency_limit = Some(4);
     registration.display_name = Some("Workstation".to_string());
@@ -2443,7 +2440,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
         ToolProvidersStatus,
     };
     let registry = Arc::new(ShellClientRegistry::default());
-    let mut registration = metadata_agent_registration("policy-agent", Some("websocket-v1"));
+    let mut registration = metadata_agent_registration("policy-agent", "websocket-v1");
     registration.agent_instance_id = "inst-p".to_string();
     registration.owner = Some("alice".to_string());
     registration.policy = Some(AgentPolicySummary {
@@ -2567,7 +2564,7 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
         .input_schema
         .clone();
     let registry = Arc::new(ShellClientRegistry::default());
-    let mut registration = metadata_agent_registration("provider-surface", Some("websocket-v1"));
+    let mut registration = metadata_agent_registration("provider-surface", "websocket-v1");
     registration.agent_instance_id = "inst-surface".to_string();
     registration.policy = Some(AgentPolicySummary {
         tool_providers: Some(ToolProvidersStatus {
@@ -2633,7 +2630,7 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
 async fn runtime_status_policy_summary_is_null_for_older_agents() {
     let registry = Arc::new(ShellClientRegistry::default());
     // Older agent: no policy field (None).
-    let mut registration = metadata_agent_registration("legacy-agent", None);
+    let mut registration = metadata_agent_registration("legacy-agent", "polling-v1");
     registration.agent_instance_id = "inst-l".to_string();
     registry.register(registration).await.unwrap();
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
@@ -2891,7 +2888,7 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
 async fn list_agents_includes_sanitized_policy_summary() {
     use crate::shell_protocol::AgentPolicySummary;
     let registry = Arc::new(ShellClientRegistry::default());
-    let mut registration = metadata_agent_registration("list-policy-agent", Some("websocket-v1"));
+    let mut registration = metadata_agent_registration("list-policy-agent", "websocket-v1");
     registration.agent_instance_id = "inst-lp".to_string();
     registration.job_concurrency_limit = Some(8);
     registration.owner = Some("alice".to_string());
@@ -2947,7 +2944,7 @@ async fn list_agents_includes_sanitized_policy_summary() {
 async fn runtime_status_distinguishes_stale_registration_from_transport_connection() {
     use crate::shell_client::TRANSPORT_WEBSOCKET;
     let registry = Arc::new(ShellClientRegistry::default());
-    let mut registration = metadata_agent_registration("ws-stale", Some("websocket-v1"));
+    let mut registration = metadata_agent_registration("ws-stale", "websocket-v1");
     registration.agent_instance_id = "inst".to_string();
     registration.display_name = Some("Stale WS".to_string());
     registration.owner = Some("alice".to_string());
@@ -2997,7 +2994,7 @@ async fn runtime_status_distinguishes_stale_registration_from_transport_connecti
 async fn runtime_status_reflects_websocket_transport_label() {
     let registry = Arc::new(ShellClientRegistry::default());
     let runtime = ToolRuntime::new(registry.clone(), Arc::new(RuntimeInfo::default()));
-    let mut registration = metadata_agent_registration("ws-agent", Some("websocket-v1"));
+    let mut registration = metadata_agent_registration("ws-agent", "websocket-v1");
     registration.agent_instance_id = "inst".to_string();
     registration.owner = Some("alice".to_string());
     registry.register(registration).await.unwrap();

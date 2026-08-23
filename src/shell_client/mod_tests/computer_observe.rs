@@ -127,7 +127,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -167,7 +167,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -220,7 +220,7 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

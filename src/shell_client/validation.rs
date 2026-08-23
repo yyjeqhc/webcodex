@@ -210,6 +210,20 @@ pub(super) fn validate_agent_instance_id(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Require an explicit protocol identity while preserving unknown non-empty
+/// labels for fail-closed compatibility diagnostics. Keeping this validation
+/// after serde decoding lets polling, WebSocket, and QUIC surface one stable
+/// operator-readable error for both omitted and blank declarations.
+pub(super) fn normalize_required_agent_protocol_version(
+    value: Option<&str>,
+) -> Result<String, String> {
+    value
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "agent_protocol_version is required".to_string())
+}
+
 pub(super) fn validate_optional_field(value: &Option<String>, field: &str) -> Result<(), String> {
     if let Some(value) = value {
         if value.chars().count() > MAX_CLIENT_FIELD_LEN {

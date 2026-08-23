@@ -1,6 +1,6 @@
 use super::*;
 use crate::shell_protocol::{
-    ShellCommandExecutionState, AGENT_PROTOCOL_VERSION_QUIC_V1,
+    ShellCommandExecutionState, AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_QUIC_V1,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
 };
@@ -115,7 +115,7 @@ fn runner_registration(
         host_context: None,
         capabilities: Some(async_job_capabilities()),
         projects: Some(projects),
-        agent_protocol_version: None,
+        agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string()),
         policy: None,
     }
 }
@@ -246,7 +246,7 @@ async fn register_computer_test_client(
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string()),
             policy: None,
         })
         .await

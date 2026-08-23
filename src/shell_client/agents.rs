@@ -11,8 +11,9 @@ use super::reconciliation::{
 use super::requests::resolve_disconnected_sync_requests_locked;
 use super::state::{NotifierEntry, ShellClientRecord, ShellClientRegistryInner};
 use super::validation::{
-    normalize_project_summaries, normalize_tool_providers, trim_string, validate_agent_instance_id,
-    validate_id, validate_optional_field, validate_project_summary_batch,
+    normalize_project_summaries, normalize_required_agent_protocol_version,
+    normalize_tool_providers, trim_string, validate_agent_instance_id, validate_id,
+    validate_optional_field, validate_project_summary_batch,
 };
 use super::{
     now_ts, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS, MAX_RETIRED_INSTANCES_PER_CLIENT,
@@ -159,13 +160,8 @@ impl ShellClientRegistry {
         )?;
         let coding_agent_providers = coding_agent_providers.unwrap_or_default();
         let coding_agent_inventory = coding_agent_inventory.unwrap_or_default();
-        let agent_protocol_version = body
-            .agent_protocol_version
-            .as_deref()
-            .map(str::trim)
-            .filter(|version| !version.is_empty())
-            .unwrap_or("unknown")
-            .to_string();
+        let agent_protocol_version =
+            normalize_required_agent_protocol_version(body.agent_protocol_version.as_deref())?;
         let agent_protocol_semantics = normalize_agent_protocol_semantics(&agent_protocol_version);
         let paged_project_inventory = matches!(
             agent_protocol_semantics.project_inventory,

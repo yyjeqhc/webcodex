@@ -762,6 +762,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn quic_register_requires_explicit_protocol_version() {
+        let (cert_der, key_der) = self_signed_cert();
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_quic_server(
+            registry.clone(),
+            test_config(None),
+            cert_der.clone(),
+            key_der,
+        )
+        .await;
+        let (client_endpoint, conn, mut send, mut recv) =
+            connect_quic_client(&cert_der, addr).await;
+        let mut register = register_envelope("quic-missing-protocol", "inst-missing-protocol");
+        let AgentEnvelope::Register { payload, .. } = &mut register else {
+            unreachable!("register helper must return Register")
+        };
+        payload.agent_protocol_version = None;
+        write_quic_frame(&mut send, &register)
+            .await
+            .expect("write register");
+
+        let error = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv))
+            .await
+            .expect("register error timeout")
+            .expect("read register error");
+        match error {
+            AgentEnvelope::Error { code, message } => {
+                assert_eq!(code, "register_failed");
+                assert_eq!(message, "agent_protocol_version is required");
+            }
+            other => panic!("expected register_failed, got {:?}", other.kind()),
+        }
+        assert!(registry
+            .get_client_view("quic-missing-protocol")
+            .await
+            .is_none());
+        client_endpoint.close(quinn::VarInt::from_u32(0), b"");
+        conn.close(quinn::VarInt::from_u32(0), b"done");
+    }
+
+    #[tokio::test]
     async fn quic_register_ack_and_ping_pong_roundtrip() {
         let (cert_der, key_der) = self_signed_cert();
         let server_crypto = server_crypto(cert_der.clone(), key_der);

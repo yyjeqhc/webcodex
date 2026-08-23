@@ -289,7 +289,7 @@ async fn mcp_import_runtime(
                 updated_at: 0,
                 shell_profile: None,
             }]),
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

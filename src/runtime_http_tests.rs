@@ -298,7 +298,7 @@ async fn register_import_agent_with_capabilities(
                 updated_at: 0,
                 shell_profile: None,
             }]),
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

@@ -118,6 +118,17 @@ fn test_runtime(cfg: &AgentConfig) -> AgentRuntimeState {
     AgentRuntimeState::new(cfg, PathBuf::new())
 }
 
+fn wait_for_path(path: &Path, deadline: Instant, context: &str) {
+    while !path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {context}: {}",
+            path.display()
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn runtime_shutdown_is_fast_ordered_and_runs_once_without_resources() {
     let cfg = test_agent_config("http://127.0.0.1:1".to_string());
@@ -452,11 +463,18 @@ fn run_polling_agent_against_server(
     let runtime = test_runtime(&cfg);
     let shutdown = Arc::new(AtomicBool::new(false));
     let failsafe = Arc::clone(&shutdown);
-    thread::spawn(move || {
-        thread::sleep(Duration::from_secs(2));
-        failsafe.store(true, Ordering::SeqCst);
+    let (failsafe_cancel_tx, failsafe_cancel_rx) = std::sync::mpsc::channel();
+    let failsafe_thread = thread::spawn(move || {
+        if failsafe_cancel_rx
+            .recv_timeout(Duration::from_secs(2))
+            .is_err()
+        {
+            failsafe.store(true, Ordering::SeqCst);
+        }
     });
     let result = run_polling_agent_with_shutdown(cfg, once, "inst-poll-test", shutdown, &runtime);
+    let _ = failsafe_cancel_tx.send(());
+    failsafe_thread.join().unwrap();
     server.join().unwrap();
     (result, poll_count.load(Ordering::SeqCst))
 }
@@ -1085,11 +1103,11 @@ fn polling_long_ordinary_dispatch_does_not_pin_and_results_stay_correlated_exact
         "poll-b",
         "the next poll must reach the Server before A is released"
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !started_a.exists() {
-        assert!(Instant::now() < deadline, "slow request A did not start");
-        thread::sleep(Duration::from_millis(5));
-    }
+    wait_for_path(
+        &started_a,
+        Instant::now() + Duration::from_secs(5),
+        "slow request A to start",
+    );
     assert_eq!(
         event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
         "result-req-fast-b",
@@ -1197,9 +1215,8 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
     });
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !(started[0].exists() && started[1].exists()) {
-        assert!(Instant::now() < deadline, "first two workers did not start");
-        thread::sleep(Duration::from_millis(5));
+    for path in &started[..2] {
+        wait_for_path(path, deadline, "first two polling workers to start");
     }
     assert_eq!(runtime.dispatches.active(), POLLING_DISPATCH_MAX_IN_FLIGHT);
     assert!(
@@ -1213,11 +1230,11 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
     third_poll_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("releasing one slot must allow the third poll");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !started[2].exists() {
-        assert!(Instant::now() < deadline, "third worker did not start");
-        thread::sleep(Duration::from_millis(5));
-    }
+    wait_for_path(
+        &started[2],
+        Instant::now() + Duration::from_secs(5),
+        "third polling worker to start",
+    );
     assert_eq!(
         runtime.dispatches.active(),
         POLLING_DISPATCH_MAX_IN_FLIGHT,
@@ -1387,11 +1404,11 @@ fn polling_once_waits_for_its_tracked_ordinary_dispatch() {
         let _ = runner_tx.send(result);
     });
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !started.exists() {
-        assert!(Instant::now() < deadline, "--once request did not start");
-        thread::sleep(Duration::from_millis(5));
-    }
+    wait_for_path(
+        &started,
+        Instant::now() + Duration::from_secs(5),
+        "--once request to start",
+    );
     assert!(
         runner_rx.try_recv().is_err(),
         "--once returned while its ordinary dispatch was still active"
@@ -1469,11 +1486,11 @@ fn polling_once_preserves_job_manager_drain_before_exit() {
         let _ = runner_tx.send(result);
     });
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !started.exists() {
-        assert!(Instant::now() < deadline, "--once Job did not start");
-        thread::sleep(Duration::from_millis(5));
-    }
+    wait_for_path(
+        &started,
+        Instant::now() + Duration::from_secs(5),
+        "--once Job to start",
+    );
     assert!(
         runner_rx.try_recv().is_err(),
         "--once returned before JobManager drained its active Job"
@@ -1548,14 +1565,11 @@ fn polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying
         let _ = runner_tx.send(result);
     });
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !started.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "shutdown fixture dispatch did not start"
-        );
-        thread::sleep(Duration::from_millis(5));
-    }
+    wait_for_path(
+        &started,
+        Instant::now() + Duration::from_secs(5),
+        "shutdown fixture dispatch to start",
+    );
     let shutdown_started = Instant::now();
     shutdown.store(true, Ordering::SeqCst);
     runner_rx
@@ -1568,13 +1582,12 @@ fn polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying
         "shutdown exceeded its bounded cleanup budget"
     );
     let polls_after_completion = poll_count.load(Ordering::SeqCst);
-    thread::sleep(Duration::from_millis(50));
+    server.finish();
     assert_eq!(
         poll_count.load(Ordering::SeqCst),
         polls_after_completion,
         "polling continued after shutdown completed"
     );
-    server.finish();
 
     assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
     assert_eq!(runtime.dispatches.active(), 0);
@@ -1794,14 +1807,11 @@ fn polling_persistent_shell_exec_remains_responsive_to_close() {
         let _ = runner_tx.send(result);
     });
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !started.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "persistent-shell exec did not start"
-        );
-        thread::sleep(Duration::from_millis(5));
-    }
+    wait_for_path(
+        &started,
+        Instant::now() + Duration::from_secs(5),
+        "persistent-shell exec to start",
+    );
     allow_close.store(true, Ordering::SeqCst);
     runner_rx
         .recv_timeout(Duration::from_secs(10))

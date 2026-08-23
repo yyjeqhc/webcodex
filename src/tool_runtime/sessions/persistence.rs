@@ -10,10 +10,10 @@ use serde::Deserialize;
 use super::super::helpers::is_safe_job_id;
 use super::super::project_instructions::ProjectInstructionsSummarySnapshot;
 use super::events::{
-    exploration_tool_kind, is_valid_session_id, sanitize_failure_expectation_result,
-    sanitize_observed_paths, sanitize_persisted_validation_output_summary,
-    sanitize_persistent_shell_event_evidence, sanitize_tool_execution_state,
-    session_input_summary_for_tool,
+    context_result_summary_for_tool_result, exploration_tool_kind, is_valid_session_id,
+    sanitize_failure_expectation_result, sanitize_observed_paths,
+    sanitize_persisted_validation_output_summary, sanitize_persistent_shell_event_evidence,
+    sanitize_tool_execution_state, session_input_summary_for_tool,
 };
 use super::model::{
     ColdSessionRecord, DurableCurrentBinding, PersistedCurrentBindings, PersistedSessionLedger,
@@ -70,6 +70,7 @@ impl PersistedSessionRecord {
             events,
             messages,
             events_observed: record.events_observed,
+            context_revision: record.context_revision,
             materialized_validation_job_ids: record
                 .materialized_validation_job_ids
                 .iter()
@@ -93,6 +94,7 @@ impl PersistedSessionRecord {
             && self.created_at == record.created_at
             && self.updated_at == record.updated_at
             && self.events_observed == record.events_observed
+            && self.context_revision == record.context_revision
             && self
                 .materialized_validation_job_ids
                 .iter()
@@ -241,6 +243,11 @@ impl PersistedSessionRecord {
         // eviction. A live ledger that exceeded the cap has the true cumulative
         // count persisted.
         let retained_events = events.len() as u64;
+        let retained_context_revision = events
+            .iter()
+            .filter_map(|event| event.context_revision)
+            .max()
+            .unwrap_or(0);
         let project = self.project.map(|value| bound_summary_string(value.trim()));
         let owner_authority_fingerprint =
             sanitize_owner_authority_fingerprint(self.owner_authority_fingerprint);
@@ -263,6 +270,7 @@ impl PersistedSessionRecord {
             updated_at: self.updated_at.max(self.created_at),
             events,
             events_observed: self.events_observed.max(retained_events),
+            context_revision: self.context_revision.max(retained_context_revision),
             materialized_validation_job_ids,
             messages,
             project_instructions: None,
@@ -344,6 +352,7 @@ pub(super) fn cold_session_from_persisted(
         guards: persisted.guards,
         lifecycle: persisted.lifecycle,
         updated_at: persisted.updated_at,
+        context_revision: persisted.context_revision,
         project_instructions,
         raw,
     })
@@ -644,6 +653,9 @@ pub(super) fn sanitize_persisted_event(
     event.input_summary = event
         .input_summary
         .map(|value| session_input_summary_for_tool(&event.tool_name, &value));
+    event.context_result_summary = event
+        .context_result_summary
+        .and_then(|value| context_result_summary_for_tool_result(&event.tool_name, &value));
     event.validation_output_summary = event
         .validation_output_summary
         .and_then(|value| sanitize_persisted_validation_output_summary(&event.tool_name, &value));

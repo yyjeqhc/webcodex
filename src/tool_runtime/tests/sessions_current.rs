@@ -508,6 +508,11 @@ async fn generic_tool_call_uses_bound_current_session_without_session_id() {
     let result = outcome.result.unwrap();
     assert_eq!(result.output["session_recorded"], true);
     assert_eq!(result.output["session_id"], session.session_id);
+    assert_eq!(result.output["session_context_revision"], 1);
+    assert_eq!(
+        result.output["session_continuity"]["status"],
+        "unacknowledged"
+    );
     assert_eq!(
         runtime
             .sessions

@@ -269,7 +269,7 @@ impl ToolRuntime {
                     &mut result,
                     session_context::SESSION_PROJECT_MISMATCH_KIND,
                 );
-                let event_id = self.sessions.record_tool_call_finished(
+                let recording = self.sessions.record_model_facing_tool_call_finished(
                     session_event,
                     false,
                     &result.output,
@@ -280,8 +280,13 @@ impl ToolRuntime {
                     &mut result,
                     &self.sessions,
                     session_id,
-                    event_id,
+                    recording.as_ref().map(|recorded| recorded.event_id.clone()),
                 );
+                if let Some(recorded) = recording.as_ref() {
+                    session_context::add_session_context_continuity(&mut result, recorded);
+                    self.add_session_history_recovery(&mut result, recorded, context.auth)
+                        .await;
+                }
                 session_context::add_session_attention(
                     &mut result,
                     &self.sessions,
@@ -315,7 +320,7 @@ impl ToolRuntime {
                     None,
                     recorder_metadata.clone(),
                 );
-                let event_id = self.sessions.record_tool_call_finished(
+                let recording = self.sessions.record_model_facing_tool_call_finished(
                     session_event,
                     false,
                     &result.output,
@@ -326,8 +331,13 @@ impl ToolRuntime {
                     &mut result,
                     &self.sessions,
                     session_id,
-                    event_id,
+                    recording.as_ref().map(|recorded| recorded.event_id.clone()),
                 );
+                if let Some(recorded) = recording.as_ref() {
+                    session_context::add_session_context_continuity(&mut result, recorded);
+                    self.add_session_history_recovery(&mut result, recorded, context.auth)
+                        .await;
+                }
                 session_context::add_session_attention(
                     &mut result,
                     &self.sessions,
@@ -376,7 +386,7 @@ impl ToolRuntime {
                     .get("error_kind")
                     .and_then(Value::as_str)
                     .unwrap_or("session_closed");
-                let event_id = self.sessions.record_tool_call_finished(
+                let recording = self.sessions.record_model_facing_tool_call_finished(
                     session_event,
                     false,
                     &result.output,
@@ -387,8 +397,13 @@ impl ToolRuntime {
                     &mut result,
                     &self.sessions,
                     session_id,
-                    event_id,
+                    recording.as_ref().map(|recorded| recorded.event_id.clone()),
                 );
+                if let Some(recorded) = recording.as_ref() {
+                    session_context::add_session_context_continuity(&mut result, recorded);
+                    self.add_session_history_recovery(&mut result, recorded, context.auth)
+                        .await;
+                }
                 session_context::add_session_attention(
                     &mut result,
                     &self.sessions,
@@ -422,7 +437,7 @@ impl ToolRuntime {
                     &mut result,
                     "session_guard_denied",
                 );
-                let event_id = self.sessions.record_tool_call_finished(
+                let recording = self.sessions.record_model_facing_tool_call_finished(
                     session_event,
                     false,
                     &result.output,
@@ -433,8 +448,13 @@ impl ToolRuntime {
                     &mut result,
                     &self.sessions,
                     session_id,
-                    event_id,
+                    recording.as_ref().map(|recorded| recorded.event_id.clone()),
                 );
+                if let Some(recorded) = recording.as_ref() {
+                    session_context::add_session_context_continuity(&mut result, recorded);
+                    self.add_session_history_recovery(&mut result, recorded, context.auth)
+                        .await;
+                }
                 session_context::add_session_attention(
                     &mut result,
                     &self.sessions,
@@ -565,7 +585,7 @@ impl ToolRuntime {
             .filter(|mode| matches!(mode, crate::tool_runtime::SessionMode::Inspect))
             .map(|_| crate::command_sandbox::INSPECT_SANDBOX_MODE);
         let mut result = self
-            .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
+            .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode(
                 call,
                 context.auth,
                 context.transport.into(),
@@ -574,6 +594,7 @@ impl ToolRuntime {
                 recorder_metadata.clone(),
                 inherited_sandbox,
                 context.window,
+                context.session_id.is_none(),
             )
             .await;
         if let Some(start) = session_event.as_mut() {
@@ -622,7 +643,7 @@ impl ToolRuntime {
             );
         }
         let session_log_result = session_log_result_for_tool(&request.tool_name, &result.output);
-        let outer_event_id = self.sessions.record_tool_call_finished(
+        let outer_recording = self.sessions.record_model_facing_tool_call_finished(
             session_event,
             result.success,
             &session_log_result,
@@ -640,8 +661,15 @@ impl ToolRuntime {
                 &mut result,
                 &self.sessions,
                 session_id,
-                outer_event_id,
+                outer_recording
+                    .as_ref()
+                    .map(|recorded| recorded.event_id.clone()),
             );
+            if let Some(recorded) = outer_recording.as_ref() {
+                session_context::add_session_context_continuity(&mut result, recorded);
+                self.add_session_history_recovery(&mut result, recorded, context.auth)
+                    .await;
+            }
             session_context::add_session_attention(
                 &mut result,
                 &self.sessions,

@@ -734,6 +734,121 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution() 
 }
 
 #[tokio::test]
+async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_invalid_ack() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db, runtime.clone()));
+
+    let (status, session_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        227,
+        "start_session",
+        json!({"title": "context continuity dogfood"}),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{session_body}");
+    let session_id = stateless_tool_output(&session_body)["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let first_args = with_mcp_recording_session(json!({}), &session_id);
+    let (status, first_body) =
+        stateless_2026_tool_call(&service, "secret", 228, "list_tools", first_args, None).await;
+    assert_eq!(status, StatusCode::OK, "{first_body}");
+    let first = stateless_tool_output(&first_body);
+    assert_eq!(first["session_context_revision"], 1);
+    assert_eq!(first["session_continuity"]["status"], "unacknowledged");
+    assert!(first["session_recovery"]["model_facing_events"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    let mut exact_args = with_mcp_recording_session(json!({}), &session_id);
+    exact_args.as_object_mut().unwrap().insert(
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD.to_string(),
+        json!(1),
+    );
+    let (status, exact_body) =
+        stateless_2026_tool_call(&service, "secret", 229, "list_tools", exact_args, None).await;
+    assert_eq!(status, StatusCode::OK, "{exact_body}");
+    let exact = stateless_tool_output(&exact_body);
+    assert_eq!(exact["session_context_revision"], 2);
+    assert!(exact.get("session_continuity").is_none());
+    assert!(exact.get("session_recovery").is_none());
+
+    let mut stale_args = with_mcp_recording_session(json!({}), &session_id);
+    stale_args.as_object_mut().unwrap().insert(
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD.to_string(),
+        json!(1),
+    );
+    let (status, stale_body) =
+        stateless_2026_tool_call(&service, "secret", 230, "list_tools", stale_args, None).await;
+    assert_eq!(status, StatusCode::OK, "{stale_body}");
+    let stale = stateless_tool_output(&stale_body);
+    assert_eq!(stale["session_context_revision"], 3);
+    assert_eq!(stale["session_continuity"]["status"], "behind");
+    assert_eq!(stale["session_continuity"]["ack_revision"], 1);
+    assert_eq!(stale["session_continuity"]["pre_call_revision"], 2);
+    assert_eq!(
+        stale["session_recovery"]["model_facing_events"][0]["context_revision"],
+        2
+    );
+
+    let mut recovered_args = with_mcp_recording_session(json!({}), &session_id);
+    recovered_args.as_object_mut().unwrap().insert(
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD.to_string(),
+        json!(3),
+    );
+    let (status, recovered_body) =
+        stateless_2026_tool_call(&service, "secret", 231, "list_tools", recovered_args, None).await;
+    assert_eq!(status, StatusCode::OK, "{recovered_body}");
+    let recovered = stateless_tool_output(&recovered_body);
+    assert_eq!(recovered["session_context_revision"], 4);
+    assert!(recovered.get("session_recovery").is_none());
+
+    let mut invalid_args = with_mcp_recording_session(json!({}), &session_id);
+    invalid_args.as_object_mut().unwrap().insert(
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD.to_string(),
+        json!("not-a-revision"),
+    );
+    let (status, invalid_body) =
+        stateless_2026_tool_call(&service, "secret", 232, "list_tools", invalid_args, None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "invalid ACK must not block tool: {invalid_body}"
+    );
+    let invalid = stateless_tool_output(&invalid_body);
+    assert_eq!(invalid["session_context_revision"], 5);
+    assert_eq!(invalid["session_continuity"]["status"], "invalid");
+    assert!(invalid.get("session_recovery").is_some());
+
+    let omitted_args = with_mcp_recording_session(json!({}), &session_id);
+    let (status, omitted_body) =
+        stateless_2026_tool_call(&service, "secret", 233, "list_tools", omitted_args, None).await;
+    assert_eq!(status, StatusCode::OK, "{omitted_body}");
+    let omitted = stateless_tool_output(&omitted_body);
+    assert_eq!(omitted["session_context_revision"], 6);
+    assert_eq!(omitted["session_continuity"]["status"], "unacknowledged");
+    assert!(omitted.get("session_recovery").is_some());
+
+    let audit = serde_json::to_string(
+        &runtime
+            .sessions
+            .summary(&session_id, Some(100))
+            .unwrap()
+            .events,
+    )
+    .unwrap();
+    assert!(!audit.contains("ack_session_context_revision"));
+    assert!(!audit.contains("__webcodex_stateless_ack_session_context_revision"));
+}
+
+#[tokio::test]
 async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_provenance() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();

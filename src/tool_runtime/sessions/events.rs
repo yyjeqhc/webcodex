@@ -13,14 +13,15 @@ use crate::lsp_bridge::{
 use serde_json::{json, Value};
 
 use super::model::{
-    PersistentShellEventEvidence, SessionEvent, ToolCallExpectation, ToolCallRecorderMetadata,
-    MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS, SESSION_ID_PREFIX,
-    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD,
-    TOOL_CALL_EXPECTATION_METADATA_FIELDS, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
-    TOOL_EXPECTATION_RESULT_MATCHED, TOOL_EXPECTATION_RESULT_MISMATCH,
-    TOOL_EXPECTATION_RESULT_NONE, TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
-    TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS, TOOL_EXPECTED_FAILURE_FIELD,
-    TOOL_EXPECTED_FAILURE_KIND_FIELD,
+    PersistentShellEventEvidence, SessionContextRevisionAck, SessionEvent, ToolCallExpectation,
+    ToolCallRecorderMetadata, MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS,
+    SESSION_ID_PREFIX, TOOL_ASSERTION_NAME_FIELD,
+    TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
+    TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD, TOOL_CALL_EXPECTATION_METADATA_FIELDS,
+    TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_EXPECTATION_RESULT_MATCHED,
+    TOOL_EXPECTATION_RESULT_MISMATCH, TOOL_EXPECTATION_RESULT_NONE,
+    TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE, TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS,
+    TOOL_EXPECTED_FAILURE_FIELD, TOOL_EXPECTED_FAILURE_KIND_FIELD,
 };
 use super::util::redact_and_bound_value;
 use super::util::{bound_summary_string, validation_excerpt};
@@ -49,6 +50,16 @@ impl ToolCallRecorderMetadata {
                         .collect()
                 })
                 .unwrap_or_default(),
+            ack_session_context_revision: match arguments
+                .as_object()
+                .and_then(|obj| obj.get(TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD))
+            {
+                None => SessionContextRevisionAck::Unacknowledged,
+                Some(value) => value
+                    .as_u64()
+                    .map(SessionContextRevisionAck::Revision)
+                    .unwrap_or(SessionContextRevisionAck::Invalid),
+            },
         }
     }
 }
@@ -108,6 +119,7 @@ pub(crate) fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
         obj.remove(key);
     }
     obj.remove(TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD);
+    obj.remove(TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD);
     Value::Object(obj)
 }
 
@@ -772,6 +784,72 @@ pub(super) fn extract_job_id(output: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+pub(super) fn context_result_summary_for_tool_result(
+    tool_name: &str,
+    output: &Value,
+) -> Option<Value> {
+    fn selected(output: &Value, keys: &[&str]) -> Option<Value> {
+        let source = output.as_object()?;
+        let mut summary = serde_json::Map::new();
+        for key in keys {
+            if let Some(value) = source.get(*key) {
+                summary.insert((*key).to_string(), value.clone());
+            }
+        }
+        (!summary.is_empty()).then_some(Value::Object(summary))
+    }
+
+    let summary = match tool_name {
+        "workspace_checkpoint_create" => selected(
+            output,
+            &[
+                "checkpoint_id",
+                "head",
+                "branch",
+                "complete",
+                "tracked_diff_bytes",
+                "staged_diff_bytes",
+                "untracked_file_count",
+                "status_summary",
+                "kind",
+            ],
+        ),
+        "git_status" if output.get("status_excerpt").is_some() => selected(
+            output,
+            &["clean", "status_excerpt", "status_truncated", "exit_code"],
+        ),
+        "git_status" => output.as_object().map(|source| {
+            let stdout = source
+                .get("stdout")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let status_excerpt = validation_excerpt(stdout);
+            json!({
+                "clean": stdout.trim().is_empty(),
+                "status_excerpt": status_excerpt.text,
+                "status_truncated": status_excerpt.filtered,
+                "exit_code": source.get("exit_code").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "git_log" => selected(output, &["commits", "next_skip", "truncated"]),
+        "git_diff_summary" | "show_changes" => selected(
+            output,
+            &[
+                "clean",
+                "branch",
+                "head",
+                "upstream",
+                "ahead",
+                "behind",
+                "counts",
+                "changed_files",
+            ],
+        ),
+        _ => None,
+    };
+    summary.map(|value| redact_and_bound_value(&value))
 }
 pub(crate) fn validation_output_summary_for_tool_result(
     tool_name: &str,

@@ -582,6 +582,33 @@ impl ToolRuntime {
         inherited_sandbox: Option<&'static str>,
         window: Option<&crate::client_window::ClientWindow>,
     ) -> ToolResult {
+        self.dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode(
+            call,
+            auth,
+            transport,
+            use_current_session,
+            allow_cross_project_session,
+            recorder_metadata,
+            inherited_sandbox,
+            window,
+            true,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode(
+        &self,
+        call: ToolCall,
+        auth: Option<&AuthContext>,
+        transport: sessions::SessionTransport,
+        use_current_session: bool,
+        allow_cross_project_session: bool,
+        recorder_metadata: sessions::ToolCallRecorderMetadata,
+        inherited_sandbox: Option<&'static str>,
+        window: Option<&crate::client_window::ClientWindow>,
+        inner_model_facing_recording: bool,
+    ) -> ToolResult {
         // Phase-1 edit usage telemetry: argument-free structured log only.
         // Does not alter execution, session ledger, Action Audit, or schemas.
         let mut edit_usage = edit_tool_telemetry::start_edit_tool_usage(call.tool_name());
@@ -595,6 +622,7 @@ impl ToolRuntime {
                 recorder_metadata,
                 inherited_sandbox,
                 window,
+                inner_model_facing_recording,
             )
             .await;
         if let Some(guard) = edit_usage.as_mut() {
@@ -649,6 +677,52 @@ impl ToolRuntime {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn record_dispatch_session_result(
+        &self,
+        result: &mut ToolResult,
+        session_id: &str,
+        start: Option<sessions::ToolCallStart>,
+        tool_name: &str,
+        error_kind: Option<&str>,
+        auth: Option<&AuthContext>,
+        model_facing: bool,
+    ) {
+        let success = result.success;
+        let error = result.error.clone();
+        if model_facing {
+            let session_output =
+                super::tool_audit::session_log_result_for_tool(tool_name, &result.output);
+            let recorded = self.sessions.record_model_facing_tool_call_finished(
+                start,
+                success,
+                &session_output,
+                error.as_deref(),
+                error_kind,
+            );
+            add_session_telemetry_hint(
+                result,
+                &self.sessions,
+                session_id,
+                recorded.as_ref().map(|recorded| recorded.event_id.clone()),
+            );
+            if let Some(recorded) = recorded.as_ref() {
+                session_context::add_session_context_continuity(result, recorded);
+                self.add_session_history_recovery(result, recorded, auth)
+                    .await;
+            }
+        } else {
+            let event_id = self.sessions.record_tool_call_finished(
+                start,
+                success,
+                &result.output,
+                error.as_deref(),
+                error_kind,
+            );
+            add_session_telemetry_hint(result, &self.sessions, session_id, event_id);
+        }
+    }
+
     async fn dispatch_with_auth_transport_options_and_metadata_inner(
         &self,
         mut call: ToolCall,
@@ -659,6 +733,7 @@ impl ToolRuntime {
         recorder_metadata: sessions::ToolCallRecorderMetadata,
         inherited_sandbox: Option<&'static str>,
         window: Option<&crate::client_window::ClientWindow>,
+        inner_model_facing_recording: bool,
     ) -> ToolResult {
         call = call
             .with_coding_agent_recording_session_id(recorder_metadata.recording_session_id.clone());
@@ -784,14 +859,16 @@ impl ToolRuntime {
                     &mut result,
                     session_context::SESSION_PROJECT_MISMATCH_KIND,
                 );
-                let event_id = self.sessions.record_tool_call_finished(
+                self.record_dispatch_session_result(
+                    &mut result,
+                    session_id,
                     session_start,
-                    false,
-                    &result.output,
-                    result.error.as_deref(),
+                    call.tool_name(),
                     Some(session_context::SESSION_PROJECT_MISMATCH_KIND),
-                );
-                add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
+                    auth,
+                    inner_model_facing_recording,
+                )
+                .await;
                 return result;
             }
         }
@@ -841,14 +918,16 @@ impl ToolRuntime {
                     None,
                     recorder_metadata.clone(),
                 );
-                let event_id = self.sessions.record_tool_call_finished(
+                self.record_dispatch_session_result(
+                    &mut result,
+                    session_id,
                     session_start,
-                    false,
-                    &result.output,
-                    result.error.as_deref(),
+                    call.tool_name(),
                     Some("tool_disabled"),
-                );
-                add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
+                    auth,
+                    inner_model_facing_recording,
+                )
+                .await;
             }
             return result;
         }
@@ -873,16 +952,19 @@ impl ToolRuntime {
                 let error_kind = result
                     .output
                     .get("error_kind")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("session_closed");
-                let event_id = self.sessions.record_tool_call_finished(
+                    .and_then(Value::as_str)
+                    .unwrap_or("session_closed")
+                    .to_string();
+                self.record_dispatch_session_result(
+                    &mut result,
+                    session_id,
                     session_start,
-                    false,
-                    &result.output,
-                    result.error.as_deref(),
-                    Some(error_kind),
-                );
-                add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
+                    call.tool_name(),
+                    Some(error_kind.as_str()),
+                    auth,
+                    inner_model_facing_recording,
+                )
+                .await;
                 return result;
             }
             if let Some(denial) = self.sessions.guard_denial(session_id, call.tool_name()) {
@@ -900,14 +982,16 @@ impl ToolRuntime {
                     &mut result,
                     "session_guard_denied",
                 );
-                let event_id = self.sessions.record_tool_call_finished(
+                self.record_dispatch_session_result(
+                    &mut result,
+                    session_id,
                     session_start,
-                    false,
-                    &result.output,
-                    result.error.as_deref(),
+                    call.tool_name(),
                     Some("session_guard_denied"),
-                );
-                add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
+                    auth,
+                    inner_model_facing_recording,
+                )
+                .await;
                 return result;
             }
         }
@@ -938,14 +1022,16 @@ impl ToolRuntime {
                 super::process::classify_process_failure(err.error.as_deref().unwrap_or_default());
             decorate_structured_execution_prestart_denial(call.tool_name(), &mut err, failure_kind);
             if let Some(session_id) = session_id.as_deref() {
-                let event_id = self.sessions.record_tool_call_finished(
+                self.record_dispatch_session_result(
+                    &mut err,
+                    session_id,
                     session_start,
-                    false,
-                    &err.output,
-                    err.error.as_deref(),
+                    call.tool_name(),
                     None,
-                );
-                add_session_telemetry_hint(&mut err, &self.sessions, session_id, event_id);
+                    auth,
+                    inner_model_facing_recording,
+                )
+                .await;
             }
             return err;
         }
@@ -977,14 +1063,16 @@ impl ToolRuntime {
                             allow_cross_project_session,
                         );
                     }
-                    let event_id = self.sessions.record_tool_call_finished(
+                    self.record_dispatch_session_result(
+                        &mut result,
+                        session_id,
                         session_start,
-                        result.success,
-                        &result.output,
-                        result.error.as_deref(),
+                        call.tool_name(),
                         None,
-                    );
-                    add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
+                        auth,
+                        inner_model_facing_recording,
+                    )
+                    .await;
                 }
                 return result;
             }
@@ -1022,14 +1110,16 @@ impl ToolRuntime {
                     allow_cross_project_session,
                 );
             }
-            let event_id = self.sessions.record_tool_call_finished(
+            self.record_dispatch_session_result(
+                &mut result,
+                session_id,
                 session_start,
-                result.success,
-                &result.output,
-                result.error.as_deref(),
+                tool_name,
                 None,
-            );
-            add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
+                auth,
+                inner_model_facing_recording,
+            )
+            .await;
         }
         if let Some(context) = activity_context {
             self.activity.record(super::activity::ActivityRecord {

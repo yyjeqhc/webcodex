@@ -59,6 +59,10 @@ pub(crate) const TOOL_CALL_RECORDING_SESSION_ID_FIELD: &str = "recording_session
 pub(crate) const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: &str = "ack_session_message_ids";
 pub(crate) const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: &str =
     "__webcodex_stateless_ack_session_message_ids";
+pub(crate) const TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: &str =
+    "ack_session_context_revision";
+pub(crate) const TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD: &str =
+    "__webcodex_stateless_ack_session_context_revision";
 pub(crate) const MAX_TOOL_CALL_ACK_MESSAGE_IDS: usize = 8;
 pub(crate) const TOOL_EXPECTED_FAILURE_FIELD: &str = "expected_failure";
 pub(crate) const TOOL_EXPECTED_FAILURE_KIND_FIELD: &str = "expected_failure_kind";
@@ -325,6 +329,10 @@ pub(super) struct SessionRecord {
     /// than are retained now". The persisted counterpart carries the additive
     /// serde default; the in-memory record is always constructed explicitly.
     pub(super) events_observed: u64,
+    /// Durable Session-local model-facing continuity watermark. This advances
+    /// exactly once for each recorded ToolResult returned to the model;
+    /// generic/background Session events never advance it.
+    pub(super) context_revision: u64,
     /// Bounded durable exact identities for terminal structured-validation Jobs
     /// already synthesized into this Session. Independent of the retained event
     /// deque so event FIFO eviction cannot resurrect an authoritative Job.
@@ -361,6 +369,7 @@ pub(super) struct ColdSessionRecord {
     pub(super) lifecycle: SessionLifecycle,
     pub(super) updated_at: i64,
     pub(super) project_instructions: Option<ProjectInstructionsSummarySnapshot>,
+    pub(super) context_revision: u64,
     pub(super) raw: Arc<RawValue>,
 }
 
@@ -404,6 +413,13 @@ impl StoredSession {
         match self {
             Self::Hot(record) => record.updated_at,
             Self::Cold(record) => record.updated_at,
+        }
+    }
+
+    pub(super) fn context_revision(&self) -> u64 {
+        match self {
+            Self::Hot(record) => record.context_revision,
+            Self::Cold(record) => record.context_revision,
         }
     }
 
@@ -695,6 +711,10 @@ pub(super) struct PersistedSessionRecord {
     /// persisted events" for legacy compatibility.
     #[serde(default)]
     pub(super) events_observed: u64,
+    /// Additive ledger-v1 model-facing continuity watermark. Legacy rows
+    /// deserialize to zero and begin issuing revisions only after upgrade.
+    #[serde(default)]
+    pub(super) context_revision: u64,
     /// Additive ledger-v1 field. Exact identities are sanitized and bounded on
     /// restore; old ledgers deserialize to an empty set.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -756,6 +776,8 @@ pub(crate) struct ToolCallStart {
     pub(crate) started_instant: Instant,
     pub(crate) permission: Option<PermissionDecision>,
     pub(crate) expectation: ToolCallExpectation,
+    pub(crate) pre_call_context_revision: u64,
+    pub(crate) ack_session_context_revision: SessionContextRevisionAck,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -772,6 +794,28 @@ pub(crate) struct ToolCallRecorderMetadata {
     pub(crate) recording_session_id: Option<String>,
     pub(crate) expectation: ToolCallExpectation,
     pub(crate) ack_session_message_ids: Vec<String>,
+    pub(crate) ack_session_context_revision: SessionContextRevisionAck,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum SessionContextRevisionAck {
+    #[default]
+    Unacknowledged,
+    Revision(u64),
+    Invalid,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RecordedModelFacingToolCall {
+    pub(crate) event_id: String,
+    pub(crate) session_id: String,
+    pub(crate) context_revision: u64,
+    pub(crate) pre_call_context_revision: u64,
+    pub(crate) ack_session_context_revision: SessionContextRevisionAck,
+    /// Retained model-facing results strictly after the caller's proven view and
+    /// at or before the pre-call watermark. The current ToolResult is excluded.
+    pub(crate) recovery_events: Vec<SessionEvent>,
+    pub(crate) history_lost: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -839,6 +883,14 @@ pub(crate) struct SessionEvent {
     pub(crate) call_id: Option<String>,
     pub(crate) session_id: String,
     pub(crate) kind: String,
+    /// Model-facing context revision assigned atomically with a finished
+    /// ToolResult. Started/background/system events leave this unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) context_revision: Option<u64>,
+    /// Closed, bounded consequence projection used only for model-context
+    /// recovery. It never stores arbitrary ToolResult bodies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) context_result_summary: Option<Value>,
     pub(crate) timestamp: i64,
     pub(crate) transport: String,
     pub(crate) tool_name: String,

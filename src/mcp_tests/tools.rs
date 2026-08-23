@@ -168,6 +168,9 @@ fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_too
             .contains_key(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD));
         assert!(!properties
             .contains_key(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD));
+        assert!(!properties.contains_key(
+            crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD
+        ));
     }
 
     let generic = registered_tool_specs()
@@ -179,6 +182,8 @@ fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_too
         .contains_key(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD));
     assert!(!generic_properties
         .contains_key(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD));
+    assert!(!generic_properties
+        .contains_key(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD));
 }
 
 #[test]
@@ -222,6 +227,47 @@ fn stateless_ack_wrapper_normalizes_and_is_removed_before_concrete_tool_parsing(
                 .collect::<Vec<_>>()
     });
     assert!(strip_stateless_ack_session_message_ids(&mut oversized).is_err());
+}
+
+#[test]
+fn stateless_context_revision_ack_is_request_scoped_and_removed_before_parsing() {
+    let mut arguments = json!({
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: 41,
+    });
+    let ack = strip_stateless_ack_session_context_revision(&mut arguments).unwrap();
+    assert_eq!(ack, json!(41));
+    assert!(arguments
+        .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD)
+        .is_none());
+    arguments
+        [crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] =
+        ack;
+    let recorder =
+        crate::tool_runtime::sessions::ToolCallRecorderMetadata::from_arguments(&arguments);
+    assert_eq!(
+        recorder.ack_session_context_revision,
+        crate::tool_runtime::sessions::SessionContextRevisionAck::Revision(41)
+    );
+    let concrete = crate::tool_runtime::sessions::strip_tool_call_expectation_metadata(arguments);
+    assert!(concrete
+        .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD)
+        .is_none());
+    crate::tool_runtime::ToolCall::from_tool_name("list_tools", concrete)
+        .expect("context revision wrapper metadata must be gone before concrete parsing");
+
+    let mut malformed = json!({
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: "not-a-revision",
+    });
+    let malformed_ack = strip_stateless_ack_session_context_revision(&mut malformed).unwrap();
+    malformed
+        [crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] =
+        malformed_ack;
+    let recorder =
+        crate::tool_runtime::sessions::ToolCallRecorderMetadata::from_arguments(&malformed);
+    assert_eq!(
+        recorder.ack_session_context_revision,
+        crate::tool_runtime::sessions::SessionContextRevisionAck::Invalid
+    );
 }
 
 #[test]

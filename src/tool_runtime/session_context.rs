@@ -3,7 +3,7 @@ use super::tool_definition::{
     runtime_tool_allows_current_session_fallback, runtime_tool_is_shell_like,
     runtime_tool_requires_session_project_escape,
 };
-use super::{RecoveryKind, ToolCall, ToolResult};
+use super::{RecoveryKind, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -12,6 +12,7 @@ pub(crate) const SESSION_PROJECT_MISMATCH_KIND: &str = "session_project_mismatch
 pub(crate) const ALLOW_CROSS_PROJECT_SESSION_FIELD: &str = "allow_cross_project_session";
 const SESSION_ATTENTION_MAX_MESSAGES: usize = 3;
 const SESSION_ATTENTION_MAX_BODY_BYTES: usize = 3072;
+const SESSION_CONTINUITY_RECOVERY_EVENT_LIMIT: usize = 20;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionProjectMismatch {
@@ -388,6 +389,156 @@ pub(crate) fn add_session_telemetry_hint(
         );
     }
     result.output = Value::Object(output);
+}
+
+pub(crate) fn add_session_context_continuity(
+    result: &mut ToolResult,
+    recorded: &sessions::RecordedModelFacingToolCall,
+) {
+    let mut output = match std::mem::take(&mut result.output) {
+        Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("value".to_string(), other);
+            map
+        }
+    };
+    output.insert(
+        "session_context_revision".to_string(),
+        Value::from(recorded.context_revision),
+    );
+    let (status, ack_revision, needs_recovery, events_after_ack) =
+        match recorded.ack_session_context_revision {
+            sessions::SessionContextRevisionAck::Revision(revision)
+                if revision == recorded.pre_call_context_revision =>
+            {
+                ("exact", Some(revision), false, 0)
+            }
+            sessions::SessionContextRevisionAck::Revision(revision)
+                if revision < recorded.pre_call_context_revision =>
+            {
+                (
+                    "behind",
+                    Some(revision),
+                    true,
+                    recorded.pre_call_context_revision.saturating_sub(revision),
+                )
+            }
+            sessions::SessionContextRevisionAck::Revision(revision) => (
+                "invalid",
+                Some(revision),
+                true,
+                recorded.pre_call_context_revision,
+            ),
+            sessions::SessionContextRevisionAck::Unacknowledged => (
+                "unacknowledged",
+                None,
+                true,
+                recorded.pre_call_context_revision,
+            ),
+            sessions::SessionContextRevisionAck::Invalid => {
+                ("invalid", None, true, recorded.pre_call_context_revision)
+            }
+        };
+    if needs_recovery {
+        let total_retained = recorded.recovery_events.len();
+        let events = recorded
+            .recovery_events
+            .iter()
+            .rev()
+            .take(SESSION_CONTINUITY_RECOVERY_EVENT_LIMIT)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|event| {
+                json!({
+                    "context_revision": event.context_revision,
+                    "tool_name": event.tool_name,
+                    "status": event.status,
+                    "changed_paths": event.changed_paths,
+                    "job_id": event.job_id,
+                    "error_kind": event.error_kind,
+                    "effect_evidence": event.effect_evidence,
+                    "context_result": event.context_result_summary,
+                    "execution_summary": event.validation_output_summary,
+                })
+            })
+            .collect::<Vec<_>>();
+        let omitted_count = total_retained.saturating_sub(events.len());
+        output.insert(
+            "session_continuity".to_string(),
+            json!({
+                "status": status,
+                "ack_revision": ack_revision,
+                "pre_call_revision": recorded.pre_call_context_revision,
+                "events_after_ack": events_after_ack,
+                "history_lost": recorded.history_lost,
+            }),
+        );
+        output.insert(
+            "session_recovery".to_string(),
+            json!({
+                "model_facing_events": events,
+                "omitted_count": omitted_count,
+                "truncated": omitted_count > 0,
+                "history_lost": recorded.history_lost,
+            }),
+        );
+    }
+    result.output = Value::Object(output);
+}
+
+impl ToolRuntime {
+    pub(crate) async fn add_session_history_recovery(
+        &self,
+        result: &mut ToolResult,
+        recorded: &sessions::RecordedModelFacingToolCall,
+        auth: Option<&AuthContext>,
+    ) {
+        if !recorded.history_lost {
+            return;
+        }
+        let project = self
+            .sessions
+            .session_project(&recorded.session_id)
+            .flatten();
+        let handoff = self
+            .session_handoff_summary(
+                recorded.session_id.clone(),
+                project,
+                Some(true),
+                Some(true),
+                Some(true),
+                false,
+                Some(20),
+                auth,
+            )
+            .await;
+        if !handoff.success {
+            return;
+        }
+        let current = json!({
+            "workspace": handoff.output.get("workspace"),
+            "checkpoints": handoff.output.get("checkpoints"),
+            "validation": handoff.output.get("validation"),
+            "jobs": handoff.output.get("jobs"),
+            "open_todos": handoff.output.get("open_todos"),
+            "open_risks": handoff.output.get("open_risks"),
+            "open_questions": handoff.output.get("open_questions"),
+            "open_guidance": handoff.output.get("open_guidance"),
+            "recent_decisions": handoff.output.get("recent_decisions"),
+            "work_performed": handoff.output.get("work_performed"),
+            "changed_paths": handoff.output.get("changed_paths"),
+            "suggested_next_actions": handoff.output.get("suggested_next_actions"),
+        });
+        if let Some(recovery) = result
+            .output
+            .get_mut("session_recovery")
+            .and_then(Value::as_object_mut)
+        {
+            recovery.insert("current_handoff".to_string(), current);
+        }
+    }
 }
 
 pub(crate) fn add_session_attention(

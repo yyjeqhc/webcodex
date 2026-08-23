@@ -14,6 +14,40 @@ use super::*;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+fn record_model_facing_result(
+    store: &SessionStore,
+    session_id: &str,
+    tool_name: &str,
+    ack: SessionContextRevisionAck,
+    success: bool,
+    output: Value,
+) -> RecordedModelFacingToolCall {
+    let arguments = json!({"project": "proj"});
+    let start = store
+        .record_tool_call_started_with_metadata(
+            Some(session_id),
+            SessionTransport::Mcp,
+            tool_name,
+            &arguments,
+            Some("proj".to_string()),
+            ToolCallRecorderMetadata {
+                ack_session_context_revision: ack,
+                ..Default::default()
+            },
+        )
+        .expect("recorded call start");
+    let session_output = super::super::tool_audit::session_log_result_for_tool(tool_name, &output);
+    store
+        .record_model_facing_tool_call_finished(
+            Some(start),
+            success,
+            &session_output,
+            (!success).then_some("business failure"),
+            (!success).then_some("business_failure"),
+        )
+        .expect("recorded model-facing result")
+}
+
 #[test]
 fn session_tool_classification_uses_definition_policy() {
     for (tool, risk_class) in [
@@ -4309,4 +4343,473 @@ fn closed_session_does_not_reopen() {
     assert!(again.already_closed);
     assert_eq!(again.summary.lifecycle, SessionLifecycle::Closed);
     assert!(!again.summary.lifecycle.allows_mutation());
+}
+
+#[test]
+fn session_context_revision_exact_missing_stale_invalid_and_failure_semantics() {
+    let store = SessionStore::new(10, 100);
+    let session = store.start_session(Some("proj".to_string()), Some("continuity".to_string()));
+
+    let first = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"content": "one"}),
+    );
+    assert_eq!(first.pre_call_context_revision, 0);
+    assert_eq!(first.context_revision, 1);
+
+    let second = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Revision(1),
+        true,
+        json!({"content": "two"}),
+    );
+    assert_eq!(second.pre_call_context_revision, 1);
+    assert_eq!(second.context_revision, 2);
+    assert!(second.recovery_events.is_empty());
+    assert!(!second.history_lost);
+
+    let missing = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "apply_text_edits",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"state_changed": true}),
+    );
+    assert_eq!(missing.context_revision, 3);
+    assert_eq!(missing.recovery_events.len(), 2);
+    assert!(!missing.history_lost);
+
+    let stale = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Revision(1),
+        true,
+        json!({"clean": true}),
+    );
+    assert_eq!(stale.pre_call_context_revision, 3);
+    assert_eq!(stale.context_revision, 4);
+    assert_eq!(
+        stale
+            .recovery_events
+            .iter()
+            .filter_map(|event| event.context_revision)
+            .collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+
+    let invalid = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Revision(999),
+        true,
+        json!({"content": "future ack still executes"}),
+    );
+    assert_eq!(invalid.context_revision, 5);
+    assert_eq!(invalid.pre_call_context_revision, 4);
+
+    let failed = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "run_process",
+        SessionContextRevisionAck::Revision(5),
+        false,
+        json!({"failure_kind": "process_failed", "command_started": true, "command_completed": true}),
+    );
+    assert_eq!(failed.pre_call_context_revision, 5);
+    assert_eq!(failed.context_revision, 6);
+    assert_eq!(store.context_revision(&session.session_id), Some(6));
+}
+
+#[test]
+fn session_context_revision_retention_reports_history_loss_without_counter_regression() {
+    let store = SessionStore::new(10, 4);
+    let session = store.start_session(Some("proj".to_string()), Some("retention".to_string()));
+    let mut latest = 0;
+    for _ in 0..6 {
+        let recorded = record_model_facing_result(
+            &store,
+            &session.session_id,
+            "read_file",
+            SessionContextRevisionAck::Revision(latest),
+            true,
+            json!({"content": "bounded"}),
+        );
+        latest = recorded.context_revision;
+    }
+    assert_eq!(latest, 6);
+    assert_eq!(store.context_revision(&session.session_id), Some(6));
+
+    let stale = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Revision(1),
+        true,
+        json!({"clean": true}),
+    );
+    assert_eq!(stale.pre_call_context_revision, 6);
+    assert_eq!(stale.context_revision, 7);
+    assert!(stale.history_lost);
+    assert!(stale.recovery_events.len() < 5);
+}
+
+#[test]
+fn generic_session_events_do_not_advance_model_context_revision() {
+    let store = SessionStore::new(10, 100);
+    let session = store.start_session(Some("proj".to_string()), Some("background".to_string()));
+    let first = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"content": "one"}),
+    );
+    assert_eq!(first.context_revision, 1);
+
+    let generic_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_test",
+        &json!({"project": "proj"}),
+    );
+    assert!(store
+        .record_tool_call_finished(
+            generic_start,
+            true,
+            &json!({"tests_run": 1, "passed": true}),
+            None,
+            None,
+        )
+        .is_some());
+    assert_eq!(store.context_revision(&session.session_id), Some(1));
+
+    let exact = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Revision(1),
+        true,
+        json!({"clean": true}),
+    );
+    assert_eq!(exact.pre_call_context_revision, 1);
+    assert_eq!(exact.context_revision, 2);
+    assert!(exact.recovery_events.is_empty());
+}
+
+#[test]
+fn simultaneous_model_facing_results_allocate_unique_ordered_revisions() {
+    let store = SessionStore::new(10, 100);
+    let session = store.start_session(Some("proj".to_string()), Some("concurrent".to_string()));
+    let first = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"content": "seed"}),
+    );
+    assert_eq!(first.context_revision, 1);
+
+    let make_start = || {
+        store
+            .record_tool_call_started_with_metadata(
+                Some(&session.session_id),
+                SessionTransport::Mcp,
+                "read_file",
+                &json!({"project": "proj"}),
+                Some("proj".to_string()),
+                ToolCallRecorderMetadata {
+                    ack_session_context_revision: SessionContextRevisionAck::Revision(1),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let start_a = make_start();
+    let start_b = make_start();
+    assert_eq!(start_a.pre_call_context_revision, 1);
+    assert_eq!(start_b.pre_call_context_revision, 1);
+
+    let a_store = store.clone();
+    let b_store = store.clone();
+    let a = std::thread::spawn(move || {
+        a_store
+            .record_model_facing_tool_call_finished(
+                Some(start_a),
+                true,
+                &json!({"content": "a"}),
+                None,
+                None,
+            )
+            .unwrap()
+    });
+    let b = std::thread::spawn(move || {
+        b_store
+            .record_model_facing_tool_call_finished(
+                Some(start_b),
+                true,
+                &json!({"content": "b"}),
+                None,
+                None,
+            )
+            .unwrap()
+    });
+    let mut revisions = vec![
+        a.join().unwrap().context_revision,
+        b.join().unwrap().context_revision,
+    ];
+    revisions.sort_unstable();
+    assert_eq!(revisions, vec![2, 3]);
+    assert_eq!(store.context_revision(&session.session_id), Some(3));
+
+    let next = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Revision(3),
+        true,
+        json!({"clean": true}),
+    );
+    assert_eq!(next.pre_call_context_revision, 3);
+    assert_eq!(next.context_revision, 4);
+    assert!(next.recovery_events.is_empty());
+}
+
+#[test]
+fn session_context_revision_survives_persistence_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 100);
+    let session = store.start_session(Some("proj".to_string()), Some("restart".to_string()));
+    let first = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"content": "persisted"}),
+    );
+    assert_eq!(first.context_revision, 1);
+    store.flush_persistence();
+    drop(store);
+
+    let restored = SessionStore::with_persistence(&ledger, 10, 100);
+    assert_eq!(restored.context_revision(&session.session_id), Some(1));
+    let second = record_model_facing_result(
+        &restored,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Revision(1),
+        true,
+        json!({"clean": true}),
+    );
+    assert_eq!(second.pre_call_context_revision, 1);
+    assert_eq!(second.context_revision, 2);
+    assert!(second.recovery_events.is_empty());
+}
+
+#[test]
+fn session_context_revision_restore_revalidates_bounded_context_result_summary() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 100);
+    let session = store.start_session(
+        Some("proj".to_string()),
+        Some("context sanitize".to_string()),
+    );
+    let recorded = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "workspace_checkpoint_create",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({
+            "checkpoint_id": "wc_ckpt_demo",
+            "branch": "b".repeat(500),
+            "status_summary": {
+                "modified": 21,
+                "token": "wc_pat_must_not_survive"
+            }
+        }),
+    );
+    assert_eq!(recorded.context_revision, 1);
+    let live = store.summary(&session.session_id, Some(20)).unwrap();
+    let live_summary = live
+        .events
+        .iter()
+        .find(|event| event.context_revision == Some(1))
+        .and_then(|event| event.context_result_summary.as_ref())
+        .unwrap();
+    assert_eq!(live_summary["status_summary"]["modified"], 21);
+    assert_eq!(live_summary["status_summary"]["token"], "[redacted]");
+    let live_branch = live_summary["branch"].as_str().unwrap();
+    assert!(live_branch.chars().count() <= 123);
+    assert!(live_branch.ends_with("..."));
+
+    store.flush_persistence();
+    drop(store);
+    let mut persisted: Value = serde_json::from_slice(&std::fs::read(&ledger).unwrap()).unwrap();
+    let events = persisted["sessions"][0]["events"].as_array_mut().unwrap();
+    let finished = events
+        .iter_mut()
+        .find(|event| event["context_revision"] == 1)
+        .unwrap();
+    finished["context_result_summary"] = json!({
+        "checkpoint_id": "wc_ckpt_demo",
+        "branch": "x".repeat(500),
+        "status_summary": {
+            "modified": 21,
+            "token": "wc_pat_corrupt_ledger_secret"
+        },
+        "arbitrary_untrusted_body": "must not survive restore"
+    });
+    std::fs::write(&ledger, serde_json::to_vec(&persisted).unwrap()).unwrap();
+
+    let restored = SessionStore::with_persistence(&ledger, 10, 100);
+    assert_eq!(restored.context_revision(&session.session_id), Some(1));
+    let restored_summary = restored.summary(&session.session_id, Some(20)).unwrap();
+    let context = restored_summary
+        .events
+        .iter()
+        .find(|event| event.context_revision == Some(1))
+        .and_then(|event| event.context_result_summary.as_ref())
+        .unwrap();
+    assert!(context.get("arbitrary_untrusted_body").is_none());
+    assert_eq!(context["status_summary"]["modified"], 21);
+    assert_eq!(context["status_summary"]["token"], "[redacted]");
+    let restored_branch = context["branch"].as_str().unwrap();
+    assert!(restored_branch.chars().count() <= 123);
+    assert!(restored_branch.ends_with("..."));
+}
+
+#[test]
+fn stale_session_recovery_preserves_consequential_git_workspace_evidence() {
+    let store = SessionStore::new(10, 100);
+    let session = store.start_session(
+        Some("proj".to_string()),
+        Some("acp reproduction".to_string()),
+    );
+    let seed = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"content": "seed"}),
+    );
+    assert_eq!(seed.context_revision, 1);
+
+    let checkpoint = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "workspace_checkpoint_create",
+        SessionContextRevisionAck::Revision(1),
+        true,
+        json!({
+            "checkpoint_id": "wc_ckpt_demo",
+            "head": "pre-commit",
+            "branch": "feature",
+            "complete": true,
+            "tracked_diff_bytes": 4096,
+            "staged_diff_bytes": 0,
+            "untracked_file_count": 0,
+            "status_summary": {"modified": 21},
+            "state_changed": true
+        }),
+    );
+    let commit = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "run_shell",
+        SessionContextRevisionAck::Revision(checkpoint.context_revision),
+        true,
+        json!({
+            "command_completed": true,
+            "command_started": true,
+            "exit_code": 0,
+            "stdout_tail": "[feature 64ac72ae] checkpointed work\n21 files changed",
+            "stderr_tail": ""
+        }),
+    );
+    let push = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "run_shell",
+        SessionContextRevisionAck::Revision(commit.context_revision),
+        true,
+        json!({
+            "command_completed": true,
+            "command_started": true,
+            "exit_code": 0,
+            "stdout_tail": "feature -> feature 64ac72ae",
+            "stderr_tail": ""
+        }),
+    );
+    let status = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Revision(push.context_revision),
+        true,
+        json!({"clean": true, "head": "64ac72ae", "remote_head": "64ac72ae"}),
+    );
+    assert_eq!(status.context_revision, 5);
+
+    let resumed = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Revision(1),
+        true,
+        json!({"content": "resume normally"}),
+    );
+    assert_eq!(resumed.pre_call_context_revision, 5);
+    assert_eq!(resumed.context_revision, 6);
+    assert_eq!(
+        resumed
+            .recovery_events
+            .iter()
+            .filter_map(|event| event.context_revision)
+            .collect::<Vec<_>>(),
+        vec![2, 3, 4, 5]
+    );
+    assert!(resumed.recovery_events.iter().any(|event| {
+        event.tool_name == "workspace_checkpoint_create"
+            && event
+                .context_result_summary
+                .as_ref()
+                .is_some_and(|summary| {
+                    summary["status_summary"]["modified"] == 21
+                        && summary["checkpoint_id"] == "wc_ckpt_demo"
+                })
+    }));
+    assert!(resumed
+        .recovery_events
+        .iter()
+        .any(|event| event.tool_name == "run_shell"
+            && event
+                .validation_output_summary
+                .as_ref()
+                .is_some_and(|summary| summary.to_string().contains("64ac72ae"))));
+
+    let exact = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Revision(6),
+        true,
+        json!({"clean": true}),
+    );
+    assert_eq!(exact.context_revision, 7);
+    assert!(exact.recovery_events.is_empty());
 }

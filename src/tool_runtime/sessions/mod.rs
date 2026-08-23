@@ -38,14 +38,17 @@ pub(crate) use events::{
 };
 pub(crate) use model::{
     CodingSessionError, CodingSessionRequest, CompleteSessionMessageInput, CurrentSessionKey,
-    ListSessionMessagesFilter, PostSessionMessageInput, SessionCloseError, SessionCreateOptions,
-    SessionDiscussionCounts, SessionDiscussionSummary, SessionEvent, SessionExecutionContext,
+    ListSessionMessagesFilter, PostSessionMessageInput, RecordedModelFacingToolCall,
+    SessionCloseError, SessionContextRevisionAck, SessionCreateOptions, SessionDiscussionCounts,
+    SessionDiscussionSummary, SessionEvent, SessionExecutionContext,
     SessionExecutionContextUpdateError, SessionGuardDenial, SessionGuards, SessionLifecycle,
     SessionLifecycleDenial, SessionMessage, SessionMessageError, SessionMessageKind,
     SessionMessageObservationError, SessionMessagePriority, SessionMessageStatus, SessionSummary,
-    SessionTransport, ToolCallRecorderMetadata, DEFAULT_MAX_EVENTS_PER_SESSION,
+    SessionTransport, ToolCallRecorderMetadata, ToolCallStart, DEFAULT_MAX_EVENTS_PER_SESSION,
     DEFAULT_MAX_SESSIONS, MAX_CODING_INSTRUCTION_CHARS, MAX_MESSAGE_COMPLETION_KEY_CHARS,
-    MAX_MESSAGE_LIST_LIMIT, MAX_TOOL_CALL_ACK_MESSAGE_IDS, TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
+    MAX_MESSAGE_LIST_LIMIT, MAX_TOOL_CALL_ACK_MESSAGE_IDS,
+    TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD,
+    TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD, TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
     TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
     TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
 };

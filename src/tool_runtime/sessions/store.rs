@@ -18,19 +18,20 @@ use super::console::{
 };
 use super::events::{
     actual_failure_kind_for_tool_result, changed_paths_for_tool, classify_failure_expectation,
-    diff_review_like_for_tool, extract_job_id, extract_project, is_valid_session_id,
-    observed_input_paths_for_tool, observed_paths_for_successful_result,
-    persistent_shell_event_evidence_for_tool_result, sanitize_tool_execution_state,
-    session_input_summary_for_tool, validation_output_summary_for_tool_result,
-    SessionToolClassification,
+    context_result_summary_for_tool_result, diff_review_like_for_tool, extract_job_id,
+    extract_project, is_valid_session_id, observed_input_paths_for_tool,
+    observed_paths_for_successful_result, persistent_shell_event_evidence_for_tool_result,
+    sanitize_tool_execution_state, session_input_summary_for_tool,
+    validation_output_summary_for_tool_result, SessionToolClassification,
 };
 use super::model::{
     CodingSessionError, CodingSessionOutcome, CodingSessionRequest, ColdSessionRecord,
     CompleteSessionMessageInput, CompleteSessionMessageOutcome, CurrentSessionKey,
     DurableCurrentBinding, PersistedCurrentBinding, PersistedCurrentBindings,
     PersistedSessionLedger, PersistedSessionRecord, PersistedSessionSnapshot,
-    PersistentShellEventEvidence, PostSessionMessageInput, SessionCloseError, SessionCloseOutcome,
-    SessionCounts, SessionCreateOptions, SessionEvent, SessionExecutionContext,
+    PersistentShellEventEvidence, PostSessionMessageInput, RecordedModelFacingToolCall,
+    SessionCloseError, SessionCloseOutcome, SessionContextRevisionAck, SessionCounts,
+    SessionCreateOptions, SessionEvent, SessionExecutionContext,
     SessionExecutionContextUpdateError, SessionExecutionContextUpdateOutcome, SessionGuardDenial,
     SessionGuards, SessionLifecycle, SessionLifecycleDenial, SessionMessage, SessionMessageError,
     SessionMessageStatus, SessionRecord, SessionStoreStatus, SessionSummary, SessionTransport,
@@ -554,6 +555,7 @@ impl SessionStore {
             messages: VecDeque::new(),
             events: VecDeque::new(),
             events_observed: 0,
+            context_revision: 0,
             materialized_validation_job_ids: VecDeque::new(),
             message_observation_revision: 0,
             message_observation_floor: 0,
@@ -844,6 +846,7 @@ impl SessionStore {
                     messages: VecDeque::new(),
                     events: VecDeque::from([Arc::new(event)]),
                     events_observed: 1,
+                    context_revision: 0,
                     materialized_validation_job_ids: VecDeque::new(),
                     message_observation_revision: 0,
                     message_observation_floor: 0,
@@ -1022,6 +1025,14 @@ impl SessionStore {
     pub(crate) fn contains_session(&self, session_id: &str) -> bool {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.contains_session(session_id)
+    }
+
+    pub(crate) fn context_revision(&self, session_id: &str) -> Option<u64> {
+        let inner = self.inner.lock().expect("session store mutex poisoned");
+        inner
+            .sessions
+            .get(session_id)
+            .map(StoredSession::context_revision)
     }
 
     pub(crate) fn session_mode(&self, session_id: &str) -> Option<SessionMode> {
@@ -1263,9 +1274,10 @@ impl SessionStore {
         metadata: ToolCallRecorderMetadata,
     ) -> Option<ToolCallStart> {
         let session_id = session_id?.trim();
-        if !is_valid_session_id(session_id) || !self.contains_session(session_id) {
+        if !is_valid_session_id(session_id) {
             return None;
         }
+        let pre_call_context_revision = self.context_revision(session_id)?;
         let now = now_ts();
         let event_id = format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let project = extract_project(arguments);
@@ -1277,6 +1289,7 @@ impl SessionStore {
         let diff_review_like = diff_review_like_for_tool(tool_name, arguments);
         let input_summary = Some(session_input_summary_for_tool(tool_name, arguments));
         let expectation = metadata.expectation;
+        let ack_session_context_revision = metadata.ack_session_context_revision;
         let start = ToolCallStart {
             event_id: event_id.clone(),
             call_id: call_id.clone(),
@@ -1298,11 +1311,15 @@ impl SessionStore {
             started_instant: Instant::now(),
             permission: None,
             expectation: expectation.clone(),
+            pre_call_context_revision,
+            ack_session_context_revision,
         };
         self.push_event(SessionEvent {
             event_id,
             session_id: session_id.to_string(),
             kind: "tool_call_started".to_string(),
+            context_revision: None,
+            context_result_summary: None,
             call_id: Some(call_id),
             timestamp: now,
             transport: transport.as_str().to_string(),
@@ -1424,7 +1441,93 @@ impl SessionStore {
         })
     }
 
-    /// Sole entry for appending a `tool_call_finished` ledger event.
+    fn push_model_facing_event(
+        &self,
+        mut event: SessionEvent,
+        pre_call_context_revision: u64,
+        ack_session_context_revision: SessionContextRevisionAck,
+    ) -> Option<RecordedModelFacingToolCall> {
+        let session_id = event.session_id.clone();
+        let outcome = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            let max_events = inner.max_events_per_session;
+            let stored = inner.sessions.get_mut(&session_id)?;
+            let project_instructions = match stored {
+                StoredSession::Cold(cold) => cold.project_instructions.clone(),
+                StoredSession::Hot(_) => None,
+            };
+            let mut materialized = match stored {
+                StoredSession::Hot(_) => None,
+                StoredSession::Cold(cold) => materialize_cold_session(cold, max_events),
+            };
+            let record = match stored {
+                StoredSession::Hot(record) => record,
+                StoredSession::Cold(_) => materialized.as_mut()?,
+            };
+            if record.context_revision < pre_call_context_revision {
+                return None;
+            }
+            let next_revision = record.context_revision.checked_add(1)?;
+            let recovery_start = match ack_session_context_revision {
+                SessionContextRevisionAck::Revision(revision)
+                    if revision <= pre_call_context_revision =>
+                {
+                    revision
+                }
+                _ => 0,
+            };
+            let recovery_events = record
+                .events
+                .iter()
+                .filter_map(|candidate| {
+                    let candidate_revision = candidate.context_revision?;
+                    (candidate_revision > recovery_start
+                        && candidate_revision <= pre_call_context_revision)
+                        .then(|| candidate.as_ref().clone())
+                })
+                .collect::<Vec<_>>();
+            let expected_recovery_count = match ack_session_context_revision {
+                SessionContextRevisionAck::Revision(revision)
+                    if revision <= pre_call_context_revision =>
+                {
+                    pre_call_context_revision.saturating_sub(revision)
+                }
+                _ => pre_call_context_revision,
+            };
+            let history_lost = expected_recovery_count > recovery_events.len() as u64;
+            event.context_revision = Some(next_revision);
+            let event_id = event.event_id.clone();
+            record.context_revision = next_revision;
+            record.updated_at = record.updated_at.max(event.timestamp);
+            record.events.push_back(Arc::new(event));
+            record.events_observed = record.events_observed.saturating_add(1);
+            while record.events.len() > max_events {
+                record.events.pop_front();
+            }
+            let outcome = RecordedModelFacingToolCall {
+                event_id,
+                session_id: session_id.clone(),
+                context_revision: next_revision,
+                pre_call_context_revision,
+                ack_session_context_revision,
+                recovery_events,
+                history_lost,
+            };
+            if let Some(record) = materialized.as_ref() {
+                let persisted = PersistedSessionRecord::from_record(record, max_events);
+                let cold = cold_session_from_persisted(&persisted, project_instructions).ok()?;
+                *stored = StoredSession::Cold(cold);
+            }
+            inner.touch(&session_id);
+            outcome
+        };
+        self.persist_after_mutation();
+        Some(outcome)
+    }
+
+    /// Append a finished ledger event that is not itself returned as a model-facing
+    /// ToolResult (for example a pre-kernel parsing/scope failure or an internal
+    /// nested operation). It deliberately does not advance model context continuity.
     pub(crate) fn record_tool_call_finished(
         &self,
         start: Option<ToolCallStart>,
@@ -1433,7 +1536,42 @@ impl SessionStore {
         error: Option<&str>,
         error_kind: Option<&str>,
     ) -> Option<String> {
+        let (event, _, _) =
+            Self::tool_call_finished_event(start, success, output, error, error_kind)?;
+        let event_id = event.event_id.clone();
+        self.push_event(event);
+        Some(event_id)
+    }
+
+    /// Append a finished model-facing ToolResult and atomically allocate its next
+    /// Session-local context revision with the corresponding event annotation.
+    pub(crate) fn record_model_facing_tool_call_finished(
+        &self,
+        start: Option<ToolCallStart>,
+        success: bool,
+        output: &Value,
+        error: Option<&str>,
+        error_kind: Option<&str>,
+    ) -> Option<RecordedModelFacingToolCall> {
+        let (event, pre_call_context_revision, ack_session_context_revision) =
+            Self::tool_call_finished_event(start, success, output, error, error_kind)?;
+        self.push_model_facing_event(
+            event,
+            pre_call_context_revision,
+            ack_session_context_revision,
+        )
+    }
+
+    fn tool_call_finished_event(
+        start: Option<ToolCallStart>,
+        success: bool,
+        output: &Value,
+        error: Option<&str>,
+        error_kind: Option<&str>,
+    ) -> Option<(SessionEvent, u64, SessionContextRevisionAck)> {
         let start = start?;
+        let pre_call_context_revision = start.pre_call_context_revision;
+        let ack_session_context_revision = start.ack_session_context_revision;
         let finished_at = now_ts();
         let duration_ms = start
             .started_instant
@@ -1488,10 +1626,15 @@ impl SessionStore {
         let persistent_shell =
             persistent_shell_event_evidence_for_tool_result(&start.tool_name, output);
         let effect_evidence = Self::tool_effect_event_evidence_for_result(output);
-        self.push_event(SessionEvent {
-            event_id: event_id.clone(),
+        let event = SessionEvent {
+            event_id,
             session_id: start.session_id,
             kind: "tool_call_finished".to_string(),
+            context_revision: None,
+            context_result_summary: context_result_summary_for_tool_result(
+                &start.tool_name,
+                output,
+            ),
             call_id: Some(start.call_id),
             timestamp: finished_at,
             transport: start.transport.as_str().to_string(),
@@ -1541,8 +1684,12 @@ impl SessionStore {
             execution_context: None,
             previous_execution_context: None,
             execution_context_changed: None,
-        });
-        Some(event_id)
+        };
+        Some((
+            event,
+            pre_call_context_revision,
+            ack_session_context_revision,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1610,6 +1757,8 @@ impl SessionStore {
             call_id: None,
             session_id: session_id.to_string(),
             kind: "validation_job_terminal".to_string(),
+            context_revision: None,
+            context_result_summary: None,
             timestamp,
             transport: "job_terminal".to_string(),
             tool_name: tool_name.to_string(),
@@ -2122,6 +2271,8 @@ fn coding_instruction_event(
         event_id: event_id.to_string(),
         session_id: session_id.to_string(),
         kind: "task_instruction".to_string(),
+        context_revision: None,
+        context_result_summary: None,
         call_id: None,
         timestamp: now,
         transport: transport.as_str().to_string(),
@@ -2267,6 +2418,8 @@ fn session_closed_system_event(session_id: &str, now: i64) -> SessionEvent {
         event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
         session_id: session_id.to_string(),
         kind: "session_closed".to_string(),
+        context_revision: None,
+        context_result_summary: None,
         call_id: None,
         timestamp: now,
         transport: "system".to_string(),
@@ -2332,6 +2485,8 @@ fn session_execution_context_updated_event(
         event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
         session_id: session_id.to_string(),
         kind: "session_execution_context_updated".to_string(),
+        context_revision: None,
+        context_result_summary: None,
         call_id: None,
         timestamp: now,
         transport: transport.as_str().to_string(),

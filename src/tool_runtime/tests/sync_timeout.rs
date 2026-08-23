@@ -89,75 +89,34 @@ fn structured_validation_sync_grace_is_sixty_seconds() {
 }
 
 #[tokio::test]
-async fn cargo_validation_tools_accept_long_total_runtime_budget() {
-    // Read-only validation tools accept a long total runtime budget (1..=3600);
-    // they are no longer limited to the 120s synchronous cap.
-    let runtime = runtime_with_agent_project("sync-timeout-cargo-long")
+async fn cargo_fmt_check_accepts_long_total_runtime_budget_and_hands_off() {
+    // cargo_check and cargo_test long-budget promotion lifecycles are owned by
+    // validation_handoff.rs. Keep only cargo_fmt(check=true)'s distinct branch.
+    let client_id = "sync-timeout-cargo-fmt-long";
+    let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(10));
     let caps = ShellClientCapabilities {
         async_shell_jobs: true,
         structured_validation_argv: true,
         ..Default::default()
     };
-    register_agent(&runtime, "sync-timeout-cargo-long", None, caps).await;
-    let project = agent_test_project_id("sync-timeout-cargo-long");
-    for (tool_name, timeout) in [
-        ("cargo_check", 300u64),
-        ("cargo_test", 1800),
-        ("cargo_fmt", 300),
-    ] {
-        let result = match tool_name {
-            "cargo_check" => {
-                runtime
-                    .cargo_check(
-                        project.clone(),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        Some(timeout),
-                    )
-                    .await
-            }
-            "cargo_test" => {
-                runtime
-                    .cargo_test(
-                        project.clone(),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        Some(timeout),
-                    )
-                    .await
-            }
-            "cargo_fmt" => {
-                runtime
-                    .cargo_fmt(project.clone(), None, Some(true), Some(timeout))
-                    .await
-            }
-            _ => unreachable!(),
-        };
-        // These values are within 1..=3600, so the request is accepted and the
-        // validation is promoted to a Job (the wait window is tiny in tests).
-        assert!(
-            result.success,
-            "{tool_name} long budget should be accepted: {:?}",
-            result.error
-        );
-        assert!(result.output["promoted_to_job"].as_bool().unwrap_or(false));
-        assert_eq!(result.output["effective_timeout_secs"], timeout);
-        // The promoted Job is immediately queryable.
-        let job_id = result.output["job_id"].as_str().unwrap().to_string();
-        let status = runtime.job_status_for_auth(job_id, false, None).await;
-        assert!(status.success, "{:?}", status.error);
-    }
+    register_agent(&runtime, client_id, None, caps).await;
+    let project = agent_test_project_id(client_id);
+    let timeout = 300u64;
+
+    let result = runtime
+        .cargo_fmt(project, None, Some(true), Some(timeout))
+        .await;
+    assert!(
+        result.success,
+        "cargo_fmt(check=true) long budget should be accepted: {:?}",
+        result.error
+    );
+    assert!(result.output["promoted_to_job"].as_bool().unwrap_or(false));
+    assert_eq!(result.output["effective_timeout_secs"], timeout);
+    let job_id = result.output["job_id"].as_str().unwrap().to_string();
+    let status = runtime.job_status_for_auth(job_id, false, None).await;
+    assert!(status.success, "{:?}", status.error);
 }
 
 #[tokio::test]
@@ -223,7 +182,7 @@ async fn cargo_validation_tools_reject_timeout_outside_1_3600() {
 }
 
 #[tokio::test]
-async fn cargo_fmt_mutating_timeout_stays_within_120_seconds() {
+async fn cargo_fmt_mutating_rejects_timeout_above_120_before_enqueue() {
     let client_id = "sync-timeout-fmt-mutating";
     let runtime = runtime_with_agent_project(client_id);
     register_agent(
@@ -235,30 +194,13 @@ async fn cargo_fmt_mutating_timeout_stays_within_120_seconds() {
     .await;
     let project = agent_test_project_id(client_id);
 
-    let accepted = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        async move {
-            runtime
-                .cargo_fmt(project, None, Some(false), Some(120))
-                .await
-        }
-    });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("cargo_fmt(check=false, timeout=120) should start");
-    assert_ne!(request.kind, "start_validation_job");
-    complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, "", "").await;
-    let accepted = accepted.await.unwrap();
-    assert!(accepted.success, "{:?}", accepted.error);
-    assert_eq!(accepted.output["promoted_to_job"], false);
-
+    // The successful 120-second synchronous lifecycle is owned by
+    // validation_handoff::cargo_fmt_mutating_never_auto_promotes.
     for check in [Some(false), None] {
         let rejected = runtime
             .cargo_fmt(project.clone(), None, check, Some(121))
             .await;
-        assert!(!rejected.success);
-        assert_eq!(rejected.output["failure_kind"], "invalid_arguments");
+        assert_timeout_rejected(&rejected, "cargo_fmt");
         assert_no_pending_shell_request(&runtime, client_id).await;
     }
 }

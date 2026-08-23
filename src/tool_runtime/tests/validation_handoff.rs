@@ -39,13 +39,16 @@ async fn wait_for_agent_request(
     runtime: &ToolRuntime,
     client_id: &str,
 ) -> crate::shell_protocol::ShellAgentShellRequest {
-    for _ in 0..200 {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
         if let Some(request) = next_patch_agent_request(runtime, client_id).await {
             return request;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        if tokio::time::Instant::now() >= deadline {
+            panic!("agent request was not enqueued within 10 seconds for {client_id}");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    panic!("agent request was not enqueued for {client_id}");
 }
 
 fn assert_agent_observation_upgrades_without_changing_snapshot(
@@ -173,14 +176,23 @@ async fn wait_for_local_job_terminal(
     runtime: &ToolRuntime,
     job_id: &str,
 ) -> crate::tool_runtime::ToolResult {
-    for _ in 0..500 {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
         let status = runtime.job_status(job_id.to_string()).await;
         if status.success && status.output["terminal"].as_bool().unwrap_or(false) {
             return status;
         }
+        let last_observation = format!(
+            "success={} status={} error={:?}",
+            status.success, status.output["status"], status.error
+        );
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "local validation job did not become terminal within 15 seconds: {job_id}; last observation: {last_observation}"
+            );
+        }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    panic!("local validation job did not become terminal: {job_id}");
 }
 
 #[cfg(unix)]
@@ -1895,6 +1907,7 @@ async fn cancel_queued_before_handoff_removes_start_request_and_hidden_record() 
                 .await
         }
     });
+    let registration_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     let job_id = loop {
         if let Some(job_id) = runtime
             .shell_clients
@@ -1905,11 +1918,15 @@ async fn cancel_queued_before_handoff_removes_start_request_and_hidden_record() 
         {
             break job_id;
         }
+        if tokio::time::Instant::now() >= registration_deadline {
+            panic!("hidden validation job was not registered within 10 seconds for {client_id}");
+        }
         tokio::task::yield_now().await;
     };
     task.abort();
     let _ = task.await;
-    for _ in 0..100 {
+    let cleanup_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
         if runtime
             .shell_clients
             .hidden_job_ids_for_test()
@@ -1917,6 +1934,11 @@ async fn cancel_queued_before_handoff_removes_start_request_and_hidden_record() 
             .is_empty()
         {
             break;
+        }
+        if tokio::time::Instant::now() >= cleanup_deadline {
+            panic!(
+                "hidden validation job {job_id} was not removed within 10 seconds after cancellation for {client_id}"
+            );
         }
         tokio::task::yield_now().await;
     }
@@ -2801,9 +2823,15 @@ mod tests {
     assert_eq!(handoff.output["promoted_to_job"], true);
     let job_id = handoff.output["job_id"].as_str().unwrap().to_string();
 
+    let child_pid_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     let child_pid = loop {
         if let Ok(value) = std::fs::read_to_string(tmp.path().join("child.pid")) {
             break value.trim().parse::<u32>().unwrap();
+        }
+        if tokio::time::Instant::now() >= child_pid_deadline {
+            panic!(
+                "descendant fixture did not publish child.pid within 10 seconds for local validation job {job_id}"
+            );
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     };
@@ -2817,15 +2845,13 @@ mod tests {
             .and_then(|stat| stat.split_whitespace().nth(2).map(str::to_string))
             .is_some_and(|state| state != "Z" && state != "X")
     };
-    for _ in 0..200 {
-        if !descendant_is_running() {
-            break;
-        }
+    let reap_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while descendant_is_running() && tokio::time::Instant::now() < reap_deadline {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert!(
         !descendant_is_running(),
-        "descendant process remained executable after stop_job"
+        "descendant process {child_pid} remained executable after stop_job for {job_id}"
     );
 }
 

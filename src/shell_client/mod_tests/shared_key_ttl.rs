@@ -9,18 +9,11 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
     let expired_auth = crate::auth::shared_key::shared_key_context("ttl-expired");
 
     registry
-        .register_with_auth_connection(
+        .register_streaming_session(
             runner_registration("ttl-connected", "ttl-connected-instance", Vec::new()),
             Some(&connected_auth),
-            Some("ttl-connected-connection"),
-        )
-        .await
-        .unwrap();
-    registry
-        .register_notifier_for_connection(
-            "ttl-connected",
-            "ttl-connected-instance",
             "ttl-connected-connection",
+            TRANSPORT_WEBSOCKET,
             Arc::new(Notify::new()),
         )
         .await
@@ -30,18 +23,11 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
         .await;
 
     registry
-        .register_with_auth_connection(
+        .register_streaming_session(
             runner_registration("ttl-fresh", "ttl-fresh-instance", Vec::new()),
             Some(&fresh_auth),
-            Some("ttl-fresh-connection"),
-        )
-        .await
-        .unwrap();
-    registry
-        .register_notifier_for_connection(
-            "ttl-fresh",
-            "ttl-fresh-instance",
             "ttl-fresh-connection",
+            TRANSPORT_WEBSOCKET,
             Arc::new(Notify::new()),
         )
         .await

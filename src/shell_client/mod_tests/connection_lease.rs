@@ -11,7 +11,7 @@ async fn register_with_connection(
     connection_id: &str,
 ) -> ShellClientView {
     registry
-        .register_with_auth_connection(
+        .register_streaming_session(
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
@@ -27,14 +27,112 @@ async fn register_with_connection(
                 host_context: None,
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
-                agent_protocol_version: Some("polling-v1".to_string()),
+                agent_protocol_version: Some("websocket-v1".to_string()),
                 policy: None,
             },
             None,
-            Some(connection_id),
+            connection_id,
+            TRANSPORT_WEBSOCKET,
+            Arc::new(Notify::new()),
         )
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn streaming_registration_commits_transport_connection_and_notifier_together() {
+    let registry = ShellClientRegistry::default();
+    let notify = Arc::new(Notify::new());
+    let mut registration = runner_registration(
+        "atomic-stream",
+        "atomic-instance",
+        vec![project_summary("atomic-project", "/tmp/atomic-project")],
+    );
+    // Deliberately use a polling wire label: actual transport authority comes
+    // from the streaming handler argument, never from agent_protocol_version.
+    registration.agent_protocol_version = Some("polling-v1".to_string());
+
+    let view = registry
+        .register_streaming_session(
+            registration,
+            None,
+            "atomic-connection",
+            TRANSPORT_WEBSOCKET,
+            notify.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(view.transport, TRANSPORT_WEBSOCKET);
+    assert_eq!(view.projects.len(), 1);
+
+    let inner = registry.inner.lock().await;
+    let client = inner.clients.get("atomic-stream").unwrap();
+    let notifier = inner.notifiers.get("atomic-stream").unwrap();
+    assert_eq!(client.connection_id.as_deref(), Some("atomic-connection"));
+    assert_eq!(client.transport, TRANSPORT_WEBSOCKET);
+    assert_eq!(notifier.agent_instance_id, "atomic-instance");
+    assert_eq!(notifier.connection_id.as_deref(), Some("atomic-connection"));
+    assert!(Arc::ptr_eq(&notifier.notify, &notify));
+}
+
+#[tokio::test]
+async fn failed_streaming_registration_preserves_current_session_exactly() {
+    let registry = ShellClientRegistry::default();
+    let notify_a = Arc::new(Notify::new());
+    let mut initial = runner_registration(
+        "atomic-preserve",
+        "atomic-instance",
+        vec![project_summary("original", "/tmp/original")],
+    );
+    initial.agent_protocol_version = Some("websocket-v1".to_string());
+    registry
+        .register_streaming_session(
+            initial,
+            None,
+            "connection-a",
+            TRANSPORT_WEBSOCKET,
+            notify_a.clone(),
+        )
+        .await
+        .unwrap();
+    let before = {
+        let inner = registry.inner.lock().await;
+        inner.clients.get("atomic-preserve").unwrap().clone()
+    };
+
+    let notify_b = Arc::new(Notify::new());
+    let mut rejected = runner_registration(
+        "atomic-preserve",
+        "atomic-instance",
+        vec![project_summary("replacement", "/tmp/replacement")],
+    );
+    rejected.agent_protocol_version = Some("future-v2".to_string());
+    let error = registry
+        .register_streaming_session(
+            rejected,
+            None,
+            "connection-b",
+            TRANSPORT_WEBSOCKET,
+            notify_b.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error, "agent_protocol_version is unsupported");
+
+    let inner = registry.inner.lock().await;
+    let after = inner.clients.get("atomic-preserve").unwrap();
+    let notifier = inner.notifiers.get("atomic-preserve").unwrap();
+    assert_eq!(after.connection_id, before.connection_id);
+    assert_eq!(after.transport, before.transport);
+    assert_eq!(after.last_seen, before.last_seen);
+    assert_eq!(after.registered_at, before.registered_at);
+    assert_eq!(after.connected_at, before.connected_at);
+    assert_eq!(after.projects.len(), before.projects.len());
+    assert_eq!(after.projects[0].id, before.projects[0].id);
+    assert_eq!(after.projects[0].path, before.projects[0].path);
+    assert_eq!(notifier.connection_id.as_deref(), Some("connection-a"));
+    assert!(Arc::ptr_eq(&notifier.notify, &notify_a));
+    assert!(!Arc::ptr_eq(&notifier.notify, &notify_b));
 }
 
 // ------------------------------------------------------------------------
@@ -223,7 +321,7 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
     let registry = ShellClientRegistry::default();
     let register_with_policy = async |connection_id: &str| {
         registry
-            .register_with_auth_connection(
+            .register_streaming_session(
                 ShellClientRegisterRequest {
                     process_started_at: None,
                     build: None,
@@ -239,11 +337,13 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
                     host_context: None,
                     capabilities: Some(async_job_capabilities()),
                     projects: None,
-                    agent_protocol_version: Some("polling-v1".to_string()),
+                    agent_protocol_version: Some("websocket-v1".to_string()),
                     policy: Some(AgentPolicySummary::default()),
                 },
                 None,
-                Some(connection_id),
+                connection_id,
+                TRANSPORT_WEBSOCKET,
+                Arc::new(Notify::new()),
             )
             .await
             .unwrap()
@@ -333,11 +433,6 @@ async fn stale_connection_disconnect_cleanup_is_noop_for_current_lease() {
     // reconnect coverage to the connection lease.
     let registry = ShellClientRegistry::default();
     register_with_connection(&registry, "oe", "inst-x", "conn-a").await;
-    let notify_a = Arc::new(Notify::new());
-    registry
-        .register_notifier_for_connection("oe", "inst-x", "conn-a", notify_a)
-        .await
-        .unwrap();
     let job = registry
         .start_job(
             ShellJobOpRequest {
@@ -360,11 +455,6 @@ async fn stale_connection_disconnect_cleanup_is_noop_for_current_lease() {
 
     // B reconnects (same instance) and installs its own notifier.
     register_with_connection(&registry, "oe", "inst-x", "conn-b").await;
-    let notify_b = Arc::new(Notify::new());
-    registry
-        .register_notifier_for_connection("oe", "inst-x", "conn-b", notify_b)
-        .await
-        .unwrap();
 
     // A's delayed disconnect cleanup is a no-op: B's job is not lost.
     registry
@@ -375,6 +465,15 @@ async fn stale_connection_disconnect_cleanup_is_noop_for_current_lease() {
         "lost",
         "stale connection cleanup must not mark current job lost"
     );
+    {
+        let inner = registry.inner.lock().await;
+        let client = inner.clients.get("oe").unwrap();
+        let notifier = inner.notifiers.get("oe").unwrap();
+        assert_eq!(client.connection_id.as_deref(), Some("conn-b"));
+        assert_eq!(client.transport, TRANSPORT_WEBSOCKET);
+        assert_eq!(notifier.connection_id.as_deref(), Some("conn-b"));
+        assert_eq!(notifier.agent_instance_id, "inst-x");
+    }
     // B's notifier survives A's cleanup and B's own dispatch still works.
     let polled = registry
         .poll_for_connection(

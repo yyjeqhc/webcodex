@@ -1914,10 +1914,12 @@ async fn job_reconciliation_same_instance_replaces_tail_without_duplicates() {
 async fn job_reconciliation_same_instance_stale_connection_disconnect_is_noop() {
     let registry = ShellClientRegistry::default();
     registry
-        .register_with_auth_connection(
+        .register_streaming_session(
             register_request(INSTANCE_A, empty_inventory()),
             None,
-            Some("connection-a"),
+            "connection-a",
+            super::TRANSPORT_WEBSOCKET,
+            std::sync::Arc::new(tokio::sync::Notify::new()),
         )
         .await
         .unwrap();
@@ -1930,7 +1932,7 @@ async fn job_reconciliation_same_instance_stale_connection_disconnect_is_noop() 
         ShellJobStreamSnapshot::default(),
     );
     registry
-        .register_with_auth_connection(
+        .register_streaming_session(
             register_request(
                 INSTANCE_A,
                 ShellJobInventory {
@@ -1939,7 +1941,9 @@ async fn job_reconciliation_same_instance_stale_connection_disconnect_is_noop() 
                 },
             ),
             None,
-            Some("connection-b"),
+            "connection-b",
+            super::TRANSPORT_WEBSOCKET,
+            std::sync::Arc::new(tokio::sync::Notify::new()),
         )
         .await
         .unwrap();

@@ -109,6 +109,12 @@ fn validate_coding_agent_registration(
     }
 }
 
+struct StreamingSessionRegistration {
+    connection_id: String,
+    transport: String,
+    notify: Arc<Notify>,
+}
+
 impl ShellClientRegistry {
     #[cfg(test)]
     pub async fn register(
@@ -123,14 +129,41 @@ impl ShellClientRegistry {
         body: ShellClientRegisterRequest,
         auth: Option<&crate::auth::AuthContext>,
     ) -> Result<ShellClientView, String> {
-        self.register_with_auth_connection(body, auth, None).await
+        self.register_session(body, auth, None).await
     }
 
-    pub(crate) async fn register_with_auth_connection(
+    pub(crate) async fn register_streaming_session(
         &self,
         body: ShellClientRegisterRequest,
         auth: Option<&crate::auth::AuthContext>,
-        connection_id: Option<&str>,
+        connection_id: &str,
+        transport: &str,
+        notify: Arc<Notify>,
+    ) -> Result<ShellClientView, String> {
+        validate_id(connection_id, "connection_id")?;
+        if !matches!(
+            transport,
+            super::TRANSPORT_WEBSOCKET | super::TRANSPORT_QUIC
+        ) {
+            return Err("streaming agent transport is unsupported".to_string());
+        }
+        self.register_session(
+            body,
+            auth,
+            Some(StreamingSessionRegistration {
+                connection_id: connection_id.to_string(),
+                transport: transport.to_string(),
+                notify,
+            }),
+        )
+        .await
+    }
+
+    async fn register_session(
+        &self,
+        body: ShellClientRegisterRequest,
+        auth: Option<&crate::auth::AuthContext>,
+        streaming: Option<StreamingSessionRegistration>,
     ) -> Result<ShellClientView, String> {
         validate_id(&body.client_id, "client_id")?;
         validate_agent_instance_id(&body.agent_instance_id)?;
@@ -217,13 +250,18 @@ impl ShellClientRegistry {
             project_inventory,
             last_seen: now,
             agent_protocol_version,
-            transport: TRANSPORT_POLLING.to_string(),
+            transport: streaming
+                .as_ref()
+                .map(|session| session.transport.clone())
+                .unwrap_or_else(|| TRANSPORT_POLLING.to_string()),
             agent_protocol_semantics,
             policy,
             auth_group: auth.and_then(ShellClientAuthGroup::from_auth),
             registered_at: now,
             connected_at: now,
-            connection_id: connection_id.map(str::to_string),
+            connection_id: streaming
+                .as_ref()
+                .map(|session| session.connection_id.clone()),
             disconnected_at: None,
             process_started_at: body.process_started_at,
             build: body.build,
@@ -517,11 +555,21 @@ impl ShellClientRegistry {
         }
 
         // Every successful registration replaces the concrete transport
-        // lease, including a same-instance reconnect. Removing the previous
-        // notifier here ensures an older connection cannot keep receiving new
-        // requests while its eventual disconnect races the new connection.
+        // lease, including a same-instance reconnect. Streaming transport,
+        // connection lease, and notifier are committed under this same lock so
+        // the registry never exposes a half-registered long-lived session.
         inner.notifiers.remove(&client_id);
         inner.clients.insert(client_id.clone(), record);
+        if let Some(streaming) = streaming {
+            inner.notifiers.insert(
+                client_id.clone(),
+                NotifierEntry {
+                    notify: streaming.notify,
+                    agent_instance_id: agent_instance_id.clone(),
+                    connection_id: Some(streaming.connection_id),
+                },
+            );
+        }
         if let Some(inventory) = job_inventory.as_ref() {
             let auth_group = inner
                 .clients
@@ -557,32 +605,16 @@ impl ShellClientRegistry {
         Ok(Self::client_view_locked(&inner, &client_id).expect("client just inserted"))
     }
 
-    /// Override the transport label for a registered client. Called by the
-    /// WebSocket handler after a successful register so observability and
-    /// `list_agents` reflect how the agent is actually connected. Polling
-    /// agents keep the default `"polling"` label set during `register`.
+    /// Test-only hook for observability projections that need to model a
+    /// transport without opening a real streaming connection. Production
+    /// streaming registration commits its transport atomically.
     #[cfg(test)]
     pub async fn set_transport(&self, client_id: &str, transport: &str) -> Result<(), String> {
         self.set_transport_checked(client_id, None, None, transport)
             .await
     }
 
-    pub(crate) async fn set_transport_for_connection(
-        &self,
-        client_id: &str,
-        agent_instance_id: &str,
-        connection_id: &str,
-        transport: &str,
-    ) -> Result<(), String> {
-        self.set_transport_checked(
-            client_id,
-            Some(agent_instance_id),
-            Some(connection_id),
-            transport,
-        )
-        .await
-    }
-
+    #[cfg(test)]
     async fn set_transport_checked(
         &self,
         client_id: &str,
@@ -835,10 +867,9 @@ impl ShellClientRegistry {
         self.prune_expired_shared_key_clients_locked(&mut inner, now);
     }
 
-    /// Register a push notifier for a client. The WebSocket handler calls
-    /// this after register; the server's request pump waits on the notifier
-    /// between polls. Calling this replaces any previously registered
-    /// notifier for the client (e.g. after a reconnect).
+    /// Test-only hook for instance-lease notifier regressions that intentionally
+    /// exercise notifier replacement independently. Production streaming
+    /// registration installs its notifier atomically with the client record.
     #[cfg(test)]
     pub async fn register_notifier(
         &self,
@@ -850,17 +881,7 @@ impl ShellClientRegistry {
             .await
     }
 
-    pub(crate) async fn register_notifier_for_connection(
-        &self,
-        client_id: &str,
-        agent_instance_id: &str,
-        connection_id: &str,
-        notify: Arc<Notify>,
-    ) -> Result<(), String> {
-        self.register_notifier_checked(client_id, agent_instance_id, Some(connection_id), notify)
-            .await
-    }
-
+    #[cfg(test)]
     async fn register_notifier_checked(
         &self,
         client_id: &str,
@@ -1117,6 +1138,7 @@ impl ShellClientRegistry {
         Self::client_view_locked(&inner, client_id)
     }
 
+    #[cfg(test)]
     pub(crate) async fn get_client_view_for_connection(
         &self,
         client_id: &str,

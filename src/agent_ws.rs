@@ -117,79 +117,32 @@ async fn handle_agent_ws(
         return;
     }
 
-    // 2. Register into the shared registry (same path as polling register),
-    //    then flip the transport label and install a push notifier so the
-    //    request pump can be woken on enqueue.
-    if let Err(e) = registry
-        .register_with_auth_connection(register_payload, auth.as_ref(), Some(&connection_id))
-        .await
-    {
-        send_envelope_or_log(
-            &mut ws,
-            AgentEnvelope::Error {
-                code: "register_failed".to_string(),
-                message: e,
-            },
-            "register_failed",
-        )
-        .await;
-        return;
-    }
-    if let Err(e) = registry
-        .set_transport_for_connection(
-            &client_id,
-            &agent_instance_id,
+    // 2. Commit the complete streaming session in one registry transaction.
+    //    Transport identity comes from this handler, not the raw protocol label.
+    let notify = Arc::new(Notify::new());
+    let view = match registry
+        .register_streaming_session(
+            register_payload,
+            auth.as_ref(),
             &connection_id,
             TRANSPORT_WEBSOCKET,
-        )
-        .await
-    {
-        send_envelope_or_log(
-            &mut ws,
-            AgentEnvelope::Error {
-                code: "register_failed".to_string(),
-                message: e,
-            },
-            "register_failed",
-        )
-        .await;
-        registry
-            .reconcile_disconnect_for_connection(&client_id, &agent_instance_id, &connection_id)
-            .await;
-        return;
-    }
-    let notify = Arc::new(Notify::new());
-    if registry
-        .register_notifier_for_connection(
-            &client_id,
-            &agent_instance_id,
-            &connection_id,
             notify.clone(),
         )
         .await
-        .is_err()
     {
-        send_envelope_or_log(
-            &mut ws,
-            AgentEnvelope::Error {
-                code: "register_failed".to_string(),
-                message: "failed to install push notifier".to_string(),
-            },
-            "register_failed",
-        )
-        .await;
-        registry
-            .reconcile_disconnect_for_connection(&client_id, &agent_instance_id, &connection_id)
+        Ok(view) => view,
+        Err(e) => {
+            send_envelope_or_log(
+                &mut ws,
+                AgentEnvelope::Error {
+                    code: "register_failed".to_string(),
+                    message: e,
+                },
+                "register_failed",
+            )
             .await;
-        return;
-    }
-    // Fetch the view after set_transport so the ack reflects the websocket
-    // transport label rather than the default "polling".
-    let Some(view) = registry
-        .get_client_view_for_connection(&client_id, &agent_instance_id, &connection_id)
-        .await
-    else {
-        return;
+            return;
+        }
     };
 
     // 3. Acknowledge the register.

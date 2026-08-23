@@ -321,64 +321,30 @@ async fn handle_quic_connection(
         return;
     }
 
-    // 4. Register into the shared registry (same path as polling/ws), then
-    //    flip the transport label to "quic". QUIC v1 is the full envelope flow
-    //    and keeps the agent's real capabilities.
-    if let Err(e) = registry
-        .register_with_auth_connection(register_payload, Some(&auth), Some(&connection_id))
-        .await
-    {
-        tracing::warn!(
-            client_id = %client_id,
-            error = %e,
-            "quic agent register failed in registry"
-        );
-        send_error(&mut send, &mut recv, "register_failed", &e).await;
-        return;
-    }
-    if let Err(e) = registry
-        .set_transport_for_connection(
-            &client_id,
-            &agent_instance_id,
+    // 4. Commit the complete QUIC session in one registry transaction. The
+    //    existing QUIC authentication wire remains unchanged; only registry
+    //    lifecycle state becomes atomic here.
+    let notify = Arc::new(Notify::new());
+    let view = match registry
+        .register_streaming_session(
+            register_payload,
+            Some(&auth),
             &connection_id,
             TRANSPORT_QUIC,
-        )
-        .await
-    {
-        send_error(&mut send, &mut recv, "register_failed", &e).await;
-        registry
-            .reconcile_disconnect_for_connection(&client_id, &agent_instance_id, &connection_id)
-            .await;
-        return;
-    }
-    let notify = Arc::new(Notify::new());
-    if let Err(e) = registry
-        .register_notifier_for_connection(
-            &client_id,
-            &agent_instance_id,
-            &connection_id,
             notify.clone(),
         )
         .await
     {
-        send_error(&mut send, &mut recv, "register_failed", &e).await;
-        registry
-            .reconcile_disconnect_for_connection(&client_id, &agent_instance_id, &connection_id)
-            .await;
-        return;
-    }
-    let Some(view) = registry
-        .get_client_view_for_connection(&client_id, &agent_instance_id, &connection_id)
-        .await
-    else {
-        send_error(
-            &mut send,
-            &mut recv,
-            "register_failed",
-            "client vanished after register",
-        )
-        .await;
-        return;
+        Ok(view) => view,
+        Err(e) => {
+            tracing::warn!(
+                client_id = %client_id,
+                error = %e,
+                "quic agent register failed in registry"
+            );
+            send_error(&mut send, &mut recv, "register_failed", &e).await;
+            return;
+        }
     };
 
     // 5. From this point on, all writes go through one writer task so the

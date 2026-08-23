@@ -92,6 +92,18 @@ pub(crate) struct WorkflowSessionConsoleAttentionOverview {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub(crate) struct WorkflowSessionConsoleAggregate {
+    pub(crate) retained_sessions: usize,
+    pub(crate) returned_sessions: usize,
+    pub(crate) sessions_truncated: bool,
+    pub(crate) active_sessions: usize,
+    pub(crate) running_sessions: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) latest_updated_at: Option<i64>,
+    pub(crate) attention: WorkflowSessionConsoleAttentionOverview,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct WorkflowSessionConsoleReportedProgress {
     pub(crate) reported_at: i64,
     pub(crate) text: String,
@@ -426,6 +438,54 @@ fn build_overview(
         validation,
         attention,
         reported_progress,
+    }
+}
+
+pub(crate) fn aggregate_console_list(
+    list: &WorkflowSessionConsoleList,
+) -> WorkflowSessionConsoleAggregate {
+    let mut attention = WorkflowSessionConsoleAttentionOverview {
+        open_guidance: 0,
+        open_questions: 0,
+        open_risks: 0,
+        open_todos: 0,
+    };
+    let mut active_sessions = 0usize;
+    let mut running_sessions = 0usize;
+    let mut latest_updated_at = None;
+    for session in &list.sessions {
+        if session.lifecycle == "active" {
+            active_sessions = active_sessions.saturating_add(1);
+        }
+        if session.running_call {
+            running_sessions = running_sessions.saturating_add(1);
+        }
+        latest_updated_at = Some(
+            latest_updated_at.map_or(session.updated_at, |current: i64| {
+                current.max(session.updated_at)
+            }),
+        );
+        attention.open_guidance = attention
+            .open_guidance
+            .saturating_add(session.overview.attention.open_guidance);
+        attention.open_questions = attention
+            .open_questions
+            .saturating_add(session.overview.attention.open_questions);
+        attention.open_risks = attention
+            .open_risks
+            .saturating_add(session.overview.attention.open_risks);
+        attention.open_todos = attention
+            .open_todos
+            .saturating_add(session.overview.attention.open_todos);
+    }
+    WorkflowSessionConsoleAggregate {
+        retained_sessions: list.total,
+        returned_sessions: list.returned,
+        sessions_truncated: list.truncated,
+        active_sessions,
+        running_sessions,
+        latest_updated_at,
+        attention,
     }
 }
 
@@ -1107,5 +1167,61 @@ mod tests {
             kinds,
             vec!["Searched", "Read", "Progress", "Progress later"]
         );
+    }
+
+    #[test]
+    fn aggregate_console_list_preserves_bounds_and_attention_counts() {
+        let overview = WorkflowSessionConsoleOverview {
+            work: WorkflowSessionConsoleWorkOverview {
+                exploration: 0,
+                edits: 0,
+                reviews: 0,
+                validations: 0,
+                runs: 0,
+                history_complete: true,
+                history_truncated: false,
+            },
+            validation: WorkflowSessionConsoleValidationOverview {
+                state: "none".to_string(),
+                latest_kind: None,
+                latest_at: None,
+                unresolved_failure_count: 0,
+                tests_run_count: None,
+                history_complete: true,
+                history_truncated: false,
+            },
+            attention: WorkflowSessionConsoleAttentionOverview {
+                open_guidance: 1,
+                open_questions: 2,
+                open_risks: 3,
+                open_todos: 4,
+            },
+            reported_progress: None,
+        };
+        let list = WorkflowSessionConsoleList {
+            sessions: vec![WorkflowSessionConsoleListItem {
+                session_id: "wc_sess_test".to_string(),
+                title: "test".to_string(),
+                lifecycle: "active".to_string(),
+                mode: "normal".to_string(),
+                updated_at: 42,
+                running_call: true,
+                current_activity: None,
+                last_activity: None,
+                overview,
+            }],
+            total: 9,
+            returned: 1,
+            truncated: true,
+        };
+        let aggregate = aggregate_console_list(&list);
+        assert_eq!(aggregate.retained_sessions, 9);
+        assert_eq!(aggregate.returned_sessions, 1);
+        assert!(aggregate.sessions_truncated);
+        assert_eq!(aggregate.active_sessions, 1);
+        assert_eq!(aggregate.running_sessions, 1);
+        assert_eq!(aggregate.latest_updated_at, Some(42));
+        assert_eq!(aggregate.attention.open_todos, 4);
+        assert_eq!(aggregate.attention.open_questions, 2);
     }
 }

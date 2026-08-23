@@ -140,6 +140,14 @@ export function workflowSessionOverviewPresentation(overview) {
         progressAt: progress && typeof progress.reported_at === "number" ? progress.reported_at : null,
     };
 }
+export function workflowSessionIdleAttentionLabel(runningCall, overview) {
+    if (runningCall)
+        return "running call";
+    const attention = overview && typeof overview === "object" ? overview.attention : null;
+    const pending = ["open_guidance", "open_questions", "open_risks", "open_todos"]
+        .some((key) => overviewCount(attention && attention[key]) > 0);
+    return pending ? "idle · pending attention" : "no running call";
+}
 export function initialWorkflowSessionState() {
     return {
         selectedSessionId: "",

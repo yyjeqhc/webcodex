@@ -26,7 +26,10 @@ mod tests;
 // Re-exports keep `crate::tool_runtime::sessions::{...}` stable for callers.
 // Only symbols referenced outside this module are re-exported here; internal
 // helpers stay `pub(super)` / module-private.
-pub(crate) use console::{WorkflowSessionConsoleDetail, WorkflowSessionConsoleList};
+pub(crate) use console::{
+    aggregate_console_list, WorkflowSessionConsoleAggregate, WorkflowSessionConsoleDetail,
+    WorkflowSessionConsoleList,
+};
 pub(crate) use events::{
     exploration_tool_kind, is_valid_session_id, normalize_observed_project_path,
     strip_tool_call_expectation_metadata, tool_failure_summary_from_events,

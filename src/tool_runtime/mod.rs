@@ -89,6 +89,8 @@ pub(crate) use local_jobs::ACTIVE_JOB_STATUSES;
 pub(crate) use local_jobs::{LocalJobKiller, LocalJobRecord, SystemJobKiller, TerminateOutcome};
 pub use runtime::ToolRuntime;
 pub use runtime_info::RuntimeInfo;
+#[cfg(test)]
+pub(crate) use session_context::workflow_session_authority_fingerprint;
 pub use tool_call::{
     ObserveJobsItem, ReadFilesItem, SearchProjectTextsQuery, SearchResultMode, ToolCall,
 };

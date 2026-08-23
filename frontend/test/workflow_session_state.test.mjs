@@ -12,6 +12,7 @@ import {
   shouldFollowWorkflowSessionLatest,
   workflowSessionListOverviewFacts,
   workflowSessionOverviewPresentation,
+  workflowSessionIdleAttentionLabel,
 } from "../dist/workflow_session_state.js";
 
 test("workflow session list overview stays compact and labels retained evidence", () => {
@@ -74,6 +75,14 @@ test("workflow session detail overview separates runtime validation attention an
   });
   assert.equal(unavailable.validationText, "Terminal validation evidence unavailable");
   assert.equal(unavailable.progressText, "No retained model-reported progress.");
+});
+
+test("idle pending-attention presentation stays factual and never calls a Session stalled", () => {
+  const overview = { attention: { open_guidance: 0, open_questions: 1, open_risks: 0, open_todos: 1 } };
+  assert.equal(workflowSessionIdleAttentionLabel(false, overview), "idle · pending attention");
+  assert.equal(workflowSessionIdleAttentionLabel(true, overview), "running call");
+  assert.equal(workflowSessionIdleAttentionLabel(false, { attention: {} }), "no running call");
+  assert.equal(workflowSessionIdleAttentionLabel(false, overview).includes("stalled"), false);
 });
 
 test("stale same-session detail response cannot overwrite newer snapshot", () => {

@@ -12,7 +12,7 @@
     <header class="topbar">
       <div>
         <h1>WebCodex Runtime Console</h1>
-        <p class="muted">Hosted Workflow Session observability</p>
+        <p class="muted">Server, Runner, Project, Workflow Session, and collaboration observability</p>
       </div>
       <div id="runtime-topbar-controls" class="topbar-controls" hidden>
         <button id="runtime-refresh" class="btn" type="button">Refresh</button>
@@ -23,7 +23,7 @@
     <section id="runtime-token-gate" class="gate">
       <form id="runtime-token-form" autocomplete="off">
         <h2>Connect to Runtime</h2>
-        <p class="muted">Enter an existing runtime Bearer credential with project read access. It stays in page memory only.</p>
+        <p class="muted">Enter an existing runtime Bearer credential with project read access. Runtime-wide and collaboration views additionally require runtime read access. The credential stays in page memory only.</p>
         <div class="field-row">
           <input id="runtime-token-input" type="password" placeholder="Runtime Bearer credential" autocomplete="off" spellcheck="false" />
           <button class="btn primary" type="submit">Connect</button>
@@ -34,10 +34,39 @@
 
     <section id="runtime-console" hidden>
       <p id="runtime-error" class="banner error" role="alert" hidden></p>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Server overview</h2>
+          <span id="runtime-overview-access" class="muted small">runtime:read checking…</span>
+        </div>
+        <div id="runtime-server-overview" class="metric-grid">
+          <div class="metric"><span class="metric-label">Server</span><strong id="runtime-server-identity">—</strong><span id="runtime-server-build" class="muted small">—</span></div>
+          <div class="metric"><span class="metric-label">Runners</span><strong id="runtime-server-runners">—</strong><span id="runtime-server-alignment" class="muted small">—</span></div>
+          <div class="metric"><span class="metric-label">Projects</span><strong id="runtime-server-projects">—</strong><span id="runtime-server-jobs" class="muted small">—</span></div>
+          <div class="metric"><span class="metric-label">Collaboration attention</span><strong id="runtime-server-attention">—</strong><span id="runtime-server-sessions" class="muted small">—</span></div>
+        </div>
+        <p id="runtime-overview-unavailable" class="muted small" hidden>Runtime-wide overview is unavailable to this credential; project-scoped Console access remains available.</p>
+      </section>
+
+      <section class="panel runner-panel">
+        <div class="panel-head"><h2>Runner machine</h2><span id="runtime-runner-access" class="muted small">—</span></div>
+        <div class="runner-head">
+          <label for="runtime-device-select">Runner</label>
+          <select id="runtime-device-select"></select>
+          <span id="runtime-device-status" class="muted small">—</span>
+        </div>
+        <div id="runtime-runner-summary" class="metric-grid compact-grid">
+          <div class="metric"><span class="metric-label">Identity</span><strong id="runtime-runner-id">—</strong><span id="runtime-runner-health" class="muted small">—</span></div>
+          <div class="metric"><span class="metric-label">Build</span><strong id="runtime-runner-version">—</strong><span id="runtime-runner-build">—</span></div>
+          <div class="metric"><span class="metric-label">Jobs</span><strong id="runtime-runner-jobs">—</strong><span id="runtime-runner-concurrency" class="muted small">—</span></div>
+          <div class="metric"><span class="metric-label">Source alignment</span><strong id="runtime-runner-alignment">—</strong><span id="runtime-runner-project-count" class="muted small">—</span></div>
+        </div>
+        <p id="runtime-runner-unavailable" class="muted small" hidden>Runtime-wide Runner facts are unavailable to this credential.</p>
+        <div id="runtime-runner-projects" class="runner-projects"></div>
+      </section>
+
       <section class="panel project-panel">
-        <label for="runtime-device-select">Device</label>
-        <select id="runtime-device-select"></select>
-        <span id="runtime-device-status" class="muted small">—</span>
         <label for="runtime-project-select">Project</label>
         <select id="runtime-project-select"></select>
         <span id="runtime-project-status" class="muted small">—</span>
@@ -65,31 +94,25 @@
               <p id="runtime-session-updated" class="muted small">—</p>
 
               <div class="overview" aria-label="Workflow Session overview">
-                <section class="overview-card runtime-fact">
-                  <h4>Work</h4>
-                  <p id="runtime-overview-work">—</p>
-                </section>
-                <section id="runtime-overview-validation-card" class="overview-card validation-fact">
-                  <h4>Validation</h4>
-                  <p id="runtime-overview-validation">—</p>
-                </section>
-                <section id="runtime-overview-attention-card" class="overview-card attention-fact">
-                  <h4>Attention</h4>
-                  <p id="runtime-overview-attention">—</p>
-                </section>
-                <section class="overview-card reported-card">
-                  <h4>Reported progress</h4>
-                  <p class="muted small">Model-reported; informational only.</p>
-                  <p id="runtime-overview-progress" class="muted">—</p>
-                </section>
+                <section class="overview-card runtime-fact"><h4>Work</h4><p id="runtime-overview-work">—</p></section>
+                <section id="runtime-overview-validation-card" class="overview-card validation-fact"><h4>Validation</h4><p id="runtime-overview-validation">—</p></section>
+                <section id="runtime-overview-attention-card" class="overview-card attention-fact"><h4>Attention</h4><p id="runtime-overview-attention">—</p></section>
+                <section class="overview-card reported-card"><h4>Reported progress</h4><p class="muted small">Model-reported; informational only.</p><p id="runtime-overview-progress" class="muted">—</p></section>
               </div>
 
-              <div class="timeline-controls">
-                <strong>Activity</strong>
-                <button id="runtime-jump-latest" class="btn" type="button" hidden>Jump to latest</button>
-              </div>
-              <ol id="runtime-timeline" class="timeline"></ol>
-              <p id="runtime-timeline-empty" class="muted small" hidden>No bounded activity is available.</p>
+              <section class="detail-section" aria-labelledby="runtime-collaboration-heading">
+                <div class="section-head"><strong id="runtime-collaboration-heading">Collaboration</strong><span id="runtime-collaboration-status" class="muted small">—</span></div>
+                <p id="runtime-collaboration-unavailable" class="muted small" hidden>Collaboration messages require runtime:read. Existing project/session observability remains available.</p>
+                <div id="runtime-collaboration-board" class="collaboration-board"></div>
+                <p id="runtime-collaboration-empty" class="muted small" hidden>No retained collaboration messages.</p>
+                <p class="muted small retention-note">Retained board only; this is not a permanent or complete chat history.</p>
+              </section>
+
+              <section class="detail-section" aria-labelledby="runtime-activity-heading">
+                <div class="timeline-controls"><strong id="runtime-activity-heading">Activity</strong><button id="runtime-jump-latest" class="btn" type="button" hidden>Jump to latest</button></div>
+                <ol id="runtime-timeline" class="timeline"></ol>
+                <p id="runtime-timeline-empty" class="muted small" hidden>No bounded activity is available.</p>
+              </section>
             </div>
           </div>
         </div>

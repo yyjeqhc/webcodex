@@ -1095,6 +1095,8 @@ async fn legacy_031_runner_path_source_fails_before_queue_or_session_state() {
     );
     assert_eq!(result.output["capability"], "project_path_registration");
     assert_eq!(result.output["state_changed"], false);
+    assert_eq!(result.output["recovery_kind"], "none");
+    assert!(result.output.get("recovery_tool").is_none());
     assert_eq!(result.output["permission"]["status"], "auto_approved");
     assert_eq!(result.output["permission"]["tool_name"], "register_project");
     assert!(

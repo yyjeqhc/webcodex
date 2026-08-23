@@ -17,7 +17,7 @@
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use super::tool_result::ToolResult;
+use super::tool_result::{RecoveryKind, ToolResult};
 use super::{agent_project_runtime_id, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
@@ -472,7 +472,8 @@ impl ToolRuntime {
                         "capability": SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
                         "state_changed": false,
                     }),
-                );
+                )
+                .with_recovery(RecoveryKind::NoAction, None);
             }
         }
         self.submit_project_op(

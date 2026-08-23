@@ -603,6 +603,9 @@ async fn capability_missing_blocks_dispatch() {
         )
         .await;
     assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "agent_capability_unavailable");
+    assert_eq!(result.output["recovery_kind"], "none");
+    assert!(result.output.get("recovery_tool").is_none());
     let err = result.error.unwrap_or_default();
     assert!(
         err.contains("agent_capability_unavailable")
@@ -640,6 +643,9 @@ async fn call_hierarchy_requires_its_distinct_runner_capability_before_dispatch(
         )
         .await;
     assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "agent_capability_unavailable");
+    assert_eq!(result.output["recovery_kind"], "none");
+    assert!(result.output.get("recovery_tool").is_none());
     let error = result.error.unwrap_or_default();
     assert!(
         error.contains("agent_capability_unavailable")

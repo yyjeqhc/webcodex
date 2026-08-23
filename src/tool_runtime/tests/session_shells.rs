@@ -698,6 +698,9 @@ async fn capability_modes_and_ssh_resource_fail_closed_without_enqueue() {
             .await
     };
     assert!(!legacy.success);
+    assert_eq!(legacy.output["error_kind"], "agent_capability_unavailable");
+    assert_eq!(legacy.output["recovery_kind"], "none");
+    assert!(legacy.output.get("recovery_tool").is_none());
     assert!(legacy
         .error
         .as_deref()
@@ -726,6 +729,9 @@ async fn capability_modes_and_ssh_resource_fail_closed_without_enqueue() {
             .await
     };
     assert!(!ssh.success);
+    assert_eq!(ssh.output["error_kind"], "agent_capability_unavailable");
+    assert_eq!(ssh.output["recovery_kind"], "none");
+    assert!(ssh.output.get("recovery_tool").is_none());
     // An SSH persistent shell routes through the SSH connection pool and the
     // persistent-shell manager, so it requires ssh_shell + ssh_persistent_shell
     // (persistent_shell is enforced through the PersistentShell tool

@@ -1940,6 +1940,9 @@ async fn run_process_named_ssh_resource_fails_before_enqueue() {
     assert_eq!(result.output["command_started"], false);
     assert_eq!(result.output["command_completed"], false);
     assert_eq!(result.output["failure_kind"], "unsupported_resource");
+    assert_eq!(result.output["error_kind"], "unsupported_resource");
+    assert_eq!(result.output["recovery_kind"], "fix_input");
+    assert!(result.output.get("recovery_tool").is_none());
     assert!(next_patch_agent_request(&runtime, "process-ssh")
         .await
         .is_none());

@@ -1078,6 +1078,9 @@ async fn run_script_ssh_read_only_closed_and_inspect_session_boundaries_fail_clo
     assert_eq!(unsupported.output["command_started"], false);
     assert_eq!(unsupported.output["command_completed"], false);
     assert_eq!(unsupported.output["failure_kind"], "unsupported_resource");
+    assert_eq!(unsupported.output["error_kind"], "unsupported_resource");
+    assert_eq!(unsupported.output["recovery_kind"], "fix_input");
+    assert!(unsupported.output.get("recovery_tool").is_none());
     assert!(next_patch_agent_request(&runtime, "script-guards")
         .await
         .is_none());

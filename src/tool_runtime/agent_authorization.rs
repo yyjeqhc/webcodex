@@ -13,6 +13,14 @@ pub(crate) fn required_agent_capability(call: &ToolCall) -> Option<AgentCapabili
     runtime_tool_agent_capability(call.tool_name())
 }
 
+fn agent_capability_unavailable_result(message: impl Into<String>) -> ToolResult {
+    ToolResult::err_with_output(
+        message,
+        json!({"error_kind": "agent_capability_unavailable"}),
+    )
+    .with_recovery(RecoveryKind::NoAction, None)
+}
+
 impl ToolRuntime {
     /// Enforce the owner boundary and capability requirements for agent-backed
     /// runtime tools before dispatching. This is the single place where the
@@ -67,6 +75,7 @@ impl ToolRuntime {
                     "{tool} is unavailable for named Session SSH resources because the current SSH transport cannot preserve {representation}; execution was not started. Use run_shell explicitly for remote shell semantics."
                 ),
                 json!({
+                    "error_kind": "unsupported_resource",
                     "command_started": false,
                     "command_completed": false,
                     "command_ok": false,
@@ -75,14 +84,16 @@ impl ToolRuntime {
                     "failure_kind": "unsupported_resource",
                     "tool_failure": true,
                 }),
-            ));
+            )
+            .with_recovery(RecoveryKind::FixInput, None));
         }
         if !proj.is_agent() {
             if ssh_resource.is_some() {
-                return Err(ToolResult::err(
-                    "ssh_resource_requires_agent_project: SSH resources require a project owned by a connected Runner"
-                        .to_string(),
-                ));
+                return Err(ToolResult::err_with_output(
+                    "ssh_resource_requires_agent_project: SSH resources require a project owned by a connected Runner",
+                    json!({"error_kind": "ssh_resource_requires_agent_project"}),
+                )
+                .with_recovery(RecoveryKind::FixInput, None));
             }
             return Ok(());
         }
@@ -128,14 +139,14 @@ impl ToolRuntime {
                         required,
                         AgentCapability::LspReadOnlyNavigation | AgentCapability::LspCallHierarchy
                     ) {
-                        return Err(ToolResult::err(format!(
+                        return Err(agent_capability_unavailable_result(format!(
                             "{}: {}",
                             crate::lsp_bridge::error_codes::AGENT_CAPABILITY_UNAVAILABLE,
                             message
                         )));
                     }
                     if matches!(required, AgentCapability::PersistentShell) {
-                        return Err(ToolResult::err(format!(
+                        return Err(agent_capability_unavailable_result(format!(
                             "agent_capability_unavailable: {}",
                             message
                         )));
@@ -172,7 +183,7 @@ impl ToolRuntime {
                         )
                         .with_recovery(RecoveryKind::NoAction, None));
                     }
-                    return Err(ToolResult::err(message));
+                    return Err(agent_capability_unavailable_result(message));
                 }
             }
         }
@@ -189,7 +200,7 @@ impl ToolRuntime {
                 .await
                 .map_err(ToolResult::err)?
             {
-                return Err(ToolResult::err(format!(
+                return Err(agent_capability_unavailable_result(format!(
                     "agent_capability_unavailable: agent client {} does not support {}",
                     client_id, SHELL_CLIENT_CAPABILITY_SSH_SHELL
                 )));
@@ -211,7 +222,7 @@ impl ToolRuntime {
                     .await
                     .map_err(ToolResult::err)?
             {
-                return Err(ToolResult::err(format!(
+                return Err(agent_capability_unavailable_result(format!(
                     "agent_capability_unavailable: agent client {} does not support {}",
                     client_id, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL
                 )));

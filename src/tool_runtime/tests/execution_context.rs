@@ -544,6 +544,9 @@ async fn session_ssh_resource_requires_runner_ssh_shell_capability() {
         )
         .await;
     assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "agent_capability_unavailable");
+    assert_eq!(result.output["recovery_kind"], "none");
+    assert!(result.output.get("recovery_tool").is_none());
     assert!(result
         .error
         .as_deref()

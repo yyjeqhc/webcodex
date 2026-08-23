@@ -10,7 +10,9 @@ use crate::tool_runtime::kernel::{
     check_runtime_tool_scope, HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
     ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
-use crate::tool_runtime::model_ergonomics_telemetry::ModelErgonomicsRecord;
+use crate::tool_runtime::model_ergonomics_telemetry::{
+    ModelErgonomicsRecord, ModelErgonomicsTimer,
+};
 use crate::tool_runtime::tool_definition::LOCAL_CODING_TOOL_NAMES;
 #[cfg(test)]
 use crate::tool_runtime::MAX_PROJECT_ARTIFACT_BYTES;
@@ -2301,6 +2303,15 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     // failure mode behind "MCP request never gets a reply"), converting a
     // silently dead HTTP request into an observable JSON-RPC error.
     let request_id = request.id.clone();
+    // The shared kernel timer is authoritative for completed runtime calls. Keep
+    // one outer emergency timer only so the MCP hard-timeout path does not erase
+    // an otherwise established runtime invocation from ergonomics telemetry.
+    let mut hard_timeout_model_ergonomics =
+        if runtime.model_surface() == ModelSurface::CanonicalConnector {
+            None
+        } else {
+            tool_name.as_deref().and_then(ModelErgonomicsTimer::start)
+        };
     let mut model_ergonomics = None;
     let outcome = match tokio::time::timeout(
         MCP_DISPATCH_HARD_TIMEOUT,
@@ -2342,11 +2353,16 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                     Some(-32000),
                 );
             }
+            let timeout_model_ergonomics = hard_timeout_model_ergonomics.take().map(|timer| {
+                timer
+                    .finish()
+                    .record_for_pre_result_failure("dispatch_hard_timeout")
+            });
             record_audit(
                 false,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Some("mcp dispatch hard timeout".to_string()),
-                None,
+                timeout_model_ergonomics.as_ref(),
             );
             let estimated = estimate_json_bytes(&body);
             guard.response_serialized(500, estimated, Some(false), None, "dispatch_hard_timeout");
@@ -2907,6 +2923,11 @@ async fn handle_mcp_request_with_lifecycle(
                     ),
                 ));
             }
+            // From here on, the MCP boundary has established a model-visible runtime
+            // tool identity. A few MCP-only validations still happen before the
+            // shared ToolRuntime kernel; preserve those failed attempts in generic
+            // telemetry without creating a second record for normal kernel calls.
+            let mut pre_kernel_model_ergonomics = ModelErgonomicsTimer::start(&params.name);
             let artifact_export_caller = if params.name == "export_project_artifact" {
                 if !stateless_2026 || runtime.model_surface() != ModelSurface::FullOperatorRuntime {
                     return McpOutcome::BadRequest(rpc_error(
@@ -2918,11 +2939,21 @@ async fn handle_mcp_request_with_lifecycle(
                 match mcp_artifact_export_caller_binding(auth) {
                     Ok(caller) => Some(caller),
                     Err(error) => {
+                        if let (Some(slot), Some(timer)) = (
+                            model_ergonomics_out.as_deref_mut(),
+                            pre_kernel_model_ergonomics.take(),
+                        ) {
+                            *slot = Some(
+                                timer
+                                    .finish()
+                                    .record_for_pre_result_failure("invalid_arguments"),
+                            );
+                        }
                         return McpOutcome::BadRequest(rpc_error(
                             id,
                             -32602,
                             format!("export_project_artifact cannot bind this caller: {error}"),
-                        ))
+                        ));
                     }
                 }
             } else {
@@ -3012,6 +3043,16 @@ async fn handle_mcp_request_with_lifecycle(
                     if let Some(lc) = lifecycle.as_deref() {
                         lc.dispatch_failed("invalid_arguments");
                         lc.dispatch_finished(false, Some(false), "invalid_arguments");
+                    }
+                    if let (Some(slot), Some(timer)) = (
+                        model_ergonomics_out.as_deref_mut(),
+                        pre_kernel_model_ergonomics.take(),
+                    ) {
+                        *slot = Some(
+                            timer
+                                .finish()
+                                .record_for_pre_result_failure("invalid_arguments"),
+                        );
                     }
                     return McpOutcome::BadRequest(rpc_error(id, -32602, message));
                 }

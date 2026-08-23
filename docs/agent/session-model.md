@@ -623,11 +623,14 @@ not “what is the coding task ledger for this repo work?”.
 
 Model-visible **runtime** tool calls reuse the existing Action Audit event as the
 durable/queryable sink for low-cardinality ergonomics telemetry. No second
-telemetry table or recorder is created. The shared ToolRuntime kernel starts one
-timer for a registered model-visible tool; the transport that already owns the
-outer Action Audit row then finalizes one `summary.model_ergonomics` object from
-the final model-facing ToolResult projection. Batch items do not create generic
-invocation records, and hidden/internal helpers do not start this telemetry.
+telemetry table or recorder is created. The shared ToolRuntime kernel owns the
+normal timer for a registered model-visible tool; the transport that already owns
+the outer Action Audit row then finalizes one `summary.model_ergonomics` object
+from the final model-facing ToolResult projection. A transport may use a bounded
+fallback timer only after a runtime tool identity is established when MCP-only
+validation rejects the call before kernel entry or the MCP hard dispatch timeout
+prevents kernel completion. Batch items do not create generic invocation records,
+and hidden/internal helpers do not start this telemetry.
 
 The version-1 generic record contains only:
 
@@ -646,10 +649,13 @@ character count, Rust memory size, stdout/stderr estimate, database-row size, or
 HTTP/JSON-RPC/MCP framing size. MCP finalizes the count from the final
 `structuredContent` ToolResult after MCP-only image/resource framing, so bytes
 removed from the model-facing ToolResult are not charged. If a registered
-model-visible tool is rejected by the kernel with a structured adapter error
-before any ToolResult exists (currently invalid arguments or insufficient
-scope), the invocation is still counted but `serialized_result_bytes` is `null`;
-the transport-specific error envelope is never substituted for a ToolResult.
+model-visible tool identity has already been established but the call is rejected
+before any ToolResult exists (for example invalid arguments, insufficient scope,
+or MCP wrapper validation), the invocation is still counted but
+`serialized_result_bytes` is `null`; the transport-specific error envelope is
+never substituted for a ToolResult. The MCP hard dispatch timeout is recorded the
+same way with structured `error_kind = dispatch_hard_timeout` so stalled calls do
+not disappear from failure/latency aggregates.
 There is currently no
 authoritative generic final-result truncation fact, so generic
 `result_truncated` is deliberately **not** recorded; tool-specific truncation

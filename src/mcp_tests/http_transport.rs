@@ -205,10 +205,8 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
     let body: Value = resp.take_json().await.unwrap();
     let structured = &body["result"]["structuredContent"];
     assert_eq!(structured["success"], true);
-    let expected_tool_result_bytes =
-        serde_json::to_vec(&ToolResult::ok(structured["output"].clone()))
-            .unwrap()
-            .len() as u64;
+    assert!(structured["error"].is_null());
+    let expected_tool_result_bytes = serde_json::to_vec(structured).unwrap().len() as u64;
 
     // End the connection guard structurally inside the block: the awaited
     // requests below must not overlap it.
@@ -311,6 +309,49 @@ async fn mcp_pre_result_invalid_arguments_still_records_generic_attempt() {
     let summary: Value = serde_json::from_str(&summary).unwrap();
     let telemetry = &summary["model_ergonomics"];
     assert_eq!(telemetry["tool_name"], "read_file");
+    assert_eq!(telemetry["success"], false);
+    assert_eq!(telemetry["error_kind"], "invalid_arguments");
+    assert!(telemetry["serialized_result_bytes"].is_null());
+}
+
+#[tokio::test]
+async fn mcp_pre_kernel_wrapper_validation_still_records_generic_attempt() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db.clone(), runtime));
+    let mut arguments = json!({});
+    arguments.as_object_mut().unwrap().insert(
+        crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string(),
+        json!(42),
+    );
+
+    let mut response = TestClient::post("http://localhost/mcp")
+        .bearer_auth("secret")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 102,
+            "method": "tools/call",
+            "params": {"name": "list_tools", "arguments": arguments}
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&response), StatusCode::BAD_REQUEST);
+    let body: Value = response.take_json().await.unwrap();
+    assert_eq!(body["error"]["code"], -32602);
+
+    let summary: String = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT summary_json FROM action_events WHERE operation = 'list_tools'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let summary: Value = serde_json::from_str(&summary).unwrap();
+    let telemetry = &summary["model_ergonomics"];
+    assert_eq!(telemetry["tool_name"], "list_tools");
+    assert_eq!(telemetry["tool_category"], "runtime");
     assert_eq!(telemetry["success"], false);
     assert_eq!(telemetry["error_kind"], "invalid_arguments");
     assert!(telemetry["serialized_result_bytes"].is_null());

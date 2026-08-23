@@ -42,14 +42,6 @@ pub(crate) struct ModelErgonomicsRecord {
     pub(crate) execution_state: Option<String>,
 }
 
-#[derive(Serialize)]
-struct BorrowedToolResult<'a> {
-    success: bool,
-    output: &'a Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<&'a str>,
-}
-
 impl ModelErgonomicsTimer {
     pub(crate) fn start(tool_name: &str) -> Option<Self> {
         let definition =
@@ -105,14 +97,7 @@ impl ModelErgonomicsCompletion {
     ) -> Option<ModelErgonomicsRecord> {
         let success = structured_content.get("success")?.as_bool()?;
         let output = structured_content.get("output")?;
-        let error = structured_content.get("error").and_then(Value::as_str);
-        let serialized_result_bytes = serde_json::to_vec(&BorrowedToolResult {
-            success,
-            output,
-            error,
-        })
-        .ok()?
-        .len();
+        let serialized_result_bytes = serde_json::to_vec(structured_content).ok()?.len();
         Some(self.record_from_parts(success, output, Some(serialized_result_bytes)))
     }
 

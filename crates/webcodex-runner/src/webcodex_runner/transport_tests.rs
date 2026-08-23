@@ -981,7 +981,7 @@ fn run_polling_agent_against_scripted_server(
     let failsafe_shutdown = Arc::clone(&server.shutdown);
     let server_url = server.server_url.clone();
     let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
-    thread::spawn(move || {
+    let runner = thread::spawn(move || {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = polling_agent_config(server_url, tmp.path().join("projects.d"));
         let runtime = test_runtime(&cfg);
@@ -990,10 +990,21 @@ fn run_polling_agent_against_scripted_server(
         let _ = result_tx.send(result);
     });
     match result_rx.recv_timeout(Duration::from_secs(20)) {
-        Ok(result) => result,
-        Err(error) => {
+        Ok(result) => {
+            runner
+                .join()
+                .expect("scripted polling runner thread panicked after reporting its result");
+            result
+        }
+        Err(error @ std::sync::mpsc::RecvTimeoutError::Timeout) => {
             failsafe_shutdown.store(true, Ordering::SeqCst);
             panic!("scripted polling runner exceeded hard timeout: {error}");
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            runner
+                .join()
+                .expect("scripted polling runner thread panicked before reporting its result");
+            panic!("scripted polling runner exited without reporting a result");
         }
     }
 }

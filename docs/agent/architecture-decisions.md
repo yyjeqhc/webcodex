@@ -30,6 +30,56 @@ Do **not** change `wc_sess_*` ID format, ledger event shape, or lifecycle
 semantics casually. Session / guard / current-session work must preserve the
 invariants listed in `AGENTS.md` §6 (Architecture) and the session section.
 
+### Collaboration boundary (standing)
+
+A Workflow Session remains a bounded **execution and evidence unit** even when
+its session-local message board is used for coordinator/worker handoff. Do not
+turn `wc_sess_*` lifecycle, ownership, or evidence history into a generic chat
+room, participant registry, worker pool, or scheduler.
+
+If repeated dogfood later demonstrates a real need for durable multi-party
+conversation, add an independent Room/Discussion-style collaboration container
+rather than reinterpreting existing Workflow Sessions. The standing extension
+rules are:
+
+- each executing model/worker continues to own an independent Workflow Session
+  for its tool calls, validation, Jobs, checkpoints, and review evidence; pure
+  collaboration observers need no execution Session merely to participate;
+- Room/Discussion state never proves model-context retention or message delivery.
+  Membership, presence, transport/window identity, or a referenced Workflow
+  Session cannot be used as a receipt that a model has seen prior messages, nor
+  as hidden current-session/context fallback. Models explicitly observe the
+  bounded collaboration state they need;
+- Room/Discussion membership or roles may govern only that collaboration
+  container's own visibility/posting contract; they never confer Project,
+  Workflow Session, Job, Artifact, shell, Computer, or other execution
+  authority. Message authorship and object references remain provenance or
+  correlation, and dereferencing an object always re-runs that object's normal
+  authorization;
+- Room/Discussion identifiers and participant claims are not bearer capabilities;
+  Room reads/posts still require authenticated caller authorization against that
+  collaboration container's own visibility/posting contract;
+- the collaboration substrate may own bounded messages, reply/thread
+  correlation, provenance, and observation, while automatic wake-up, worker
+  spawning, routing, scheduling, or continuation belongs to a separate optional
+  orchestrator layer;
+- an orchestrator may choose when and where to dispatch work, but it never
+  inherits execution authority from collaboration state. Consequential actions
+  still name explicit targets and pass the same caller authorization, Project and
+  Workflow Session scope, guards, capabilities, and dispatch-time revalidation as
+  direct tool calls;
+- a Room/Discussion is never itself a filesystem/worktree lock, task lease, or
+  execution authority;
+- extract shared message/participant machinery only after a second concrete
+  consumer exists; do not pre-build a generic collaboration framework for a
+  hypothetical future UI;
+- future collaboration storage is additive: existing `wc_sess_*` and
+  Session-message meanings remain unchanged rather than being migrated into a
+  new interpretation.
+
+Current bounded handoff behavior and non-goals are documented in
+[`manual-window-collaboration.md`](manual-window-collaboration.md).
+
 ### Action audit session (HTTP / operator audit)
 
 | Aspect | Contract |

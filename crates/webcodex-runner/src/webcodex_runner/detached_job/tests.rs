@@ -261,18 +261,7 @@ fn accepted_active_record_is_never_reclaimed() {
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
     let request = make_payload_request("linger", Vec::new());
-    let outcome = handoff_detached_job(&store, request.clone()).unwrap();
-    assert!(matches!(outcome, DetachedHandoffOutcome::Accepted { .. }));
-    assert!(
-        wait_until(Duration::from_secs(5), || store
-            .read(&request.job_id)
-            .is_ok_and(|record| {
-                record.phase == DetachedJobPhase::Running
-                    && record.ownership_accepted_at_unix_ms.is_some()
-            })),
-        "accepted detached execution never reached a live Running state"
-    );
-    let running = store.read(&request.job_id).unwrap();
+    let running = handoff_and_wait_running(&store, &request);
     assert!(running.ownership_accepted_at_unix_ms.is_some());
     assert_eq!(running.phase, DetachedJobPhase::Running);
 
@@ -636,6 +625,70 @@ fn make_payload_request(scenario: &str, env: Vec<(String, String)>) -> DetachedS
 }
 
 #[cfg(unix)]
+fn wait_for_running_record(store: &DetachedJobStore, job_id: &str) -> DetachedJobRecord {
+    assert!(
+        wait_until(Duration::from_secs(5), || store.read(job_id).is_ok_and(
+            |record| {
+                record.phase == DetachedJobPhase::Running
+                    && record.ownership_accepted_at_unix_ms.is_some()
+            }
+        )),
+        "detached execution never reached an accepted Running state: {job_id}"
+    );
+    store.read(job_id).unwrap()
+}
+
+#[cfg(unix)]
+fn handoff_and_wait_running(
+    store: &DetachedJobStore,
+    request: &DetachedStartRequest,
+) -> DetachedJobRecord {
+    let outcome = handoff_detached_job(store, request.clone()).unwrap();
+    assert!(matches!(outcome, DetachedHandoffOutcome::Accepted { .. }));
+    wait_for_running_record(store, &request.job_id)
+}
+
+#[cfg(unix)]
+fn run_accept_then_exit_owner(temp: &Path, state_root: &Path, request: &DetachedStartRequest) {
+    let instruction = temp.join("accept-exit-owner.json");
+    fs::write(
+        &instruction,
+        serde_json::to_vec(&(state_root.to_path_buf(), request.clone())).unwrap(),
+    )
+    .unwrap();
+    let mut owner = Command::new(std::env::current_exe().unwrap());
+    owner
+        .arg("--exact")
+        .arg("webcodex_runner::detached_job::tests::accept_then_exit_owner_subprocess_entrypoint")
+        .arg("--nocapture")
+        .env_clear()
+        .env("WEBCODEX_DETACHED_ACCEPT_EXIT_INSTRUCTION", &instruction)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    assert!(owner.spawn().unwrap().wait().unwrap().success());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn tree_payload_request(temp: &Path) -> (DetachedStartRequest, PathBuf, PathBuf) {
+    let parent_marker = temp.join("parent.pid");
+    let child_marker = temp.join("child.pid");
+    let request = make_payload_request(
+        "tree",
+        vec![
+            (
+                "PARENT_PID_MARKER".to_string(),
+                parent_marker.to_string_lossy().into_owned(),
+            ),
+            (
+                "CHILD_PID_MARKER".to_string(),
+                child_marker.to_string_lossy().into_owned(),
+            ),
+        ],
+    );
+    (request, parent_marker, child_marker)
+}
+
+#[cfg(unix)]
 #[test]
 fn accepted_handoff_keeps_payload_alive_after_owner_process_exits() {
     let _guard = test_env_lock();
@@ -701,23 +754,7 @@ fn accepted_handoff_survives_owner_exit_before_ack() {
             marker.to_string_lossy().into_owned(),
         )],
     );
-    let instruction = temp.path().join("accept-exit-owner.json");
-    fs::write(
-        &instruction,
-        serde_json::to_vec(&(state_root.clone(), request.clone())).unwrap(),
-    )
-    .unwrap();
-
-    let mut owner = Command::new(std::env::current_exe().unwrap());
-    owner
-        .arg("--exact")
-        .arg("webcodex_runner::detached_job::tests::accept_then_exit_owner_subprocess_entrypoint")
-        .arg("--nocapture")
-        .env_clear()
-        .env("WEBCODEX_DETACHED_ACCEPT_EXIT_INSTRUCTION", &instruction)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    assert!(owner.spawn().unwrap().wait().unwrap().success());
+    run_accept_then_exit_owner(temp.path(), &state_root, &request);
 
     let store = DetachedJobStore::new(state_root);
     let terminal = wait_for_terminal(&store, &request.job_id);
@@ -842,27 +879,10 @@ fn restart_scan_reconciles_live_detached_execution_without_respawn() {
             marker.to_string_lossy().into_owned(),
         )],
     );
-    let instruction = temp.path().join("restart-owner.json");
-    fs::write(
-        &instruction,
-        serde_json::to_vec(&(state_root.clone(), request.clone())).unwrap(),
-    )
-    .unwrap();
-    let mut owner = Command::new(std::env::current_exe().unwrap());
-    owner
-        .arg("--exact")
-        .arg("webcodex_runner::detached_job::tests::accept_then_exit_owner_subprocess_entrypoint")
-        .arg("--nocapture")
-        .env_clear()
-        .env("WEBCODEX_DETACHED_ACCEPT_EXIT_INSTRUCTION", &instruction)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    assert!(owner.spawn().unwrap().wait().unwrap().success());
+    run_accept_then_exit_owner(temp.path(), &state_root, &request);
 
     let store = DetachedJobStore::new(state_root);
-    assert!(wait_until(Duration::from_secs(5), || store
-        .read(&request.job_id)
-        .is_ok_and(|record| record.phase == DetachedJobPhase::Running)));
+    let _running = wait_for_running_record(&store, &request.job_id);
     let records = store.scan_for_client(&request.client_id).unwrap();
     assert_eq!(records.len(), 1);
     let recovered = store
@@ -885,28 +905,13 @@ fn durable_stop_request_terminates_exact_supervisor_owned_tree() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
-    let parent_marker = temp.path().join("parent.pid");
-    let child_marker = temp.path().join("child.pid");
-    let request = make_payload_request(
-        "tree",
-        vec![
-            (
-                "PARENT_PID_MARKER".to_string(),
-                parent_marker.to_string_lossy().into_owned(),
-            ),
-            (
-                "CHILD_PID_MARKER".to_string(),
-                child_marker.to_string_lossy().into_owned(),
-            ),
-        ],
-    );
-    let _ = handoff_detached_job(&store, request.clone()).unwrap();
+    let (request, parent_marker, child_marker) = tree_payload_request(temp.path());
+    let running = handoff_and_wait_running(&store, &request);
     assert!(wait_until(Duration::from_secs(5), || {
         parent_marker.exists() && child_marker.exists()
     }));
     let parent_pid: u32 = fs::read_to_string(&parent_marker).unwrap().parse().unwrap();
     let child_pid: u32 = fs::read_to_string(&child_marker).unwrap().parse().unwrap();
-    let running = store.read(&request.job_id).unwrap();
     let stopped = store
         .request_stop(&request.job_id, &running.execution_id)
         .unwrap();
@@ -956,11 +961,7 @@ fn stale_native_supervisor_identity_reconciles_to_lost_without_respawn() {
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
     let request = make_payload_request("linger", Vec::new());
-    let _ = handoff_detached_job(&store, request.clone()).unwrap();
-    assert!(wait_until(Duration::from_secs(5), || store
-        .read(&request.job_id)
-        .is_ok_and(|record| record.phase == DetachedJobPhase::Running)));
-    let mut running = store.read(&request.job_id).unwrap();
+    let mut running = handoff_and_wait_running(&store, &request);
     let real_supervisor_pid = running.supervisor.as_ref().unwrap().pid;
     running.supervisor.as_mut().unwrap().native_start_id =
         stale_native_start_identity().to_string();
@@ -1194,28 +1195,13 @@ fn supervisor_death_terminates_payload_process_tree() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
-    let parent_marker = temp.path().join("parent.pid");
-    let child_marker = temp.path().join("child.pid");
-    let request = make_payload_request(
-        "tree",
-        vec![
-            (
-                "PARENT_PID_MARKER".to_string(),
-                parent_marker.to_string_lossy().into_owned(),
-            ),
-            (
-                "CHILD_PID_MARKER".to_string(),
-                child_marker.to_string_lossy().into_owned(),
-            ),
-        ],
-    );
-    let _ = handoff_detached_job(&store, request.clone()).unwrap();
+    let (request, parent_marker, child_marker) = tree_payload_request(temp.path());
+    let running = handoff_and_wait_running(&store, &request);
     assert!(wait_until(Duration::from_secs(5), || {
         parent_marker.exists() && child_marker.exists()
     }));
     let parent_pid: u32 = fs::read_to_string(&parent_marker).unwrap().parse().unwrap();
     let child_pid: u32 = fs::read_to_string(&child_marker).unwrap().parse().unwrap();
-    let running = store.read(&request.job_id).unwrap();
     assert_eq!(running.phase, DetachedJobPhase::Running);
     let supervisor_pid = running.supervisor.as_ref().unwrap().pid;
     assert!(process_alive(supervisor_pid));

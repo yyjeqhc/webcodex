@@ -571,6 +571,59 @@ impl ConcurrentPollingServer {
     }
 }
 
+struct PollingRunnerHandle {
+    result_rx: std::sync::mpsc::Receiver<Result<(), String>>,
+    handle: thread::JoinHandle<()>,
+}
+
+impl PollingRunnerHandle {
+    fn assert_pending(&self, context: &str) {
+        match self.result_rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                panic!("{context}: polling runner disconnected before reporting a result")
+            }
+            Ok(result) => panic!("{context}: polling runner returned early: {result:?}"),
+        }
+    }
+
+    fn finish(self, timeout: Duration, context: &str) -> Result<(), String> {
+        match self.result_rx.recv_timeout(timeout) {
+            Ok(result) => {
+                if self.handle.join().is_err() {
+                    panic!("{context}: polling runner thread panicked after reporting its result");
+                }
+                result
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                if self.handle.join().is_err() {
+                    panic!("{context}: polling runner thread panicked before reporting its result");
+                }
+                panic!("{context}: polling runner exited without reporting a result");
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("{context}: polling runner exceeded hard timeout {timeout:?}");
+            }
+        }
+    }
+}
+
+fn spawn_polling_runner(
+    cfg: AgentConfig,
+    runtime: AgentRuntimeState,
+    once: bool,
+    instance_id: &str,
+    shutdown: Arc<AtomicBool>,
+) -> PollingRunnerHandle {
+    let instance_id = instance_id.to_string();
+    let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+    let handle = thread::spawn(move || {
+        let result = run_polling_agent_with_shutdown(cfg, once, &instance_id, shutdown, &runtime);
+        let _ = result_tx.send(result);
+    });
+    PollingRunnerHandle { result_rx, handle }
+}
+
 fn start_concurrent_polling_server(
     handler: Arc<dyn Fn(&str, &str) -> ConcurrentHttpResponse + Send + Sync>,
 ) -> ConcurrentPollingServer {
@@ -1095,19 +1148,13 @@ fn polling_long_ordinary_dispatch_does_not_pin_and_results_stay_correlated_exact
     let server = start_concurrent_polling_server(handler);
     let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
-    let runner_runtime = runtime.clone();
-    let runner_shutdown_for_thread = Arc::clone(&runner_shutdown);
-    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
-    let runner = thread::spawn(move || {
-        let result = run_polling_agent_with_shutdown(
-            cfg,
-            false,
-            "inst-e1-correlation",
-            runner_shutdown_for_thread,
-            &runner_runtime,
-        );
-        let _ = runner_tx.send(result);
-    });
+    let runner = spawn_polling_runner(
+        cfg,
+        runtime.clone(),
+        false,
+        "inst-e1-correlation",
+        Arc::clone(&runner_shutdown),
+    );
 
     assert_eq!(
         event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
@@ -1131,11 +1178,9 @@ fn polling_long_ordinary_dispatch_does_not_pin_and_results_stay_correlated_exact
         "result-req-slow-a"
     );
 
-    runner_rx
-        .recv_timeout(Duration::from_secs(10))
-        .expect("polling runner completion")
+    runner
+        .finish(Duration::from_secs(10), "polling correlation runner")
         .expect("polling runner should shut down cleanly");
-    runner.join().unwrap();
     server.finish();
 
     let results = results.lock().unwrap();
@@ -1211,19 +1256,13 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
     let server = start_concurrent_polling_server(handler);
     let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
-    let runner_runtime = runtime.clone();
-    let runner_shutdown_for_thread = Arc::clone(&runner_shutdown);
-    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
-    let runner = thread::spawn(move || {
-        let result = run_polling_agent_with_shutdown(
-            cfg,
-            false,
-            "inst-e1-bound",
-            runner_shutdown_for_thread,
-            &runner_runtime,
-        );
-        let _ = runner_tx.send(result);
-    });
+    let runner = spawn_polling_runner(
+        cfg,
+        runtime.clone(),
+        false,
+        "inst-e1-bound",
+        Arc::clone(&runner_shutdown),
+    );
 
     let deadline = Instant::now() + Duration::from_secs(5);
     for path in &started[..2] {
@@ -1254,11 +1293,9 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
     std::fs::write(&releases[1], "release\n").unwrap();
     std::fs::write(&releases[2], "release\n").unwrap();
 
-    runner_rx
-        .recv_timeout(Duration::from_secs(10))
-        .expect("bounded polling runner completion")
+    runner
+        .finish(Duration::from_secs(10), "bounded polling runner")
         .expect("bounded polling runner should shut down cleanly");
-    runner.join().unwrap();
     server.finish();
     assert_eq!(result_count.load(Ordering::SeqCst), 3);
     for marker in markers {
@@ -1336,19 +1373,13 @@ fn polling_job_start_dispatches_behind_one_long_ordinary_request() {
     let server = start_concurrent_polling_server(handler);
     let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
-    let runner_runtime = runtime.clone();
-    let runner_shutdown_for_thread = Arc::clone(&runner_shutdown);
-    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
-    let runner = thread::spawn(move || {
-        let result = run_polling_agent_with_shutdown(
-            cfg,
-            false,
-            "inst-e1-job",
-            runner_shutdown_for_thread,
-            &runner_runtime,
-        );
-        let _ = runner_tx.send(result);
-    });
+    let runner = spawn_polling_runner(
+        cfg,
+        runtime.clone(),
+        false,
+        "inst-e1-job",
+        Arc::clone(&runner_shutdown),
+    );
 
     job_rx
         .recv_timeout(Duration::from_secs(5))
@@ -1358,11 +1389,9 @@ fn polling_job_start_dispatches_behind_one_long_ordinary_request() {
     assert_eq!(std::fs::read_to_string(&job_marker).unwrap(), "job-ran\n");
     std::fs::write(&release_a, "release\n").unwrap();
 
-    runner_rx
-        .recv_timeout(Duration::from_secs(10))
-        .expect("Job-behind-ordinary runner completion")
+    runner
+        .finish(Duration::from_secs(10), "Job-behind-ordinary runner")
         .expect("Job-behind-ordinary runner should shut down cleanly");
-    runner.join().unwrap();
     server.finish();
     assert_eq!(
         std::fs::read_to_string(&marker_a).unwrap().lines().count(),
@@ -1406,30 +1435,24 @@ fn polling_once_waits_for_its_tracked_ordinary_dispatch() {
     let server = start_concurrent_polling_server(handler);
     let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
-    let runner_runtime = runtime.clone();
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
-    let runner = thread::spawn(move || {
-        let result =
-            run_polling_agent_with_shutdown(cfg, true, "inst-e1-once", shutdown, &runner_runtime);
-        let _ = runner_tx.send(result);
-    });
+    let runner = spawn_polling_runner(
+        cfg,
+        runtime.clone(),
+        true,
+        "inst-e1-once",
+        Arc::new(AtomicBool::new(false)),
+    );
 
     wait_for_path(
         &started,
         Instant::now() + Duration::from_secs(5),
         "--once request to start",
     );
-    assert!(
-        runner_rx.try_recv().is_err(),
-        "--once returned while its ordinary dispatch was still active"
-    );
+    runner.assert_pending("--once returned while its ordinary dispatch was still active");
     std::fs::write(&release, "release\n").unwrap();
-    runner_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("--once runner completion")
+    runner
+        .finish(Duration::from_secs(5), "--once polling runner")
         .expect("--once runner should complete successfully");
-    runner.join().unwrap();
     server.finish();
 
     assert_eq!(poll_count.load(Ordering::SeqCst), 1);
@@ -1483,38 +1506,27 @@ fn polling_once_preserves_job_manager_drain_before_exit() {
     let server = start_concurrent_polling_server(handler);
     let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
-    let runner_runtime = runtime.clone();
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
-    let runner = thread::spawn(move || {
-        let result = run_polling_agent_with_shutdown(
-            cfg,
-            true,
-            "inst-e1-once-job",
-            shutdown,
-            &runner_runtime,
-        );
-        let _ = runner_tx.send(result);
-    });
+    let runner = spawn_polling_runner(
+        cfg,
+        runtime.clone(),
+        true,
+        "inst-e1-once-job",
+        Arc::new(AtomicBool::new(false)),
+    );
 
     wait_for_path(
         &started,
         Instant::now() + Duration::from_secs(5),
         "--once Job to start",
     );
-    assert!(
-        runner_rx.try_recv().is_err(),
-        "--once returned before JobManager drained its active Job"
-    );
+    runner.assert_pending("--once returned before JobManager drained its active Job");
     std::fs::write(&release, "release\n").unwrap();
     terminal_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("--once Job terminal update");
-    runner_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("--once Job runner completion")
+    runner
+        .finish(Duration::from_secs(5), "--once Job polling runner")
         .expect("--once Job runner should complete successfully");
-    runner.join().unwrap();
     server.finish();
 
     assert_eq!(poll_count.load(Ordering::SeqCst), 1);
@@ -1561,20 +1573,14 @@ fn polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying
     let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime =
         AgentRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_secs(2));
-    let runner_runtime = runtime.clone();
     let shutdown = Arc::new(AtomicBool::new(false));
-    let shutdown_for_thread = Arc::clone(&shutdown);
-    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
-    let runner = thread::spawn(move || {
-        let result = run_polling_agent_with_shutdown(
-            cfg,
-            false,
-            "inst-e1-shutdown",
-            shutdown_for_thread,
-            &runner_runtime,
-        );
-        let _ = runner_tx.send(result);
-    });
+    let runner = spawn_polling_runner(
+        cfg,
+        runtime.clone(),
+        false,
+        "inst-e1-shutdown",
+        Arc::clone(&shutdown),
+    );
 
     wait_for_path(
         &started,
@@ -1583,11 +1589,9 @@ fn polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying
     );
     let shutdown_started = Instant::now();
     shutdown.store(true, Ordering::SeqCst);
-    runner_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("active-shutdown runner completion")
+    runner
+        .finish(Duration::from_secs(5), "active-shutdown polling runner")
         .expect("active-shutdown runner should exit cleanly");
-    runner.join().unwrap();
     assert!(
         shutdown_started.elapsed() < Duration::from_secs(3),
         "shutdown exceeded its bounded cleanup budget"
@@ -1682,19 +1686,13 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
     let mut cfg = polling_agent_config(server.server_url.clone(), projects_dir.clone());
     cfg.policy.allowed_roots = vec![temp.path().to_path_buf()];
     let runtime = test_runtime(&cfg);
-    let runner_runtime = runtime.clone();
-    let runner_shutdown_for_thread = Arc::clone(&runner_shutdown);
-    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
-    let runner = thread::spawn(move || {
-        let result = run_polling_agent_with_shutdown(
-            cfg,
-            false,
-            "inst-e1-project-cache",
-            runner_shutdown_for_thread,
-            &runner_runtime,
-        );
-        let _ = runner_tx.send(result);
-    });
+    let runner = spawn_polling_runner(
+        cfg,
+        runtime.clone(),
+        false,
+        "inst-e1-project-cache",
+        Arc::clone(&runner_shutdown),
+    );
 
     // The register_project round trip is an actual project operation (it may
     // spawn git); on a loaded runner the poll that observes the refreshed
@@ -1702,11 +1700,9 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
     refreshed_rx
         .recv_timeout(Duration::from_secs(30))
         .expect("a later poll must carry refreshed project metadata");
-    runner_rx
-        .recv_timeout(Duration::from_secs(30))
-        .expect("project-cache runner completion")
+    runner
+        .finish(Duration::from_secs(30), "project-cache polling runner")
         .expect("project-cache runner should shut down cleanly");
-    runner.join().unwrap();
     server.finish();
     assert!(projects_dir.join("e1-project.toml").exists());
     assert!(poll_count.load(Ordering::SeqCst) >= 2);
@@ -1804,19 +1800,13 @@ fn polling_persistent_shell_exec_remains_responsive_to_close() {
     let server = start_concurrent_polling_server(handler);
     let cfg = polling_agent_config(server.server_url.clone(), projects_dir);
     let runtime = test_runtime(&cfg);
-    let runner_runtime = runtime.clone();
-    let runner_shutdown_for_thread = Arc::clone(&runner_shutdown);
-    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
-    let runner = thread::spawn(move || {
-        let result = run_polling_agent_with_shutdown(
-            cfg,
-            false,
-            "inst-e1-persistent",
-            runner_shutdown_for_thread,
-            &runner_runtime,
-        );
-        let _ = runner_tx.send(result);
-    });
+    let runner = spawn_polling_runner(
+        cfg,
+        runtime.clone(),
+        false,
+        "inst-e1-persistent",
+        Arc::clone(&runner_shutdown),
+    );
 
     wait_for_path(
         &started,
@@ -1824,11 +1814,9 @@ fn polling_persistent_shell_exec_remains_responsive_to_close() {
         "persistent-shell exec to start",
     );
     allow_close.store(true, Ordering::SeqCst);
-    runner_rx
-        .recv_timeout(Duration::from_secs(10))
-        .expect("persistent-shell polling runner completion")
+    runner
+        .finish(Duration::from_secs(10), "persistent-shell polling runner")
         .expect("persistent-shell polling runner should shut down cleanly");
-    runner.join().unwrap();
     server.finish();
 
     let mut result_ids = state.lock().unwrap().result_ids.clone();

@@ -4012,6 +4012,52 @@ fn insert_running_job(
     stop_requested
 }
 
+struct RunningJobTreeFixture {
+    parent_pid: u32,
+    grandchild_pid: u32,
+    output: mpsc::Receiver<JobTreeOut>,
+}
+
+impl RunningJobTreeFixture {
+    fn assert_terminated(&self, timeout: Duration, tag: &str) {
+        assert!(
+            wait_for_process_exit(self.parent_pid, timeout, &format!("{tag}-parent")),
+            "{tag} parent survived tree termination"
+        );
+        assert!(
+            wait_for_process_exit(self.grandchild_pid, timeout, &format!("{tag}-grandchild")),
+            "{tag} descendant survived tree termination"
+        );
+        assert!(
+            wait_for_stdout_eof(&self.output, timeout, &format!("{tag}-eof")),
+            "{tag} stdout did not reach EOF after tree termination"
+        );
+    }
+}
+
+fn seed_running_job_tree(
+    manager: &JobManager,
+    job_id: &str,
+    marker: &Path,
+) -> (RunningJobTreeFixture, Arc<AtomicBool>) {
+    let (managed, output) = spawn_helper_raw(
+        "spawn-grandchild-keepalive",
+        &[marker.to_str().unwrap(), "3", "60", "60"],
+    );
+    let parent_pid = managed.id();
+    let grandchild_pid = read_grandchild_pid(&output);
+    let child = Arc::new(Mutex::new(managed));
+    let stop_requested = insert_running_job(manager, job_id, Some(child));
+    (
+        RunningJobTreeFixture {
+            parent_pid,
+            grandchild_pid,
+            output,
+        },
+        stop_requested,
+    )
+}
+
 /// An explicit stop terminates the whole job process tree, including a
 /// descendant that inherited the stdout pipe, and the stdout reader reaches
 /// EOF instead of blocking forever.
@@ -4019,43 +4065,20 @@ fn insert_running_job(
 fn job_stop_terminates_whole_tree_including_descendant() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("stop-grandchild.marker");
-    let (managed, rx) = spawn_helper_raw(
-        "spawn-grandchild-keepalive",
-        &[marker.to_str().unwrap(), "3", "60", "60"],
-    );
-    let parent_pid = managed.id();
-    let grandchild_pid = read_grandchild_pid(&rx);
+    let manager = JobManager::new(1);
+    let (tree, stop_requested) = seed_running_job_tree(&manager, "stop-tree-job", &marker);
     assert!(
-        process_running(parent_pid),
+        process_running(tree.parent_pid),
         "job parent should be running before stop"
     );
     assert!(
-        process_running(grandchild_pid),
+        process_running(tree.grandchild_pid),
         "job descendant should be running before stop"
     );
-    let child = Arc::new(Mutex::new(managed));
-
-    let manager = JobManager::new(1);
-    let stop_requested = insert_running_job(&manager, "stop-tree-job", Some(child.clone()));
     manager.stop("stop-tree-job").expect("stop job");
     assert!(stop_requested.load(Ordering::SeqCst));
 
-    assert!(
-        wait_for_process_exit(parent_pid, Duration::from_secs(5), "parent-after-stop"),
-        "job parent survived stop"
-    );
-    assert!(
-        wait_for_process_exit(
-            grandchild_pid,
-            Duration::from_secs(5),
-            "grandchild-after-stop"
-        ),
-        "job descendant survived stop; stop must terminate the whole tree"
-    );
-    assert!(
-        wait_for_stdout_eof(&rx, Duration::from_secs(5), "stop-eof"),
-        "stdout must reach EOF after the whole tree is terminated"
-    );
+    tree.assert_terminated(Duration::from_secs(5), "explicit-stop");
     assert!(
         !marker.exists(),
         "delayed grandchild marker must never appear after stop"
@@ -4169,20 +4192,8 @@ fn job_stop_all_terminates_all_trees_and_preserves_completed_jobs() {
     let temp = tempfile::tempdir().unwrap();
     let marker_a = temp.path().join("stop-all-a.marker");
     let marker_b = temp.path().join("stop-all-b.marker");
-    let (managed_a, rx_a) = spawn_helper_raw(
-        "spawn-grandchild-keepalive",
-        &[marker_a.to_str().unwrap(), "3", "60", "60"],
-    );
-    let (managed_b, rx_b) = spawn_helper_raw(
-        "spawn-grandchild-keepalive",
-        &[marker_b.to_str().unwrap(), "3", "60", "60"],
-    );
-    let a_parent = managed_a.id();
-    let a_grandchild = read_grandchild_pid(&rx_a);
-    let b_parent = managed_b.id();
-    let b_grandchild = read_grandchild_pid(&rx_b);
-    insert_running_job(&manager, "running-a", Some(Arc::new(Mutex::new(managed_a))));
-    insert_running_job(&manager, "running-b", Some(Arc::new(Mutex::new(managed_b))));
+    let (tree_a, _) = seed_running_job_tree(&manager, "running-a", &marker_a);
+    let (tree_b, _) = seed_running_job_tree(&manager, "running-b", &marker_b);
 
     manager.stop_all();
 
@@ -4195,19 +4206,8 @@ fn job_stop_all_terminates_all_trees_and_preserves_completed_jobs() {
         !completed_stop.load(Ordering::SeqCst),
         "a terminal job must not be signalled during shutdown"
     );
-    for (pid, tag) in [
-        (a_parent, "a-parent"),
-        (a_grandchild, "a-grandchild"),
-        (b_parent, "b-parent"),
-        (b_grandchild, "b-grandchild"),
-    ] {
-        assert!(
-            wait_for_process_exit(pid, Duration::from_secs(5), tag),
-            "{tag} survived stop_all"
-        );
-    }
-    assert!(wait_for_stdout_eof(&rx_a, Duration::from_secs(5), "a-eof"));
-    assert!(wait_for_stdout_eof(&rx_b, Duration::from_secs(5), "b-eof"));
+    tree_a.assert_terminated(Duration::from_secs(5), "stop-all-a");
+    tree_b.assert_terminated(Duration::from_secs(5), "stop-all-b");
 }
 
 /// Repeated stops are idempotent: the second stop must not panic and must not
@@ -4216,36 +4216,15 @@ fn job_stop_all_terminates_all_trees_and_preserves_completed_jobs() {
 fn job_stop_twice_is_idempotent() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("twice.marker");
-    let (managed, rx) = spawn_helper_raw(
-        "spawn-grandchild-keepalive",
-        &[marker.to_str().unwrap(), "3", "60", "60"],
-    );
-    let parent_pid = managed.id();
-    let grandchild_pid = read_grandchild_pid(&rx);
-    let child = Arc::new(Mutex::new(managed));
     let manager = JobManager::new(1);
-    insert_running_job(&manager, "twice-job", Some(child));
+    let (tree, _) = seed_running_job_tree(&manager, "twice-job", &marker);
 
     manager.stop("twice-job").expect("first stop");
     manager
         .stop("twice-job")
         .expect("second stop must be idempotent");
 
-    assert!(wait_for_process_exit(
-        parent_pid,
-        Duration::from_secs(5),
-        "twice-parent"
-    ));
-    assert!(wait_for_process_exit(
-        grandchild_pid,
-        Duration::from_secs(5),
-        "twice-grandchild"
-    ));
-    assert!(wait_for_stdout_eof(
-        &rx,
-        Duration::from_secs(5),
-        "twice-eof"
-    ));
+    tree.assert_terminated(Duration::from_secs(5), "stop-twice");
 }
 
 /// Stopping a job whose tree already exited naturally must not panic and must
@@ -4278,34 +4257,19 @@ fn job_stop_after_natural_exit_does_not_panic() {
 fn last_job_manager_owner_drop_terminates_running_tree_with_worker_clone_alive() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("drop.marker");
-    let (managed, rx) = spawn_helper_raw(
-        "spawn-grandchild-keepalive",
-        &[marker.to_str().unwrap(), "3", "60", "60"],
-    );
-    let parent_pid = managed.id();
-    let grandchild_pid = read_grandchild_pid(&rx);
     let manager = JobManager::new(1);
     let second_owner = manager.clone();
     let worker_manager = manager.clone_for_worker();
-    let stop_requested =
-        insert_running_job(&manager, "drop-job", Some(Arc::new(Mutex::new(managed))));
+    let (tree, stop_requested) = seed_running_job_tree(&manager, "drop-job", &marker);
 
     drop(manager);
-    assert!(process_running(parent_pid) && process_running(grandchild_pid));
+    assert!(process_running(tree.parent_pid) && process_running(tree.grandchild_pid));
     assert!(!stop_requested.load(Ordering::SeqCst));
 
     drop(second_owner);
     assert!(worker_manager.shutting_down.load(Ordering::SeqCst));
     assert!(stop_requested.load(Ordering::SeqCst));
-    assert!(
-        wait_for_process_exit(parent_pid, Duration::from_secs(5), "drop-parent"),
-        "running job parent survived last owner drop"
-    );
-    assert!(
-        wait_for_process_exit(grandchild_pid, Duration::from_secs(5), "drop-grandchild"),
-        "running job descendant survived last owner drop"
-    );
-    assert!(wait_for_stdout_eof(&rx, Duration::from_secs(5), "drop-eof"));
+    tree.assert_terminated(Duration::from_secs(5), "last-owner-drop");
     drop(worker_manager);
 }
 
@@ -4333,15 +4297,8 @@ fn cleanup_managed_tree_on_exited_tree_does_not_panic() {
 fn job_stop_racing_shutdown_does_not_panic() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("race.marker");
-    let (managed, rx) = spawn_helper_raw(
-        "spawn-grandchild-keepalive",
-        &[marker.to_str().unwrap(), "3", "60", "60"],
-    );
-    let parent_pid = managed.id();
-    let grandchild_pid = read_grandchild_pid(&rx);
-    let child = Arc::new(Mutex::new(managed));
     let manager = JobManager::new(1);
-    insert_running_job(&manager, "race-job", Some(child.clone()));
+    let (tree, _) = seed_running_job_tree(&manager, "race-job", &marker);
 
     let stop_manager = manager.clone();
     let stopper = std::thread::spawn(move || {
@@ -4353,17 +4310,7 @@ fn job_stop_racing_shutdown_does_not_panic() {
     stopper.join().expect("stop thread must not panic");
     assert!(outcome.resources >= 1);
 
-    assert!(wait_for_process_exit(
-        parent_pid,
-        Duration::from_secs(5),
-        "race-parent"
-    ));
-    assert!(wait_for_process_exit(
-        grandchild_pid,
-        Duration::from_secs(5),
-        "race-grandchild"
-    ));
-    assert!(wait_for_stdout_eof(&rx, Duration::from_secs(5), "race-eof"));
+    tree.assert_terminated(Duration::from_secs(5), "stop-shutdown-race");
 }
 
 /// A job timeout must terminate the whole tree (parent shell, helper, and the

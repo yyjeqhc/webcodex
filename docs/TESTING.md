@@ -35,27 +35,35 @@ The lanes above define test semantics; workflows decide when to run them.
   lane owns frontend install/type/test/dist validation, workspace-boundary
   self-test/checks, formatting, the heuristic test-inventory self-test/report
   (without count thresholds), and focused registry/OpenAPI/MCP schema and metadata parity.
-- The heavier Linux `test`, native macOS `test-macos`, and native Windows
-  `test-windows` jobs all depend on a successful `contract` job. They still run
-  on every push to `main`; external pull requests run them automatically subject
-  to GitHub fork protections, while owner-authored pull requests opt in with the
-  `run-ci` label. This dependency ordering is CI orchestration, not a claim that
-  the repository now has perfectly pure fast/integration/platform test suites.
-- Heavy Linux CI no longer repeats contract-owned frontend, workspace-boundary,
-  or formatting gates on the same SHA. It retains release-verification tooling,
-  Markdown-link validation, npm package-smoke tooling, and the full
-  `cargo test --locked --workspace` suite; Node remains installed there because the npm
-  smoke scripts invoke Node/npm directly. macOS owns release-surface compilation
-  and the native Runner suite, including detached ownership/restart recovery.
-  The local-`sshd` SSH integration fixture remains Linux-only because it depends
-  on Linux daemon account/auth configuration; macOS still compiles and tests the
-  SSH client and pure command-shaping surface. Windows owns its native library,
-  CLI and serialized Runner suites, npm tests, and artifact-to-install smoke.
+- The heavy Linux Rust matrix `test-linux-rust`, Linux tooling lane
+  `test-linux-tooling`, native macOS `test-macos`, and native Windows
+  `test-windows` jobs all depend on a successful `contract` job and retain the
+  existing main/external-PR/owner-`run-ci` policy. The historical `test` job id
+  remains the aggregate Linux status check: on an eligible heavy run it waits for
+  `contract` plus both Linux lanes and fails unless every required result is
+  `success`. Owner-authored pull requests without `run-ci` still intentionally
+  skip the heavy Linux lanes and aggregate. This is CI orchestration, not a claim
+  that the repository now has perfectly pure fast/integration/platform suites.
+- Linux Rust execution is package-sharded without test-name filters: the server
+  package `webcodex`, the integration-rich Runner package `webcodex-runner`, and
+  the remaining workspace crates run as three complete package groups in
+  parallel. Each workspace package appears in exactly one group, so sharding is
+  an execution optimization rather than a semantic coverage reduction. Package
+  boundaries do not imply that every test inside a shard has the same cost or
+  integration characteristics.
+- Linux tooling runs in parallel with the Rust shards and retains
+  release-verification tooling, Markdown-link validation, and npm package-smoke
+  tooling; within the Linux heavy split, only this tooling lane installs Node
+  because those smoke scripts invoke Node/npm directly. macOS still owns release-surface compilation and the native
+  Runner suite, including detached ownership/restart recovery. The local-`sshd`
+  SSH integration fixture remains Linux-only because it depends on Linux daemon
+  account/auth configuration; Windows still owns its native library, CLI and
+  serialized Runner suites, npm tests, and artifact-to-install smoke.
 - Exact-source release acceptance is a separate trust boundary from ordinary CI
-  and intentionally repeats canonical acceptance checks for the selected source,
-  including full workspace/frontend/E2E/native release evidence. Follow
+  and intentionally keeps its independent full locked workspace acceptance suite
+  together with frontend/E2E/native release evidence. Follow
   [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
-  `.github/workflows/release-readiness.yml`; ordinary-CI deduplication does not
+  `.github/workflows/release-readiness.yml`; ordinary-CI package sharding does not
   reduce that workflow or `scripts/release_check.sh`.
 - Slow/manual and real-process lanes remain explicit targeted evidence unless
   a workflow names them. Do not infer that one lane ran merely because another CI

@@ -4781,6 +4781,75 @@ async fn websocket_proxy_connect_response_header_is_bounded_and_redacted() {
 }
 
 #[tokio::test]
+async fn streaming_writer_failure_terminates_pending_reader_for_ws_and_quic() {
+    for transport in [StreamTransport::WebSocket, StreamTransport::Quic] {
+        let cfg = test_agent_config("http://127.0.0.1:9".to_string());
+        let runtime = test_runtime(&cfg);
+        let registered_jobs = ShellJobInventory::default();
+        let (out_tx, _out_rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
+        let (_read_tx, read_rx) = tokio::sync::mpsc::channel::<StreamRead>(1);
+        let writer_task = tokio::spawn(async { StreamWriterExit::TransportFailed });
+
+        let exit = tokio::time::timeout(
+            Duration::from_millis(250),
+            serve_registered_stream(
+                transport,
+                &cfg,
+                "inst-writer-fail",
+                &registered_jobs,
+                out_tx,
+                RegisteredStream::Test { reader: read_rx },
+                writer_task,
+                None,
+                &runtime,
+                std::future::pending::<()>(),
+            ),
+        )
+        .await
+        .expect("writer failure must not wait for pending reader")
+        .expect("writer failure is a transport disconnect, not a session error");
+        assert_eq!(
+            exit,
+            AgentSessionExit::TransportDisconnected,
+            "{transport:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn streaming_graceful_writer_completion_is_not_a_failure_signal() {
+    let cfg = test_agent_config("http://127.0.0.1:9".to_string());
+    let runtime = test_runtime(&cfg);
+    let registered_jobs = ShellJobInventory::default();
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
+    let (_read_tx, read_rx) = tokio::sync::mpsc::channel::<StreamRead>(1);
+    let writer_task = tokio::spawn(async move {
+        while let Some(env) = out_rx.recv().await {
+            if matches!(env, AgentEnvelope::Goodbye { .. }) {
+                return StreamWriterExit::GracefulClose;
+            }
+        }
+        StreamWriterExit::ChannelClosed
+    });
+
+    let exit = serve_registered_stream(
+        StreamTransport::WebSocket,
+        &cfg,
+        "inst-graceful",
+        &registered_jobs,
+        out_tx,
+        RegisteredStream::Test { reader: read_rx },
+        writer_task,
+        None,
+        &runtime,
+        async {},
+    )
+    .await
+    .expect("graceful shutdown must not be classified as writer failure");
+    assert_eq!(exit, AgentSessionExit::Shutdown);
+}
+
+#[tokio::test]
 async fn websocket_close_returns_transport_disconnect_not_shutdown() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

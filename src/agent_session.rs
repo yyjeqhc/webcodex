@@ -23,12 +23,23 @@ use crate::shell_client::{
 };
 use crate::shell_protocol::{AgentEnvelope, ShellAgentPollRequest, ShellClientRegisterRequest};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
 
 /// Channel capacity for outgoing envelopes (requests + pongs). Provides
 /// backpressure if the agent reads slowly. Shared by both transports.
 pub(crate) const OUTGOING_CHANNEL_CAPACITY: usize = 64;
+
+/// Bound writer teardown after the reader/session side has already ended.
+const STREAM_WRITER_JOIN_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Transport writer completion without retaining an unsent envelope or error body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WriterExit {
+    ChannelClosed,
+    TransportFailed,
+}
 
 /// Error from [`register_session_prelude`]: the agent transport boundary
 /// rejected the register. Both variants surface to the wire as the
@@ -130,13 +141,14 @@ pub(crate) struct SessionContext<'a> {
 /// `recovering` state, while legacy runners become `lost`; the client then
 /// decays to stale/offline.
 ///
-/// Returns when the reader loop ends (peer closed, sent `Goodbye`, or a fatal
-/// read). The caller is responsible for any post-teardown transport logging.
+/// Returns when either direction becomes unusable: the reader closes/fails,
+/// the peer sends `Goodbye`, or the writer task exits unexpectedly. The caller
+/// is responsible for any post-teardown transport logging.
 pub(crate) async fn run_agent_session(
     ctx: SessionContext<'_>,
     out_tx: mpsc::Sender<AgentEnvelope>,
     mut reader: impl AgentReader,
-    writer_task: JoinHandle<()>,
+    writer_task: JoinHandle<WriterExit>,
 ) {
     let SessionContext {
         registry,
@@ -210,44 +222,93 @@ pub(crate) async fn run_agent_session(
         }
     });
 
-    // Reader loop: dispatch inbound envelopes into the connection lease. A
-    // `Goodbye` reconciles the disconnect inline and then breaks the loop.
+    // Bidirectional health: the session is authoritative only while both read
+    // and write directions are alive. Observe the writer directly so a dead
+    // outbound transport cannot remain registered behind a pending reader.
+    let mut writer_task = writer_task;
+    let mut writer_observed = false;
     loop {
-        match reader.recv().await {
-            RecvOutcome::Envelope(env) => {
-                let is_goodbye = matches!(&env, AgentEnvelope::Goodbye { .. });
-                dispatch_inbound(
-                    env,
-                    registry,
-                    client_id,
-                    agent_instance_id,
-                    connection_id,
-                    &out_tx,
-                    transport_label,
-                )
-                .await;
-                if is_goodbye {
-                    break;
+        tokio::select! {
+            writer = &mut writer_task => {
+                writer_observed = true;
+                let reason_code = match writer {
+                    Ok(WriterExit::ChannelClosed) => "writer_channel_closed",
+                    Ok(WriterExit::TransportFailed) => "writer_transport_failed",
+                    Err(error) if error.is_panic() => "writer_task_panicked",
+                    Err(_) => "writer_task_cancelled",
+                };
+                tracing::debug!(
+                    client_id = client_id,
+                    reason_code,
+                    "agent {} writer ended; terminating session",
+                    transport_label
+                );
+                break;
+            }
+            received = reader.recv() => {
+                match received {
+                    RecvOutcome::Envelope(env) => {
+                        let is_goodbye = matches!(&env, AgentEnvelope::Goodbye { .. });
+                        dispatch_inbound(
+                            env,
+                            registry,
+                            client_id,
+                            agent_instance_id,
+                            connection_id,
+                            &out_tx,
+                            transport_label,
+                        )
+                        .await;
+                        if is_goodbye {
+                            break;
+                        }
+                    }
+                    RecvOutcome::Skip => continue,
+                    RecvOutcome::Closed => break,
                 }
             }
-            RecvOutcome::Skip => continue,
-            RecvOutcome::Closed => break,
         }
     }
 
-    // Teardown: stop the pump, drop the writer's feed so it flushes and exits,
-    // join the writer, and reconcile the disconnect so a disconnected agent
-    // never leaves jobs permanently "running" or stays online forever (the
-    // client decays to stale via last_seen).
+    // Teardown: stop the pump, close the writer feed, bound any remaining writer
+    // join, then reconcile the exact connection lease. A stale writer completion
+    // is harmless because reconciliation is fenced by client/instance/connection.
     pump_task.abort();
     drop(out_tx);
-    if let Err(e) = writer_task.await {
-        tracing::debug!(
-            client_id = client_id,
-            error = ?e,
-            "agent {} writer task join failed",
-            transport_label
-        );
+    if !writer_observed {
+        match tokio::time::timeout(STREAM_WRITER_JOIN_TIMEOUT, &mut writer_task).await {
+            Ok(Ok(WriterExit::ChannelClosed)) => {}
+            Ok(Ok(WriterExit::TransportFailed)) => {
+                tracing::debug!(
+                    client_id = client_id,
+                    reason_code = "writer_transport_failed_during_teardown",
+                    "agent {} writer failed during teardown",
+                    transport_label
+                );
+            }
+            Ok(Err(error)) => {
+                let reason_code = if error.is_panic() {
+                    "writer_task_panicked_during_teardown"
+                } else {
+                    "writer_task_cancelled_during_teardown"
+                };
+                tracing::debug!(
+                    client_id = client_id,
+                    reason_code,
+                    "agent {} writer join failed during teardown",
+                    transport_label
+                );
+            }
+            Err(_) => {
+                tracing::debug!(
+                    client_id = client_id,
+                    reason_code = "writer_join_timeout",
+                    "agent {} writer join timed out; aborting writer",
+                    transport_label
+                );
+                writer_task.abort();
+            }
+        }
     }
     registry
         .reconcile_disconnect_for_connection(client_id, agent_instance_id, connection_id)
@@ -444,5 +505,204 @@ async fn dispatch_inbound(
                 transport_label
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shell_client::TRANSPORT_WEBSOCKET;
+    use crate::shell_protocol::{ShellClientCapabilities, ShellJobOpRequest};
+
+    struct PendingReader;
+
+    impl AgentReader for PendingReader {
+        async fn recv(&mut self) -> RecvOutcome {
+            std::future::pending::<RecvOutcome>().await
+        }
+    }
+
+    fn streaming_registration(
+        client_id: &str,
+        agent_instance_id: &str,
+    ) -> ShellClientRegisterRequest {
+        let mut capabilities = ShellClientCapabilities::default();
+        capabilities.async_jobs = true;
+        capabilities.async_shell_jobs = true;
+        ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            client_id: client_id.to_string(),
+            agent_instance_id: agent_instance_id.to_string(),
+            display_name: None,
+            owner: None,
+            hostname: None,
+            host_context: None,
+            capabilities: Some(capabilities),
+            projects: Some(Vec::new()),
+            agent_protocol_version: Some("websocket-v1".to_string()),
+            policy: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn writer_failure_terminates_session_and_reconciles_active_job() {
+        let registry = Arc::new(ShellClientRegistry::default());
+        let notify = Arc::new(Notify::new());
+        registry
+            .register_streaming_session(
+                streaming_registration("writer-fail", "inst-a"),
+                None,
+                "conn-a",
+                TRANSPORT_WEBSOCKET,
+                notify.clone(),
+            )
+            .await
+            .unwrap();
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("writer-fail".to_string()),
+                    cwd: None,
+                    command: Some("sleep 1".to_string()),
+                    timeout_secs: Some(1),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "test".to_string(),
+            )
+            .await
+            .unwrap();
+        let (out_tx, _out_rx) = mpsc::channel(OUTGOING_CHANNEL_CAPACITY);
+        let writer_task = tokio::spawn(async { WriterExit::TransportFailed });
+
+        tokio::time::timeout(
+            Duration::from_millis(250),
+            run_agent_session(
+                SessionContext {
+                    registry: &registry,
+                    client_id: "writer-fail",
+                    agent_instance_id: "inst-a",
+                    connection_id: "conn-a",
+                    notify,
+                    transport_label: "websocket",
+                },
+                out_tx,
+                PendingReader,
+                writer_task,
+            ),
+        )
+        .await
+        .expect("writer failure must terminate a pending reader session");
+
+        let view = registry.get_client_view("writer-fail").await.unwrap();
+        assert!(!view.connected);
+        assert_eq!(registry.get_job(&job.job_id).await.unwrap().status, "lost");
+    }
+
+    #[tokio::test]
+    async fn writer_task_panic_terminates_session() {
+        let registry = Arc::new(ShellClientRegistry::default());
+        let notify = Arc::new(Notify::new());
+        registry
+            .register_streaming_session(
+                streaming_registration("writer-panic", "inst-a"),
+                None,
+                "conn-a",
+                TRANSPORT_WEBSOCKET,
+                notify.clone(),
+            )
+            .await
+            .unwrap();
+        let (out_tx, _out_rx) = mpsc::channel(OUTGOING_CHANNEL_CAPACITY);
+        let writer_task = tokio::spawn(async { panic!("synthetic writer panic") });
+
+        tokio::time::timeout(
+            Duration::from_millis(250),
+            run_agent_session(
+                SessionContext {
+                    registry: &registry,
+                    client_id: "writer-panic",
+                    agent_instance_id: "inst-a",
+                    connection_id: "conn-a",
+                    notify,
+                    transport_label: "websocket",
+                },
+                out_tx,
+                PendingReader,
+                writer_task,
+            ),
+        )
+        .await
+        .expect("writer panic must terminate a pending reader session");
+
+        assert!(
+            !registry
+                .get_client_view("writer-panic")
+                .await
+                .unwrap()
+                .connected
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_writer_failure_cannot_reconcile_replacement_connection() {
+        let registry = Arc::new(ShellClientRegistry::default());
+        let notify_a = Arc::new(Notify::new());
+        registry
+            .register_streaming_session(
+                streaming_registration("writer-stale", "inst-a"),
+                None,
+                "conn-a",
+                TRANSPORT_WEBSOCKET,
+                notify_a.clone(),
+            )
+            .await
+            .unwrap();
+        registry
+            .register_streaming_session(
+                streaming_registration("writer-stale", "inst-a"),
+                None,
+                "conn-b",
+                TRANSPORT_WEBSOCKET,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .unwrap();
+        let (out_tx, _out_rx) = mpsc::channel(OUTGOING_CHANNEL_CAPACITY);
+        let writer_task = tokio::spawn(async { WriterExit::TransportFailed });
+
+        tokio::time::timeout(
+            Duration::from_millis(250),
+            run_agent_session(
+                SessionContext {
+                    registry: &registry,
+                    client_id: "writer-stale",
+                    agent_instance_id: "inst-a",
+                    connection_id: "conn-a",
+                    notify: notify_a,
+                    transport_label: "quic",
+                },
+                out_tx,
+                PendingReader,
+                writer_task,
+            ),
+        )
+        .await
+        .expect("stale writer failure must terminate without touching replacement");
+
+        let replacement = registry
+            .get_client_view_for_connection("writer-stale", "inst-a", "conn-b")
+            .await
+            .expect("replacement connection must remain authoritative");
+        assert!(replacement.connected);
+        assert_eq!(replacement.transport, TRANSPORT_WEBSOCKET);
     }
 }

@@ -373,19 +373,17 @@ async fn handle_quic_connection(
     //    SendStream.
     let (out_tx, mut out_rx) =
         mpsc::channel::<AgentEnvelope>(crate::agent_session::OUTGOING_CHANNEL_CAPACITY);
-    let writer_client_id = client_id.clone();
     let writer_task = tokio::spawn(async move {
         while let Some(env) = out_rx.recv().await {
-            if let Err(e) = write_quic_frame(&mut send, &env).await {
-                tracing::debug!(
-                    client_id = %writer_client_id,
-                    error = %e,
-                    "quic writer send failed; stopping writer"
-                );
-                break;
+            if write_quic_frame(&mut send, &env).await.is_err() {
+                return crate::agent_session::WriterExit::TransportFailed;
             }
         }
-        let _ = send.finish();
+        if send.finish().is_err() {
+            crate::agent_session::WriterExit::TransportFailed
+        } else {
+            crate::agent_session::WriterExit::ChannelClosed
+        }
     });
     tracing::info!(client_id = %client_id, "agent quic connected");
 

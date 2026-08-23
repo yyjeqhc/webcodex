@@ -2426,16 +2426,25 @@ enum StreamRead {
     Closed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamWriterExit {
+    ChannelClosed,
+    GracefulClose,
+    TransportFailed,
+}
+
 enum RegisteredStream {
     WebSocket {
         reader: futures_util::stream::SplitStream<RunnerWebSocket>,
-        writer: tokio::task::JoinHandle<()>,
     },
     Quic {
         reader: quinn::RecvStream,
-        writer: tokio::task::JoinHandle<()>,
         connection: quinn::Connection,
         endpoint: quinn::Endpoint,
+    },
+    #[cfg(test)]
+    Test {
+        reader: tokio::sync::mpsc::Receiver<StreamRead>,
     },
 }
 
@@ -2501,17 +2510,23 @@ impl RegisteredStream {
                 }
                 Err(error) => Err(format!("quic stream read error: {}", error)),
             },
+            #[cfg(test)]
+            Self::Test { reader } => Ok(reader.recv().await.unwrap_or(StreamRead::Closed)),
         }
     }
 
-    async fn finish(self, graceful: bool) {
+    async fn finish(
+        self,
+        graceful: bool,
+        writer: Option<tokio::task::JoinHandle<StreamWriterExit>>,
+    ) {
         use futures_util::StreamExt;
 
         match self {
-            Self::WebSocket {
-                mut reader,
-                mut writer,
-            } => {
+            Self::WebSocket { mut reader } => {
+                let Some(mut writer) = writer else {
+                    return;
+                };
                 if !graceful {
                     writer.abort();
                     return;
@@ -2551,11 +2566,13 @@ impl RegisteredStream {
                 }
             }
             Self::Quic {
-                mut writer,
                 connection,
                 endpoint,
                 ..
             } => {
+                let Some(mut writer) = writer else {
+                    return;
+                };
                 if graceful {
                     connection.close(quinn::VarInt::from_u32(0), b"process shutdown");
                     endpoint.close(quinn::VarInt::from_u32(0), b"process shutdown");
@@ -2567,6 +2584,16 @@ impl RegisteredStream {
                     }
                 } else {
                     writer.abort();
+                }
+            }
+            #[cfg(test)]
+            Self::Test { .. } => {
+                if let Some(mut writer) = writer {
+                    if graceful {
+                        let _ = tokio::time::timeout(WS_WRITER_CLOSE_TIMEOUT, &mut writer).await;
+                    } else {
+                        writer.abort();
+                    }
                 }
             }
         }
@@ -2903,6 +2930,7 @@ async fn serve_registered_stream<F>(
     registered_jobs: &ShellJobInventory,
     out_tx: tokio::sync::mpsc::Sender<AgentEnvelope>,
     mut stream: RegisteredStream,
+    mut writer_task: tokio::task::JoinHandle<StreamWriterExit>,
     project_inventory_sync: Option<ProjectInventorySync>,
     runtime: &AgentRuntimeState,
     shutdown: F,
@@ -2933,6 +2961,7 @@ where
     let mut shutdown = Box::pin(shutdown);
     let mut shutdown_requested = false;
     let mut session_error = None;
+    let mut writer_observed = false;
 
     loop {
         let project_inventory_retry_at = project_inventory.retry_at();
@@ -2956,6 +2985,22 @@ where
             _ = &mut shutdown => {
                 runtime.request_shutdown_signal();
                 shutdown_requested = true;
+                break;
+            }
+            writer = &mut writer_task => {
+                writer_observed = true;
+                let reason_code = match writer {
+                    Ok(StreamWriterExit::ChannelClosed) => "writer_channel_closed",
+                    Ok(StreamWriterExit::GracefulClose) => "writer_graceful_close_unexpected",
+                    Ok(StreamWriterExit::TransportFailed) => "writer_transport_failed",
+                    Err(error) if error.is_panic() => "writer_task_panicked",
+                    Err(_) => "writer_task_cancelled",
+                };
+                tracing::debug!(
+                    transport = transport.name(),
+                    reason_code,
+                    "webcodex-runner stream writer ended; terminating session"
+                );
                 break;
             }
             read = stream.receive() => {
@@ -3025,7 +3070,8 @@ where
     }
     drop(sink);
     drop(out_tx);
-    stream.finish(shutdown_requested).await;
+    let writer = (!writer_observed).then_some(writer_task);
+    stream.finish(shutdown_requested, writer).await;
     if !shutdown_requested && transport == StreamTransport::WebSocket {
         runtime
             .persistent_shells
@@ -3354,11 +3400,23 @@ async fn quic_session(
     try_queue_project_inventory_page(StreamTransport::Quic, &mut project_inventory_sync, &out_tx);
     let writer_task = tokio::spawn(async move {
         while let Some(env) = out_rx.recv().await {
+            let graceful = matches!(env, AgentEnvelope::Goodbye { .. });
             if write_quic_frame(&mut send, &env).await.is_err() {
-                break;
+                return StreamWriterExit::TransportFailed;
+            }
+            if graceful {
+                return if send.finish().is_ok() {
+                    StreamWriterExit::GracefulClose
+                } else {
+                    StreamWriterExit::TransportFailed
+                };
             }
         }
-        let _ = send.finish();
+        if send.finish().is_ok() {
+            StreamWriterExit::ChannelClosed
+        } else {
+            StreamWriterExit::TransportFailed
+        }
     });
     serve_registered_stream(
         StreamTransport::Quic,
@@ -3368,10 +3426,10 @@ async fn quic_session(
         out_tx,
         RegisteredStream::Quic {
             reader: recv,
-            writer: writer_task,
             connection: conn,
             endpoint: client_endpoint,
         },
+        writer_task,
         project_inventory_sync,
         runtime,
         runtime.wait_for_shutdown(),
@@ -3912,28 +3970,26 @@ where
         &out_tx,
     );
     let writer_task = tokio::spawn(async move {
-        let mut graceful_close = false;
         while let Some(env) = out_rx.recv().await {
             let is_goodbye = matches!(env, AgentEnvelope::Goodbye { .. });
-            match serde_json::to_string(&env) {
-                Ok(json) => {
-                    if sink.send(WsMessage::Text(json.into())).await.is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
+            let Ok(json) = serde_json::to_string(&env) else {
+                return StreamWriterExit::TransportFailed;
+            };
+            if sink.send(WsMessage::Text(json.into())).await.is_err() {
+                return StreamWriterExit::TransportFailed;
             }
             if is_goodbye {
-                graceful_close = true;
-                break;
+                // The session loop continues polling the split read half while
+                // awaiting this task, allowing tungstenite's close handshake to
+                // progress without turning this into an unbounded wait.
+                return if sink.close().await.is_ok() {
+                    StreamWriterExit::GracefulClose
+                } else {
+                    StreamWriterExit::TransportFailed
+                };
             }
         }
-        if graceful_close {
-            // The session loop continues polling the split read half while
-            // awaiting this task, allowing tungstenite's close handshake to
-            // progress without turning this into an unbounded wait.
-            let _ = sink.close().await;
-        }
+        StreamWriterExit::ChannelClosed
     });
     serve_registered_stream(
         StreamTransport::WebSocket,
@@ -3941,10 +3997,8 @@ where
         agent_instance_id,
         &registered_jobs,
         out_tx,
-        RegisteredStream::WebSocket {
-            reader: stream,
-            writer: writer_task,
-        },
+        RegisteredStream::WebSocket { reader: stream },
+        writer_task,
         project_inventory_sync,
         runtime,
         shutdown,

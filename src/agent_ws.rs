@@ -181,21 +181,17 @@ async fn handle_agent_ws(
         let mut sink = sink;
         let mut out_rx = out_rx;
         while let Some(env) = out_rx.recv().await {
-            match env.to_json() {
-                Ok(json) => {
-                    if let Err(e) = sink.send(Message::text(json)).await {
-                        tracing::debug!(error = ?e, "agent websocket writer send failed; stopping writer");
-                        break;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "agent websocket writer failed to encode envelope; stopping writer");
-                    break;
-                }
+            let Ok(json) = env.to_json() else {
+                return crate::agent_session::WriterExit::TransportFailed;
+            };
+            if sink.send(Message::text(json)).await.is_err() {
+                return crate::agent_session::WriterExit::TransportFailed;
             }
         }
-        if let Err(e) = sink.close().await {
-            tracing::debug!(error = ?e, "agent websocket writer close failed");
+        if sink.close().await.is_err() {
+            crate::agent_session::WriterExit::TransportFailed
+        } else {
+            crate::agent_session::WriterExit::ChannelClosed
         }
     });
 

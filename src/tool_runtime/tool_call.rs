@@ -436,6 +436,19 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Observe only message-state changes after an opaque Session-bound durable
+    /// cursor. Without a token this establishes a current baseline and returns
+    /// no history. Optional waiting is one bounded wait, never a subscription.
+    ObserveSessionMessages {
+        session_id: String,
+        #[serde(default, deserialize_with = "deserialize_optional_observation_token")]
+        after_observation_token: Option<String>,
+        #[serde(default)]
+        wait_secs: Option<u64>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
     /// Mark a session-local message resolved. Idempotent for already resolved
     /// messages.
     ResolveSessionMessage {
@@ -2053,6 +2066,7 @@ impl ToolCall {
             Self::ValidationSummary { .. } => "validation_summary",
             Self::PostSessionMessage { .. } => "post_session_message",
             Self::ListSessionMessages { .. } => "list_session_messages",
+            Self::ObserveSessionMessages { .. } => "observe_session_messages",
             Self::ResolveSessionMessage { .. } => "resolve_session_message",
             Self::CompleteSessionMessage { .. } => "complete_session_message",
             Self::SessionDiscussionSummary { .. } => "session_discussion_summary",

@@ -1,5 +1,5 @@
 //! JSON session ledger load/save, sanitize-on-restore, and atomic writes.
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -69,6 +69,9 @@ impl PersistedSessionRecord {
             events,
             messages,
             events_observed: record.events_observed,
+            message_observation_revision: record.message_observation_revision,
+            message_observation_floor: record.message_observation_floor,
+            message_observation_revisions: record.message_observation_revisions.clone(),
         }
     }
 
@@ -84,6 +87,9 @@ impl PersistedSessionRecord {
             && self.created_at == record.created_at
             && self.updated_at == record.updated_at
             && self.events_observed == record.events_observed
+            && self.message_observation_revision == record.message_observation_revision
+            && self.message_observation_floor == record.message_observation_floor
+            && self.message_observation_revisions == record.message_observation_revisions
             && self.events.len() == record.events.len()
             && self.messages.len() == record.messages.len()
             && self
@@ -127,6 +133,48 @@ impl PersistedSessionRecord {
             .into_iter()
             .rev()
             .collect();
+        let retained_message_ids = messages
+            .iter()
+            .map(|message| message.message_id.clone())
+            .collect::<HashSet<_>>();
+        let current_observation_revision = self.message_observation_revision;
+        let mut observation_floor = self
+            .message_observation_floor
+            .min(current_observation_revision);
+        let mut observation_revisions = BTreeMap::new();
+        if current_observation_revision > 0 {
+            let mut inconsistent = false;
+            for (message_id, revision) in self.message_observation_revisions {
+                if revision > current_observation_revision {
+                    inconsistent = true;
+                    continue;
+                }
+                if retained_message_ids.contains(&message_id) {
+                    observation_revisions.insert(message_id, revision);
+                } else {
+                    observation_floor = observation_floor.max(revision);
+                }
+            }
+            for message_id in &retained_message_ids {
+                if !observation_revisions.contains_key(message_id) {
+                    inconsistent = true;
+                    observation_revisions.insert(message_id.clone(), 0);
+                }
+            }
+            if inconsistent {
+                observation_floor = current_observation_revision;
+            }
+        } else {
+            // Pre-feature ledgers never issued observation tokens. Their retained
+            // messages therefore become safe baseline state at revision zero.
+            observation_revisions.extend(
+                retained_message_ids
+                    .iter()
+                    .cloned()
+                    .map(|message_id| (message_id, 0)),
+            );
+            observation_floor = 0;
+        }
         // On restore, `events_observed` is at least the count of events we just
         // retained, so a freshly-restored legacy ledger does not falsely report
         // eviction. A live ledger that exceeded the cap has the true cumulative
@@ -156,6 +204,9 @@ impl PersistedSessionRecord {
             events_observed: self.events_observed.max(retained_events),
             messages,
             project_instructions: None,
+            message_observation_revision: current_observation_revision,
+            message_observation_floor: observation_floor,
+            message_observation_revisions: observation_revisions,
         })
     }
 }

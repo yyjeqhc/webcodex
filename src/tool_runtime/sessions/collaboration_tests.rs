@@ -1,10 +1,21 @@
-use super::model::MESSAGE_COMPLETION_FINGERPRINT_HEX_CHARS;
+use super::messages::encode_observation_token;
+use super::model::{
+    SessionMessageObservationOutcome, DEFAULT_MAX_MESSAGES_PER_SESSION,
+    MESSAGE_COMPLETION_FINGERPRINT_HEX_CHARS,
+};
 use super::*;
 use serde_json::Value;
 
 fn completion_id(byte: char) -> String {
     byte.to_string()
         .repeat(MESSAGE_COMPLETION_FINGERPRINT_HEX_CHARS)
+}
+
+async fn baseline(store: &SessionStore, session_id: &str) -> SessionMessageObservationOutcome {
+    store
+        .observe_messages(session_id, None, None, None)
+        .await
+        .unwrap()
 }
 
 fn post(
@@ -24,6 +35,485 @@ fn post(
             priority,
         })
         .unwrap()
+}
+
+#[tokio::test]
+async fn observe_session_messages_baseline_append_resolve_completion_and_replay() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("proj".to_string()), None);
+
+    let empty_baseline = baseline(&store, &session.session_id).await;
+    assert!(empty_baseline.messages.is_empty());
+    assert!(!empty_baseline.changed);
+    assert_eq!(empty_baseline.wait_outcome, "immediate");
+    assert_eq!(empty_baseline.waited_ms, 0);
+    assert!(!empty_baseline.history_lost);
+    assert!(!empty_baseline.has_more);
+
+    let note = post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Note,
+        "delta note",
+        SessionMessagePriority::Normal,
+    );
+    let appended = store
+        .observe_messages(
+            &session.session_id,
+            Some(&empty_baseline.observation_token),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(appended.changed);
+    assert_eq!(appended.messages.len(), 1);
+    assert_eq!(appended.messages[0].message_id, note.message_id);
+    let caught_up = store
+        .observe_messages(
+            &session.session_id,
+            Some(&appended.observation_token),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(!caught_up.changed);
+    assert!(caught_up.messages.is_empty());
+
+    let todo = post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Todo,
+        "resolve me",
+        SessionMessagePriority::High,
+    );
+    let before_resolve = baseline(&store, &session.session_id).await;
+    let resolved = store
+        .resolve_message(
+            &session.session_id,
+            &todo.message_id,
+            Some("done".to_string()),
+        )
+        .unwrap();
+    assert_eq!(resolved.status, SessionMessageStatus::Resolved);
+    let resolution_delta = store
+        .observe_messages(
+            &session.session_id,
+            Some(&before_resolve.observation_token),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(resolution_delta.messages.len(), 1);
+    assert_eq!(resolution_delta.messages[0].message_id, todo.message_id);
+    assert_eq!(
+        resolution_delta.messages[0].resolution.as_deref(),
+        Some("done")
+    );
+    let unchanged_token = resolution_delta.observation_token.clone();
+    let no_op = store
+        .resolve_message(
+            &session.session_id,
+            &todo.message_id,
+            Some("done".to_string()),
+        )
+        .unwrap();
+    assert_eq!(no_op.resolution.as_deref(), Some("done"));
+    let after_no_op = store
+        .observe_messages(&session.session_id, Some(&unchanged_token), None, None)
+        .await
+        .unwrap();
+    assert!(!after_no_op.changed);
+    assert!(after_no_op.messages.is_empty());
+
+    let completion_todo = post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Todo,
+        "complete me",
+        SessionMessagePriority::High,
+    );
+    let before_completion = baseline(&store, &session.session_id).await;
+    let input = CompleteSessionMessageInput {
+        session_id: session.session_id.clone(),
+        message_id: completion_todo.message_id.clone(),
+        answer: "completed".to_string(),
+        tags: vec!["done".to_string()],
+        priority: SessionMessagePriority::Normal,
+        completion_id: completion_id('a'),
+        author_session_id: None,
+    };
+    let completion = store.complete_message(input.clone()).unwrap();
+    assert!(!completion.replayed);
+    let completion_delta = store
+        .observe_messages(
+            &session.session_id,
+            Some(&before_completion.observation_token),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(completion_delta.messages.len(), 2);
+    assert_eq!(
+        completion_delta.messages[0].message_id,
+        completion_todo.message_id
+    );
+    assert_eq!(
+        completion_delta.messages[0].status,
+        SessionMessageStatus::Resolved
+    );
+    assert_eq!(
+        completion_delta.messages[1].message_id,
+        completion.answer.message_id
+    );
+
+    let replay = store.complete_message(input).unwrap();
+    assert!(replay.replayed);
+    let after_replay = store
+        .observe_messages(
+            &session.session_id,
+            Some(&completion_delta.observation_token),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(!after_replay.changed);
+    assert!(after_replay.messages.is_empty());
+}
+
+#[tokio::test]
+async fn observe_session_messages_pagination_advances_only_through_returned_changes() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("proj".to_string()), None);
+    let first = baseline(&store, &session.session_id).await;
+    let mut expected = Vec::new();
+    for index in 0..7 {
+        expected.push(
+            post(
+                &store,
+                &session.session_id,
+                SessionMessageKind::Note,
+                &format!("page-{index}"),
+                SessionMessagePriority::Normal,
+            )
+            .message_id,
+        );
+    }
+
+    let mut token = first.observation_token;
+    let mut observed = Vec::new();
+    loop {
+        let page = store
+            .observe_messages(&session.session_id, Some(&token), None, Some(2))
+            .await
+            .unwrap();
+        observed.extend(
+            page.messages
+                .iter()
+                .map(|message| message.message_id.clone()),
+        );
+        token = page.observation_token;
+        if !page.has_more {
+            break;
+        }
+    }
+    assert_eq!(observed, expected);
+    let final_page = store
+        .observe_messages(&session.session_id, Some(&token), None, Some(2))
+        .await
+        .unwrap();
+    assert!(!final_page.changed);
+    assert!(final_page.messages.is_empty());
+}
+
+#[tokio::test]
+async fn observe_session_messages_retention_reports_history_loss_for_protected_todo_hole() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("proj".to_string()), None);
+    let todo = post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Todo,
+        "old protected todo",
+        SessionMessagePriority::High,
+    );
+    let before_fill = baseline(&store, &session.session_id).await;
+    let mut filler_ids = Vec::new();
+    for index in 0..(DEFAULT_MAX_MESSAGES_PER_SESSION - 1) {
+        filler_ids.push(
+            post(
+                &store,
+                &session.session_id,
+                SessionMessageKind::Note,
+                &format!("filler-{index}"),
+                SessionMessagePriority::Normal,
+            )
+            .message_id,
+        );
+    }
+    let completion = store
+        .complete_message(CompleteSessionMessageInput {
+            session_id: session.session_id.clone(),
+            message_id: todo.message_id.clone(),
+            answer: "answer preserving old todo".to_string(),
+            tags: Vec::new(),
+            priority: SessionMessagePriority::Normal,
+            completion_id: completion_id('b'),
+            author_session_id: None,
+        })
+        .unwrap();
+
+    let retained_todo = store
+        .list_messages(
+            &session.session_id,
+            ListSessionMessagesFilter {
+                message_id: Some(todo.message_id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(retained_todo.len(), 1);
+    let retained_answer = store
+        .list_messages(
+            &session.session_id,
+            ListSessionMessagesFilter {
+                message_id: Some(completion.answer.message_id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(retained_answer.len(), 1);
+    let evicted_filler = store
+        .list_messages(
+            &session.session_id,
+            ListSessionMessagesFilter {
+                message_id: Some(filler_ids[0].clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(evicted_filler.is_empty());
+
+    let delta = store
+        .observe_messages(
+            &session.session_id,
+            Some(&before_fill.observation_token),
+            None,
+            Some(100),
+        )
+        .await
+        .unwrap();
+    assert!(delta.changed);
+    assert!(delta.history_lost);
+    assert!(delta.has_more);
+    assert!(delta
+        .messages
+        .iter()
+        .all(|message| message.message_id != filler_ids[0]));
+}
+
+#[tokio::test]
+async fn observe_session_messages_token_survives_restart_and_legacy_restore_baselines_safely() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let session = store.start_session(Some("proj".to_string()), None);
+    post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Note,
+        "before baseline",
+        SessionMessagePriority::Normal,
+    );
+    let before_restart = baseline(&store, &session.session_id).await;
+    // Observation-token issuance fences the current message-observation revision
+    // itself. A fresh store opened while the first store is still alive must
+    // therefore accept the token without relying on graceful Drop/test flush.
+    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let unchanged = restored
+        .observe_messages(
+            &session.session_id,
+            Some(&before_restart.observation_token),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(!unchanged.changed);
+    assert!(unchanged.messages.is_empty());
+    let new_message = post(
+        &restored,
+        &session.session_id,
+        SessionMessageKind::Progress,
+        "after restart",
+        SessionMessagePriority::Normal,
+    );
+    let after_restart = restored
+        .observe_messages(
+            &session.session_id,
+            Some(&before_restart.observation_token),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(after_restart.messages.len(), 1);
+    assert_eq!(after_restart.messages[0].message_id, new_message.message_id);
+
+    restored.flush_persistence();
+    drop(restored);
+    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let record = raw["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|record| record["session_id"] == session.session_id)
+        .unwrap()
+        .as_object_mut()
+        .unwrap();
+    record.remove("message_observation_revision");
+    record.remove("message_observation_floor");
+    record.remove("message_observation_revisions");
+    std::fs::write(&ledger, serde_json::to_vec(&raw).unwrap()).unwrap();
+    let legacy = SessionStore::with_persistence(&ledger, 10, 50);
+    let legacy_baseline = baseline(&legacy, &session.session_id).await;
+    assert!(legacy_baseline.messages.is_empty());
+    assert!(!legacy_baseline.changed);
+    let post_legacy = post(
+        &legacy,
+        &session.session_id,
+        SessionMessageKind::Note,
+        "after legacy restore",
+        SessionMessagePriority::Normal,
+    );
+    let legacy_delta = legacy
+        .observe_messages(
+            &session.session_id,
+            Some(&legacy_baseline.observation_token),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(legacy_delta.messages.len(), 1);
+    assert_eq!(legacy_delta.messages[0].message_id, post_legacy.message_id);
+}
+
+#[tokio::test]
+async fn observe_session_messages_rejects_malformed_oversized_wrong_session_and_future_tokens() {
+    let store = SessionStore::default();
+    let first = store.start_session(Some("proj".to_string()), None);
+    let second = store.start_session(Some("proj".to_string()), None);
+    let token = baseline(&store, &first.session_id).await.observation_token;
+
+    assert_eq!(
+        store
+            .observe_messages(&first.session_id, Some("not-a-token"), None, None)
+            .await
+            .unwrap_err(),
+        SessionMessageObservationError::MalformedToken
+    );
+    assert_eq!(
+        store
+            .observe_messages(&first.session_id, Some(&"x".repeat(193)), None, None)
+            .await
+            .unwrap_err(),
+        SessionMessageObservationError::OversizedToken
+    );
+    assert_eq!(
+        store
+            .observe_messages(&second.session_id, Some(&token), None, None)
+            .await
+            .unwrap_err(),
+        SessionMessageObservationError::WrongSession
+    );
+    let future = encode_observation_token(&first.session_id, 1).unwrap();
+    assert_eq!(
+        store
+            .observe_messages(&first.session_id, Some(&future), None, None)
+            .await
+            .unwrap_err(),
+        SessionMessageObservationError::FutureRevision
+    );
+}
+
+#[tokio::test]
+async fn observe_session_messages_wait_is_target_scoped_race_safe_and_wakes_two_waiters() {
+    let store = SessionStore::default();
+    let target = store.start_session(Some("proj".to_string()), None);
+    let unrelated = store.start_session(Some("proj".to_string()), None);
+    let token = baseline(&store, &target.session_id).await.observation_token;
+
+    let first_store = store.clone();
+    let first_session = target.session_id.clone();
+    let first_token = token.clone();
+    let first_waiter = tokio::spawn(async move {
+        first_store
+            .observe_messages(&first_session, Some(&first_token), Some(2), None)
+            .await
+            .unwrap()
+    });
+    let second_store = store.clone();
+    let second_session = target.session_id.clone();
+    let second_token = token.clone();
+    let second_waiter = tokio::spawn(async move {
+        second_store
+            .observe_messages(&second_session, Some(&second_token), Some(2), None)
+            .await
+            .unwrap()
+    });
+    tokio::task::yield_now().await;
+
+    // An unrelated mutation can wake the shared watch internally but must not
+    // satisfy either target waiter. It also proves no SessionStore mutex is held
+    // across the await because this mutation can acquire the store immediately.
+    post(
+        &store,
+        &unrelated.session_id,
+        SessionMessageKind::Progress,
+        "spurious wake",
+        SessionMessagePriority::Normal,
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    assert!(!first_waiter.is_finished());
+    assert!(!second_waiter.is_finished());
+
+    let target_message = post(
+        &store,
+        &target.session_id,
+        SessionMessageKind::Progress,
+        "wake both",
+        SessionMessagePriority::Normal,
+    );
+    let first = first_waiter.await.unwrap();
+    let second = second_waiter.await.unwrap();
+    for observed in [first, second] {
+        assert!(observed.changed);
+        assert_eq!(observed.wait_outcome, "updated");
+        assert_eq!(observed.messages.len(), 1);
+        assert_eq!(observed.messages[0].message_id, target_message.message_id);
+    }
+}
+
+#[tokio::test]
+async fn observe_session_messages_wait_timeout_is_successful_unchanged_snapshot() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("proj".to_string()), None);
+    let token = baseline(&store, &session.session_id)
+        .await
+        .observation_token;
+    let timed_out = store
+        .observe_messages(&session.session_id, Some(&token), Some(1), None)
+        .await
+        .unwrap();
+    assert!(!timed_out.changed);
+    assert!(timed_out.messages.is_empty());
+    assert_eq!(timed_out.wait_outcome, "timeout");
+    assert!(timed_out.waited_ms >= 900);
 }
 
 #[test]

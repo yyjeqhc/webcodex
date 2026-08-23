@@ -219,6 +219,23 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
+        "observe_session_messages" => Some(wrapped_output_schema(vec![
+            ("success", schema_type("boolean", "Always true on success, including timeout.")),
+            ("session_id", schema_type("string", "Explicit business Session id being observed.")),
+            (
+                "messages",
+                array_schema(
+                    open_object_schema("Current retained Session message state."),
+                    "Ascending observation-order current states changed after the caller cursor; empty for a baseline or unchanged timeout.",
+                ),
+            ),
+            ("observation_token", schema_type("string", "Opaque bounded Session-bound durable observation token. Return it unchanged on the next observation call.")),
+            ("changed", schema_type("boolean", "Whether durable message observation revision advanced beyond the supplied token.")),
+            ("wait_outcome", json!({"type": "string", "enum": ["immediate", "updated", "timeout"], "description": "Closed one-shot wait outcome; timeout remains a successful tool result."})),
+            ("waited_ms", schema_type("integer", "Monotonic elapsed wait duration in milliseconds.")),
+            ("history_lost", schema_type("boolean", "True when retention/sanitization means the caller cursor predates message-state history that can no longer be reconstructed completely.")),
+            ("has_more", schema_type("boolean", "True when more retained changed message states remain after the returned page; the token advances only through the last returned change.")),
+        ])),
         "resolve_session_message" => Some(wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success.")),
             (

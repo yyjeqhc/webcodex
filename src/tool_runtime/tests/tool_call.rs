@@ -934,6 +934,74 @@ fn from_tool_name_parses_finish_coding_task_workspace_projection_flag() {
 }
 
 #[test]
+fn observe_session_messages_tool_call_and_audit_are_bounded() {
+    let raw_token = "wsm1:wc_sess_demo:1";
+    let call = ToolCall::from_tool_name(
+        "observe_session_messages",
+        json!({
+            "session_id": "wc_sess_demo",
+            "after_observation_token": raw_token,
+            "wait_secs": 7,
+            "limit": 25
+        }),
+    )
+    .unwrap();
+    match &call {
+        ToolCall::ObserveSessionMessages {
+            session_id,
+            after_observation_token,
+            wait_secs,
+            limit,
+        } => {
+            assert_eq!(session_id, "wc_sess_demo");
+            assert_eq!(after_observation_token.as_deref(), Some(raw_token));
+            assert_eq!(*wait_secs, Some(7));
+            assert_eq!(*limit, Some(25));
+        }
+        other => panic!("expected ObserveSessionMessages, got {other:?}"),
+    }
+    assert_eq!(call.tool_name(), "observe_session_messages");
+    assert_eq!(
+        call.session_log_arguments(),
+        json!({
+            "session_id": "wc_sess_demo",
+            "wait_secs": 7,
+            "limit": 25,
+            "token_present": true
+        })
+    );
+    let output_audit = super::super::tool_audit::session_log_result_for_tool(
+        "observe_session_messages",
+        &json!({
+            "success": true,
+            "session_id": "wc_sess_demo",
+            "messages": [{"message": "secret body"}],
+            "observation_token": raw_token,
+            "changed": true,
+            "history_lost": false,
+            "has_more": true,
+            "wait_outcome": "immediate"
+        }),
+    );
+    assert_eq!(output_audit["message_count"], 1);
+    assert_eq!(output_audit["changed"], true);
+    assert_eq!(output_audit["has_more"], true);
+    assert!(output_audit.get("messages").is_none());
+    assert!(output_audit.get("observation_token").is_none());
+    assert!(!output_audit.to_string().contains("secret body"));
+    assert!(!output_audit.to_string().contains(raw_token));
+
+    let oversized = ToolCall::from_tool_name(
+        "observe_session_messages",
+        json!({
+            "session_id": "wc_sess_demo",
+            "after_observation_token": "x".repeat(193)
+        }),
+    );
+    assert!(oversized.is_err());
+}
+
+#[test]
 fn project_overview_tool_call_parses() {
     let call = ToolCall::from_tool_name(
         "project_overview",

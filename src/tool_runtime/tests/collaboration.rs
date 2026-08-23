@@ -103,6 +103,238 @@ fn start_authorized_project_session(
 }
 
 #[tokio::test]
+async fn observe_session_messages_collaboration_recorder_target_scope_fences() {
+    let runtime = runtime_with_resolver_projects().await;
+    let auth = auth_context(None, true);
+    let coordinator = start_authorized_project_session(
+        &runtime,
+        "agent:workstation:my-repo",
+        Some("observation coordinator"),
+        &auth,
+    );
+    let same_project_worker = start_authorized_project_session(
+        &runtime,
+        "agent:workstation:my-repo",
+        Some("same-project worker"),
+        &auth,
+    );
+    let other_project_worker = start_authorized_project_session(
+        &runtime,
+        "agent:workstation:other-repo",
+        Some("other-project worker"),
+        &auth,
+    );
+
+    let allowed = call_with_recorder(
+        &runtime,
+        "observe_session_messages",
+        json!({"session_id": coordinator.session_id}),
+        Some(&same_project_worker.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(allowed.success, "{:?}", allowed.error);
+    assert!(allowed.output["messages"].as_array().unwrap().is_empty());
+    assert!(allowed.output["observation_token"].as_str().is_some());
+    let baseline_token = allowed.output["observation_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let wait_without_token = call_with_recorder(
+        &runtime,
+        "observe_session_messages",
+        json!({"session_id": coordinator.session_id, "wait_secs": 1}),
+        Some(&same_project_worker.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(!wait_without_token.success);
+    assert_eq!(
+        wait_without_token.output["error_kind"],
+        "invalid_session_message_observation_request"
+    );
+
+    let cross_project = call_with_recorder(
+        &runtime,
+        "observe_session_messages",
+        json!({"session_id": coordinator.session_id}),
+        Some(&other_project_worker.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(!cross_project.success);
+    assert_eq!(
+        cross_project.output["error_kind"],
+        "session_project_mismatch"
+    );
+    assert!(cross_project.output.get("observation_token").is_none());
+
+    let unscoped_worker = call_with_recorder(
+        &runtime,
+        "start_session",
+        json!({"title": "unscoped observation worker"}),
+        None,
+        &auth,
+        None,
+    )
+    .await;
+    assert!(unscoped_worker.success, "{:?}", unscoped_worker.error);
+    let unscoped_worker_id = unscoped_worker.output["session_id"].as_str().unwrap();
+    let unscoped_to_scoped = call_with_recorder(
+        &runtime,
+        "observe_session_messages",
+        json!({"session_id": coordinator.session_id}),
+        Some(unscoped_worker_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(!unscoped_to_scoped.success);
+    assert_eq!(
+        unscoped_to_scoped.output["error_kind"],
+        "session_project_mismatch"
+    );
+
+    let unscoped_coordinator = call_with_recorder(
+        &runtime,
+        "start_session",
+        json!({"title": "unscoped observation coordinator"}),
+        None,
+        &auth,
+        None,
+    )
+    .await;
+    assert!(
+        unscoped_coordinator.success,
+        "{:?}",
+        unscoped_coordinator.error
+    );
+    let unscoped_coordinator_id = unscoped_coordinator.output["session_id"].as_str().unwrap();
+    let scoped_to_unscoped = call_with_recorder(
+        &runtime,
+        "observe_session_messages",
+        json!({"session_id": unscoped_coordinator_id}),
+        Some(&same_project_worker.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(!scoped_to_unscoped.success);
+    assert_eq!(
+        scoped_to_unscoped.output["error_kind"],
+        "session_project_mismatch"
+    );
+    let closed = call_with_recorder(
+        &runtime,
+        "close_session",
+        json!({"session_id": coordinator.session_id}),
+        Some(&same_project_worker.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(closed.success, "{:?}", closed.error);
+    let closed_observation = call_with_recorder(
+        &runtime,
+        "observe_session_messages",
+        json!({
+            "session_id": coordinator.session_id,
+            "after_observation_token": baseline_token
+        }),
+        Some(&same_project_worker.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(closed_observation.success, "{:?}", closed_observation.error);
+    assert_eq!(closed_observation.output["changed"], false);
+}
+
+#[tokio::test]
+async fn observe_session_messages_collaboration_projectless_owner_and_foreign_recorder_fence() {
+    let runtime = test_runtime();
+    let alice = shared_key_auth_context("observation-projectless-alice");
+    let bob = shared_key_auth_context("observation-projectless-bob");
+
+    let alice_coordinator = call_with_recorder(
+        &runtime,
+        "start_session",
+        json!({"title": "Alice observation coordinator"}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    let alice_worker = call_with_recorder(
+        &runtime,
+        "start_session",
+        json!({"title": "Alice observation worker"}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    let bob_worker = call_with_recorder(
+        &runtime,
+        "start_session",
+        json!({"title": "Bob observation worker"}),
+        None,
+        &bob,
+        None,
+    )
+    .await;
+    assert!(alice_coordinator.success && alice_worker.success && bob_worker.success);
+    let coordinator_id = alice_coordinator.output["session_id"].as_str().unwrap();
+    let alice_worker_id = alice_worker.output["session_id"].as_str().unwrap();
+    let bob_worker_id = bob_worker.output["session_id"].as_str().unwrap();
+
+    let same_owner = call_with_recorder(
+        &runtime,
+        "observe_session_messages",
+        json!({"session_id": coordinator_id}),
+        Some(alice_worker_id),
+        &alice,
+        None,
+    )
+    .await;
+    assert!(same_owner.success, "{:?}", same_owner.error);
+
+    let foreign_recorder = call_with_recorder(
+        &runtime,
+        "observe_session_messages",
+        json!({"session_id": coordinator_id}),
+        Some(bob_worker_id),
+        &alice,
+        None,
+    )
+    .await;
+    assert!(!foreign_recorder.success);
+    assert_eq!(
+        foreign_recorder.output["error_kind"],
+        "session_authority_denied"
+    );
+    assert!(foreign_recorder.output.get("observation_token").is_none());
+
+    let foreign_target = call_with_recorder(
+        &runtime,
+        "observe_session_messages",
+        json!({"session_id": coordinator_id}),
+        None,
+        &bob,
+        None,
+    )
+    .await;
+    assert!(!foreign_target.success);
+    assert_eq!(
+        foreign_target.output["error_kind"],
+        "session_authority_denied"
+    );
+}
+
+#[tokio::test]
 async fn collaboration_two_sessions_keep_execution_history_independent_and_bind_provenance() {
     let client_id = "collaboration-runtime";
     let runtime = runtime_with_agent_project(client_id);

@@ -95,6 +95,21 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::ObserveSessionMessages {
+                session_id,
+                after_observation_token,
+                wait_secs,
+                limit,
+            } => {
+                self.observe_session_messages_tool(
+                    session_id,
+                    after_observation_token,
+                    wait_secs,
+                    limit,
+                    auth,
+                )
+                .await
+            }
             ToolCall::ResolveSessionMessage {
                 session_id,
                 message_id,
@@ -578,6 +593,63 @@ impl ToolRuntime {
         }
     }
 
+    pub(crate) async fn observe_session_messages_tool(
+        &self,
+        session_id: String,
+        after_observation_token: Option<String>,
+        wait_secs: Option<u64>,
+        limit: Option<usize>,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        if let Err(result) = self
+            .authorize_session_target(&session_id, "observe_session_messages", auth)
+            .await
+        {
+            return result;
+        }
+        if wait_secs.is_some() && after_observation_token.is_none() {
+            return invalid_session_message_observation_request(
+                &session_id,
+                "wait_secs requires after_observation_token",
+            );
+        }
+        if wait_secs.is_some_and(|wait_secs| !(1..=60).contains(&wait_secs)) {
+            return invalid_session_message_observation_request(
+                &session_id,
+                "wait_secs must be in 1..=60",
+            );
+        }
+        if limit.is_some_and(|limit| !(1..=sessions::MAX_MESSAGE_LIST_LIMIT).contains(&limit)) {
+            return invalid_session_message_observation_request(
+                &session_id,
+                "limit must be in 1..=100",
+            );
+        }
+        match self
+            .sessions
+            .observe_messages(
+                &session_id,
+                after_observation_token.as_deref(),
+                wait_secs,
+                limit,
+            )
+            .await
+        {
+            Ok(observation) => ToolResult::ok(json!({
+                "success": true,
+                "session_id": session_id,
+                "messages": observation.messages,
+                "observation_token": observation.observation_token,
+                "changed": observation.changed,
+                "wait_outcome": observation.wait_outcome,
+                "waited_ms": observation.waited_ms,
+                "history_lost": observation.history_lost,
+                "has_more": observation.has_more,
+            })),
+            Err(err) => session_message_observation_error_result(&session_id, err),
+        }
+    }
+
     pub(crate) async fn resolve_session_message_tool(
         &self,
         session_id: String,
@@ -827,6 +899,50 @@ impl ToolRuntime {
             "project": project,
             "resolved_project": resolved.resolved_id,
         }))
+    }
+}
+
+fn invalid_session_message_observation_request(session_id: &str, message: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        message,
+        json!({
+            "error_kind": "invalid_session_message_observation_request",
+            "failure_kind": "invalid_arguments",
+            "session_id": session_id,
+            "state_changed": false,
+        }),
+    )
+}
+
+fn session_message_observation_error_result(
+    session_id: &str,
+    error: sessions::SessionMessageObservationError,
+) -> ToolResult {
+    match error {
+        sessions::SessionMessageObservationError::UnknownSession => {
+            unknown_session_result(session_id)
+        }
+        sessions::SessionMessageObservationError::MalformedToken
+        | sessions::SessionMessageObservationError::OversizedToken
+        | sessions::SessionMessageObservationError::WrongSession
+        | sessions::SessionMessageObservationError::FutureRevision => ToolResult::err_with_output(
+            "invalid_session_message_observation_token",
+            json!({
+                "error_kind": "invalid_session_message_observation_token",
+                "session_id": session_id,
+                "state_changed": false,
+            }),
+        ),
+        sessions::SessionMessageObservationError::InvalidObservationState => {
+            ToolResult::err_with_output(
+                "invalid_message_observation_state",
+                json!({
+                    "error_kind": "invalid_message_observation_state",
+                    "session_id": session_id,
+                    "state_changed": false,
+                }),
+            )
+        }
     }
 }
 

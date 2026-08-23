@@ -7,7 +7,7 @@ use super::super::tool_inputs::{ExecutionShell, SessionMode};
 use serde::{Deserialize, Serialize};
 use serde_json::{value::RawValue, Value};
 use sha2::{Digest, Sha256};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -34,6 +34,7 @@ pub(crate) const DEFAULT_MAX_MESSAGES_PER_SESSION: usize = 200;
 pub(crate) const MAX_CODING_INSTRUCTION_CHARS: usize = 4000;
 pub(crate) const DEFAULT_MESSAGE_LIST_LIMIT: usize = 50;
 pub(crate) const MAX_MESSAGE_LIST_LIMIT: usize = 100;
+pub(crate) const MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN: usize = 192;
 pub(crate) const MAX_MESSAGE_CHARS: usize = 8000;
 pub(crate) const MAX_MESSAGE_TAGS: usize = 16;
 pub(crate) const MAX_MESSAGE_TAG_CHARS: usize = 64;
@@ -314,6 +315,14 @@ pub(super) struct SessionRecord {
     /// serde default; the in-memory record is always constructed explicitly.
     pub(super) events_observed: u64,
     pub(super) messages: VecDeque<Arc<SessionMessage>>,
+    /// Durable Session-local monotonic message-state revision. This is never
+    /// exposed as a public cursor; callers receive an opaque Session-bound token.
+    pub(super) message_observation_revision: u64,
+    /// Highest last-message revision no longer recoverable because that message
+    /// was evicted or sanitized from retained state.
+    pub(super) message_observation_floor: u64,
+    /// Last observable mutation revision for each currently retained message.
+    pub(super) message_observation_revisions: BTreeMap<String, u64>,
     pub(super) project_instructions: Option<ProjectInstructionsSnapshot>,
 }
 
@@ -659,6 +668,12 @@ pub(super) struct PersistedSessionRecord {
     pub(super) updated_at: i64,
     pub(super) events: Vec<Arc<SessionEvent>>,
     pub(super) messages: Vec<Arc<SessionMessage>>,
+    #[serde(default)]
+    pub(super) message_observation_revision: u64,
+    #[serde(default)]
+    pub(super) message_observation_floor: u64,
+    #[serde(default)]
+    pub(super) message_observation_revisions: BTreeMap<String, u64>,
     /// Additive v1 field. Cumulative number of events ever appended, including
     /// those the per-session event cap has evicted. Older ledgers omit it and
     /// deserialize to 0; the restore path treats 0 as "retain exactly the
@@ -989,6 +1004,27 @@ pub(crate) struct ListSessionMessagesFilter {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub(crate) struct SessionMessageObservationOutcome {
+    pub(crate) messages: Vec<SessionMessage>,
+    pub(crate) observation_token: String,
+    pub(crate) changed: bool,
+    pub(crate) wait_outcome: &'static str,
+    pub(crate) waited_ms: u64,
+    pub(crate) history_lost: bool,
+    pub(crate) has_more: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionMessageObservationError {
+    UnknownSession,
+    MalformedToken,
+    OversizedToken,
+    WrongSession,
+    FutureRevision,
+    InvalidObservationState,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct SessionMessagesSummary {
     pub(crate) total: usize,
     pub(crate) open: usize,
@@ -1073,6 +1109,7 @@ pub(crate) enum SessionMessageError {
         completion_id: Option<String>,
     },
     InvalidCompletionState,
+    InvalidObservationState,
     PersistenceUncertain,
     /// Message-board mutation denied because the workflow session is closed
     /// (or archived). Query tools remain available.

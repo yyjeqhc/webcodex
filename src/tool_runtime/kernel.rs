@@ -637,6 +637,7 @@ fn collaboration_session_tool(tool_name: &str) -> bool {
         tool_name,
         "post_session_message"
             | "list_session_messages"
+            | "observe_session_messages"
             | "resolve_session_message"
             | "complete_session_message"
             | "session_discussion_summary"

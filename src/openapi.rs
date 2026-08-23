@@ -1260,6 +1260,17 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": "Flattened list_session_messages status filter: open or resolved. Used only when `params` and `arguments` are absent."
                 },
+                "after_observation_token": {
+                    "type": "string",
+                    "maxLength": 192,
+                    "description": "Flattened opaque observation token for observe_session_messages and compatible bounded observation tools. Used only when `params` and `arguments` are absent."
+                },
+                "wait_secs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 60,
+                    "description": "Flattened one-shot bounded wait for observe_session_messages and compatible observation tools. Used only when `params` and `arguments` are absent."
+                },
                 "message_id": {
                     "type": "string",
                     "description": "Flattened resolve_session_message wc_msg_* id. Used only when `params` and `arguments` are absent."

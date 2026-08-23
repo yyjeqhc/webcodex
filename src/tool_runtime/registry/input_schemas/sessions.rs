@@ -156,6 +156,38 @@ pub(crate) fn list_session_messages_input_schema() -> Value {
     })
 }
 
+pub(crate) fn observe_session_messages_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "pattern": "^wc_sess_[A-Za-z0-9_]+$",
+                "description": "Required explicit Workflow Session whose message-state delta is observed."
+            },
+            "after_observation_token": {
+                "type": "string",
+                "maxLength": 192,
+                "description": "Optional opaque Session-bound durable observation token returned by an earlier observe_session_messages call."
+            },
+            "wait_secs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60,
+                "description": "Optional one-shot bounded wait in seconds. Allowed only with after_observation_token; never creates a subscription or stream."
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Maximum retained current-state message changes returned. Defaults to 50."
+            }
+        },
+        "required": ["session_id"],
+        "additionalProperties": false,
+    })
+}
+
 pub(crate) fn resolve_session_message_input_schema() -> Value {
     json!({
         "type": "object",

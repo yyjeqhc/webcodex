@@ -1091,6 +1091,7 @@ impl ToolRuntime {
             | ToolCall::ValidationSummary { .. }
             | ToolCall::PostSessionMessage { .. }
             | ToolCall::ListSessionMessages { .. }
+            | ToolCall::ObserveSessionMessages { .. }
             | ToolCall::ResolveSessionMessage { .. }
             | ToolCall::CompleteSessionMessage { .. }
             | ToolCall::SessionDiscussionSummary { .. }

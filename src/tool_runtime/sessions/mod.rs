@@ -39,10 +39,11 @@ pub(crate) use model::{
     SessionDiscussionCounts, SessionDiscussionSummary, SessionEvent, SessionExecutionContext,
     SessionExecutionContextUpdateError, SessionGuardDenial, SessionGuards, SessionLifecycle,
     SessionLifecycleDenial, SessionMessage, SessionMessageError, SessionMessageKind,
-    SessionMessagePriority, SessionMessageStatus, SessionSummary, SessionTransport,
-    ToolCallRecorderMetadata, DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_SESSIONS,
-    MAX_CODING_INSTRUCTION_CHARS, MAX_MESSAGE_COMPLETION_KEY_CHARS,
-    TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
+    SessionMessageObservationError, SessionMessagePriority, SessionMessageStatus, SessionSummary,
+    SessionTransport, ToolCallRecorderMetadata, DEFAULT_MAX_EVENTS_PER_SESSION,
+    DEFAULT_MAX_SESSIONS, MAX_CODING_INSTRUCTION_CHARS, MAX_MESSAGE_COMPLETION_KEY_CHARS,
+    MAX_MESSAGE_LIST_LIMIT, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
+    TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
 };
 pub(crate) use store::SessionStore;
 pub(crate) use util::redact_and_bound_instruction;

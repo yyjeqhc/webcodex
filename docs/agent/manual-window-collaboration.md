@@ -69,6 +69,18 @@ status=<optional>
 
 All supplied filters use deterministic AND semantics. `message_id` therefore gives an exact 0/1 lookup even when the Session contains many messages; `reply_to` finds bounded replies to one exact todo.
 
+## Observe message-state delta
+
+`observe_session_messages(session_id=C)` establishes a current message-board baseline and returns an opaque observation token without replaying existing history. Keep using `session_handoff_summary` and `list_session_messages` when existing todos/history are needed. A later call with `after_observation_token=<token>` returns retained messages whose current state changed after that baseline; an optional `wait_secs=1..60` performs one bounded wait only. Existing backlog returns immediately, a relevant update returns `wait_outcome=updated`, and a deadline returns successful `wait_outcome=timeout` with `changed=false`.
+
+The token is bounded, opaque, bound to the exact Workflow Session, and backed by a durable Session-local monotonic message-observation revision. It is observation state only: it is not authority, an idempotency key, execution identity, current-Session binding, or message-delivery receipt. The same recorder/target authorization fence used by the other collaboration tools applies before any observation result is returned. Token issuance fences the ledger generation containing its revision so a valid token remains usable after Server restart when that Workflow Session can be restored.
+
+Observation tracks real message-state mutation, not deque length. Posts advance it; a resolve advances it only when status/resolution really changes; a new atomic completion advances for the todo resolution and answer creation; exact completion replay and no-op resolve do not advance it. If one retained message changes multiple times between observations, the observer may receive only its latest current state because this primitive is not an event/audit log.
+
+Retention is explicit. Each retained message carries internal latest-revision bookkeeping and the Session maintains a durable low-watermark for evicted observation history. When the caller cursor predates an unrecoverable retention hole, `history_lost=true`; retained current-state delta may still be returned, but it is not represented as complete history. Pagination advances the returned token only through the last change actually returned while `has_more=true`.
+
+Message observation is **not** a delivery receipt, **not** proof of model-context retention, **not** a subscription/stream, and **not** an orchestrator wake-up. It never automatically wakes a model or spawns/routes work. Room/Discussion remains only a future additive direction; this Workflow Session primitive does not create Room, participant, presence, typing, scheduler, worker-pool, or routing state.
+
 ## Provenance is metadata, not authority
 
 A completed answer can identify the independent worker with `author_session_id`. That value is derived first from the trusted recording Session that owns the completion tool evidence, then from the trusted current-Session binding only when no recording Session exists. It is not a caller-authored claim. In stateless MCP 2026, `recording_session_id` is explicit wrapper provenance metadata, not a transport Session and not an authority grant; the legacy `mcp-session-id` header remains irrelevant.

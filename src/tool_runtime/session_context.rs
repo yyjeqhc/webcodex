@@ -269,6 +269,15 @@ pub(crate) fn session_message_error_result(
                 "state_changed": false,
             }),
         ),
+        sessions::SessionMessageError::InvalidObservationState => ToolResult::err_with_output(
+            "invalid_message_observation_state",
+            json!({
+                "error_kind": "invalid_message_observation_state",
+                "session_id": session_id,
+                "message_id": message_id,
+                "state_changed": false,
+            }),
+        ),
         sessions::SessionMessageError::PersistenceUncertain => ToolResult::err_with_output(
             "completion_persistence_uncertain",
             json!({

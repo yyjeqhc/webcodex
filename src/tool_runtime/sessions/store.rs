@@ -64,6 +64,9 @@ pub(crate) struct SessionStore {
     /// stores or when the writer thread could not be spawned (mutations then
     /// fall back to the synchronous write path).
     writer: Option<Arc<LedgerWriterGuard>>,
+    /// Process-local wake signal only; durable observation truth remains in the
+    /// persisted per-Session revision bookkeeping.
+    pub(super) message_observation_notify: tokio::sync::watch::Sender<u64>,
     #[cfg(test)]
     fail_next_coding_continuity_precommit: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -317,6 +320,7 @@ impl SessionStore {
 
     pub(crate) fn new_in_memory(max_sessions: usize, max_events_per_session: usize) -> Self {
         let max_durable_bindings = max_durable_bindings(max_sessions);
+        let (message_observation_notify, _) = tokio::sync::watch::channel(0_u64);
         Self {
             inner: Arc::new(Mutex::new(SessionStoreInner {
                 sessions: HashMap::<String, StoredSession>::new(),
@@ -332,6 +336,7 @@ impl SessionStore {
             })),
             persistence_write_mutex: Arc::new(Mutex::new(())),
             writer: None,
+            message_observation_notify,
             #[cfg(test)]
             fail_next_coding_continuity_precommit: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
@@ -374,10 +379,12 @@ impl SessionStore {
         // be spawned, fall back to the synchronous write path.
         let writer =
             LedgerWriterGuard::spawn(Arc::clone(&inner), Arc::clone(&persistence_write_mutex));
+        let (message_observation_notify, _) = tokio::sync::watch::channel(0_u64);
         Self {
             inner,
             persistence_write_mutex,
             writer,
+            message_observation_notify,
             #[cfg(test)]
             fail_next_coding_continuity_precommit: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
@@ -547,6 +554,9 @@ impl SessionStore {
             messages: VecDeque::new(),
             events: VecDeque::new(),
             events_observed: 0,
+            message_observation_revision: 0,
+            message_observation_floor: 0,
+            message_observation_revisions: Default::default(),
             project_instructions: opts.project_instructions,
         };
         let summary = {
@@ -833,6 +843,9 @@ impl SessionStore {
                     messages: VecDeque::new(),
                     events: VecDeque::from([Arc::new(event)]),
                     events_observed: 1,
+                    message_observation_revision: 0,
+                    message_observation_floor: 0,
+                    message_observation_revisions: Default::default(),
                     project_instructions: request.project_instructions,
                 };
                 let summary = inner.insert_session(record);
@@ -2346,7 +2359,7 @@ impl SessionStoreInner {
     pub(super) fn post_message(
         &mut self,
         input: PostSessionMessageInput,
-    ) -> Result<SessionMessage, SessionMessageError> {
+    ) -> Result<(SessionMessage, bool), SessionMessageError> {
         self.touch(&input.session_id);
         let Some(stored) = self.sessions.get_mut(&input.session_id) else {
             return Err(SessionMessageError::UnknownSession);
@@ -2386,12 +2399,18 @@ impl SessionStoreInner {
             resolved_by_message_id: None,
             completion_id: None,
         };
+        let revision = Self::next_message_observation_revision(record)?;
         record.updated_at = now;
         record.messages.push_back(Arc::new(message.clone()));
+        record
+            .message_observation_revisions
+            .insert(message.message_id.clone(), revision);
         while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
-            record.messages.pop_front();
+            if let Some(evicted) = record.messages.pop_front() {
+                Self::note_evicted_message_observation(record, &evicted.message_id);
+            }
         }
-        Ok(message)
+        Ok((message, true))
     }
 
     /// Resolve an open message. Already-resolved messages stay resolved
@@ -2401,7 +2420,7 @@ impl SessionStoreInner {
         session_id: &str,
         message_id: &str,
         resolution: Option<String>,
-    ) -> Result<SessionMessage, SessionMessageError> {
+    ) -> Result<(SessionMessage, bool), SessionMessageError> {
         self.touch(session_id);
         let Some(stored) = self.sessions.get_mut(session_id) else {
             return Err(SessionMessageError::UnknownSession);
@@ -2413,18 +2432,27 @@ impl SessionStoreInner {
         let record = stored
             .hot_mut()
             .expect("active session message mutation must stay hot");
-        let Some(message) = record
+        let Some(message_index) = record
             .messages
-            .iter_mut()
-            .find(|message| message.message_id == message_id)
+            .iter()
+            .position(|message| message.message_id == message_id)
         else {
             return Err(SessionMessageError::UnknownMessage);
         };
-        let message = Arc::make_mut(message);
         let resolution = match resolution {
             Some(value) => Some(validate_resolution_text(value)?),
             None => None,
         };
+        let changed = record.messages[message_index].status == SessionMessageStatus::Open
+            || resolution.as_ref().is_some_and(|resolution| {
+                record.messages[message_index].resolution.as_ref() != Some(resolution)
+            });
+        let revision = if changed {
+            Some(Self::next_message_observation_revision(record)?)
+        } else {
+            None
+        };
+        let message = Arc::make_mut(&mut record.messages[message_index]);
         if message.status == SessionMessageStatus::Open {
             message.status = SessionMessageStatus::Resolved;
             message.resolved_at = Some(now_ts());
@@ -2433,7 +2461,12 @@ impl SessionStoreInner {
             message.resolution = resolution;
         }
         record.updated_at = now_ts();
-        Ok(message.clone())
+        if let Some(revision) = revision {
+            record
+                .message_observation_revisions
+                .insert(message.message_id.clone(), revision);
+        }
+        Ok((message.clone(), changed))
     }
 
     pub(super) fn complete_message(
@@ -2523,6 +2556,15 @@ impl SessionStoreInner {
             return Err(SessionMessageError::InvalidCompletionState);
         }
 
+        let todo_revision = record
+            .message_observation_revision
+            .checked_add(1)
+            .ok_or(SessionMessageError::InvalidObservationState)?;
+        let answer_revision = todo_revision
+            .checked_add(1)
+            .ok_or(SessionMessageError::InvalidObservationState)?;
+        record.message_observation_revision = answer_revision;
+
         let now = now_ts();
         let answer = SessionMessage {
             message_id: format!("{MESSAGE_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
@@ -2548,6 +2590,12 @@ impl SessionStoreInner {
             todo.completion_id = Some(input.completion_id);
         }
         record.messages.push_back(Arc::new(answer.clone()));
+        record
+            .message_observation_revisions
+            .insert(input.message_id.clone(), todo_revision);
+        record
+            .message_observation_revisions
+            .insert(answer.message_id.clone(), answer_revision);
         while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
             let protected_answer_id = answer.message_id.as_str();
             let protected_todo_id = input.message_id.as_str();
@@ -2556,7 +2604,9 @@ impl SessionStoreInner {
             }) else {
                 return Err(SessionMessageError::InvalidCompletionState);
             };
-            record.messages.remove(remove_index);
+            if let Some(evicted) = record.messages.remove(remove_index) {
+                Self::note_evicted_message_observation(record, &evicted.message_id);
+            }
         }
         record.updated_at = now;
         let todo = record
@@ -2571,6 +2621,23 @@ impl SessionStoreInner {
             answer,
             replayed: false,
         })
+    }
+
+    fn next_message_observation_revision(
+        record: &mut SessionRecord,
+    ) -> Result<u64, SessionMessageError> {
+        let revision = record
+            .message_observation_revision
+            .checked_add(1)
+            .ok_or(SessionMessageError::InvalidObservationState)?;
+        record.message_observation_revision = revision;
+        Ok(revision)
+    }
+
+    fn note_evicted_message_observation(record: &mut SessionRecord, message_id: &str) {
+        if let Some(revision) = record.message_observation_revisions.remove(message_id) {
+            record.message_observation_floor = record.message_observation_floor.max(revision);
+        }
     }
 
     // --- reads / housekeeping ---

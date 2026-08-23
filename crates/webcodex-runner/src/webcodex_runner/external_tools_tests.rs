@@ -1035,6 +1035,36 @@ fn opt_in_real_claude_mcp_smoke() {
     }
 }
 
+#[test]
+fn normalized_search_exit_status_distinguishes_matches_from_no_match() {
+    let marker = r#"{"webcodex_search":{"backend":"claude_code","feature_unavailable":false}}"#;
+    assert_eq!(normalized_search_exit_code(marker), 1);
+    assert_eq!(
+        normalized_search_exit_code(&format!("{marker}\nsrc/lib.rs:1:needle")),
+        0
+    );
+}
+
+#[test]
+fn normalize_search_result_rejects_untrusted_paths_instead_of_claiming_no_match() {
+    let root = tempfile::tempdir().unwrap();
+    let context = ToolExecutionContext {
+        project_root: root.path(),
+        target: root.path().to_path_buf(),
+        max_output_bytes: MAX_MCP_OUTPUT_BYTES,
+        timeout_secs: 30,
+    };
+    let result = json!({
+        "content": [{
+            "type": "text",
+            "text": "/private/provider/NEVER_RETURN.rs:1:needle"
+        }]
+    });
+
+    let error = normalize_search_result(&result, &context).unwrap_err();
+    assert_eq!(error.code, "provider_output_untrusted");
+}
+
 /// Whether a process with `pid` is still alive, probed natively (no tasklist,
 /// no shelling out).
 #[cfg(target_os = "macos")]

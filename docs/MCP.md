@@ -303,8 +303,18 @@ No project discovery or runtime identifier belongs in this prompt.
 - `search_project_text` is the default search tool (ripgrep first, bounded in
   work and bytes); `search_project_texts` batches up to 8 queries.
 
+An empty search result is affirmative no-match evidence only after a recognized
+backend reports a successful completed/no-match status. Missing or malformed
+backend identity, missing completion status, status/output disagreement,
+backend failure, Agent failure, timeout, request drop, and provider failure
+return failures instead. Search failures retain the compatibility `code` and
+add bounded `failure_stage` plus a specific `reason_code`. Batch failure items
+retain their broad `reason_code` and preserve the single-search provenance as
+`failure_stage` and `detail_code`; successful batch items remain sparse.
+
 Failures return small structured errors with project-relative paths only —
-never absolute paths, commands, or Runner stderr.
+never absolute paths, commands, Runner/provider stderr, or arbitrary provider
+prose.
 
 ## Common errors
 

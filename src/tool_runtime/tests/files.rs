@@ -1892,6 +1892,12 @@ fn search_backend_exit_codes_map_to_results() {
                 assert!(!result.success, "{ctx}");
                 assert_search_output_keys_are_declared(&result.output);
                 assert_eq!(result.output["code"], "search_execution_failed", "{ctx}");
+                assert_eq!(result.output["failure_stage"], "backend_execution", "{ctx}");
+                assert_eq!(
+                    result.output["reason_code"], "backend_process_failed",
+                    "{ctx}"
+                );
+                assert_eq!(result.output["exit_code"], case.exit_code, "{ctx}");
                 assert_eq!(result.output["result_mode"], "matches", "{ctx}");
             }
             Expect::ParsedMatches(expected) => {
@@ -1922,8 +1928,83 @@ fn search_markerless_output_cannot_be_reported_as_a_search_result() {
         assert!(!result.success, "stdout={stdout:?} exit_code={exit_code:?}");
         assert_search_output_keys_are_declared(&result.output);
         assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["failure_stage"], "backend_protocol");
+        assert_eq!(result.output["reason_code"], "backend_identity_missing");
+        assert!(result.output["backend"].is_null());
+        let rendered = serde_json::to_string(&result).unwrap();
+        assert!(!rendered.contains("PowerShell parser"));
+        assert!(!rendered.contains("startup noise"));
+    }
+}
+
+#[test]
+fn search_invalid_backend_marker_reports_protocol_provenance() {
+    let options = SearchOptions::normalize(raw_search_request()).unwrap();
+    for stdout in [
+        "{\"webcodex_search\":{\"backend\":\"unknown\"}}\n",
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":\"no\"}}\n",
+        "{\"webcodex_search\":\n",
+    ] {
+        let result = search_project_text_output("demo", &options, stdout, Some(0), "");
+        assert!(!result.success, "stdout={stdout:?}");
+        assert_search_output_keys_are_declared(&result.output);
+        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["failure_stage"], "backend_protocol");
+        assert_eq!(result.output["reason_code"], "backend_identity_invalid");
         assert!(result.output["backend"].is_null());
     }
+}
+
+#[test]
+fn search_missing_completion_status_cannot_prove_success() {
+    let options = SearchOptions::normalize(raw_search_request()).unwrap();
+    let stdout = "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n";
+    let result = search_project_text_output("demo", &options, stdout, None, "");
+
+    assert!(!result.success);
+    assert_search_output_keys_are_declared(&result.output);
+    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["failure_stage"], "backend_protocol");
+    assert_eq!(result.output["reason_code"], "backend_status_unavailable");
+    assert_eq!(result.output["backend"], "rg");
+    assert!(result.output.get("exit_code").is_none());
+}
+
+#[test]
+fn search_status_and_records_must_agree_before_empty_is_trusted() {
+    let options = SearchOptions::normalize(raw_search_request()).unwrap();
+    let marker = "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n";
+    for (stdout, exit_code) in [
+        (marker.to_string(), 0),
+        (marker.to_string(), 141),
+        (format!("{marker}src/lib.rs:1:needle\n"), 1),
+        (format!("{marker}/private/absolute/secret.rs:1:needle\n"), 0),
+    ] {
+        let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), "");
+        assert!(!result.success, "stdout={stdout:?} exit_code={exit_code}");
+        assert_search_output_keys_are_declared(&result.output);
+        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["failure_stage"], "backend_protocol");
+        assert_eq!(result.output["reason_code"], "backend_output_inconsistent");
+        assert_eq!(result.output["backend"], "rg");
+        assert_eq!(result.output["exit_code"], exit_code);
+        assert!(!serde_json::to_string(&result)
+            .unwrap()
+            .contains("/private/"));
+    }
+
+    let provider_marker =
+        "{\"webcodex_search\":{\"backend\":\"claude_code\",\"feature_unavailable\":false}}\n";
+    let unproven = search_project_text_output("demo", &options, provider_marker, Some(0), "");
+    assert!(!unproven.success);
+    assert_eq!(
+        unproven.output["reason_code"],
+        "backend_output_inconsistent"
+    );
+    let proven_empty = search_project_text_output("demo", &options, provider_marker, Some(1), "");
+    assert!(proven_empty.success, "{:?}", proven_empty.error);
+    assert_eq!(proven_empty.output["matches"], json!([]));
+    assert_eq!(proven_empty.output["exit_code"], 1);
 }
 
 #[cfg(unix)]
@@ -2653,6 +2734,8 @@ async fn search_invalid_request_dispatch_returns_structured_error() {
     assert!(!result.success);
     assert_search_output_keys_are_declared(&result.output);
     assert_eq!(result.output["code"], "invalid_search_request");
+    assert_eq!(result.output["failure_stage"], "request_validation");
+    assert_eq!(result.output["reason_code"], "invalid_glob");
     assert_eq!(result.output["field"], "include_globs");
     assert_eq!(result.output["reason"], "negated");
     let rendered = serde_json::to_string(&result.output).unwrap();
@@ -2709,9 +2792,113 @@ async fn search_agent_command_timeout_returns_search_timeout() {
     assert!(!result.success);
     assert_search_output_keys_are_declared(&result.output);
     assert_eq!(result.output["code"], "search_timeout");
+    assert_eq!(result.output["failure_stage"], "backend_execution");
+    assert_eq!(result.output["reason_code"], "timeout");
     assert_eq!(result.output["result_mode"], "matches");
     assert_eq!(result.output["effective_timeout_secs"], 1);
     assert_eq!(result.output["backend"], "rg");
+}
+
+#[tokio::test]
+async fn search_agent_execution_failure_is_structured_and_does_not_leak_diagnostics() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-agent-failure", "demo", tmp.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    search_call(project, raw_search_request()),
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    let req = wait_for_patch_agent_request(&runtime, "search-agent-failure").await;
+    let private_diagnostic =
+        "provider private prose at /private/runner/workspace with token=NEVER_RETURN";
+    runtime
+        .shell_clients
+        .complete(ShellAgentResultRequest {
+            client_id: "search-agent-failure".to_string(),
+            agent_instance_id: "inst".to_string(),
+            request_id: req.request_id,
+            exit_code: Some(9),
+            stdout: Some(
+                "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n"
+                    .to_string(),
+            ),
+            stderr: Some(private_diagnostic.to_string()),
+            duration_ms: Some(5),
+            error: Some(private_diagnostic.to_string()),
+        })
+        .await
+        .unwrap();
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_search_output_keys_are_declared(&result.output);
+    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["failure_stage"], "agent_execution");
+    assert_eq!(result.output["reason_code"], "agent_execution_failed");
+    assert_eq!(result.output["backend"], "rg");
+    assert_eq!(result.output["exit_code"], 9);
+    let rendered = serde_json::to_string(&result).unwrap();
+    assert!(!rendered.contains("private prose"));
+    assert!(!rendered.contains("/private/"));
+    assert!(!rendered.contains("NEVER_RETURN"));
+}
+
+#[tokio::test]
+async fn search_agent_timeout_without_trusted_marker_cannot_return_partial_success() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-timeout-no-marker", "demo", tmp.path())
+            .await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    search_call(
+                        project,
+                        SearchRequest {
+                            timeout_secs: Some(1),
+                            ..raw_search_request()
+                        },
+                    ),
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    let req = wait_for_patch_agent_request(&runtime, "search-timeout-no-marker").await;
+    runtime
+        .shell_clients
+        .complete(ShellAgentResultRequest {
+            client_id: "search-timeout-no-marker".to_string(),
+            agent_instance_id: "inst".to_string(),
+            request_id: req.request_id,
+            exit_code: Some(-1),
+            stdout: Some("src/a.rs:1:needle\n".to_string()),
+            stderr: Some("command timed out after 1 seconds".to_string()),
+            duration_ms: Some(1000),
+            error: Some("command timed out".to_string()),
+        })
+        .await
+        .unwrap();
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_search_output_keys_are_declared(&result.output);
+    assert_eq!(result.output["code"], "search_timeout");
+    assert_eq!(result.output["failure_stage"], "agent_execution");
+    assert_eq!(result.output["reason_code"], "timeout");
+    assert!(result.output["backend"].is_null());
+    assert!(result.output.get("matches").is_none());
 }
 
 #[tokio::test]
@@ -2810,6 +2997,8 @@ async fn search_agent_outer_timeout_returns_search_timeout_and_cancels() {
     assert!(!result.success);
     assert_search_output_keys_are_declared(&result.output);
     assert_eq!(result.output["code"], "search_timeout");
+    assert_eq!(result.output["failure_stage"], "agent_transport");
+    assert_eq!(result.output["reason_code"], "timeout");
     assert_eq!(result.output["result_mode"], "matches");
     assert_eq!(result.output["effective_timeout_secs"], 1);
     assert!(
@@ -2869,6 +3058,8 @@ async fn search_agent_request_dropped_returns_structured_error() {
     assert!(!result.success);
     assert_search_output_keys_are_declared(&result.output);
     assert_eq!(result.output["code"], "search_request_dropped");
+    assert_eq!(result.output["failure_stage"], "agent_transport");
+    assert_eq!(result.output["reason_code"], "search_request_dropped");
     assert_eq!(result.output["result_mode"], "matches");
     assert_eq!(result.output["effective_timeout_secs"], 30);
     assert_ne!(result.output["code"], "search_timeout");
@@ -3353,6 +3544,8 @@ async fn advanced_search_without_rg_returns_structured_capability_error() {
     assert!(!result.success);
     assert_search_output_keys_are_declared(&result.output);
     assert_eq!(result.output["code"], "search_backend_feature_unavailable");
+    assert_eq!(result.output["failure_stage"], "backend_selection");
+    assert_eq!(result.output["reason_code"], "backend_feature_unavailable");
     assert_eq!(result.output["backend"], "grep");
     assert_eq!(
         result.output["requested_features"],

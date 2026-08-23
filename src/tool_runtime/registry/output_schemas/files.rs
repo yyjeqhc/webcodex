@@ -118,7 +118,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "backend",
                 nullable_schema(
                     "string",
-                    "Search backend used: rg, grep, or native. Omitted for ordinary complete default rg/matches success, or null/omitted when unknown (for example outer wait timeout before backend selection).",
+                    "Search backend used: rg, grep, native, or claude_code. Omitted for ordinary complete default rg/matches success, or null/omitted when unknown (for example outer wait timeout before backend selection).",
                 ),
             ),
             (
@@ -206,8 +206,37 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "code",
                 schema_type(
                     "string",
-                    "Stable structured error code on validation, backend capability, execution, timeout, or request-drop failure.",
+                    "Stable compatibility error code on validation, backend capability, execution, timeout, provider, or request-drop failure.",
                 ),
+            ),
+            (
+                "failure_stage",
+                json!({
+                    "type": "string",
+                    "enum": [
+                        "request_validation", "backend_selection", "backend_protocol",
+                        "backend_execution", "agent_request", "agent_execution",
+                        "agent_transport", "provider", "local_execution", "batch_deadline"
+                    ],
+                    "description": "Stable stage at which search evidence failed."
+                }),
+            ),
+            (
+                "reason_code",
+                json!({
+                    "type": "string",
+                    "enum": [
+                        "invalid_pattern", "invalid_path", "invalid_glob",
+                        "invalid_search_request", "backend_feature_unavailable",
+                        "backend_identity_missing", "backend_identity_invalid",
+                        "backend_status_unavailable", "backend_output_inconsistent",
+                        "backend_process_failed", "agent_request_failed",
+                        "agent_execution_failed", "search_request_dropped", "timeout",
+                        "provider_execution_failed", "provider_protocol_invalid",
+                        "local_execution_failed"
+                    ],
+                    "description": "Specific stable failure reason within failure_stage."
+                }),
             ),
             (
                 "field",
@@ -236,6 +265,39 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     schema_type("string", "Requested advanced feature."),
                     "Advanced features that require ripgrep.",
                 ),
+            ),
+            (
+                "format",
+                schema_type("string", "Bounded external-provider envelope format on provider failure."),
+            ),
+            (
+                "provider",
+                schema_type("string", "Known external search provider identity."),
+            ),
+            (
+                "provider_code",
+                json!({
+                    "type": "string",
+                    "maxLength": 64,
+                    "pattern": "^[a-z0-9_]+$",
+                    "description": "Sanitized provider error code; arbitrary provider prose is not returned."
+                }),
+            ),
+            (
+                "capability",
+                schema_type("string", "External provider capability that failed."),
+            ),
+            (
+                "write_state",
+                schema_type("string", "Provider write state; search failures are not_submitted."),
+            ),
+            (
+                "changed",
+                schema_type("boolean", "False for read-only search failures."),
+            ),
+            (
+                "error",
+                schema_type("string", "Bounded stable provider error classification."),
             ),
             ("message", schema_type("string", "Structured failure message.")),
         ]))
@@ -303,9 +365,43 @@ fn search_project_texts_output_schema() -> Value {
                     "search_request_dropped", "external_provider_error", "agent_unavailable"
                 ]
             },
+            "failure_stage": {
+                "type": "string",
+                "enum": [
+                    "request_validation", "backend_selection", "backend_protocol",
+                    "backend_execution", "agent_request", "agent_execution",
+                    "agent_transport", "provider", "local_execution", "batch_deadline"
+                ]
+            },
+            "detail_code": {
+                "type": "string",
+                "enum": [
+                    "invalid_pattern", "invalid_path", "invalid_glob",
+                    "invalid_search_request", "backend_feature_unavailable",
+                    "backend_identity_missing", "backend_identity_invalid",
+                    "backend_status_unavailable", "backend_output_inconsistent",
+                    "backend_process_failed", "agent_request_failed",
+                    "agent_execution_failed", "search_request_dropped", "timeout",
+                    "provider_execution_failed", "provider_protocol_invalid",
+                    "local_execution_failed",
+                    "search_backend_feature_unavailable", "search_execution_failed",
+                    "external_provider_error", "agent_unavailable"
+                ]
+            },
+            "backend": {"type": "string", "enum": ["rg", "grep", "native", "claude_code"]},
+            "exit_code": {"type": "integer"},
+            "result_mode": {"type": "string", "enum": ["matches", "files_with_matches", "count"]},
+            "effective_timeout_secs": {"type": "integer", "minimum": 1, "maximum": 120},
+            "provider_code": {
+                "type": "string",
+                "maxLength": 64,
+                "pattern": "^[a-z0-9_]+$"
+            },
             "state_changed": {"type": "boolean", "const": false}
         },
-        "required": ["error_kind", "reason_code", "state_changed"]
+        "required": [
+            "error_kind", "reason_code", "failure_stage", "detail_code", "state_changed"
+        ]
     });
     let item_schema = json!({
         "type": "object",

@@ -272,8 +272,16 @@ summarize the project, review the result, and finish. Do not edit files.
 - `search_project_text` 是默认搜索工具（优先 ripgrep，工作量与字节均有界）；
   `search_project_texts` 批量执行最多 8 个查询。
 
+只有已识别的 backend 明确报告搜索正常完成且无匹配时，空搜索结果才是肯定的
+“无匹配”证据。backend 标识缺失或畸形、完成状态缺失、状态与输出不一致、
+backend 失败、Agent 失败、超时、请求丢失及 provider 失败都会返回失败。
+搜索失败保留兼容的 `code`，并增加有界的 `failure_stage` 与具体
+`reason_code`。批量失败条目保留宽泛的 `reason_code`，同时通过
+`failure_stage` 和 `detail_code` 保留单项搜索 provenance；成功条目仍保持
+稀疏投影。
+
 失败返回只含项目相对路径的小型结构化错误——绝不包含绝对路径、命令或 Runner
-stderr。
+stderr、provider stderr 或任意 provider prose。
 
 ## 常见错误
 

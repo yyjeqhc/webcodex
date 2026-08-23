@@ -116,6 +116,92 @@ fn failure_reason_code(result: &ToolResult) -> &'static str {
     }
 }
 
+fn batch_failure_stage(result: &ToolResult, broad_reason: &str) -> &'static str {
+    match result.output.get("failure_stage").and_then(Value::as_str) {
+        Some("request_validation") => "request_validation",
+        Some("backend_selection") => "backend_selection",
+        Some("backend_protocol") => "backend_protocol",
+        Some("backend_execution") => "backend_execution",
+        Some("agent_request") => "agent_request",
+        Some("agent_execution") => "agent_execution",
+        Some("agent_transport") => "agent_transport",
+        Some("provider") => "provider",
+        Some("local_execution") => "local_execution",
+        Some("batch_deadline") => "batch_deadline",
+        _ => match broad_reason {
+            "invalid_pattern" | "invalid_path" | "invalid_glob" | "invalid_search_request" => {
+                "request_validation"
+            }
+            "search_backend_feature_unavailable" => "backend_selection",
+            "search_request_dropped" => "agent_transport",
+            "external_provider_error" => "provider",
+            "agent_unavailable" => "agent_request",
+            "timeout" => "agent_transport",
+            _ => "backend_execution",
+        },
+    }
+}
+
+fn batch_failure_detail_code(result: &ToolResult, broad_reason: &'static str) -> &'static str {
+    match result.output.get("reason_code").and_then(Value::as_str) {
+        Some("invalid_pattern") => "invalid_pattern",
+        Some("invalid_path") => "invalid_path",
+        Some("invalid_glob") => "invalid_glob",
+        Some("invalid_search_request") => "invalid_search_request",
+        Some("backend_feature_unavailable") => "backend_feature_unavailable",
+        Some("backend_identity_missing") => "backend_identity_missing",
+        Some("backend_identity_invalid") => "backend_identity_invalid",
+        Some("backend_status_unavailable") => "backend_status_unavailable",
+        Some("backend_output_inconsistent") => "backend_output_inconsistent",
+        Some("backend_process_failed") => "backend_process_failed",
+        Some("agent_request_failed") => "agent_request_failed",
+        Some("agent_execution_failed") => "agent_execution_failed",
+        Some("search_request_dropped") => "search_request_dropped",
+        Some("timeout") => "timeout",
+        Some("provider_execution_failed") => "provider_execution_failed",
+        Some("provider_protocol_invalid") => "provider_protocol_invalid",
+        Some("local_execution_failed") => "local_execution_failed",
+        _ => broad_reason,
+    }
+}
+
+fn copy_safe_batch_failure_metadata(source: &Value, target: &mut Value) {
+    if let Some(backend @ ("rg" | "grep" | "native" | "claude_code")) =
+        source.get("backend").and_then(Value::as_str)
+    {
+        target["backend"] = json!(backend);
+    }
+    if let Some(exit_code) = source.get("exit_code").and_then(Value::as_i64) {
+        target["exit_code"] = json!(exit_code);
+    }
+    if let Some(result_mode @ ("matches" | "files_with_matches" | "count")) =
+        source.get("result_mode").and_then(Value::as_str)
+    {
+        target["result_mode"] = json!(result_mode);
+    }
+    if let Some(timeout) = source
+        .get("effective_timeout_secs")
+        .and_then(Value::as_u64)
+        .filter(|timeout| (1..=120).contains(timeout))
+    {
+        target["effective_timeout_secs"] = json!(timeout);
+    }
+    if let Some(provider_code) =
+        source
+            .get("provider_code")
+            .and_then(Value::as_str)
+            .filter(|code| {
+                !code.is_empty()
+                    && code.len() <= 64
+                    && code.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                    })
+            })
+    {
+        target["provider_code"] = json!(provider_code);
+    }
+}
+
 fn batch_item(index: usize, mut result: ToolResult) -> Value {
     if result.success {
         if let Some(output) = result.output.as_object_mut() {
@@ -142,14 +228,22 @@ fn batch_item(index: usize, mut result: ToolResult) -> Value {
     }
 
     let reason_code = failure_reason_code(&result);
+    let failure_stage = batch_failure_stage(&result, reason_code);
+    let detail_code = batch_failure_detail_code(&result, reason_code);
+    let mut output = json!({
+        "error_kind": "search_project_text_failed",
+        // Preserve the established broad batch reason while adding the
+        // single-search provenance that explains where and why it failed.
+        "reason_code": reason_code,
+        "failure_stage": failure_stage,
+        "detail_code": detail_code,
+        "state_changed": false,
+    });
+    copy_safe_batch_failure_metadata(&result.output, &mut output);
     json!({
         "index": index,
         "success": false,
-        "output": {
-            "error_kind": "search_project_text_failed",
-            "reason_code": reason_code,
-            "state_changed": false,
-        },
+        "output": output,
         "error": format!("search_project_text failed: {reason_code}"),
     })
 }

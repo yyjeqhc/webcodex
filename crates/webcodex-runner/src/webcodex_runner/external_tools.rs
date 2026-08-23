@@ -300,13 +300,12 @@ impl ExternalToolRouter {
                     call_summary(capability, "claude_code", false, true, None, started, None),
                     true,
                 );
-                ExternalRoute::Handled(command_result(
-                    output
-                        .as_str()
-                        .map(str::to_string)
-                        .unwrap_or_else(|| output.to_string()),
-                    started,
-                ))
+                let stdout = output
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| output.to_string());
+                let exit_code = normalized_search_exit_code(&stdout);
+                ExternalRoute::Handled(command_result_with_exit(stdout, exit_code, started))
             }
             Err(error) => self.failure_or_native(capability, error, started),
         }
@@ -419,12 +418,24 @@ fn provider_error_result(
 }
 
 fn command_result(stdout: String, started: Instant) -> CommandResult {
+    command_result_with_exit(stdout, 0, started)
+}
+
+fn command_result_with_exit(stdout: String, exit_code: i32, started: Instant) -> CommandResult {
     CommandResult {
-        exit_code: Some(0),
+        exit_code: Some(exit_code),
         stdout: Some(stdout),
         stderr: Some(String::new()),
         duration_ms: Some(started.elapsed().as_millis() as u64),
         error: None,
+    }
+}
+
+fn normalized_search_exit_code(stdout: &str) -> i32 {
+    if stdout.lines().skip(1).any(|line| !line.is_empty()) {
+        0
+    } else {
+        1
     }
 }
 
@@ -980,6 +991,9 @@ fn normalize_search_result(
             .to_string(),
     );
     for line in raw.lines() {
+        if line.is_empty() {
+            continue;
+        }
         let normalized = line.strip_prefix(&root_prefix).unwrap_or(line);
         let path = normalized
             .split_once(':')
@@ -988,7 +1002,7 @@ fn normalize_search_result(
             .components()
             .any(|part| !matches!(part, Component::Normal(_) | Component::CurDir))
         {
-            continue;
+            return Err(ProviderError::new("provider_output_untrusted"));
         }
         lines.push(normalized.to_string());
     }

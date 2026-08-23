@@ -119,8 +119,16 @@ impl SearchValidationError {
     }
 
     pub(crate) fn into_tool_result(self) -> ToolResult {
+        let reason_code = match self.field {
+            "pattern" => "invalid_pattern",
+            "path" => "invalid_path",
+            "include_globs" | "exclude_globs" => "invalid_glob",
+            _ => "invalid_search_request",
+        };
         let mut output = json!({
             "code": "invalid_search_request",
+            "failure_stage": "request_validation",
+            "reason_code": reason_code,
             "field": self.field,
             "message": self.message,
         });
@@ -651,15 +659,39 @@ pub(crate) fn search_project_text_command_with_head_fallbacks(
 
 fn search_request_dropped_tool_result(options: &SearchOptions) -> ToolResult {
     let message = "search_project_text agent request was dropped";
-    ToolResult::err_with_output(
+    search_failure_tool_result(
+        options,
+        "search_request_dropped",
+        "agent_transport",
+        "search_request_dropped",
         message,
-        json!({
-            "code": "search_request_dropped",
-            "result_mode": options.result_mode.as_str(),
-            "effective_timeout_secs": options.timeout_secs,
-            "message": message,
-        }),
+        None,
+        None,
     )
+}
+
+fn search_failure_tool_result(
+    options: &SearchOptions,
+    code: &'static str,
+    failure_stage: &'static str,
+    reason_code: &'static str,
+    message: &'static str,
+    backend: Option<&str>,
+    exit_code: Option<i32>,
+) -> ToolResult {
+    let mut output = json!({
+        "code": code,
+        "failure_stage": failure_stage,
+        "reason_code": reason_code,
+        "backend": backend,
+        "result_mode": options.result_mode.as_str(),
+        "effective_timeout_secs": options.timeout_secs,
+        "message": message,
+    });
+    if let Some(exit_code) = exit_code {
+        output["exit_code"] = json!(exit_code);
+    }
+    ToolResult::err_with_output(message, output)
 }
 
 /// Backend exit codes treated as successful search completion.
@@ -688,21 +720,20 @@ fn looks_like_search_timeout(
     })
 }
 
-fn search_timeout_tool_result(options: &SearchOptions, backend: Option<&str>) -> ToolResult {
-    let message = format!(
-        "search_project_text timed out after {} seconds",
-        options.timeout_secs
-    );
-    let mut output = json!({
-        "code": "search_timeout",
-        "result_mode": options.result_mode.as_str(),
-        "effective_timeout_secs": options.timeout_secs,
-        "message": message,
-    });
-    if let Some(backend) = backend {
-        output["backend"] = json!(backend);
-    }
-    ToolResult::err_with_output(message, output)
+fn search_timeout_tool_result(
+    options: &SearchOptions,
+    backend: Option<&str>,
+    failure_stage: &'static str,
+) -> ToolResult {
+    search_failure_tool_result(
+        options,
+        "search_timeout",
+        failure_stage,
+        "timeout",
+        "search_project_text timed out",
+        backend,
+        None,
+    )
 }
 
 fn is_search_project_text_excluded_path(path: &str) -> bool {
@@ -799,54 +830,120 @@ struct SearchResult {
     truncation_reason: Option<SearchTruncation>,
 }
 
+fn search_result_has_records(result: &SearchResult) -> bool {
+    match &result.data {
+        SearchResultData::Matches(matches) => !matches.is_empty(),
+        SearchResultData::FilesWithMatches(files) => !files.is_empty(),
+        SearchResultData::Count { files, .. } => !files.is_empty(),
+    }
+}
+
 #[derive(Debug)]
 struct SearchBackendStatus {
     backend: String,
     feature_unavailable: bool,
     marker_present: bool,
+    marker_invalid: bool,
 }
 
 fn parse_search_backend_status(stdout: &str) -> SearchBackendStatus {
-    stdout
-        .lines()
-        .find_map(|line| {
-            let value = serde_json::from_str::<Value>(line).ok()?;
-            let marker = value.get("webcodex_search").unwrap_or(&value);
-            let backend = marker.get("backend").and_then(Value::as_str)?;
-            if !matches!(backend, "rg" | "grep" | "native" | "claude_code") {
-                return None;
+    let mut marker_invalid = false;
+    for line in stdout.lines() {
+        let value = match serde_json::from_str::<Value>(line) {
+            Ok(value) => value,
+            Err(_) => {
+                marker_invalid |= line.contains("webcodex_search");
+                continue;
             }
-            Some(SearchBackendStatus {
-                backend: backend.to_string(),
-                feature_unavailable: marker
-                    .get("feature_unavailable")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                marker_present: true,
-            })
-        })
-        .unwrap_or_else(|| SearchBackendStatus {
-            backend: "grep".to_string(),
-            feature_unavailable: false,
-            marker_present: false,
-        })
+        };
+        let marker = if let Some(marker) = value.get("webcodex_search") {
+            marker
+        } else if value.get("backend").is_some() {
+            &value
+        } else {
+            continue;
+        };
+        let Some(backend) = marker.get("backend").and_then(Value::as_str) else {
+            marker_invalid = true;
+            continue;
+        };
+        if !matches!(backend, "rg" | "grep" | "native" | "claude_code")
+            || marker
+                .get("feature_unavailable")
+                .is_some_and(|value| !value.is_boolean())
+        {
+            marker_invalid = true;
+            continue;
+        }
+        return SearchBackendStatus {
+            backend: backend.to_string(),
+            feature_unavailable: marker
+                .get("feature_unavailable")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            marker_present: true,
+            marker_invalid: false,
+        };
+    }
+    SearchBackendStatus {
+        backend: "grep".to_string(),
+        feature_unavailable: false,
+        marker_present: false,
+        marker_invalid,
+    }
 }
 
-fn external_provider_error_result(stdout: &str) -> Option<ToolResult> {
+fn safe_external_provider_error_code(value: Option<&str>) -> Option<&str> {
+    value.filter(|code| {
+        !code.is_empty()
+            && code.len() <= 64
+            && code
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    })
+}
+
+fn external_provider_error_result(stdout: &str, options: &SearchOptions) -> Option<ToolResult> {
     let value: Value = serde_json::from_str(stdout.trim()).ok()?;
     if value.get("format").and_then(Value::as_str) != Some("webcodex.external_provider_error.v1") {
         return None;
     }
-    let message = value
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or("external tool provider failed")
-        .to_string();
-    Some(ToolResult {
-        success: false,
-        output: value,
-        error: Some(message),
-    })
+    let provider_code =
+        safe_external_provider_error_code(value.get("code").and_then(Value::as_str));
+    if value.get("provider").and_then(Value::as_str) != Some("claude_code")
+        || value.get("capability").and_then(Value::as_str) != Some("search_project_text")
+        || provider_code.is_none()
+    {
+        return Some(search_failure_tool_result(
+            options,
+            "search_execution_failed",
+            "provider",
+            "provider_protocol_invalid",
+            "external search provider returned an invalid failure envelope",
+            None,
+            None,
+        ));
+    }
+    let provider_code = provider_code.expect("validated provider code");
+    let message = "external search provider failed";
+    Some(ToolResult::err_with_output(
+        message,
+        json!({
+            "format": "webcodex.external_provider_error.v1",
+            "provider": "claude_code",
+            "capability": "search_project_text",
+            "code": provider_code,
+            "provider_code": provider_code,
+            "failure_stage": "provider",
+            "reason_code": "provider_execution_failed",
+            "result_mode": options.result_mode.as_str(),
+            "effective_timeout_secs": options.timeout_secs,
+            "message": message,
+            "write_state": "not_submitted",
+            "changed": false,
+            "error": "external_provider_error",
+        }),
+    ))
 }
 
 /// A path parsed out of search stdout is only trusted when it is a plain
@@ -1186,30 +1283,33 @@ pub(crate) fn search_project_text_output_with_agent_error(
     // search result (observed with PowerShell on Windows).
     if !backend_status.marker_present {
         let message = "search_project_text backend did not emit its identity marker";
-        return ToolResult::err_with_output(
+        return search_failure_tool_result(
+            options,
+            "search_execution_failed",
+            "backend_protocol",
+            if backend_status.marker_invalid {
+                "backend_identity_invalid"
+            } else {
+                "backend_identity_missing"
+            },
             message,
-            json!({
-                "code": "search_execution_failed",
-                "backend": Value::Null,
-                "result_mode": options.result_mode.as_str(),
-                "effective_timeout_secs": options.timeout_secs,
-                "message": message,
-            }),
+            None,
+            exit_code,
         );
     }
     if backend_status.feature_unavailable {
         let message = "ripgrep is required for the requested search_project_text features; grep fallback supports only basic matches requests";
-        return ToolResult::err_with_output(
+        let mut result = search_failure_tool_result(
+            options,
+            "search_backend_feature_unavailable",
+            "backend_selection",
+            "backend_feature_unavailable",
             message,
-            json!({
-                "code": "search_backend_feature_unavailable",
-                "backend": "grep",
-                "requested_features": options.requested_features,
-                "message": message,
-                "result_mode": options.result_mode.as_str(),
-                "effective_timeout_secs": options.timeout_secs,
-            }),
+            Some("grep"),
+            exit_code,
         );
+        result.output["requested_features"] = json!(options.requested_features);
+        return result;
     }
     if looks_like_search_timeout(exit_code, stderr, agent_error, options.timeout_secs) {
         // Timeout after a timeout can still have collected complete, trusted
@@ -1222,25 +1322,61 @@ pub(crate) fn search_project_text_output_with_agent_error(
             stdout,
             Some(backend_status.backend.as_str()),
             exit_code,
+            "backend_execution",
         );
     }
     // 0 = matches, 1 = no matches (success empty), 141 = SIGPIPE after head bound.
     // exit >= 2 (other) is a real backend execution failure.
-    if exit_code.is_some_and(|code| !is_search_backend_success_exit(code)) {
-        let message = "search_project_text backend execution failed";
-        return ToolResult::err_with_output(
-            message,
-            json!({
-                "code": "search_execution_failed",
-                "backend": backend_status.backend,
-                "result_mode": options.result_mode.as_str(),
-                "effective_timeout_secs": options.timeout_secs,
-                "message": message,
-            }),
-        );
+    match exit_code {
+        Some(code) if is_search_backend_success_exit(code) => {}
+        Some(code) => {
+            return search_failure_tool_result(
+                options,
+                "search_execution_failed",
+                "backend_execution",
+                "backend_process_failed",
+                "search_project_text backend execution failed",
+                Some(backend_status.backend.as_str()),
+                Some(code),
+            )
+        }
+        None => {
+            return search_failure_tool_result(
+                options,
+                "search_execution_failed",
+                "backend_protocol",
+                "backend_status_unavailable",
+                "search_project_text backend completion status was unavailable",
+                Some(backend_status.backend.as_str()),
+                None,
+            )
+        }
     }
 
-    let result = parse_search_result(stdout, options, backend_status.backend);
+    let result = parse_search_result(stdout, options, backend_status.backend.clone());
+    // Search status is part of the evidence contract: 0 means at least one
+    // match, 1 means a completed no-match scan, and 141 means bounded output
+    // stopped after at least one complete record. If parsed safe records
+    // disagree, output was malformed, transport-incomplete, or entirely
+    // rejected by the path/privacy filter. Returning an empty success in any
+    // of those cases would falsely claim proven absence.
+    let has_records = search_result_has_records(&result);
+    let status_consistent = match exit_code {
+        Some(1) => !has_records,
+        Some(0 | 141) => has_records,
+        _ => true,
+    };
+    if !status_consistent {
+        return search_failure_tool_result(
+            options,
+            "search_execution_failed",
+            "backend_protocol",
+            "backend_output_inconsistent",
+            "search_project_text backend output was inconsistent with its completion status",
+            Some(backend_status.backend.as_str()),
+            exit_code,
+        );
+    }
     ToolResult::ok(search_result_json(project, options, result, exit_code))
 }
 
@@ -1309,16 +1445,17 @@ fn search_timeout_tool_result_with_records(
     stdout: &str,
     backend: Option<&str>,
     exit_code: Option<i32>,
+    failure_stage: &'static str,
 ) -> ToolResult {
-    let backend_name = backend.unwrap_or("grep").to_string();
-    let mut result = parse_search_result(stdout, options, backend_name);
-    let has_records = match &result.data {
-        SearchResultData::Matches(matches) => !matches.is_empty(),
-        SearchResultData::FilesWithMatches(files) => !files.is_empty(),
-        SearchResultData::Count { files, .. } => !files.is_empty(),
+    let Some(backend_name) = backend else {
+        // Without a validated identity marker the collected lines cannot be
+        // promoted into trusted partial search evidence.
+        return search_timeout_tool_result(options, None, failure_stage);
     };
-    if !has_records {
-        return search_timeout_tool_result(options, backend);
+    let backend_name = backend_name.to_string();
+    let mut result = parse_search_result(stdout, options, backend_name);
+    if !search_result_has_records(&result) {
+        return search_timeout_tool_result(options, backend, failure_stage);
     }
     // The scan did not complete, so the result is truncated by timeout no
     // matter what the parsed state suggested.
@@ -1340,7 +1477,7 @@ fn empty_search_project_text_output(project: &str, options: &SearchOptions) -> T
         }
     })
     .to_string();
-    search_project_text_output(project, options, &marker, None, "")
+    search_project_text_output(project, options, &marker, Some(1), "")
 }
 
 /// Maximum accepted size for `write_project_file` `content`.
@@ -1411,7 +1548,7 @@ impl ToolRuntime {
         if let Some(deadline) = batch_deadline {
             let now = Instant::now();
             if now >= deadline {
-                return search_timeout_tool_result(&options, None);
+                return search_timeout_tool_result(&options, None, "batch_deadline");
             }
             // The Runner protocol expresses command timeouts in whole seconds;
             // the outer `timeout_at` below still enforces the exact subsecond
@@ -1430,7 +1567,17 @@ impl ToolRuntime {
         if proj.is_agent() {
             let client_id = match proj.agent_client_id() {
                 Ok(id) => id.to_string(),
-                Err(e) => return ToolResult::err(e),
+                Err(_) => {
+                    return search_failure_tool_result(
+                        &options,
+                        "agent_unavailable",
+                        "agent_request",
+                        "agent_request_failed",
+                        "search_project_text could not resolve the Agent executor",
+                        None,
+                        None,
+                    )
+                }
             };
             let payload = json!({
                 "pattern": options.pattern,
@@ -1459,16 +1606,28 @@ impl ToolRuntime {
                 .await
             {
                 Ok(r) => r,
-                Err(e) => return ToolResult::err(e),
+                Err(_) => {
+                    return search_failure_tool_result(
+                        &options,
+                        "agent_unavailable",
+                        "agent_request",
+                        "agent_request_failed",
+                        "search_project_text Agent request could not be started",
+                        None,
+                        None,
+                    )
+                }
             };
-            let wait_deadline = Instant::now() + Duration::from_secs(outer_timeout);
-            let wait_deadline = batch_deadline.map_or(wait_deadline, |deadline| {
-                std::cmp::min(deadline, wait_deadline)
+            let agent_wait_deadline = Instant::now() + Duration::from_secs(outer_timeout);
+            let batch_deadline_wins =
+                batch_deadline.is_some_and(|deadline| deadline <= agent_wait_deadline);
+            let wait_deadline = batch_deadline.map_or(agent_wait_deadline, |deadline| {
+                std::cmp::min(deadline, agent_wait_deadline)
             });
             return match tokio::time::timeout_at(wait_deadline, rx).await {
                 Ok(Ok(resp)) => {
                     let raw_stdout = resp.stdout.unwrap_or_default();
-                    if let Some(result) = external_provider_error_result(&raw_stdout) {
+                    if let Some(result) = external_provider_error_result(&raw_stdout, &options) {
                         return result;
                     }
                     let stdout = raw_stdout;
@@ -1480,29 +1639,35 @@ impl ToolRuntime {
                         agent_error,
                         options.timeout_secs,
                     ) {
-                        let backend = if stdout.contains("webcodex_search") {
-                            Some(parse_search_backend_status(&stdout).backend)
-                        } else {
-                            None
-                        };
+                        let backend_status = parse_search_backend_status(&stdout);
+                        let backend = backend_status
+                            .marker_present
+                            .then_some(backend_status.backend);
                         return search_timeout_tool_result_with_records(
                             output_project,
                             &options,
                             &stdout,
                             backend.as_deref(),
                             resp.exit_code,
+                            if backend.is_some() {
+                                "backend_execution"
+                            } else {
+                                "agent_execution"
+                            },
                         );
                     }
                     if agent_error.is_some() {
-                        let message = "search_project_text agent execution failed";
-                        return ToolResult::err_with_output(
-                            message,
-                            json!({
-                                "code": "search_execution_failed",
-                                "result_mode": options.result_mode.as_str(),
-                                "effective_timeout_secs": options.timeout_secs,
-                                "message": message,
-                            }),
+                        let backend_status = parse_search_backend_status(&stdout);
+                        return search_failure_tool_result(
+                            &options,
+                            "search_execution_failed",
+                            "agent_execution",
+                            "agent_execution_failed",
+                            "search_project_text Agent execution failed",
+                            backend_status
+                                .marker_present
+                                .then_some(backend_status.backend.as_str()),
+                            resp.exit_code,
                         );
                     }
                     search_project_text_output(
@@ -1521,8 +1686,17 @@ impl ToolRuntime {
                 }
                 Err(_) => {
                     self.shell_clients.cancel_request(&req_id).await;
-                    // Outer wait timed out before the agent reported; backend is unknown.
-                    search_timeout_tool_result(&options, None)
+                    // Preserve whether the per-search transport bound or the
+                    // batch's shared absolute deadline ended the wait.
+                    search_timeout_tool_result(
+                        &options,
+                        None,
+                        if batch_deadline_wins {
+                            "batch_deadline"
+                        } else {
+                            "agent_transport"
+                        },
+                    )
                 }
             };
         }
@@ -1531,7 +1705,7 @@ impl ToolRuntime {
         let local = match batch_deadline {
             Some(deadline) => match tokio::time::timeout_at(deadline, local).await {
                 Ok(result) => result,
-                Err(_) => return search_timeout_tool_result(&options, Some("local_hard_bound")),
+                Err(_) => return search_timeout_tool_result(&options, None, "batch_deadline"),
             },
             None => local.await,
         };
@@ -1547,9 +1721,17 @@ impl ToolRuntime {
             // search timeout so the MCP request still returns a structured error
             // instead of parking forever on a wedged output drain.
             Err(LocalRunFailure::HardTimeout { bound_secs: _ }) => {
-                search_timeout_tool_result(&options, Some("local_hard_bound"))
+                search_timeout_tool_result(&options, None, "local_execution")
             }
-            Err(LocalRunFailure::Join(e)) => ToolResult::err(format!("task join error: {}", e)),
+            Err(LocalRunFailure::Join(_)) => search_failure_tool_result(
+                &options,
+                "search_execution_failed",
+                "local_execution",
+                "local_execution_failed",
+                "search_project_text local execution failed",
+                None,
+                None,
+            ),
         }
     }
 }

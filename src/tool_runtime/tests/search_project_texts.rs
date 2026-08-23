@@ -225,6 +225,31 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
         json!(["project", "pattern"]),
         "single-query schema remains unchanged"
     );
+    let failure = &batch.output_schema["properties"]["output"]["anyOf"][0]["anyOf"][0]
+        ["properties"]["items"]["items"]["properties"]["output"]["anyOf"][1];
+    assert_eq!(
+        failure["required"],
+        json!([
+            "error_kind",
+            "reason_code",
+            "failure_stage",
+            "detail_code",
+            "state_changed"
+        ])
+    );
+    assert_eq!(failure["additionalProperties"], false);
+    for property in [
+        "backend",
+        "exit_code",
+        "result_mode",
+        "effective_timeout_secs",
+        "provider_code",
+    ] {
+        assert!(
+            failure["properties"].get(property).is_some(),
+            "batch failure schema omitted safe provenance field {property}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -587,6 +612,8 @@ async fn search_project_texts_dispatch_mixed_batch_only_sparsifies_success_item(
         "search_project_text_failed"
     );
     assert_eq!(items[1]["output"]["reason_code"], "invalid_path");
+    assert_eq!(items[1]["output"]["failure_stage"], "request_validation");
+    assert_eq!(items[1]["output"]["detail_code"], "invalid_path");
     assert_eq!(items[1]["output"]["state_changed"], false);
     assert!(items[1]["error"].as_str().is_some());
 
@@ -685,6 +712,8 @@ async fn search_project_texts_stops_after_two_dropped_agent_attempts() {
     assert_eq!(items[0]["index"], 0);
     assert_eq!(items[0]["success"], false);
     assert_eq!(items[0]["output"]["reason_code"], "search_request_dropped");
+    assert_eq!(items[0]["output"]["failure_stage"], "agent_transport");
+    assert_eq!(items[0]["output"]["detail_code"], "search_request_dropped");
     assert_no_agent_request(&runtime, client_id).await;
 }
 
@@ -801,6 +830,14 @@ async fn search_project_texts_retry_uses_only_remaining_absolute_deadline() {
         result.output["items"][0]["output"]["reason_code"],
         "timeout"
     );
+    assert_eq!(
+        result.output["items"][0]["output"]["failure_stage"],
+        "batch_deadline"
+    );
+    assert_eq!(
+        result.output["items"][0]["output"]["detail_code"],
+        "timeout"
+    );
     assert_no_agent_request(&runtime, client_id).await;
     let late = runtime
         .shell_clients
@@ -836,6 +873,14 @@ async fn search_project_texts_does_not_retry_nontransient_agent_failures() {
         invalid_result.output["items"][0]["output"]["reason_code"],
         "invalid_path"
     );
+    assert_eq!(
+        invalid_result.output["items"][0]["output"]["failure_stage"],
+        "request_validation"
+    );
+    assert_eq!(
+        invalid_result.output["items"][0]["output"]["detail_code"],
+        "invalid_path"
+    );
     assert_no_agent_request(&runtime, client_id).await;
 
     let mut timeout_query = query("timeout", None);
@@ -854,6 +899,14 @@ async fn search_project_texts_does_not_retry_nontransient_agent_failures() {
         timeout_result.output["items"][0]["output"]["reason_code"],
         "timeout"
     );
+    assert_eq!(
+        timeout_result.output["items"][0]["output"]["failure_stage"],
+        "backend_execution"
+    );
+    assert_eq!(
+        timeout_result.output["items"][0]["output"]["detail_code"],
+        "timeout"
+    );
 
     let backend_result = run_single_agent_batch_response(
         "batch-search-no-retry-backend",
@@ -869,6 +922,16 @@ async fn search_project_texts_does_not_retry_nontransient_agent_failures() {
         backend_result.output["items"][0]["output"]["reason_code"],
         "search_execution_failed"
     );
+    assert_eq!(
+        backend_result.output["items"][0]["output"]["failure_stage"],
+        "backend_execution"
+    );
+    assert_eq!(
+        backend_result.output["items"][0]["output"]["detail_code"],
+        "backend_process_failed"
+    );
+    assert_eq!(backend_result.output["items"][0]["output"]["backend"], "rg");
+    assert_eq!(backend_result.output["items"][0]["output"]["exit_code"], 2);
 
     let feature_result = run_single_agent_batch_response(
         "batch-search-no-retry-feature",
@@ -884,6 +947,14 @@ async fn search_project_texts_does_not_retry_nontransient_agent_failures() {
         feature_result.output["items"][0]["output"]["reason_code"],
         "search_backend_feature_unavailable"
     );
+    assert_eq!(
+        feature_result.output["items"][0]["output"]["failure_stage"],
+        "backend_selection"
+    );
+    assert_eq!(
+        feature_result.output["items"][0]["output"]["detail_code"],
+        "backend_feature_unavailable"
+    );
 
     let provider_result = run_single_agent_batch_response(
         "batch-search-no-retry-provider",
@@ -891,7 +962,10 @@ async fn search_project_texts_does_not_retry_nontransient_agent_failures() {
         0,
         json!({
             "format": "webcodex.external_provider_error.v1",
-            "message": "provider failed"
+            "provider": "claude_code",
+            "capability": "search_project_text",
+            "code": "rate_limited",
+            "message": "private provider diagnostic at /private/provider/NEVER_RETURN"
         })
         .to_string(),
         "",
@@ -901,6 +975,141 @@ async fn search_project_texts_does_not_retry_nontransient_agent_failures() {
         provider_result.output["items"][0]["output"]["reason_code"],
         "external_provider_error"
     );
+    assert_eq!(
+        provider_result.output["items"][0]["output"]["failure_stage"],
+        "provider"
+    );
+    assert_eq!(
+        provider_result.output["items"][0]["output"]["detail_code"],
+        "provider_execution_failed"
+    );
+    assert_eq!(
+        provider_result.output["items"][0]["output"]["provider_code"],
+        "rate_limited"
+    );
+    let rendered = serde_json::to_string(&provider_result).unwrap();
+    assert!(!rendered.contains("private provider"));
+    assert!(!rendered.contains("/private/"));
+    assert!(!rendered.contains("NEVER_RETURN"));
+
+    let invalid_provider_result = run_single_agent_batch_response(
+        "batch-search-invalid-provider-envelope",
+        query("invalid-provider", None),
+        0,
+        json!({
+            "format": "webcodex.external_provider_error.v1",
+            "provider": "unexpected_provider",
+            "capability": "search_project_text",
+            "code": "rate_limited",
+            "message": "untrusted provider prose"
+        })
+        .to_string(),
+        "",
+    )
+    .await;
+    assert_eq!(
+        invalid_provider_result.output["items"][0]["output"]["reason_code"],
+        "search_execution_failed"
+    );
+    assert_eq!(
+        invalid_provider_result.output["items"][0]["output"]["failure_stage"],
+        "provider"
+    );
+    assert_eq!(
+        invalid_provider_result.output["items"][0]["output"]["detail_code"],
+        "provider_protocol_invalid"
+    );
+    assert!(invalid_provider_result.output["items"][0]["output"]
+        .get("provider_code")
+        .is_none());
+    assert!(!serde_json::to_string(&invalid_provider_result)
+        .unwrap()
+        .contains("untrusted provider prose"));
+}
+
+#[tokio::test]
+async fn search_project_texts_mixed_batch_preserves_failure_and_empty_result_fidelity() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "batch-search-provenance-mixed";
+    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .search_project_texts(
+                    "demo".to_string(),
+                    vec![
+                        query("normal-match", None),
+                        query("backend-failure", None),
+                        query("legitimate-empty", None),
+                    ],
+                )
+                .await
+        }
+    });
+
+    let first_two = [
+        wait_for_patch_agent_request(&runtime, client_id).await,
+        wait_for_patch_agent_request(&runtime, client_id).await,
+    ];
+    let failure = first_two
+        .iter()
+        .find(|request| request_pattern(request) == "backend-failure")
+        .unwrap();
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &failure.request_id,
+        2,
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+        "private rg stderr at /private/runner/NEVER_RETURN",
+    )
+    .await;
+    let empty = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(request_pattern(&empty), "legitimate-empty");
+    let normal = first_two
+        .iter()
+        .find(|request| request_pattern(request) == "normal-match")
+        .unwrap();
+    complete_search_success(&runtime, client_id, normal, "src/found.rs").await;
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &empty.request_id,
+        1,
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+        "",
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["succeeded_count"], 2);
+    assert_eq!(result.output["failed_count"], 1);
+    let items = result.output["items"].as_array().unwrap();
+    assert_eq!(items[0]["success"], true);
+    assert_eq!(items[0]["output"]["matches"][0]["path"], "src/found.rs");
+    assert_eq!(items[1]["success"], false);
+    assert_eq!(items[1]["output"]["reason_code"], "search_execution_failed");
+    assert_eq!(items[1]["output"]["failure_stage"], "backend_execution");
+    assert_eq!(items[1]["output"]["detail_code"], "backend_process_failed");
+    assert_eq!(items[1]["output"]["backend"], "rg");
+    assert_eq!(items[1]["output"]["exit_code"], 2);
+    assert_eq!(items[2]["success"], true);
+    assert_eq!(items[2]["output"]["matches"], json!([]));
+    assert_eq!(items[2]["output"]["count"], 0);
+    assert_eq!(items[2]["output"]["exit_code"], 1);
+    assert_no_agent_request(&runtime, client_id).await;
+
+    let rendered = serde_json::to_string(&result).unwrap();
+    assert!(!rendered.contains("private rg stderr"));
+    assert!(!rendered.contains("/private/"));
+    assert!(!rendered.contains("NEVER_RETURN"));
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("search_project_texts");
+    let serialized = serde_json::to_value(&result).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
+        .unwrap_or_else(|error| panic!("mixed provenance batch must match schema: {error}"));
 }
 
 #[tokio::test]

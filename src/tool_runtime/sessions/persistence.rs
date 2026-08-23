@@ -144,12 +144,21 @@ impl PersistedSessionRecord {
         let mut observation_revisions = BTreeMap::new();
         if current_observation_revision > 0 {
             let mut inconsistent = false;
+            let mut retained_positive_revisions = HashSet::new();
             for (message_id, revision) in self.message_observation_revisions {
                 if revision > current_observation_revision {
                     inconsistent = true;
                     continue;
                 }
                 if retained_message_ids.contains(&message_id) {
+                    // Revision zero is a valid shared baseline for messages restored
+                    // from a pre-observation ledger. Positive revisions, however,
+                    // are assigned one-at-a-time by the canonical writer and must
+                    // remain unique or a revision-only pagination token could skip
+                    // a second retained message with the same revision.
+                    if revision > 0 && !retained_positive_revisions.insert(revision) {
+                        inconsistent = true;
+                    }
                     observation_revisions.insert(message_id, revision);
                 } else {
                     observation_floor = observation_floor.max(revision);
@@ -161,8 +170,33 @@ impl PersistedSessionRecord {
                     observation_revisions.insert(message_id.clone(), 0);
                 }
             }
+            let highest_known_revision = observation_revisions
+                .values()
+                .copied()
+                .max()
+                .unwrap_or(0)
+                .max(observation_floor);
+            if highest_known_revision != current_observation_revision {
+                // The canonical current revision is always represented either
+                // by the latest state of a retained message or by history already
+                // represented by the floor. If the persisted high-water mark has
+                // no such explanation, cursor continuity cannot be proven.
+                inconsistent = true;
+            }
             if inconsistent {
+                // Observation metadata is advisory bookkeeping around durable
+                // messages. If it cannot prove the writer's unique ordering,
+                // preserve the messages but fail closed on historical continuity:
+                // old cursors report history_lost and no retained pre-restore
+                // state is paginated under an ambiguous revision.
                 observation_floor = current_observation_revision;
+                observation_revisions.clear();
+                observation_revisions.extend(
+                    retained_message_ids
+                        .iter()
+                        .cloned()
+                        .map(|message_id| (message_id, 0)),
+                );
             }
         } else {
             // Pre-feature ledgers never issued observation tokens. Their retained

@@ -404,6 +404,146 @@ async fn observe_session_messages_token_survives_restart_and_legacy_restore_base
 }
 
 #[tokio::test]
+async fn observe_session_messages_duplicate_persisted_positive_revisions_fail_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let session = store.start_session(Some("proj".to_string()), None);
+    let before = baseline(&store, &session.session_id).await;
+    let first = post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Note,
+        "first distinct revision",
+        SessionMessagePriority::Normal,
+    );
+    let second = post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Note,
+        "second distinct revision",
+        SessionMessagePriority::Normal,
+    );
+    store.flush_persistence();
+    drop(store);
+
+    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let record = raw["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|record| record["session_id"] == session.session_id)
+        .unwrap()
+        .as_object_mut()
+        .unwrap();
+    let revisions = record["message_observation_revisions"]
+        .as_object_mut()
+        .unwrap();
+    revisions.insert(first.message_id.clone(), Value::from(1));
+    revisions.insert(second.message_id.clone(), Value::from(1));
+    std::fs::write(&ledger, serde_json::to_vec(&raw).unwrap()).unwrap();
+
+    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let recovered = restored
+        .observe_messages(
+            &session.session_id,
+            Some(&before.observation_token),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+    assert!(recovered.changed);
+    assert!(recovered.history_lost);
+    assert!(!recovered.has_more);
+    assert!(recovered.messages.is_empty());
+
+    let caught_up = restored
+        .observe_messages(
+            &session.session_id,
+            Some(&recovered.observation_token),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+    assert!(!caught_up.changed);
+    assert!(!caught_up.history_lost);
+    assert!(caught_up.messages.is_empty());
+
+    let after_restore = post(
+        &restored,
+        &session.session_id,
+        SessionMessageKind::Progress,
+        "new revision after conservative restore",
+        SessionMessagePriority::Normal,
+    );
+    let delta = restored
+        .observe_messages(
+            &session.session_id,
+            Some(&recovered.observation_token),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delta.messages.len(), 1);
+    assert_eq!(delta.messages[0].message_id, after_restore.message_id);
+}
+
+#[tokio::test]
+async fn observe_session_messages_unexplained_persisted_revision_gap_reports_history_loss() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let session = store.start_session(Some("proj".to_string()), None);
+    let before = baseline(&store, &session.session_id).await;
+    post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Note,
+        "known revision one",
+        SessionMessagePriority::Normal,
+    );
+    post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Note,
+        "known revision two",
+        SessionMessagePriority::Normal,
+    );
+    store.flush_persistence();
+    drop(store);
+
+    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let record = raw["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|record| record["session_id"] == session.session_id)
+        .unwrap()
+        .as_object_mut()
+        .unwrap();
+    record.insert("message_observation_revision".to_string(), Value::from(3));
+    std::fs::write(&ledger, serde_json::to_vec(&raw).unwrap()).unwrap();
+
+    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let recovered = restored
+        .observe_messages(
+            &session.session_id,
+            Some(&before.observation_token),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+    assert!(recovered.changed);
+    assert!(recovered.history_lost);
+    assert!(!recovered.has_more);
+    assert!(recovered.messages.is_empty());
+}
+
+#[tokio::test]
 async fn observe_session_messages_rejects_malformed_oversized_wrong_session_and_future_tokens() {
     let store = SessionStore::default();
     let first = store.start_session(Some("proj".to_string()), None);

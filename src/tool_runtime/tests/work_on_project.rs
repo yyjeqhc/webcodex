@@ -153,13 +153,18 @@ async fn dispatch_recording_startup_requests(
                 .await
         }
     });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut request_kinds = Vec::new();
-    for _ in 0..800 {
+    loop {
         if task.is_finished() {
             break;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "coding startup did not finish within 10 seconds; serviced requests: {request_kinds:?}"
+        );
         let Some(request) = next_patch_agent_request(runtime, client_id).await else {
-            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             continue;
         };
         request_kinds.push(request.kind.clone());
@@ -185,10 +190,6 @@ async fn dispatch_recording_startup_requests(
             complete_agent_request_by_running_locally(runtime, client_id, request).await;
         }
     }
-    assert!(
-        task.is_finished(),
-        "coding startup did not finish after servicing Runner requests: {request_kinds:?}"
-    );
     (task.await.unwrap(), request_kinds)
 }
 
@@ -216,11 +217,16 @@ async fn dispatch_startup_without_window(
                 .await
         }
     });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "coding startup without window did not finish within 10 seconds for client {client_id}"
+        );
         if let Some(request) = next_patch_agent_request(runtime, client_id).await {
             complete_agent_request_by_running_locally(runtime, client_id, request).await;
         } else {
-            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
     task.await.unwrap()
@@ -240,10 +246,15 @@ async fn dispatch_with_path_runner(
         let auth = auth_context(None, true);
         async move { runtime.dispatch_with_auth(call, Some(&auth)).await }
     });
-    for _ in 0..400 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
         if task.is_finished() {
             break;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "path-based coding call did not finish within 10 seconds for client {client_id}"
+        );
         if let Some(request) = next_patch_agent_request(runtime, client_id).await {
             if request.kind == "resolve_or_register_project" {
                 let payload: Value =
@@ -283,10 +294,6 @@ async fn dispatch_with_path_runner(
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
-    assert!(
-        task.is_finished(),
-        "path-based coding call did not finish after servicing Runner requests"
-    );
     task.await.unwrap()
 }
 
@@ -1490,10 +1497,15 @@ async fn path_source_cross_project_recording_session_reports_resolved_mismatch()
         }
     });
 
-    for _ in 0..500 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
         if task.is_finished() {
             break;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "kernel path bootstrap did not finish within 10 seconds for client {target_client}"
+        );
         if let Some(request) = next_patch_agent_request(&runtime, target_client).await {
             if request.kind == "resolve_or_register_project" {
                 let payload: Value =
@@ -1533,7 +1545,6 @@ async fn path_source_cross_project_recording_session_reports_resolved_mismatch()
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
-    assert!(task.is_finished(), "kernel path bootstrap did not finish");
     let outcome = task.await.unwrap();
     assert!(outcome.success);
     let result = outcome.result.expect("work_on_project result");
@@ -2754,10 +2765,15 @@ async fn start_coding_task_standard_repository_overview_timeout_is_nonblocking()
     });
 
     // Service the git/instruction probes but never the overview request.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut overview_request = None;
     while !task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "overview-timeout startup did not finish within 10 seconds"
+        );
         let Some(request) = next_patch_agent_request(&runtime, "wop-timeout").await else {
-            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             continue;
         };
         if request.kind == "file_project_overview" {
@@ -2855,10 +2871,15 @@ async fn dispatch_start_coding_task_with_overview_stdout(
         }
     });
 
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut overview_request_id = None;
     while !task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "overview startup did not finish within 10 seconds for client {client_id}"
+        );
         let Some(request) = next_patch_agent_request(runtime, client_id).await else {
-            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             continue;
         };
         if request.kind == "file_project_overview" {

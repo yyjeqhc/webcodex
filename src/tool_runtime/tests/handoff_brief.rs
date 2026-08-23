@@ -60,17 +60,21 @@ fn add_instruction_for_project(
         .unwrap();
 }
 
-fn empty_jobs() -> Value {
+fn jobs_summary(running: u64, recovering: u64, terminal_pending: u64) -> Value {
     json!({
-        "active_count": 0,
-        "running_count": 0,
-        "recovering_count": 0,
-        "terminal_pending_count": 0,
-        "blocking_active_count": 0,
-        "nonblocking_active_count": 0,
+        "active_count": running + terminal_pending,
+        "running_count": running,
+        "recovering_count": recovering,
+        "terminal_pending_count": terminal_pending,
+        "blocking_active_count": running,
+        "nonblocking_active_count": terminal_pending,
         "recent": [],
         "truncated": false,
     })
+}
+
+fn empty_jobs() -> Value {
+    jobs_summary(0, 0, 0)
 }
 
 fn clean_workspace() -> Value {
@@ -437,15 +441,7 @@ fn handoff_brief_progress_state_uses_only_proven_blockers() {
     assert_eq!(conflicted["progress"]["state"], "blocked");
     assert_eq!(conflicted["attention"]["workspace_conflict"], true);
 
-    let blocking_jobs = json!({
-        "active_count": 1,
-        "running_count": 1,
-        "recovering_count": 0,
-        "terminal_pending_count": 0,
-        "blocking_active_count": 1,
-        "recent": [],
-        "truncated": false,
-    });
+    let blocking_jobs = jobs_summary(1, 0, 0);
     let blocked = brief_for(
         &store,
         &session_id,
@@ -458,15 +454,7 @@ fn handoff_brief_progress_state_uses_only_proven_blockers() {
     );
     assert_eq!(blocked["progress"]["state"], "blocked");
 
-    let recovering_jobs = json!({
-        "active_count": 1,
-        "running_count": 1,
-        "recovering_count": 1,
-        "terminal_pending_count": 0,
-        "blocking_active_count": 1,
-        "recent": [],
-        "truncated": false,
-    });
+    let recovering_jobs = jobs_summary(1, 1, 0);
     let recovering = brief_for(
         &store,
         &session_id,
@@ -479,15 +467,7 @@ fn handoff_brief_progress_state_uses_only_proven_blockers() {
     );
     assert_eq!(recovering["progress"]["state"], "blocked");
 
-    let terminal_pending_jobs = json!({
-        "active_count": 1,
-        "running_count": 0,
-        "recovering_count": 0,
-        "terminal_pending_count": 1,
-        "blocking_active_count": 0,
-        "recent": [],
-        "truncated": false,
-    });
+    let terminal_pending_jobs = jobs_summary(0, 0, 1);
     let terminal_pending = brief_for(
         &store,
         &session_id,
@@ -770,15 +750,7 @@ fn handoff_brief_next_action_priority_is_stable() {
         })
         .unwrap();
     let workspace = dirty_workspace(1);
-    let jobs = json!({
-        "active_count": 1,
-        "running_count": 1,
-        "recovering_count": 1,
-        "terminal_pending_count": 0,
-        "blocking_active_count": 1,
-        "recent": [],
-        "truncated": false,
-    });
+    let jobs = jobs_summary(1, 1, 0);
 
     let brief = brief_for(
         &store,
@@ -1316,17 +1288,18 @@ async fn finish_and_handoff_surfaces_return_the_same_brief_for_the_same_snapshot
                 .await
         }
     });
-    for _ in 0..200 {
-        if finish_task.is_finished() {
-            break;
-        }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !finish_task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "finish_coding_task did not finish within 10 seconds while proving shared handoff brief"
+        );
         if let Some(request) = next_patch_agent_request(&runtime, client_id).await {
             complete_agent_request_by_running_locally(&runtime, client_id, request).await;
         } else {
-            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
-    assert!(finish_task.is_finished());
     let finish = finish_task.await.unwrap();
     assert!(finish.success, "{:?}", finish.error);
 

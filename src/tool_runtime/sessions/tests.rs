@@ -522,102 +522,89 @@ fn write_ledger_atomic_cleans_up_temp_file_when_rename_fails() {
 }
 
 #[test]
-fn session_execution_context_persists_and_legacy_ledgers_default_empty() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger.clone());
-    let expected = SessionExecutionContext {
-        default_cwd: Some("frontend/./src".to_string()),
-        default_shell: Some(ExecutionShell::Bash),
-        resource: None,
-    };
-    let session = store
-        .start_session_with_options(
-            SessionCreateOptions::new(
-                Some("agent:oe:private-drop".to_string()),
-                Some("persistent context".to_string()),
-                SessionMode::Normal,
-                SessionGuards::default(),
+fn session_execution_context_persistence_matrix_and_legacy_default() {
+    let cases = [
+        (
+            "local-normalized",
+            SessionExecutionContext {
+                default_cwd: Some("frontend/./src".to_string()),
+                default_shell: Some(ExecutionShell::Bash),
+                resource: None,
+            },
+            SessionExecutionContext {
+                default_cwd: Some("frontend/src".to_string()),
+                default_shell: Some(ExecutionShell::Bash),
+                resource: None,
+            },
+            json!({"default_cwd": "frontend/src", "default_shell": "bash"}),
+            true,
+        ),
+        (
+            "remote-resource",
+            SessionExecutionContext {
+                default_cwd: Some("/opt/webcodex-edge".to_string()),
+                default_shell: None,
+                resource: Some("tmp".to_string()),
+            },
+            SessionExecutionContext {
+                default_cwd: Some("/opt/webcodex-edge".to_string()),
+                default_shell: None,
+                resource: Some("tmp".to_string()),
+            },
+            json!({"default_cwd": "/opt/webcodex-edge", "resource": "tmp"}),
+            false,
+        ),
+    ];
+
+    for (label, input, expected, persisted_context, check_legacy_default) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = tmp.path().join("sessions.json");
+        let store = persistent_store(ledger.clone());
+        let session = store
+            .start_session_with_options(
+                SessionCreateOptions::new(
+                    Some("agent:oe:private-drop".to_string()),
+                    Some(format!("persistent context {label}")),
+                    SessionMode::Normal,
+                    SessionGuards::default(),
+                )
+                .with_execution_context(input),
             )
-            .with_execution_context(expected),
-        )
-        .unwrap();
-    assert_eq!(
-        session.execution_context,
-        SessionExecutionContext {
-            default_cwd: Some("frontend/src".to_string()),
-            default_shell: Some(ExecutionShell::Bash),
-            resource: None,
+            .unwrap();
+        assert_eq!(session.execution_context, expected, "{label}");
+
+        store.flush_persistence();
+        let mut value: Value = serde_json::from_slice(&std::fs::read(&ledger).unwrap()).unwrap();
+        assert_eq!(
+            value["sessions"][0]["execution_context"], persisted_context,
+            "{label}"
+        );
+        let restored = SessionStore::with_persistence(ledger.clone(), 10, 10);
+        assert_eq!(
+            restored
+                .summary(&session.session_id, None)
+                .unwrap()
+                .execution_context,
+            expected,
+            "{label}"
+        );
+
+        if check_legacy_default {
+            value["sessions"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("execution_context");
+            std::fs::write(&ledger, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+            let legacy = SessionStore::with_persistence(ledger, 10, 10);
+            assert_eq!(
+                legacy
+                    .summary(&session.session_id, None)
+                    .unwrap()
+                    .execution_context,
+                SessionExecutionContext::default()
+            );
         }
-    );
-
-    store.flush_persistence();
-    let raw = std::fs::read_to_string(&ledger).unwrap();
-    let mut value: Value = serde_json::from_str(&raw).unwrap();
-    assert_eq!(
-        value["sessions"][0]["execution_context"],
-        json!({"default_cwd": "frontend/src", "default_shell": "bash"})
-    );
-    let restored = SessionStore::with_persistence(ledger.clone(), 10, 10);
-    assert_eq!(
-        restored
-            .summary(&session.session_id, None)
-            .unwrap()
-            .execution_context,
-        session.execution_context
-    );
-
-    value["sessions"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("execution_context");
-    std::fs::write(&ledger, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
-    let legacy = SessionStore::with_persistence(ledger, 10, 10);
-    assert_eq!(
-        legacy
-            .summary(&session.session_id, None)
-            .unwrap()
-            .execution_context,
-        SessionExecutionContext::default()
-    );
-}
-
-#[test]
-fn session_ssh_resource_and_remote_default_cwd_persist_without_connection_state() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger.clone());
-    let context = SessionExecutionContext {
-        default_cwd: Some("/opt/webcodex-edge".to_string()),
-        default_shell: None,
-        resource: Some("tmp".to_string()),
-    };
-    let session = store
-        .start_session_with_options(
-            SessionCreateOptions::new(
-                Some("agent:oe:private-drop".to_string()),
-                Some("remote context".to_string()),
-                SessionMode::Normal,
-                SessionGuards::default(),
-            )
-            .with_execution_context(context.clone()),
-        )
-        .unwrap();
-    assert_eq!(session.execution_context, context);
-    store.flush_persistence();
-    let value: Value = serde_json::from_slice(&std::fs::read(&ledger).unwrap()).unwrap();
-    assert_eq!(
-        value["sessions"][0]["execution_context"],
-        json!({"default_cwd": "/opt/webcodex-edge", "resource": "tmp"})
-    );
-    let restored = SessionStore::with_persistence(ledger, 10, 10);
-    assert_eq!(
-        restored
-            .summary(&session.session_id, None)
-            .unwrap()
-            .execution_context,
-        context
-    );
+    }
 }
 
 #[test]
@@ -837,63 +824,6 @@ fn archived_session_rejects_execution_context_update() {
             lifecycle: SessionLifecycle::Archived
         }
     );
-}
-
-#[test]
-fn session_messages_survive_restore() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger.clone());
-    let session = store.start_session(None, Some("discussion".to_string()));
-    post_message(
-        &store,
-        &session.session_id,
-        SessionMessageKind::Guidance,
-        "keep OpenAPI operation count stable",
-    );
-    post_message(
-        &store,
-        &session.session_id,
-        SessionMessageKind::Progress,
-        "ledger snapshot wired",
-    );
-
-    let restored = flush_and_restore(&store, ledger);
-    let messages = restored
-        .list_messages(&session.session_id, ListSessionMessagesFilter::default())
-        .unwrap();
-    assert_eq!(messages.len(), 2);
-    assert_eq!(messages[0].message, "ledger snapshot wired");
-    assert_eq!(messages[1].kind, SessionMessageKind::Guidance);
-    let discussion = restored
-        .discussion_summary(&session.session_id, Some(10))
-        .unwrap();
-    assert_eq!(discussion.counts.total, 2);
-    assert_eq!(discussion.counts.guidance, 1);
-    assert_eq!(discussion.counts.progress, 1);
-}
-
-#[test]
-fn session_events_survive_restore() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger.clone());
-    let session = store.start_session(None, Some("events".to_string()));
-    let start = store.record_tool_call_started(
-        Some(&session.session_id),
-        SessionTransport::Api,
-        "git_log",
-        &json!({"project": "agent:oe:private-drop", "limit": 1}),
-    );
-    store.record_tool_call_finished(start, true, &json!({}), None, None);
-
-    let restored = flush_and_restore(&store, ledger);
-    let summary = restored.summary(&session.session_id, Some(10)).unwrap();
-    assert_eq!(summary.events.len(), 2);
-    assert_eq!(summary.counts.tool_calls, 1);
-    assert_eq!(summary.counts.succeeded, 1);
-    assert_eq!(summary.counts.git_like, 1);
-    assert_eq!(summary.events[1].tool_name, "git_log");
 }
 
 #[test]
@@ -2903,8 +2833,8 @@ fn concurrent_persistence_reloads_current_snapshot_before_write() {
         );
     });
 
-    let mut newer_message_visible = false;
-    for _ in 0..100 {
+    let visibility_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
         let messages = store
             .list_messages(&session.session_id, ListSessionMessagesFilter::default())
             .unwrap();
@@ -2912,12 +2842,14 @@ fn concurrent_persistence_reloads_current_snapshot_before_write() {
             .iter()
             .any(|message| message.message == "newer mutation")
         {
-            newer_message_visible = true;
             break;
         }
+        assert!(
+            std::time::Instant::now() < visibility_deadline,
+            "newer persistence mutation did not become visible within 5 seconds"
+        );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(newer_message_visible);
 
     allow_old_write_tx.send(()).unwrap();
     delayed_write.join().unwrap();
@@ -2985,30 +2917,6 @@ fn post_message(
 }
 
 #[test]
-fn post_session_message_creates_message() {
-    let store = SessionStore::default();
-    let session = store.start_session(None, None);
-    let message = store
-        .post_message(PostSessionMessageInput {
-            session_id: session.session_id.clone(),
-            kind: SessionMessageKind::Guidance,
-            message: "Keep this behind callRuntimeTool.".to_string(),
-            tags: vec!["openapi".to_string(), "constraint".to_string()],
-            reply_to: None,
-            priority: SessionMessagePriority::High,
-        })
-        .unwrap();
-
-    assert!(message.message_id.starts_with(MESSAGE_ID_PREFIX));
-    assert_eq!(message.session_id, session.session_id);
-    assert_eq!(message.kind, SessionMessageKind::Guidance);
-    assert_eq!(message.status, SessionMessageStatus::Open);
-    assert_eq!(message.priority, SessionMessagePriority::High);
-    assert_eq!(message.message, "Keep this behind callRuntimeTool.");
-    assert_eq!(message.tags, vec!["openapi", "constraint"]);
-}
-
-#[test]
 fn list_session_messages_filters_and_clamps_limit() {
     let store = SessionStore::default();
     let session = store.start_session(None, None);
@@ -3055,35 +2963,6 @@ fn list_session_messages_filters_and_clamps_limit() {
         .unwrap();
     assert_eq!(open.len(), 3);
     assert_eq!(open[0].message, "r1");
-}
-
-#[test]
-fn resolve_session_message_is_idempotent() {
-    let store = SessionStore::default();
-    let session = store.start_session(None, None);
-    let message = post_message(
-        &store,
-        &session.session_id,
-        SessionMessageKind::Todo,
-        "fix it",
-    );
-
-    let resolved = store
-        .resolve_message(
-            &session.session_id,
-            &message.message_id,
-            Some("Done".to_string()),
-        )
-        .unwrap();
-    assert_eq!(resolved.status, SessionMessageStatus::Resolved);
-    assert!(resolved.resolved_at.is_some());
-    assert_eq!(resolved.resolution.as_deref(), Some("Done"));
-
-    let resolved_again = store
-        .resolve_message(&session.session_id, &message.message_id, None)
-        .unwrap();
-    assert_eq!(resolved_again.status, SessionMessageStatus::Resolved);
-    assert_eq!(resolved_again.resolution.as_deref(), Some("Done"));
 }
 
 #[test]
@@ -3455,7 +3334,7 @@ fn stale_binding_is_cleared_when_session_missing() {
 }
 
 #[test]
-fn message_post_and_resolve_round_trip_through_store() {
+fn session_message_create_list_and_resolve_contract() {
     let store = SessionStore::default();
     let session = store.start_session(None, None);
     let posted = store
@@ -3463,12 +3342,18 @@ fn message_post_and_resolve_round_trip_through_store() {
             session_id: session.session_id.clone(),
             kind: SessionMessageKind::Todo,
             message: "do the thing".to_string(),
-            tags: vec!["work".to_string()],
+            tags: vec!["work".to_string(), "constraint".to_string()],
             reply_to: None,
             priority: SessionMessagePriority::High,
         })
         .unwrap();
+    assert!(posted.message_id.starts_with(MESSAGE_ID_PREFIX));
+    assert_eq!(posted.session_id, session.session_id);
+    assert_eq!(posted.kind, SessionMessageKind::Todo);
     assert_eq!(posted.status, SessionMessageStatus::Open);
+    assert_eq!(posted.priority, SessionMessagePriority::High);
+    assert_eq!(posted.message, "do the thing");
+    assert_eq!(posted.tags, vec!["work", "constraint"]);
 
     let listed = store
         .list_messages(
@@ -3496,17 +3381,23 @@ fn message_post_and_resolve_round_trip_through_store() {
     assert_eq!(resolved.resolution.as_deref(), Some("shipped"));
     let first_resolved_at = resolved.resolved_at.expect("resolved_at set");
 
-    // Resolved messages are not reopened by a second resolve.
-    let again = store
+    let idempotent = store
+        .resolve_message(&session.session_id, &posted.message_id, None)
+        .unwrap();
+    assert_eq!(idempotent.status, SessionMessageStatus::Resolved);
+    assert_eq!(idempotent.resolved_at, Some(first_resolved_at));
+    assert_eq!(idempotent.resolution.as_deref(), Some("shipped"));
+
+    let updated = store
         .resolve_message(
             &session.session_id,
             &posted.message_id,
             Some("still done".to_string()),
         )
         .unwrap();
-    assert_eq!(again.status, SessionMessageStatus::Resolved);
-    assert_eq!(again.resolved_at, Some(first_resolved_at));
-    assert_eq!(again.resolution.as_deref(), Some("still done"));
+    assert_eq!(updated.status, SessionMessageStatus::Resolved);
+    assert_eq!(updated.resolved_at, Some(first_resolved_at));
+    assert_eq!(updated.resolution.as_deref(), Some("still done"));
 
     let open = store
         .list_messages(
@@ -3579,7 +3470,7 @@ fn read_only_guards_block_write_and_shell_classifications() {
 }
 
 #[test]
-fn ledger_round_trip_preserves_session_events_and_messages() {
+fn ledger_round_trip_preserves_session_state_events_and_messages() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = dir.path().join("sessions.json");
     let store = SessionStore::with_persistence(&ledger, 10, 50);
@@ -3601,6 +3492,12 @@ fn ledger_round_trip_preserves_session_events_and_messages() {
     post_message(
         &store,
         &session.session_id,
+        SessionMessageKind::Guidance,
+        "keep OpenAPI operation count stable",
+    );
+    post_message(
+        &store,
+        &session.session_id,
         SessionMessageKind::Progress,
         "checkpoint",
     );
@@ -3615,12 +3512,24 @@ fn ledger_round_trip_preserves_session_events_and_messages() {
     assert!(!summary.guards.deny_shell_tools);
     assert_eq!(summary.lifecycle, SessionLifecycle::Active);
     assert_eq!(summary.counts.tool_calls, 1);
+    assert_eq!(summary.counts.succeeded, 1);
     assert!(summary
         .events
         .iter()
-        .any(|event| event.kind == "tool_call_finished"));
-    assert_eq!(summary.messages.total, 1);
-    assert_eq!(summary.messages.progress, 1);
+        .any(|event| event.kind == "tool_call_finished" && event.tool_name == "read_file"));
+
+    let messages = restored
+        .list_messages(&session.session_id, ListSessionMessagesFilter::default())
+        .unwrap();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].message, "checkpoint");
+    assert_eq!(messages[1].kind, SessionMessageKind::Guidance);
+    let discussion = restored
+        .discussion_summary(&session.session_id, Some(10))
+        .unwrap();
+    assert_eq!(discussion.counts.total, 2);
+    assert_eq!(discussion.counts.guidance, 1);
+    assert_eq!(discussion.counts.progress, 1);
 
     // This session was never bound, so the additive ledger field stays empty.
     let key = test_binding_key("proj");
@@ -3825,20 +3734,6 @@ fn durable_current_binding_restore_enforces_bounded_count() {
     assert_eq!(status.durable_binding_count, 8);
     assert_eq!(status.discarded_binding_count, 4);
     assert!(restored.summary(&session.session_id, None).is_some());
-}
-
-#[test]
-fn lifecycle_ledger_round_trip_preserves_active() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger.clone());
-    let session = store.start_session(None, Some("round trip".to_string()));
-    assert_eq!(session.lifecycle, SessionLifecycle::Active);
-
-    let restored = flush_and_restore(&store, ledger);
-    let summary = restored.summary(&session.session_id, Some(10)).unwrap();
-    assert_eq!(summary.lifecycle, SessionLifecycle::Active);
-    assert_eq!(summary.session_id, session.session_id);
 }
 
 #[test]

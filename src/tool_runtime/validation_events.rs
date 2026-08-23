@@ -235,8 +235,23 @@ impl ToolRuntime {
         session_ids: &[String],
         auth: Option<&AuthContext>,
     ) {
+        // Absence from `grouped` is eviction authority for the bounded durable
+        // materialization marker set. Hold one runtime-shared ordering fence from
+        // authoritative snapshot acquisition through every Session mutation so
+        // a snapshot acquired later can never materialize first and then have a
+        // still-retained marker removed by an older snapshot. The batch lock is
+        // deliberately stronger than a per-Session lock because candidate
+        // acquisition itself is batched across Sessions.
+        #[cfg(test)]
+        self.validation_terminal_reconciliation_test_hook
+            .before_reconciliation_lock();
+        let _reconciliation_guard = self.validation_terminal_reconciliation.lock().await;
         let mut grouped = self
             .validation_job_candidates_for_sessions(project, session_ids, auth)
+            .await;
+        #[cfg(test)]
+        self.validation_terminal_reconciliation_test_hook
+            .after_snapshot_acquired()
             .await;
         for session_id in session_ids {
             let Some(jobs) = grouped.remove(session_id) else {

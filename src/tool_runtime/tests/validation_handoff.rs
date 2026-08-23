@@ -7,9 +7,12 @@
 //! (mutating) never auto-promotes.
 
 use super::support::*;
+use crate::shell_client::{ShellJobStartMetadata, ShellJobVisibility};
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentResultPayload, ShellAgentResultRequest,
-    ShellClientCapabilities, ShellCommandExecutionState, ShellJobValidationProgress,
+    ShellClientCapabilities, ShellCommandExecutionState, ShellJobOpRequest,
+    ShellJobValidationMetadata, ShellJobValidationProgress, ShellJobValidationStep,
+    JOB_INVENTORY_MAX_TERMINAL_JOBS,
 };
 use crate::tool_runtime::sessions::{SessionTransport, DEFAULT_MAX_EVENTS_PER_SESSION};
 #[cfg(unix)]
@@ -144,6 +147,120 @@ fn completed_progress() -> ShellJobValidationProgress {
         completed: 1,
         current_step: None,
         failed_step: None,
+    }
+}
+
+#[derive(Clone)]
+struct SeededTerminalValidationJob {
+    job_id: String,
+    validation_target_id: String,
+    ended_at: i64,
+}
+
+async fn seed_retained_terminal_validation_job(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    session_id: &str,
+    ordinal: u64,
+) -> SeededTerminalValidationJob {
+    let validation_target_id = format!("target:{ordinal:024x}");
+    let step = ShellJobValidationStep {
+        name: "check".to_string(),
+        program: "cargo".to_string(),
+        args: vec!["check".to_string(), "--all-targets".to_string()],
+        env: Vec::new(),
+    };
+    let job = runtime
+        .shell_clients
+        .start_job_with_metadata(
+            ShellJobOpRequest {
+                op: "start".to_string(),
+                client_id: Some(client_id.to_string()),
+                cwd: Some("/tmp/agent-proj".to_string()),
+                command: Some("cargo check --all-targets".to_string()),
+                timeout_secs: Some(600),
+                job_id: None,
+                since_stdout_line: None,
+                since_stderr_line: None,
+                tail_lines: None,
+                limit: None,
+                codex: None,
+            },
+            "validation-stale-snapshot-test".to_string(),
+            ShellJobStartMetadata {
+                project_id: Some(project.to_string()),
+                session_id: Some(session_id.to_string()),
+                project_cwd: Some("/tmp/agent-proj".to_string()),
+                purpose: Some("validation".to_string()),
+                shell: Some("bash".to_string()),
+                validation_steps: vec![step.clone()],
+                validation: Some(ShellJobValidationMetadata {
+                    tool: "cargo_check".to_string(),
+                    kind: "check".to_string(),
+                    steps: vec![step],
+                    effective_timeout_secs: 600,
+                    sync_wait_secs: 10,
+                    adapter: "cargo_check".to_string(),
+                    validation_target_id: Some(validation_target_id.clone()),
+                }),
+                visibility: ShellJobVisibility::Public,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let request = next_patch_agent_request(runtime, client_id)
+        .await
+        .expect("seeded validation Job should enqueue a request");
+    assert_eq!(request.kind, "start_validation_job");
+    assert_eq!(request.job_id.as_deref(), Some(job.job_id.as_str()));
+    runtime
+        .shell_clients
+        .update_job(cargo_test_update(
+            client_id,
+            &request.request_id,
+            &job.job_id,
+            "running",
+            "Checking seeded v0.1.0\n",
+            "",
+            None,
+            running_progress("check"),
+            false,
+        ))
+        .await
+        .unwrap();
+    runtime
+        .shell_clients
+        .update_job(cargo_test_update(
+            client_id,
+            &request.request_id,
+            &job.job_id,
+            "completed",
+            "Finished `dev` profile [unoptimized + debuginfo] target(s)\n",
+            "",
+            Some(0),
+            completed_progress(),
+            true,
+        ))
+        .await
+        .unwrap();
+    let status = runtime
+        .job_status_for_auth(job.job_id.clone(), false, None)
+        .await;
+    assert!(status.success, "{:?}", status.error);
+    assert_eq!(status.output["terminal"], true);
+    assert_eq!(
+        status.output["validation"]["validation_target_id"],
+        validation_target_id
+    );
+    let ended_at = status.output["ended_at"]
+        .as_i64()
+        .expect("terminal seeded Job must expose ended_at");
+    SeededTerminalValidationJob {
+        job_id: job.job_id,
+        validation_target_id,
+        ended_at,
     }
 }
 
@@ -1301,6 +1418,197 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
     assert_eq!(
         latest["tests_run_count"],
         status.output["validation"]["tests_run_count"]
+    );
+}
+
+#[tokio::test]
+async fn stale_validation_terminal_snapshot_cannot_evict_newer_materialization_marker() {
+    let client_id = "vhandoff-stale-terminal-snapshot";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
+
+    let mut old_inventory = Vec::with_capacity(JOB_INVENTORY_MAX_TERMINAL_JOBS);
+    for ordinal in 0..JOB_INVENTORY_MAX_TERMINAL_JOBS as u64 {
+        old_inventory.push(
+            seed_retained_terminal_validation_job(
+                &runtime,
+                client_id,
+                &project,
+                &session_id,
+                ordinal,
+            )
+            .await,
+        );
+    }
+    let old_snapshot = runtime
+        .validation_job_candidates_for_sessions(&project, &[session_id.clone()], None)
+        .await;
+    let old_candidates = old_snapshot
+        .get(&session_id)
+        .expect("old candidate snapshot");
+    assert_eq!(old_candidates.len(), JOB_INVENTORY_MAX_TERMINAL_JOBS);
+    let old_snapshot_job_ids = old_inventory
+        .iter()
+        .map(|job| job.job_id.as_str())
+        .collect::<Vec<_>>();
+    let jold = old_inventory.last().unwrap().clone();
+
+    // S0: 63 durable markers J0..J62; Jold is retained but deliberately not
+    // materialized yet. Every insertion uses the complete old authoritative
+    // inventory, matching the production marker-eviction contract.
+    for job in old_inventory
+        .iter()
+        .take(JOB_INVENTORY_MAX_TERMINAL_JOBS - 1)
+    {
+        assert!(runtime.sessions.record_validation_job_terminal(
+            &session_id,
+            &job.job_id,
+            &old_snapshot_job_ids,
+            "cargo_check",
+            Some(project.clone()),
+            &job.validation_target_id,
+            "completed",
+            Some(0),
+            Some(job.ended_at.saturating_sub(1)),
+            Some(job.ended_at),
+            Some(25),
+            None,
+        ));
+    }
+
+    let hook = runtime.validation_terminal_reconciliation_test_hook.clone();
+    hook.pause_next_snapshot();
+    let older_reconciliation = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .materialize_validation_job_terminals_for_sessions(&project, &[session_id], None)
+                .await;
+        }
+    });
+    hook.wait_for_reconciliation_attempt().await;
+    hook.wait_for_snapshot_acquired().await;
+    assert_eq!(hook.snapshot_acquisition_count(), 1);
+    assert!(
+        runtime
+            .validation_terminal_reconciliation
+            .try_lock()
+            .is_err(),
+        "the snapshot-to-materialization ordering fence must remain held while S1 is in flight"
+    );
+
+    // Churn the authoritative terminal inventory only after A has captured S1:
+    // J0 leaves retention and Jnew enters. This produces S2 =
+    // J1..J62 + Jold + Jnew while A still holds its older S1.
+    let j0 = old_inventory.first().unwrap().clone();
+    assert!(runtime.shell_clients.remove_job_record(&j0.job_id).await);
+    let jnew =
+        seed_retained_terminal_validation_job(&runtime, client_id, &project, &session_id, 10_000)
+            .await;
+    let newer_snapshot = runtime
+        .validation_job_candidates_for_sessions(&project, &[session_id.clone()], None)
+        .await;
+    let newer_candidates = newer_snapshot
+        .get(&session_id)
+        .expect("new authoritative candidate snapshot");
+    assert_eq!(newer_candidates.len(), JOB_INVENTORY_MAX_TERMINAL_JOBS);
+    assert!(newer_candidates
+        .iter()
+        .all(|job| job["job_id"].as_str() != Some(j0.job_id.as_str())));
+    assert!(newer_candidates
+        .iter()
+        .any(|job| job["job_id"].as_str() == Some(jold.job_id.as_str())));
+    assert!(newer_candidates
+        .iter()
+        .any(|job| job["job_id"].as_str() == Some(jnew.job_id.as_str())));
+
+    let newer_reconciliation = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .materialize_validation_job_terminals_for_sessions(&project, &[session_id], None)
+                .await;
+        }
+    });
+    // B has reached the ordering fence, but while A is paused after acquiring
+    // S1 it must not acquire S2 or materialize Jnew ahead of A.
+    hook.wait_for_reconciliation_attempt().await;
+    assert_eq!(
+        hook.snapshot_acquisition_count(),
+        1,
+        "a newer reconciliation must not acquire its snapshot before the older snapshot finishes"
+    );
+
+    hook.resume_snapshot();
+    older_reconciliation.await.unwrap();
+    newer_reconciliation.await.unwrap();
+    assert_eq!(hook.snapshot_acquisition_count(), 2);
+
+    let materialized = runtime
+        .sessions
+        .summary(&session_id, Some(DEFAULT_MAX_EVENTS_PER_SESSION))
+        .unwrap();
+    for job in [&jold, &jnew] {
+        assert_eq!(
+            materialized
+                .events
+                .iter()
+                .filter(|event| {
+                    event.kind == "validation_job_terminal"
+                        && event.job_id.as_deref() == Some(job.job_id.as_str())
+                })
+                .count(),
+            1,
+            "{} must materialize exactly once",
+            job.job_id
+        );
+    }
+    let validation = validation_summary_for_session(&materialized);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+    let events_total_before_repeat = materialized.events_total;
+
+    // A fresh S2 reconciliation proves Jnew's durable marker survived. If the
+    // stale S1 had evicted it, this read would append Jnew a second time and
+    // increase events_observed/events_total.
+    runtime
+        .materialize_validation_job_terminals_for_sessions(
+            &project,
+            std::slice::from_ref(&session_id),
+            None,
+        )
+        .await;
+    let after_repeat = runtime
+        .sessions
+        .summary(&session_id, Some(DEFAULT_MAX_EVENTS_PER_SESSION))
+        .unwrap();
+    assert_eq!(after_repeat.events_total, events_total_before_repeat);
+    assert_eq!(
+        after_repeat
+            .events
+            .iter()
+            .filter(|event| {
+                event.kind == "validation_job_terminal"
+                    && event.job_id.as_deref() == Some(jnew.job_id.as_str())
+            })
+            .count(),
+        1
     );
 }
 

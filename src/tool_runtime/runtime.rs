@@ -10,9 +10,13 @@ use crate::shell_client::ShellClientRegistry;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+#[cfg(test)]
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 fn new_git_diff_hunks_continuation_mac_key() -> Arc<[u8; 32]> {
@@ -21,6 +25,82 @@ fn new_git_diff_hunks_continuation_mac_key() -> Arc<[u8; 32]> {
     hasher.update(Uuid::new_v4().as_bytes());
     hasher.update(Uuid::new_v4().as_bytes());
     Arc::new(hasher.finalize().into())
+}
+
+#[cfg(test)]
+pub(crate) struct ValidationTerminalReconciliationTestHook {
+    reconciliation_attempted: Semaphore,
+    pause_next_after_snapshot: AtomicBool,
+    snapshot_acquired: Semaphore,
+    resume_snapshot: Semaphore,
+    snapshot_acquisition_count: AtomicUsize,
+}
+
+#[cfg(test)]
+impl Default for ValidationTerminalReconciliationTestHook {
+    fn default() -> Self {
+        Self {
+            pause_next_after_snapshot: AtomicBool::new(false),
+            reconciliation_attempted: Semaphore::new(0),
+            snapshot_acquired: Semaphore::new(0),
+            resume_snapshot: Semaphore::new(0),
+            snapshot_acquisition_count: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[cfg(test)]
+impl ValidationTerminalReconciliationTestHook {
+    pub(crate) fn before_reconciliation_lock(&self) {
+        self.reconciliation_attempted.add_permits(1);
+    }
+
+    pub(crate) async fn wait_for_reconciliation_attempt(&self) {
+        let permit = self
+            .reconciliation_attempted
+            .acquire()
+            .await
+            .expect("validation terminal reconciliation attempt semaphore closed");
+        permit.forget();
+    }
+
+    pub(crate) fn pause_next_snapshot(&self) {
+        assert!(
+            !self.pause_next_after_snapshot.swap(true, Ordering::SeqCst),
+            "validation terminal snapshot pause already armed"
+        );
+    }
+
+    pub(crate) async fn after_snapshot_acquired(&self) {
+        self.snapshot_acquisition_count
+            .fetch_add(1, Ordering::SeqCst);
+        self.snapshot_acquired.add_permits(1);
+        if self.pause_next_after_snapshot.swap(false, Ordering::SeqCst) {
+            let permit = self
+                .resume_snapshot
+                .acquire()
+                .await
+                .expect("validation terminal snapshot resume semaphore closed");
+            permit.forget();
+        }
+    }
+
+    pub(crate) async fn wait_for_snapshot_acquired(&self) {
+        let permit = self
+            .snapshot_acquired
+            .acquire()
+            .await
+            .expect("validation terminal snapshot semaphore closed");
+        permit.forget();
+    }
+
+    pub(crate) fn resume_snapshot(&self) {
+        self.resume_snapshot.add_permits(1);
+    }
+
+    pub(crate) fn snapshot_acquisition_count(&self) -> usize {
+        self.snapshot_acquisition_count.load(Ordering::SeqCst)
+    }
 }
 
 #[derive(Clone)]
@@ -44,6 +124,15 @@ pub struct ToolRuntime {
     /// before it promotes to a Job. Defaults to `SYNC_VALIDATION_WAIT_SECS`;
     /// tests shrink it so the handoff path can be exercised without sleeping.
     pub(crate) validation_sync_wait: Duration,
+    /// Orders authoritative terminal-Job snapshot acquisition through Session
+    /// marker/evidence materialization. Marker eviction interprets absence from
+    /// that snapshot as retention exit, so a later snapshot must never commit
+    /// before an earlier snapshot has finished using its eviction authority.
+    /// Cloned runtimes share this mutex; restart drops all in-flight snapshots.
+    pub(crate) validation_terminal_reconciliation: Arc<Mutex<()>>,
+    #[cfg(test)]
+    pub(crate) validation_terminal_reconciliation_test_hook:
+        Arc<ValidationTerminalReconciliationTestHook>,
     /// Internal synchronous grace for typed process/script Jobs. It controls
     /// only when the existing execution is exposed, never its total timeout.
     pub(crate) structured_execution_sync_wait: Duration,
@@ -84,6 +173,11 @@ impl ToolRuntime {
             search_project_texts_deadline:
                 super::search_project_texts::DEFAULT_SEARCH_PROJECT_TEXTS_DEADLINE,
             validation_sync_wait: Duration::from_secs(super::helpers::SYNC_VALIDATION_WAIT_SECS),
+            validation_terminal_reconciliation: Arc::new(Mutex::new(())),
+            #[cfg(test)]
+            validation_terminal_reconciliation_test_hook: Arc::new(
+                ValidationTerminalReconciliationTestHook::default(),
+            ),
             structured_execution_sync_wait: Duration::from_secs(
                 super::structured_execution::STRUCTURED_EXECUTION_SYNC_WAIT_SECS,
             ),

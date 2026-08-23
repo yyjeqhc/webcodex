@@ -162,6 +162,75 @@ async fn register_blank_protocol_version_is_rejected() {
 }
 
 #[tokio::test]
+async fn register_protocol_version_bounds_are_enforced() {
+    let cases = [
+        (
+            "oversized",
+            "x".repeat(65),
+            "agent_protocol_version is too long; maximum is 64 bytes",
+        ),
+        (
+            "nul",
+            "polling-v1\0".to_string(),
+            "agent_protocol_version cannot contain control characters",
+        ),
+        (
+            "control",
+            "polling-v1\n".to_string(),
+            "agent_protocol_version cannot contain control characters",
+        ),
+    ];
+    for (client_id, version, expected_error) in cases {
+        let registry = ShellClientRegistry::default();
+        let mut registration = runner_registration(client_id, "inst", Vec::new());
+        registration.agent_protocol_version = Some(version);
+        let error = registry.register(registration).await.unwrap_err();
+        assert_eq!(error, expected_error);
+        assert!(registry.list_clients().await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn register_unknown_protocol_version_is_rejected() {
+    let registry = ShellClientRegistry::default();
+    let mut registration = runner_registration("future", "inst", Vec::new());
+    registration.agent_protocol_version = Some("future-v2".to_string());
+    let error = registry.register(registration).await.unwrap_err();
+    assert_eq!(error, "agent_protocol_version is unsupported");
+    assert!(registry.list_clients().await.is_empty());
+}
+
+#[tokio::test]
+async fn polling_http_register_rejects_unknown_protocol_version() {
+    use salvo::test::{ResponseExt, TestClient};
+    use salvo::Service;
+
+    let registry = Arc::new(ShellClientRegistry::default());
+    let service = Service::new(
+        Router::new()
+            .hoop(affix_state::inject(registry.clone()))
+            .hoop(affix_state::inject(auth_context(None, true)))
+            .push(Router::with_path("api/shell/agent/register").post(shell_agent_register)),
+    );
+    let mut response = TestClient::post("http://localhost/api/shell/agent/register")
+        .json(&json!({
+            "client_id": "polling-unknown-protocol",
+            "agent_instance_id": "inst",
+            "agent_protocol_version": "polling-v3"
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(
+        response.status_code.unwrap_or(StatusCode::OK),
+        StatusCode::BAD_REQUEST
+    );
+    let body: serde_json::Value = response.take_json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error"], "agent_protocol_version is unsupported");
+    assert!(registry.list_clients().await.is_empty());
+}
+
+#[tokio::test]
 async fn client_supports_reflects_registered_capabilities() {
     let registry = ShellClientRegistry::default();
     let caps = ShellClientCapabilities {

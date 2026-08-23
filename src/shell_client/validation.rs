@@ -14,6 +14,9 @@ const MAX_CLIENT_FIELD_LEN: usize = 200;
 /// for future formats but bound it so a malicious peer cannot stash huge
 /// strings in the registry.
 const MAX_AGENT_INSTANCE_ID_LEN: usize = 128;
+/// Agent protocol identity is a tiny compatibility label retained in the
+/// registry. Bound the untrusted wire value independently from display fields.
+const MAX_AGENT_PROTOCOL_VERSION_BYTES: usize = 64;
 const MAX_CWD_LEN: usize = 1_024;
 const MAX_FILE_PATH_LEN: usize = 2_048;
 const MAX_FILE_CONTENT_BYTES: usize = 512 * 1024;
@@ -217,11 +220,20 @@ pub(super) fn validate_agent_instance_id(value: &str) -> Result<(), String> {
 pub(super) fn normalize_required_agent_protocol_version(
     value: Option<&str>,
 ) -> Result<String, String> {
-    value
-        .map(str::trim)
-        .filter(|version| !version.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| "agent_protocol_version is required".to_string())
+    let raw = value.ok_or_else(|| "agent_protocol_version is required".to_string())?;
+    let version = raw.trim();
+    if version.is_empty() {
+        return Err("agent_protocol_version is required".to_string());
+    }
+    if raw.len() > MAX_AGENT_PROTOCOL_VERSION_BYTES {
+        return Err(format!(
+            "agent_protocol_version is too long; maximum is {MAX_AGENT_PROTOCOL_VERSION_BYTES} bytes"
+        ));
+    }
+    if raw.chars().any(char::is_control) {
+        return Err("agent_protocol_version cannot contain control characters".to_string());
+    }
+    Ok(version.to_string())
 }
 
 pub(super) fn validate_optional_field(value: &Option<String>, field: &str) -> Result<(), String> {

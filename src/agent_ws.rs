@@ -780,6 +780,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ws_register_rejects_unsupported_protocol_version() {
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_server(registry.clone()).await;
+        let url = format!("ws://{}/api/agents/ws", addr);
+        let (mut ws, _resp) = connect_async(url).await.expect("ws connect");
+        let mut register = register_envelope("ws-unsupported-protocol");
+        let AgentEnvelope::Register { payload, .. } = &mut register else {
+            unreachable!("register helper must return Register")
+        };
+        payload.agent_protocol_version = Some("websocket-next".to_string());
+        ws.send(TungsteniteMessage::Text(register.to_json().unwrap().into()))
+            .await
+            .unwrap();
+
+        match recv_envelope(&mut ws).await {
+            AgentEnvelope::Error { code, message } => {
+                assert_eq!(code, "register_failed");
+                assert_eq!(message, "agent_protocol_version is unsupported");
+            }
+            other => panic!("expected register_failed, got {:?}", other.kind()),
+        }
+        assert!(registry
+            .get_client_view("ws-unsupported-protocol")
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
     async fn ws_register_then_request_result_roundtrip() {
         let registry = Arc::new(ShellClientRegistry::default());
         let addr = start_server(registry.clone()).await;

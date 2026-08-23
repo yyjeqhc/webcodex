@@ -1,9 +1,8 @@
 use super::*;
 use crate::shell_protocol::{
-    ShellProjectInventoryPage, AGENT_PROTOCOL_VERSION_POLLING_V1,
-    AGENT_PROTOCOL_VERSION_POLLING_V2, PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS,
-    PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
-    PROJECT_INVENTORY_STAGING_TTL_SECS,
+    ShellProjectInventoryPage, AGENT_PROTOCOL_VERSION_POLLING_V2,
+    PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS, PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
+    PROJECT_INVENTORY_PAGE_MAX_SUMMARIES, PROJECT_INVENTORY_STAGING_TTL_SECS,
 };
 
 fn synthetic_projects(count: usize) -> Vec<ShellAgentProjectSummary> {
@@ -162,38 +161,55 @@ async fn v2_registration_project_bootstrap_is_not_published_as_authoritative_inv
 
 #[tokio::test]
 async fn inventory_pages_require_paged_registration_strategy() {
-    for (case, protocol) in [
-        ("inline", AGENT_PROTOCOL_VERSION_POLLING_V1),
-        ("unsupported", "future-v2"),
-    ] {
-        let registry = ShellClientRegistry::default();
-        let client_id = format!("inventory-strategy-{case}");
-        let instance_id = format!("inventory-strategy-{case}-instance");
-        let original = project_summary("original", "/tmp/original");
-        let mut registration =
-            runner_registration(&client_id, &instance_id, vec![original.clone()]);
-        registration.agent_protocol_version = Some(protocol.to_string());
-        let registered = registry.register(registration).await.unwrap();
-        assert_eq!(registered.projects.len(), 1);
-        assert_eq!(registered.projects[0].id, "original");
+    let registry = ShellClientRegistry::default();
+    let client_id = "inventory-strategy-inline";
+    let instance_id = "inventory-strategy-inline-instance";
+    let original = project_summary("original", "/tmp/original");
+    let registered = registry
+        .register(runner_registration(
+            client_id,
+            instance_id,
+            vec![original.clone()],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(registered.projects.len(), 1);
+    assert_eq!(registered.projects[0].id, "original");
 
-        let replacement = vec![project_summary("replacement", "/tmp/replacement")];
-        let status = registry
-            .apply_project_inventory_page(
-                &client_id,
-                &instance_id,
-                snapshot_pages("unexpected-page", 1, &replacement).remove(0),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            status.last_error_code.as_deref(),
-            Some("project_inventory_paging_not_negotiated")
-        );
-        let published = registry.list_client_projects(&client_id).await.unwrap();
-        assert_eq!(published.len(), 1);
-        assert_eq!(published[0].id, "original");
-    }
+    let replacement = vec![project_summary("replacement", "/tmp/replacement")];
+    let status = registry
+        .apply_project_inventory_page(
+            client_id,
+            instance_id,
+            snapshot_pages("unexpected-page", 1, &replacement).remove(0),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        status.last_error_code.as_deref(),
+        Some("project_inventory_paging_not_negotiated")
+    );
+    let published = registry.list_client_projects(client_id).await.unwrap();
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0].id, "original");
+}
+
+#[tokio::test]
+async fn unsupported_protocol_registration_does_not_publish_project_inventory() {
+    let registry = ShellClientRegistry::default();
+    let client_id = "inventory-strategy-unsupported";
+    let instance_id = "inventory-strategy-unsupported-instance";
+    let mut registration = runner_registration(
+        client_id,
+        instance_id,
+        vec![project_summary("untrusted", "/tmp/untrusted")],
+    );
+    registration.agent_protocol_version = Some("future-v2".to_string());
+
+    let error = registry.register(registration).await.unwrap_err();
+    assert_eq!(error, "agent_protocol_version is unsupported");
+    assert!(registry.get_client_view(client_id).await.is_none());
+    assert!(registry.list_client_projects(client_id).await.is_err());
 }
 
 #[tokio::test]

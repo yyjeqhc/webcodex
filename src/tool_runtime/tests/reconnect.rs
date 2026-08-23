@@ -1679,8 +1679,9 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
         ))
         .await
         .unwrap();
-    // Unrecognized protocol → capability_mismatch.
-    runtime
+    // Unsupported protocol identities fail registration and therefore never
+    // become a diagnostic-but-operational runtime client.
+    let unsupported = runtime
         .shell_clients
         .register(register_request(
             "legacy",
@@ -1690,12 +1691,13 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
             "prehistoric-v0",
         ))
         .await
-        .unwrap();
+        .unwrap_err();
+    assert_eq!(unsupported, "agent_protocol_version is unsupported");
 
     let status = runtime.runtime_status(None).await;
     assert!(status.success);
     let compat = &status.output["version_compatibility"];
-    assert_eq!(compat["status"], "capability_mismatch");
+    assert_eq!(compat["status"], "version_mismatch");
     assert_eq!(compat["server"]["version"], server_version);
     let runners = compat["runners"].as_array().unwrap();
     let by_id = |id: &str| {
@@ -1724,11 +1726,6 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
         .as_str()
         .unwrap()
         .contains("align"));
-    assert_eq!(by_id("legacy")["status"], "capability_mismatch");
-    assert_eq!(
-        by_id("legacy")["reason_code"],
-        "agent_protocol_version_unsupported"
-    );
     let compact = crate::tool_runtime::runtime_info::compact_runtime_status(&status.output);
     let compact_runner = compact["agents"]["clients"]
         .as_array()

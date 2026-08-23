@@ -163,6 +163,9 @@ impl ShellClientRegistry {
         let agent_protocol_version =
             normalize_required_agent_protocol_version(body.agent_protocol_version.as_deref())?;
         let agent_protocol_semantics = normalize_agent_protocol_semantics(&agent_protocol_version);
+        if !agent_protocol_semantics.compatibility.is_supported() {
+            return Err("agent_protocol_version is unsupported".to_string());
+        }
         let paged_project_inventory = matches!(
             agent_protocol_semantics.project_inventory,
             AgentProjectInventoryStrategy::Paged

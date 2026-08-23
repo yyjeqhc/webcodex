@@ -81,6 +81,12 @@ Retention is explicit. Each retained message carries internal latest-revision bo
 
 Message observation is **not** a delivery receipt, **not** proof of model-context retention, **not** a subscription/stream, and **not** an orchestrator wake-up. It never automatically wakes a model or spawns/routes work. Room/Discussion remains only a future additive direction; this Workflow Session primitive does not create Room, participant, presence, typing, scheduler, worker-pool, or routing state.
 
+## Runtime Collaboration Console
+
+The Server-hosted `/runtime` page provides a read-only operator view over the same authoritative runtime and Workflow Session state. It presents a bounded Server overview, a focused per-Runner machine view, Project/Workflow Session activity, and retained collaboration messages without creating a second Session store or collaboration truth. Existing Project and Workflow Session console views retain their `project:read` boundary; Server-wide/Runner-wide facts and full collaboration message/observation routes require `runtime:read` and still re-authorize the exact target Session/project before returning message content.
+
+The collaboration panel establishes an observation baseline before reading the retained snapshot, then uses bounded long-polls and merges deltas by `message_id`. `has_more` is drained before the next wait, while `history_lost` causes a retained-board reload and a new baseline rather than claiming complete history. All aggregate counts remain bounded/truncation-aware. The browser wait is only UI refresh: it is not a model wake-up, subscription, participant-presence mechanism, scheduler, worker claim, or execution lease. The first version intentionally exposes no collaboration mutation buttons.
+
 ## Provenance is metadata, not authority
 
 A completed answer can identify the independent worker with `author_session_id`. That value is derived first from the trusted recording Session that owns the completion tool evidence, then from the trusted current-Session binding only when no recording Session exists. It is not a caller-authored claim. In stateless MCP 2026, `recording_session_id` is explicit wrapper provenance metadata, not a transport Session and not an authority grant; the legacy `mcp-session-id` header remains irrelevant.

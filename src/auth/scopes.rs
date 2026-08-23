@@ -244,6 +244,12 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
             OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN)
         }
 
+        ("POST", "/api/runtime-console/overview")
+        | ("POST", "/api/runtime-console/runner")
+        | ("POST", "/api/runtime-console/workflow-session-messages")
+        | ("POST", "/api/runtime-console/workflow-session-observe") => {
+            OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ)
+        }
         ("POST", "/api/runtime-console/projects")
         | ("POST", "/api/runtime-console/workflow-sessions")
         | ("POST", "/api/runtime-console/workflow-session")
@@ -548,6 +554,18 @@ mod tests {
         for (method, path, scope) in [
             ("GET", "/mcp", SCOPE_RUNTIME_READ),
             ("POST", "/api/runtime/status", SCOPE_RUNTIME_READ),
+            ("POST", "/api/runtime-console/overview", SCOPE_RUNTIME_READ),
+            ("POST", "/api/runtime-console/runner", SCOPE_RUNTIME_READ),
+            (
+                "POST",
+                "/api/runtime-console/workflow-session-messages",
+                SCOPE_RUNTIME_READ,
+            ),
+            (
+                "POST",
+                "/api/runtime-console/workflow-session-observe",
+                SCOPE_RUNTIME_READ,
+            ),
             ("POST", "/api/tools/list", SCOPE_RUNTIME_READ),
             ("POST", "/api/connector/task/start", SCOPE_RUNTIME_READ),
             ("POST", "/api/connector/files/read", SCOPE_PROJECT_READ),
@@ -596,11 +614,19 @@ mod tests {
         let shared = crate::auth::shared_key_context("scope-matrix");
         let bootstrap = crate::auth::bootstrap_context();
 
-        for (label, auth) in [("pat", &pat), ("oauth", &oauth), ("shared", &shared)] {
-            assert!(
-                enforce_route_scope(auth, "POST", "/api/runtime/status").is_ok(),
-                "{label} should honor runtime:read"
-            );
+        for path in [
+            "/api/runtime/status",
+            "/api/runtime-console/overview",
+            "/api/runtime-console/runner",
+            "/api/runtime-console/workflow-session-messages",
+            "/api/runtime-console/workflow-session-observe",
+        ] {
+            for (label, auth) in [("pat", &pat), ("oauth", &oauth), ("shared", &shared)] {
+                assert!(
+                    enforce_route_scope(auth, "POST", path).is_ok(),
+                    "{label} should honor runtime:read on {path}"
+                );
+            }
         }
         for (label, auth) in [("pat", &pat), ("oauth", &oauth)] {
             assert_eq!(

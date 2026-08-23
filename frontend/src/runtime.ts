@@ -578,22 +578,26 @@ function renderCollaboration(statusText?: string): void {
 }
 
 async function loadRetainedCollaboration(request: any, controller: AbortController): Promise<string | null> {
-  const response = await api("workflow-session-messages", { project: request.project, session_id: request.sessionId, limit: 100 }, controller.signal);
-  if (!response || !isCurrentRuntimeCollaborationRequest(state, request)) return null;
-  if (response.status === 401) { lock("Credential rejected."); return null; }
-  if (response.status === 403) {
-    setRuntimeCollaborationAvailable(state, request, false); renderCollaboration(); return null;
-  }
-  if (response.status === 404) { setRuntimeCollaborationAvailable(state, request, false); renderCollaboration("Session collaboration unavailable"); return null; }
-  if (!response.ok || !response.data) { renderCollaboration("Collaboration refresh failed"); return null; }
-  setRuntimeCollaborationAvailable(state, request, true);
-  if (!adoptRuntimeCollaborationList(state, request, Array.isArray(response.data.messages) ? response.data.messages : [])) return null;
+  // Establish the cursor before the retained snapshot. A mutation between these
+  // two reads is then present in the snapshot, the subsequent delta, or both;
+  // merge-by-id makes the overlap harmless. Listing first and baselining second
+  // would permanently skip a mutation that lands in that gap.
   renderCollaboration("Establishing live baseline…");
   const baseline = await api("workflow-session-observe", { project: request.project, session_id: request.sessionId, limit: 100 }, controller.signal);
   if (!baseline || !isCurrentRuntimeCollaborationRequest(state, request)) return null;
   if (baseline.status === 401) { lock("Credential rejected."); return null; }
   if (baseline.status === 403) { setRuntimeCollaborationAvailable(state, request, false); renderCollaboration(); return null; }
+  if (baseline.status === 404) { setRuntimeCollaborationAvailable(state, request, false); renderCollaboration("Session collaboration unavailable"); return null; }
   if (!baseline.ok || !baseline.data || typeof baseline.data.observation_token !== "string") { renderCollaboration("Live observation unavailable"); return null; }
+
+  const response = await api("workflow-session-messages", { project: request.project, session_id: request.sessionId, limit: 100 }, controller.signal);
+  if (!response || !isCurrentRuntimeCollaborationRequest(state, request)) return null;
+  if (response.status === 401) { lock("Credential rejected."); return null; }
+  if (response.status === 403) { setRuntimeCollaborationAvailable(state, request, false); renderCollaboration(); return null; }
+  if (response.status === 404) { setRuntimeCollaborationAvailable(state, request, false); renderCollaboration("Session collaboration unavailable"); return null; }
+  if (!response.ok || !response.data) { renderCollaboration("Collaboration refresh failed"); return null; }
+  setRuntimeCollaborationAvailable(state, request, true);
+  if (!adoptRuntimeCollaborationList(state, request, Array.isArray(response.data.messages) ? response.data.messages : [])) return null;
   adoptRuntimeCollaborationObservation(state, request, baseline.data);
   renderCollaboration("Live · bounded long-poll");
   return baseline.data.observation_token;

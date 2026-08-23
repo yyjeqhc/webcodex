@@ -183,4 +183,10 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(source, /action === "reload"[\s\S]*loadRetainedCollaboration/);
   assert.match(source, /action === "drain"/);
   assert.match(source, /abortCollaboration\(\)/);
+  const bootstrapStart = source.indexOf("async function loadRetainedCollaboration");
+  const bootstrapEnd = source.indexOf("async function startCollaboration", bootstrapStart);
+  const bootstrap = source.slice(bootstrapStart, bootstrapEnd);
+  const baselineAt = bootstrap.indexOf('api("workflow-session-observe"');
+  const retainedListAt = bootstrap.indexOf('api("workflow-session-messages"');
+  assert.ok(baselineAt >= 0 && retainedListAt > baselineAt, "live baseline must precede the retained snapshot to avoid a lost-update gap");
 });

@@ -60,6 +60,78 @@ async fn stateless_2026_tool_call(
     (status, body)
 }
 
+async fn stateless_observation_shell_clients() -> Arc<crate::shell_client::ShellClientRegistry> {
+    let shell_clients = Arc::new(crate::shell_client::ShellClientRegistry::default());
+    shell_clients
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            client_id: "mcp-observation-agent".to_string(),
+            agent_instance_id: "inst-mcp-observation".to_string(),
+            display_name: None,
+            owner: None,
+            hostname: None,
+            host_context: None,
+            capabilities: Some(ShellClientCapabilities::default()),
+            projects: Some(vec![
+                ShellAgentProjectSummary {
+                    id: "shared".to_string(),
+                    name: Some("Shared observation project".to_string()),
+                    path: "/tmp/mcp-observation-shared".to_string(),
+                    allow_patch: true,
+                    kind: Some("repo".to_string()),
+                    description: None,
+                    hooks: Vec::new(),
+                    disabled: false,
+                    revision: None,
+                    git_branch: None,
+                    git_head: None,
+                    git_dirty: None,
+                    updated_at: 1,
+                    shell_profile: None,
+                },
+                ShellAgentProjectSummary {
+                    id: "foreign".to_string(),
+                    name: Some("Foreign observation project".to_string()),
+                    path: "/tmp/mcp-observation-foreign".to_string(),
+                    allow_patch: true,
+                    kind: Some("repo".to_string()),
+                    description: None,
+                    hooks: Vec::new(),
+                    disabled: false,
+                    revision: None,
+                    git_branch: None,
+                    git_head: None,
+                    git_dirty: None,
+                    updated_at: 2,
+                    shell_profile: None,
+                },
+            ]),
+            agent_protocol_version: Some("polling-v1".to_string()),
+            policy: None,
+        })
+        .await
+        .unwrap();
+    shell_clients
+}
+
+fn stateless_tool_output(body: &Value) -> &Value {
+    &body["result"]["structuredContent"]["output"]
+}
+
+fn start_stateless_observation_session(
+    runtime: &ToolRuntime,
+    project: &str,
+    title: &str,
+) -> String {
+    runtime
+        .sessions
+        .start_session(Some(project.to_string()), Some(title.to_string()))
+        .session_id
+}
+
 #[tokio::test]
 async fn mcp_tools_call_writes_a_summary_action_audit_row() {
     // list_tools is a full-operator-only tool; select that surface so the
@@ -585,6 +657,415 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
         .sessions
         .summary("wc_sess_missing_recorder", None)
         .is_none());
+}
+
+#[tokio::test]
+async fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contract() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let ledger_dir = tempfile::tempdir().unwrap();
+    let ledger = ledger_dir.path().join("sessions.json");
+    let shell_clients = stateless_observation_shell_clients().await;
+    let shared_project =
+        crate::tool_runtime::agent_project_runtime_id("mcp-observation-agent", "shared");
+    let foreign_project =
+        crate::tool_runtime::agent_project_runtime_id("mcp-observation-agent", "foreign");
+    let runtime = Arc::new(
+        ToolRuntime::new_for_tests_with_shell_clients(shell_clients.clone())
+            .with_session_ledger(&ledger)
+            .with_model_surface(ModelSurface::FullOperatorRuntime),
+    );
+    let service = Service::new(build_test_router(
+        config.clone(),
+        db.clone(),
+        runtime.clone(),
+    ));
+
+    // Session creation is fixture setup, not part of the transport contract under
+    // test. Build exact project-scoped Sessions directly; the cfg(test) Session
+    // fixture marker is accepted only in tests, while every HTTP observation still
+    // exercises real project resolution plus recorder/target scope authorization.
+    // This avoids unrelated project-instruction file probes on the fake Runner.
+    let coordinator_id =
+        start_stateless_observation_session(&runtime, &shared_project, "Observation coordinator C");
+    let worker_id =
+        start_stateless_observation_session(&runtime, &shared_project, "Observation worker W");
+    let second_coordinator_id = start_stateless_observation_session(
+        &runtime,
+        &shared_project,
+        "Observation coordinator C2",
+    );
+    let foreign_worker_id = start_stateless_observation_session(
+        &runtime,
+        &foreign_project,
+        "Foreign observation worker W2",
+    );
+
+    let pre_baseline_body_marker = "pre-baseline-history-must-not-replay";
+    let (status, pre_baseline_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        244,
+        "post_session_message",
+        with_mcp_recording_session(
+            json!({
+                "session_id": coordinator_id,
+                "kind": "note",
+                "message": pre_baseline_body_marker
+            }),
+            &worker_id,
+        ),
+        Some("legacy-pre-baseline"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pre_baseline_body}");
+    assert_eq!(pre_baseline_body["result"]["isError"], false);
+
+    let (status, baseline_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        245,
+        "observe_session_messages",
+        with_mcp_recording_session(json!({"session_id": coordinator_id}), &worker_id),
+        Some("legacy-baseline-a"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{baseline_body}");
+    assert_eq!(baseline_body["result"]["isError"], false);
+    let baseline = stateless_tool_output(&baseline_body);
+    assert_eq!(baseline["success"], true);
+    assert!(baseline["messages"].as_array().unwrap().is_empty());
+    assert_eq!(baseline["changed"], false);
+    assert_eq!(baseline["history_lost"], false);
+    assert_eq!(baseline["has_more"], false);
+    assert_eq!(baseline["wait_outcome"], "immediate");
+    let token0 = baseline["observation_token"]
+        .as_str()
+        .expect("baseline observation token")
+        .to_string();
+    assert!(token0.starts_with("wsm1_"));
+    assert!(token0.len() <= 192);
+
+    let worker_summary = runtime.sessions.summary(&worker_id, Some(100)).unwrap();
+    assert!(worker_summary.events.iter().any(|event| {
+        event.kind == "tool_call_finished" && event.tool_name == "observe_session_messages"
+    }));
+    let coordinator_summary = runtime
+        .sessions
+        .summary(&coordinator_id, Some(100))
+        .unwrap();
+    assert!(!coordinator_summary.events.iter().any(|event| {
+        event.kind == "tool_call_finished" && event.tool_name == "observe_session_messages"
+    }));
+
+    let delta_body_marker = "stateless-cross-request-delta-body";
+    let (status, posted_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        246,
+        "post_session_message",
+        with_mcp_recording_session(
+            json!({
+                "session_id": coordinator_id,
+                "kind": "progress",
+                "message": delta_body_marker
+            }),
+            &worker_id,
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{posted_body}");
+    assert_eq!(posted_body["result"]["isError"], false);
+    let delta_message_id = stateless_tool_output(&posted_body)["message_id"]
+        .as_str()
+        .expect("delta message id")
+        .to_string();
+
+    let (status, delta_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        247,
+        "observe_session_messages",
+        with_mcp_recording_session(
+            json!({
+                "session_id": coordinator_id,
+                "after_observation_token": token0
+            }),
+            &worker_id,
+        ),
+        Some("different-legacy-delta-b"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{delta_body}");
+    assert_eq!(delta_body["result"]["isError"], false);
+    let delta = stateless_tool_output(&delta_body);
+    assert_eq!(delta["changed"], true);
+    assert_eq!(delta["history_lost"], false);
+    assert_eq!(delta["has_more"], false);
+    let delta_messages = delta["messages"].as_array().unwrap();
+    assert_eq!(delta_messages.len(), 1);
+    assert_eq!(delta_messages[0]["message_id"], delta_message_id);
+    assert_eq!(delta_messages[0]["message"], delta_body_marker);
+    assert!(delta_messages
+        .iter()
+        .all(|message| message["message"] != pre_baseline_body_marker));
+    let token1 = delta["observation_token"]
+        .as_str()
+        .expect("advanced observation token")
+        .to_string();
+    assert_ne!(token1, token0);
+
+    let (status, wrong_target_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        248,
+        "observe_session_messages",
+        with_mcp_recording_session(
+            json!({
+                "session_id": second_coordinator_id,
+                "after_observation_token": token1
+            }),
+            &worker_id,
+        ),
+        Some("legacy-wrong-target"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{wrong_target_body}");
+    assert_eq!(wrong_target_body["result"]["isError"], true);
+    assert_eq!(
+        stateless_tool_output(&wrong_target_body)["error_kind"],
+        "invalid_session_message_observation_token"
+    );
+    assert!(stateless_tool_output(&wrong_target_body)
+        .get("observation_token")
+        .is_none());
+    let wrong_target_serialized = serde_json::to_string(&wrong_target_body).unwrap();
+    assert!(!wrong_target_serialized.contains(delta_body_marker));
+
+    let target_before_foreign = runtime
+        .sessions
+        .summary(&coordinator_id, Some(100))
+        .unwrap();
+    let (status, foreign_recorder_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        249,
+        "observe_session_messages",
+        with_mcp_recording_session(json!({"session_id": coordinator_id}), &foreign_worker_id),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{foreign_recorder_body}");
+    assert_eq!(foreign_recorder_body["result"]["isError"], true);
+    assert_eq!(
+        stateless_tool_output(&foreign_recorder_body)["error_kind"],
+        "session_project_mismatch"
+    );
+    assert!(stateless_tool_output(&foreign_recorder_body)
+        .get("observation_token")
+        .is_none());
+    let foreign_serialized = serde_json::to_string(&foreign_recorder_body).unwrap();
+    assert!(!foreign_serialized.contains(delta_body_marker));
+    assert!(!foreign_serialized.contains(&token1));
+    let target_after_foreign = runtime
+        .sessions
+        .summary(&coordinator_id, Some(100))
+        .unwrap();
+    assert_eq!(
+        target_after_foreign.messages.total,
+        target_before_foreign.messages.total
+    );
+
+    let wait_body_marker = "stateless-bounded-wait-delta-body";
+    let wait_arguments = with_mcp_recording_session(
+        json!({
+            "session_id": coordinator_id,
+            "after_observation_token": token1,
+            "wait_secs": 2
+        }),
+        &worker_id,
+    );
+    let post_during_wait_arguments = with_mcp_recording_session(
+        json!({
+            "session_id": coordinator_id,
+            "kind": "progress",
+            "message": wait_body_marker
+        }),
+        &worker_id,
+    );
+    let wait_request = stateless_2026_tool_call(
+        &service,
+        "secret",
+        250,
+        "observe_session_messages",
+        wait_arguments,
+        Some("legacy-wait-request"),
+    );
+    let post_during_wait = async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        stateless_2026_tool_call(
+            &service,
+            "secret",
+            251,
+            "post_session_message",
+            post_during_wait_arguments,
+            Some("different-legacy-post-during-wait"),
+        )
+        .await
+    };
+    let ((wait_status, wait_body), (post_status, post_during_wait_body)) =
+        tokio::join!(wait_request, post_during_wait);
+    assert_eq!(post_status, StatusCode::OK, "{post_during_wait_body}");
+    let wait_message_id = stateless_tool_output(&post_during_wait_body)["message_id"]
+        .as_str()
+        .expect("wait delta message id")
+        .to_string();
+    assert_eq!(wait_status, StatusCode::OK, "{wait_body}");
+    assert_eq!(wait_body["result"]["isError"], false);
+    let waited = stateless_tool_output(&wait_body);
+    assert_eq!(waited["changed"], true);
+    assert_eq!(waited["wait_outcome"], "updated");
+    assert_eq!(waited["history_lost"], false);
+    let waited_messages = waited["messages"].as_array().unwrap();
+    assert_eq!(waited_messages.len(), 1);
+    assert_eq!(waited_messages[0]["message_id"], wait_message_id);
+    assert_eq!(waited_messages[0]["message"], wait_body_marker);
+    let token2 = waited["observation_token"]
+        .as_str()
+        .expect("wait observation token")
+        .to_string();
+    assert_ne!(token2, token1);
+
+    let worker_summary = runtime.sessions.summary(&worker_id, Some(100)).unwrap();
+    let observe_events = worker_summary
+        .events
+        .iter()
+        .filter(|event| event.tool_name == "observe_session_messages")
+        .collect::<Vec<_>>();
+    assert!(observe_events
+        .iter()
+        .any(|event| event.kind == "tool_call_finished"));
+    let session_audit = serde_json::to_string(&observe_events).unwrap();
+    for private in [
+        token0.as_str(),
+        token1.as_str(),
+        token2.as_str(),
+        pre_baseline_body_marker,
+        delta_body_marker,
+        wait_body_marker,
+        "recording_session_id",
+    ] {
+        assert!(
+            !session_audit.contains(private),
+            "stateless observation Session audit leaked private data: {private}"
+        );
+    }
+    let action_audit = {
+        let conn = db.conn_for_tests();
+        let mut statement = conn
+            .prepare("SELECT summary_json FROM action_events WHERE operation = 'observe_session_messages'")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(!action_audit.is_empty());
+    for private in [
+        token0.as_str(),
+        token1.as_str(),
+        token2.as_str(),
+        pre_baseline_body_marker,
+        delta_body_marker,
+        wait_body_marker,
+        "recording_session_id",
+    ] {
+        assert!(
+            !action_audit.contains(private),
+            "stateless observation action audit leaked private data: {private}"
+        );
+    }
+
+    drop(service);
+    drop(runtime);
+    let restored_runtime = Arc::new(
+        ToolRuntime::new_for_tests_with_shell_clients(shell_clients)
+            .with_session_ledger(&ledger)
+            .with_model_surface(ModelSurface::FullOperatorRuntime),
+    );
+    let restored_service = Service::new(build_test_router(config, db, restored_runtime.clone()));
+    let (status, restored_unchanged_body) = stateless_2026_tool_call(
+        &restored_service,
+        "secret",
+        252,
+        "observe_session_messages",
+        with_mcp_recording_session(
+            json!({
+                "session_id": coordinator_id,
+                "after_observation_token": token2
+            }),
+            &worker_id,
+        ),
+        Some("legacy-after-restart"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{restored_unchanged_body}");
+    assert_eq!(restored_unchanged_body["result"]["isError"], false);
+    let restored_unchanged = stateless_tool_output(&restored_unchanged_body);
+    assert_eq!(restored_unchanged["changed"], false);
+    assert!(restored_unchanged["messages"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    let restart_body_marker = "stateless-post-restart-delta-body";
+    let (status, post_restart_body) = stateless_2026_tool_call(
+        &restored_service,
+        "secret",
+        253,
+        "post_session_message",
+        with_mcp_recording_session(
+            json!({
+                "session_id": coordinator_id,
+                "kind": "progress",
+                "message": restart_body_marker
+            }),
+            &worker_id,
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{post_restart_body}");
+    let restart_message_id = stateless_tool_output(&post_restart_body)["message_id"]
+        .as_str()
+        .expect("restart delta message id")
+        .to_string();
+    let (status, restart_delta_body) = stateless_2026_tool_call(
+        &restored_service,
+        "secret",
+        254,
+        "observe_session_messages",
+        with_mcp_recording_session(
+            json!({
+                "session_id": coordinator_id,
+                "after_observation_token": token2
+            }),
+            &worker_id,
+        ),
+        Some("different-legacy-restart-delta"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{restart_delta_body}");
+    assert_eq!(restart_delta_body["result"]["isError"], false);
+    let restart_delta = stateless_tool_output(&restart_delta_body);
+    assert_eq!(restart_delta["changed"], true);
+    let restart_messages = restart_delta["messages"].as_array().unwrap();
+    assert_eq!(restart_messages.len(), 1);
+    assert_eq!(restart_messages[0]["message_id"], restart_message_id);
+    assert_eq!(restart_messages[0]["message"], restart_body_marker);
 }
 
 #[tokio::test]

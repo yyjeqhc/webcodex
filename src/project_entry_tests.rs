@@ -456,7 +456,8 @@ async fn next_project_agent_request(
     registry: &ShellClientRegistry,
     client_id: &str,
 ) -> ShellAgentShellRequest {
-    for _ in 0..2_000 {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
         if let Some(request) = registry
             .poll(ShellAgentPollRequest {
                 client_id: client_id.to_string(),
@@ -468,9 +469,12 @@ async fn next_project_agent_request(
         {
             return request;
         }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "configured project Agent did not receive a request within 10 seconds"
+        );
         tokio::time::sleep(Duration::from_millis(1)).await;
     }
-    panic!("configured project Agent did not receive a request");
 }
 
 async fn complete_project_agent_request(

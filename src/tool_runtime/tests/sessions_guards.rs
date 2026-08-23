@@ -109,9 +109,7 @@ async fn same_project_session_records_without_project_mismatch_warning() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "alpha-client")
-        .await
-        .expect("read_file should enqueue an agent request");
+    let req = wait_for_patch_agent_request(&runtime, "alpha-client").await;
     complete_patch_agent_request(
         &runtime,
         "alpha-client",
@@ -166,9 +164,7 @@ async fn read_only_cross_project_session_succeeds_with_structured_warning() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "bravo-client")
-        .await
-        .expect("read_file should enqueue an agent request");
+    let req = wait_for_patch_agent_request(&runtime, "bravo-client").await;
     complete_patch_agent_request(
         &runtime,
         "bravo-client",
@@ -313,9 +309,7 @@ async fn allow_cross_project_session_allows_mutation_and_records_warning() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "bravo-client")
-        .await
-        .expect("write_project_file should enqueue a native file-op request");
+    let req = wait_for_patch_agent_request(&runtime, "bravo-client").await;
     assert_eq!(req.kind, "file_write_project_file");
     let payload: serde_json::Value =
         serde_json::from_str(req.content.as_deref().expect("file-op payload")).unwrap();
@@ -449,9 +443,7 @@ async fn current_session_binding_cannot_cross_project_boundary() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "bravo-client")
-        .await
-        .expect("read_file should enqueue an agent request");
+    let req = wait_for_patch_agent_request(&runtime, "bravo-client").await;
     complete_patch_agent_request(
         &runtime,
         "bravo-client",
@@ -526,7 +518,7 @@ async fn read_only_current_session_guard_blocks_write_before_enqueue() {
     assert_eq!(result.output["session_id"], session.session_id);
     assert_eq!(result.output["session_recorded"], true);
     assert!(
-        next_agent_request_for_instance(&runtime, "current-guard", "inst")
+        probe_agent_request_for_instance(&runtime, "current-guard", "inst")
             .await
             .is_none(),
         "guard denial must happen before an agent request is enqueued"
@@ -652,9 +644,7 @@ async fn inspect_session_blocks_structured_write_and_landlocks_run_shell() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "guard-inspect")
-        .await
-        .expect("inspect run_shell should be enqueued");
+    let request = wait_for_patch_agent_request(&runtime, "guard-inspect").await;
     assert_eq!(
         request.sandbox.as_deref(),
         Some(crate::command_sandbox::INSPECT_SANDBOX_MODE)
@@ -714,9 +704,7 @@ async fn inspect_session_landlocks_cargo_and_async_job_entry_points() {
         }
     });
     let cargo_request =
-        next_agent_request_for_instance(&runtime, "guard-inspect-all-shell", "inst")
-            .await
-            .expect("inspect cargo_check should enqueue");
+        wait_for_agent_request_for_instance(&runtime, "guard-inspect-all-shell", "inst").await;
     assert_eq!(cargo_request.kind, "run_shell");
     assert_eq!(
         cargo_request.sandbox.as_deref(),
@@ -748,9 +736,8 @@ async fn inspect_session_landlocks_cargo_and_async_job_entry_points() {
         )
         .await;
     assert!(job.success, "{:?}", job.error);
-    let job_request = next_agent_request_for_instance(&runtime, "guard-inspect-all-shell", "inst")
-        .await
-        .expect("inspect run_job should enqueue");
+    let job_request =
+        wait_for_agent_request_for_instance(&runtime, "guard-inspect-all-shell", "inst").await;
     assert_eq!(job_request.kind, "start_job");
     assert_eq!(
         job_request.sandbox.as_deref(),
@@ -800,9 +787,7 @@ async fn read_only_session_allows_read_file_and_records_success() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "guard-read", "inst")
-        .await
-        .expect("read_file should be allowed in read_only session");
+    let req = wait_for_agent_request_for_instance(&runtime, "guard-read", "inst").await;
     assert_eq!(req.kind, "file_read");
     complete_patch_agent_request(
         &runtime,
@@ -977,7 +962,7 @@ async fn read_only_session_rejects_all_artifact_upload_tools_without_base64_leak
         assert_eq!(result.output["session_recorded"], true);
     }
     assert!(
-        next_patch_agent_request(&runtime, "guard-artifact-upload")
+        probe_patch_agent_request(&runtime, "guard-artifact-upload")
             .await
             .is_none(),
         "artifact upload guard denial must not enqueue an agent request"
@@ -1070,7 +1055,7 @@ async fn read_only_session_rejects_run_shell_before_agent_enqueue() {
     assert!(result.output.get("permission").is_none());
     assert_eq!(result.output["session_recorded"], true);
     assert!(
-        next_patch_agent_request(&runtime, "guard-shell")
+        probe_patch_agent_request(&runtime, "guard-shell")
             .await
             .is_none(),
         "run_shell guard denial must not enqueue an agent request"
@@ -1150,9 +1135,7 @@ async fn deny_write_only_allows_read_and_shell_tools() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "guard-write-only", "inst")
-        .await
-        .expect("read_file should be allowed with deny_write_tools only");
+    let req = wait_for_agent_request_for_instance(&runtime, "guard-write-only", "inst").await;
     complete_patch_agent_request(
         &runtime,
         "guard-write-only",
@@ -1186,9 +1169,7 @@ async fn deny_write_only_allows_read_and_shell_tools() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "guard-write-only")
-        .await
-        .expect("run_shell should be allowed when deny_shell_tools=false");
+    let req = wait_for_patch_agent_request(&runtime, "guard-write-only").await;
     complete_patch_agent_request(&runtime, "guard-write-only", &req.request_id, 0, "", "").await;
     assert!(shell_task.await.unwrap().success);
 }
@@ -1258,9 +1239,7 @@ async fn deny_shell_only_allows_write_tools() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "guard-shell-only")
-        .await
-        .expect("write_project_file should be allowed when deny_write_tools=false");
+    let req = wait_for_patch_agent_request(&runtime, "guard-shell-only").await;
     assert_eq!(req.kind, "file_write_project_file");
     complete_patch_agent_request(
         &runtime,

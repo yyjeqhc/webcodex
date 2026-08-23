@@ -70,9 +70,7 @@ async fn run_shell_inherits_session_context_and_explicit_arguments_override_it()
                 .await
         }
     });
-    let inherited_request = next_patch_agent_request(&runtime, "context-shell")
-        .await
-        .expect("inherited run_shell should enqueue");
+    let inherited_request = wait_for_patch_agent_request(&runtime, "context-shell").await;
     assert_eq!(
         inherited_request.cwd.as_deref(),
         Some(frontend.to_string_lossy().as_ref())
@@ -114,9 +112,7 @@ async fn run_shell_inherits_session_context_and_explicit_arguments_override_it()
                 .await
         }
     });
-    let override_request = next_patch_agent_request(&runtime, "context-shell")
-        .await
-        .expect("overridden run_shell should enqueue");
+    let override_request = wait_for_patch_agent_request(&runtime, "context-shell").await;
     assert_eq!(
         override_request.cwd.as_deref(),
         Some(override_dir.to_string_lossy().as_ref())
@@ -157,9 +153,7 @@ async fn run_shell_inherits_session_context_and_explicit_arguments_override_it()
                 .await
         }
     });
-    let no_session_request = next_patch_agent_request(&runtime, "context-shell")
-        .await
-        .expect("sessionless run_shell should enqueue");
+    let no_session_request = wait_for_patch_agent_request(&runtime, "context-shell").await;
     assert_eq!(
         no_session_request.cwd.as_deref(),
         Some(root.to_string_lossy().as_ref())
@@ -231,9 +225,7 @@ async fn run_job_inherits_session_cwd_and_shell() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["cwd"], "frontend");
     assert_eq!(result.output["shell"], "bash");
-    let request = next_agent_request_for_client(&runtime, "context-job")
-        .await
-        .expect("run_job should enqueue a start_job request");
+    let request = wait_for_agent_request_for_client(&runtime, "context-job").await;
     assert_eq!(request.kind, "start_job");
     assert_eq!(
         request.cwd.as_deref(),
@@ -297,9 +289,7 @@ async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_a
                 .await
         }
     });
-    let shell_request = next_agent_request_for_client(&runtime, "context-ssh")
-        .await
-        .expect("SSH shell should enqueue");
+    let shell_request = wait_for_agent_request_for_client(&runtime, "context-ssh").await;
     assert_eq!(shell_request.cwd.as_deref(), Some("/remote/override"));
     let shell_context = shell_request
         .job_context
@@ -344,9 +334,7 @@ async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_a
     assert_eq!(job.output["ssh_resource"], "tmp");
     assert_eq!(job.output["cwd"], "/remote/default");
     let job_id = job.output["job_id"].as_str().unwrap().to_string();
-    let job_request = next_agent_request_for_client(&runtime, "context-ssh")
-        .await
-        .expect("SSH job should enqueue");
+    let job_request = wait_for_agent_request_for_client(&runtime, "context-ssh").await;
     assert_eq!(job_request.kind, "start_job");
     assert_eq!(job_request.cwd.as_deref(), Some("/remote/default"));
     assert_eq!(
@@ -433,7 +421,7 @@ async fn session_ssh_resource_rejects_structured_cargo_before_legacy_sync_start(
         .as_deref()
         .is_some_and(|error| error.contains("ssh_resource_unsupported_for_request")));
     assert!(
-        next_agent_request_for_client(&runtime, "context-ssh-cargo")
+        probe_agent_request_for_client(&runtime, "context-ssh-cargo")
             .await
             .is_none(),
         "structured Cargo rejection must happen before the legacy sync command starts"
@@ -496,7 +484,7 @@ async fn session_ssh_resource_rejects_mutating_cargo_fmt_before_start() {
         .as_deref()
         .is_some_and(|error| error.contains("ssh_resource_unsupported_for_request")));
     assert!(
-        next_agent_request_for_client(&runtime, "context-ssh-cargo-fmt")
+        probe_agent_request_for_client(&runtime, "context-ssh-cargo-fmt")
             .await
             .is_none(),
         "mutating cargo fmt rejection must happen before an Agent shell request starts"
@@ -552,7 +540,7 @@ async fn session_ssh_resource_requires_runner_ssh_shell_capability() {
         .as_deref()
         .is_some_and(|error| error.contains("agent_capability_unavailable")));
     assert!(
-        next_agent_request_for_client(&runtime, "context-ssh-legacy")
+        probe_agent_request_for_client(&runtime, "context-ssh-legacy")
             .await
             .is_none(),
         "an old Runner must not receive an SSH resource request"
@@ -609,9 +597,7 @@ async fn session_ssh_transport_failure_marks_remote_delivery_uncertain() {
                 .await
         }
     });
-    let request = next_agent_request_for_client(&runtime, "context-ssh-transport")
-        .await
-        .expect("SSH shell should enqueue");
+    let request = wait_for_agent_request_for_client(&runtime, "context-ssh-transport").await;
     runtime
         .shell_clients
         .complete(ShellAgentResultPayload {
@@ -688,7 +674,7 @@ async fn mismatch_and_invalid_context_fail_closed_without_root_fallback() {
     assert!(!mismatch.success);
     assert_eq!(mismatch.output["failure_kind"], "session_project_mismatch");
     assert!(
-        next_patch_agent_request(&runtime, "context-second")
+        probe_patch_agent_request(&runtime, "context-second")
             .await
             .is_none(),
         "mismatched Session must not enqueue with inherited context"
@@ -752,9 +738,7 @@ async fn nonexistent_inherited_cwd_is_not_retried_at_project_root() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "context-missing")
-        .await
-        .expect("run_shell should dispatch the inherited cwd once");
+    let request = wait_for_patch_agent_request(&runtime, "context-missing").await;
     assert_eq!(
         request.cwd.as_deref(),
         Some(root.join("missing").to_string_lossy().as_ref())
@@ -781,7 +765,7 @@ async fn nonexistent_inherited_cwd_is_not_retried_at_project_root() {
         .unwrap_or_default()
         .contains("cwd does not exist"));
     assert!(
-        next_patch_agent_request(&runtime, "context-missing")
+        probe_patch_agent_request(&runtime, "context-missing")
             .await
             .is_none(),
         "invalid inherited cwd must not fall back to the project root"

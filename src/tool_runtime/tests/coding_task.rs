@@ -11,6 +11,27 @@ use crate::tool_runtime::{
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+async fn service_agent_task_until_finished(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    task: &tokio::task::JoinHandle<ToolResult>,
+    label: &str,
+) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !task.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "{label} did not finish within the 10-second test deadline"
+        );
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
+            complete_agent_request_by_running_locally(runtime, client_id, request).await;
+        } else {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+}
 
 #[test]
 fn coding_task_tools_are_registered_in_metadata_and_openapi() {
@@ -356,12 +377,14 @@ async fn start_coding_task_creates_managed_temporary_project_then_restores_it_as
     });
 
     let mut create_seen = false;
-    for _ in 0..300 {
-        if task.is_finished() {
-            break;
-        }
-        let Some(request) = next_patch_agent_request(&runtime1, client_id).await else {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let startup_deadline = Instant::now() + Duration::from_secs(10);
+    while !task.is_finished() {
+        assert!(
+            Instant::now() < startup_deadline,
+            "managed temporary startup did not finish within the 10-second test deadline"
+        );
+        let Some(request) = probe_patch_agent_request(&runtime1, client_id).await else {
+            tokio::time::sleep(Duration::from_millis(5)).await;
             continue;
         };
         if request.kind == "create_project" {
@@ -524,17 +547,7 @@ async fn start_coding_task_can_explicitly_disable_current_binding() {
         }
     });
 
-    for _ in 0..200 {
-        if task.is_finished() {
-            break;
-        }
-        if let Some(request) = next_patch_agent_request(&runtime, "coding-start").await {
-            complete_agent_request_by_running_locally(&runtime, "coding-start", request).await;
-        } else {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    }
-    assert!(task.is_finished(), "start_coding_task did not finish");
+    service_agent_task_until_finished(&runtime, "coding-start", &task, "start_coding_task").await;
 
     let result = task.await.unwrap();
 
@@ -906,20 +919,7 @@ async fn start_coding_task_with_git_inspection(
                 .await
         }
     });
-    for _ in 0..200 {
-        if task.is_finished() {
-            break;
-        }
-        if let Some(req) = next_patch_agent_request(runtime, client_id).await {
-            complete_agent_request_by_running_locally(runtime, client_id, req).await;
-        } else {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    }
-    assert!(
-        task.is_finished(),
-        "start_coding_task did not finish after servicing startup agent requests"
-    );
+    service_agent_task_until_finished(runtime, client_id, &task, "start_coding_task").await;
     task.await.unwrap()
 }
 
@@ -943,20 +943,7 @@ async fn start_coding_task_serviced(
                 .await
         }
     });
-    for _ in 0..200 {
-        if task.is_finished() {
-            break;
-        }
-        if let Some(req) = next_patch_agent_request(runtime, client_id).await {
-            complete_agent_request_by_running_locally(runtime, client_id, req).await;
-        } else {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    }
-    assert!(
-        task.is_finished(),
-        "start_coding_task did not finish after servicing startup agent requests"
-    );
+    service_agent_task_until_finished(runtime, client_id, &task, "start_coding_task").await;
     task.await.unwrap()
 }
 
@@ -1414,9 +1401,7 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "coding-finish")
-        .await
-        .expect("finish_coding_task should inspect changes through the agent");
+    let req = wait_for_patch_agent_request(&runtime, "coding-finish").await;
     assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
     let show_changes_stdout = "## main\n M README.md\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=1\nfiles_returned=1\nfiles_truncated=0\nfiles_limit=200\nmodified=1\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=1\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=20\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ncommit=abc123\nshort=abc123\nsummary=add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\nhead_bytes=45\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n README.md | 1 +\n 1 file changed, 1 insertion(+)\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=52\n";
     complete_patch_agent_request(
@@ -1531,20 +1516,13 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
         }
     });
 
-    for _ in 0..200 {
-        if task.is_finished() {
-            break;
-        }
-        if let Some(req) = next_patch_agent_request(&runtime, "coding-finish-compact").await {
-            complete_agent_request_by_running_locally(&runtime, "coding-finish-compact", req).await;
-        } else {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    }
-    assert!(
-        task.is_finished(),
-        "finish_coding_task summary_only did not finish after read-only agent requests"
-    );
+    service_agent_task_until_finished(
+        &runtime,
+        "coding-finish-compact",
+        &task,
+        "finish_coding_task summary_only",
+    )
+    .await;
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
@@ -1701,20 +1679,13 @@ async fn finish_coding_task_summary_only_includes_review_evidence_for_docs_only_
                 .await
         }
     });
-    for _ in 0..200 {
-        if task.is_finished() {
-            break;
-        }
-        if let Some(req) = next_patch_agent_request(&runtime, "coding-finish-docs").await {
-            complete_agent_request_by_running_locally(&runtime, "coding-finish-docs", req).await;
-        } else {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    }
-    assert!(
-        task.is_finished(),
-        "finish_coding_task summary_only did not finish after read-only agent requests"
-    );
+    service_agent_task_until_finished(
+        &runtime,
+        "coding-finish-docs",
+        &task,
+        "finish_coding_task summary_only",
+    )
+    .await;
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
@@ -1799,9 +1770,7 @@ async fn finish_coding_task_summary_only_treats_dirty_workspace_as_advisory() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "coding-finish-dirty")
-        .await
-        .expect("finish_coding_task should inspect changes");
+    let req = wait_for_patch_agent_request(&runtime, "coding-finish-dirty").await;
     complete_agent_request_by_running_locally(&runtime, "coding-finish-dirty", req).await;
     let result = task.await.unwrap();
 
@@ -1882,21 +1851,13 @@ async fn finish_coding_task_does_not_resolve_a_different_validation_identity() {
                 .await
         }
     });
-    for _ in 0..200 {
-        if task.is_finished() {
-            break;
-        }
-        if let Some(req) = next_patch_agent_request(&runtime, "coding-finish-resolved").await {
-            complete_agent_request_by_running_locally(&runtime, "coding-finish-resolved", req)
-                .await;
-        } else {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    }
-    assert!(
-        task.is_finished(),
-        "finish_coding_task summary_only did not finish after read-only agent requests"
-    );
+    service_agent_task_until_finished(
+        &runtime,
+        "coding-finish-resolved",
+        &task,
+        "finish_coding_task summary_only",
+    )
+    .await;
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
@@ -3223,20 +3184,8 @@ async fn finish_coding_task_with_agent(
                 .await
         }
     });
-    for _ in 0..200 {
-        if task.is_finished() {
-            break;
-        }
-        if let Some(req) = next_patch_agent_request(runtime, client_id).await {
-            complete_agent_request_by_running_locally(runtime, client_id, req).await;
-        } else {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    }
-    assert!(
-        task.is_finished(),
-        "finish_coding_task summary_only did not finish after read-only agent requests"
-    );
+    service_agent_task_until_finished(runtime, client_id, &task, "finish_coding_task summary_only")
+        .await;
     task.await.unwrap()
 }
 
@@ -3323,9 +3272,7 @@ async fn start_coding_task_standard_omits_repeated_manifest_and_recommended_flow
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "coding-flow-full")
-        .await
-        .expect("standard startup should inspect workspace state");
+    let request = wait_for_patch_agent_request(&runtime, "coding-flow-full").await;
     complete_agent_request_by_running_locally(&runtime, "coding-flow-full", request).await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);

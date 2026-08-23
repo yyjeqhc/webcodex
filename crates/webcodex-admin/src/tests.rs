@@ -14,6 +14,47 @@ fn request(values: &[&str]) -> AdminCliRequest {
     build_admin_request(&cmd).unwrap()
 }
 
+struct EnvGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    previous: std::collections::BTreeMap<String, Option<std::ffi::OsString>>,
+}
+
+impl EnvGuard {
+    fn new() -> Self {
+        Self {
+            _lock: TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            previous: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn set(&mut self, name: &str, value: &str) {
+        self.previous
+            .entry(name.to_string())
+            .or_insert_with(|| std::env::var_os(name));
+        std::env::set_var(name, value);
+    }
+
+    fn remove(&mut self, name: &str) {
+        self.previous
+            .entry(name.to_string())
+            .or_insert_with(|| std::env::var_os(name));
+        std::env::remove_var(name);
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (name, value) in &self.previous {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+}
+
 #[test]
 fn admin_usage_keeps_rest_registration_commands_but_not_create_local() {
     let stdout = usage();
@@ -162,8 +203,8 @@ fn agent_tokens_register_hash_builds_hash_registration_request() {
 
 #[test]
 fn agent_tokens_register_hash_defaults_agent_scopes_and_prefers_admin_token() {
-    let _guard = TEST_ENV_LOCK.lock().unwrap();
-    std::env::set_var("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
+    let mut env = EnvGuard::new();
+    env.set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
     let req = request(&[
         "agent-tokens",
         "register-hash",
@@ -190,13 +231,13 @@ fn agent_tokens_register_hash_defaults_agent_scopes_and_prefers_admin_token() {
             "agent:job_update"
         ])
     );
-    std::env::remove_var("WEBCODEX_ACCOUNT_CREDENTIAL");
+    env.remove("WEBCODEX_ACCOUNT_CREDENTIAL");
 }
 
 #[test]
 fn agent_tokens_register_hash_uses_credential_env_and_default_account_credential() {
-    let _guard = TEST_ENV_LOCK.lock().unwrap();
-    std::env::set_var("CUSTOM_ACCT", "wc_acct_custom");
+    let mut env = EnvGuard::new();
+    env.set("CUSTOM_ACCT", "wc_acct_custom");
     let req = request(&[
         "agent-tokens",
         "register-hash",
@@ -214,9 +255,9 @@ fn agent_tokens_register_hash_uses_credential_env_and_default_account_credential
         "wc_agent_aaaaaaa",
     ]);
     assert_eq!(req.token, "wc_acct_custom");
-    std::env::remove_var("CUSTOM_ACCT");
+    env.remove("CUSTOM_ACCT");
 
-    std::env::set_var("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
+    env.set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
     let req = request(&[
         "agent-tokens",
         "register-hash",
@@ -232,7 +273,7 @@ fn agent_tokens_register_hash_uses_credential_env_and_default_account_credential
         "wc_agent_bbbbbbb",
     ]);
     assert_eq!(req.token, "wc_acct_default");
-    std::env::remove_var("WEBCODEX_ACCOUNT_CREDENTIAL");
+    env.remove("WEBCODEX_ACCOUNT_CREDENTIAL");
 }
 
 #[test]
@@ -289,8 +330,8 @@ fn token_file_is_read() {
 
 #[test]
 fn env_token_fallback_is_used() {
-    let _guard = TEST_ENV_LOCK.lock().unwrap();
-    std::env::set_var("WEBCODEX_TOKEN", "fake-env-token");
+    let mut env = EnvGuard::new();
+    env.set("WEBCODEX_TOKEN", "fake-env-token");
     let cmd = parse_admin_cli(&args(&[
         "users",
         "list",
@@ -300,13 +341,13 @@ fn env_token_fallback_is_used() {
     .unwrap();
     let req = build_admin_request(&cmd).unwrap();
     assert_eq!(req.token, "fake-env-token");
-    std::env::remove_var("WEBCODEX_TOKEN");
+    env.remove("WEBCODEX_TOKEN");
 }
 
 #[test]
 fn explicit_admin_token_wins_over_default_account_credential_env() {
-    let _guard = TEST_ENV_LOCK.lock().unwrap();
-    std::env::set_var("WEBCODEX_ACCOUNT_CREDENTIAL", "fake-account-credential");
+    let mut env = EnvGuard::new();
+    env.set("WEBCODEX_ACCOUNT_CREDENTIAL", "fake-account-credential");
     let cmd = parse_admin_cli(&args(&[
         "tokens",
         "register-hash",
@@ -324,7 +365,7 @@ fn explicit_admin_token_wins_over_default_account_credential_env() {
     .unwrap();
     let req = build_admin_request(&cmd).unwrap();
     assert_eq!(req.token, "fake-admin");
-    std::env::remove_var("WEBCODEX_ACCOUNT_CREDENTIAL");
+    env.remove("WEBCODEX_ACCOUNT_CREDENTIAL");
 }
 
 #[test]

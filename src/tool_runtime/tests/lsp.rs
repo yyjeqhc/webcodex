@@ -369,15 +369,7 @@ async fn complete_lsp_agent_request(
     client_id: &str,
     result: impl serde::Serialize,
 ) {
-    let mut req = None;
-    for _ in 0..200 {
-        req = next_patch_agent_request(runtime, client_id).await;
-        if req.is_some() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-    let req = req.expect("expected LSP agent request");
+    let req = wait_for_patch_agent_request(runtime, client_id).await;
     assert_eq!(req.kind, AGENT_LSP_REQUEST_KIND);
     assert!(req.lsp.is_some());
     assert!(req.command.is_empty());
@@ -653,7 +645,7 @@ async fn call_hierarchy_requires_its_distinct_runner_capability_before_dispatch(
         "{error}"
     );
     assert!(
-        next_patch_agent_request(&runtime, "navigation-only")
+        probe_patch_agent_request(&runtime, "navigation-only")
             .await
             .is_none(),
         "capability failure must happen before agent dispatch"
@@ -732,15 +724,7 @@ async fn call_hierarchy_dispatch_uses_typed_bridge_and_validates_bounds() {
                 .await
         }
     });
-    let mut request = None;
-    for _ in 0..200 {
-        request = next_patch_agent_request(&runtime, "hierarchy-agent").await;
-        if request.is_some() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-    let request = request.expect("typed call hierarchy request");
+    let request = wait_for_patch_agent_request(&runtime, "hierarchy-agent").await;
     assert_eq!(
         request.lsp.as_ref().map(|payload| &payload.request),
         Some(&AgentLspRequest::CallHierarchy {

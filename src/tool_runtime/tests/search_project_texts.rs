@@ -105,9 +105,7 @@ async fn run_single_agent_batch_response(
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("single batch search request");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     complete_patch_agent_request(
         &runtime,
         client_id,
@@ -265,9 +263,7 @@ async fn search_project_text_default_success_is_sparse_after_session_recording()
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("single sparse search request");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
 
     let result = task.await.unwrap();
@@ -362,9 +358,7 @@ async fn search_project_text_nondefault_success_keeps_effective_metadata() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("nondefault search request");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
 
     let result = task.await.unwrap();
@@ -413,9 +407,7 @@ async fn search_project_text_grep_fallback_keeps_backend_metadata() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("grep fallback search request");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     let stdout = concat!(
         "{\"webcodex_search\":{\"backend\":\"grep\",\"feature_unavailable\":false}}\n",
         "src/a.rs:1:needle\n"
@@ -458,8 +450,8 @@ async fn search_project_texts_default_matches_items_are_sparse_and_schema_valid(
         }
     });
     let requests = [
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
+        wait_for_patch_agent_request(&runtime, client_id).await,
+        wait_for_patch_agent_request(&runtime, client_id).await,
     ];
     for request in &requests {
         let pattern = request_pattern(request);
@@ -548,9 +540,7 @@ async fn search_project_texts_dispatch_mixed_batch_only_sparsifies_success_item(
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("mixed batch successful query request");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request_pattern(&request), "steady");
     complete_search_success(&runtime, client_id, &request, "src/steady.rs").await;
     assert_no_agent_request(&runtime, client_id).await;
@@ -625,8 +615,8 @@ async fn search_project_texts_retries_one_dropped_agent_request_and_restores_ord
     });
 
     let first_two = vec![
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
+        wait_for_patch_agent_request(&runtime, client_id).await,
+        wait_for_patch_agent_request(&runtime, client_id).await,
     ];
     let dropped = first_two
         .iter()
@@ -642,9 +632,7 @@ async fn search_project_texts_retries_one_dropped_agent_request_and_restores_ord
         .await;
     complete_search_success(&runtime, client_id, steady, "src/steady.rs").await;
 
-    let retry = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("dropped query retry");
+    let retry = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request_pattern(&retry), "retry-me");
     assert_ne!(retry.request_id, dropped.request_id);
     complete_search_success(&runtime, client_id, &retry, "src/retried.rs").await;
@@ -677,15 +665,13 @@ async fn search_project_texts_stops_after_two_dropped_agent_attempts() {
         }
     });
 
-    let first = next_patch_agent_request(&runtime, client_id).await.unwrap();
+    let first = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request_pattern(&first), "drop-twice");
     runtime
         .shell_clients
         .cancel_request(&first.request_id)
         .await;
-    let second = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("one retry after first drop");
+    let second = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request_pattern(&second), "drop-twice");
     assert_ne!(second.request_id, first.request_id);
     runtime
@@ -725,8 +711,8 @@ async fn search_project_texts_retry_stays_inside_existing_concurrency_slot() {
     });
 
     let first_two = vec![
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
+        wait_for_patch_agent_request(&runtime, client_id).await,
+        wait_for_patch_agent_request(&runtime, client_id).await,
     ];
     let retry_slot = first_two
         .iter()
@@ -741,9 +727,7 @@ async fn search_project_texts_retry_stays_inside_existing_concurrency_slot() {
         .cancel_request(&retry_slot.request_id)
         .await;
 
-    let retry = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("retry must replace work inside the occupied query slot");
+    let retry = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request_pattern(&retry), "retry-slot");
     assert!(
         poll_agent_request(&runtime, client_id).await.is_none(),
@@ -751,9 +735,7 @@ async fn search_project_texts_retry_stays_inside_existing_concurrency_slot() {
     );
 
     complete_search_success(&runtime, client_id, &retry, "src/retry.rs").await;
-    let third = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("third query after retry slot completes");
+    let third = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request_pattern(&third), "third");
     complete_search_success(&runtime, client_id, blocker, "src/blocker.rs").await;
     complete_search_success(&runtime, client_id, &third, "src/third.rs").await;
@@ -779,15 +761,13 @@ async fn search_project_texts_retry_uses_only_remaining_absolute_deadline() {
         }
     });
 
-    let first = next_patch_agent_request(&runtime, client_id).await.unwrap();
+    let first = wait_for_patch_agent_request(&runtime, client_id).await;
     tokio::time::sleep(Duration::from_millis(1100)).await;
     runtime
         .shell_clients
         .cancel_request(&first.request_id)
         .await;
-    let retry = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("retry before batch deadline");
+    let retry = wait_for_patch_agent_request(&runtime, client_id).await;
     assert!(
         retry.timeout_secs < first.timeout_secs,
         "retry reset the command timeout instead of using remaining batch budget: first={} retry={}",
@@ -812,7 +792,7 @@ async fn search_project_texts_retry_uses_only_remaining_absolute_deadline() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, client_id).await.unwrap();
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     let result = tokio::time::timeout(Duration::from_secs(2), task)
         .await
         .expect("absolute batch deadline should end the query")
@@ -947,15 +927,15 @@ async fn search_project_texts_restores_input_order_after_out_of_order_runner_com
     });
 
     let first_two = [
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
+        wait_for_patch_agent_request(&runtime, client_id).await,
+        wait_for_patch_agent_request(&runtime, client_id).await,
     ];
     let second = first_two
         .iter()
         .find(|request| request_pattern(request) == "second")
         .unwrap();
     complete_search_success(&runtime, client_id, second, "src/second.rs").await;
-    let third = next_patch_agent_request(&runtime, client_id).await.unwrap();
+    let third = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request_pattern(&third), "third");
     complete_search_success(&runtime, client_id, &third, "src/third.rs").await;
     let first = first_two
@@ -1025,7 +1005,7 @@ async fn search_project_texts_isolates_validation_no_match_and_protected_path_re
     });
 
     for _ in 0..2 {
-        let request = next_patch_agent_request(&runtime, client_id).await.unwrap();
+        let request = wait_for_patch_agent_request(&runtime, client_id).await;
         match request_pattern(&request).as_str() {
             "found" => complete_search_success(&runtime, client_id, &request, "src/found.rs").await,
             "absent" => {
@@ -1085,8 +1065,8 @@ async fn search_project_texts_runner_in_flight_is_concurrent_and_never_exceeds_t
     });
 
     let mut active = vec![
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
+        wait_for_patch_agent_request(&runtime, client_id).await,
+        wait_for_patch_agent_request(&runtime, client_id).await,
     ];
     let third_before_completion = runtime
         .shell_clients
@@ -1107,7 +1087,7 @@ async fn search_project_texts_runner_in_flight_is_concurrent_and_never_exceeds_t
     while dispatched < 8 {
         let finished = active.remove(0);
         complete_search_success(&runtime, client_id, &finished, "src/result.rs").await;
-        active.push(next_patch_agent_request(&runtime, client_id).await.unwrap());
+        active.push(wait_for_patch_agent_request(&runtime, client_id).await);
         dispatched += 1;
         max_in_flight = max_in_flight.max(active.len());
         assert!(active.len() <= 2);
@@ -1145,15 +1125,15 @@ async fn search_project_texts_deadline_preserves_fast_result_and_cancels_unfinis
         }
     });
     let first_two = vec![
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
-        next_patch_agent_request(&runtime, client_id).await.unwrap(),
+        wait_for_patch_agent_request(&runtime, client_id).await,
+        wait_for_patch_agent_request(&runtime, client_id).await,
     ];
     let fast = first_two
         .iter()
         .find(|request| request_pattern(request) == "fast")
         .unwrap();
     complete_search_success(&runtime, client_id, fast, "src/fast.rs").await;
-    let third = next_patch_agent_request(&runtime, client_id).await.unwrap();
+    let third = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request_pattern(&third), "slow-b");
     let unfinished = first_two
         .into_iter()
@@ -1225,7 +1205,7 @@ async fn search_project_texts_records_one_event_without_patterns_and_aggregates_
         }
     });
     for _ in 0..2 {
-        let request = next_patch_agent_request(&runtime, client_id).await.unwrap();
+        let request = wait_for_patch_agent_request(&runtime, client_id).await;
         let stdout = match request_pattern(&request).as_str() {
             "RAW_BATCH_PATTERN_ALPHA" => format!(
                 "{}{}",

@@ -78,15 +78,7 @@ async fn next_semantic_status_request(
     runtime: &ToolRuntime,
     client_id: &str,
 ) -> crate::shell_protocol::ShellAgentShellRequest {
-    let mut request = None;
-    for _ in 0..200 {
-        request = next_patch_agent_request(runtime, client_id).await;
-        if request.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(2)).await;
-    }
-    let request = request.expect("semantic navigation status request");
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
     assert_eq!(request.kind, AGENT_LSP_REQUEST_KIND);
     assert!(request.command.is_empty());
     assert!(request.stdin.is_none());
@@ -171,20 +163,18 @@ async fn finish_start_servicing_locally(
     client_id: &str,
     task: tokio::task::JoinHandle<ToolResult>,
 ) -> ToolResult {
-    for _ in 0..400 {
-        if task.is_finished() {
-            break;
-        }
-        if let Some(request) = next_patch_agent_request(runtime, client_id).await {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !task.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "start_coding_task did not finish within the 10-second test deadline"
+        );
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
             complete_agent_request_by_running_locally(runtime, client_id, request).await;
         } else {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
-    assert!(
-        task.is_finished(),
-        "start_coding_task did not finish after servicing startup agent requests"
-    );
     task.await.unwrap()
 }
 
@@ -308,11 +298,13 @@ async fn coding_task_semantic_navigation_legacy_agent_is_not_enqueued() {
     let project =
         register_semantic_agent(&runtime, "legacy-agent", "demo", temp.path(), false).await;
     let task = spawn_start(&runtime, project, SessionMode::Normal);
-    for _ in 0..400 {
-        if task.is_finished() {
-            break;
-        }
-        if let Some(request) = next_patch_agent_request(&runtime, "legacy-agent").await {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !task.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "legacy-agent startup did not finish within the 10-second test deadline"
+        );
+        if let Some(request) = probe_patch_agent_request(&runtime, "legacy-agent").await {
             assert_ne!(
                 request.kind, AGENT_LSP_REQUEST_KIND,
                 "legacy agent must not receive an LSP probe"
@@ -329,7 +321,7 @@ async fn coding_task_semantic_navigation_legacy_agent_is_not_enqueued() {
     assert_eq!(semantic["reason_code"], "lsp_capability_not_advertised");
     assert_eq!(semantic["available"], false);
     assert_eq!(semantic["capability"], Value::Null);
-    assert!(next_patch_agent_request(&runtime, "legacy-agent")
+    assert!(probe_patch_agent_request(&runtime, "legacy-agent")
         .await
         .is_none());
 }
@@ -374,7 +366,7 @@ async fn coding_task_semantic_navigation_disconnected_agent_is_nonblocking() {
         warning_kinds.contains(&"git_unavailable"),
         "{warning_kinds:?}"
     );
-    assert!(next_patch_agent_request(&runtime, "offline-agent")
+    assert!(probe_patch_agent_request(&runtime, "offline-agent")
         .await
         .is_none());
 }

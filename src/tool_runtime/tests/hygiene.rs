@@ -43,7 +43,7 @@ async fn dispatch_hygiene_with_agent(
             tokio::time::Instant::now() < deadline,
             "hygiene check did not finish within 10 seconds for client {client_id}"
         );
-        if let Some(req) = next_patch_agent_request(runtime, client_id).await {
+        if let Some(req) = probe_patch_agent_request(runtime, client_id).await {
             assert_eq!(req.kind, "run_internal_posix_script");
             assert!(req.command.is_empty());
             let payload = req

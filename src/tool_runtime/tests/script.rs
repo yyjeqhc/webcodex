@@ -216,9 +216,7 @@ async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_ki
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "script-wire")
-        .await
-        .expect("run_script should enqueue");
+    let request = wait_for_patch_agent_request(&runtime, "script-wire").await;
     assert_eq!(request.kind, "run_script");
     assert_eq!(request.command, "");
     assert!(request.process.is_none());
@@ -280,9 +278,7 @@ async fn run_script_fast_success_projects_back_and_removes_the_hidden_job() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "script-fast-job")
-        .await
-        .expect("hidden script Job should dispatch");
+    let request = wait_for_patch_agent_request(&runtime, "script-fast-job").await;
     assert_eq!(request.kind, "start_script_job");
     assert_eq!(request.command, "");
     assert!(request.process.is_none());
@@ -387,9 +383,7 @@ async fn run_script_fast_missing_interpreter_retains_not_started_through_the_hid
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "script-prestart-job")
-        .await
-        .expect("hidden script Job should dispatch");
+    let request = wait_for_patch_agent_request(&runtime, "script-prestart-job").await;
     let queued = runtime
         .shell_clients
         .get_hidden_job_for_auth(Some(&auth), request.job_id.as_deref().unwrap())
@@ -471,9 +465,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "script-slow-job")
-        .await
-        .expect("typed script Job should dispatch");
+    let request = wait_for_patch_agent_request(&runtime, "script-slow-job").await;
     assert_eq!(request.kind, "start_script_job");
     assert_eq!(request.command, "");
     assert!(request.process.is_none());
@@ -612,7 +604,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
         terminal.command_execution_state,
         Some(ShellCommandExecutionState::Completed)
     );
-    assert!(next_patch_agent_request(&runtime, "script-slow-job")
+    assert!(probe_patch_agent_request(&runtime, "script-slow-job")
         .await
         .is_none());
 }
@@ -662,9 +654,7 @@ async fn b2_script_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "script-b2")
-        .await
-        .expect("B2 direct script request");
+    let request = wait_for_patch_agent_request(&runtime, "script-b2").await;
     assert_eq!(request.kind, "run_script");
     complete_script_lifecycle(
         &runtime,
@@ -710,7 +700,7 @@ async fn b2_script_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
     assert_eq!(rejected.output["execution_state"], "not_started");
     assert_eq!(rejected.output["command_started"], false);
     assert_eq!(rejected.output["failure_kind"], "capability_unavailable");
-    assert!(next_patch_agent_request(&runtime, "script-b2")
+    assert!(probe_patch_agent_request(&runtime, "script-b2")
         .await
         .is_none());
 }
@@ -734,9 +724,7 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "script-lifecycle")
-        .await
-        .unwrap();
+    let request = wait_for_patch_agent_request(&runtime, "script-lifecycle").await;
     complete_script_lifecycle(
         &runtime,
         "script-lifecycle",
@@ -768,9 +756,7 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "script-lifecycle")
-        .await
-        .unwrap();
+    let request = wait_for_patch_agent_request(&runtime, "script-lifecycle").await;
     complete_script_lifecycle(
         &runtime,
         "script-lifecycle",
@@ -804,9 +790,7 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
                 .await
         }
     });
-    next_patch_agent_request(&runtime, "script-lifecycle")
-        .await
-        .unwrap();
+    wait_for_patch_agent_request(&runtime, "script-lifecycle").await;
     runtime
         .shell_clients
         .reconcile_disconnect("script-lifecycle", "inst")
@@ -846,9 +830,7 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
                 .await
         }
     });
-    let request = next_patch_agent_request(&missing_runtime, "script-interpreter")
-        .await
-        .unwrap();
+    let request = wait_for_patch_agent_request(&missing_runtime, "script-interpreter").await;
     complete_script_lifecycle(
         &missing_runtime,
         "script-interpreter",
@@ -889,7 +871,7 @@ async fn run_script_capability_and_authority_fail_before_enqueue_without_shell_f
         .as_deref()
         .unwrap_or_default()
         .contains("no shell fallback"));
-    assert!(next_patch_agent_request(&runtime, "legacy-script")
+    assert!(probe_patch_agent_request(&runtime, "legacy-script")
         .await
         .is_none());
 
@@ -913,7 +895,7 @@ async fn run_script_capability_and_authority_fail_before_enqueue_without_shell_f
     assert_eq!(denied.output["command_started"], false);
     assert_eq!(denied.output["command_completed"], false);
     assert_eq!(denied.output["failure_kind"], "permission_denied");
-    assert!(next_patch_agent_request(&denied_runtime, "denied-script")
+    assert!(probe_patch_agent_request(&denied_runtime, "denied-script")
         .await
         .is_none());
 }
@@ -976,9 +958,7 @@ async fn run_script_session_defaults_and_evidence_are_body_and_stdin_free() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "script-context")
-        .await
-        .expect("Session run_script should enqueue");
+    let request = wait_for_patch_agent_request(&runtime, "script-context").await;
     assert_eq!(
         request.cwd.as_deref(),
         Some(frontend.to_string_lossy().as_ref())
@@ -1081,7 +1061,7 @@ async fn run_script_ssh_read_only_closed_and_inspect_session_boundaries_fail_clo
     assert_eq!(unsupported.output["error_kind"], "unsupported_resource");
     assert_eq!(unsupported.output["recovery_kind"], "fix_input");
     assert!(unsupported.output.get("recovery_tool").is_none());
-    assert!(next_patch_agent_request(&runtime, "script-guards")
+    assert!(probe_patch_agent_request(&runtime, "script-guards")
         .await
         .is_none());
 
@@ -1106,7 +1086,7 @@ async fn run_script_ssh_read_only_closed_and_inspect_session_boundaries_fail_clo
     assert_eq!(mismatched.output["execution_state"], "not_started");
     assert_eq!(mismatched.output["command_started"], false);
     assert_eq!(mismatched.output["command_completed"], false);
-    assert!(next_patch_agent_request(&runtime, "script-guards")
+    assert!(probe_patch_agent_request(&runtime, "script-guards")
         .await
         .is_none());
 
@@ -1175,9 +1155,7 @@ async fn run_script_ssh_read_only_closed_and_inspect_session_boundaries_fail_clo
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "script-guards")
-        .await
-        .expect("inspect script should enqueue");
+    let request = wait_for_patch_agent_request(&runtime, "script-guards").await;
     assert_eq!(
         request.sandbox.as_deref(),
         Some(crate::command_sandbox::INSPECT_SANDBOX_MODE)
@@ -1313,7 +1291,7 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
         "capability_unavailable"
     );
     assert_eq!(durable_only.output["async_handoff_available"], false);
-    assert!(next_patch_agent_request(&runtime, "script-bounds")
+    assert!(probe_patch_agent_request(&runtime, "script-bounds")
         .await
         .is_none());
 }
@@ -1355,7 +1333,7 @@ async fn model_facing_run_script_session_denials_keep_phase_a_tuple() {
     assert_eq!(result.output["command_started"], false);
     assert_eq!(result.output["command_completed"], false);
     assert_eq!(result.output["failure_kind"], "session_guard_denied");
-    assert!(next_patch_agent_request(&runtime, "script-kernel")
+    assert!(probe_patch_agent_request(&runtime, "script-kernel")
         .await
         .is_none());
 }

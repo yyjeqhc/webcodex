@@ -8,6 +8,55 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Panic-safe process-global environment mutation guard for server tests.
+///
+/// The guard holds the canonical server test env lock for its full lifetime,
+/// snapshots each variable only before the first mutation, and restores the
+/// original process environment during unwinding as well as ordinary drop.
+pub(crate) struct TestEnvGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    previous: std::collections::BTreeMap<String, Option<std::ffi::OsString>>,
+}
+
+impl TestEnvGuard {
+    pub(crate) fn new() -> Self {
+        Self {
+            _lock: crate::admin_cli::TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            previous: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn remember(&mut self, name: &str) {
+        if !self.previous.contains_key(name) {
+            self.previous
+                .insert(name.to_string(), std::env::var_os(name));
+        }
+    }
+
+    pub(crate) fn set(&mut self, name: &str, value: impl AsRef<std::ffi::OsStr>) {
+        self.remember(name);
+        std::env::set_var(name, value);
+    }
+
+    pub(crate) fn remove(&mut self, name: &str) {
+        self.remember(name);
+        std::env::remove_var(name);
+    }
+}
+
+impl Drop for TestEnvGuard {
+    fn drop(&mut self) {
+        for (name, value) in &self.previous {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+}
+
 /// Minimal `Config` for tests (token sets whether auth is enabled).
 pub(crate) fn test_config(token: Option<&str>) -> Arc<crate::Config> {
     Arc::new(crate::Config {

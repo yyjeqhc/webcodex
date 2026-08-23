@@ -157,7 +157,7 @@ async fn validation_summary_is_guard_safe_read_only_and_does_not_pollute_ledger(
         .events
         .is_empty());
     assert!(
-        next_patch_agent_request(&runtime, "validation-summary-safe")
+        probe_patch_agent_request(&runtime, "validation-summary-safe")
             .await
             .is_none()
     );

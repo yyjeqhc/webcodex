@@ -91,9 +91,7 @@ async fn read_file_accepts_unique_short_id() {
                 .await
         }
     });
-    let req = next_agent_request_for_client(&runtime, "workstation")
-        .await
-        .expect("read_file should enqueue an agent file_read request");
+    let req = wait_for_agent_request_for_client(&runtime, "workstation").await;
     assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
     runtime
         .shell_clients
@@ -131,9 +129,7 @@ async fn git_status_accepts_unique_short_id() {
                 .await
         }
     });
-    let req = next_agent_request_for_client(&runtime, "workstation")
-        .await
-        .expect("git_status should enqueue an agent shell request");
+    let req = wait_for_agent_request_for_client(&runtime, "workstation").await;
     assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
     runtime
         .shell_clients
@@ -198,9 +194,7 @@ async fn full_id_remains_compatible_for_project_tools() {
                 .await
         }
     });
-    let req = next_agent_request_for_client(&runtime, "workstation")
-        .await
-        .expect("full id should still enqueue an agent request");
+    let req = wait_for_agent_request_for_client(&runtime, "workstation").await;
     runtime
         .shell_clients
         .complete(ShellAgentResultRequest {

@@ -298,9 +298,7 @@ async fn bound_current_session_records_project_tool_without_session_id() {
             .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "current-read", "inst")
-        .await
-        .expect("read_file should enqueue with current session");
+    let req = wait_for_agent_request_for_instance(&runtime, "current-read", "inst").await;
     complete_patch_agent_request(
         &runtime,
         "current-read",
@@ -417,9 +415,8 @@ async fn open_anonymous_can_bind_current_session_and_record_project_read() {
             .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "open-current", "inst-open-current")
-        .await
-        .expect("open read_file should enqueue with current session");
+    let req =
+        wait_for_agent_request_for_instance(&runtime, "open-current", "inst-open-current").await;
     complete_patch_agent_request_for_instance(
         &runtime,
         "open-current",
@@ -494,9 +491,7 @@ async fn generic_tool_call_uses_bound_current_session_without_session_id() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "current-generic", "inst")
-        .await
-        .expect("generic read_file should enqueue with current session");
+    let req = wait_for_agent_request_for_instance(&runtime, "current-generic", "inst").await;
     complete_patch_agent_request(
         &runtime,
         "current-generic",
@@ -590,9 +585,7 @@ async fn explicit_session_id_wins_over_current_session() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "current-explicit", "inst")
-        .await
-        .expect("read_file should enqueue with explicit session");
+    let req = wait_for_agent_request_for_instance(&runtime, "current-explicit", "inst").await;
     complete_patch_agent_request(
         &runtime,
         "current-explicit",
@@ -693,7 +686,7 @@ async fn unknown_explicit_session_id_does_not_fallback_to_current_session() {
         0
     );
     assert!(
-        next_agent_request_for_instance(&runtime, "current-missing-explicit", "inst")
+        probe_agent_request_for_instance(&runtime, "current-missing-explicit", "inst")
             .await
             .is_none(),
         "unknown explicit session_id must not enqueue via current-session fallback"
@@ -765,9 +758,7 @@ async fn stale_current_session_is_cleared_and_project_tool_runs_without_session(
             .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "current-stale", "inst")
-        .await
-        .expect("stale current session should not block no-session call");
+    let req = wait_for_agent_request_for_instance(&runtime, "current-stale", "inst").await;
     complete_patch_agent_request(
         &runtime,
         "current-stale",

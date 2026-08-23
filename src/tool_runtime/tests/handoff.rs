@@ -871,7 +871,7 @@ async fn real_cargo_nonzero_failures_match_validation_failed_expectations() {
         });
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let req = loop {
-            if let Some(req) = next_patch_agent_request(&runtime, "cargo-expected-kind").await {
+            if let Some(req) = probe_patch_agent_request(&runtime, "cargo-expected-kind").await {
                 break req;
             }
             if task.is_finished() {
@@ -985,7 +985,7 @@ async fn cargo_test_zero_tests_success_is_detected_and_warns_in_handoff() {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let req = loop {
-        if let Some(req) = next_patch_agent_request(&runtime, "cargo-zero-tests").await {
+        if let Some(req) = probe_patch_agent_request(&runtime, "cargo-zero-tests").await {
             break req;
         }
         assert!(
@@ -3197,7 +3197,7 @@ async fn complete_agent_shell_requests_until_finished<T>(
             std::time::Instant::now() < deadline,
             "tool did not finish within 10 seconds after Agent requests for {client_id}"
         );
-        if let Some(req) = next_patch_agent_request(runtime, client_id).await {
+        if let Some(req) = probe_patch_agent_request(runtime, client_id).await {
             complete_agent_request_by_running_locally(runtime, client_id, req).await;
         } else {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;

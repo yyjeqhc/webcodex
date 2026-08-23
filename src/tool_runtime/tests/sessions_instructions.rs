@@ -45,9 +45,7 @@ async fn start_session_without_project_instructions_when_no_candidate_exists() {
     });
     // Drive every candidate file_read in order; each fails with not-found.
     for expected_path in project_instructions::INSTRUCTION_CANDIDATE_PATHS {
-        let req = next_agent_request_for_instance(&runtime, "instr-empty", "inst")
-            .await
-            .expect("each candidate should enqueue an agent file_read");
+        let req = wait_for_agent_request_for_instance(&runtime, "instr-empty", "inst").await;
         assert_eq!(req.kind, "file_read");
         assert_eq!(
             req.path.as_deref(),
@@ -115,9 +113,7 @@ async fn start_session_loads_agents_md_from_agent_project() {
         }
     });
     // The loader tries AGENTS.md first; drive that single file_read.
-    let req = next_agent_request_for_instance(&runtime, "instr-loader", "inst")
-        .await
-        .expect("instruction load should enqueue an agent file_read");
+    let req = wait_for_agent_request_for_instance(&runtime, "instr-loader", "inst").await;
     assert_eq!(req.kind, "file_read");
     assert_eq!(req.path.as_deref(), Some("AGENTS.md"));
     complete_patch_agent_request(
@@ -186,9 +182,7 @@ async fn start_session_truncates_large_instruction_file() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "instr-trunc", "inst")
-        .await
-        .expect("instruction load should enqueue an agent file_read");
+    let req = wait_for_agent_request_for_instance(&runtime, "instr-trunc", "inst").await;
     assert_eq!(req.kind, "file_read");
     assert_eq!(req.path.as_deref(), Some("AGENTS.md"));
     // Simulate the agent returning MAX_LINES_PER_FILE + 1 lines for a file
@@ -261,9 +255,7 @@ async fn session_summary_returns_project_instructions_without_content() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "instr-summary", "inst")
-        .await
-        .expect("instruction load should enqueue an agent file_read");
+    let req = wait_for_agent_request_for_instance(&runtime, "instr-summary", "inst").await;
     complete_patch_agent_request(
         &runtime,
         "instr-summary",
@@ -340,9 +332,7 @@ async fn load_project_instructions_first_match_wins_from_agent_project() {
     // CLAUDE.md is present (3rd candidate). First match wins => agents.md.
     let load = runtime.load_project_instructions(&config);
     let drive_agent = async {
-        let missing = next_agent_request_for_instance(&runtime, "instr-order", "inst")
-            .await
-            .expect("AGENTS.md candidate should enqueue an agent file_read");
+        let missing = wait_for_agent_request_for_instance(&runtime, "instr-order", "inst").await;
         assert_eq!(missing.kind, "file_read");
         assert_eq!(missing.path.as_deref(), Some("AGENTS.md"));
         complete_patch_agent_request(
@@ -355,9 +345,7 @@ async fn load_project_instructions_first_match_wins_from_agent_project() {
         )
         .await;
 
-        let present = next_agent_request_for_instance(&runtime, "instr-order", "inst")
-            .await
-            .expect("agents.md candidate should enqueue an agent file_read");
+        let present = wait_for_agent_request_for_instance(&runtime, "instr-order", "inst").await;
         assert_eq!(present.kind, "file_read");
         assert_eq!(present.path.as_deref(), Some("agents.md"));
         complete_patch_agent_request(

@@ -53,9 +53,7 @@ async fn read_agent_file_for_session(
                 .await
         }
     });
-    let req = next_agent_request_for_instance(runtime, client_id, "inst")
-        .await
-        .expect("read_file should enqueue an agent request");
+    let req = wait_for_agent_request_for_instance(runtime, client_id, "inst").await;
     complete_patch_agent_request(
         runtime,
         client_id,
@@ -106,9 +104,7 @@ async fn read_file_with_session_id_records_event_without_content() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "telemetry-read", "inst")
-        .await
-        .expect("read_file should enqueue an agent request");
+    let req = wait_for_agent_request_for_instance(&runtime, "telemetry-read", "inst").await;
     assert_eq!(req.kind, "file_read");
     complete_patch_agent_request(
         &runtime,
@@ -177,9 +173,7 @@ async fn read_file_without_session_id_omits_session_telemetry() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "telemetry-nosession", "inst")
-        .await
-        .expect("read_file should enqueue without session_id");
+    let req = wait_for_agent_request_for_instance(&runtime, "telemetry-nosession", "inst").await;
     complete_patch_agent_request(
         &runtime,
         "telemetry-nosession",
@@ -685,9 +679,7 @@ async fn finish_coding_task_does_not_auto_close_session() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "coding-finish-no-close")
-        .await
-        .expect("finish_coding_task should inspect workspace through the agent");
+    let req = wait_for_patch_agent_request(&runtime, "coding-finish-no-close").await;
     complete_patch_agent_request(
         &runtime,
         "coding-finish-no-close",

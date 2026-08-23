@@ -1053,9 +1053,7 @@ async fn run_shell_declared_validation_enters_unified_summary_with_shell_and_roo
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "validation-shell")
-        .await
-        .expect("run_shell should reach the Agent");
+    let request = wait_for_patch_agent_request(&runtime, "validation-shell").await;
     assert_eq!(request.kind, "run_shell");
     assert!(request.command.starts_with("exec bash -c "));
     complete_patch_agent_request(
@@ -1133,9 +1131,7 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
     assert_eq!(execution.output["cwd"], ".");
     assert_eq!(execution.output["shell"], "bash");
     let job_id = execution.output["job_id"].as_str().unwrap().to_string();
-    let request = next_agent_request_for_client(&runtime, "validation-job")
-        .await
-        .expect("run_job should enqueue a start_job request");
+    let request = wait_for_agent_request_for_client(&runtime, "validation-job").await;
     assert_eq!(request.kind, "start_job");
     runtime
         .shell_clients
@@ -1294,9 +1290,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "validation-finish")
-        .await
-        .expect("cargo_check should enqueue an agent shell request");
+    let req = wait_for_patch_agent_request(&runtime, "validation-finish").await;
     assert!(req.command.contains("cargo check --all-targets"));
     complete_patch_agent_request(&runtime, "validation-finish", &req.request_id, 0, "", "").await;
     let check = check_task.await.unwrap();
@@ -1331,9 +1325,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "validation-finish")
-        .await
-        .expect("cargo_test should enqueue an agent shell request");
+    let req = wait_for_patch_agent_request(&runtime, "validation-finish").await;
     assert!(req.command.contains("cargo test"));
     complete_patch_agent_request(
         &runtime,
@@ -1370,9 +1362,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "validation-finish")
-        .await
-        .expect("finish_coding_task should inspect changes through the agent");
+    let req = wait_for_patch_agent_request(&runtime, "validation-finish").await;
     assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
     complete_patch_agent_request(
         &runtime,
@@ -1479,9 +1469,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "validation-finish")
-        .await
-        .expect("summary-only finish should inspect changes through the agent");
+    let req = wait_for_patch_agent_request(&runtime, "validation-finish").await;
     complete_patch_agent_request(
         &runtime,
         "validation-finish",

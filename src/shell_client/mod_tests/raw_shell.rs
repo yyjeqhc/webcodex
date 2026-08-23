@@ -35,7 +35,8 @@ async fn raw_shell_run_wait_timeout_preserves_known_dispatch_evidence() {
         }))
         .send(&service);
     let poll = async {
-        for _ in 0..200 {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
             if let Some(request) = registry
                 .poll(ShellAgentPollRequest {
                     client_id: client_id.to_string(),
@@ -47,9 +48,12 @@ async fn raw_shell_run_wait_timeout_preserves_known_dispatch_evidence() {
             {
                 return request;
             }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "raw shell request was not dispatched within 2 seconds"
+            );
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
-        panic!("raw shell request was not dispatched");
     };
     let (mut response, request) = tokio::join!(response, poll);
     assert_eq!(request.kind, "run_shell");

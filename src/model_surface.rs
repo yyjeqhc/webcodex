@@ -92,10 +92,6 @@ pub(crate) fn local_coding_tool_specs() -> Vec<ToolSpec> {
 mod tests {
     use super::*;
 
-    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
-        crate::admin_cli::TEST_ENV_LOCK.lock().unwrap()
-    }
-
     #[test]
     fn local_coding_tool_names_are_ordered_and_unique() {
         let mut seen = std::collections::HashSet::new();
@@ -186,28 +182,28 @@ mod tests {
 
     #[test]
     fn default_surface_is_local_coding_without_connector_or_env() {
-        let _guard = env_guard();
-        std::env::remove_var(MCP_MODEL_SURFACE_ENV);
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.remove(MCP_MODEL_SURFACE_ENV);
         assert_eq!(resolve_model_surface(None), Ok(ModelSurface::LocalCoding));
     }
 
     #[test]
     fn explicit_local_coding_and_full_operator_values() {
-        let _guard = env_guard();
-        std::env::set_var(MCP_MODEL_SURFACE_ENV, MCP_MODEL_SURFACE_LOCAL_CODING_V1);
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set(MCP_MODEL_SURFACE_ENV, MCP_MODEL_SURFACE_LOCAL_CODING_V1);
         assert_eq!(resolve_model_surface(None), Ok(ModelSurface::LocalCoding));
-        std::env::set_var(MCP_MODEL_SURFACE_ENV, MCP_MODEL_SURFACE_FULL_OPERATOR_V1);
+        env.set(MCP_MODEL_SURFACE_ENV, MCP_MODEL_SURFACE_FULL_OPERATOR_V1);
         assert_eq!(
             resolve_model_surface(None),
             Ok(ModelSurface::FullOperatorRuntime)
         );
-        std::env::remove_var(MCP_MODEL_SURFACE_ENV);
+        env.remove(MCP_MODEL_SURFACE_ENV);
     }
 
     #[test]
     fn connector_configured_selects_canonical_connector() {
-        let _guard = env_guard();
-        std::env::remove_var(MCP_MODEL_SURFACE_ENV);
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.remove(MCP_MODEL_SURFACE_ENV);
         let context = connector_context();
         assert_eq!(
             resolve_model_surface(Some(&context)),
@@ -217,17 +213,17 @@ mod tests {
 
     #[test]
     fn invalid_and_conflicting_values_fail_resolution() {
-        let _guard = env_guard();
-        std::env::set_var(MCP_MODEL_SURFACE_ENV, "bogus-surface");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set(MCP_MODEL_SURFACE_ENV, "bogus-surface");
         let error = resolve_model_surface(None).expect_err("invalid value must fail");
         assert!(error.contains("unsupported"), "error: {error}");
         assert!(error.contains("bogus-surface"), "error: {error}");
 
-        std::env::set_var(MCP_MODEL_SURFACE_ENV, MCP_MODEL_SURFACE_LOCAL_CODING_V1);
+        env.set(MCP_MODEL_SURFACE_ENV, MCP_MODEL_SURFACE_LOCAL_CODING_V1);
         let context = connector_context();
         let error = resolve_model_surface(Some(&context)).expect_err("conflict must fail");
         assert!(error.contains("cannot be combined"), "error: {error}");
         assert!(error.contains(MCP_MODEL_SURFACE_ENV), "error: {error}");
-        std::env::remove_var(MCP_MODEL_SURFACE_ENV);
+        env.remove(MCP_MODEL_SURFACE_ENV);
     }
 }

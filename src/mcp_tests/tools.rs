@@ -1,5 +1,32 @@
 use super::*;
 
+async fn wait_for_mcp_agent_request(
+    registry: &crate::shell_client::ShellClientRegistry,
+    client_id: &str,
+    agent_instance_id: &str,
+    label: &str,
+) -> crate::shell_protocol::ShellAgentShellRequest {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Some(request) = registry
+            .poll(ShellAgentPollRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: agent_instance_id.to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+        {
+            return request;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{label} did not dispatch within 10 seconds"
+        );
+        tokio::task::yield_now().await;
+    }
+}
+
 // The compact switch is read per tools/list request, so `WEBCODEX_MCP_COMPACT_SCHEMAS`
 // must stay stable (and serialized against other env-mutating tests) for the whole
 // async body below. The full-operator surface is passed explicitly instead of via env.
@@ -12,7 +39,7 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
     // covered by dedicated tests:
     // `mcp_tools_list_default_retains_output_schema` and
     // `mcp_tools_list_compact_omits_output_schema_only`.
-    let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+    let mut env = crate::test_support::TestEnvGuard::new();
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     let runtime_names: Vec<String> = registered_tool_specs()
         .iter()
@@ -26,9 +53,9 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
 
     for compact in [false, true] {
         if compact {
-            std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+            env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
         } else {
-            std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+            env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
         }
         let outcome = handle_mcp_request(
             &runtime,
@@ -115,7 +142,6 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             }
         }
     }
-    std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
 }
 
 #[test]
@@ -473,29 +499,13 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
         }
     });
 
-    let mut request = None;
-    for _ in 0..200 {
-        request = runtime
-            .shell_clients
-            .poll(ShellAgentPollRequest {
-                client_id: client_id.to_string(),
-                agent_instance_id: agent_instance_id.to_string(),
-                projects: None,
-            })
-            .await
-            .unwrap();
-        if request.is_some() || call.is_finished() {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    let request = match request {
-        Some(request) => request,
-        None => {
-            let outcome = call.await.unwrap();
-            panic!("MCP image call should enqueue a remote artifact read, got {outcome:?}");
-        }
-    };
+    let request = wait_for_mcp_agent_request(
+        &runtime.shell_clients,
+        client_id,
+        agent_instance_id,
+        "MCP image call",
+    )
+    .await;
     assert_eq!(request.kind, "file_read_project_artifact");
     assert_eq!(request.cwd.as_deref(), Some("/remote/session-atlas"));
     let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
@@ -743,8 +753,8 @@ fn mcp_tools_list_compact_is_smaller_than_full_serialized() {
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn mcp_tools_call_still_returns_structured_content_under_compact_flag() {
-    let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-    std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
     let runtime = test_runtime();
     let outcome = handle_mcp_request(
         &runtime,
@@ -756,7 +766,6 @@ async fn mcp_tools_call_still_returns_structured_content_under_compact_flag() {
         None,
     )
     .await;
-    std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
     let McpOutcome::Ok(value) = outcome else {
         panic!("expected Ok, got {outcome:?}");
     };
@@ -1112,8 +1121,8 @@ async fn mcp_tools_list_hides_testing_metadata_while_raw_call_records_it() {
 #[tokio::test]
 async fn mcp_show_changes_distinguishes_reserved_session_id_from_query_session_id() {
     use crate::shell_protocol::{
-        ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
-        ShellClientCapabilities, ShellClientRegisterRequest,
+        ShellAgentProjectSummary, ShellAgentResultRequest, ShellClientCapabilities,
+        ShellClientRegisterRequest,
     };
 
     let runtime = test_runtime();
@@ -1199,23 +1208,13 @@ async fn mcp_show_changes_distinguishes_reserved_session_id_from_query_session_i
         Some(&auth),
     );
     let complete = async {
-        let mut req = None;
-        for _ in 0..50 {
-            req = runtime
-                .shell_clients
-                .poll(ShellAgentPollRequest {
-                    client_id: "mcp-client".to_string(),
-                    agent_instance_id: "inst".to_string(),
-                    projects: None,
-                })
-                .await
-                .unwrap();
-            if req.is_some() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-        let req = req.expect("show_changes should enqueue an agent shell request");
+        let req = wait_for_mcp_agent_request(
+            &runtime.shell_clients,
+            "mcp-client",
+            "inst",
+            "show_changes",
+        )
+        .await;
         let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0test head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
         runtime
             .shell_clients

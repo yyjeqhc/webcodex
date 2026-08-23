@@ -5,8 +5,7 @@ use super::super::patch::*;
 use super::super::*;
 use super::support::*;
 use crate::shell_protocol::{
-    ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,
-    ShellClientRegisterRequest,
+    ShellAgentResultRequest, ShellClientCapabilities, ShellClientRegisterRequest,
 };
 use serde_json::json;
 
@@ -144,9 +143,7 @@ async fn agent_run_shell_resolves_relative_cwd_from_registered_project_root() {
                     .await
             }
         });
-        let request = next_patch_agent_request(&runtime, "cwd-agent")
-            .await
-            .expect("run_shell should enqueue");
+        let request = wait_for_patch_agent_request(&runtime, "cwd-agent").await;
         assert_eq!(
             request.cwd.as_deref(),
             Some(expected.to_string_lossy().as_ref())
@@ -166,7 +163,7 @@ async fn agent_run_shell_resolves_relative_cwd_from_registered_project_root() {
         assert_eq!(result.output["failure_kind"], "permission_denied");
     }
     assert!(
-        next_patch_agent_request(&runtime, "cwd-agent")
+        probe_patch_agent_request(&runtime, "cwd-agent")
             .await
             .is_none(),
         "unsafe cwd must be rejected before Agent enqueue"
@@ -188,9 +185,7 @@ async fn cargo_check_failure_includes_stderr_tail_or_guidance() {
             .cargo_check(project, None, None, None, None, None, None, Some(60))
             .await
     });
-    let req = next_patch_agent_request(&runtime, "cargo-checker")
-        .await
-        .expect("cargo_check should enqueue a cargo command");
+    let req = wait_for_patch_agent_request(&runtime, "cargo-checker").await;
     assert_eq!(req.command, "cargo check --all-targets");
     complete_patch_agent_request(
         &runtime,
@@ -244,9 +239,7 @@ async fn cargo_test_failure_includes_stderr_tail_or_guidance() {
             )
             .await
     });
-    let req = next_patch_agent_request(&runtime, "cargo-tester")
-        .await
-        .expect("cargo_test should enqueue a cargo command");
+    let req = wait_for_patch_agent_request(&runtime, "cargo-tester").await;
     assert_eq!(req.command, "cargo test 'failing'");
     complete_patch_agent_request(
         &runtime,
@@ -297,9 +290,7 @@ async fn cargo_test_output_includes_bounded_failed_test_diagnostics() {
             )
             .await
     });
-    let req = next_patch_agent_request(&runtime, "cargo-diag")
-        .await
-        .expect("cargo_test should enqueue a cargo command");
+    let req = wait_for_patch_agent_request(&runtime, "cargo-diag").await;
     assert_eq!(req.command, "cargo test 'multi_fail'");
     complete_patch_agent_request(
         &runtime,
@@ -399,9 +390,7 @@ async fn cargo_test_passing_output_includes_empty_failed_test_details_diagnostic
             )
             .await
     });
-    let req = next_patch_agent_request(&runtime, "cargo-pass-diag")
-        .await
-        .expect("cargo_test should enqueue a cargo command");
+    let req = wait_for_patch_agent_request(&runtime, "cargo-pass-diag").await;
     complete_patch_agent_request(
         &runtime,
         "cargo-pass-diag",
@@ -456,9 +445,7 @@ async fn cargo_test_multi_harness_counts_match_diagnostics_summary() {
             )
             .await
     });
-    let req = next_patch_agent_request(&runtime, "cargo-multi-harness")
-        .await
-        .expect("cargo_test should enqueue a cargo command");
+    let req = wait_for_patch_agent_request(&runtime, "cargo-multi-harness").await;
     complete_patch_agent_request(
         &runtime,
         "cargo-multi-harness",
@@ -520,9 +507,7 @@ async fn cargo_test_agent_timeout_is_not_validation_failed() {
             )
             .await
     });
-    let req = next_patch_agent_request(&runtime, "cargo-timeout")
-        .await
-        .expect("cargo_test should enqueue a cargo command");
+    let req = wait_for_patch_agent_request(&runtime, "cargo-timeout").await;
     assert_eq!(req.command, "cargo test 'slow'");
     runtime
         .shell_clients
@@ -562,9 +547,7 @@ async fn cargo_fmt_failure_includes_stderr_tail_or_guidance() {
             .cargo_fmt(project, None, Some(true), Some(60))
             .await
     });
-    let req = next_patch_agent_request(&runtime, "cargo-formatter")
-        .await
-        .expect("cargo_fmt should enqueue a cargo command");
+    let req = wait_for_patch_agent_request(&runtime, "cargo-formatter").await;
     assert_eq!(req.command, "cargo fmt -- --check");
     complete_patch_agent_request(
         &runtime,
@@ -630,23 +613,7 @@ new file mode 100644\n\
     let apply_task =
         tokio::spawn(async move { runtime_for_task.apply_patch(project, patch).await });
 
-    let mut check_req = None;
-    for _ in 0..10 {
-        check_req = runtime
-            .shell_clients
-            .poll(ShellAgentPollRequest {
-                client_id: "patcher".to_string(),
-                agent_instance_id: "inst".to_string(),
-                projects: None,
-            })
-            .await
-            .unwrap();
-        if check_req.is_some() {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    let check_req = check_req.expect("apply_patch should enqueue git apply --check for the agent");
+    let check_req = wait_for_agent_request_for_instance(&runtime, "patcher", "inst").await;
     assert_eq!(check_req.command, "git apply --check -");
     assert!(check_req
         .stdin
@@ -668,23 +635,7 @@ new file mode 100644\n\
         .await
         .unwrap();
 
-    let mut apply_req = None;
-    for _ in 0..10 {
-        apply_req = runtime
-            .shell_clients
-            .poll(ShellAgentPollRequest {
-                client_id: "patcher".to_string(),
-                agent_instance_id: "inst".to_string(),
-                projects: None,
-            })
-            .await
-            .unwrap();
-        if apply_req.is_some() {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    let apply_req = apply_req.expect("apply_patch should enqueue git apply for the agent");
+    let apply_req = wait_for_agent_request_for_instance(&runtime, "patcher", "inst").await;
     assert_eq!(apply_req.command, "git apply -");
     assert!(apply_req
         .stdin
@@ -734,9 +685,7 @@ async fn apply_patch_agent_command_excludes_patch_content_and_uses_stdin_and_cwd
         tokio::spawn(async move { runtime_for_task.apply_patch(project, patch_for_apply).await });
 
     // 1) preflight check: `git apply --check -`
-    let check_req = next_patch_agent_request(&runtime, "patcher")
-        .await
-        .expect("apply_patch should enqueue a git apply --check request");
+    let check_req = wait_for_patch_agent_request(&runtime, "patcher").await;
     assert_safe_patch_command(&check_req.command, marker);
     assert_eq!(check_req.command, "git apply --check -");
     assert_eq!(check_req.stdin.as_deref(), Some(patch.as_str()));
@@ -744,9 +693,7 @@ async fn apply_patch_agent_command_excludes_patch_content_and_uses_stdin_and_cwd
     complete_patch_agent_request(&runtime, "patcher", &check_req.request_id, 0, "OK\n", "").await;
 
     // 2) apply: `git apply -`
-    let apply_req = next_patch_agent_request(&runtime, "patcher")
-        .await
-        .expect("apply_patch should enqueue a git apply request");
+    let apply_req = wait_for_patch_agent_request(&runtime, "patcher").await;
     assert_safe_patch_command(&apply_req.command, marker);
     assert_eq!(apply_req.command, "git apply -");
     assert_eq!(apply_req.stdin.as_deref(), Some(patch.as_str()));
@@ -794,24 +741,20 @@ async fn apply_patch_checked_does_not_apply_when_check_fails() {
     });
 
     // 1) validate preflight check: fails (exit 1) -> can_apply=false.
-    let check_req = next_patch_agent_request(&runtime, "patcher")
-        .await
-        .expect("apply_patch_checked should enqueue a validate check request");
+    let check_req = wait_for_patch_agent_request(&runtime, "patcher").await;
     assert_safe_patch_command(&check_req.command, marker);
     assert_eq!(check_req.command, "git apply --check -");
     assert_eq!(check_req.stdin.as_deref(), Some(patch.as_str()));
     complete_patch_agent_request(&runtime, "patcher", &check_req.request_id, 1, "", "bad").await;
 
     // 2) validate stat summary still runs (read-only, regardless of can_apply).
-    let stat_req = next_patch_agent_request(&runtime, "patcher")
-        .await
-        .expect("validate_patch should enqueue a git apply --stat request");
+    let stat_req = wait_for_patch_agent_request(&runtime, "patcher").await;
     assert_safe_patch_command(&stat_req.command, marker);
     assert_eq!(stat_req.command, "git apply --stat -");
     complete_patch_agent_request(&runtime, "patcher", &stat_req.request_id, 0, "stat", "").await;
 
     // 3) No apply step must be enqueued because the preflight failed.
-    let leaked_apply = next_patch_agent_request(&runtime, "patcher").await;
+    let leaked_apply = probe_patch_agent_request(&runtime, "patcher").await;
     assert!(
         leaked_apply.is_none(),
         "apply_patch_checked must not apply when the check fails (got: {:?})",
@@ -853,24 +796,18 @@ async fn apply_patch_checked_applies_large_patch_over_command_limit_via_stdin() 
     });
 
     // 1) validate check.
-    let check_req = next_patch_agent_request(&runtime, "patcher")
-        .await
-        .expect("validate check request");
+    let check_req = wait_for_patch_agent_request(&runtime, "patcher").await;
     assert_safe_patch_command(&check_req.command, marker);
     assert_eq!(check_req.stdin.as_deref(), Some(patch.as_str()));
     complete_patch_agent_request(&runtime, "patcher", &check_req.request_id, 0, "", "").await;
 
     // 2) validate stat.
-    let stat_req = next_patch_agent_request(&runtime, "patcher")
-        .await
-        .expect("validate stat request");
+    let stat_req = wait_for_patch_agent_request(&runtime, "patcher").await;
     assert_safe_patch_command(&stat_req.command, marker);
     complete_patch_agent_request(&runtime, "patcher", &stat_req.request_id, 0, "stat", "").await;
 
     // 3) apply preflight check.
-    let apply_check_req = next_patch_agent_request(&runtime, "patcher")
-        .await
-        .expect("apply check request");
+    let apply_check_req = wait_for_patch_agent_request(&runtime, "patcher").await;
     assert_safe_patch_command(&apply_check_req.command, marker);
     assert_eq!(apply_check_req.command, "git apply --check -");
     assert_eq!(apply_check_req.stdin.as_deref(), Some(patch.as_str()));
@@ -885,16 +822,14 @@ async fn apply_patch_checked_applies_large_patch_over_command_limit_via_stdin() 
     .await;
 
     // 4) apply.
-    let apply_req = next_patch_agent_request(&runtime, "patcher")
-        .await
-        .expect("apply request");
+    let apply_req = wait_for_patch_agent_request(&runtime, "patcher").await;
     assert_safe_patch_command(&apply_req.command, marker);
     assert_eq!(apply_req.command, "git apply -");
     assert_eq!(apply_req.stdin.as_deref(), Some(patch.as_str()));
     complete_patch_agent_request(&runtime, "patcher", &apply_req.request_id, 0, "", "").await;
 
     // 5) post-apply git_diff_summary (drain + complete generically).
-    if let Some(diff_req) = next_patch_agent_request(&runtime, "patcher").await {
+    if let Some(diff_req) = probe_patch_agent_request(&runtime, "patcher").await {
         complete_patch_agent_request(&runtime, "patcher", &diff_req.request_id, 0, "", "").await;
     }
 
@@ -1054,25 +989,9 @@ async fn register_project_crosses_historical_64_threshold_and_is_immediately_res
             )
             .await
     });
-    let mut request = None;
-    for _ in 0..20 {
-        request = next_agent_request_for_client(&runtime, client_id).await;
-        if request.is_some() {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    let request = match request {
-        Some(request) => request,
-        None => {
-            assert!(
-                task.is_finished(),
-                "register_project task neither enqueued nor completed"
-            );
-            let early = task.await.unwrap();
-            panic!("register_project completed before enqueue: {early:?}");
-        }
-    };
+    let request =
+        wait_for_agent_request_for_instance(&runtime, client_id, &format!("inst-{client_id}"))
+            .await;
     assert_eq!(request.kind, "register_project");
     let authoritative = json!({
         "outcome": "registered",
@@ -1115,7 +1034,7 @@ async fn register_project_crosses_historical_64_threshold_and_is_immediately_res
         authoritative["revision"].as_str().map(str::to_string)
     );
     assert!(
-        next_agent_request_for_client(&runtime, client_id)
+        probe_agent_request_for_client(&runtime, client_id)
             .await
             .is_none(),
         "successful projection must not replay the mutation"
@@ -1152,15 +1071,9 @@ async fn register_project_projection_failure_returns_reconcile_required_without_
             )
             .await
     });
-    let mut request = None;
-    for _ in 0..20 {
-        request = next_agent_request_for_client(&runtime, client_id).await;
-        if request.is_some() {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    let request = request.expect("register_project should enqueue one mutation");
+    let request =
+        wait_for_agent_request_for_instance(&runtime, client_id, &format!("inst-{client_id}"))
+            .await;
     assert_eq!(request.kind, "register_project");
     let authoritative = json!({
         "outcome": "registered",
@@ -1216,7 +1129,7 @@ async fn register_project_projection_failure_returns_reconcile_required_without_
         "failed Server projection must not falsely advertise routing"
     );
     assert!(
-        next_agent_request_for_client(&runtime, client_id)
+        probe_agent_request_for_client(&runtime, client_id)
             .await
             .is_none(),
         "uncertain post-persist state must not blind-retry register_project"
@@ -1305,19 +1218,7 @@ async fn dispatch_unregister_project_removes_server_inventory_after_terminal_run
                 .await
         }
     });
-    let request = loop {
-        if let Some(request) = next_agent_request_for_client(&runtime, client_id).await {
-            break request;
-        }
-        if task.is_finished() {
-            let result = task.await.unwrap();
-            panic!(
-                "unregister returned before dispatching a lifecycle request: success={} error={:?} output={}",
-                result.success, result.error, result.output
-            );
-        }
-        tokio::task::yield_now().await;
-    };
+    let request = wait_for_agent_request_for_client(&runtime, client_id).await;
     assert_eq!(request.kind, "project_lifecycle_unregister");
     let payload: serde_json::Value =
         serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
@@ -1500,9 +1401,7 @@ async fn mutating_dispatch_feeds_the_activity_recorder() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "activity-shell")
-        .await
-        .expect("run_shell should enqueue a request");
+    let request = wait_for_patch_agent_request(&runtime, "activity-shell").await;
     complete_patch_agent_request(&runtime, "activity-shell", &request.request_id, 0, "ok", "")
         .await;
     let shell = shell_task.await.unwrap();
@@ -1531,9 +1430,7 @@ async fn mutating_dispatch_feeds_the_activity_recorder() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "activity-shell")
-        .await
-        .expect("short project id should enqueue on the resolved client");
+    let request = wait_for_patch_agent_request(&runtime, "activity-shell").await;
     complete_patch_agent_request(&runtime, "activity-shell", &request.request_id, 0, "ok", "")
         .await;
     let alias = alias_task.await.unwrap();

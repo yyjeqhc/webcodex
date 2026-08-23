@@ -659,12 +659,12 @@ mod tests {
 
     #[test]
     fn quic_server_config_from_env_disabled_by_default() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::remove_var("WEBCODEX_QUIC_ENABLED");
-        std::env::remove_var("WEBCODEX_QUIC_LISTEN");
-        std::env::remove_var("WEBCODEX_QUIC_CERT");
-        std::env::remove_var("WEBCODEX_QUIC_KEY");
-        std::env::remove_var("WEBCODEX_QUIC_ALPN");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.remove("WEBCODEX_QUIC_ENABLED");
+        env.remove("WEBCODEX_QUIC_LISTEN");
+        env.remove("WEBCODEX_QUIC_CERT");
+        env.remove("WEBCODEX_QUIC_KEY");
+        env.remove("WEBCODEX_QUIC_ALPN");
         let cfg = QuicServerConfig::from_env();
         assert!(!cfg.enabled);
         assert_eq!(cfg.listen, "0.0.0.0:8443");
@@ -692,13 +692,13 @@ mod tests {
 
     #[test]
     fn codex_config_from_env_uses_defaults_when_unset() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
         // Clear CODEX_* env vars so we get deterministic defaults.
-        std::env::remove_var("CODEX_BIN");
-        std::env::remove_var("CODEX_APPROVAL_MODE");
-        std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");
-        std::env::remove_var("CODEX_MAX_PROMPT_BYTES");
-        std::env::remove_var("CODEX_ALLOWED_EXTRA_ARGS");
+        env.remove("CODEX_BIN");
+        env.remove("CODEX_APPROVAL_MODE");
+        env.remove("CODEX_DEFAULT_TIMEOUT_SECS");
+        env.remove("CODEX_MAX_PROMPT_BYTES");
+        env.remove("CODEX_ALLOWED_EXTRA_ARGS");
 
         let cfg = CodexConfig::from_env();
         assert_eq!(cfg.bin, "codex");
@@ -711,12 +711,12 @@ mod tests {
 
     #[test]
     fn codex_config_from_env_parses_overrides() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("CODEX_BIN", "/usr/local/bin/codex");
-        std::env::set_var("CODEX_APPROVAL_MODE", "suggest");
-        std::env::set_var("CODEX_DEFAULT_TIMEOUT_SECS", "600");
-        std::env::set_var("CODEX_MAX_PROMPT_BYTES", "2048");
-        std::env::set_var("CODEX_ALLOWED_EXTRA_ARGS", "--verbose, --json, --no-color");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("CODEX_BIN", "/usr/local/bin/codex");
+        env.set("CODEX_APPROVAL_MODE", "suggest");
+        env.set("CODEX_DEFAULT_TIMEOUT_SECS", "600");
+        env.set("CODEX_MAX_PROMPT_BYTES", "2048");
+        env.set("CODEX_ALLOWED_EXTRA_ARGS", "--verbose, --json, --no-color");
 
         let cfg = CodexConfig::from_env();
         assert_eq!(cfg.bin, "/usr/local/bin/codex");
@@ -732,56 +732,59 @@ mod tests {
         assert!(!cfg.is_extra_arg_allowed("--danger"));
 
         // Restore defaults.
-        std::env::remove_var("CODEX_BIN");
-        std::env::remove_var("CODEX_APPROVAL_MODE");
-        std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");
-        std::env::remove_var("CODEX_MAX_PROMPT_BYTES");
-        std::env::remove_var("CODEX_ALLOWED_EXTRA_ARGS");
+        env.remove("CODEX_BIN");
+        env.remove("CODEX_APPROVAL_MODE");
+        env.remove("CODEX_DEFAULT_TIMEOUT_SECS");
+        env.remove("CODEX_MAX_PROMPT_BYTES");
+        env.remove("CODEX_ALLOWED_EXTRA_ARGS");
     }
 
     #[test]
     fn codex_config_from_env_trims_approval_mode_whitespace() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("CODEX_APPROVAL_MODE", "  suggest  ");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("CODEX_APPROVAL_MODE", "  suggest  ");
         let cfg = CodexConfig::from_env();
         assert_eq!(cfg.approval_mode, "suggest");
 
         // An unset/blank value normalizes to empty (disabled). The disabled
         // sentinels (none/off/disabled) are recognized later by
         // build_codex_command, so the config keeps the trimmed token.
-        std::env::set_var("CODEX_APPROVAL_MODE", "   ");
+        env.set("CODEX_APPROVAL_MODE", "   ");
         let cfg = CodexConfig::from_env();
         assert_eq!(cfg.approval_mode, "");
 
-        std::env::remove_var("CODEX_APPROVAL_MODE");
+        env.remove("CODEX_APPROVAL_MODE");
     }
 
     #[test]
     fn codex_config_from_env_ignores_invalid_numeric_values() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("CODEX_DEFAULT_TIMEOUT_SECS", "not-a-number");
-        std::env::set_var("CODEX_MAX_PROMPT_BYTES", "-5");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("CODEX_DEFAULT_TIMEOUT_SECS", "not-a-number");
+        env.set("CODEX_MAX_PROMPT_BYTES", "-5");
 
         let cfg = CodexConfig::from_env();
         assert_eq!(cfg.default_timeout_secs, 3600);
         assert_eq!(cfg.max_prompt_bytes, 100_000);
 
-        std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");
-        std::env::remove_var("CODEX_MAX_PROMPT_BYTES");
+        env.remove("CODEX_DEFAULT_TIMEOUT_SECS");
+        env.remove("CODEX_MAX_PROMPT_BYTES");
     }
 
     #[test]
     fn oauth2_config_defaults_to_disabled() {
-        let _env = crate::auth::AuthEnvGuard::auth_required();
-        std::env::remove_var("WEBCODEX_OAUTH2_ENABLED");
-        std::env::remove_var("WEBCODEX_PUBLIC_URL");
-        std::env::remove_var("WEBCODEX_OAUTH2_ISSUER");
-        std::env::remove_var("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS");
-        std::env::remove_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS");
-        std::env::remove_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
-        std::env::remove_var("WEBCODEX_OAUTH2_REQUIRE_PKCE");
-        std::env::remove_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE");
-        std::env::remove_var("WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.remove("WEBCODEX_SHARED_KEY_ENABLED");
+        env.remove("WEBCODEX_ALLOW_ANONYMOUS");
+        env.remove("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE");
+        env.remove("WEBCODEX_OAUTH2_ENABLED");
+        env.remove("WEBCODEX_PUBLIC_URL");
+        env.remove("WEBCODEX_OAUTH2_ISSUER");
+        env.remove("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS");
+        env.remove("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS");
+        env.remove("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
+        env.remove("WEBCODEX_OAUTH2_REQUIRE_PKCE");
+        env.remove("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE");
+        env.remove("WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS");
 
         let cfg = OAuth2Config::from_env();
         assert!(!cfg.enabled);
@@ -796,17 +799,17 @@ mod tests {
 
     #[test]
     fn oauth2_config_from_env_parses_overrides() {
-        let env = crate::auth::AuthEnvGuard::new();
-        std::env::set_var("WEBCODEX_OAUTH2_ENABLED", "true");
-        std::env::set_var("WEBCODEX_OAUTH2_ISSUER", "https://example.com");
-        std::env::set_var("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS", "1800");
-        std::env::set_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS", "86400");
-        std::env::set_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS", "600");
-        std::env::set_var("WEBCODEX_OAUTH2_REQUIRE_PKCE", "false");
-        env.enable_oauth2_shared_key_bridge();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_OAUTH2_ENABLED", "true");
+        env.set("WEBCODEX_OAUTH2_ISSUER", "https://example.com");
+        env.set("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS", "1800");
+        env.set("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS", "86400");
+        env.set("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS", "600");
+        env.set("WEBCODEX_OAUTH2_REQUIRE_PKCE", "false");
+        env.set("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE", "true");
         let trusted_a = format!("wc_client_{}", "a".repeat(64));
         let trusted_b = format!("wc_client_{}", "b".repeat(64));
-        std::env::set_var(
+        env.set(
             "WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS",
             format!(
                 " {trusted_a} , invalid-client, {trusted_a}, {trusted_b}, wc_client_{} ",
@@ -824,119 +827,119 @@ mod tests {
         assert!(cfg.shared_key_bridge_enabled);
         assert_eq!(cfg.trusted_mcp_file_client_ids, vec![trusted_a, trusted_b]);
 
-        std::env::remove_var("WEBCODEX_OAUTH2_ENABLED");
-        std::env::remove_var("WEBCODEX_OAUTH2_ISSUER");
-        std::env::remove_var("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS");
-        std::env::remove_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS");
-        std::env::remove_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
-        std::env::remove_var("WEBCODEX_OAUTH2_REQUIRE_PKCE");
-        std::env::remove_var("WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS");
+        env.remove("WEBCODEX_OAUTH2_ENABLED");
+        env.remove("WEBCODEX_OAUTH2_ISSUER");
+        env.remove("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS");
+        env.remove("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS");
+        env.remove("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
+        env.remove("WEBCODEX_OAUTH2_REQUIRE_PKCE");
+        env.remove("WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS");
     }
 
     #[test]
     fn oauth2_config_issuer_prefers_oauth2_issuer_over_public_url() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("WEBCODEX_PUBLIC_URL", "https://pub.example.com");
-        std::env::set_var("WEBCODEX_OAUTH2_ISSUER", "https://issuer.example.com");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_PUBLIC_URL", "https://pub.example.com");
+        env.set("WEBCODEX_OAUTH2_ISSUER", "https://issuer.example.com");
 
         let cfg = OAuth2Config::from_env();
         assert_eq!(cfg.issuer.as_deref(), Some("https://issuer.example.com"));
 
-        std::env::remove_var("WEBCODEX_OAUTH2_ISSUER");
+        env.remove("WEBCODEX_OAUTH2_ISSUER");
         // Falls back to WEBCODEX_PUBLIC_URL when OAUTH2_ISSUER is absent.
         let cfg = OAuth2Config::from_env();
         assert_eq!(cfg.issuer.as_deref(), Some("https://pub.example.com"));
 
-        std::env::remove_var("WEBCODEX_PUBLIC_URL");
+        env.remove("WEBCODEX_PUBLIC_URL");
     }
 
     #[test]
     fn codex_config_allowed_extra_args_ignores_empty_entries() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("CODEX_ALLOWED_EXTRA_ARGS", " --verbose , , --json ");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("CODEX_ALLOWED_EXTRA_ARGS", " --verbose , , --json ");
 
         let cfg = CodexConfig::from_env();
         assert_eq!(cfg.allowed_extra_args, vec!["--verbose", "--json"]);
 
-        std::env::remove_var("CODEX_ALLOWED_EXTRA_ARGS");
+        env.remove("CODEX_ALLOWED_EXTRA_ARGS");
     }
 
     #[test]
     fn load_startup_env_files_explicit_path_loads_webcodex_env() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
         let dir = tempfile::tempdir().unwrap();
         let new_file = dir.path().join("webcodex.env");
         std::fs::write(&new_file, "WEBCODEX_TOKEN=new\n").unwrap();
-        std::env::set_var("WEBCODEX_ENV_FILE", &new_file);
-        std::env::remove_var("WEBCODEX_TOKEN");
+        env.set("WEBCODEX_ENV_FILE", &new_file);
+        env.remove("WEBCODEX_TOKEN");
 
         let loads = load_startup_env_files().unwrap();
         assert_eq!(loads.len(), 1);
         assert_eq!(loads[0].path, new_file);
         assert_eq!(std::env::var("WEBCODEX_TOKEN").unwrap(), "new");
 
-        std::env::remove_var("WEBCODEX_ENV_FILE");
+        env.remove("WEBCODEX_ENV_FILE");
     }
     #[test]
     fn mcp_compact_schemas_defaults_off() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
         assert!(!mcp_compact_schemas_enabled());
     }
 
     #[test]
     fn mcp_compact_schemas_true_enables() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
         assert!(mcp_compact_schemas_enabled());
-        std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "1");
+        env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "1");
         assert!(mcp_compact_schemas_enabled());
-        std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
+        env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
         assert!(!mcp_compact_schemas_enabled());
-        std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "maybe");
+        env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "maybe");
         // Invalid values are treated as unset by env_flag -> default false.
         assert!(!mcp_compact_schemas_enabled());
-        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+        env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
     }
 
     #[test]
     fn action_compact_responses_defaults_off() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::remove_var("WEBCODEX_ACTION_COMPACT_RESPONSES");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.remove("WEBCODEX_ACTION_COMPACT_RESPONSES");
         assert!(!action_compact_responses_enabled());
     }
 
     #[test]
     fn action_compact_responses_true_enables() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "true");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_ACTION_COMPACT_RESPONSES", "true");
         assert!(action_compact_responses_enabled());
-        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "1");
+        env.set("WEBCODEX_ACTION_COMPACT_RESPONSES", "1");
         assert!(action_compact_responses_enabled());
-        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "yes");
+        env.set("WEBCODEX_ACTION_COMPACT_RESPONSES", "yes");
         assert!(action_compact_responses_enabled());
-        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "false");
+        env.set("WEBCODEX_ACTION_COMPACT_RESPONSES", "false");
         assert!(!action_compact_responses_enabled());
-        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "maybe");
+        env.set("WEBCODEX_ACTION_COMPACT_RESPONSES", "maybe");
         assert!(!action_compact_responses_enabled());
-        std::env::remove_var("WEBCODEX_ACTION_COMPACT_RESPONSES");
+        env.remove("WEBCODEX_ACTION_COMPACT_RESPONSES");
     }
     #[test]
     fn tool_request_trace_defaults_off() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::remove_var("WEBCODEX_TOOL_REQUEST_TRACE");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
         assert!(!tool_request_trace_enabled());
     }
 
     #[test]
     fn tool_request_trace_true_enables() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("WEBCODEX_TOOL_REQUEST_TRACE", "true");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "true");
         assert!(tool_request_trace_enabled());
-        std::env::set_var("WEBCODEX_TOOL_REQUEST_TRACE", "false");
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "false");
         assert!(!tool_request_trace_enabled());
-        std::env::set_var("WEBCODEX_TOOL_REQUEST_TRACE", "maybe");
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "maybe");
         assert!(!tool_request_trace_enabled());
-        std::env::remove_var("WEBCODEX_TOOL_REQUEST_TRACE");
+        env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
     }
 }

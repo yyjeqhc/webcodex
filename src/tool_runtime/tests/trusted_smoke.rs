@@ -12,6 +12,7 @@ use serde_json::Value;
 use sha2::Digest;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 const CLIENT: &str = "smoke-agent";
 
@@ -29,7 +30,12 @@ async fn dispatch_with_local_agent(
             runtime.dispatch_with_auth(call, Some(&bootstrap)).await
         }
     });
+    let deadline = Instant::now() + Duration::from_secs(10);
     while !task.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "trusted smoke dispatch did not finish within the 10-second test deadline"
+        );
         poll_calls.fetch_add(1, Ordering::SeqCst);
         let request = runtime
             .shell_clients
@@ -41,7 +47,7 @@ async fn dispatch_with_local_agent(
             .await
             .unwrap();
         let Some(req) = request else {
-            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            tokio::time::sleep(Duration::from_millis(2)).await;
             continue;
         };
         let (exit_code, stdout, stderr) = if req.kind == "file_write_project_file" {

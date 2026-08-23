@@ -163,7 +163,7 @@ async fn dispatch_recording_startup_requests(
             std::time::Instant::now() < deadline,
             "coding startup did not finish within 10 seconds; serviced requests: {request_kinds:?}"
         );
-        let Some(request) = next_patch_agent_request(runtime, client_id).await else {
+        let Some(request) = probe_patch_agent_request(runtime, client_id).await else {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             continue;
         };
@@ -223,7 +223,7 @@ async fn dispatch_startup_without_window(
             std::time::Instant::now() < deadline,
             "coding startup without window did not finish within 10 seconds for client {client_id}"
         );
-        if let Some(request) = next_patch_agent_request(runtime, client_id).await {
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
             complete_agent_request_by_running_locally(runtime, client_id, request).await;
         } else {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -255,7 +255,7 @@ async fn dispatch_with_path_runner(
             std::time::Instant::now() < deadline,
             "path-based coding call did not finish within 10 seconds for client {client_id}"
         );
-        if let Some(request) = next_patch_agent_request(runtime, client_id).await {
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
             if request.kind == "resolve_or_register_project" {
                 let payload: Value =
                     serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
@@ -1107,7 +1107,7 @@ async fn legacy_031_runner_path_source_fails_before_queue_or_session_state() {
     assert_eq!(result.output["permission"]["status"], "auto_approved");
     assert_eq!(result.output["permission"]["tool_name"], "register_project");
     assert!(
-        next_patch_agent_request(&runtime, client_id)
+        probe_patch_agent_request(&runtime, client_id)
             .await
             .is_none(),
         "legacy Runner received a path-registration request"
@@ -1506,7 +1506,7 @@ async fn path_source_cross_project_recording_session_reports_resolved_mismatch()
             std::time::Instant::now() < deadline,
             "kernel path bootstrap did not finish within 10 seconds for client {target_client}"
         );
-        if let Some(request) = next_patch_agent_request(&runtime, target_client).await {
+        if let Some(request) = probe_patch_agent_request(&runtime, target_client).await {
             if request.kind == "resolve_or_register_project" {
                 let payload: Value =
                     serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
@@ -1651,7 +1651,7 @@ async fn path_source_respects_restricted_authority_before_runner_enqueue() {
     assert_eq!(result.output["error_kind"], "permission_denied");
     assert_eq!(result.output["permission"]["status"], "denied");
     assert_eq!(result.output["permission"]["tool_name"], "register_project");
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
 }
@@ -2721,7 +2721,7 @@ async fn start_coding_task_standard_repository_unavailable_keeps_session_and_war
 
     // No fallback to an arbitrary shell scan: no extra agent request enqueued.
     assert!(
-        next_patch_agent_request(&runtime, "wop-nocap")
+        probe_patch_agent_request(&runtime, "wop-nocap")
             .await
             .is_none(),
         "unavailable overview must not fall back to a shell scan"
@@ -2772,7 +2772,7 @@ async fn start_coding_task_standard_repository_overview_timeout_is_nonblocking()
             std::time::Instant::now() < deadline,
             "overview-timeout startup did not finish within 10 seconds"
         );
-        let Some(request) = next_patch_agent_request(&runtime, "wop-timeout").await else {
+        let Some(request) = probe_patch_agent_request(&runtime, "wop-timeout").await else {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             continue;
         };
@@ -2878,7 +2878,7 @@ async fn dispatch_start_coding_task_with_overview_stdout(
             std::time::Instant::now() < deadline,
             "overview startup did not finish within 10 seconds for client {client_id}"
         );
-        let Some(request) = next_patch_agent_request(runtime, client_id).await else {
+        let Some(request) = probe_patch_agent_request(runtime, client_id).await else {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             continue;
         };

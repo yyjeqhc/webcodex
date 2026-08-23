@@ -2116,7 +2116,7 @@ async fn validation_summary_surfaces_validation_delta_without_shell_or_new_event
         "validation_summary appended events"
     );
     assert!(
-        next_patch_agent_request(&runtime, "vsummary-agent")
+        probe_patch_agent_request(&runtime, "vsummary-agent")
             .await
             .is_none(),
         "validation_summary enqueued an agent request"
@@ -2223,7 +2223,7 @@ async fn finish_coding_task_continuation_matches_handoff_attempt_without_rerunni
         "finish_coding_task must not re-run validation"
     );
     assert!(
-        next_patch_agent_request(&runtime, "finish-agent")
+        probe_patch_agent_request(&runtime, "finish-agent")
             .await
             .is_none(),
         "finish_coding_task enqueued an agent request"

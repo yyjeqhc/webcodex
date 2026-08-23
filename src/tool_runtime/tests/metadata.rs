@@ -540,9 +540,7 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
                 .await
         }
     });
-    let req = next_agent_request_for_client(&runtime, "client-a")
-        .await
-        .expect("bridge read_file should enqueue for shared-key group A");
+    let req = wait_for_agent_request_for_client(&runtime, "client-a").await;
     complete_patch_agent_request_for_instance(
         &runtime,
         "client-a",
@@ -634,9 +632,7 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
                 .await
         }
     });
-    let req = next_agent_request_for_client(&runtime, "client-open")
-        .await
-        .expect("open read_file should enqueue for the open agent");
+    let req = wait_for_agent_request_for_client(&runtime, "client-open").await;
     complete_patch_agent_request_for_instance(
         &runtime,
         "client-open",
@@ -666,9 +662,7 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
                 .await
         }
     });
-    let req = next_agent_request_for_client(&runtime, "client-open")
-        .await
-        .expect("open git_status should enqueue for the open agent");
+    let req = wait_for_agent_request_for_client(&runtime, "client-open").await;
     complete_patch_agent_request_for_instance(
         &runtime,
         "client-open",
@@ -868,7 +862,7 @@ async fn replacement_runner_pending_inventory_has_zero_project_routing_authority
         assert_eq!(result.output["error_kind"], "unknown_project");
     }
     assert!(
-        next_agent_request_for_instance(&runtime, client_id, new_instance)
+        probe_agent_request_for_instance(&runtime, client_id, new_instance)
             .await
             .is_none(),
         "pending replacement must receive zero project execution dispatches"
@@ -918,9 +912,7 @@ async fn replacement_runner_pending_inventory_has_zero_project_routing_authority
                 .await
         }
     });
-    let request = next_agent_request_for_instance(&runtime, client_id, new_instance)
-        .await
-        .expect("completed replacement snapshot should restore routing");
+    let request = wait_for_agent_request_for_instance(&runtime, client_id, new_instance).await;
     assert_eq!(request.cwd.as_deref(), Some(path_b.as_str()));
     complete_patch_agent_request_for_instance(
         &runtime,
@@ -1006,7 +998,7 @@ async fn replacement_runner_removed_project_never_inherits_old_authority() {
         );
         assert_eq!(result.output["error_kind"], "unknown_project");
         assert!(
-            next_agent_request_for_instance(&runtime, client_id, new_instance)
+            probe_agent_request_for_instance(&runtime, client_id, new_instance)
                 .await
                 .is_none(),
             "removed project must receive zero dispatch during {phase}"
@@ -1257,9 +1249,7 @@ async fn unique_short_agent_project_id_is_resolved_by_runtime_surface() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "oe", "inst")
-        .await
-        .expect("unique short id should resolve to the owning agent");
+    let req = wait_for_agent_request_for_instance(&runtime, "oe", "inst").await;
     assert_eq!(req.cwd.as_deref(), Some("/tmp/agent-proj"));
     runtime
         .shell_clients

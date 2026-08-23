@@ -252,7 +252,7 @@ async fn git_path_mutation_capability_preflight_matches_structured_process_runti
     assert!(error.contains("structured_process_argv"), "{error}");
     assert!(error.contains("no shell fallback"), "{error}");
     assert!(
-        next_patch_agent_request(&runtime, "discard-shell-only")
+        probe_patch_agent_request(&runtime, "discard-shell-only")
             .await
             .is_none(),
         "capability preflight must reject before enqueue"
@@ -284,7 +284,7 @@ async fn git_restore_missing_structured_process_capability_is_definite_not_start
     assert!(!result.success);
     assert_eq!(result.output["execution_state"], "not_started");
     assert_eq!(result.output["failure_kind"], "capability_unavailable");
-    assert!(next_patch_agent_request(&runtime, "restore-no-argv")
+    assert!(probe_patch_agent_request(&runtime, "restore-no-argv")
         .await
         .is_none());
 }
@@ -341,7 +341,7 @@ async fn git_restore_stays_sync_on_structured_job_capable_runner() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["restored_paths"], json!(["safe.txt"]));
     assert!(
-        next_patch_agent_request(&runtime, "restore-sync-job-capable")
+        probe_patch_agent_request(&runtime, "restore-sync-job-capable")
             .await
             .is_none()
     );
@@ -396,7 +396,7 @@ async fn git_restore_replacement_after_dispatch_reports_outcome_unknown_without_
     assert!(!result.success);
     assert_eq!(result.output["execution_state"], "outcome_unknown");
     assert_eq!(result.output["failure_kind"], "outcome_unknown");
-    let retry = next_agent_request_for_instance(&runtime, "restore-uncertain", "inst-b").await;
+    let retry = probe_agent_request_for_instance(&runtime, "restore-uncertain", "inst-b").await;
     assert!(
         retry.is_none(),
         "uncertain mutation must not be retried: {retry:?}"
@@ -771,7 +771,7 @@ async fn run_agent_git_diff_hunks_committed_page(
         if task.is_finished() {
             break;
         }
-        if let Some(request) = next_patch_agent_request(runtime, client_id).await {
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
             assert_eq!(request.kind, "run_internal_posix_script");
             assert_eq!(
                 request.cwd.as_deref(),
@@ -1121,7 +1121,7 @@ async fn git_diff_hunks_never_returns_secret_path_content_in_any_mode() {
     assert!(!explicit.success);
     assert_eq!(explicit.output["reason_code"], "sensitive_path");
     assert!(
-        next_patch_agent_request(&runtime, "diff-secret-boundary")
+        probe_patch_agent_request(&runtime, "diff-secret-boundary")
             .await
             .is_none(),
         "explicit protected path must fail before Runner dispatch"
@@ -1176,7 +1176,7 @@ async fn git_diff_hunks_committed_range_validation_and_merge_base_fail_closed() 
         assert!(!result.success);
         assert_eq!(result.output["reason_code"], reason);
         assert!(
-            next_patch_agent_request(&runtime, "committed-validation")
+            probe_patch_agent_request(&runtime, "committed-validation")
                 .await
                 .is_none(),
             "invalid committed input must fail before Runner dispatch"
@@ -2105,7 +2105,7 @@ async fn git_diff_hunks_scoped_fence_ignores_outside_change_and_rejects_scope_mi
         project_mismatch.output["reason_code"],
         "continuation_mismatch"
     );
-    assert!(next_patch_agent_request(&runtime, other_client_id)
+    assert!(probe_patch_agent_request(&runtime, other_client_id)
         .await
         .is_none());
 
@@ -2121,7 +2121,7 @@ async fn git_diff_hunks_scoped_fence_ignores_outside_change_and_rejects_scope_mi
         .await;
     assert!(!mismatch.success);
     assert_eq!(mismatch.output["reason_code"], "continuation_mismatch");
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
 
@@ -2133,7 +2133,7 @@ async fn git_diff_hunks_scoped_fence_ignores_outside_change_and_rejects_scope_mi
         cached_mismatch.output["reason_code"],
         "continuation_mismatch"
     );
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
 }
@@ -2276,7 +2276,7 @@ async fn git_diff_hunks_malformed_continuation_fails_before_runner_dispatch() {
     assert_eq!(result.output["reason_code"], "invalid_continuation");
     assert_eq!(result.output["files"], json!([]));
     assert_eq!(result.output["next_continuation"], Value::Null);
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
 }
@@ -3600,9 +3600,7 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "telemetry-show", "inst")
-        .await
-        .expect("read_file should enqueue before show_changes");
+    let req = wait_for_agent_request_for_instance(&runtime, "telemetry-show", "inst").await;
     complete_patch_agent_request(
         &runtime,
         "telemetry-show",
@@ -3683,9 +3681,7 @@ async fn show_changes_accepts_unique_short_id() {
                 .await
         }
     });
-    let req = next_agent_request_for_client(&runtime, "workstation")
-        .await
-        .expect("show_changes should enqueue an agent shell request");
+    let req = wait_for_agent_request_for_client(&runtime, "workstation").await;
     assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
     let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=0\nfiles_returned=0\nfiles_truncated=0\nfiles_limit=200\nmodified=0\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=0\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=7\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ncommit=abc123\nshort=abc123\nsummary=head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\nhead_bytes=39\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=0\n";
     runtime
@@ -3871,7 +3867,7 @@ async fn run_git_review_summary_via_agent(
             tokio::time::Instant::now() < deadline,
             "git_review_summary did not finish within 10 seconds for client {client_id}"
         );
-        if let Some(request) = next_patch_agent_request(runtime, client_id).await {
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
             assert_eq!(request.kind, "run_internal_posix_script");
             assert!(request.command.is_empty());
             let payload = request
@@ -4824,7 +4820,7 @@ async fn run_show_changes_via_agent(
             tokio::time::Instant::now() < deadline,
             "show_changes did not finish within 10 seconds for client {client_id}"
         );
-        if let Some(req) = next_patch_agent_request(runtime, client_id).await {
+        if let Some(req) = probe_patch_agent_request(runtime, client_id).await {
             assert_eq!(req.kind, "run_internal_posix_script");
             assert!(req.command.is_empty());
             let payload = req

@@ -27,9 +27,7 @@ async fn poll_start_validation_job(
     runtime: &ToolRuntime,
     client_id: &str,
 ) -> (crate::shell_protocol::ShellAgentShellRequest, String) {
-    let request = next_patch_agent_request(runtime, client_id)
-        .await
-        .expect("structured validation should enqueue a start_validation_job request");
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
     assert_eq!(request.kind, "start_validation_job", "{:?}", request.kind);
     let job_id = request.job_id.clone().expect("start_validation_job job_id");
     (request, job_id)
@@ -41,7 +39,7 @@ async fn wait_for_agent_request(
 ) -> crate::shell_protocol::ShellAgentShellRequest {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
-        if let Some(request) = next_patch_agent_request(runtime, client_id).await {
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
             return request;
         }
         if tokio::time::Instant::now() >= deadline {
@@ -261,7 +259,7 @@ async fn go_test_fails_closed_without_structured_go_capability() {
         .as_deref()
         .unwrap_or_default()
         .contains("structured_go_test_json"));
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
 }
@@ -310,7 +308,7 @@ async fn go_test_requires_first_class_tool_capability_before_job_reservation() {
         .unwrap_or_default()
         .contains("structured_go_test_tool"));
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
     let summary = runtime
@@ -415,7 +413,7 @@ async fn focused_go_test_packages_require_explicit_runner_capability_before_disp
         .unwrap_or_default()
         .contains("structured_go_test_packages"));
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
 }
@@ -463,7 +461,7 @@ async fn go_test_rejects_empty_or_oversized_package_lists_before_dispatch() {
         assert_eq!(result.output["command_started"], false);
     }
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
 }
@@ -1652,9 +1650,7 @@ async fn explicit_short_timeout_never_creates_a_job() {
     });
     // The short path enqueues a plain `run_shell`-style request (the existing
     // sync capture), not a structured validation Job.
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("short validation should enqueue a shell request");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_ne!(request.kind, "start_validation_job");
     complete_sync_shell_lifecycle(
         &runtime,
@@ -1863,7 +1859,7 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
         );
         // No agent request may have been enqueued for the rejected call.
         assert!(
-            next_patch_agent_request(&runtime, client_id)
+            probe_patch_agent_request(&runtime, client_id)
                 .await
                 .is_none(),
             "{label}: no agent request may be enqueued"
@@ -1947,7 +1943,7 @@ async fn cancel_queued_before_handoff_removes_start_request_and_hidden_record() 
         .get_hidden_job_for_auth(None, &job_id)
         .await
         .is_err());
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
@@ -2022,9 +2018,7 @@ async fn cancel_running_before_handoff_retains_record_until_runner_stops() {
     if intent_registered {
         crate::shell_client::recovery_timeout_sweep(&runtime.shell_clients).await;
     }
-    let stop = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("cancellation should enqueue stop_job");
+    let stop = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(stop.kind, "stop_job");
     assert_eq!(stop.job_id.as_deref(), Some(job_id.as_str()));
     let hidden = runtime
@@ -2381,7 +2375,7 @@ async fn legacy_agent_explicit_120_runs_but_121_rejects_before_start() {
     assert_eq!(rejected.output["failure_kind"], "capability_unavailable");
     assert_eq!(rejected.output["command_started"], false);
     assert_eq!(rejected.output["command_completed"], false);
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
     assert_cargo_result_matches_schema("cargo_check", &rejected);
@@ -2920,9 +2914,7 @@ async fn cargo_fmt_mutating_never_auto_promotes() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("cargo fmt (mutating) should enqueue a shell request");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_ne!(request.kind, "start_validation_job");
     runtime
         .shell_clients

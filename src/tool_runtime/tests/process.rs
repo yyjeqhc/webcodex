@@ -447,7 +447,7 @@ async fn detached_process_requires_job_run_and_detach_scopes_before_any_admissio
             "{label} should fail at scope gate"
         );
         assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
-        assert!(next_patch_agent_request(&runtime, "detached-scope-gate")
+        assert!(probe_patch_agent_request(&runtime, "detached-scope-gate")
             .await
             .is_none());
     }
@@ -478,7 +478,7 @@ async fn detached_process_requires_job_run_and_detach_scopes_before_any_admissio
     assert!(!denied.success);
     assert!(denied.error_status.is_some());
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
-    assert!(next_patch_agent_request(&runtime, "detached-scope-gate")
+    assert!(probe_patch_agent_request(&runtime, "detached-scope-gate")
         .await
         .is_none());
 
@@ -521,7 +521,7 @@ async fn detached_process_requires_job_run_and_detach_scopes_before_any_admissio
             .kind,
         "start_detached_process_job"
     );
-    assert!(next_patch_agent_request(&runtime, "detached-scope-gate")
+    assert!(probe_patch_agent_request(&runtime, "detached-scope-gate")
         .await
         .is_none());
 }
@@ -602,7 +602,7 @@ async fn detached_process_idempotency_replays_same_intent_and_rejects_conflict()
     assert!(replay.success, "{:?}", replay.error);
     assert_eq!(replay.output["job_id"], job_id);
     assert!(
-        next_patch_agent_request(&runtime, "detached-idempotency")
+        probe_patch_agent_request(&runtime, "detached-idempotency")
             .await
             .is_none(),
         "same-key same-intent replay must not redispatch"
@@ -625,7 +625,7 @@ async fn detached_process_idempotency_replays_same_intent_and_rejects_conflict()
     assert_eq!(conflict.output["failure_kind"], "idempotency_conflict");
     assert_eq!(conflict.output["execution_state"], "not_started");
     assert!(
-        next_patch_agent_request(&runtime, "detached-idempotency")
+        probe_patch_agent_request(&runtime, "detached-idempotency")
             .await
             .is_none(),
         "conflicting key must fail before redispatch"
@@ -748,7 +748,7 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
     assert_eq!(retry.output["job_id"], job_id);
     assert_eq!(retry.output["redispatched"], false);
     assert!(
-        next_patch_agent_request(&restarted, "detached-restart-recovery")
+        probe_patch_agent_request(&restarted, "detached-restart-recovery")
             .await
             .is_none(),
         "lost-response recovery must not enqueue a second payload"
@@ -778,7 +778,7 @@ async fn detached_process_requires_explicit_runner_authority_before_admission() 
     assert!(!result.success);
     assert_eq!(result.output["execution_state"], "not_started");
     assert_eq!(result.output["failure_kind"], "capability_unavailable");
-    assert!(next_patch_agent_request(&runtime, "detached-no-authority")
+    assert!(probe_patch_agent_request(&runtime, "detached-no-authority")
         .await
         .is_none());
 }
@@ -803,7 +803,7 @@ async fn detached_process_uses_existing_job_identity_and_typed_runner_request() 
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
     assert!(request.process.is_some());
     assert!(request.script.is_none());
-    assert!(next_patch_agent_request(&runtime, "detached-product-path")
+    assert!(probe_patch_agent_request(&runtime, "detached-product-path")
         .await
         .is_none());
 }
@@ -1217,7 +1217,7 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
         listed.iter().filter(|job| job["job_id"] == job_id).count(),
         1
     );
-    assert!(next_patch_agent_request(&runtime, "process-slow-job")
+    assert!(probe_patch_agent_request(&runtime, "process-slow-job")
         .await
         .is_none());
 
@@ -1249,7 +1249,7 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
         terminal.output["structured_execution"]["execution_source"],
         "run_process"
     );
-    assert!(next_patch_agent_request(&runtime, "process-slow-job")
+    assert!(probe_patch_agent_request(&runtime, "process-slow-job")
         .await
         .is_none());
 }
@@ -1317,7 +1317,7 @@ async fn stop_job_stops_the_promoted_process_without_starting_a_replacement() {
         Some(ShellCommandExecutionState::Completed)
     );
     assert!(
-        next_patch_agent_request(&runtime, "process-stop-job")
+        probe_patch_agent_request(&runtime, "process-stop-job")
             .await
             .is_none(),
         "stopping the Job must never enqueue a replacement execution"
@@ -1496,7 +1496,7 @@ async fn b2_process_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
     assert_eq!(rejected.output["execution_state"], "not_started");
     assert_eq!(rejected.output["command_started"], false);
     assert_eq!(rejected.output["failure_kind"], "capability_unavailable");
-    assert!(next_patch_agent_request(&runtime, "process-b2")
+    assert!(probe_patch_agent_request(&runtime, "process-b2")
         .await
         .is_none());
 }
@@ -1570,7 +1570,7 @@ async fn run_process_capability_absence_fails_prestart_without_shell_fallback() 
         .unwrap_or_default()
         .contains("no shell fallback"));
     assert!(
-        next_patch_agent_request(&runtime, "legacy-process-agent")
+        probe_patch_agent_request(&runtime, "legacy-process-agent")
             .await
             .is_none(),
         "capability failure must not enqueue run_process or run_shell"
@@ -1637,7 +1637,7 @@ async fn authority_denied_run_process_has_prestart_lifecycle() {
     assert_eq!(result.output["command_started"], false);
     assert_eq!(result.output["command_completed"], false);
     assert_eq!(result.output["failure_kind"], "permission_denied");
-    assert!(next_patch_agent_request(&runtime, "process-authority")
+    assert!(probe_patch_agent_request(&runtime, "process-authority")
         .await
         .is_none());
 }
@@ -1838,7 +1838,7 @@ async fn run_process_named_ssh_resource_fails_before_enqueue() {
     assert_eq!(result.output["error_kind"], "unsupported_resource");
     assert_eq!(result.output["recovery_kind"], "fix_input");
     assert!(result.output.get("recovery_tool").is_none());
-    assert!(next_patch_agent_request(&runtime, "process-ssh")
+    assert!(probe_patch_agent_request(&runtime, "process-ssh")
         .await
         .is_none());
 }
@@ -1966,7 +1966,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
     );
     assert_eq!(durable_only.output["async_handoff_available"], false);
     assert!(!root.join("marker").exists());
-    assert!(next_patch_agent_request(&runtime, "process-guards")
+    assert!(probe_patch_agent_request(&runtime, "process-guards")
         .await
         .is_none());
 
@@ -2025,7 +2025,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
     assert_eq!(denied.output["command_started"], false);
     assert_eq!(denied.output["command_completed"], false);
     assert_eq!(denied.output["failure_kind"], "session_guard_denied");
-    assert!(next_patch_agent_request(&runtime, "process-guards")
+    assert!(probe_patch_agent_request(&runtime, "process-guards")
         .await
         .is_none());
 }
@@ -2057,7 +2057,7 @@ async fn closed_session_run_process_has_prestart_lifecycle() {
     assert_eq!(result.output["command_started"], false);
     assert_eq!(result.output["command_completed"], false);
     assert_eq!(result.output["failure_kind"], "session_closed");
-    assert!(next_patch_agent_request(&runtime, "process-closed")
+    assert!(probe_patch_agent_request(&runtime, "process-closed")
         .await
         .is_none());
 }
@@ -2116,7 +2116,7 @@ async fn model_facing_session_denials_keep_run_process_prestart_lifecycle() {
         assert_eq!(result.output["failure_kind"], failure_kind);
     }
     assert!(
-        next_patch_agent_request(&runtime, "process-kernel-guards")
+        probe_patch_agent_request(&runtime, "process-kernel-guards")
             .await
             .is_none(),
         "model-facing Session denials must happen before Runner enqueue"

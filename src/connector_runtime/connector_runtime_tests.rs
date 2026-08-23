@@ -134,7 +134,8 @@ async fn register_agent_with_lsp_capabilities(
 }
 
 async fn next_lsp_request(registry: &ShellClientRegistry) -> ShellAgentShellRequest {
-    for _ in 0..200 {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
         if let Some(request) = registry
             .poll(ShellAgentPollRequest {
                 client_id: "hosted".to_string(),
@@ -148,9 +149,12 @@ async fn next_lsp_request(registry: &ShellClientRegistry) -> ShellAgentShellRequ
             assert!(request.command.is_empty());
             return request;
         }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "connector did not dispatch an LSP request within 10 seconds"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     }
-    panic!("connector did not dispatch an LSP request");
 }
 
 async fn complete_lsp_request(
@@ -897,7 +901,8 @@ async fn inspect_to_write_keeps_task_and_rechecks_write_authority() {
 
     let responder_registry = registry.clone();
     let responder = tokio::spawn(async move {
-        for _ in 0..1_000 {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
             if let Some(request) = responder_registry
                 .poll(ShellAgentPollRequest {
                     client_id: "hosted".to_string(),
@@ -934,9 +939,12 @@ async fn inspect_to_write_keeps_task_and_rechecks_write_authority() {
                     .unwrap();
                 return;
             }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "workspace upgrade did not register the isolated project within 10 seconds"
+            );
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
-        panic!("workspace upgrade did not register the isolated project");
     });
     let upgraded = connector
         .call_for_window(
@@ -1117,7 +1125,8 @@ async fn writable_start_registers_and_releases_a_reusable_git_worktree() {
     .unwrap();
     let agent_registry = registry.clone();
     let responder = tokio::spawn(async move {
-        for _ in 0..1_000 {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
             if let Some(request) = agent_registry
                 .poll(ShellAgentPollRequest {
                     client_id: "hosted".to_string(),
@@ -1155,9 +1164,12 @@ async fn writable_start_registers_and_releases_a_reusable_git_worktree() {
                     .unwrap();
                 return;
             }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "connector did not register its isolated execution project within 10 seconds"
+            );
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
-        panic!("connector did not register its isolated execution project");
     });
     let owner = auth("u1");
     let outcome = connector
@@ -1192,7 +1204,8 @@ async fn writable_start_registers_and_releases_a_reusable_git_worktree() {
     );
     let check_registry = registry.clone();
     let check_responder = tokio::spawn(async move {
-        for _ in 0..1_000 {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
             if let Some(request) = check_registry
                 .poll(ShellAgentPollRequest {
                     client_id: "hosted".to_string(),
@@ -1233,9 +1246,12 @@ async fn writable_start_registers_and_releases_a_reusable_git_worktree() {
                     .unwrap();
                 return;
             }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "connector did not dispatch structured validation within 10 seconds"
+            );
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
-        panic!("connector did not dispatch structured validation");
     });
     let checked = connector
         .call(
@@ -1396,7 +1412,8 @@ async fn failed_task_binding_releases_prepared_workspace_for_retry() {
     let responder_registry = registry.clone();
     let responder = tokio::spawn(async move {
         let mut registrations = 0;
-        for _ in 0..2_000 {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
             if let Some(request) = responder_registry
                 .poll(ShellAgentPollRequest {
                     client_id: "hosted".to_string(),
@@ -1436,9 +1453,12 @@ async fn failed_task_binding_releases_prepared_workspace_for_retry() {
                     return;
                 }
             }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "connector did not issue both workspace registrations within 10 seconds"
+            );
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
-        panic!("connector did not issue both workspace registrations");
     });
 
     let owner = auth("u1");
@@ -1535,7 +1555,8 @@ async fn canonical_read_reaches_bound_executor_and_advances_event_cursor() {
 
     let agent_registry = registry.clone();
     let responder = tokio::spawn(async move {
-        for _ in 0..100 {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
             if let Some(request) = agent_registry
                 .poll(ShellAgentPollRequest {
                     client_id: "hosted".to_string(),
@@ -1574,9 +1595,12 @@ async fn canonical_read_reaches_bound_executor_and_advances_event_cursor() {
                     .unwrap();
                 return;
             }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "connector did not dispatch the read to its bound executor within 10 seconds"
+            );
             tokio::task::yield_now().await;
         }
-        panic!("connector did not dispatch the read to its bound executor");
     });
     let outcome = connector
         .call(
@@ -2159,7 +2183,8 @@ async fn code_impact_is_available_in_normal_inspect_and_read_only_tasks() {
         let registration = if mode == "normal" {
             let registration_registry = registry.clone();
             Some(tokio::spawn(async move {
-                for _ in 0..1_000 {
+                let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+                loop {
                     if let Some(request) = registration_registry
                         .poll(ShellAgentPollRequest {
                             client_id: "hosted".to_string(),
@@ -2195,9 +2220,12 @@ async fn code_impact_is_available_in_normal_inspect_and_read_only_tasks() {
                             .unwrap();
                         return;
                     }
+                    assert!(
+                        tokio::time::Instant::now() < deadline,
+                        "normal task did not register its isolated execution project within 10 seconds"
+                    );
                     tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                 }
-                panic!("normal task did not register its isolated execution project");
             }))
         } else {
             None

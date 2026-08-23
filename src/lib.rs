@@ -580,16 +580,16 @@ mod tests {
 
     #[test]
     fn test_config_from_env_defaults() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        // Clear env vars to test defaults
-        std::env::remove_var("WEBCODEX_ADDR");
-        std::env::remove_var("WEBCODEX_DATA");
-        std::env::remove_var("WEBCODEX_TOKEN");
-        std::env::remove_var("CODEX_BIN");
-        std::env::remove_var("CODEX_APPROVAL_MODE");
-        std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");
-        std::env::remove_var("CODEX_MAX_PROMPT_BYTES");
-        std::env::remove_var("CODEX_ALLOWED_EXTRA_ARGS");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        // Clear env vars to test defaults; Drop restores the process environment.
+        env.remove("WEBCODEX_ADDR");
+        env.remove("WEBCODEX_DATA");
+        env.remove("WEBCODEX_TOKEN");
+        env.remove("CODEX_BIN");
+        env.remove("CODEX_APPROVAL_MODE");
+        env.remove("CODEX_DEFAULT_TIMEOUT_SECS");
+        env.remove("CODEX_MAX_PROMPT_BYTES");
+        env.remove("CODEX_ALLOWED_EXTRA_ARGS");
 
         let config = Config::from_env();
         assert_eq!(config.addr, "0.0.0.0:8080");

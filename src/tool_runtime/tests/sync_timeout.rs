@@ -265,9 +265,7 @@ async fn dispatched_shared_capture_wait_timeout_reports_outcome_unknown_without_
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("full cargo_test should be dispatched to the Agent");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request.command, "cargo test");
     let active_summary = runtime
         .sessions
@@ -377,9 +375,7 @@ async fn shared_capture_missing_pending_record_reports_outcome_unknown() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("capture request should be dispatched");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(
         runtime
             .shell_clients
@@ -487,9 +483,7 @@ async fn timeout_rejection_does_not_pollute_validation_summary() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "sync-timeout-ledger")
-        .await
-        .expect("valid cargo_check should enqueue");
+    let req = wait_for_patch_agent_request(&runtime, "sync-timeout-ledger").await;
     assert!(req.command.contains("cargo check"));
     complete_patch_agent_request(
         &runtime,

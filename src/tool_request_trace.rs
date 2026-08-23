@@ -305,19 +305,19 @@ mod tests {
 
     #[test]
     fn estimate_json_bytes_is_none_when_trace_disabled() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::remove_var("WEBCODEX_TOOL_REQUEST_TRACE");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
         assert!(estimate_json_bytes(&json!({"a": 1})).is_none());
-        std::env::set_var("WEBCODEX_TOOL_REQUEST_TRACE", "true");
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "true");
         let n = estimate_json_bytes(&json!({"a": 1})).expect("size when enabled");
         assert!(n > 0);
-        std::env::remove_var("WEBCODEX_TOOL_REQUEST_TRACE");
+        env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
     }
 
     #[test]
     fn incomplete_drop_is_safe_when_disabled() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::remove_var("WEBCODEX_TOOL_REQUEST_TRACE");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
         let guard = ToolRequestLifecycle::new(
             "mcp",
             "trace-test".into(),
@@ -332,12 +332,12 @@ mod tests {
 
     #[test]
     fn completed_drop_is_silent() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("WEBCODEX_TOOL_REQUEST_TRACE", "true");
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "true");
         let guard =
             ToolRequestLifecycle::new("api", "trace-ok".into(), "-", "POST /api/tools/call", None);
         guard.handler_returned(200, Some(12), Some(true), Some(true), "ok");
         drop(guard);
-        std::env::remove_var("WEBCODEX_TOOL_REQUEST_TRACE");
+        env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
     }
 }

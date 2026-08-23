@@ -53,9 +53,7 @@ async fn register_write_agent(runtime: &ToolRuntime, client_id: &str) {
 
 /// Complete a successful agent write so the mutation path can finish.
 async fn complete_write_ok(runtime: &ToolRuntime, client_id: &str, path: &str) {
-    let req = next_patch_agent_request(runtime, client_id)
-        .await
-        .expect("mutation tool should enqueue agent request under allowing modes");
+    let req = wait_for_patch_agent_request(runtime, client_id).await;
     assert_eq!(req.kind, "file_write_project_file");
     let payload: serde_json::Value =
         serde_json::from_str(req.content.as_deref().expect("file-op payload")).unwrap();
@@ -160,7 +158,7 @@ async fn restricted_blocks_mutation_before_agent_enqueue() {
     );
 
     assert!(
-        next_patch_agent_request(&runtime, client_id)
+        probe_patch_agent_request(&runtime, client_id)
             .await
             .is_none(),
         "restricted authority must not enqueue mutation"
@@ -213,7 +211,7 @@ async fn invalid_mode_blocks_mutation_and_does_not_auto_approve() {
         "{err}"
     );
     assert!(
-        next_patch_agent_request(&runtime, client_id)
+        probe_patch_agent_request(&runtime, client_id)
             .await
             .is_none(),
         "invalid mode must not enqueue mutation"
@@ -255,7 +253,7 @@ async fn hard_policy_deny_still_suppresses_permission_attach() {
         result.output.get("permission")
     );
     assert!(
-        next_patch_agent_request(&runtime, client_id)
+        probe_patch_agent_request(&runtime, client_id)
             .await
             .is_none(),
         "policy rejection must happen before enqueue"
@@ -304,9 +302,7 @@ async fn read_only_tool_skips_permission_decision() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("read_file should still execute under restricted authority");
+    let req = wait_for_patch_agent_request(&runtime, client_id).await;
     complete_patch_agent_request(
         &runtime,
         client_id,

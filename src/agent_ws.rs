@@ -350,6 +350,43 @@ mod tests {
     use tokio_tungstenite::tungstenite::http::HeaderValue;
     use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 
+    async fn wait_for_ws_client_connected(
+        registry: &ShellClientRegistry,
+        client_id: &str,
+        expected: bool,
+    ) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let view = registry.get_client_view(client_id).await.unwrap();
+            if view.connected == expected {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "client {client_id} connected={expected} was not observed before the 3-second deadline; last status={} transport={}",
+                view.status,
+                view.transport
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    async fn wait_for_ws_job_status(registry: &ShellClientRegistry, job_id: &str, expected: &str) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let job = registry.get_job(job_id).await.unwrap();
+            if job.status == expected {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "job {job_id} did not reach {expected} before the 3-second deadline; last status={}",
+                job.status
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
     fn register_envelope(client_id: &str) -> AgentEnvelope {
         register_envelope_with_instance(client_id, "ws-inst")
     }
@@ -806,7 +843,8 @@ mod tests {
         ))
         .await
         .unwrap();
-        for _ in 0..20 {
+        let metadata_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
             let view = registry.get_client_view("ws-roundtrip").await.unwrap();
             if view
                 .policy
@@ -817,6 +855,10 @@ mod tests {
             {
                 break;
             }
+            assert!(
+                tokio::time::Instant::now() < metadata_deadline,
+                "runtime metadata was not projected before the 3-second deadline"
+            );
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         let view = registry.get_client_view("ws-roundtrip").await.unwrap();
@@ -935,13 +977,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Give the server a moment to process the frame.
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            if registry.get_client_view("ws-pong").await.unwrap().connected {
-                break;
-            }
-        }
+        wait_for_ws_client_connected(&registry, "ws-pong", true).await;
         let fresh = registry.get_client_view("ws-pong").await.unwrap();
         assert!(fresh.connected, "pong must refresh liveness");
         assert_eq!(fresh.status, "online");
@@ -982,16 +1018,9 @@ mod tests {
         assert_eq!(view1.transport, "websocket");
         assert!(view1.connected);
 
-        // Disconnect: server reconciles (retains the client record).
+        // Disconnect: server reconciles and retains the client record offline.
         drop(ws1);
-        for _ in 0..40 {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            // Reconcile happens in the background; we just wait for it to
-            // settle by observing the record is still present.
-            if registry.get_client_view("ws-recon").await.is_some() {
-                break;
-            }
-        }
+        wait_for_ws_client_connected(&registry, "ws-recon", false).await;
 
         // Reconnect with the same client_id.
         let (mut ws2, _resp) = connect_async(url).await.unwrap();
@@ -1023,7 +1052,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ws_disconnect_marks_notifier_removed() {
+    async fn ws_disconnect_marks_client_offline_and_retains_record() {
         let registry = Arc::new(ShellClientRegistry::default());
         let addr = start_server(registry.clone()).await;
 
@@ -1040,24 +1069,10 @@ mod tests {
         let view = registry.get_client_view("ws-disc").await.unwrap();
         assert_eq!(view.transport, "websocket");
 
-        // Drop the socket.
         drop(ws);
-        // Give the server a moment to observe the disconnect and clean up.
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            // After disconnect the notifier is gone; the client decays to
-            // stale once last_seen ages past the online window. We only
-            // assert the notifier was removed by re-registering a notifier
-            // successfully (which would fail if still present? it replaces, so
-            // instead assert transport label is unchanged but the client is
-            // still known).
-            let _ = registry.get_client_view("ws-disc").await;
-        }
-        // The client record is retained (so jobs/results can still resolve)
-        // but its transport label persists; the key guarantee is that the
-        // server did not crash and the pump was torn down.
-        let view = registry.get_client_view("ws-disc").await;
-        assert!(view.is_some());
+        wait_for_ws_client_connected(&registry, "ws-disc", false).await;
+        let view = registry.get_client_view("ws-disc").await.unwrap();
+        assert_eq!(view.transport, "websocket");
     }
 
     #[tokio::test]
@@ -1211,14 +1226,8 @@ mod tests {
         // Drop the socket; the server must reconcile running jobs to "lost"
         // instead of leaving them running forever.
         drop(ws);
-        let mut lost = registry.get_job(&job.job_id).await.unwrap();
-        for _ in 0..40 {
-            if lost.status == "lost" {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            lost = registry.get_job(&job.job_id).await.unwrap();
-        }
+        wait_for_ws_job_status(&registry, &job.job_id, "lost").await;
+        let lost = registry.get_job(&job.job_id).await.unwrap();
         assert_eq!(lost.status, "lost");
         assert!(lost.error.unwrap().contains("disconnected"));
     }
@@ -1312,13 +1321,7 @@ mod tests {
             AgentEnvelope::Registered { success: true, .. }
         ));
         drop(ws1);
-        // Let the server observe the disconnect and reconcile.
-        for _ in 0..40 {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            if registry.get_client_view("ws-same").await.is_some() {
-                break;
-            }
-        }
+        wait_for_ws_client_connected(&registry, "ws-same", false).await;
 
         // Reconnect with the SAME instance id.
         let (mut ws2, _resp) = connect_async(url).await.unwrap();
@@ -1370,17 +1373,7 @@ mod tests {
         ))
         .await
         .unwrap();
-        for _ in 0..40 {
-            if !registry
-                .get_client_view("ws-goodbye")
-                .await
-                .unwrap()
-                .connected
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
+        wait_for_ws_client_connected(&registry, "ws-goodbye", false).await;
         let offline = registry.get_client_view("ws-goodbye").await.unwrap();
         assert!(!offline.connected);
 
@@ -1485,14 +1478,8 @@ mod tests {
 
         // B's own disconnect does reconcile the job.
         drop(ws_b);
-        let mut lost = registry.get_job(&job.job_id).await.unwrap();
-        for _ in 0..40 {
-            if lost.status == "lost" {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            lost = registry.get_job(&job.job_id).await.unwrap();
-        }
+        wait_for_ws_job_status(&registry, &job.job_id, "lost").await;
+        let lost = registry.get_job(&job.job_id).await.unwrap();
         assert_eq!(lost.status, "lost");
     }
 

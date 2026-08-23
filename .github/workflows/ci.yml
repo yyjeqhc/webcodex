@@ -63,10 +63,9 @@ jobs:
           cargo test --locked -p webcodex --lib -- \
             openapi_operation_ids_are_minimal \
             openapi_all_local_refs_resolve \
-            explicit_resume_openapi_metadata_is_distinct_from_session_recording \
+            openapi_tool_call_request_does_not_advertise_hidden_start_bootstrap \
             mcp_tools_list_returns_same_names_as_runtime \
-            mcp_tools_list_parity_with_rest_tools_list \
-            explicit_resume_mcp_schema_and_metadata_are_exposed \
+            explicit_resume_advanced_compatibility_schema_and_metadata_are_retained \
             http_project_connector_lists_and_dispatches_only_canonical_capabilities
 
   test-linux-rust:

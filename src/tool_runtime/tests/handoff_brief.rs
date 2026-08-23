@@ -1104,7 +1104,7 @@ async fn internal_handoff_projection_does_not_append_events_or_enqueue_agent_req
         result.output["handoff_brief"]["validation"]["status"],
         "not_requested"
     );
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
     let after = runtime
@@ -1236,7 +1236,7 @@ async fn public_handoff_dispatch_records_only_standard_telemetry_and_preserves_g
     )
     .unwrap();
     assert_eq!(before_discussion, after_discussion);
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
     assert_eq!(
@@ -1294,7 +1294,7 @@ async fn finish_and_handoff_surfaces_return_the_same_brief_for_the_same_snapshot
             std::time::Instant::now() < deadline,
             "finish_coding_task did not finish within 10 seconds while proving shared handoff brief"
         );
-        if let Some(request) = next_patch_agent_request(&runtime, client_id).await {
+        if let Some(request) = probe_patch_agent_request(&runtime, client_id).await {
             complete_agent_request_by_running_locally(&runtime, client_id, request).await;
         } else {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;

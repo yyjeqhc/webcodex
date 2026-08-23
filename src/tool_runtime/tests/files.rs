@@ -293,9 +293,8 @@ async fn delete_project_files_replaced_agent_keeps_legacy_shell_fallback() {
         }
     });
 
-    let req = next_agent_request_for_instance(&runtime, "cleanup-delete-replaced", "inst-b")
-        .await
-        .expect("replaced agent should receive the legacy shell request");
+    let req =
+        wait_for_agent_request_for_instance(&runtime, "cleanup-delete-replaced", "inst-b").await;
     assert_eq!(req.kind, "run_shell");
     assert!(req.command.contains("rm -f --"));
     complete_patch_agent_request_for_instance(
@@ -310,7 +309,7 @@ async fn delete_project_files_replaced_agent_keeps_legacy_shell_fallback() {
     .await;
     assert!(task.await.unwrap().success);
     let extra =
-        next_agent_request_for_instance(&runtime, "cleanup-delete-replaced", "inst-b").await;
+        probe_agent_request_for_instance(&runtime, "cleanup-delete-replaced", "inst-b").await;
     assert!(
         extra.is_none(),
         "exactly one legacy request may be emitted: {extra:?}"
@@ -372,9 +371,7 @@ async fn delete_project_files_capability_revoked_before_enqueue_falls_back_to_le
     // The only request the Runner receives is the legacy shell fallback: no
     // structured request may be queued for a client that no longer advertises
     // the capability, and no duplicate structured + legacy pair may appear.
-    let req = next_agent_request_for_instance(&runtime, "cleanup-delete-fence", "inst-b")
-        .await
-        .expect("replaced agent should receive exactly one legacy shell request");
+    let req = wait_for_agent_request_for_instance(&runtime, "cleanup-delete-fence", "inst-b").await;
     assert_eq!(req.kind, "run_shell");
     assert!(req.command.contains("rm -f --"));
     complete_patch_agent_request_for_instance(
@@ -388,7 +385,7 @@ async fn delete_project_files_capability_revoked_before_enqueue_falls_back_to_le
     )
     .await;
     assert!(task.await.unwrap().success);
-    let extra = next_agent_request_for_instance(&runtime, "cleanup-delete-fence", "inst-b").await;
+    let extra = probe_agent_request_for_instance(&runtime, "cleanup-delete-fence", "inst-b").await;
     assert!(
         extra.is_none(),
         "no duplicate structured + legacy request may be emitted: {extra:?}"
@@ -477,7 +474,7 @@ async fn delete_project_files_replacement_before_poll_reports_not_started() {
     // No legacy fallback and no inherited structured request for the
     // replacement Runner.
     let extra =
-        next_agent_request_for_instance(&runtime, "cleanup-delete-replace-early", "inst-b").await;
+        probe_agent_request_for_instance(&runtime, "cleanup-delete-replace-early", "inst-b").await;
     assert!(
         extra.is_none(),
         "replacement Runner must receive no request: {extra:?}"
@@ -510,9 +507,8 @@ async fn delete_project_files_replacement_after_poll_reports_outcome_unknown() {
 
     wait_for_pending_requests(&runtime, "cleanup-delete-replace-late", 1).await;
     // Dispatch the structured request to the original instance.
-    let req = next_agent_request_for_instance(&runtime, "cleanup-delete-replace-late", "inst")
-        .await
-        .expect("structured delete should be polled by the original instance");
+    let req =
+        wait_for_agent_request_for_instance(&runtime, "cleanup-delete-replace-late", "inst").await;
     assert_eq!(req.kind, "file_delete_project_files");
     // Replace the Runner before it returns its result.
     runtime
@@ -570,7 +566,7 @@ async fn delete_project_files_replacement_after_poll_reports_outcome_unknown() {
         "replacement must not complete the replaced request: {err}"
     );
     let extra =
-        next_agent_request_for_instance(&runtime, "cleanup-delete-replace-late", "inst-b").await;
+        probe_agent_request_for_instance(&runtime, "cleanup-delete-replace-late", "inst-b").await;
     assert!(
         extra.is_none(),
         "replacement Runner must receive no inherited request: {extra:?}"
@@ -661,9 +657,8 @@ async fn delete_project_files_timeout_after_dispatch_reports_outcome_unknown() {
     wait_for_pending_requests(&runtime, "cleanup-delete-timeout-late", 1).await;
     // Dispatch the structured request; the Runner never returns a result, so
     // the wait timeout fires after dispatch may have started deleting.
-    let req = next_agent_request_for_instance(&runtime, "cleanup-delete-timeout-late", "inst")
-        .await
-        .expect("structured delete should be polled");
+    let req =
+        wait_for_agent_request_for_instance(&runtime, "cleanup-delete-timeout-late", "inst").await;
     assert_eq!(req.kind, "file_delete_project_files");
 
     let result = task.await.unwrap();
@@ -722,9 +717,7 @@ async fn delete_project_files_waiter_dropped_without_undispatch_proof_reports_ou
     // cancellation API: remove the pending record (dropping the oneshot
     // sender) without resolving it, so the tool's receiver observes the
     // channel close. The registry returns the preserved dispatch truth.
-    let req = next_agent_request_for_instance(&runtime, "cleanup-delete-waiter", "inst")
-        .await
-        .expect("structured delete should be polled");
+    let req = wait_for_agent_request_for_instance(&runtime, "cleanup-delete-waiter", "inst").await;
     let dispatch = runtime
         .shell_clients
         .cancel_request_dispatch_state(&req.request_id)
@@ -783,9 +776,8 @@ async fn delete_project_files_terminal_failure_reports_outcome_unknown() {
     // The Runner returns a definitive terminal failure after dispatch
     // (non-zero exit). The mutation may already have deleted files, so the
     // failure must never collapse into an ordinary retry-safe error.
-    let req = next_agent_request_for_instance(&runtime, "cleanup-delete-terminal", "inst")
-        .await
-        .expect("structured delete should be polled");
+    let req =
+        wait_for_agent_request_for_instance(&runtime, "cleanup-delete-terminal", "inst").await;
     complete_patch_agent_request_for_instance(
         &runtime,
         "cleanup-delete-terminal",
@@ -808,7 +800,7 @@ async fn delete_project_files_terminal_failure_reports_outcome_unknown() {
         "error was: {error}"
     );
     // No automatic legacy fallback follows the uncertain mutation.
-    let extra = next_agent_request_for_instance(&runtime, "cleanup-delete-terminal", "inst").await;
+    let extra = probe_agent_request_for_instance(&runtime, "cleanup-delete-terminal", "inst").await;
     assert!(
         extra.is_none(),
         "no legacy fallback may follow an uncertain structured delete: {extra:?}"
@@ -1105,7 +1097,7 @@ async fn artifact_upload_begin_policy_rejection_is_classified() {
     assert!(error.contains(".artifact"), "{error}");
     assert!(error.contains("artifacts/smoke/<name>.artifact"), "{error}");
     assert!(
-        next_patch_agent_request(&runtime, "artifact-policy-session")
+        probe_patch_agent_request(&runtime, "artifact-policy-session")
             .await
             .is_none(),
         "policy rejection must happen before enqueue"
@@ -1157,7 +1149,7 @@ async fn validate_patch_never_enqueues_mutating_apply_command() {
     complete_patch_agent_request(&runtime, "patcher", &stat_req.request_id, 0, "stat", "").await;
 
     // 3) No mutating apply must be enqueued — validate_patch is dry-run only.
-    let leaked_apply = next_patch_agent_request(&runtime, "patcher").await;
+    let leaked_apply = probe_patch_agent_request(&runtime, "patcher").await;
     assert!(
         leaked_apply.is_none(),
         "validate_patch enqueued a mutating command (got: {:?})",
@@ -3515,7 +3507,7 @@ async fn file_read_project_tools_require_file_read_capability() {
             result.error
         );
     }
-    assert!(next_patch_agent_request(&runtime, "file-read-capability")
+    assert!(probe_patch_agent_request(&runtime, "file-read-capability")
         .await
         .is_none());
 }
@@ -3755,7 +3747,7 @@ async fn project_read_adapters_reject_out_of_project_paths_before_agent_dispatch
             assert_eq!(result.output["field"], field, "{case}");
         }
         assert!(
-            next_patch_agent_request(&runtime, "path-boundary")
+            probe_patch_agent_request(&runtime, "path-boundary")
                 .await
                 .is_none(),
             "{case} must reject before Agent dispatch"
@@ -4452,7 +4444,7 @@ async fn read_file_refuses_secret_paths_before_reaching_agent() {
     }
 
     assert!(
-        next_patch_agent_request(&runtime, "secret-read")
+        probe_patch_agent_request(&runtime, "secret-read")
             .await
             .is_none(),
         "a refused secret path still reached the agent"

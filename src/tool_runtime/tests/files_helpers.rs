@@ -43,9 +43,7 @@ async fn save_project_artifact_routes_to_agent_file_op() {
         }
     });
 
-    let req = next_patch_agent_request(&runtime, "artifact-save")
-        .await
-        .expect("save_project_artifact should enqueue an artifact file-op");
+    let req = wait_for_patch_agent_request(&runtime, "artifact-save").await;
     assert_eq!(req.kind, "file_save_project_artifact");
     assert!(req.command.is_empty());
     assert!(req.stdin.is_none());
@@ -97,9 +95,7 @@ async fn read_project_artifact_metadata_routes_to_agent_file_op() {
         }
     });
 
-    let req = next_patch_agent_request(&runtime, "artifact-meta")
-        .await
-        .expect("read_project_artifact_metadata should enqueue an artifact file-op");
+    let req = wait_for_patch_agent_request(&runtime, "artifact-meta").await;
     assert_eq!(req.kind, "file_read_project_artifact_metadata");
     assert!(req.command.is_empty());
     assert!(req.stdin.is_none());
@@ -154,9 +150,7 @@ async fn read_project_artifact_metadata_allow_missing_routes_to_agent_file_op() 
         }
     });
 
-    let req = next_patch_agent_request(&runtime, "artifact-meta-missing")
-        .await
-        .expect("read_project_artifact_metadata should enqueue an artifact file-op");
+    let req = wait_for_patch_agent_request(&runtime, "artifact-meta-missing").await;
     let payload: serde_json::Value =
         serde_json::from_str(req.content.as_deref().expect("artifact payload")).unwrap();
     assert_eq!(payload["allow_missing"], true);
@@ -209,9 +203,7 @@ async fn read_project_artifact_routes_to_agent_file_op() {
         }
     });
 
-    let req = next_patch_agent_request(&runtime, "artifact-read")
-        .await
-        .expect("read_project_artifact should enqueue an artifact file-op");
+    let req = wait_for_patch_agent_request(&runtime, "artifact-read").await;
     assert_eq!(req.kind, "file_read_project_artifact");
     assert!(req.command.is_empty());
     assert!(req.stdin.is_none());
@@ -275,9 +267,7 @@ async fn read_project_artifact_mcp_image_routes_complete_bounded_remote_read() {
         }
     });
 
-    let req = next_patch_agent_request(&runtime, "artifact-image")
-        .await
-        .expect("MCP image read should enqueue an artifact file-op");
+    let req = wait_for_patch_agent_request(&runtime, "artifact-image").await;
     assert_eq!(req.kind, "file_read_project_artifact");
     let payload: serde_json::Value =
         serde_json::from_str(req.content.as_deref().expect("artifact payload")).unwrap();
@@ -345,9 +335,7 @@ async fn read_project_artifact_mcp_image_rejects_untrusted_remote_mime() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "artifact-image-mime")
-        .await
-        .expect("MCP image read should enqueue an artifact file-op");
+    let req = wait_for_patch_agent_request(&runtime, "artifact-image-mime").await;
     let pdf = b"%PDF-1.7\n";
     let stdout = json!({
         "path": "docs/images/spoofed.png",
@@ -446,9 +434,7 @@ async fn artifact_upload_tools_route_to_agent_file_ops() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "artifact-upload")
-        .await
-        .expect("artifact_upload_begin should enqueue an artifact file-op");
+    let req = wait_for_patch_agent_request(&runtime, "artifact-upload").await;
     assert_eq!(req.kind, "file_artifact_upload_begin");
     let payload: serde_json::Value =
         serde_json::from_str(req.content.as_deref().expect("artifact payload")).unwrap();
@@ -490,9 +476,7 @@ async fn artifact_upload_tools_route_to_agent_file_ops() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "artifact-upload")
-        .await
-        .expect("artifact_upload_chunk should enqueue an artifact file-op");
+    let req = wait_for_patch_agent_request(&runtime, "artifact-upload").await;
     assert_eq!(req.kind, "file_artifact_upload_chunk");
     let payload: serde_json::Value =
         serde_json::from_str(req.content.as_deref().expect("artifact payload")).unwrap();
@@ -527,9 +511,7 @@ async fn artifact_upload_tools_route_to_agent_file_ops() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "artifact-upload")
-        .await
-        .expect("artifact_upload_finish should enqueue an artifact file-op");
+    let req = wait_for_patch_agent_request(&runtime, "artifact-upload").await;
     assert_eq!(req.kind, "file_artifact_upload_finish");
     let payload: serde_json::Value =
         serde_json::from_str(req.content.as_deref().expect("artifact payload")).unwrap();
@@ -560,9 +542,7 @@ async fn artifact_upload_tools_route_to_agent_file_ops() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "artifact-upload")
-        .await
-        .expect("artifact_upload_abort should enqueue an artifact file-op");
+    let req = wait_for_patch_agent_request(&runtime, "artifact-upload").await;
     assert_eq!(req.kind, "file_artifact_upload_abort");
     let payload: serde_json::Value =
         serde_json::from_str(req.content.as_deref().expect("artifact payload")).unwrap();

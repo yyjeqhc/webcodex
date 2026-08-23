@@ -62,14 +62,9 @@ async fn setup(
 async fn next_persistent_request(
     runtime: &ToolRuntime,
 ) -> crate::shell_protocol::ShellAgentShellRequest {
-    for _ in 0..100 {
-        if let Some(request) = next_patch_agent_request(runtime, CLIENT).await {
-            assert_eq!(request.kind, "persistent_shell");
-            return request;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    }
-    panic!("persistent shell request was not enqueued")
+    let request = wait_for_patch_agent_request(runtime, CLIENT).await;
+    assert_eq!(request.kind, "persistent_shell");
+    request
 }
 
 async fn complete(

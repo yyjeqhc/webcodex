@@ -660,7 +660,7 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
     assert!(result.output["observation_token"].is_string());
     assert_run_shell_result_matches_schema(&result);
     assert!(
-        next_patch_agent_request(&runtime, client_id)
+        probe_patch_agent_request(&runtime, client_id)
             .await
             .is_none(),
         "handoff must not redispatch the shell command"
@@ -914,7 +914,7 @@ async fn long_run_shell_async_job_capability_does_not_bypass_shell_authority() {
     let error = result.error.as_deref().unwrap_or_default();
     assert!(error.contains("does not support shell"), "{error}");
     assert!(error.contains(client_id), "{error}");
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
@@ -957,7 +957,7 @@ async fn long_run_shell_job_start_rejection_is_not_started_and_enqueues_nothing(
     assert_eq!(result.output["promoted_to_job"], false);
     assert_eq!(result.output["async_handoff_available"], true);
     assert_run_shell_result_matches_schema(&result);
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
@@ -1040,7 +1040,7 @@ async fn long_run_shell_job_timeout_is_terminal_and_never_becomes_fake_outcome_u
         .as_str()
         .unwrap_or_default()
         .contains("runner deadline reached"));
-    assert!(next_patch_agent_request(&runtime, client_id)
+    assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
     assert!(runtime.shell_clients.remove_job_record(&job_id).await);

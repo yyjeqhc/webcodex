@@ -106,9 +106,7 @@ async fn register_and_start_agent_job(
         .await;
     assert!(started.success, "{:?}", started.error);
     let job_id = started.output["job_id"].as_str().unwrap().to_string();
-    let request = next_patch_agent_request(runtime, client_id)
-        .await
-        .expect("Agent Job start request");
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
     (job_id, request, auth)
 }
@@ -151,9 +149,7 @@ async fn start_owned_agent_job(
         .await;
     assert!(started.success, "{:?}", started.error);
     let job_id = started.output["job_id"].as_str().unwrap().to_string();
-    let request = next_agent_request_for_client(runtime, client_id)
-        .await
-        .expect("owned Agent Job request");
+    let request = wait_for_agent_request_for_client(runtime, client_id).await;
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
     job_id
 }
@@ -841,9 +837,7 @@ async fn observe_jobs_recovering_lost_and_stop_requested_match_job_log_semantics
         )
         .await;
     let recovering_job = started.output["job_id"].as_str().unwrap().to_string();
-    let recovering_request = next_patch_agent_request(&runtime, "observe-recovering")
-        .await
-        .unwrap();
+    let recovering_request = wait_for_patch_agent_request(&runtime, "observe-recovering").await;
     runtime
         .shell_clients
         .update_job(ShellAgentJobUpdateRequest {
@@ -1029,7 +1023,7 @@ async fn observe_jobs_mixed_success_result_matches_declared_output_schema_and_en
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["succeeded_count"], 1);
     assert_eq!(result.output["failed_count"], 1);
-    assert!(next_patch_agent_request(&runtime, "observe-no-enqueue")
+    assert!(probe_patch_agent_request(&runtime, "observe-no-enqueue")
         .await
         .is_none());
 

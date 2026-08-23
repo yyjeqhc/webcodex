@@ -880,9 +880,7 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
         )
         .await
         .unwrap();
-    let start_request = next_agent_request_for_instance(&runtime, "startup-jobs", "inst")
-        .await
-        .expect("runner should receive the queued start_job request");
+    let start_request = wait_for_agent_request_for_instance(&runtime, "startup-jobs", "inst").await;
     assert_eq!(start_request.kind, "start_job");
     runtime
         .shell_clients
@@ -987,9 +985,7 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
         .await
         .unwrap();
     assert_eq!(stopped.status, "stop_requested");
-    let stop_request = next_agent_request_for_instance(&runtime, "startup-jobs", "inst")
-        .await
-        .expect("runner should receive the stop_job request");
+    let stop_request = wait_for_agent_request_for_instance(&runtime, "startup-jobs", "inst").await;
     assert_eq!(stop_request.kind, "stop_job");
     assert_eq!(stop_request.job_id.as_deref(), Some(job.job_id.as_str()));
 

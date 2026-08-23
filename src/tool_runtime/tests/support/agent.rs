@@ -378,7 +378,7 @@ pub(in crate::tool_runtime::tests) async fn dispatch_checkpoint_with_local_agent
     });
     let deadline = Instant::now() + Duration::from_secs(10);
     let req = loop {
-        let request = next_patch_agent_request(runtime, client_id).await;
+        let request = probe_patch_agent_request(runtime, client_id).await;
         if request.is_some() || task.is_finished() {
             break request;
         }
@@ -615,14 +615,14 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
         .unwrap();
 }
 
-pub(in crate::tool_runtime::tests) async fn next_agent_request_for_client(
+pub(in crate::tool_runtime::tests) async fn probe_agent_request_for_client(
     runtime: &ToolRuntime,
     client_id: &str,
 ) -> Option<ShellAgentShellRequest> {
-    next_agent_request_for_instance(runtime, client_id, &format!("inst-{}", client_id)).await
+    probe_agent_request_for_instance(runtime, client_id, &format!("inst-{}", client_id)).await
 }
 
-pub(in crate::tool_runtime::tests) async fn next_agent_request_for_instance(
+pub(in crate::tool_runtime::tests) async fn probe_agent_request_for_instance(
     runtime: &ToolRuntime,
     client_id: &str,
     agent_instance_id: &str,
@@ -671,6 +671,13 @@ pub(in crate::tool_runtime::tests) async fn wait_for_agent_request_for_instance(
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+}
+
+pub(in crate::tool_runtime::tests) async fn wait_for_agent_request_for_client(
+    runtime: &ToolRuntime,
+    client_id: &str,
+) -> ShellAgentShellRequest {
+    wait_for_agent_request_for_instance(runtime, client_id, &format!("inst-{client_id}")).await
 }
 
 pub(in crate::tool_runtime::tests) async fn runtime_with_resolver_projects() -> ToolRuntime {
@@ -731,7 +738,7 @@ pub(in crate::tool_runtime::tests) async fn runtime_with_resolver_projects() -> 
 //   * server-configured (non-agent) projects are rejected by every patch
 //     tool, so the server never touches the filesystem directly.
 
-pub(in crate::tool_runtime::tests) async fn next_patch_agent_request(
+pub(in crate::tool_runtime::tests) async fn probe_patch_agent_request(
     runtime: &ToolRuntime,
     client_id: &str,
 ) -> Option<ShellAgentShellRequest> {
@@ -754,7 +761,7 @@ pub(in crate::tool_runtime::tests) async fn next_patch_agent_request(
 }
 
 /// Wait for a request that the test requires to be dispatched. Unlike
-/// `next_patch_agent_request`, which is intentionally a short probe for
+/// `probe_patch_agent_request`, which is intentionally a short probe for
 /// negative/no-dispatch assertions, this positive readiness wait uses one
 /// absolute wall-clock deadline so scheduler contention cannot turn a fixed
 /// yield count into a flaky failure.

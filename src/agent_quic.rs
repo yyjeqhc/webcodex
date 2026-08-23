@@ -510,6 +510,47 @@ mod tests {
     /// ALPN used by the QUIC integration tests.
     const TEST_ALPN: &str = AGENT_QUIC_ALPN_V1;
 
+    async fn wait_for_quic_client_connected(
+        registry: &ShellClientRegistry,
+        client_id: &str,
+        expected: bool,
+    ) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let view = registry.get_client_view(client_id).await.unwrap();
+            if view.connected == expected {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "client {client_id} connected={expected} was not observed before the 3-second deadline; last status={} transport={}",
+                view.status,
+                view.transport
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    async fn wait_for_quic_job_status(
+        registry: &ShellClientRegistry,
+        job_id: &str,
+        expected: &str,
+    ) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let job = registry.get_job(job_id).await.unwrap();
+            if job.status == expected {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "job {job_id} did not reach {expected} before the 3-second deadline; last status={}",
+                job.status
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
     /// Generate a self-signed cert/key for `localhost` using rcgen, returned as
     /// DER types directly consumable by rustls. Avoids PEM parsing in tests.
     fn self_signed_cert() -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
@@ -824,15 +865,9 @@ mod tests {
             .last_seen;
         assert!(after > before, "ping must refresh last_seen");
 
-        // Close the stream; the server reconciles.
+        // Close the stream; the server reconciles the retained client offline.
         send.finish().unwrap();
-        // Give the server a moment to observe the stream end.
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            if registry.get_client_view("quic-rt").await.is_some() {
-                break;
-            }
-        }
+        wait_for_quic_client_connected(&registry, "quic-rt", false).await;
         client_endpoint.close(quinn::VarInt::from_u32(0), b"");
         conn.close(quinn::VarInt::from_u32(0), b"done");
     }
@@ -1046,13 +1081,7 @@ mod tests {
         .await
         .unwrap();
 
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            let updated = registry.get_job(&job.job_id).await.unwrap();
-            if updated.status == "running" {
-                break;
-            }
-        }
+        wait_for_quic_job_status(&registry, &job.job_id, "running").await;
         let updated = registry.get_job(&job.job_id).await.unwrap();
         assert_eq!(updated.status, "running");
         let (_job, stdout, _stderr, _next_stdout, _next_stderr) = registry
@@ -1124,12 +1153,7 @@ mod tests {
         client_endpoint.close(quinn::VarInt::from_u32(0), b"");
         conn.close(quinn::VarInt::from_u32(0), b"done");
 
-        for _ in 0..40 {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            if registry.get_job(&job.job_id).await.unwrap().status == "lost" {
-                break;
-            }
-        }
+        wait_for_quic_job_status(&registry, &job.job_id, "lost").await;
         let lost = registry.get_job(&job.job_id).await.unwrap();
         assert_eq!(lost.status, "lost");
         assert!(lost.error.unwrap().contains("disconnected"));
@@ -1225,17 +1249,7 @@ mod tests {
         )
         .await
         .unwrap();
-        for _ in 0..40 {
-            if !registry
-                .get_client_view("quic-goodbye")
-                .await
-                .unwrap()
-                .connected
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
+        wait_for_quic_client_connected(&registry, "quic-goodbye", false).await;
         assert!(
             !registry
                 .get_client_view("quic-goodbye")

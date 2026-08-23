@@ -241,9 +241,7 @@ async fn runner_disconnect_and_reconnect_change_layers_independently() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "rc-agent", "inst-b")
-        .await
-        .expect("new instance receives work after reconnect");
+    let req = wait_for_agent_request_for_instance(&runtime, "rc-agent", "inst-b").await;
     complete_patch_agent_request_for_instance(
         &runtime,
         "rc-agent",
@@ -1517,9 +1515,7 @@ async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
         )
         .await
         .unwrap();
-    let _req = next_agent_request_for_instance(&runtime, "job-agent", "inst-a")
-        .await
-        .expect("job request dispatched");
+    let _req = wait_for_agent_request_for_instance(&runtime, "job-agent", "inst-a").await;
 
     // Transport drops mid-job: job authority is not silently completed.
     runtime
@@ -1824,7 +1820,12 @@ async fn dispatch_start_coding_task_in_window_with_transport(
                 .await
         }
     });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "start_coding_task did not finish within the 10-second test deadline"
+        );
         if let Some(req) = runtime
             .shell_clients
             .poll(crate::shell_protocol::ShellAgentPollRequest {

@@ -33,9 +33,7 @@ async fn git_status_with_session_id_records_git_read_event() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "telemetry-git")
-        .await
-        .expect("git_status should enqueue an agent shell request");
+    let req = wait_for_patch_agent_request(&runtime, "telemetry-git").await;
     complete_patch_agent_request(&runtime, "telemetry-git", &req.request_id, 0, "", "").await;
     let result = task.await.unwrap();
 
@@ -87,9 +85,7 @@ async fn git_log_parses_commits() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "git-log-parse")
-        .await
-        .expect("git_log should enqueue an agent shell request");
+    let req = wait_for_patch_agent_request(&runtime, "git-log-parse").await;
     assert!(req.command.contains("git log"));
     assert!(req.command.contains("-n 21"));
     complete_patch_agent_request(&runtime, "git-log-parse", &req.request_id, 0, &stdout, "").await;
@@ -149,9 +145,7 @@ async fn git_log_limit_and_skip_returns_second_recent_and_truncated() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "git-log-page")
-        .await
-        .expect("git_log should enqueue an agent shell request");
+    let req = wait_for_patch_agent_request(&runtime, "git-log-page").await;
     assert!(req.command.contains("-n 2"));
     assert!(req.command.contains("--skip 1"));
     complete_patch_agent_request(&runtime, "git-log-page", &req.request_id, 0, &stdout, "").await;
@@ -249,9 +243,7 @@ async fn git_log_read_only_session_allowed_and_recorded() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "git-log-readonly")
-        .await
-        .expect("git_log should be allowed in read_only session");
+    let req = wait_for_patch_agent_request(&runtime, "git-log-readonly").await;
     complete_patch_agent_request(
         &runtime,
         "git-log-readonly",

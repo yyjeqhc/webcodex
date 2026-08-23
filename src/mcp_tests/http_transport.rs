@@ -517,8 +517,8 @@ async fn http_mcp_initialize_success() {
 async fn http_mcp_tools_list_success() {
     // Default (non-compact) HTTP tools/list: full schema fields present.
     // Compact-mode shape is covered by mcp_tools_list_compact_*.
-    let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-    std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());

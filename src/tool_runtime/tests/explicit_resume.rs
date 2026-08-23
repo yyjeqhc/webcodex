@@ -7,6 +7,7 @@ use crate::tool_runtime::sessions::{SessionEvent, SessionGuards, SessionTranspor
 use crate::tool_runtime::{SessionMode, StartupDetail, ToolCall, ToolResult, ToolRuntime};
 use serde_json::{json, Value};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 fn coding_call(
     project: &str,
@@ -75,10 +76,12 @@ async fn dispatch_start_coding_task_without_window(
         }
     });
 
-    for _ in 0..5_000 {
-        if task.is_finished() {
-            break;
-        }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !task.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "start_coding_task did not finish within the 10-second test deadline"
+        );
         if let Some(request) = runtime
             .shell_clients
             .poll(crate::shell_protocol::ShellAgentPollRequest {
@@ -100,10 +103,9 @@ async fn dispatch_start_coding_task_without_window(
             )
             .await;
         } else {
-            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            tokio::time::sleep(Duration::from_millis(2)).await;
         }
     }
-    assert!(task.is_finished(), "start_coding_task did not finish");
     task.await.unwrap()
 }
 

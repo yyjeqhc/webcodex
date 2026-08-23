@@ -5,7 +5,8 @@ use crate::tool_runtime::git::{
 };
 use crate::tool_runtime::helpers::{run_command_sync, shell_escape_simple};
 use crate::tool_runtime::{
-    ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind, ToolRuntime,
+    ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind,
+    LocalJobRecord, ToolRuntime,
 };
 use crate::tool_runtime::{LocalJobKiller, TerminateOutcome};
 use serde_json::{json, Value};
@@ -131,6 +132,43 @@ pub(in crate::tool_runtime::tests) fn write_fake_job(
     fs::write(dir.join("stdout.log"), stdout).unwrap();
     fs::write(dir.join("stderr.log"), stderr).unwrap();
     dir
+}
+
+/// Seed one session-scoped local Job directly into the runtime for model-facing
+/// handoff/finish projection tests. Execution/transport semantics belong to the
+/// Job/process suites; projection tests only need durable lifecycle metadata.
+pub(in crate::tool_runtime::tests) async fn seed_session_projection_job(
+    runtime: &ToolRuntime,
+    root: &Path,
+    job_id: &str,
+    project: &str,
+    session_id: &str,
+    status: &str,
+    stdout: &str,
+) {
+    let now = chrono::Utc::now().timestamp();
+    let dir = write_fake_job(
+        root,
+        job_id,
+        project,
+        &root.to_string_lossy(),
+        status,
+        stdout,
+        "",
+        json!({
+            "created_at": now,
+            "started_at": now,
+            "max_runtime_secs": 3600,
+            "session_id": session_id,
+            "purpose": "test",
+        }),
+    );
+    let (record, _) = LocalJobRecord::initialize(project.to_string(), dir).unwrap();
+    runtime
+        .local_jobs
+        .lock()
+        .await
+        .insert(job_id.to_string(), record);
 }
 
 /// A deterministic fake process-killer for testing timeout/stop invariants.

@@ -62,9 +62,7 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "telemetry-shell")
-        .await
-        .expect("run_shell should enqueue success request");
+    let req = wait_for_patch_agent_request(&runtime, "telemetry-shell").await;
     complete_patch_agent_request(
         &runtime,
         "telemetry-shell",
@@ -104,9 +102,7 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
                 .await
         }
     });
-    let req = next_patch_agent_request(&runtime, "telemetry-shell")
-        .await
-        .expect("run_shell should enqueue failure request");
+    let req = wait_for_patch_agent_request(&runtime, "telemetry-shell").await;
     complete_patch_agent_request(
         &runtime,
         "telemetry-shell",
@@ -490,9 +486,7 @@ async fn run_shell_via_agent(
             .run_shell(project, command, timeout_secs, None)
             .await
     });
-    let req = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("run_shell should enqueue a shell command");
+    let req = wait_for_patch_agent_request(&runtime, client_id).await;
     if let Some((exit_code, stdout, stderr)) = completion {
         complete_patch_agent_request(
             &runtime,
@@ -525,9 +519,7 @@ async fn run_shell_via_agent_lifecycle_error(
             .run_shell(project, "printf lifecycle".to_string(), Some(30), None)
             .await
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("run_shell should be dispatched");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     runtime
         .shell_clients
         .complete(ShellAgentResultPayload {
@@ -632,16 +624,7 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
         }
     });
 
-    let start = match next_patch_agent_request(&runtime, client_id).await {
-        Some(start) => start,
-        None => {
-            let early = task.await.unwrap();
-            panic!(
-                "long run_shell ended before durable Job start: success={} error={:?} output={}",
-                early.success, early.error, early.output
-            );
-        }
-    };
+    let start = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(start.kind, "start_job");
     assert_eq!(start.timeout_secs, 120);
     assert!(start.command.starts_with("exec bash -c "));
@@ -730,9 +713,7 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
         )
         .await;
     assert!(stopped.success, "{:?}", stopped.error);
-    let stop_request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("stop_job request");
+    let stop_request = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(stop_request.kind, "stop_job");
     assert_eq!(stop_request.job_id.as_deref(), Some(job_id.as_str()));
     update_agent_shell_job(
@@ -782,9 +763,7 @@ async fn long_run_shell_fast_terminal_returns_ordinary_result_without_visible_jo
                 .await
         }
     });
-    let start = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("durable start request");
+    let start = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(start.kind, "start_job");
     let job_id = start.job_id.clone().unwrap();
     update_agent_shell_job(
@@ -837,9 +816,7 @@ async fn run_shell_default_sixty_stays_synchronous_even_with_async_job_capabilit
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("ordinary synchronous run_shell request");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request.kind, "run_shell");
     assert_eq!(request.timeout_secs, 60);
     complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, "default", "").await;
@@ -872,9 +849,7 @@ async fn long_run_shell_without_async_job_capability_keeps_legacy_sync_dispatch(
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("legacy synchronous request");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request.kind, "run_shell");
     assert_eq!(request.timeout_secs, 120);
     complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, "legacy", "").await;
@@ -1018,9 +993,7 @@ async fn long_run_shell_job_timeout_is_terminal_and_never_becomes_fake_outcome_u
                 .await
         }
     });
-    let start = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("durable Job start");
+    let start = wait_for_patch_agent_request(&runtime, client_id).await;
     let job_id = start.job_id.clone().unwrap();
     update_agent_shell_job(
         &runtime,
@@ -1358,9 +1331,7 @@ async fn run_shell_runner_timeout_preserves_known_timeout_state() {
             .run_shell(project, "sleep 2".to_string(), Some(1), None)
             .await
     });
-    let request = next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("run_shell should be dispatched");
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
     runtime
         .shell_clients
         .complete(ShellAgentResultPayload {
@@ -1409,9 +1380,7 @@ async fn run_shell_transport_disconnect_after_dispatch_reports_unknown_outcome()
             .run_shell(project, "printf possibly-ran".to_string(), Some(30), None)
             .await
     });
-    next_patch_agent_request(&runtime, client_id)
-        .await
-        .expect("run_shell should be dispatched before disconnect");
+    wait_for_patch_agent_request(&runtime, client_id).await;
 
     runtime
         .shell_clients
@@ -2134,9 +2103,8 @@ async fn model_facing_stop_job_reports_requested_and_already_stop_requested() {
         .await;
     assert!(run.success, "{:?}", run.error);
     let job_id = run.output["job_id"].as_str().unwrap().to_string();
-    let start_req = next_agent_request_for_instance(&runtime, "client-stop-pending", "inst")
-        .await
-        .expect("agent should receive start_job");
+    let start_req =
+        wait_for_agent_request_for_instance(&runtime, "client-stop-pending", "inst").await;
     assert_eq!(start_req.kind, "start_job");
 
     let result = runtime
@@ -2534,9 +2502,7 @@ async fn start_agent_runtime_job_in_session(
 }
 
 async fn mark_next_agent_job_running(runtime: &ToolRuntime, client_id: &str) -> String {
-    let request = next_agent_request_for_instance(runtime, client_id, "inst")
-        .await
-        .expect("Agent Job request should be queued");
+    let request = wait_for_agent_request_for_instance(runtime, client_id, "inst").await;
     let job_id = request.job_id.clone().expect("Job request id");
     runtime
         .shell_clients
@@ -2634,9 +2600,7 @@ async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group() {
     let job_b = start_agent_runtime_job(&runtime, "client-b", "proj-b", &shared_b).await;
     let job_open = start_agent_runtime_job(&runtime, "client-open", "proj-open", &open).await;
 
-    let req = next_agent_request_for_instance(&runtime, "client-b", "inst")
-        .await
-        .expect("client-b job request should be queued");
+    let req = wait_for_agent_request_for_instance(&runtime, "client-b", "inst").await;
     complete_patch_agent_request(&runtime, "client-b", &req.request_id, 0, "b-out", "b-err").await;
 
     let list_a = runtime
@@ -2976,9 +2940,7 @@ async fn list_jobs_filters_visible_jobs_by_project_session_and_status_before_lim
         mark_next_agent_job_running(&runtime, "target-a").await,
         job_a1_running
     );
-    let completed_request = next_agent_request_for_instance(&runtime, "target-a", "inst")
-        .await
-        .expect("second A1 Job request");
+    let completed_request = wait_for_agent_request_for_instance(&runtime, "target-a", "inst").await;
     assert_eq!(
         completed_request.job_id.as_deref(),
         Some(job_a1_completed.as_str())

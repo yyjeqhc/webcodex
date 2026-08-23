@@ -645,6 +645,34 @@ pub(in crate::tool_runtime::tests) async fn next_agent_request_for_instance(
     None
 }
 
+pub(in crate::tool_runtime::tests) async fn wait_for_agent_request_for_instance(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    agent_instance_id: &str,
+) -> ShellAgentShellRequest {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(request) = runtime
+            .shell_clients
+            .poll(ShellAgentPollRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: agent_instance_id.to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+        {
+            return request;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "Agent request readiness failed for client {client_id} instance {agent_instance_id} within 10 seconds"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 pub(in crate::tool_runtime::tests) async fn runtime_with_resolver_projects() -> ToolRuntime {
     let runtime = test_runtime();
     let file_caps = ShellClientCapabilities {
@@ -734,25 +762,7 @@ pub(in crate::tool_runtime::tests) async fn wait_for_patch_agent_request(
     runtime: &ToolRuntime,
     client_id: &str,
 ) -> ShellAgentShellRequest {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(request) = runtime
-            .shell_clients
-            .poll(ShellAgentPollRequest {
-                client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
-                projects: None,
-            })
-            .await
-            .unwrap()
-        {
-            return request;
-        }
-        if Instant::now() >= deadline {
-            panic!("Agent request readiness failed for client {client_id} within 10 seconds");
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    wait_for_agent_request_for_instance(runtime, client_id, "inst").await
 }
 
 pub(in crate::tool_runtime::tests) fn assert_internal_posix_script_contains(

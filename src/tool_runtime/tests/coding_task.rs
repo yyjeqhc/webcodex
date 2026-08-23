@@ -2849,114 +2849,20 @@ async fn finish_coding_task_summary_only_treats_read_failure_as_historical_non_a
 
 #[tokio::test]
 async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
-    let runtime = test_runtime();
-    let caps = ShellClientCapabilities {
-        shell: true,
-        git: true,
-        async_shell_jobs: true,
-        internal_posix_script: true,
-        ..Default::default()
-    };
-    let project_path = tmp.path().to_string_lossy().to_string();
-    let auth = open_auth_context();
-    register_agent_projects_for_auth(
-        &runtime,
-        "coding-finish-jobs",
-        &auth,
-        caps,
-        vec![registered_project("demo", &project_path)],
+    let fixture = finish_summary_fixture("coding-finish-jobs").await;
+    let job_id = "22222222-3333-4444-5555-666666666661";
+    seed_session_projection_job(
+        &fixture.runtime,
+        fixture._tmp.path(),
+        job_id,
+        &fixture.project,
+        &fixture.session_id,
+        "running",
+        "secret-job-output\n",
     )
     .await;
-    let project = "agent:coding-finish-jobs:demo".to_string();
-    let start = runtime
-        .dispatch_with_auth(
-            ToolCall::StartCodingTask {
-                project: project.clone(),
-                client_id: None,
-                path: None,
-                temporary_project_name: None,
-                title: Some("finish active jobs".to_string()),
-                mode: SessionMode::Normal,
-                detail: Default::default(),
-                deny_write_tools: false,
-                deny_shell_tools: false,
-                resume_session_id: None,
-                bind_current: false,
-                new_session: false,
-                execution_context: None,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(start.success, "{:?}", start.error);
-    let session_id = start.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
 
-    let run = runtime
-        .dispatch_with_auth(
-            ToolCall::RunJob {
-                project: project.clone(),
-                command: "printf secret-job-output".to_string(),
-                session_id: Some(session_id.clone()),
-                timeout_secs: None,
-                cwd: None,
-                purpose: None,
-                shell: None,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(run.success, "{:?}", run.error);
-    let queued_job = next_agent_request_for_client(&runtime, "coding-finish-jobs")
-        .await
-        .expect("run_job should enqueue a job request");
-    assert_eq!(queued_job.kind, "start_job");
-
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let session_id = session_id.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    ToolCall::FinishCodingTask {
-                        project,
-                        session_id,
-                        summary_only: false,
-                        include_diff: Some(false),
-                        include_workspace: None,
-                        include_hygiene: Some(false),
-                        include_handoff: Some(false),
-                        include_validation_summary: Some(false),
-                    },
-                    Some(&auth),
-                )
-                .await
-        }
-    });
-    let req = next_agent_request_for_client(&runtime, "coding-finish-jobs")
-        .await
-        .expect("finish_coding_task should inspect changes through the agent");
-    assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
-    let show_changes_stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
-    complete_patch_agent_request_for_instance(
-        &runtime,
-        "coding-finish-jobs",
-        "inst-coding-finish-jobs",
-        &req.request_id,
-        0,
-        show_changes_stdout,
-        "",
-    )
-    .await;
-    let result = task.await.unwrap();
-
+    let result = finish_coding_task_jobs_projection(&fixture).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["jobs"]["active_count"], 1);
     assert_eq!(result.output["jobs"]["running_count"], 1);
@@ -2966,10 +2872,7 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
     assert_eq!(result.output["jobs"]["nonblocking_active_count"], 0);
     assert_eq!(result.output["task_outcome"]["status"], "fail");
     assert_eq!(result.output["task_outcome"]["blocking"], true);
-    assert_eq!(
-        result.output["jobs"]["recent"][0]["job_id"],
-        run.output["job_id"]
-    );
+    assert_eq!(result.output["jobs"]["recent"][0]["job_id"], job_id);
     assert!(result.output["final_warnings"]
         .as_array()
         .unwrap()
@@ -2982,133 +2885,20 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
 
 #[tokio::test]
 async fn finish_coding_task_treats_stop_requested_jobs_as_nonblocking() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
-    let runtime = test_runtime();
-    let caps = ShellClientCapabilities {
-        shell: true,
-        git: true,
-        async_shell_jobs: true,
-        internal_posix_script: true,
-        ..Default::default()
-    };
-    let project_path = tmp.path().to_string_lossy().to_string();
-    let auth = open_auth_context();
-    register_agent_projects_for_auth(
-        &runtime,
-        "coding-finish-stop-pending",
-        &auth,
-        caps,
-        vec![registered_project("demo", &project_path)],
+    let fixture = finish_summary_fixture("coding-finish-stop-pending").await;
+    let job_id = "22222222-3333-4444-5555-666666666662";
+    seed_session_projection_job(
+        &fixture.runtime,
+        fixture._tmp.path(),
+        job_id,
+        &fixture.project,
+        &fixture.session_id,
+        "stop_requested",
+        "stop-pending-secret-output\n",
     )
     .await;
-    let project = "agent:coding-finish-stop-pending:demo".to_string();
-    let start = runtime
-        .dispatch_with_auth(
-            ToolCall::StartCodingTask {
-                project: project.clone(),
-                client_id: None,
-                path: None,
-                temporary_project_name: None,
-                title: Some("finish stop pending".to_string()),
-                mode: SessionMode::Normal,
-                detail: Default::default(),
-                deny_write_tools: false,
-                deny_shell_tools: false,
-                resume_session_id: None,
-                bind_current: false,
-                new_session: false,
-                execution_context: None,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(start.success, "{:?}", start.error);
-    let session_id = start.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
 
-    let run = runtime
-        .dispatch_with_auth(
-            ToolCall::RunJob {
-                project: project.clone(),
-                command: "printf stop-pending-secret-output".to_string(),
-                session_id: Some(session_id.clone()),
-                timeout_secs: None,
-                cwd: None,
-                purpose: None,
-                shell: None,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(run.success, "{:?}", run.error);
-    let job_id = run.output["job_id"].as_str().unwrap().to_string();
-    let start_job = next_agent_request_for_client(&runtime, "coding-finish-stop-pending")
-        .await
-        .expect("run_job should enqueue a job request");
-    assert_eq!(start_job.kind, "start_job");
-
-    let stop = runtime
-        .dispatch_with_auth(
-            ToolCall::StopJob {
-                project: project.clone(),
-                job_id: job_id.clone(),
-                session_id: Some(session_id.clone()),
-                confirm: true,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(stop.success, "{:?}", stop.error);
-    assert_eq!(stop.output["status_after"], "stop_requested");
-    let stop_req = next_agent_request_for_client(&runtime, "coding-finish-stop-pending")
-        .await
-        .expect("stop_job should enqueue a stop request");
-    assert_eq!(stop_req.kind, "stop_job");
-
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let session_id = session_id.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    ToolCall::FinishCodingTask {
-                        project,
-                        session_id,
-                        summary_only: false,
-                        include_diff: Some(false),
-                        include_workspace: None,
-                        include_hygiene: Some(false),
-                        include_handoff: Some(false),
-                        include_validation_summary: Some(false),
-                    },
-                    Some(&auth),
-                )
-                .await
-        }
-    });
-    let req = next_agent_request_for_client(&runtime, "coding-finish-stop-pending")
-        .await
-        .expect("finish_coding_task should inspect changes through the agent");
-    assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
-    let show_changes_stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
-    complete_patch_agent_request_for_instance(
-        &runtime,
-        "coding-finish-stop-pending",
-        "inst-coding-finish-stop-pending",
-        &req.request_id,
-        0,
-        show_changes_stdout,
-        "",
-    )
-    .await;
-    let result = task.await.unwrap();
-
+    let result = finish_coding_task_jobs_projection(&fixture).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["jobs"]["active_count"], 1);
     assert_eq!(result.output["jobs"]["running_count"], 0);
@@ -3353,6 +3143,44 @@ async fn finish_summary_fixture(client_id: &'static str) -> FinishSummaryFixture
         auth: auth_context(None, true),
         client_id,
     }
+}
+
+async fn finish_coding_task_jobs_projection(fixture: &FinishSummaryFixture) -> ToolResult {
+    let task = tokio::spawn({
+        let runtime = fixture.runtime.clone();
+        let project = fixture.project.clone();
+        let session_id = fixture.session_id.clone();
+        let auth = fixture.auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        summary_only: false,
+                        include_diff: Some(false),
+                        include_workspace: None,
+                        include_hygiene: Some(false),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(false),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&fixture.runtime, fixture.client_id).await;
+    assert_internal_posix_script_contains(&request, "git status --porcelain=v1 -b");
+    complete_patch_agent_request(
+        &fixture.runtime,
+        fixture.client_id,
+        &request.request_id,
+        0,
+        "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n",
+        "",
+    )
+    .await;
+    task.await.unwrap()
 }
 
 async fn finish_coding_task_summary_only_with_agent(

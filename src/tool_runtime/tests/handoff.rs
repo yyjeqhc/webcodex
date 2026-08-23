@@ -222,9 +222,7 @@ async fn session_handoff_summary_includes_recent_failed_tools() {
                 .await
         }
     });
-    let req = next_agent_request_for_instance(&runtime, "handoff-fail", "inst")
-        .await
-        .expect("read_file should enqueue an agent request");
+    let req = wait_for_agent_request_for_instance(&runtime, "handoff-fail", "inst").await;
     // Return an error to simulate a failed read.
     complete_patch_agent_request(
         &runtime,
@@ -871,20 +869,20 @@ async fn real_cargo_nonzero_failures_match_validation_failed_expectations() {
                 call_typed_tool_with_metadata(&runtime, &tool_name, arguments, Some(&auth)).await
             }
         });
-        let mut req = None;
-        for _ in 0..200 {
-            req = next_patch_agent_request(&runtime, "cargo-expected-kind").await;
-            if req.is_some() || task.is_finished() {
-                break;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let req = loop {
+            if let Some(req) = next_patch_agent_request(&runtime, "cargo-expected-kind").await {
+                break req;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-        let req = match req {
-            Some(req) => req,
-            None => {
+            if task.is_finished() {
                 let result = task.await.unwrap();
                 panic!("cargo tool finished before enqueueing an agent shell request: {result:?}");
             }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "cargo validation Agent request readiness timed out"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         };
         assert_eq!(req.command, *expected_command);
         complete_patch_agent_request(
@@ -985,15 +983,21 @@ async fn cargo_test_zero_tests_success_is_detected_and_warns_in_handoff() {
         }
     });
 
-    let mut req = None;
-    for _ in 0..200 {
-        req = next_patch_agent_request(&runtime, "cargo-zero-tests").await;
-        if req.is_some() || task.is_finished() {
-            break;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let req = loop {
+        if let Some(req) = next_patch_agent_request(&runtime, "cargo-zero-tests").await {
+            break req;
         }
+        assert!(
+            !task.is_finished(),
+            "cargo_test finished before Agent dispatch"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "cargo_test Agent request readiness timed out"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-    let req = req.expect("cargo_test should enqueue an agent shell request");
+    };
     assert_eq!(req.command, "cargo test 'missing_filter'");
     complete_patch_agent_request(
         &runtime,
@@ -1563,58 +1567,41 @@ async fn session_handoff_summary_only_is_compact() {
 // 4. Active jobs summary
 // =========================================================================
 
+async fn handoff_jobs_projection(runtime: &ToolRuntime, session_id: &str) -> ToolResult {
+    runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: session_id.to_string(),
+            project: None,
+            include_workspace: Some(false),
+            include_checkpoints: Some(false),
+            include_validation: Some(false),
+            summary_only: false,
+            limit: Some(20),
+        })
+        .await
+}
+
 #[tokio::test]
 async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
-    let runtime = test_runtime();
-    let caps = ShellClientCapabilities {
-        async_shell_jobs: true,
-        ..Default::default()
-    };
-    let auth = open_auth_context();
-    register_agent_projects_for_auth(
-        &runtime,
-        "handoff-jobs",
-        &auth,
-        caps,
-        vec![registered_project("demo", "/tmp/handoff-jobs-demo")],
-    )
-    .await;
-    let project = "agent:handoff-jobs:demo".to_string();
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = runtime_with_project(temp.path(), "demo");
+    let project = "demo";
     let session = runtime
         .sessions
-        .start_session(Some(project.clone()), Some("handoff jobs".to_string()));
-    let sid = session.session_id.clone();
-    let run = runtime
-        .dispatch_with_auth(
-            ToolCall::RunJob {
-                project: project.clone(),
-                command: "printf handoff-secret-output".to_string(),
-                session_id: Some(sid.clone()),
-                timeout_secs: None,
-                cwd: None,
-                purpose: None,
-                shell: None,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(run.success, "{:?}", run.error);
-    let job_id = run.output["job_id"].as_str().unwrap().to_string();
+        .start_session(Some(project.to_string()), Some("handoff jobs".to_string()));
+    let job_id = "11111111-2222-3333-4444-555555555551";
+    seed_session_projection_job(
+        &runtime,
+        temp.path(),
+        job_id,
+        project,
+        &session.session_id,
+        "running",
+        "handoff-secret-output\n",
+    )
+    .await;
 
-    let active = runtime
-        .dispatch_with_auth(
-            ToolCall::SessionHandoffSummary {
-                session_id: sid.clone(),
-                project: Some(project.clone()),
-                include_workspace: Some(false),
-                include_checkpoints: Some(false),
-                include_validation: Some(false),
-                summary_only: false,
-                limit: Some(20),
-            },
-            Some(&auth),
-        )
-        .await;
+    let active = handoff_jobs_projection(&runtime, &session.session_id).await;
     assert!(active.success, "{:?}", active.error);
     assert_eq!(active.output["jobs"]["active_count"], 1);
     assert_eq!(active.output["jobs"]["running_count"], 1);
@@ -1634,33 +1621,12 @@ async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
     let serialized = serde_json::to_string(&active.output["jobs"]).unwrap();
     assert!(!serialized.contains("handoff-secret-output"));
 
-    let stop = runtime
-        .dispatch_with_auth(
-            ToolCall::StopJob {
-                project: project.clone(),
-                job_id,
-                session_id: Some(sid.clone()),
-                confirm: true,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(stop.success, "{:?}", stop.error);
-
-    let stopped = runtime
-        .dispatch_with_auth(
-            ToolCall::SessionHandoffSummary {
-                session_id: sid,
-                project: Some(project),
-                include_workspace: Some(false),
-                include_checkpoints: Some(false),
-                include_validation: Some(false),
-                summary_only: false,
-                limit: Some(20),
-            },
-            Some(&auth),
-        )
-        .await;
+    std::fs::write(
+        temp.path().join(format!(".codex/jobs/{job_id}/status")),
+        "stopped",
+    )
+    .unwrap();
+    let stopped = handoff_jobs_projection(&runtime, &session.session_id).await;
     assert!(stopped.success, "{:?}", stopped.error);
     assert_eq!(stopped.output["jobs"]["active_count"], 0);
     assert_eq!(stopped.output["jobs"]["blocking_active_count"], 0);
@@ -1674,75 +1640,26 @@ async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
 
 #[tokio::test]
 async fn session_handoff_summary_treats_stop_requested_as_nonblocking() {
-    let runtime = test_runtime();
-    let caps = ShellClientCapabilities {
-        async_shell_jobs: true,
-        ..Default::default()
-    };
-    let auth = open_auth_context();
-    register_agent_projects_for_auth(
-        &runtime,
-        "handoff-stop-pending",
-        &auth,
-        caps,
-        vec![registered_project("demo", "/tmp/handoff-stop-pending-demo")],
-    )
-    .await;
-    let project = "agent:handoff-stop-pending:demo".to_string();
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = runtime_with_project(temp.path(), "demo");
+    let project = "demo";
     let session = runtime.sessions.start_session(
-        Some(project.clone()),
+        Some(project.to_string()),
         Some("handoff stop pending".to_string()),
     );
-    let sid = session.session_id.clone();
-    let run = runtime
-        .dispatch_with_auth(
-            ToolCall::RunJob {
-                project: project.clone(),
-                command: "printf handoff-stop-pending-secret".to_string(),
-                session_id: Some(sid.clone()),
-                timeout_secs: None,
-                cwd: None,
-                purpose: None,
-                shell: None,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(run.success, "{:?}", run.error);
-    let job_id = run.output["job_id"].as_str().unwrap().to_string();
-    let start_req = next_agent_request_for_client(&runtime, "handoff-stop-pending")
-        .await
-        .expect("agent should receive start_job");
-    assert_eq!(start_req.kind, "start_job");
+    let job_id = "11111111-2222-3333-4444-555555555552";
+    seed_session_projection_job(
+        &runtime,
+        temp.path(),
+        job_id,
+        project,
+        &session.session_id,
+        "stop_requested",
+        "handoff-stop-pending-secret\n",
+    )
+    .await;
 
-    let stop = runtime
-        .dispatch_with_auth(
-            ToolCall::StopJob {
-                project: project.clone(),
-                job_id: job_id.clone(),
-                session_id: Some(sid.clone()),
-                confirm: true,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(stop.success, "{:?}", stop.error);
-    assert_eq!(stop.output["status_after"], "stop_requested");
-
-    let summary = runtime
-        .dispatch_with_auth(
-            ToolCall::SessionHandoffSummary {
-                session_id: sid,
-                project: Some(project),
-                include_workspace: Some(false),
-                include_checkpoints: Some(false),
-                include_validation: Some(false),
-                summary_only: false,
-                limit: Some(20),
-            },
-            Some(&auth),
-        )
-        .await;
+    let summary = handoff_jobs_projection(&runtime, &session.session_id).await;
     assert!(summary.success, "{:?}", summary.error);
     assert_eq!(summary.output["jobs"]["active_count"], 1);
     assert_eq!(summary.output["jobs"]["running_count"], 0);
@@ -3274,20 +3191,18 @@ async fn complete_agent_shell_requests_until_finished<T>(
     client_id: &str,
     task: &tokio::task::JoinHandle<T>,
 ) {
-    for _ in 0..200 {
-        if task.is_finished() {
-            return;
-        }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "tool did not finish within 10 seconds after Agent requests for {client_id}"
+        );
         if let Some(req) = next_patch_agent_request(runtime, client_id).await {
             complete_agent_request_by_running_locally(runtime, client_id, req).await;
         } else {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
-    assert!(
-        task.is_finished(),
-        "tool did not finish after agent requests"
-    );
 }
 
 async fn handoff_summary(runtime: &ToolRuntime, session_id: &str) -> ToolResult {
@@ -3351,9 +3266,7 @@ async fn dispatch_handoff_with_agent(
     // If include_workspace is true, the internal show_changes call enqueues
     // an agent shell request. Complete it locally.
     if include_workspace {
-        let req = next_patch_agent_request(runtime, client_id)
-            .await
-            .expect("handoff workspace should enqueue an agent shell request");
+        let req = wait_for_patch_agent_request(runtime, client_id).await;
         complete_agent_request_by_running_locally(runtime, client_id, req).await;
     }
 
@@ -3384,9 +3297,7 @@ async fn dispatch_handoff_summary_only_with_agent(
     });
 
     if include_workspace {
-        let req = next_patch_agent_request(runtime, client_id)
-            .await
-            .expect("handoff workspace should enqueue an agent shell request");
+        let req = wait_for_patch_agent_request(runtime, client_id).await;
         complete_agent_request_by_running_locally(runtime, client_id, req).await;
     }
 

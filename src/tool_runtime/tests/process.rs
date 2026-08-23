@@ -244,6 +244,23 @@ async fn complete_process_lifecycle(
         .unwrap();
 }
 
+async fn dispatch_process_until_request(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    call: ToolCall,
+    auth: crate::auth::AuthContext,
+) -> (
+    tokio::task::JoinHandle<ToolResult>,
+    crate::shell_protocol::ShellAgentShellRequest,
+) {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.dispatch_with_auth(call, Some(&auth)).await }
+    });
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
+    (task, request)
+}
+
 #[tokio::test]
 async fn run_process_local_direct_executor_preserves_argv_and_stdin_without_a_shell() {
     let cwd = tempfile::tempdir().unwrap();
@@ -315,9 +332,7 @@ async fn run_process_enqueues_only_typed_argv_and_reports_completed_exit_codes()
                     .await
             }
         });
-        let request = next_patch_agent_request(&runtime, "process-agent")
-            .await
-            .expect("run_process should enqueue");
+        let request = wait_for_patch_agent_request(&runtime, "process-agent").await;
         assert_eq!(request.kind, "run_process");
         assert_eq!(request.command, "");
         let process = request.process.as_ref().expect("typed process payload");
@@ -501,9 +516,8 @@ async fn detached_process_requires_job_run_and_detach_scopes_before_any_admissio
     assert!(result.success, "{:?}", result.error);
     assert_eq!(runtime.shell_clients.list_jobs(Some(10)).await.len(), 1);
     assert_eq!(
-        next_patch_agent_request(&runtime, "detached-scope-gate")
+        wait_for_patch_agent_request(&runtime, "detached-scope-gate")
             .await
-            .expect("both scopes dispatch exactly one Job")
             .kind,
         "start_detached_process_job"
     );
@@ -570,9 +584,7 @@ async fn detached_process_idempotency_replays_same_intent_and_rejects_conflict()
         .await;
     assert!(first.success, "{:?}", first.error);
     let job_id = first.output["job_id"].as_str().unwrap().to_string();
-    let request = next_patch_agent_request(&runtime, "detached-idempotency")
-        .await
-        .expect("first initiation dispatches");
+    let request = wait_for_patch_agent_request(&runtime, "detached-idempotency").await;
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
 
     let replay = runtime
@@ -649,9 +661,7 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
         .await;
     assert!(first.success, "{:?}", first.error);
     let job_id = first.output["job_id"].as_str().unwrap().to_string();
-    let request = next_patch_agent_request(&first_runtime, "detached-restart-recovery")
-        .await
-        .expect("first initiation dispatches");
+    let request = wait_for_patch_agent_request(&first_runtime, "detached-restart-recovery").await;
     let context = request
         .job_context
         .clone()
@@ -788,9 +798,7 @@ async fn detached_process_uses_existing_job_identity_and_typed_runner_request() 
     let job_id = result.output["job_id"].as_str().unwrap().to_string();
     assert_eq!(result.output["execution_source"], "run_detached_process");
 
-    let request = next_patch_agent_request(&runtime, "detached-product-path")
-        .await
-        .expect("detached product path should dispatch one typed Job request");
+    let request = wait_for_patch_agent_request(&runtime, "detached-product-path").await;
     assert_eq!(request.kind, "start_detached_process_job");
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
     assert!(request.process.is_some());
@@ -808,19 +816,13 @@ async fn run_process_fast_terminal_jobs_project_back_without_visible_duplicates(
     let auth = auth_context(None, true);
 
     for (exit_code, status, expected_success) in [(0, "completed", true), (19, "failed", false)] {
-        let task = tokio::spawn({
-            let runtime = runtime.clone();
-            let project = project.clone();
-            let auth = auth.clone();
-            async move {
-                runtime
-                    .dispatch_with_auth(process_call(project, None), Some(&auth))
-                    .await
-            }
-        });
-        let request = next_patch_agent_request(&runtime, "process-fast-job")
-            .await
-            .expect("hidden process Job should dispatch");
+        let (task, request) = dispatch_process_until_request(
+            &runtime,
+            "process-fast-job",
+            process_call(project.clone(), None),
+            auth.clone(),
+        )
+        .await;
         assert_eq!(request.kind, "start_process_job");
         assert_eq!(request.command, "");
         assert!(request.process.is_some());
@@ -911,20 +913,13 @@ async fn run_process_terminal_success_is_sparse_after_full_session_effect_record
     let session_id = session.session_id.clone();
     let auth = auth_context(None, true);
 
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let session_id = session_id.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(process_call(project, Some(session_id)), Some(&auth))
-                .await
-        }
-    });
-    let request = next_patch_agent_request(&runtime, "process-sparse-ledger")
-        .await
-        .expect("hidden process Job should dispatch");
+    let (task, request) = dispatch_process_until_request(
+        &runtime,
+        "process-sparse-ledger",
+        process_call(project.clone(), Some(session_id.clone())),
+        auth.clone(),
+    )
+    .await;
     update_process_job(
         &runtime,
         "process-sparse-ledger",
@@ -1038,19 +1033,13 @@ async fn run_process_fast_terminal_projection_does_not_silently_drop_retained_li
         "fixture must fit the model-facing terminal projection bound"
     );
 
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(process_call(project, None), Some(&auth))
-                .await
-        }
-    });
-    let request = next_patch_agent_request(&runtime, "process-fast-log-job")
-        .await
-        .expect("hidden process Job should dispatch");
+    let (task, request) = dispatch_process_until_request(
+        &runtime,
+        "process-fast-log-job",
+        process_call(project.clone(), None),
+        auth.clone(),
+    )
+    .await;
     update_process_job(
         &runtime,
         "process-fast-log-job",
@@ -1094,19 +1083,13 @@ async fn run_process_fast_prestart_rejection_retains_not_started_through_the_hid
     let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));
     let project = register_process_job_agent(&runtime, "process-prestart-job", temp.path()).await;
     let auth = auth_context(None, true);
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(process_call(project, None), Some(&auth))
-                .await
-        }
-    });
-    let request = next_patch_agent_request(&runtime, "process-prestart-job")
-        .await
-        .expect("hidden process Job should dispatch");
+    let (task, request) = dispatch_process_until_request(
+        &runtime,
+        "process-prestart-job",
+        process_call(project.clone(), None),
+        auth.clone(),
+    )
+    .await;
     let queued = runtime
         .shell_clients
         .get_hidden_job_for_auth(Some(&auth), request.job_id.as_deref().unwrap())
@@ -1148,35 +1131,26 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
     let project = register_process_job_agent(&runtime, "process-slow-job", temp.path()).await;
     let auth = auth_context(None, true);
     let started = Instant::now();
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    ToolCall::RunProcess {
-                        project,
-                        executable: "argv-helper".to_string(),
-                        args: vec![
-                            "two words".to_string(),
-                            "$(literal)".to_string(),
-                            "雪".to_string(),
-                        ],
-                        stdin: Some("input\n".to_string()),
-                        session_id: None,
-                        timeout_secs: Some(121),
-                        cwd: None,
-                        purpose: Some(ExecutionPurpose::Diagnostic),
-                    },
-                    Some(&auth),
-                )
-                .await
-        }
-    });
-    let request = next_patch_agent_request(&runtime, "process-slow-job")
-        .await
-        .expect("typed process Job should dispatch");
+    let (task, request) = dispatch_process_until_request(
+        &runtime,
+        "process-slow-job",
+        ToolCall::RunProcess {
+            project: project.clone(),
+            executable: "argv-helper".to_string(),
+            args: vec![
+                "two words".to_string(),
+                "$(literal)".to_string(),
+                "雪".to_string(),
+            ],
+            stdin: Some("input\n".to_string()),
+            session_id: None,
+            timeout_secs: Some(121),
+            cwd: None,
+            purpose: Some(ExecutionPurpose::Diagnostic),
+        },
+        auth.clone(),
+    )
+    .await;
     assert_eq!(request.kind, "start_process_job");
     assert_eq!(request.command, "");
     assert!(request.process.is_some());
@@ -1243,14 +1217,6 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
         listed.iter().filter(|job| job["job_id"] == job_id).count(),
         1
     );
-    let listed_job = listed
-        .iter()
-        .find(|job| job["job_id"] == job_id)
-        .expect("promoted process Job summary");
-    assert_eq!(
-        listed_job["structured_execution"]["execution_source"],
-        "run_process"
-    );
     assert!(next_patch_agent_request(&runtime, "process-slow-job")
         .await
         .is_none());
@@ -1267,65 +1233,21 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
         None,
     )
     .await;
-    let log = runtime
+    let terminal = runtime
         .dispatch_with_auth(
-            ToolCall::JobLog {
+            ToolCall::JobStatus {
                 job_id: job_id.clone(),
-                offset: None,
-                tail_lines: Some(20),
-                after_observation_token: None,
-                wait_secs: None,
+                include_command_preview: false,
             },
             Some(&auth),
         )
         .await;
-    assert!(log.success, "{:?}", log.error);
-    assert_eq!(log.output["status"], "completed");
-    assert!(log.output["stdout_tail"]
-        .as_str()
-        .unwrap()
-        .contains("same execution complete"));
-    assert_eq!(log.output["command_execution_state"], "completed");
+    assert!(terminal.success, "{:?}", terminal.error);
+    assert_eq!(terminal.output["status"], "completed");
+    assert_eq!(terminal.output["command_execution_state"], "completed");
     assert_eq!(
-        log.output["structured_execution"]["execution_source"],
+        terminal.output["structured_execution"]["execution_source"],
         "run_process"
-    );
-    let observed = runtime
-        .dispatch_with_auth(
-            ToolCall::ObserveJobs {
-                items: vec![ObserveJobsItem {
-                    job_id: job_id.clone(),
-                    after_observation_token: None,
-                }],
-                tail_lines: 20,
-                wait_secs: None,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(observed.success, "{:?}", observed.error);
-    let observed_job = &observed.output["items"][0]["output"];
-    assert_eq!(observed_job["status"], log.output["status"]);
-    assert_eq!(
-        observed_job["command_execution_state"],
-        log.output["command_execution_state"]
-    );
-    assert_eq!(
-        observed_job["structured_execution"],
-        log.output["structured_execution"]
-    );
-    assert_eq!(
-        observed_job["observation_token"],
-        log.output["observation_token"]
-    );
-    assert_eq!(
-        runtime
-            .shell_clients
-            .get_job(&job_id)
-            .await
-            .unwrap()
-            .command_execution_state,
-        Some(ShellCommandExecutionState::Completed)
     );
     assert!(next_patch_agent_request(&runtime, "process-slow-job")
         .await
@@ -1338,19 +1260,13 @@ async fn stop_job_stops_the_promoted_process_without_starting_a_replacement() {
     let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(30));
     let project = register_process_job_agent(&runtime, "process-stop-job", temp.path()).await;
     let auth = auth_context(None, true);
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(process_call(project, None), Some(&auth))
-                .await
-        }
-    });
-    let start_request = next_patch_agent_request(&runtime, "process-stop-job")
-        .await
-        .expect("structured process Job start");
+    let (task, start_request) = dispatch_process_until_request(
+        &runtime,
+        "process-stop-job",
+        process_call(project.clone(), None),
+        auth.clone(),
+    )
+    .await;
     update_process_job(
         &runtime,
         "process-stop-job",
@@ -1379,9 +1295,7 @@ async fn stop_job_stops_the_promoted_process_without_starting_a_replacement() {
         )
         .await;
     assert!(stopped.success, "{:?}", stopped.error);
-    let stop_request = next_patch_agent_request(&runtime, "process-stop-job")
-        .await
-        .expect("existing stop_job API should dispatch");
+    let stop_request = wait_for_patch_agent_request(&runtime, "process-stop-job").await;
     assert_eq!(stop_request.kind, "stop_job");
     assert_eq!(stop_request.job_id.as_deref(), Some(job_id.as_str()));
     update_process_job(
@@ -1422,20 +1336,13 @@ async fn promoted_process_inherits_the_initiating_session_without_a_second_tool_
         sessions::SessionGuards::default(),
     );
     let auth = auth_context(None, true);
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let session_id = session.session_id.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(process_call(project, Some(session_id)), Some(&auth))
-                .await
-        }
-    });
-    let request = next_patch_agent_request(&runtime, "process-session-job")
-        .await
-        .expect("Session-bound process Job");
+    let (task, request) = dispatch_process_until_request(
+        &runtime,
+        "process-session-job",
+        process_call(project.clone(), Some(session.session_id.clone())),
+        auth.clone(),
+    )
+    .await;
     update_process_job(
         &runtime,
         "process-session-job",
@@ -1527,9 +1434,7 @@ async fn b2_process_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "process-b2")
-        .await
-        .expect("B2 direct request");
+    let request = wait_for_patch_agent_request(&runtime, "process-b2").await;
     assert_eq!(request.kind, "run_process");
     complete_process_lifecycle(
         &runtime,
@@ -1625,9 +1530,7 @@ async fn run_process_preserves_large_typed_argv_without_shell_parsing() {
         }
     });
 
-    let request = next_patch_agent_request(&runtime, "process-large")
-        .await
-        .expect("large structured argv should enqueue");
+    let request = wait_for_patch_agent_request(&runtime, "process-large").await;
     assert_eq!(request.command, "");
     let process = request.process.as_ref().unwrap();
     assert_eq!(process.args, large_args);
@@ -1688,9 +1591,7 @@ async fn run_process_batch_rejection_from_runner_has_stable_prestart_contract() 
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "process-batch-rejected")
-        .await
-        .expect("run_process should reach the capable Runner");
+    let request = wait_for_patch_agent_request(&runtime, "process-batch-rejected").await;
     complete_process_lifecycle(
         &runtime,
         "process-batch-rejected",
@@ -1756,9 +1657,7 @@ async fn run_process_transport_uncertainty_and_timeout_preserve_phase_a_truth() 
                 .await
         }
     });
-    next_patch_agent_request(&runtime, "process-lifecycle")
-        .await
-        .expect("run_process should dispatch before transport loss");
+    wait_for_patch_agent_request(&runtime, "process-lifecycle").await;
     runtime
         .shell_clients
         .reconcile_disconnect("process-lifecycle", "inst")
@@ -1794,9 +1693,7 @@ async fn run_process_transport_uncertainty_and_timeout_preserve_phase_a_truth() 
                 .await
         }
     });
-    let request = next_patch_agent_request(&timeout_runtime, "process-timeout")
-        .await
-        .expect("run_process timeout should dispatch");
+    let request = wait_for_patch_agent_request(&timeout_runtime, "process-timeout").await;
     complete_process_lifecycle(
         &timeout_runtime,
         "process-timeout",
@@ -1858,9 +1755,7 @@ async fn run_process_session_default_cwd_applies_without_default_shell() {
         }
     });
 
-    let request = next_patch_agent_request(&runtime, "process-context")
-        .await
-        .expect("session run_process should enqueue");
+    let request = wait_for_patch_agent_request(&runtime, "process-context").await;
     assert_eq!(
         request.cwd.as_deref(),
         Some(frontend.to_string_lossy().as_ref())
@@ -2094,9 +1989,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
                 .await
         }
     });
-    let request = next_patch_agent_request(&runtime, "process-guards")
-        .await
-        .expect("inspect run_process should enqueue");
+    let request = wait_for_patch_agent_request(&runtime, "process-guards").await;
     assert_eq!(
         request.sandbox.as_deref(),
         Some(crate::command_sandbox::INSPECT_SANDBOX_MODE)

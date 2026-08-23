@@ -210,9 +210,7 @@ async fn seed_retained_terminal_validation_job(
         )
         .await
         .unwrap();
-    let request = next_patch_agent_request(runtime, client_id)
-        .await
-        .expect("seeded validation Job should enqueue a request");
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
     assert_eq!(request.kind, "start_validation_job");
     assert_eq!(request.job_id.as_deref(), Some(job.job_id.as_str()));
     runtime

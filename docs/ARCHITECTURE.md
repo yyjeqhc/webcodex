@@ -65,9 +65,11 @@ is the id registered by that Runner in its `projects.d` registry.
 ## Task / Job / session continuity
 
 - **Task** — a bounded unit of project work created by the model and reviewed
-  by a human. A project-bound Connector binds a chat window to its active task,
-  so follow-up instructions continue the same repository context. Tasks are
-  durable and can be resumed.
+  by a human. Tasks are durable and can be resumed. A project-bound Connector
+  may bind an active task only when its exact adapter/protocol supplies a stable
+  `ClientWindow`. Stateless MCP 2026 has no hidden window continuity: each
+  `task_start` is independent and existing work continues explicitly with its
+  durable `task_id` through `task_resume`.
 - **Job** — a long-running command or validation that continues after the
   initiating call returns. A single execution is promoted to a Job with the
   same `job_id` when it outlives the synchronous grace period; it is never
@@ -117,11 +119,13 @@ See [SECURITY.md](../SECURITY.md) and [AUTH_MODEL.md](AUTH_MODEL.md).
 ## Persistence and recovery
 
 The Server persists users, tokens, projects, audit entries, and OAuth rows in a
-SQLite database. Task history and per-repository window mappings are durable.
-Process-local "currently viewed project" state is deliberately discarded on
-restart; a client that retains its transport window identity restores the
-matching repository on its next `task_start`, and an explicit durable task id
-recovers it otherwise.
+SQLite database. Task history is durable. Per-repository window mappings exist
+only for adapters that explicitly provide a stable `ClientWindow`; they are not
+inferred from credentials, connections, or project identity. Process-local
+"currently viewed project" state is deliberately discarded on restart.
+Stateless MCP 2026 restores no hidden window mapping: callers continue exact work
+with an explicit durable task id. A stateful adapter may restore only its exact
+window/repository mapping under that adapter's own contract.
 
 Runner Job state is reconciled from the Runner's inventory on reconnect.
 Ordinary Jobs remain owned by the Runner process, so a Runner process restart

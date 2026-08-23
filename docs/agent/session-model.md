@@ -26,39 +26,40 @@ statement is true for only one kind, name that kind explicitly.
 ## Project Connector continuity is not a third session type
 
 The ordinary project-bound product path uses existing durable Connector Tasks
-and task events. A lightweight SQLite map associates the hashed client-window
-identity, authenticated subject, exact Connector project, and canonical-root
-hash with one current durable task. It does not create another event ledger and
-must never be cross-wired to either session system below.
+and task events. Connector continuity is adapter-specific; it is never inferred
+merely because two requests come from the same credential, connection, project,
+or apparent chat.
 
-`task_start` resolves get-or-create/continue context without duplication:
+An adapter/protocol that explicitly supplies a stable `ClientWindow` may use a
+lightweight SQLite map from the domain-separated hashed window identity,
+authenticated subject, exact Connector project, and canonical-root hash to one
+current durable task. That mapping does not create another event ledger and must
+never be cross-wired to either session system below. On such a stateful adapter,
+`task_start` may continue the exact active mapping, repository switches remain
+isolated, write upgrades recheck project-write authority, and a terminal task
+advances only that exact mapping while preserving history.
 
-- no mapping creates a durable Connector Task;
-- an active exact mapping appends a `task_instruction` event to that task;
-- changing repository activates a separate mapping without closing the first;
-- returning to the repository restores its mapping;
-- a read-only-to-write transition rechecks project-write authority and upgrades
-  the same task's execution workspace;
-- a terminal task advances that repository mapping to a new task while keeping
-  old history.
+**Stateless MCP 2026 deliberately supplies no stable `ClientWindow`.** Every
+`task_start` therefore starts independent durable work; even a caller-supplied
+legacy `Mcp-Session-Id` must not create hidden continuity. Existing work is
+continued explicitly with its durable `task_id` through `task_resume` (and may be
+discovered with `task_list`). This stateless path never falls back to a user,
+credential, project identity, connection, or prior request.
 
-Raw window identifiers are neither tool arguments nor stored data. MCP uses the
-server-minted `Mcp-Session-Id` from initialize; hosted Actions use their
-conversation-scoped request header; other HTTP clients use a server-minted
-HttpOnly cookie and one cookie jar per logical window. Only a domain-separated
-SHA-256 key is stored. Every lookup is also scoped by authenticated subject,
-Connector project id, and canonical-root hash. The process-local
-current-project navigation map is intentionally separate from the durable
-per-repository task mapping.
+Legacy/stateful MCP and first-party/hosted HTTP adapters may have their own
+explicit window sources, such as the older server-minted MCP session header, a
+conversation-scoped request header, or a first-party HttpOnly window cookie.
+Those are adapter-local `ClientWindow` inputs, not a general property of HTTP or
+MCP and never proof of Workflow Session identity, model-context retention, or
+authority. Raw window values are not stored; only their domain-separated hash is
+used where that adapter contract permits window binding.
 
-Restart recovery has a strict boundary: task history and the durable exact
-mapping survive; current navigation does not. A retained MCP header or HTTP
-cookie can recover the exact repository. Missing identity never falls back to a
-user, credential, project name, or repository path. MCP rejects anonymous
-`task_start`; HTTP clients that discard cookies require explicit task recovery.
-When `task_resume` has a new stable window identity, it moves the lightweight
-binding to that window without copying history or sharing one active task
-between two windows.
+Restart recovery follows the same boundary: durable task history always
+survives; only adapters with an explicit stable window may restore an exact
+window/repository mapping automatically. Stateless callers recover explicitly by
+`task_id`. `task_resume` may rebind only when the current adapter actually
+supplies a new stable `ClientWindow`; otherwise the durable task resumes without
+manufacturing one.
 
 ---
 

@@ -182,9 +182,14 @@ code_impact
 ```
 
 Connector context 已绑定配置的仓库。用 `task_start` 开始；不要调用项目发现、
-session 或 runtime 工具，也不要在 prompt 里放 runtime project id。同一个聊天窗口
-会自动延续当前仓库的工作。`task_list` 与 `task_resume` 是客户端无法再提供传输
-窗口身份时的显式恢复工具。
+session 或 runtime 工具，也不要在 prompt 里放 runtime project id。在 Stateless
+MCP 2026 中，每次 `tools/call` 对聊天/窗口连续性而言都是应用层无状态请求：
+`task_start` 会返回 durable `task_id`，后续再次 `task_start` 会开始独立工作，即使
+客户端仍发送旧的 `Mcp-Session-Id` 也不能形成隐藏连续性。要继续现有工作，必须显式
+调用 `task_resume(task_id)`；需要恢复 task identity 时可使用 `task_list`。不要从同一
+聊天、连接、credential、project 或 transport header 推断连续性。旧的 stateful
+adapter 契约可以显式提供 stable `ClientWindow`，但这不是 MCP 的普遍属性，也不是
+Workflow Session 或 model-context identity。
 
 ## 黄金 coding 循环
 

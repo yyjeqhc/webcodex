@@ -25,6 +25,7 @@ V2 development is paused; V1 is the active product line and is not feature-froze
 - When two designs satisfy the current need, choose the one with fewer concepts, states, configuration paths, and maintenance costs.
 - For model-facing execution, prefer structured process/argv and durable Job/observation primitives over shell-text orchestration. Keep shell as an escape hatch; structured lifecycle state is the source of truth for retry safety.
 - Treat demonstrated host features such as MCP App orchestration as optional adapters. Core execution and Job semantics must remain protocol-, UI-, transport-, and OS-neutral.
+- Never assume a model-facing HTTP/MCP request has stable model-window or Workflow Session identity. Treat requests as stateless unless that exact adapter/protocol contract explicitly supplies a stable `ClientWindow`. Stateless MCP 2026 must not derive hidden continuity from `Mcp-Session-Id`, connection state, credentials, project identity, or prior requests. Transport/audit/session correlation ids are not Workflow Session, model-context-retention, or authority proofs by themselves; use explicit durable task/session ids and recorder metadata only under their own contracts.
 
 Product direction: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 

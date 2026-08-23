@@ -204,10 +204,15 @@ code_impact
 
 The Connector context already binds the configured repository. Start with
 `task_start`; do not call project-discovery, session, or runtime tools, and do
-not put a runtime project id in the prompt. The same chat window continues the
-current repository automatically. `task_list` and `task_resume` are explicit
-recovery tools when a client can no longer present its transport window
-identity.
+not put a runtime project id in the prompt. On Stateless MCP 2026, each
+`tools/call` is application-stateless with respect to chat/window continuity:
+`task_start` returns a durable `task_id`, and a later `task_start` begins
+independent work even if the client sends a legacy `Mcp-Session-Id`. Continue
+exact existing work explicitly with `task_resume(task_id)`; use `task_list` to
+recover a task identity when needed. Do not infer continuity from the same chat,
+connection, credential, project, or transport header. Older stateful adapter
+contracts may expose a stable `ClientWindow`, but that is not a general MCP
+property and is not Workflow Session or model-context identity.
 
 ## Golden coding loop
 

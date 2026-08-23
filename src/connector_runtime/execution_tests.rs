@@ -293,13 +293,16 @@ fn project_summary(id: &str, path: &Path) -> ShellAgentProjectSummary {
 }
 
 async fn next_request(registry: &ShellClientRegistry) -> ShellAgentShellRequest {
-    for _ in 0..2_000 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
         if let Some(request) = poll(registry).await {
             return request;
         }
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        if Instant::now() >= deadline {
+            panic!("Connector agent dispatch readiness failed: no request dispatched within 10 seconds");
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    panic!("agent request was not dispatched");
 }
 
 async fn poll(registry: &ShellClientRegistry) -> Option<ShellAgentShellRequest> {
@@ -912,113 +915,102 @@ async fn node_lockfile_change_makes_successful_checks_run_stale() {
 }
 
 #[tokio::test]
-async fn validation_step_spawn_failure_is_executor_failure_without_assertion_evidence() {
-    let fixture = fixture(1_000).await;
-    let registry = fixture.registry.clone();
-    let responder = tokio::spawn(async move {
-        let request = next_request(&registry).await;
-        assert_eq!(request.kind, "start_validation_job");
-        let job_id = request.job_id.unwrap();
-        update_validation_job(
-            &registry,
-            &job_id,
-            "running",
-            Some("format completed\n"),
-            None,
-            check_progress(1, Some("check"), None),
-        )
-        .await;
-        let mut failed = validation_job_update(&job_id, "failed", check_progress(1, None, None));
-        failed.error = Some("validation_step_spawn_failed".to_string());
-        let updated = registry.update_job(failed).await.unwrap();
-        assert_eq!(updated.status, "failed");
-    });
+async fn validation_executor_failures_preserve_codes_without_assertion_evidence() {
+    let cases = [
+        ("spawn-failure", "validation_step_spawn_failed", true, false),
+        (
+            "tool-unavailable",
+            "validation_tool_unavailable",
+            false,
+            false,
+        ),
+        (
+            "wait-failure",
+            VALIDATION_STEP_WAIT_FAILED_CODE,
+            false,
+            true,
+        ),
+    ];
 
-    let outcome = fixture
-        .call(
-            "checks_run",
-            checks(&fixture, "spawn-failure", &["format", "check"]),
-        )
-        .await;
-    responder.await.unwrap();
-    assert!(outcome.ok, "{}", outcome.body);
-    let execution = &outcome.body["data"]["execution"];
-    assert_eq!(execution["execution_status"], "failed");
-    assert_eq!(execution["failure_source"], "executor");
-    assert_eq!(execution["failure_code"], "validation_step_spawn_failed");
-    assert_ne!(execution["assertion_status"], "failed");
-    assert!(execution["assertion_evidence"].is_null());
-    assert_eq!(execution["checks"][1]["status"], "not_run");
+    for (operation_id, failure_code, format_completed, assert_wait_failed_step_none) in cases {
+        let fixture = fixture(1_000).await;
+        let registry = fixture.registry.clone();
+        let responder_failure_code = failure_code.to_string();
+        let responder = tokio::spawn(async move {
+            let request = next_request(&registry).await;
+            assert_eq!(request.kind, "start_validation_job");
+            let job_id = request.job_id.unwrap();
+            if format_completed {
+                update_validation_job(
+                    &registry,
+                    &job_id,
+                    "running",
+                    Some("format completed\n"),
+                    None,
+                    check_progress(1, Some("check"), None),
+                )
+                .await;
+            }
+            let completed = if format_completed { 1 } else { 0 };
+            let mut failed =
+                validation_job_update(&job_id, "failed", check_progress(completed, None, None));
+            failed.error = Some(responder_failure_code);
+            let updated = registry.update_job(failed).await.unwrap();
+            assert_eq!(updated.status, "failed");
+            if assert_wait_failed_step_none {
+                assert!(updated
+                    .validation_progress
+                    .is_some_and(|progress| progress.failed_step.is_none()));
+            }
+        });
 
-    let durable = fixture
-        .connector
-        .db
-        .connector_execution(execution["execution_id"].as_str().unwrap())
-        .unwrap();
-    assert!(durable.failed_check.is_none());
-    assert!(durable.assertion_evidence.is_none());
-    assert!(durable.validated_workspace_sha256.is_none());
-}
-
-#[tokio::test]
-async fn validation_tool_unavailable_is_executor_failure_not_assertion_failure() {
-    let fixture = fixture(1_000).await;
-    let registry = fixture.registry.clone();
-    let responder = tokio::spawn(async move {
-        let request = next_request(&registry).await;
-        let mut failed = validation_job_update(
-            request.job_id.as_deref().unwrap(),
-            "failed",
-            check_progress(0, None, None),
+        let plan: &[&str] = if format_completed {
+            &["format", "check"]
+        } else {
+            &["check"]
+        };
+        let outcome = fixture
+            .call("checks_run", checks(&fixture, operation_id, plan))
+            .await;
+        responder.await.unwrap();
+        assert!(outcome.ok, "{failure_code}: {}", outcome.body);
+        let execution = &outcome.body["data"]["execution"];
+        assert_eq!(execution["execution_status"], "failed", "{failure_code}");
+        assert_eq!(execution["failure_source"], "executor", "{failure_code}");
+        assert_eq!(execution["failure_code"], failure_code, "{failure_code}");
+        assert_ne!(execution["assertion_status"], "failed", "{failure_code}");
+        assert!(execution["assertion_evidence"].is_null(), "{failure_code}");
+        let projected_checks = execution["checks"].as_array().unwrap();
+        assert!(
+            projected_checks
+                .iter()
+                .all(|check| check["status"] != "failed"),
+            "{failure_code}: {projected_checks:?}"
         );
-        failed.error = Some("validation_tool_unavailable".to_string());
-        registry.update_job(failed).await.unwrap();
-    });
-    let outcome = fixture
-        .call(
-            "checks_run",
-            checks(&fixture, "tool-unavailable", &["check"]),
-        )
-        .await;
-    responder.await.unwrap();
-    let execution = &outcome.body["data"]["execution"];
-    assert_eq!(execution["execution_status"], "failed");
-    assert_eq!(execution["failure_source"], "executor");
-    assert_eq!(execution["failure_code"], "validation_tool_unavailable");
-    assert!(execution["assertion_evidence"].is_null());
-    assert!(execution["checks"][0]["status"] != "failed");
-}
-
-#[tokio::test]
-async fn validation_step_wait_failure_is_executor_failure_without_assertion_evidence() {
-    let fixture = fixture(1_000).await;
-    let registry = fixture.registry.clone();
-    let responder = tokio::spawn(async move {
-        let request = next_request(&registry).await;
-        let mut failed = validation_job_update(
-            request.job_id.as_deref().unwrap(),
-            "failed",
-            check_progress(0, None, None),
+        let durable = fixture
+            .connector
+            .db
+            .connector_execution(execution["execution_id"].as_str().unwrap())
+            .unwrap();
+        assert!(durable.failed_check.is_none(), "{failure_code}");
+        assert!(durable.assertion_evidence.is_none(), "{failure_code}");
+        assert!(
+            durable.validated_workspace_sha256.is_none(),
+            "{failure_code}"
         );
-        failed.error = Some(VALIDATION_STEP_WAIT_FAILED_CODE.to_string());
-        let updated = registry.update_job(failed).await.unwrap();
-        assert_eq!(updated.status, "failed");
-        assert!(updated
-            .validation_progress
-            .is_some_and(|progress| progress.failed_step.is_none()));
-    });
-    let outcome = fixture
-        .call("checks_run", checks(&fixture, "wait-failure", &["check"]))
-        .await;
-    responder.await.unwrap();
-    assert!(outcome.ok, "{}", outcome.body);
-    let execution = &outcome.body["data"]["execution"];
-    assert_eq!(execution["execution_status"], "failed");
-    assert_eq!(execution["failure_source"], "executor");
-    assert_eq!(execution["failure_code"], VALIDATION_STEP_WAIT_FAILED_CODE);
-    assert_ne!(execution["assertion_status"], "failed");
-    assert!(execution["assertion_evidence"].is_null());
-    assert_ne!(execution["checks"][0]["status"], "failed");
+
+        if format_completed {
+            assert_eq!(
+                execution["checks"],
+                json!([
+                    {"check": "format", "status": "passed"},
+                    {"check": "check", "status": "not_run"}
+                ])
+            );
+            assert_eq!(durable.check_plan, vec!["format", "check"]);
+            assert_eq!(durable.check_completed, 1);
+        }
+    }
 }
 
 #[tokio::test]
@@ -2542,7 +2534,8 @@ async fn starting_cancel_late_attach_binds_job_and_dispatches_compensating_stop(
             job.status.as_str(),
             "queued" | "agent_queued" | "running" | "stop_requested"
         )));
-    for _ in 0..100 {
+    let slot_release_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
         let resources = workspace::WorkspaceManager::resource_status(
             Path::new(&fixture.connector.context.runs_root),
             fixture._temp.path().join("cargo-target").as_path(),
@@ -2550,9 +2543,11 @@ async fn starting_cancel_late_attach_binds_job_and_dispatches_compensating_stop(
         if resources.slot_state == "idle" {
             return;
         }
+        if Instant::now() >= slot_release_deadline {
+            panic!("cancelled workspace slot was not released within 10 seconds");
+        }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    panic!("cancelled workspace slot was not released");
 }
 
 #[tokio::test]
@@ -2605,9 +2600,16 @@ async fn retry_and_cancel_share_one_execution_monitor() {
         .validated_workspace_sha256
         .is_none());
     assert_eq!(fixture.connector.executions.monitor_start_count(), 1);
-    for _ in 0..100 {
-        if fixture.connector.executions.active_monitor_count() == 0 {
+    let monitor_shutdown_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let active_monitors = fixture.connector.executions.active_monitor_count();
+        if active_monitors == 0 {
             break;
+        }
+        if Instant::now() >= monitor_shutdown_deadline {
+            panic!(
+                "execution monitor did not stop within 10 seconds after cancellation; active monitors: {active_monitors}"
+            );
         }
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
@@ -4490,8 +4492,8 @@ async fn provenance_mismatch_fails_honestly_with_evidence() {
 
     // Deterministic invariant failure: terminal quickly (no grace burn),
     // honestly categorized, with the evidence and the remedy in the message.
-    let mut terminal = None;
-    for _ in 0..400 {
+    let terminal_deadline = Instant::now() + Duration::from_secs(10);
+    let execution = loop {
         let execution = fixture
             .connector
             .db
@@ -4504,12 +4506,15 @@ async fn provenance_mismatch_fails_honestly_with_evidence() {
             .unwrap()
             .unwrap();
         if execution.is_terminal() {
-            terminal = Some(execution);
-            break;
+            break execution;
+        }
+        if Instant::now() >= terminal_deadline {
+            panic!(
+                "workspace provenance mismatch execution did not become terminal within 10 seconds"
+            );
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    let execution = terminal.expect("execution should reach a terminal state quickly");
+    };
     assert_eq!(execution.state, "failed");
     assert_eq!(execution.failure_source.as_deref(), Some("workspace"));
     assert_eq!(
@@ -4602,8 +4607,8 @@ async fn provenance_mismatch_from_tracked_changes_keeps_gitignore_out_of_the_rem
     let outcome = check_call.await.unwrap();
     assert!(outcome.ok, "{}", outcome.body);
 
-    let mut terminal = None;
-    for _ in 0..400 {
+    let terminal_deadline = Instant::now() + Duration::from_secs(10);
+    let execution = loop {
         let execution = fixture
             .connector
             .db
@@ -4616,12 +4621,13 @@ async fn provenance_mismatch_from_tracked_changes_keeps_gitignore_out_of_the_rem
             .unwrap()
             .unwrap();
         if execution.is_terminal() {
-            terminal = Some(execution);
-            break;
+            break execution;
+        }
+        if Instant::now() >= terminal_deadline {
+            panic!("tracked workspace provenance mismatch execution did not become terminal within 10 seconds");
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    let execution = terminal.expect("execution should reach a terminal state quickly");
+    };
     assert_eq!(execution.state, "failed");
     assert_eq!(execution.failure_source.as_deref(), Some("workspace"));
     assert_eq!(

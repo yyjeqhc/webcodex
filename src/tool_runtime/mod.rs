@@ -35,6 +35,7 @@ pub(crate) mod kernel;
 mod local_jobs;
 mod lsp_tools;
 pub(crate) mod metadata;
+pub(crate) mod model_ergonomics_telemetry;
 pub(crate) mod observations;
 mod observe_jobs;
 mod patch;

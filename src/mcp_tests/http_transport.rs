@@ -191,7 +191,7 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
     let service = Service::new(build_test_router(config, db.clone(), runtime));
-    let resp = TestClient::post("http://localhost/mcp")
+    let mut resp = TestClient::post("http://localhost/mcp")
         .bearer_auth("secret")
         .json(&json!({
             "jsonrpc": "2.0",
@@ -202,6 +202,13 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
         .send(&service)
         .await;
     assert_eq!(resp.status_code, Some(StatusCode::OK));
+    let body: Value = resp.take_json().await.unwrap();
+    let structured = &body["result"]["structuredContent"];
+    assert_eq!(structured["success"], true);
+    let expected_tool_result_bytes =
+        serde_json::to_vec(&ToolResult::ok(structured["output"].clone()))
+            .unwrap()
+            .len() as u64;
 
     // End the connection guard structurally inside the block: the awaited
     // requests below must not overlap it.
@@ -226,10 +233,22 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
     assert_eq!(action, "toolsCall");
     assert_eq!(operation, "list_tools");
     assert_eq!(status, "success");
+    let summary: Value = serde_json::from_str(&summary).unwrap();
+    assert_eq!(summary["transport"], "mcp");
     assert!(
-        !summary.contains("tools"),
-        "summary must not embed output: {summary}"
+        summary.get("output").is_none(),
+        "summary must not embed tool output: {summary}"
     );
+    let telemetry = &summary["model_ergonomics"];
+    assert_eq!(telemetry["tool_name"], "list_tools");
+    assert_eq!(telemetry["tool_category"], "runtime");
+    assert_eq!(telemetry["success"], true);
+    assert_eq!(
+        telemetry["serialized_result_bytes"].as_u64().unwrap(),
+        expected_tool_result_bytes,
+        "MCP telemetry must count the final structuredContent ToolResult, not JSON-RPC/content framing"
+    );
+    assert!(telemetry["recovery_kind"].is_null());
 
     // Non-tool methods stay out of the audit.
     let resp = TestClient::post("http://localhost/mcp")
@@ -259,6 +278,42 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
             .unwrap()
     };
     assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn mcp_pre_result_invalid_arguments_still_records_generic_attempt() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db.clone(), runtime));
+    let mut response = TestClient::post("http://localhost/mcp")
+        .bearer_auth("secret")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 101,
+            "method": "tools/call",
+            "params": {"name": "read_file", "arguments": {}}
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&response), StatusCode::BAD_REQUEST);
+    let body: Value = response.take_json().await.unwrap();
+    assert_eq!(body["error"]["code"], -32602);
+
+    let summary: String = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT summary_json FROM action_events WHERE operation = 'read_file'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let summary: Value = serde_json::from_str(&summary).unwrap();
+    let telemetry = &summary["model_ergonomics"];
+    assert_eq!(telemetry["tool_name"], "read_file");
+    assert_eq!(telemetry["success"], false);
+    assert_eq!(telemetry["error_kind"], "invalid_arguments");
+    assert!(telemetry["serialized_result_bytes"].is_null());
 }
 
 fn seed_action_audit_pat(db: &crate::Database, user: &crate::models::UserRecord) -> String {

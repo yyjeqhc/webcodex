@@ -9,6 +9,8 @@ use std::time::Duration;
 mod import_http_tests;
 #[path = "runtime_http/tests/jobs_tests.rs"]
 mod jobs_tests;
+#[path = "runtime_http/tests/model_ergonomics_tests.rs"]
+mod model_ergonomics_tests;
 #[path = "runtime_http/tests/project_files_tests.rs"]
 mod project_files_tests;
 #[path = "runtime_http/tests/projects_tests.rs"]

@@ -109,6 +109,51 @@ async fn dispatch_records_edit_tool_usage_without_sensitive_args() {
 }
 
 #[tokio::test]
+async fn kernel_generic_telemetry_and_edit_enrichment_each_emit_once() {
+    clear_test_edit_tool_usage();
+    let runtime = test_runtime();
+    let outcome = runtime
+        .call_tool_with_context(
+            super::super::kernel::ToolCallRequest {
+                tool_name: "write_project_file".to_string(),
+                arguments: json!({
+                    "project": "agent:oe:missing",
+                    "path": "src/private.rs",
+                    "content": "PRIVATE edit body",
+                    "overwrite": true
+                }),
+            },
+            super::super::kernel::ToolCallContext {
+                transport: super::super::kernel::ToolTransport::Api,
+                session_id: None,
+                auth: None,
+                window: None,
+                record_oauth_scope_denials: true,
+                host_file_import_trust: Default::default(),
+            },
+        )
+        .await;
+    let result = outcome.result.as_ref().expect("tool result");
+    let generic = outcome
+        .model_ergonomics
+        .as_ref()
+        .expect("one generic model-visible completion")
+        .record_for_tool_result(result)
+        .expect("generic record");
+    assert_eq!(generic.tool_name, "write_project_file");
+    assert_eq!(generic.tool_category, "edit");
+    assert_eq!(generic.success, result.success);
+
+    let edit_events = take_test_edit_tool_usage();
+    assert_eq!(
+        edit_events.len(),
+        1,
+        "edit-specific enrichment must remain one event"
+    );
+    assert_eq!(edit_events[0].tool_name, "write_project_file");
+}
+
+#[tokio::test]
 async fn edit_tool_usage_does_not_change_session_ledger_shape() {
     clear_test_edit_tool_usage();
     let runtime = test_runtime();

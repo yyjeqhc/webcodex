@@ -1,3 +1,4 @@
+use super::model_ergonomics_telemetry::{ModelErgonomicsCompletion, ModelErgonomicsTimer};
 use super::sessions::{
     strip_tool_call_expectation_metadata, SessionTransport, ToolCallRecorderMetadata,
 };
@@ -76,6 +77,7 @@ pub(crate) struct ToolCallOutcome {
     pub(crate) result: Option<ToolResult>,
     pub(crate) error_status: Option<ToolCallErrorStatus>,
     pub(crate) project: Option<String>,
+    pub(crate) model_ergonomics: Option<ModelErgonomicsCompletion>,
 }
 
 pub(crate) fn check_runtime_tool_scope(
@@ -140,6 +142,17 @@ impl ToolRuntime {
         request: ToolCallRequest,
         context: ToolCallContext<'_>,
     ) -> ToolCallOutcome {
+        let telemetry = ModelErgonomicsTimer::start(&request.tool_name);
+        let mut outcome = self.call_tool_with_context_inner(request, context).await;
+        outcome.model_ergonomics = telemetry.map(ModelErgonomicsTimer::finish);
+        outcome
+    }
+
+    async fn call_tool_with_context_inner(
+        &self,
+        request: ToolCallRequest,
+        context: ToolCallContext<'_>,
+    ) -> ToolCallOutcome {
         let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&request.arguments);
         let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments.clone());
         let allow_cross_project_session =
@@ -162,6 +175,7 @@ impl ToolRuntime {
                     result: Some(result),
                     error_status: None,
                     project: None,
+                    model_ergonomics: None,
                 };
             }
         }
@@ -183,6 +197,7 @@ impl ToolRuntime {
                         result: Some(result),
                         error_status: None,
                         project: None,
+                        model_ergonomics: None,
                     };
                 }
                 let recorder_project = self
@@ -209,6 +224,7 @@ impl ToolRuntime {
                         result: Some(result),
                         error_status: None,
                         project: None,
+                        model_ergonomics: None,
                     };
                 }
             }
@@ -271,6 +287,7 @@ impl ToolRuntime {
                     result: Some(result),
                     error_status: None,
                     project: None,
+                    model_ergonomics: None,
                 };
             }
         }
@@ -311,6 +328,7 @@ impl ToolRuntime {
                 result: Some(result),
                 error_status: None,
                 project: None,
+                model_ergonomics: None,
             };
         }
         if let Some(session_id) = context.session_id {
@@ -364,6 +382,7 @@ impl ToolRuntime {
                     result: Some(result),
                     error_status: None,
                     project: None,
+                    model_ergonomics: None,
                 };
             }
             if let Some(denial) = self.sessions.guard_denial(session_id, &request.tool_name) {
@@ -403,6 +422,7 @@ impl ToolRuntime {
                     result: Some(result),
                     error_status: None,
                     project: None,
+                    model_ergonomics: None,
                 };
             }
         }
@@ -414,6 +434,7 @@ impl ToolRuntime {
                     result: None,
                     error_status: Some(error_status),
                     project: None,
+                    model_ergonomics: None,
                 };
             }
         }
@@ -449,6 +470,7 @@ impl ToolRuntime {
                     result: None,
                     error_status: Some(error_status),
                     project: None,
+                    model_ergonomics: None,
                 };
             }
         }
@@ -488,6 +510,7 @@ impl ToolRuntime {
                     result: None,
                     error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
                     project: None,
+                    model_ergonomics: None,
                 };
             }
         };
@@ -601,6 +624,7 @@ impl ToolRuntime {
             result: Some(result),
             error_status: None,
             project,
+            model_ergonomics: None,
         }
     }
 

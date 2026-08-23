@@ -4,6 +4,7 @@ use crate::tool_request_trace::{estimate_json_bytes, new_trace_id, ToolRequestLi
 use crate::tool_runtime::kernel::{
     ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
+use crate::tool_runtime::model_ergonomics_telemetry::ModelErgonomicsCompletion;
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::{
     ListToolsOptions, ToolCall, ToolRuntime, TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD,
@@ -157,6 +158,7 @@ fn prepare_action_tools_call_response(
     tool: &str,
     project: Option<String>,
     result: crate::tool_runtime::ToolResult,
+    model_ergonomics: Option<&ModelErgonomicsCompletion>,
 ) -> (StatusCode, crate::tool_runtime::ToolResult) {
     let status = if result.success {
         StatusCode::OK
@@ -164,19 +166,41 @@ fn prepare_action_tools_call_response(
         StatusCode::BAD_REQUEST
     };
     let audit_output = action_audit_output_for_tool(tool, &result.output);
-    let mut event = ActionAuditRecord::new(tool.to_string(), result.success, status)
-        .error(result.error.clone())
-        .summary(json!({
-            "output": audit_output,
-        }));
-    event.project = project;
-    audit.record(event);
     let response = if crate::config::action_compact_responses_enabled() {
         action_compact::compact_action_tool_result(tool, result)
     } else {
         result
     };
+    let mut summary = json!({"output": audit_output});
+    if let Some(telemetry) = model_ergonomics
+        .and_then(|completion| completion.record_for_tool_result(&response))
+        .and_then(|record| serde_json::to_value(record).ok())
+    {
+        summary["model_ergonomics"] = telemetry;
+    }
+    let mut event = ActionAuditRecord::new(tool.to_string(), response.success, status)
+        .error(response.error.clone())
+        .summary(summary);
+    event.project = project;
+    audit.record(event);
     (status, response)
+}
+
+fn record_action_tools_call_pre_result_failure(
+    audit: &ActionAudit,
+    tool: &str,
+    status: StatusCode,
+    model_ergonomics: Option<&ModelErgonomicsCompletion>,
+    error_kind: &'static str,
+) {
+    let mut summary = json!({});
+    if let Some(telemetry) = model_ergonomics
+        .map(|completion| completion.record_for_pre_result_failure(error_kind))
+        .and_then(|record| serde_json::to_value(record).ok())
+    {
+        summary["model_ergonomics"] = telemetry;
+    }
+    audit.record(ActionAuditRecord::new(tool.to_string(), false, status).summary(summary));
 }
 
 #[handler]
@@ -289,12 +313,20 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             },
         )
         .await;
+    let model_ergonomics = outcome.model_ergonomics;
     match outcome.error_status {
         Some(ToolCallErrorStatus::InsufficientScope {
             required_scope,
             description,
         }) => {
             guard.dispatch_failed("insufficient_scope");
+            record_action_tools_call_pre_result_failure(
+                &audit,
+                &tool,
+                StatusCode::FORBIDDEN,
+                model_ergonomics.as_ref(),
+                "insufficient_scope",
+            );
             guard.dispatch_finished(false, Some(false), "insufficient_scope");
             // Scope-denial body is rendered by the credential-aware helper; size not measured.
             guard.response_serialized(403, None, Some(false), Some(false), "insufficient_scope");
@@ -303,6 +335,13 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
         }
         Some(ToolCallErrorStatus::InvalidArguments { message }) => {
             guard.dispatch_failed("invalid_arguments");
+            record_action_tools_call_pre_result_failure(
+                &audit,
+                &tool,
+                StatusCode::BAD_REQUEST,
+                model_ergonomics.as_ref(),
+                "invalid_arguments",
+            );
             guard.dispatch_finished(false, Some(false), "invalid_arguments");
             guard.response_serialized(400, None, Some(false), Some(false), "invalid_arguments");
             res.status_code(StatusCode::BAD_REQUEST);
@@ -324,8 +363,13 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             }
             // Audit the tool-specific durable projection; optionally compact only the HTTP response body.
             // Trace size reflects what ChatGPT receives (post-compact when on).
-            let (status, response) =
-                prepare_action_tools_call_response(&audit, &tool, outcome.project, result);
+            let (status, response) = prepare_action_tools_call_response(
+                &audit,
+                &tool,
+                outcome.project,
+                result,
+                model_ergonomics.as_ref(),
+            );
             let estimated = if guard.enabled() {
                 serde_json::to_value(&response)
                     .ok()

@@ -619,6 +619,69 @@ not “what is the coding task ledger for this repo work?”.
 - Idle open-session reuse and explicit close for operator audit views
 - Aggregate stats for read-only audit APIs, with explicit bounded-scan coverage
 
+### Generic model-ergonomics telemetry
+
+Model-visible **runtime** tool calls reuse the existing Action Audit event as the
+durable/queryable sink for low-cardinality ergonomics telemetry. No second
+telemetry table or recorder is created. The shared ToolRuntime kernel starts one
+timer for a registered model-visible tool; the transport that already owns the
+outer Action Audit row then finalizes one `summary.model_ergonomics` object from
+the final model-facing ToolResult projection. Batch items do not create generic
+invocation records, and hidden/internal helpers do not start this telemetry.
+
+The version-1 generic record contains only:
+
+- `schema_version = 1`;
+- registry-owned `tool_name` and closed/bounded `tool_category`;
+- `success` and non-negative `duration_ms` for the outer invocation up to its
+  returned ToolResult/Job handoff;
+- nullable `serialized_result_bytes`;
+- nullable structured `error_kind`, `failure_kind`, `recovery_kind`, and
+  authoritative closed `execution_state` when present.
+
+`serialized_result_bytes` is the UTF-8 byte length of the exact final
+model-facing ToolResult JSON object (`success`, `output`, and `error` only when
+present), serialized with the normal serde JSON representation. It is not a
+character count, Rust memory size, stdout/stderr estimate, database-row size, or
+HTTP/JSON-RPC/MCP framing size. MCP finalizes the count from the final
+`structuredContent` ToolResult after MCP-only image/resource framing, so bytes
+removed from the model-facing ToolResult are not charged. If a registered
+model-visible tool is rejected by the kernel with a structured adapter error
+before any ToolResult exists (currently invalid arguments or insufficient
+scope), the invocation is still counted but `serialized_result_bytes` is `null`;
+the transport-specific error envelope is never substituted for a ToolResult.
+There is currently no
+authoritative generic final-result truncation fact, so generic
+`result_truncated` is deliberately **not** recorded; tool-specific truncation
+fields keep their existing meanings.
+
+Classification consumes structured ToolResult fields only. It never derives a
+kind from arbitrary English error prose. The generic record stores no tool
+arguments, commands/argv/scripts/stdin/stdout/stderr, ToolResult body or error
+prose, paths/cwd/project ids, query/file/clipboard/Computer contents, Session
+message/prompt/answer bodies, credentials, native identities, or arbitrary user
+text. Existing Action Audit correlation/attribution fields remain separate
+pre-existing audit data; P1a does not copy them into `model_ergonomics`.
+
+`edit_tool_telemetry` remains the edit-specific structured tracing enrichment.
+An edit invocation therefore has one generic Action Audit invocation record plus
+its existing edit-specific enrichment, not two generic counts. Workflow Session
+`tool_call_started` / `tool_call_finished` events remain a separate workflow
+ledger and are not the persistence source for this aggregate ergonomics data.
+
+Telemetry is observation-only and failure-isolated. Failure to serialize the
+bounded generic projection or to persist the Action Audit row is dropped/warned
+without changing the tool's success, output, error, permission, execution state,
+retry safety, Job lifecycle, or Computer authority.
+
+For dogfood analysis, read bounded Action Audit events through
+`/api/audit/session` or query SQLite `action_events.summary_json`, select rows
+with `summary.model_ergonomics`, and aggregate by `tool_name`. The raw bounded
+records are sufficient for invocation/success counts, duration p50/p95,
+serialized-result mean/high percentiles, and structured error/recovery-kind
+distributions in later SQL/Python analysis; no dashboard or analytics service is
+part of this contract.
+
 ### Identity
 
 | Aspect | Contract |

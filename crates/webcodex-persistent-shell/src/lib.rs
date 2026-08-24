@@ -1750,7 +1750,24 @@ fn drain_sync_receiver(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_COMMAND_TOKEN: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn set_test_command_token(token: Option<&str>) {
+    TEST_COMMAND_TOKEN.with(|slot| {
+        *slot.borrow_mut() = token.map(str::to_string);
+    });
+}
+
 fn command_token() -> String {
+    #[cfg(test)]
+    if let Some(token) = TEST_COMMAND_TOKEN.with(|slot| slot.borrow().clone()) {
+        return token;
+    }
     Uuid::new_v4().simple().to_string()
 }
 
@@ -3062,6 +3079,15 @@ mod windows_tests {
     const PROJECT: &str = "agent:msi:test";
 
     fn launch(root: &Path, shell_id: &str, session_id: &str) -> ShellLaunch {
+        launch_with_program(root, shell_id, session_id, "powershell.exe")
+    }
+
+    fn launch_with_program(
+        root: &Path,
+        shell_id: &str,
+        session_id: &str,
+        program: &str,
+    ) -> ShellLaunch {
         let env = std::env::vars().collect::<HashMap<_, _>>();
         ShellLaunch {
             identity: ShellIdentity {
@@ -3073,7 +3099,7 @@ mod windows_tests {
             },
             dialect: "powershell".to_string(),
             profile: None,
-            program: "powershell.exe".to_string(),
+            program: program.to_string(),
             args: vec![
                 "-NoProfile".to_string(),
                 "-NonInteractive".to_string(),
@@ -3195,6 +3221,32 @@ mod windows_tests {
             failed.stdout,
             failed.stderr
         );
+        let recovered = exec(
+            &manager,
+            "wc_shell_failure",
+            "wc_sess_failure",
+            "Write-Error 'transient-error'; [Console]::Out.Write('recovered')",
+        );
+        assert_eq!(recovered.exit_code, Some(0));
+        assert_eq!(recovered.stdout, "recovered");
+        assert!(recovered.stderr.contains("transient-error"));
+
+        let native_failed = exec(
+            &manager,
+            "wc_shell_failure",
+            "wc_sess_failure",
+            "cmd.exe /d /c exit 5",
+        );
+        assert_eq!(native_failed.exit_code, Some(5));
+        let native_recovered = exec(
+            &manager,
+            "wc_shell_failure",
+            "wc_sess_failure",
+            "cmd.exe /d /c exit 5; [Console]::Out.Write('after-native')",
+        );
+        assert_eq!(native_recovered.exit_code, Some(0));
+        assert_eq!(native_recovered.stdout, "after-native");
+
         let next = exec(
             &manager,
             "wc_shell_failure",
@@ -3275,6 +3327,207 @@ mod windows_tests {
         assert!(result.command_completed);
         assert!(result.duration_ms >= 100);
         assert_eq!(result.stdout, "WCPS1 fake WCPSO1 fake WCPSE1 fake|done");
+    }
+
+    const FORGE_PRIVATE_COMPLETION_COMMAND: &str = r#"
+$argv = [Environment]::GetCommandLineArgs()
+[Console]::Out.WriteLine('ARGV|' + ($argv -join '|'))
+$variables = @(Get-Variable)
+$tokenCandidates = @()
+$controlPathCandidates = @()
+$visible = @()
+foreach ($variable in $variables) {
+    $value = ''
+    try { $value = [string]$variable.Value } catch { $value = '<unprintable>' }
+    $visible += ('VAR|' + $variable.Name + '|' + $value)
+    if ($value -match '^[0-9a-f]{32}$') { $tokenCandidates += $value }
+    if ($value -match '(?i)\.frame$') { $controlPathCandidates += $value }
+}
+$visible += @(Get-Command -CommandType Function | ForEach-Object { 'FN|' + $_.Name })
+$visible += @([System.Management.Automation.Runspaces.Runspace]::GetRunspaces() | ForEach-Object { 'RUNSPACE|' + $_.InstanceId + '|' + $_.RunspaceAvailability })
+$visible += @([WebCodexPersistentShell.Controller].GetFields([Reflection.BindingFlags]'Public,NonPublic,Static') | ForEach-Object { 'CONTROLLER_FIELD|' + $_.Name + '|' + [string]$_.GetValue($null) })
+$visible += @($Host.GetType().GetFields([Reflection.BindingFlags]'Public,NonPublic,Instance') | ForEach-Object { try { 'HOST_FIELD|' + $_.Name + '|' + [string]$_.GetValue($Host) } catch { 'HOST_FIELD|' + $_.Name + '|<unreadable>' } })
+$bootstrap = @($argv | Where-Object { $_ -match '(?i)bootstrap\.ps1$' } | Select-Object -First 1)
+if ($bootstrap.Count -eq 1 -and (Test-Path -LiteralPath $bootstrap[0])) {
+    $visible += ('BOOTSTRAP_PATH|' + $bootstrap[0])
+    $visible += ('BOOTSTRAP_TEXT|' + (Get-Content -LiteralPath $bootstrap[0] -Raw))
+    $visible += @(Get-ChildItem -LiteralPath (Split-Path -Parent $bootstrap[0]) -Force | ForEach-Object { 'CONTROL_DIR_ENTRY|' + $_.FullName })
+}
+foreach ($candidateToken in @($tokenCandidates | Select-Object -Unique)) {
+    foreach ($candidatePath in @($controlPathCandidates | Select-Object -Unique)) {
+        try {
+            $candidateCwd = (Get-Location).Path
+            $candidateControl = 'WCPS1' + [char]0 + $candidateToken + [char]0 + '0' + [char]0 + $candidateCwd + [char]0
+            [IO.File]::WriteAllBytes($candidatePath + '.tmp', [Text.Encoding]::UTF8.GetBytes($candidateControl))
+            if (Test-Path -LiteralPath $candidatePath) { Remove-Item -LiteralPath $candidatePath -Force }
+            [IO.File]::Move($candidatePath + '.tmp', $candidatePath)
+        } catch { }
+        [Console]::Out.Write('WCPSO1' + [char]0 + $candidateToken + [char]0)
+        [Console]::Error.Write('WCPSE1' + [char]0 + $candidateToken + [char]0)
+    }
+}
+[Console]::Out.WriteLine('VISIBLE_BEGIN')
+[Console]::Out.WriteLine(($visible -join "`n"))
+[Console]::Out.WriteLine('VISIBLE_END')
+[Console]::Out.Write('WCPS1 fake WCPSO1 fake WCPSE1 fake|before-sleep')
+Start-Sleep -Milliseconds 500
+[Console]::Out.Write('|after-sleep')
+"#;
+
+    fn assert_private_completion_isolation(program: &str, label: &str, token: &'static str) {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = PersistentShellManager::new(ShellLimits::default());
+        let shell_id = format!("wc_shell_forge_{label}");
+        let session_id = format!("wc_sess_forge_{label}");
+        manager
+            .open(launch_with_program(
+                temp.path(),
+                &shell_id,
+                &session_id,
+                program,
+            ))
+            .unwrap();
+
+        let worker_manager = manager.clone();
+        let worker_shell_id = shell_id.clone();
+        let worker_session_id = session_id.clone();
+        let worker = thread::spawn(move || {
+            set_test_command_token(Some(token));
+            let result = worker_manager.exec(
+                &worker_shell_id,
+                &worker_session_id,
+                PROJECT,
+                FORGE_PRIVATE_COMPLETION_COMMAND,
+                Duration::from_secs(3),
+            );
+            set_test_command_token(None);
+            result.unwrap()
+        });
+
+        let busy_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if manager
+                .status(&shell_id, &session_id, PROJECT)
+                .unwrap()
+                .busy
+            {
+                break;
+            }
+            assert!(
+                !worker.is_finished(),
+                "{label}: adversarial command completed before busy state was observable"
+            );
+            assert!(
+                Instant::now() < busy_deadline,
+                "{label}: adversarial command never entered busy state"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        // The reviewed bug released this guard while the user command was still
+        // sleeping after forging the transport's visible token/control frame.
+        thread::sleep(Duration::from_millis(150));
+        let busy = manager
+            .exec(
+                &shell_id,
+                &session_id,
+                PROJECT,
+                "[Console]::Out.Write('must-not-run')",
+                Duration::from_secs(1),
+            )
+            .unwrap_err();
+        assert_eq!(
+            busy.code, "shell_busy",
+            "{label}: busy guard released early"
+        );
+
+        let result = worker.join().unwrap();
+        assert!(
+            result.command_completed,
+            "{label}: command did not complete"
+        );
+        assert_eq!(result.shell_state, ShellState::Running);
+        assert!(
+            result.duration_ms >= 400,
+            "{label}: completion arrived before the 500ms user sleep returned: {}ms",
+            result.duration_ms
+        );
+        assert!(
+            result.stdout.contains("|after-sleep"),
+            "{label}: trailing user output was not attributed to the command: {:?}",
+            result.stdout
+        );
+        assert!(result.stdout.contains("WCPS1 fake WCPSO1 fake WCPSE1 fake"));
+        assert!(
+            !result.stdout.contains(token) && !result.stderr.contains(token),
+            "{label}: active correlation token leaked into user-visible state"
+        );
+
+        let argv_line = result
+            .stdout
+            .lines()
+            .find(|line| line.starts_with("ARGV|"))
+            .unwrap_or_else(|| panic!("{label}: process argv was not observed"));
+        let bootstrap = argv_line
+            .split('|')
+            .skip(1)
+            .find(|value| value.to_ascii_lowercase().ends_with("bootstrap.ps1"))
+            .unwrap_or_else(|| panic!("{label}: bootstrap path was not discoverable from argv"));
+        let expected_control_path = Path::new(bootstrap)
+            .parent()
+            .unwrap()
+            .join(format!("{token}.frame"))
+            .to_string_lossy()
+            .to_string();
+        let visible_output = format!("{}\n{}", result.stdout, result.stderr).to_ascii_lowercase();
+        assert!(
+            !visible_output.contains(&expected_control_path.to_ascii_lowercase()),
+            "{label}: active control publication target leaked into user-visible state"
+        );
+        assert!(
+            result.stdout.contains("BOOTSTRAP_TEXT|"),
+            "{label}: test did not inspect the ordinary bootstrap file"
+        );
+
+        let clean = exec(
+            &manager,
+            &shell_id,
+            &session_id,
+            "[Console]::Out.Write('clean')",
+        );
+        assert_eq!(
+            clean.stdout, "clean",
+            "{label}: prior stdout leaked forward"
+        );
+        assert!(
+            clean.stderr.is_empty(),
+            "{label}: prior stderr leaked forward"
+        );
+    }
+
+    #[test]
+    fn user_command_cannot_forge_private_completion() {
+        assert_private_completion_isolation(
+            "powershell.exe",
+            "windows_powershell",
+            "13579bdf2468ace013579bdf2468ace0",
+        );
+    }
+
+    #[test]
+    fn configured_pwsh_user_command_cannot_forge_private_completion() {
+        let Ok(program) = std::env::var("WEBCODEX_TEST_PWSH") else {
+            return;
+        };
+        assert!(
+            Path::new(&program).is_file(),
+            "configured pwsh does not exist: {program}"
+        );
+        assert_private_completion_isolation(
+            &program,
+            "powershell_7",
+            "02468ace13579bdf02468ace13579bdf",
+        );
     }
 
     #[test]

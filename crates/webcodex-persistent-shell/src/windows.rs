@@ -12,6 +12,7 @@ const POWERSHELL_UTF8_PREAMBLE: &str = concat!(
     "try { $OutputEncoding = [Console]::InputEncoding = ",
     "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }",
 );
+const POWERSHELL_CONTROLLER_SOURCE: &str = include_str!("windows_controller.cs");
 const READER_JOIN_GRACE: Duration = Duration::from_millis(250);
 
 #[derive(Debug)]
@@ -257,8 +258,7 @@ pub(super) fn spawn_shell_process(
                 format!("failed to create persistent shell control directory: {error}"),
             )
         })?;
-    let bootstrap_suffix = Uuid::new_v4().simple().to_string();
-    let bootstrap = powershell_bootstrap_script(&bootstrap_suffix);
+    let bootstrap = powershell_bootstrap_script();
     let bootstrap_path = control_dir.path().join("bootstrap.ps1");
     fs::write(&bootstrap_path, bootstrap.as_bytes()).map_err(|error| {
         ShellError::new(
@@ -395,48 +395,20 @@ fn powershell_command_frame(command: &str, token: &str, control_path: &Path) -> 
     format!("{token}\t{command_b64}\t{control_path_b64}\r\n")
 }
 
-fn powershell_bootstrap_script(suffix: &str) -> String {
-    // The bootstrap is trusted transport code evaluated once from a private
-    // temporary `-File`. This avoids Windows PowerShell 5.1's `-EncodedCommand`
-    // CLIXML stderr serialization, whose buffered tail can otherwise overtake
-    // our explicit stderr drain marker. User command text still never enters
-    // the PowerShell parser through stdin: each command arrives as one ASCII
-    // Base64 frame read by an explicit UTF-8 StreamReader and is dot-sourced
-    // only after decoding. The loop itself runs in one script scope, so
-    // cwd/env/variables/functions persist across frames.
+fn powershell_bootstrap_script() -> String {
+    // The bootstrap contains only static controller code. Per-command framing
+    // authority is parsed and retained inside Controller.Run's C# stack locals;
+    // the persistent user Runspace never receives the token or control path.
+    // Keeping the controller outside PowerShell SessionState is important:
+    // PowerShell exposes Runspace::GetRunspaces(), so a second Runspace alone
+    // would not hide variables kept by an outer PowerShell controller.
     format!(
         "{POWERSHELL_UTF8_PREAMBLE}\n\
-         $__wc_input_{suffix} = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false), $false, 4096, $true)\n\
-         while (($__wc_line_{suffix} = $__wc_input_{suffix}.ReadLine()) -ne $null) {{\n\
-         $__wc_parts_{suffix} = $__wc_line_{suffix}.Split([char]9)\n\
-         if ($__wc_parts_{suffix}.Length -ne 3) {{ [Environment]::Exit(125) }}\n\
-         $__wc_token_{suffix} = $__wc_parts_{suffix}[0]\n\
-         if ($__wc_token_{suffix}.Length -ne 32 -or $__wc_token_{suffix} -notmatch '^[0-9a-f]+$') {{ [Environment]::Exit(125) }}\n\
-         $__wc_source_{suffix} = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($__wc_parts_{suffix}[1]))\n\
-         $__wc_script_{suffix} = [ScriptBlock]::Create($__wc_source_{suffix} + [Environment]::NewLine + '$__wc_ok_{suffix} = $?; $__wc_native_{suffix} = $LASTEXITCODE')\n\
-         $__wc_control_path_{suffix} = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($__wc_parts_{suffix}[2]))\n\
-         $__wc_status_{suffix} = 0\n\
-         $__wc_ok_{suffix} = $true\n\
-         $__wc_native_{suffix} = 0\n\
-         $LASTEXITCODE = 0\n\
-         try {{\n\
-         . $__wc_script_{suffix}\n\
-         if (-not $__wc_ok_{suffix}) {{ if ($__wc_native_{suffix}) {{ $__wc_status_{suffix} = [int]$__wc_native_{suffix} }} else {{ $__wc_status_{suffix} = 1 }} }}\n\
-         }} catch {{\n\
-         $__wc_status_{suffix} = 1\n\
-         [Console]::Error.WriteLine($_.ToString())\n\
-         }}\n\
-         $__wc_stdout_{suffix} = [Console]::OpenStandardOutput()\n\
-         $__wc_stdout_bytes_{suffix} = [Text.Encoding]::ASCII.GetBytes('WCPSO1' + [char]0 + $__wc_token_{suffix} + [char]0)\n\
-         $__wc_stdout_{suffix}.Write($__wc_stdout_bytes_{suffix}, 0, $__wc_stdout_bytes_{suffix}.Length); $__wc_stdout_{suffix}.Flush()\n\
-         $__wc_stderr_{suffix} = [Console]::OpenStandardError()\n\
-         $__wc_stderr_bytes_{suffix} = [Text.Encoding]::ASCII.GetBytes('WCPSE1' + [char]0 + $__wc_token_{suffix} + [char]0)\n\
-         $__wc_stderr_{suffix}.Write($__wc_stderr_bytes_{suffix}, 0, $__wc_stderr_bytes_{suffix}.Length); $__wc_stderr_{suffix}.Flush()\n\
-         $__wc_cwd_{suffix} = $ExecutionContext.SessionState.Path.CurrentLocation.ProviderPath\n\
-         $__wc_control_text_{suffix} = 'WCPS1' + [char]0 + $__wc_token_{suffix} + [char]0 + [string]$__wc_status_{suffix} + [char]0 + $__wc_cwd_{suffix} + [char]0\n\
-         $__wc_control_tmp_{suffix} = $__wc_control_path_{suffix} + '.tmp'\n\
-         [IO.File]::WriteAllBytes($__wc_control_tmp_{suffix}, [Text.Encoding]::UTF8.GetBytes($__wc_control_text_{suffix}))\n\
-         [IO.File]::Move($__wc_control_tmp_{suffix}, $__wc_control_path_{suffix})\n\
-         }}"
+         $__wc_controller_source = @'\n\
+{POWERSHELL_CONTROLLER_SOURCE}\n\
+'@\n\
+         Add-Type -TypeDefinition $__wc_controller_source -Language CSharp\n\
+         Remove-Variable __wc_controller_source -Force\n\
+         try {{ [WebCodexPersistentShell.Controller]::Run($Host) }} catch {{ [Console]::Error.WriteLine($_.Exception.ToString()); [Environment]::Exit(125) }}\n"
     )
 }

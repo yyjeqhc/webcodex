@@ -4430,6 +4430,64 @@ fn session_context_revision_exact_missing_stale_invalid_and_failure_semantics() 
 }
 
 #[test]
+fn non_capable_model_facing_result_advances_cross_surface_recovery_watermark() {
+    let store = SessionStore::new(10, 100);
+    let session = store.start_session(Some("proj".to_string()), Some("cross surface".to_string()));
+    let seed = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"content": "seed"}),
+    );
+    assert_eq!(seed.context_revision, 1);
+
+    let non_capable = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "workspace_checkpoint_create",
+        SessionContextRevisionAck::Unsupported,
+        true,
+        json!({
+            "checkpoint_id": "wc_ckpt_cross_surface",
+            "branch": "feature",
+            "status_summary": {"modified": 3},
+            "state_changed": true
+        }),
+    );
+    assert_eq!(non_capable.pre_call_context_revision, 1);
+    assert_eq!(non_capable.context_revision, 2);
+    assert!(non_capable.recovery_events.is_empty());
+    assert!(!non_capable.history_lost);
+    assert_eq!(store.context_revision(&session.session_id), Some(2));
+
+    let resumed = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Revision(1),
+        true,
+        json!({"clean": false}),
+    );
+    assert_eq!(resumed.pre_call_context_revision, 2);
+    assert_eq!(resumed.context_revision, 3);
+    assert_eq!(
+        resumed
+            .recovery_events
+            .iter()
+            .filter_map(|event| event.context_revision)
+            .collect::<Vec<_>>(),
+        vec![2]
+    );
+    let checkpoint = &resumed.recovery_events[0];
+    assert_eq!(checkpoint.tool_name, "workspace_checkpoint_create");
+    let consequence = checkpoint.context_result_summary.as_ref().unwrap();
+    assert_eq!(consequence["checkpoint_id"], "wc_ckpt_cross_surface");
+    assert_eq!(consequence["status_summary"]["modified"], 3);
+}
+
+#[test]
 fn session_context_revision_retention_reports_history_loss_without_counter_regression() {
     let store = SessionStore::new(10, 4);
     let session = store.start_session(Some("proj".to_string()), Some("retention".to_string()));

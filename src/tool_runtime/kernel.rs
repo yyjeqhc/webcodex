@@ -142,8 +142,20 @@ impl ToolRuntime {
         request: ToolCallRequest,
         context: ToolCallContext<'_>,
     ) -> ToolCallOutcome {
+        self.call_tool_with_context_protocol_capability(request, context, false)
+            .await
+    }
+
+    pub(crate) async fn call_tool_with_context_protocol_capability(
+        &self,
+        request: ToolCallRequest,
+        context: ToolCallContext<'_>,
+        context_continuity_capable: bool,
+    ) -> ToolCallOutcome {
         let telemetry = ModelErgonomicsTimer::start(&request.tool_name);
-        let mut outcome = self.call_tool_with_context_inner(request, context).await;
+        let mut outcome = self
+            .call_tool_with_context_inner(request, context, context_continuity_capable)
+            .await;
         outcome.model_ergonomics = telemetry.map(ModelErgonomicsTimer::finish);
         outcome
     }
@@ -152,8 +164,12 @@ impl ToolRuntime {
         &self,
         request: ToolCallRequest,
         context: ToolCallContext<'_>,
+        context_continuity_capable: bool,
     ) -> ToolCallOutcome {
-        let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&request.arguments);
+        let recorder_metadata = ToolCallRecorderMetadata::from_arguments_with_context_continuity(
+            &request.arguments,
+            context_continuity_capable,
+        );
         let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments.clone());
         let allow_cross_project_session =
             extract_bool_arg(&concrete_arguments, ALLOW_CROSS_PROJECT_SESSION_FIELD);
@@ -283,9 +299,10 @@ impl ToolRuntime {
                     recording.as_ref().map(|recorded| recorded.event_id.clone()),
                 );
                 if let Some(recorded) = recording.as_ref() {
-                    session_context::add_session_context_continuity(&mut result, recorded);
-                    self.add_session_history_recovery(&mut result, recorded, context.auth)
-                        .await;
+                    if session_context::add_session_context_continuity(&mut result, recorded) {
+                        self.add_session_history_recovery(&mut result, recorded, context.auth)
+                            .await;
+                    }
                 }
                 session_context::add_session_attention(
                     &mut result,
@@ -334,9 +351,10 @@ impl ToolRuntime {
                     recording.as_ref().map(|recorded| recorded.event_id.clone()),
                 );
                 if let Some(recorded) = recording.as_ref() {
-                    session_context::add_session_context_continuity(&mut result, recorded);
-                    self.add_session_history_recovery(&mut result, recorded, context.auth)
-                        .await;
+                    if session_context::add_session_context_continuity(&mut result, recorded) {
+                        self.add_session_history_recovery(&mut result, recorded, context.auth)
+                            .await;
+                    }
                 }
                 session_context::add_session_attention(
                     &mut result,
@@ -400,9 +418,10 @@ impl ToolRuntime {
                     recording.as_ref().map(|recorded| recorded.event_id.clone()),
                 );
                 if let Some(recorded) = recording.as_ref() {
-                    session_context::add_session_context_continuity(&mut result, recorded);
-                    self.add_session_history_recovery(&mut result, recorded, context.auth)
-                        .await;
+                    if session_context::add_session_context_continuity(&mut result, recorded) {
+                        self.add_session_history_recovery(&mut result, recorded, context.auth)
+                            .await;
+                    }
                 }
                 session_context::add_session_attention(
                     &mut result,
@@ -451,9 +470,10 @@ impl ToolRuntime {
                     recording.as_ref().map(|recorded| recorded.event_id.clone()),
                 );
                 if let Some(recorded) = recording.as_ref() {
-                    session_context::add_session_context_continuity(&mut result, recorded);
-                    self.add_session_history_recovery(&mut result, recorded, context.auth)
-                        .await;
+                    if session_context::add_session_context_continuity(&mut result, recorded) {
+                        self.add_session_history_recovery(&mut result, recorded, context.auth)
+                            .await;
+                    }
                 }
                 session_context::add_session_attention(
                     &mut result,
@@ -666,9 +686,10 @@ impl ToolRuntime {
                     .map(|recorded| recorded.event_id.clone()),
             );
             if let Some(recorded) = outer_recording.as_ref() {
-                session_context::add_session_context_continuity(&mut result, recorded);
-                self.add_session_history_recovery(&mut result, recorded, context.auth)
-                    .await;
+                if session_context::add_session_context_continuity(&mut result, recorded) {
+                    self.add_session_history_recovery(&mut result, recorded, context.auth)
+                        .await;
+                }
             }
             session_context::add_session_attention(
                 &mut result,

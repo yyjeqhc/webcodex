@@ -173,6 +173,16 @@ fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_too
         ));
     }
 
+    let mut local = mcp_tools_list_payload_with_compact(ModelSurface::LocalCoding, false);
+    add_stateless_workflow_recorder_metadata(&mut local, ModelSurface::LocalCoding);
+    assert!(local["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|tool| tool["inputSchema"]["properties"]
+            .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD)
+            .is_none()));
+
     let generic = registered_tool_specs()
         .into_iter()
         .find(|tool| tool.name == "complete_session_message")
@@ -242,8 +252,8 @@ fn stateless_context_revision_ack_is_request_scoped_and_removed_before_parsing()
     arguments
         [crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] =
         ack;
-    let recorder =
-        crate::tool_runtime::sessions::ToolCallRecorderMetadata::from_arguments(&arguments);
+    let recorder = crate::tool_runtime::sessions::ToolCallRecorderMetadata::
+        from_arguments_with_context_continuity(&arguments, true);
     assert_eq!(
         recorder.ack_session_context_revision,
         crate::tool_runtime::sessions::SessionContextRevisionAck::Revision(41)
@@ -255,6 +265,22 @@ fn stateless_context_revision_ack_is_request_scoped_and_removed_before_parsing()
     crate::tool_runtime::ToolCall::from_tool_name("list_tools", concrete)
         .expect("context revision wrapper metadata must be gone before concrete parsing");
 
+    let unsupported =
+        crate::tool_runtime::sessions::ToolCallRecorderMetadata::from_arguments(&json!({
+            crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD: 9
+        }));
+    assert_eq!(
+        unsupported.ack_session_context_revision,
+        crate::tool_runtime::sessions::SessionContextRevisionAck::Unsupported
+    );
+
+    let missing = crate::tool_runtime::sessions::ToolCallRecorderMetadata::
+        from_arguments_with_context_continuity(&json!({}), true);
+    assert_eq!(
+        missing.ack_session_context_revision,
+        crate::tool_runtime::sessions::SessionContextRevisionAck::Unacknowledged
+    );
+
     let mut malformed = json!({
         crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: "not-a-revision",
     });
@@ -262,8 +288,8 @@ fn stateless_context_revision_ack_is_request_scoped_and_removed_before_parsing()
     malformed
         [crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] =
         malformed_ack;
-    let recorder =
-        crate::tool_runtime::sessions::ToolCallRecorderMetadata::from_arguments(&malformed);
+    let recorder = crate::tool_runtime::sessions::ToolCallRecorderMetadata::
+        from_arguments_with_context_continuity(&malformed, true);
     assert_eq!(
         recorder.ack_session_context_revision,
         crate::tool_runtime::sessions::SessionContextRevisionAck::Invalid
@@ -1197,6 +1223,10 @@ async fn mcp_tools_call_records_event_with_session_id() {
     match outcome {
         McpOutcome::Ok(value) => {
             assert_eq!(value["result"]["structuredContent"]["success"], true);
+            let output = &value["result"]["structuredContent"]["output"];
+            assert!(output.get("session_context_revision").is_none());
+            assert!(output.get("session_continuity").is_none());
+            assert!(output.get("session_recovery").is_none());
         }
         other => panic!("expected Ok, got {:?}", other),
     }
@@ -1213,6 +1243,7 @@ async fn mcp_tools_call_records_event_with_session_id() {
         .unwrap();
     assert_eq!(finished.transport, "mcp");
     assert_eq!(finished.status.as_deref(), Some("succeeded"));
+    assert_eq!(finished.context_revision, Some(1));
     assert_eq!(finished.risk_class, "read_only");
 }
 

@@ -394,7 +394,13 @@ pub(crate) fn add_session_telemetry_hint(
 pub(crate) fn add_session_context_continuity(
     result: &mut ToolResult,
     recorded: &sessions::RecordedModelFacingToolCall,
-) {
+) -> bool {
+    if matches!(
+        recorded.ack_session_context_revision,
+        sessions::SessionContextRevisionAck::Unsupported
+    ) {
+        return false;
+    }
     let mut output = match std::mem::take(&mut result.output) {
         Value::Object(map) => map,
         other => {
@@ -430,6 +436,9 @@ pub(crate) fn add_session_context_continuity(
                 true,
                 recorded.pre_call_context_revision,
             ),
+            sessions::SessionContextRevisionAck::Unsupported => {
+                unreachable!("unsupported continuity requests return before response decoration")
+            }
             sessions::SessionContextRevisionAck::Unacknowledged => (
                 "unacknowledged",
                 None,
@@ -486,6 +495,7 @@ pub(crate) fn add_session_context_continuity(
         );
     }
     result.output = Value::Object(output);
+    true
 }
 
 impl ToolRuntime {

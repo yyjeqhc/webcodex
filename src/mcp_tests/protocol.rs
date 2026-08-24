@@ -169,7 +169,7 @@ async fn mcp_legacy_server_discover_is_method_not_found() {
 
 #[tokio::test]
 async fn mcp_stateless_tools_list_uses_2026_result_shape() {
-    let runtime = test_runtime();
+    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     let outcome = handle_mcp_request(
         &runtime,
         rpc(

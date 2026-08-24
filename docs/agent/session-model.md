@@ -104,6 +104,16 @@ Stateless MCP 2026 also projects optional `ack_session_message_ids` wrapper meta
 
 A required Guidance message may persist `first_ack_observed_at` for observability. Only the first accepted ACK advances message-observation revision; repeated echoes do not create revision churn. This field means only that the Server once observed an explicit ACK echo. It is not a delivery/read receipt and does not change `status=open`. `resolve_session_message` remains the durable processed-state transition; resolved messages no longer participate in hints or urgent redelivery.
 
+### Model-facing context continuity revision
+
+Each Workflow Session also keeps a durable monotonic `context_revision` for finished model-facing tool results. Allocation is Session-local and atomic with annotating the finished event, so concurrent model-facing results receive unique revisions; generic background/system/Job bookkeeping does not advance this watermark. Retention may evict older annotated events without decreasing the durable high-water, and a capable caller whose ACK predates retained history receives `history_lost=true` rather than invented history.
+
+The context ACK protocol is request-scoped and surface-capability-scoped. Stateless MCP 2026 Full Operator `tools/call` explicitly supports `ack_session_context_revision`; the adapter marks that request internally even when the ACK is omitted or malformed. Exact ACKs return only the newly allocated `session_context_revision`; missing, stale, malformed, or future ACKs never block the original tool effect and may add bounded `session_continuity` / `session_recovery`. The ACK is evidence about the caller's model view only: it grants no authority, is not a delivery/read receipt, and is not persisted as caller state.
+
+Surfaces that do not expose this ACK protocol (including legacy MCP, generic REST/GPT Actions/OpenAPI, and Canonical Connector) still contribute their recorded model-facing results to the same durable `context_revision` history, so a later capable Stateless caller can recover intervening consequential work. Those non-capable responses preserve their existing contract and do not expose `session_context_revision`, `session_continuity`, or `session_recovery`; absence of an impossible ACK is not interpreted as model-context loss. Capability is supplied explicitly by the adapter, never inferred from host identity, elapsed time, transport heuristics, tool purpose, credentials, or Session age.
+
+This watermark is independent of `ack_session_message_ids` and the message-observation revision: message ACKs mean only that specific unresolved guidance is still remembered for one request, while context ACKs describe the retained model-facing result watermark. Neither implicitly acknowledges or resolves the other.
+
 ### Message observation state
 
 The Session-local message board has a separate durable monotonic **message-observation revision** used by `observe_session_messages`. The public observation token is bounded and opaque; it binds the exact Workflow Session plus durable cursor state without exposing the internal revision as the caller cursor. It is observation state only and grants no authority. Malformed, oversized, wrong-Session, and future-revision tokens fail closed.

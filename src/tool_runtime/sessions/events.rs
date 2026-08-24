@@ -28,6 +28,13 @@ use super::util::{bound_summary_string, validation_excerpt};
 
 impl ToolCallRecorderMetadata {
     pub(crate) fn from_arguments(arguments: &Value) -> Self {
+        Self::from_arguments_with_context_continuity(arguments, false)
+    }
+
+    pub(crate) fn from_arguments_with_context_continuity(
+        arguments: &Value,
+        context_continuity_capable: bool,
+    ) -> Self {
         let recording_session_id = arguments
             .as_object()
             .and_then(|object| object.get(TOOL_CALL_RECORDING_SESSION_ID_FIELD))
@@ -50,15 +57,19 @@ impl ToolCallRecorderMetadata {
                         .collect()
                 })
                 .unwrap_or_default(),
-            ack_session_context_revision: match arguments
-                .as_object()
-                .and_then(|obj| obj.get(TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD))
-            {
-                None => SessionContextRevisionAck::Unacknowledged,
-                Some(value) => value
-                    .as_u64()
-                    .map(SessionContextRevisionAck::Revision)
-                    .unwrap_or(SessionContextRevisionAck::Invalid),
+            ack_session_context_revision: if context_continuity_capable {
+                match arguments
+                    .as_object()
+                    .and_then(|obj| obj.get(TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD))
+                {
+                    None => SessionContextRevisionAck::Unacknowledged,
+                    Some(value) => value
+                        .as_u64()
+                        .map(SessionContextRevisionAck::Revision)
+                        .unwrap_or(SessionContextRevisionAck::Invalid),
+                }
+            } else {
+                SessionContextRevisionAck::Unsupported
             },
         }
     }

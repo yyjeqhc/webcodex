@@ -508,20 +508,107 @@ async fn generic_tool_call_uses_bound_current_session_without_session_id() {
     let result = outcome.result.unwrap();
     assert_eq!(result.output["session_recorded"], true);
     assert_eq!(result.output["session_id"], session.session_id);
+    assert!(result.output.get("session_context_revision").is_none());
+    assert!(result.output.get("session_continuity").is_none());
+    assert!(result.output.get("session_recovery").is_none());
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    assert_eq!(summary.counts.tool_calls, 1);
+    let finished = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "tool_call_finished")
+        .unwrap();
+    assert_eq!(finished.context_revision, Some(1));
+}
+
+#[tokio::test]
+async fn stateless_capable_current_session_fallback_exposes_context_continuity() {
+    let runtime = runtime_with_agent_project("current-stateless-capable");
+    register_agent(
+        &runtime,
+        "current-stateless-capable",
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("current-stateless-capable");
+    let bootstrap = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("stateless current".to_string()));
+    let window = ClientWindow::for_test("stateless-current-window");
+    let bind = runtime
+        .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
+            ToolCall::from_tool_name(
+                "bind_current_session",
+                json!({"project": project, "session_id": session.session_id}),
+            )
+            .unwrap(),
+            Some(&bootstrap),
+            sessions::SessionTransport::Mcp,
+            true,
+            false,
+            sessions::ToolCallRecorderMetadata::default(),
+            None,
+            Some(&window),
+        )
+        .await;
+    assert!(bind.success, "{:?}", bind.error);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let bootstrap = bootstrap.clone();
+        async move {
+            runtime
+                .call_tool_with_context_protocol_capability(
+                    kernel::ToolCallRequest {
+                        tool_name: "read_file".to_string(),
+                        arguments: json!({"project": project, "path": "README.md", "limit": 1}),
+                    },
+                    kernel::ToolCallContext {
+                        transport: kernel::ToolTransport::Mcp,
+                        session_id: None,
+                        auth: Some(&bootstrap),
+                        window: Some(&ClientWindow::for_test("stateless-current-window")),
+                        record_oauth_scope_denials: false,
+                        host_file_import_trust:
+                            crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
+                    },
+                    true,
+                )
+                .await
+        }
+    });
+    let req =
+        wait_for_agent_request_for_instance(&runtime, "current-stateless-capable", "inst").await;
+    complete_patch_agent_request(
+        &runtime,
+        "current-stateless-capable",
+        &req.request_id,
+        0,
+        &canonical_agent_file_read_range("hello\n", 1, 1),
+        "",
+    )
+    .await;
+    let outcome = task.await.unwrap();
+    assert!(outcome.success);
+    let result = outcome.result.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["session_recorded"], true);
+    assert_eq!(result.output["session_id"], session.session_id);
     assert_eq!(result.output["session_context_revision"], 1);
     assert_eq!(
         result.output["session_continuity"]["status"],
         "unacknowledged"
     );
-    assert_eq!(
-        runtime
-            .sessions
-            .summary(&session.session_id, Some(20))
-            .unwrap()
-            .counts
-            .tool_calls,
-        1
-    );
+    assert!(result.output.get("session_recovery").is_some());
 }
 
 #[tokio::test]

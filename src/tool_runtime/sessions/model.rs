@@ -799,7 +799,11 @@ pub(crate) struct ToolCallRecorderMetadata {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum SessionContextRevisionAck {
+    /// The current request surface does not expose the context-continuity ACK
+    /// protocol. Model-facing history still advances its durable watermark,
+    /// but the response must preserve the legacy surface contract.
     #[default]
+    Unsupported,
     Unacknowledged,
     Revision(u64),
     Invalid,

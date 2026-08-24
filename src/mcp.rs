@@ -531,14 +531,17 @@ fn add_stateless_workflow_recorder_metadata(payload: &mut Value, model_surface: 
                 "description": "MCP wrapper metadata only. ACK means the current model context still remembers the referenced open Session message. Repeat ACK ids on subsequent calls while remembered. If omitted later, unresolved ACK-required guidance may be returned again. ACK does not resolve the message."
             }),
         );
-        properties.insert(
-            crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD.to_string(),
-            json!({
-                "type": "integer",
-                "minimum": 0,
-                "description": "Echo the latest Session context revision still present in the current model context. Omit it when unknown. If it is missing or behind the Session's model-facing continuity watermark, the tool still executes normally and the result may include bounded Session recovery context."
-            }),
-        );
+        if matches!(model_surface, ModelSurface::FullOperatorRuntime) {
+            properties.insert(
+                crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD
+                    .to_string(),
+                json!({
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Echo the latest Session context revision still present in the current model context. Omit it when unknown. If it is missing or behind the Session's model-facing continuity watermark, the tool still executes normally and the result may include bounded Session recovery context."
+                }),
+            );
+        }
     }
 }
 
@@ -3110,23 +3113,30 @@ async fn handle_mcp_request_with_lifecycle(
                     );
                 }
             }
-            if stateless_2026 {
-                if let Some(context_revision) =
-                    strip_stateless_ack_session_context_revision(&mut params.arguments)
+            let context_continuity_capable = stateless_2026
+                && matches!(runtime.model_surface(), ModelSurface::FullOperatorRuntime);
+            if context_continuity_capable {
+                if let Some(arguments) = params.arguments.as_object_mut() {
+                    arguments.remove(
+                        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
+                    );
+                }
+                let context_revision =
+                    strip_stateless_ack_session_context_revision(&mut params.arguments);
+                if let (Some(arguments), Some(context_revision)) =
+                    (params.arguments.as_object_mut(), context_revision)
                 {
-                    if let Some(arguments) = params.arguments.as_object_mut() {
-                        arguments.insert(
-                            crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD
-                                .to_string(),
-                            context_revision,
-                        );
-                    }
+                    arguments.insert(
+                        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD
+                            .to_string(),
+                        context_revision,
+                    );
                 }
             }
             let as_image_requested = params.name == "read_project_artifact"
                 && params.arguments.get("as_image").and_then(Value::as_bool) == Some(true);
             let outcome = runtime
-                .call_tool_with_context(
+                .call_tool_with_context_protocol_capability(
                     KernelToolCallRequest {
                         tool_name: params.name.clone(),
                         arguments: params.arguments,
@@ -3139,6 +3149,7 @@ async fn handle_mcp_request_with_lifecycle(
                         record_oauth_scope_denials: false,
                         host_file_import_trust,
                     },
+                    context_continuity_capable,
                 )
                 .await;
             let model_ergonomics_completion = outcome.model_ergonomics;

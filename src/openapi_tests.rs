@@ -1085,6 +1085,7 @@ fn openapi_call_runtime_tool_declares_flattened_action_fields() {
         "expected_failure",
         "expected_failure_kind",
         "assertion_name",
+        "ack_session_context_revision",
     ] {
         assert!(
             !properties.contains_key(field),

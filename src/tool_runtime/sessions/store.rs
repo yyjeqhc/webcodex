@@ -1469,6 +1469,7 @@ impl SessionStore {
             }
             let next_revision = record.context_revision.checked_add(1)?;
             let recovery_start = match ack_session_context_revision {
+                SessionContextRevisionAck::Unsupported => pre_call_context_revision,
                 SessionContextRevisionAck::Revision(revision)
                     if revision <= pre_call_context_revision =>
                 {
@@ -1487,6 +1488,7 @@ impl SessionStore {
                 })
                 .collect::<Vec<_>>();
             let expected_recovery_count = match ack_session_context_revision {
+                SessionContextRevisionAck::Unsupported => 0,
                 SessionContextRevisionAck::Revision(revision)
                     if revision <= pre_call_context_revision =>
                 {

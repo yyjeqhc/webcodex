@@ -707,9 +707,10 @@ impl ToolRuntime {
                 recorded.as_ref().map(|recorded| recorded.event_id.clone()),
             );
             if let Some(recorded) = recorded.as_ref() {
-                session_context::add_session_context_continuity(result, recorded);
-                self.add_session_history_recovery(result, recorded, auth)
-                    .await;
+                if session_context::add_session_context_continuity(result, recorded) {
+                    self.add_session_history_recovery(result, recorded, auth)
+                        .await;
+                }
             }
         } else {
             let event_id = self.sessions.record_tool_call_finished(

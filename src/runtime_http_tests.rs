@@ -1526,6 +1526,9 @@ async fn api_tools_call_uses_recording_session_id_for_recorder_metadata() {
     assert_eq!(body["output"]["session_id"], business_session_id);
     assert_eq!(body["output"]["title"], "business");
     assert_eq!(body["output"]["session_recorded"], true);
+    assert!(body["output"].get("session_context_revision").is_none());
+    assert!(body["output"].get("session_continuity").is_none());
+    assert!(body["output"].get("session_recovery").is_none());
 
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
@@ -1545,6 +1548,13 @@ async fn api_tools_call_uses_recording_session_id_for_recorder_metadata() {
         tracking_summary["output"]["events"][0]["input_summary"]["session_id"],
         business_session_id
     );
+    let finished = tracking_summary["output"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["kind"] == "tool_call_finished")
+        .expect("recorded REST model-facing result");
+    assert_eq!(finished["context_revision"], 1);
 }
 
 #[tokio::test]

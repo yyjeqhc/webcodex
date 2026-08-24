@@ -3409,7 +3409,7 @@ Start-Sleep -Milliseconds 500
                 // Keep the security assertions time-relative below, but give
                 // the command enough bounded wall-clock budget to finish on a
                 // cold or contended runner.
-                Duration::from_secs(10),
+                Duration::from_secs(30),
             );
             set_test_command_token(None);
             result.unwrap()
@@ -3455,7 +3455,10 @@ Start-Sleep -Milliseconds 500
         let result = worker.join().unwrap();
         assert!(
             result.command_completed,
-            "{label}: command did not complete"
+            "{label}: command did not complete: execution_state={} shell_state={:?} error_code={:?}",
+            result.execution_state,
+            result.shell_state,
+            result.error_code
         );
         assert_eq!(result.shell_state, ShellState::Running);
         assert!(

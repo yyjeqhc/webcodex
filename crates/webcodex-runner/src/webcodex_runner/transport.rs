@@ -1026,7 +1026,17 @@ impl AgentSink {
         &self,
         body: ShellAgentResultPayload,
     ) -> Result<ResultSubmission, SubmitResultError> {
-        match self {
+        let request_id = body.result.request_id.clone();
+        if super::dispatch::runner_tool_trace_enabled() {
+            tracing::info!(
+                event = "runner_tool_result_submit_started",
+                runner_request_id = %request_id,
+                runner_client_id = self.client_id(),
+                runner_agent_instance_id = self.agent_instance_id(),
+                "runner_tool_result_submit_started"
+            );
+        }
+        let submitted = match self {
             AgentSink::Http(h) => submit_result_http(h, &body),
             AgentSink::WebSocket { tx, .. } | AgentSink::Quic { tx, .. } => {
                 let env = AgentEnvelope::Result { payload: body };
@@ -1037,7 +1047,24 @@ impl AgentSink {
                 })?;
                 Ok(ResultSubmission::Accepted)
             }
+        };
+        if super::dispatch::runner_tool_trace_enabled() {
+            match &submitted {
+                Ok(outcome) => tracing::info!(
+                    event = "runner_tool_result_submit_finished",
+                    runner_request_id = %request_id,
+                    outcome = ?outcome,
+                    "runner_tool_result_submit_finished"
+                ),
+                Err(error) => tracing::warn!(
+                    event = "runner_tool_result_submit_finished",
+                    runner_request_id = %request_id,
+                    error = %error,
+                    "runner_tool_result_submit_finished"
+                ),
+            }
         }
+        submitted
     }
 
     pub(crate) fn submit_shell_result_with_metadata(

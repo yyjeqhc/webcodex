@@ -334,6 +334,7 @@ impl ShellClientRegistry {
         payload: impl Into<ShellAgentResultPayload>,
     ) -> Result<(), String> {
         let payload = payload.into();
+        crate::tool_request_trace::capture_runner_result(&payload.result.request_id, &payload);
         self.complete_checked(
             payload.result,
             payload.command_execution_state,
@@ -356,6 +357,7 @@ impl ShellClientRegistry {
         payload: ShellAgentResultPayload,
         connection_id: &str,
     ) -> Result<(), String> {
+        crate::tool_request_trace::capture_runner_result(&payload.result.request_id, &payload);
         self.complete_checked(
             payload.result,
             payload.command_execution_state,

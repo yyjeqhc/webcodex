@@ -106,6 +106,56 @@ webcodex server status --env-file /etc/webcodex/webcodex.env
 
 Use `--overwrite` on `server install` only when replacing an existing unit.
 
+### Tool invocation tracing
+
+`WEBCODEX_TOOL_REQUEST_TRACE` has three operator modes. It is off by default;
+`true` keeps the historical metadata-only lifecycle trace, while `full` enables
+Server-side forensic payload capture:
+
+```text
+WEBCODEX_TOOL_REQUEST_TRACE=full
+WEBCODEX_TOOL_REQUEST_TRACE_DIR=/var/lib/webcodex/tool-request-traces
+WEBCODEX_TOOL_REQUEST_TRACE_RETENTION_HOURS=168
+WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES=2147483648
+```
+
+`metadata` (and the compatibility values `true`, `1`, `yes`, `on`) records only
+lifecycle fields such as `server_trace_id`, tool/method, status, duration and
+response size. `full` additionally stores the parsed inbound tool request/raw
+arguments, Server-effective arguments after wrapper/session normalization, the
+exact typed Server-to-Runner request when dispatch occurs, correlated Runner
+replies/Job updates, and final JSON tool response where a bounded JSON response
+exists. Full payloads are complete JSON compressed with
+zstd under `<trace-dir>/<server_trace_id>/`; they are not stored as BLOBs in the
+canonical runtime database. Large payloads are never silently truncated: if the
+configured total-byte budget cannot fit a capture after pruning expired/old
+traces, that capture is omitted and the Server emits
+`tool_trace_capture_omitted` with `trace_disk_budget_exceeded`.
+
+Full tracing is an explicit self-hosted diagnostic mode and can contain source
+files, patches, script/stdin data, command output, user messages, or other tool
+payloads. Protect the trace directory accordingly. The trace path does not read
+the WebCodex ingress HTTP `Authorization` header. A token, key, or other secret
+that is itself present inside a tool argument, script/stdin, Runner request, or
+Runner response is part of the payload and therefore can be captured in `full`
+mode. Trace I/O, compression, pruning, or correlation failures are fail-open for
+the tool itself and are reported as `tool_trace_capture_failed` rather than
+changing execution correctness.
+
+When a tool dispatches to a Runner, the Server records the mapping from
+`server_trace_id` to the existing `runner_request_id`, Runner client/instance,
+transport, and advertised build version/commit; the full store also captures the
+exact typed Runner request as `runner_request`. The Server keeps only a bounded
+in-memory correlation index for later Runner results and Job updates; raw Runner
+payloads still live only in the Server trace directory. If the same trace mode
+is enabled in the Runner environment, the Runner journal adds dispatch/result
+lifecycle records keyed by that same `runner_request_id`; it does not persist a
+second raw-payload copy.
+
+`tool_handler_returned` proves only that WebCodex handed the response to the HTTP
+framework. For client-delivery debugging, correlate `server_trace_id` and request
+timing with the reverse proxy's status/body-bytes/request-time logs.
+
 ### Public HTTPS
 
 Hosted MCP clients and GPT Actions require a public HTTPS URL. Set

@@ -95,6 +95,49 @@ webcodex server status --env-file /etc/webcodex/webcodex.env
 
 只有替换已有 unit 时才在 `server install` 上使用 `--overwrite`。
 
+### Tool invocation trace
+
+`WEBCODEX_TOOL_REQUEST_TRACE` 提供三种 operator 模式。默认关闭；`true` 保持历史
+metadata-only lifecycle trace，而 `full` 显式开启 Server 侧 forensic payload capture：
+
+```text
+WEBCODEX_TOOL_REQUEST_TRACE=full
+WEBCODEX_TOOL_REQUEST_TRACE_DIR=/var/lib/webcodex/tool-request-traces
+WEBCODEX_TOOL_REQUEST_TRACE_RETENTION_HOURS=168
+WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES=2147483648
+```
+
+`metadata`（以及兼容值 `true`、`1`、`yes`、`on`）只记录
+`server_trace_id`、tool/method、status、duration、response size 等 lifecycle
+metadata。`full` 还会保存解析后的 inbound tool request/raw arguments、经过
+wrapper/session normalization 后 Server 实际使用的 effective arguments、发生派发时
+Server 真正发出的 typed Runner request、相关联的 Runner reply/Job update，以及存在
+有界 JSON body 时的最终 tool response。完整
+payload 以 JSON + zstd 存在 `<trace-dir>/<server_trace_id>/`，不会作为 BLOB 写入
+canonical runtime database。
+
+大 payload 不会静默截断。如果清理过期/最旧 trace 后仍无法在总磁盘预算内完整保存，
+本次 capture 会被省略，Server 同时记录 `tool_trace_capture_omitted` 和
+`trace_disk_budget_exceeded`。`full` 是显式的自托管诊断模式，目录里可能包含源码、
+patch、script/stdin、命令输出、user message 或其他 tool payload，应按敏感诊断数据
+保护该目录。trace path 不会读取 WebCodex ingress HTTP `Authorization` header；但
+如果 token、key 或其他 secret 本身出现在 tool argument、script/stdin、Runner request
+或 Runner response 中，那么它就是 payload 的一部分，`full` 模式会照常 capture。
+trace 写盘、压缩、清理或 correlation 失败只产生 `tool_trace_capture_failed`，不会改变
+tool execution correctness。
+
+当 tool 派发到 Runner 时，Server 会记录 `server_trace_id` 到现有
+`runner_request_id` 的映射，以及 Runner client/instance、transport 和注册时报告的
+build version/commit；full store 还会把 exact typed Runner request 记录为
+`runner_request`。Server 只用有界内存索引等待后续 Runner result/Job update；
+raw Runner payload 仍只保存在 Server trace directory。若 Runner 环境也启用了同一
+trace 模式，Runner journal 会追加按 `runner_request_id` 关联的 dispatch/result
+lifecycle 日志，但不会再持久化第二份 raw payload。
+
+`tool_handler_returned` 只证明 WebCodex 已把 response 交给 HTTP framework，不证明
+client 已收到。排查 delivery 时，应再用 `server_trace_id` 和请求时间去关联 reverse
+proxy 的 status/body-bytes/request-time 日志。
+
 ### 公网 HTTPS
 
 Hosted MCP 客户端与 GPT Actions 需要公网 HTTPS URL。在 Server env 文件中设置

@@ -5131,6 +5131,7 @@ dependencies = [
  "webcodex-persistent-shell",
  "webcodex-sandbox",
  "webcodex-workspace",
+ "zstd",
 ]
 
 [[package]]

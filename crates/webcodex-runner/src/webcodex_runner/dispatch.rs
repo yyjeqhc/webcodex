@@ -30,6 +30,18 @@ fn internal_search_script(command: &str) -> Option<&str> {
     (!script.is_empty()).then_some(script)
 }
 
+pub(super) fn runner_tool_trace_enabled() -> bool {
+    std::env::var("WEBCODEX_TOOL_REQUEST_TRACE")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| {
+            matches!(
+                value.as_str(),
+                "1" | "true" | "yes" | "on" | "metadata" | "full"
+            )
+        })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_native_shell_or_internal_search(
     config: &HotAgentConfig,
@@ -93,6 +105,17 @@ pub(crate) fn dispatch_request(
     lsp: &LspSupervisor,
     request: ShellAgentShellRequest,
 ) -> Result<bool, SubmitResultError> {
+    if runner_tool_trace_enabled() {
+        tracing::info!(
+            event = "runner_tool_dispatch_started",
+            runner_request_id = %request.request_id,
+            runner_client_id = %request.client_id,
+            runner_request_kind = %request.kind,
+            runner_job_id = request.job_id.as_deref().unwrap_or("-"),
+            runner_agent_instance_id = sink.agent_instance_id(),
+            "runner_tool_dispatch_started"
+        );
+    }
     if runtime.shutdown_flag().load(Ordering::SeqCst) {
         return Ok(false);
     }

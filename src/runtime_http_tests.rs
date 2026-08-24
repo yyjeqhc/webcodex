@@ -604,6 +604,108 @@ async fn http_tool_call(service: &Service, body: Value) -> (StatusCode, Value) {
 }
 
 #[tokio::test]
+async fn http_tools_call_full_trace_captures_raw_effective_and_final_payloads() {
+    let trace_root = tempfile::tempdir().unwrap();
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+    env.set(
+        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+        trace_root.path().to_string_lossy().as_ref(),
+    );
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+
+    let (_tmp, service) = phase2_service();
+    let request = json!({
+        "tool": "list_tools",
+        "params": {},
+        "arguments": {"raw_only_marker": "client-wrapper-evidence"}
+    });
+    let (status, response) = http_tool_call(&service, request.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["success"], true);
+
+    let trace_dirs = std::fs::read_dir(trace_root.path())
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .collect::<Vec<_>>();
+    assert_eq!(trace_dirs.len(), 1);
+    let trace_dir = trace_dirs[0].path();
+    let events = std::fs::read_to_string(trace_dir.join("events.jsonl")).unwrap();
+    let events = events
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert!(events
+        .iter()
+        .any(|event| event["event"] == "api_tool_request_received"));
+    assert!(events
+        .iter()
+        .any(|event| event["event"] == "api_tool_handler_returned"));
+
+    let read_phase = |phase: &str| {
+        let relative = events
+            .iter()
+            .find(|event| {
+                event["event"] == "tool_trace_payload_captured" && event["phase"] == phase
+            })
+            .and_then(|event| event["payload_path"].as_str())
+            .unwrap_or_else(|| panic!("missing trace payload phase {phase}"));
+        let compressed = std::fs::read(trace_dir.join(relative)).unwrap();
+        let raw = zstd::stream::decode_all(compressed.as_slice()).unwrap();
+        serde_json::from_slice::<Value>(&raw).unwrap()
+    };
+
+    let raw = read_phase("raw_request_body");
+    assert_eq!(raw, request);
+    let effective = read_phase("effective_arguments");
+    assert_eq!(effective, json!({}));
+    let final_response = read_phase("final_response");
+    assert_eq!(final_response["success"], true);
+    assert_eq!(final_response["output"]["tools"].is_array(), true);
+}
+
+#[tokio::test]
+async fn http_tools_call_full_trace_captures_pre_dispatch_error_response() {
+    let trace_root = tempfile::tempdir().unwrap();
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+    env.set(
+        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+        trace_root.path().to_string_lossy().as_ref(),
+    );
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+
+    let (_tmp, service) = phase2_service();
+    let request = json!({"params": {"project": "demo"}});
+    let (status, response) = http_tool_call(&service, request.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    assert_eq!(response["status"], StatusCode::BAD_REQUEST.as_u16());
+    assert!(response["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("tool")));
+
+    let trace_dir = std::fs::read_dir(trace_root.path())
+        .unwrap()
+        .flatten()
+        .find(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .expect("one full-trace directory")
+        .path();
+    let events = std::fs::read_to_string(trace_dir.join("events.jsonl")).unwrap();
+    let final_payload_path = events
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .find(|event| {
+            event["event"] == "tool_trace_payload_captured" && event["phase"] == "final_response"
+        })
+        .and_then(|event| event["payload_path"].as_str().map(str::to_string))
+        .expect("pre-dispatch final response trace payload");
+    let compressed = std::fs::read(trace_dir.join(final_payload_path)).unwrap();
+    let raw = zstd::stream::decode_all(compressed.as_slice()).unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&raw).unwrap(), response);
+}
+
+#[tokio::test]
 async fn flattened_tool_manifest_audit_intent_survives_null_params_wrapper() {
     let (tool, params) = extract_tool_call(&json!({
         "tool": "tool_manifest",

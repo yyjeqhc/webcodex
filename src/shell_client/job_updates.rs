@@ -1812,6 +1812,12 @@ impl ShellClientRegistry {
         &self,
         body: ShellAgentJobUpdateRequest,
     ) -> Result<ShellJobInfo, String> {
+        crate::tool_request_trace::capture_runner_job_update(
+            body.request_id.as_deref(),
+            &body.job_id,
+            body.finished,
+            &body,
+        );
         self.update_job_checked(body, None).await
     }
 
@@ -1826,6 +1832,12 @@ impl ShellClientRegistry {
         body: ShellAgentJobUpdateRequest,
         connection_id: &str,
     ) -> Result<ShellJobInfo, String> {
+        crate::tool_request_trace::capture_runner_job_update(
+            body.request_id.as_deref(),
+            &body.job_id,
+            body.finished,
+            &body,
+        );
         self.update_job_checked(body, Some(connection_id)).await
     }
 

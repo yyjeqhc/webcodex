@@ -53,6 +53,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 url = "2"
 sha2 = "0.10"
 tempfile = "3"
+zstd = "0.13"
 # Custom QUIC agent transport. Quinn reuses the
 # rustls 0.23 + aws-lc-rs provider already present transitively (via
 # tokio-tungstenite / salvo). `rustls-pemfile` loads PEM cert/key on the

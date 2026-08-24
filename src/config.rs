@@ -334,12 +334,61 @@ pub(crate) fn env_flag(key: &str) -> Option<bool> {
     }
 }
 
-/// Gated tool-request lifecycle tracing (`WEBCODEX_TOOL_REQUEST_TRACE`).
+/// Operator-selected tool-request trace detail.
 ///
-/// Default **false**. When false, MCP/API handlers must not serialize response
-/// bodies solely to measure size, and no lifecycle events are emitted.
+/// Compatibility is deliberate: the historical boolean `true` remains the
+/// metadata-only mode. Raw arguments/results are persisted only when the
+/// operator explicitly selects `full`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolRequestTraceMode {
+    Off,
+    Metadata,
+    Full,
+}
+
+pub(crate) fn tool_request_trace_mode() -> ToolRequestTraceMode {
+    let Ok(value) = std::env::var("WEBCODEX_TOOL_REQUEST_TRACE") else {
+        return ToolRequestTraceMode::Off;
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" | "metadata" => ToolRequestTraceMode::Metadata,
+        "full" => ToolRequestTraceMode::Full,
+        "0" | "false" | "no" | "off" => ToolRequestTraceMode::Off,
+        _ => ToolRequestTraceMode::Off,
+    }
+}
+
 pub(crate) fn tool_request_trace_enabled() -> bool {
-    env_flag("WEBCODEX_TOOL_REQUEST_TRACE").unwrap_or(false)
+    tool_request_trace_mode() != ToolRequestTraceMode::Off
+}
+
+pub(crate) fn tool_request_trace_dir() -> PathBuf {
+    if let Ok(path) = std::env::var("WEBCODEX_TOOL_REQUEST_TRACE_DIR") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    std::env::var("WEBCODEX_DATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./data"))
+        .join("tool-request-traces")
+}
+
+pub(crate) fn tool_request_trace_retention_hours() -> u64 {
+    std::env::var("WEBCODEX_TOOL_REQUEST_TRACE_RETENTION_HOURS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(168)
+}
+
+pub(crate) fn tool_request_trace_max_total_bytes() -> u64 {
+    std::env::var("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(2 * 1024 * 1024 * 1024)
 }
 
 /// Experimental MCP `tools/list` compact schemas switch.
@@ -928,18 +977,25 @@ mod tests {
     fn tool_request_trace_defaults_off() {
         let mut env = crate::test_support::TestEnvGuard::new();
         env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
+        assert_eq!(tool_request_trace_mode(), ToolRequestTraceMode::Off);
         assert!(!tool_request_trace_enabled());
     }
 
     #[test]
-    fn tool_request_trace_true_enables() {
+    fn tool_request_trace_modes_preserve_true_as_metadata() {
         let mut env = crate::test_support::TestEnvGuard::new();
         env.set("WEBCODEX_TOOL_REQUEST_TRACE", "true");
+        assert_eq!(tool_request_trace_mode(), ToolRequestTraceMode::Metadata);
+        assert!(tool_request_trace_enabled());
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "metadata");
+        assert_eq!(tool_request_trace_mode(), ToolRequestTraceMode::Metadata);
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        assert_eq!(tool_request_trace_mode(), ToolRequestTraceMode::Full);
         assert!(tool_request_trace_enabled());
         env.set("WEBCODEX_TOOL_REQUEST_TRACE", "false");
-        assert!(!tool_request_trace_enabled());
+        assert_eq!(tool_request_trace_mode(), ToolRequestTraceMode::Off);
         env.set("WEBCODEX_TOOL_REQUEST_TRACE", "maybe");
-        assert!(!tool_request_trace_enabled());
+        assert_eq!(tool_request_trace_mode(), ToolRequestTraceMode::Off);
         env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
     }
 }

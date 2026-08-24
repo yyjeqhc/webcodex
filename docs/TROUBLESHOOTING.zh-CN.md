@@ -100,6 +100,42 @@ curl http://127.0.0.1:8080/openapi.json
 
 如果本地 HTTP 正常但 public HTTPS 不通，检查 nginx upstream host/port 和 TLS 配置。WebCodex CLI 不会自动配置 reverse proxy。
 
+### 端到端追踪一次 tool invocation
+
+自托管 forensic 排障时，在 Server 设置 `WEBCODEX_TOOL_REQUEST_TRACE=full`，只复现
+一次目标调用。在 Server journal 找到 `server_trace_id`，然后检查：
+
+```bash
+TRACE_ROOT=/var/lib/webcodex/tool-request-traces
+find "$TRACE_ROOT/<server_trace_id>" -maxdepth 2 -type f -print
+cat "$TRACE_ROOT/<server_trace_id>/events.jsonl"
+zstd -dc "$TRACE_ROOT/<server_trace_id>/payloads/<payload>.json.zst" | jq .
+```
+
+对于 `tools/call`，`raw_request_body`（API）或 `raw_arguments`（MCP）表示 WebCodex
+进行 wrapper/session normalization 之前 Server 实际收到的内容；
+`effective_arguments` 是真正送入 runtime/connector dispatch 的 semantic arguments。
+排查客户端声称已发送但 Server 最后看不到的 optional field（例如
+`ack_session_context_revision`）时，先直接对比这两层。`final_response` 保存 Server
+产生的有界 JSON response。
+
+如果调用到达 Runner，`events.jsonl` 会记录 `runner_request_id`、Runner
+client/instance、transport 与注册时报告的 build version/commit。`runner_request`
+payload 是 Server 实际 enqueue 给该 Runner 的 exact typed request；如果字段疑似在
+派发构造阶段消失，可以直接与 `effective_arguments` 对比。Runner 也启用 tool request
+trace 时，可直接在 Runner journal 搜索同一个 `runner_request_id`。后续 raw Runner
+result 与 Job update 会通过 Server 的有界 correlation index 回写到原始 Server trace。
+
+trace code 不会读取 WebCodex ingress HTTP `Authorization` header，但 `full` 本来就是
+raw forensic 模式：如果 credential-like value 被放进 tool argument、script/stdin、
+Runner request 或 Runner response，它会作为 payload data 被完整记录。
+
+没有 payload 文件不代表 payload 是空的，也不代表内容被截断。检查 Server journal
+中的 `tool_trace_capture_omitted` / `trace_disk_budget_exceeded` 或
+`tool_trace_capture_failed`。这些 trace 失败只影响诊断，不会让底层 tool 失败。如果
+WebCodex 已记录 `tool_handler_returned` 而 client 没收到 response，还要按同一请求时间
+关联 reverse proxy access log，因为 handler return 并不证明 client delivery。
+
 ### Client 显示 `webcodex: command not found`
 
 把 CLI 安装或 symlink 到 client 的 `PATH`，例如：

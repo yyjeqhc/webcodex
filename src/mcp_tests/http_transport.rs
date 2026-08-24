@@ -212,6 +212,71 @@ async fn start_stateless_observation_session(
 }
 
 #[tokio::test]
+async fn stateless_full_trace_preserves_raw_context_ack_and_records_effective_internal_ack() {
+    let trace_root = tempfile::tempdir().unwrap();
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+    env.set(
+        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+        trace_root.path().to_string_lossy().as_ref(),
+    );
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db, runtime));
+    let arguments = json!({"ack_session_context_revision": 42});
+    let (status, body) =
+        stateless_2026_tool_call(&service, "secret", 41, "list_tools", arguments, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["isError"], false, "{body}");
+
+    let trace_dirs = std::fs::read_dir(trace_root.path())
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .collect::<Vec<_>>();
+    assert_eq!(trace_dirs.len(), 1);
+    let trace_dir = trace_dirs[0].path();
+    let events = std::fs::read_to_string(trace_dir.join("events.jsonl")).unwrap();
+    let events = events
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+
+    let read_phase = |phase: &str| {
+        let relative = events
+            .iter()
+            .find(|event| {
+                event["event"] == "tool_trace_payload_captured" && event["phase"] == phase
+            })
+            .and_then(|event| event["payload_path"].as_str())
+            .unwrap_or_else(|| panic!("missing trace payload phase {phase}"));
+        let compressed = std::fs::read(trace_dir.join(relative)).unwrap();
+        let raw = zstd::stream::decode_all(compressed.as_slice()).unwrap();
+        serde_json::from_slice::<Value>(&raw).unwrap()
+    };
+
+    let raw = read_phase("raw_arguments");
+    assert_eq!(
+        raw[crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD],
+        42
+    );
+    let effective = read_phase("effective_arguments");
+    assert!(effective
+        .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD)
+        .is_none());
+    assert_eq!(
+        effective
+            [crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD],
+        42
+    );
+    let final_response = read_phase("final_response");
+    assert_eq!(final_response["result"]["isError"], false);
+}
+
+#[tokio::test]
 async fn mcp_tools_call_writes_a_summary_action_audit_row() {
     // list_tools is a full-operator-only tool; select that surface so the
     // call dispatches and lands an action audit row.

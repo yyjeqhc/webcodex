@@ -143,6 +143,22 @@ pub(super) fn enqueue_pending_request_locked(
 ) -> Result<(), PendingRequestEnqueueError> {
     ensure_dispatch_supported_locked(inner, client_id)?;
     ensure_queue_capacity_locked(inner, client_id)?;
+    let runner = inner.clients.get(client_id);
+    crate::tool_request_trace::record_runner_request_enqueued(
+        &request,
+        &request_id,
+        client_id,
+        &request.kind,
+        request.job_id.as_deref().or(job_id.as_deref()),
+        runner.map(|record| record.agent_instance_id.as_str()),
+        runner.map(|record| record.transport.as_str()),
+        runner
+            .and_then(|record| record.build.as_ref())
+            .and_then(|build| build.version.as_deref()),
+        runner
+            .and_then(|record| record.build.as_ref())
+            .and_then(|build| build.git_commit.as_deref()),
+    );
     inner
         .queues_by_client
         .entry(client_id.to_string())

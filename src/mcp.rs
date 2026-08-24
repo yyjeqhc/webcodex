@@ -4,7 +4,7 @@ use crate::connector_runtime::{ConnectorRuntime, ConnectorRuntimeSlot, Connector
 use crate::json_error;
 use crate::model_surface::ModelSurface;
 use crate::tool_request_trace::{
-    estimate_json_bytes, jsonrpc_id_safe, new_trace_id, ToolRequestLifecycle,
+    estimate_json_bytes, jsonrpc_id_safe, new_trace_id, scope_active_trace, ToolRequestLifecycle,
 };
 use crate::tool_runtime::kernel::{
     check_runtime_tool_scope, HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
@@ -2336,18 +2336,22 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             tool_name.as_deref().and_then(ModelErgonomicsTimer::start)
         };
     let mut model_ergonomics = None;
+    let active_trace_id = guard.active_trace_id();
     let outcome = match tokio::time::timeout(
         MCP_DISPATCH_HARD_TIMEOUT,
-        handle_mcp_request_with_lifecycle(
-            &runtime,
-            connector.as_deref(),
-            request,
-            auth.as_ref(),
-            protocol_era,
-            host_file_import_trust,
-            window.identity.as_ref(),
-            Some(&mut guard),
-            Some(&mut model_ergonomics),
+        scope_active_trace(
+            active_trace_id,
+            handle_mcp_request_with_lifecycle(
+                &runtime,
+                connector.as_deref(),
+                request,
+                auth.as_ref(),
+                protocol_era,
+                host_file_import_trust,
+                window.identity.as_ref(),
+                Some(&mut guard),
+                Some(&mut model_ergonomics),
+            ),
         ),
     )
     .await
@@ -2387,6 +2391,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 Some("mcp dispatch hard timeout".to_string()),
                 timeout_model_ergonomics.as_ref(),
             );
+            guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
             guard.response_serialized(500, estimated, Some(false), None, "dispatch_hard_timeout");
             res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
@@ -2450,6 +2455,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 },
                 model_ergonomics.as_ref(),
             );
+            guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
             guard.response_serialized(200, estimated, Some(true), tool_success, "ok");
             res.render(Json(body));
@@ -2505,6 +2511,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 body["error"]["message"].as_str().map(str::to_string),
                 model_ergonomics.as_ref(),
             );
+            guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
             guard.response_serialized(400, estimated, Some(false), None, "bad_request");
             res.status_code(StatusCode::BAD_REQUEST);
@@ -2518,6 +2525,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 body["error"]["message"].as_str().map(str::to_string),
                 model_ergonomics.as_ref(),
             );
+            guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
             guard.response_serialized(404, estimated, Some(false), None, "not_found");
             res.status_code(StatusCode::NOT_FOUND);
@@ -2537,6 +2545,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 )),
                 model_ergonomics.as_ref(),
             );
+            guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
             guard.response_serialized(403, estimated, Some(false), None, "forbidden");
             res.status_code(StatusCode::FORBIDDEN);
@@ -2898,6 +2907,9 @@ async fn handle_mcp_request_with_lifecycle(
                     ));
                 }
             };
+            if let Some(lc) = lifecycle.as_deref() {
+                lc.capture_payload("raw_arguments", &params.arguments);
+            }
             // Emit dispatch_started only after params parse succeeds and before
             // ToolRuntime work begins.
             if let Some(lc) = lifecycle.as_deref_mut() {
@@ -2911,6 +2923,9 @@ async fn handle_mcp_request_with_lifecycle(
                         lc.dispatch_finished(false, Some(false), "forbidden");
                     }
                     return outcome;
+                }
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.capture_payload("effective_arguments", &params.arguments);
                 }
                 let result = crate::mcp_gateway::call(runtime, params.arguments, auth).await;
                 let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
@@ -3004,6 +3019,9 @@ async fn handle_mcp_request_with_lifecycle(
                         -32600,
                         "MCP session identity is unavailable; initialize the connection before starting or continuing project work",
                     ));
+                }
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.capture_payload("effective_arguments", &params.arguments);
                 }
                 let outcome = connector
                     .call_for_window(
@@ -3132,6 +3150,9 @@ async fn handle_mcp_request_with_lifecycle(
                         context_revision,
                     );
                 }
+            }
+            if let Some(lc) = lifecycle.as_deref() {
+                lc.capture_payload("effective_arguments", &params.arguments);
             }
             let as_image_requested = params.name == "read_project_artifact"
                 && params.arguments.get("as_image").and_then(Value::as_bool) == Some(true);

@@ -73,6 +73,12 @@ fn validate_apply_text_edit(
     validate_field("old_text", &edit.old_text)?;
     validate_field("new_text", &edit.new_text)?;
     validate_field("anchor_text", &edit.anchor_text)?;
+    if edit.occurrence == Some(0) {
+        return Err(format!(
+            "change {change_index} edit {edit_index} ({}): occurrence must be at least 1",
+            edit.kind.as_str()
+        ));
+    }
     match edit.kind {
         ApplyTextEditKind::ReplaceExact => {
             if edit
@@ -290,6 +296,13 @@ pub(crate) fn apply_text_edits_to_string(
     let mut ops: Vec<(usize, usize, String, usize)> = Vec::with_capacity(edits.len());
     for (index, edit) in edits.iter().enumerate() {
         let kind = edit.kind;
+        if edit.occurrence == Some(0) {
+            return Err(edit_field_error(
+                index,
+                kind,
+                "occurrence must be at least 1",
+            ));
+        }
         let (needle, replacement): (&str, String) = match kind {
             ApplyTextEditKind::ReplaceExact => {
                 let old = edit
@@ -344,22 +357,26 @@ pub(crate) fn apply_text_edits_to_string(
             .map_err(|error| edit_field_error(index, kind, error))?
             .into_owned();
         let needle = needle.as_ref();
-        let matches = original.matches(needle).count();
-        if matches == 0 {
-            return Err(edit_match_error(index, kind, "match text was not found"));
-        }
-        if matches > 1 {
-            return Err(edit_match_error(
-                index,
-                kind,
-                &format!(
-                    "match text matched {} times; refusing ambiguous edit",
-                    matches
-                ),
-            ));
-        }
-        let start = original.find(needle).expect("unique match already counted");
-        let end = start + needle.len();
+        let (start, end) =
+            crate::apply_edits_shared::resolve_apply_text_match(original, needle, edit.occurrence)
+                .map_err(|conflict| {
+                    use crate::apply_edits_shared::ApplyTextMatchConflictKind;
+                    let message = match conflict.kind {
+                        ApplyTextMatchConflictKind::MatchNotFound => {
+                            "match text was not found".to_string()
+                        }
+                        ApplyTextMatchConflictKind::MultipleMatches => format!(
+                            "match text matched {} times; refusing ambiguous edit",
+                            conflict.match_count
+                        ),
+                        ApplyTextMatchConflictKind::OccurrenceOutOfRange => format!(
+                            "requested occurrence {} is out of range for {} exact matches",
+                            conflict.requested_occurrence.unwrap_or(0),
+                            conflict.match_count
+                        ),
+                    };
+                    edit_match_error(index, kind, &message)
+                })?;
         let (range_start, range_end) = match kind {
             ApplyTextEditKind::InsertBefore => (start, start),
             ApplyTextEditKind::InsertAfter => (end, end),
@@ -934,6 +951,7 @@ impl ToolRuntime {
         let payload = json!({
             "changes": changes,
             "dry_run": dry_run.unwrap_or(false),
+            "recovery_metadata_version": 1,
         });
         let serialized = match serde_json::to_string(&payload) {
             Ok(serialized) if serialized.len() <= MAX_APPLY_FILE_CHANGES_BYTES => serialized,

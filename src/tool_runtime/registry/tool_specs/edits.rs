@@ -29,7 +29,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "apply_text_edits",
-            "Canonical transactional file-change tool; preferred for ordinary local edits. Applies edit/create/delete/rename changes to current worktree, not HEAD. SHA-256 guards preflight the whole batch before mutation. Prefer over whole-file tools. Supports dry_run and per-file hashes.",
+            "Canonical transactional file-change preferred for ordinary local edit/create/delete/rename on current worktree, not HEAD. Whole batch uses per-file hashes, dry_run; prefer over whole-file. Unique exact by default; bounded conflicts may advertise 1-based occurrence. SHA conflict requires reread.",
             apply_text_edits_input_schema(),
         ),
     ]

@@ -265,9 +265,11 @@ const APPLY_TEXT_EDITS_MAX_FILE_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
 // keep this module's existing `Agent*` / `APPLY_TEXT_EDITS_MAX_*` names.
 use crate::apply_edits_shared::{
     canonicalize_apply_text_line_endings, detect_apply_text_line_ending, is_sensitive_edit_path,
-    restore_apply_text_line_endings, ApplyFileChangeInput as AgentFileChange,
-    ApplyFileChangeKind as AgentFileChangeKind, ApplyTextEditInput as AgentTextEdit,
-    ApplyTextEditKind as AgentTextEditKind, MAX_APPLY_FILE_CHANGES as APPLY_TEXT_EDITS_MAX_CHANGES,
+    resolve_apply_text_match, restore_apply_text_line_endings,
+    ApplyFileChangeInput as AgentFileChange, ApplyFileChangeKind as AgentFileChangeKind,
+    ApplyTextEditInput as AgentTextEdit, ApplyTextEditKind as AgentTextEditKind,
+    ApplyTextMatchConflict, ApplyTextMatchConflictKind,
+    MAX_APPLY_FILE_CHANGES as APPLY_TEXT_EDITS_MAX_CHANGES,
     MAX_APPLY_TEXT_EDITS as APPLY_TEXT_EDITS_MAX_EDITS,
     MAX_APPLY_TEXT_EDIT_FIELD_BYTES as APPLY_TEXT_EDITS_MAX_FIELD_BYTES,
 };
@@ -277,6 +279,36 @@ struct AgentApplyTextEditsPayload {
     changes: Vec<AgentFileChange>,
     #[serde(default)]
     dry_run: Option<bool>,
+    #[serde(default)]
+    recovery_metadata_version: Option<u32>,
+}
+
+#[derive(Debug)]
+enum EditPlanConflict {
+    Match(ApplyTextMatchConflict),
+    Overlap {
+        first_edit_index: usize,
+        second_edit_index: usize,
+    },
+}
+
+#[derive(Debug)]
+struct EditPlanError {
+    edit_index: usize,
+    edit_kind: &'static str,
+    message: String,
+    conflict: Option<EditPlanConflict>,
+}
+
+impl EditPlanError {
+    fn plain(edit_index: usize, edit_kind: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            edit_index,
+            edit_kind,
+            message: message.into(),
+            conflict: None,
+        }
+    }
 }
 
 struct PlannedFileChange {
@@ -303,9 +335,9 @@ struct AppliedFileChange {
 fn edit_plan(
     original: &str,
     edits: &[AgentTextEdit],
-) -> Result<(String, Vec<serde_json::Value>), (usize, &'static str, String)> {
+) -> Result<(String, Vec<serde_json::Value>), EditPlanError> {
     if edits.is_empty() || edits.len() > APPLY_TEXT_EDITS_MAX_EDITS {
-        return Err((
+        return Err(EditPlanError::plain(
             0,
             "edit",
             format!(
@@ -314,14 +346,21 @@ fn edit_plan(
             ),
         ));
     }
-    let line_ending =
-        detect_apply_text_line_ending(original).map_err(|error| (0, "edit", error.to_string()))?;
+    let line_ending = detect_apply_text_line_ending(original)
+        .map_err(|error| EditPlanError::plain(0, "edit", error))?;
     let canonical_original = canonicalize_apply_text_line_endings(original, line_ending)
-        .map_err(|error| (0, "edit", error.to_string()))?;
+        .map_err(|error| EditPlanError::plain(0, "edit", error))?;
     let original = canonical_original.as_ref();
     let mut ops: Vec<(usize, usize, String, usize)> = Vec::with_capacity(edits.len());
     for (index, edit) in edits.iter().enumerate() {
         let kind = &edit.kind;
+        if edit.occurrence == Some(0) {
+            return Err(EditPlanError::plain(
+                index,
+                kind.as_str(),
+                "occurrence must be at least 1",
+            ));
+        }
         let (needle, replacement): (&str, String) = match kind {
             AgentTextEditKind::ReplaceExact => {
                 let old = edit
@@ -329,17 +368,13 @@ fn edit_plan(
                     .as_deref()
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {
-                        (
-                            index,
-                            kind.as_str(),
-                            "old_text must be non-empty".to_string(),
-                        )
+                        EditPlanError::plain(index, kind.as_str(), "old_text must be non-empty")
                     })?;
                 if edit.anchor_text.is_some() {
-                    return Err((
+                    return Err(EditPlanError::plain(
                         index,
                         kind.as_str(),
-                        "anchor_text is not allowed".to_string(),
+                        "anchor_text is not allowed",
                     ));
                 }
                 (old, edit.new_text.clone().unwrap_or_default())
@@ -350,17 +385,13 @@ fn edit_plan(
                     .as_deref()
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {
-                        (
-                            index,
-                            kind.as_str(),
-                            "old_text must be non-empty".to_string(),
-                        )
+                        EditPlanError::plain(index, kind.as_str(), "old_text must be non-empty")
                     })?;
                 if edit.new_text.is_some() || edit.anchor_text.is_some() {
-                    return Err((
+                    return Err(EditPlanError::plain(
                         index,
                         kind.as_str(),
-                        "new_text and anchor_text are not allowed".to_string(),
+                        "new_text and anchor_text are not allowed",
                     ));
                 }
                 (old, String::new())
@@ -371,61 +402,69 @@ fn edit_plan(
                     .as_deref()
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {
-                        (
-                            index,
-                            kind.as_str(),
-                            "anchor_text must be non-empty".to_string(),
-                        )
+                        EditPlanError::plain(index, kind.as_str(), "anchor_text must be non-empty")
                     })?;
                 let new_text = edit
                     .new_text
                     .as_deref()
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {
-                        (
-                            index,
-                            kind.as_str(),
-                            "new_text must be non-empty".to_string(),
-                        )
+                        EditPlanError::plain(index, kind.as_str(), "new_text must be non-empty")
                     })?;
                 if edit.old_text.is_some() {
-                    return Err((index, kind.as_str(), "old_text is not allowed".to_string()));
+                    return Err(EditPlanError::plain(
+                        index,
+                        kind.as_str(),
+                        "old_text is not allowed",
+                    ));
                 }
                 (anchor, new_text.to_string())
             }
         };
         if needle.contains('\0') || replacement.contains('\0') {
-            return Err((
+            return Err(EditPlanError::plain(
                 index,
                 kind.as_str(),
-                "edit text cannot contain NUL bytes".to_string(),
+                "edit text cannot contain NUL bytes",
             ));
         }
         if needle.len() > APPLY_TEXT_EDITS_MAX_FIELD_BYTES
             || replacement.len() > APPLY_TEXT_EDITS_MAX_FIELD_BYTES
         {
-            return Err((index, kind.as_str(), "edit field is too large".to_string()));
-        }
-        let needle = canonicalize_apply_text_line_endings(needle, line_ending)
-            .map_err(|error| (index, kind.as_str(), error.to_string()))?;
-        let replacement = canonicalize_apply_text_line_endings(&replacement, line_ending)
-            .map_err(|error| (index, kind.as_str(), error.to_string()))?
-            .into_owned();
-        let needle = needle.as_ref();
-        let matches = original.matches(needle).count();
-        if matches != 1 {
-            return Err((
+            return Err(EditPlanError::plain(
                 index,
                 kind.as_str(),
-                if matches == 0 {
-                    "match text was not found".to_string()
-                } else {
-                    format!("match text matched {matches} times")
-                },
+                "edit field is too large",
             ));
         }
-        let start = original.find(needle).expect("unique match counted above");
-        let end = start + needle.len();
+        let needle = canonicalize_apply_text_line_endings(needle, line_ending)
+            .map_err(|error| EditPlanError::plain(index, kind.as_str(), error))?;
+        let replacement = canonicalize_apply_text_line_endings(&replacement, line_ending)
+            .map_err(|error| EditPlanError::plain(index, kind.as_str(), error))?
+            .into_owned();
+        let needle = needle.as_ref();
+        let (start, end) =
+            resolve_apply_text_match(original, needle, edit.occurrence).map_err(|conflict| {
+                let message = match conflict.kind {
+                    ApplyTextMatchConflictKind::MatchNotFound => {
+                        "match text was not found".to_string()
+                    }
+                    ApplyTextMatchConflictKind::MultipleMatches => {
+                        format!("match text matched {} times", conflict.match_count)
+                    }
+                    ApplyTextMatchConflictKind::OccurrenceOutOfRange => format!(
+                        "requested occurrence {} is out of range for {} exact matches",
+                        conflict.requested_occurrence.unwrap_or(0),
+                        conflict.match_count
+                    ),
+                };
+                EditPlanError {
+                    edit_index: index,
+                    edit_kind: kind.as_str(),
+                    message,
+                    conflict: Some(EditPlanConflict::Match(conflict)),
+                }
+            })?;
         let (range_start, range_end) = match kind {
             AgentTextEditKind::InsertBefore => (start, start),
             AgentTextEditKind::InsertAfter => (end, end),
@@ -436,11 +475,15 @@ fn edit_plan(
     ops.sort_by_key(|&(start, end, _, index)| (start, end, index));
     for pair in ops.windows(2) {
         if pair[1].0 < pair[0].1 {
-            return Err((
-                pair[1].3,
-                edits[pair[1].3].kind.as_str(),
-                "edits overlap".to_string(),
-            ));
+            return Err(EditPlanError {
+                edit_index: pair[1].3,
+                edit_kind: edits[pair[1].3].kind.as_str(),
+                message: "edits overlap".to_string(),
+                conflict: Some(EditPlanConflict::Overlap {
+                    first_edit_index: pair[0].3,
+                    second_edit_index: pair[1].3,
+                }),
+            });
         }
     }
     let mut replacement = String::with_capacity(original.len() + 64);
@@ -469,6 +512,54 @@ fn edit_plan(
     replacement.push_str(&original[cursor..]);
     let replacement = restore_apply_text_line_endings(replacement, line_ending);
     Ok((replacement, summaries))
+}
+
+fn edit_conflict_recovery(error: &EditPlanError) -> Option<serde_json::Value> {
+    match error.conflict.as_ref()? {
+        EditPlanConflict::Match(conflict) => {
+            let (selector_supported, recovery_action) = match conflict.kind {
+                ApplyTextMatchConflictKind::MultipleMatches => {
+                    (true, "select_occurrence_or_refine_match")
+                }
+                ApplyTextMatchConflictKind::OccurrenceOutOfRange => {
+                    (true, "choose_valid_occurrence_or_refine_match")
+                }
+                ApplyTextMatchConflictKind::MatchNotFound => (false, "reread_or_refine_match"),
+            };
+            let mut recovery = serde_json::json!({
+                "schema_version": 1,
+                "conflict_kind": conflict.kind.as_str(),
+                "match_count": conflict.match_count,
+                "occurrence_selector_supported": selector_supported,
+                "candidate_ranges": conflict.candidate_ranges,
+                "candidates_truncated": conflict.candidates_truncated,
+                "recovery_action": recovery_action,
+            });
+            if let Some(requested) = conflict.requested_occurrence {
+                recovery["requested_occurrence"] = serde_json::json!(requested);
+            }
+            Some(recovery)
+        }
+        EditPlanConflict::Overlap {
+            first_edit_index,
+            second_edit_index,
+        } => Some(serde_json::json!({
+            "schema_version": 1,
+            "conflict_kind": "overlapping_edits",
+            "occurrence_selector_supported": false,
+            "conflicting_edit_indices": [first_edit_index, second_edit_index],
+            "recovery_action": "refine_edit_batch",
+        })),
+    }
+}
+
+fn sha256_conflict_recovery() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": 1,
+        "conflict_kind": "sha256_mismatch",
+        "occurrence_selector_supported": false,
+        "recovery_action": "reread_file",
+    })
 }
 
 fn batch_error(
@@ -978,14 +1069,21 @@ pub(crate) fn handle_apply_text_edits_file_request(
                     }
                 };
                 if change.expected_sha256.as_deref() != Some(old_sha256.as_str()) {
-                    return batch_error(
-                        Some(index),
-                        Some(change.kind.as_str()),
-                        Some(&change.path),
-                        "sha256_conflict",
-                        format!("expected_sha256 does not match current sha256 {old_sha256}"),
-                        start,
-                    );
+                    let mut result = serde_json::json!({
+                        "changed": false,
+                        "error_kind": "sha256_conflict",
+                        "state_changed": false,
+                        "change_index": index,
+                        "kind": change.kind.as_str(),
+                        "path": change.path,
+                        "error": format!(
+                            "Rejected transactional file batch: expected_sha256 does not match current sha256 {old_sha256}. No files were modified. Retry guidance: refresh file hashes/content, correct the failing change, and retry the whole batch."
+                        ),
+                    });
+                    if payload.recovery_metadata_version == Some(1) {
+                        result["conflict_recovery"] = sha256_conflict_recovery();
+                    }
+                    return line_edit_stdout(result, start);
                 }
                 match change.kind {
                     AgentFileChangeKind::Edit => {
@@ -1001,22 +1099,26 @@ pub(crate) fn handle_apply_text_edits_file_request(
                         }
                         let (replacement, summaries) = match edit_plan(&original, &change.edits) {
                             Ok(plan) => plan,
-                            Err((edit_index, edit_kind, error)) => {
-                                return line_edit_stdout(
-                                    serde_json::json!({
-                                        "changed": false,
-                                        "error_kind": "edit_conflict",
-                                        "state_changed": false,
-                                        "change_index": index,
-                                        "edit_index": edit_index,
-                                        "kind": edit_kind,
-                                        "path": change.path,
-                                        "error": format!(
-                                            "Rejected transactional file batch: {error}. No files were modified. Retry guidance: read this file again and use an exact unique anchor."
-                                        ),
-                                    }),
-                                    start,
-                                )
+                            Err(error) => {
+                                let mut result = serde_json::json!({
+                                    "changed": false,
+                                    "error_kind": "edit_conflict",
+                                    "state_changed": false,
+                                    "change_index": index,
+                                    "edit_index": error.edit_index,
+                                    "kind": error.edit_kind,
+                                    "path": change.path,
+                                    "error": format!(
+                                        "Rejected transactional file batch: {}. No files were modified. Retry guidance: read this file again and use an exact unique anchor.",
+                                        error.message
+                                    ),
+                                });
+                                if payload.recovery_metadata_version == Some(1) {
+                                    if let Some(recovery) = edit_conflict_recovery(&error) {
+                                        result["conflict_recovery"] = recovery;
+                                    }
+                                }
+                                return line_edit_stdout(result, start);
                             }
                         };
                         let new_sha256 = sha256_hex_bytes(replacement.as_bytes());

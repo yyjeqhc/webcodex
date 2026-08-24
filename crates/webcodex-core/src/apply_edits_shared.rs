@@ -109,6 +109,123 @@ pub struct ApplyTextEditInput {
     pub new_text: Option<String>,
     #[serde(default)]
     pub anchor_text: Option<String>,
+    #[serde(default)]
+    pub occurrence: Option<usize>,
+}
+
+/// Maximum number of source-order exact-match candidates returned for one
+/// recoverable edit conflict. The full match count remains available.
+pub const MAX_APPLY_TEXT_CONFLICT_CANDIDATES: usize = 8;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ApplyTextMatchCandidate {
+    pub occurrence: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyTextMatchConflictKind {
+    MatchNotFound,
+    MultipleMatches,
+    OccurrenceOutOfRange,
+}
+
+impl ApplyTextMatchConflictKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MatchNotFound => "match_not_found",
+            Self::MultipleMatches => "multiple_matches",
+            Self::OccurrenceOutOfRange => "occurrence_out_of_range",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyTextMatchConflict {
+    pub kind: ApplyTextMatchConflictKind,
+    pub match_count: usize,
+    pub requested_occurrence: Option<usize>,
+    pub candidate_ranges: Vec<ApplyTextMatchCandidate>,
+    pub candidates_truncated: bool,
+}
+
+/// Resolve an optional 1-based exact occurrence against canonicalized file
+/// content. Matches are deterministic, non-overlapping, and in source order.
+pub fn resolve_apply_text_match(
+    original: &str,
+    needle: &str,
+    occurrence: Option<usize>,
+) -> Result<(usize, usize), ApplyTextMatchConflict> {
+    debug_assert!(!needle.is_empty());
+    let needle_newlines = needle.bytes().filter(|byte| *byte == b'\n').count();
+    let needle_ends_with_newline = needle.as_bytes().last() == Some(&b'\n');
+    let mut candidate_ranges = Vec::with_capacity(MAX_APPLY_TEXT_CONFLICT_CANDIDATES);
+    let mut match_count = 0usize;
+    let mut selected = None;
+    let mut line_cursor = 0usize;
+    let mut current_line = 1usize;
+
+    for (start, _) in original.match_indices(needle) {
+        match_count = match_count.saturating_add(1);
+        if candidate_ranges.len() < MAX_APPLY_TEXT_CONFLICT_CANDIDATES {
+            current_line = current_line.saturating_add(
+                original.as_bytes()[line_cursor..start]
+                    .iter()
+                    .filter(|byte| **byte == b'\n')
+                    .count(),
+            );
+            line_cursor = start;
+            let end_line = if needle_ends_with_newline {
+                current_line.saturating_add(needle_newlines.saturating_sub(1))
+            } else {
+                current_line.saturating_add(needle_newlines)
+            };
+            candidate_ranges.push(ApplyTextMatchCandidate {
+                occurrence: match_count,
+                start_line: current_line,
+                end_line: end_line.max(current_line),
+            });
+        }
+        if occurrence == Some(match_count) {
+            selected = Some((start, start + needle.len()));
+        }
+    }
+
+    if match_count == 0 {
+        return Err(ApplyTextMatchConflict {
+            kind: ApplyTextMatchConflictKind::MatchNotFound,
+            match_count,
+            requested_occurrence: occurrence,
+            candidate_ranges,
+            candidates_truncated: false,
+        });
+    }
+    if let Some(requested) = occurrence {
+        if requested == 0 || requested > match_count {
+            return Err(ApplyTextMatchConflict {
+                kind: ApplyTextMatchConflictKind::OccurrenceOutOfRange,
+                match_count,
+                requested_occurrence: Some(requested),
+                candidates_truncated: match_count > MAX_APPLY_TEXT_CONFLICT_CANDIDATES,
+                candidate_ranges,
+            });
+        }
+        return Ok(selected.expect("requested exact occurrence counted above"));
+    }
+    if match_count > 1 {
+        return Err(ApplyTextMatchConflict {
+            kind: ApplyTextMatchConflictKind::MultipleMatches,
+            match_count,
+            requested_occurrence: None,
+            candidates_truncated: match_count > MAX_APPLY_TEXT_CONFLICT_CANDIDATES,
+            candidate_ranges,
+        });
+    }
+    let start = original
+        .find(needle)
+        .expect("unique exact match counted above");
+    Ok((start, start + needle.len()))
 }
 
 /// Kind of project-file change performed by one transactional
@@ -173,4 +290,40 @@ pub fn is_sensitive_edit_path(path: &str) -> bool {
     // `.git`, `target`, or `node_modules` through the tool surface is never
     // intended. Reads use the narrower `is_secret_path`.
     crate::sensitive_paths::is_bulk_skipped_path(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_text_edits_exact_occurrence_resolution_is_bounded_and_ordered() {
+        let source = (1..=10)
+            .map(|index| format!("prefix-{index}\nneedle\n"))
+            .collect::<String>();
+        let conflict = resolve_apply_text_match(&source, "needle\n", None).unwrap_err();
+        assert_eq!(conflict.kind, ApplyTextMatchConflictKind::MultipleMatches);
+        assert_eq!(conflict.match_count, 10);
+        assert_eq!(
+            conflict.candidate_ranges.len(),
+            MAX_APPLY_TEXT_CONFLICT_CANDIDATES
+        );
+        assert!(conflict.candidates_truncated);
+        assert_eq!(conflict.candidate_ranges[0].occurrence, 1);
+        assert_eq!(conflict.candidate_ranges[0].start_line, 2);
+        assert_eq!(conflict.candidate_ranges[7].occurrence, 8);
+        let second = resolve_apply_text_match(&source, "needle\n", Some(2)).unwrap();
+        assert_eq!(&source[second.0..second.1], "needle\n");
+        assert!(second.0 > source.find("needle\n").unwrap());
+    }
+
+    #[test]
+    fn apply_text_edits_multiline_candidate_ranges_are_inclusive_source_lines() {
+        let source = "head\na\nb\nmid\na\nb\n";
+        let conflict = resolve_apply_text_match(source, "a\nb\n", None).unwrap_err();
+        assert_eq!(conflict.candidate_ranges[0].start_line, 2);
+        assert_eq!(conflict.candidate_ranges[0].end_line, 3);
+        assert_eq!(conflict.candidate_ranges[1].start_line, 5);
+        assert_eq!(conflict.candidate_ranges[1].end_line, 6);
+    }
 }

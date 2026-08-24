@@ -502,6 +502,333 @@ fn file_apply_text_edits_rejects_bare_cr_replacement_without_file_line_endings()
 }
 
 #[test]
+fn file_apply_text_edits_structured_multiple_match_recovery_is_bounded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(
+        &file,
+        (1..=10)
+            .map(|n| format!("dup-{n}\ndup\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let hash = sha256_hex_bytes(&std::fs::read(&file).unwrap());
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "recovery_metadata_version": 1,
+                "changes": [{"kind":"edit","path":"target.txt","expected_sha256":hash,
+                    "edits":[{"kind":"replace_exact","old_text":"dup\n","new_text":"x\n"}]}]
+            }),
+        ),
+    ));
+    assert_eq!(out["error_kind"], "edit_conflict");
+    let recovery = &out["conflict_recovery"];
+    assert_eq!(recovery["schema_version"], 1);
+    assert_eq!(recovery["conflict_kind"], "multiple_matches");
+    assert_eq!(recovery["match_count"], 10);
+    assert_eq!(recovery["occurrence_selector_supported"], true);
+    assert_eq!(recovery["candidate_ranges"].as_array().unwrap().len(), 8);
+    assert_eq!(recovery["candidate_ranges"][0]["occurrence"], 1);
+    assert_eq!(recovery["candidate_ranges"][0]["start_line"], 2);
+    assert_eq!(recovery["candidate_ranges"][7]["occurrence"], 8);
+    assert_eq!(recovery["candidates_truncated"], true);
+    let serialized = serde_json::to_string(&out).unwrap();
+    assert!(!serialized.contains("x\\n"));
+    assert_eq!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .matches("dup\n")
+            .count(),
+        10
+    );
+}
+
+#[test]
+fn file_apply_text_edits_structured_not_found_disables_selector() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, "alpha\n").unwrap();
+    let hash = sha256_hex_bytes(&std::fs::read(&file).unwrap());
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "recovery_metadata_version":1,
+                "changes":[{"kind":"edit","path":"target.txt","expected_sha256":hash,
+                    "edits":[{"kind":"replace_exact","old_text":"missing","new_text":"SECRET_NEW"}]}]
+            }),
+        ),
+    ));
+    let recovery = &out["conflict_recovery"];
+    assert_eq!(recovery["conflict_kind"], "match_not_found");
+    assert_eq!(recovery["match_count"], 0);
+    assert_eq!(recovery["occurrence_selector_supported"], false);
+    assert_eq!(recovery["recovery_action"], "reread_or_refine_match");
+    assert_eq!(recovery["candidate_ranges"].as_array().unwrap().len(), 0);
+    assert!(!serde_json::to_string(recovery)
+        .unwrap()
+        .contains("SECRET_NEW"));
+}
+
+#[test]
+fn file_apply_text_edits_structured_overlap_is_atomic_and_body_free() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, "abcdef abcdef\n").unwrap();
+    let hash = sha256_hex_bytes(&std::fs::read(&file).unwrap());
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "recovery_metadata_version":1,
+                "changes":[{"kind":"edit","path":"target.txt","expected_sha256":hash,
+                    "edits":[
+                        {"kind":"replace_exact","old_text":"abc","new_text":"SECRET_A","occurrence":2},
+                        {"kind":"replace_exact","old_text":"cde","new_text":"SECRET_B","occurrence":2}
+                    ]}]
+            }),
+        ),
+    ));
+    let recovery = &out["conflict_recovery"];
+    assert_eq!(recovery["conflict_kind"], "overlapping_edits");
+    assert_eq!(
+        recovery["conflicting_edit_indices"],
+        serde_json::json!([0, 1])
+    );
+    assert_eq!(recovery["recovery_action"], "refine_edit_batch");
+    let serialized = serde_json::to_string(recovery).unwrap();
+    assert!(!serialized.contains("SECRET_A"));
+    assert!(!serialized.contains("SECRET_B"));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "abcdef abcdef\n");
+}
+
+#[test]
+fn file_apply_text_edits_occurrence_selects_second_exact_match() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, "dup\nkeep\ndup\n").unwrap();
+    let hash = sha256_hex_bytes(&std::fs::read(&file).unwrap());
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "recovery_metadata_version": 1,
+                "changes": [{"kind":"edit","path":"target.txt","expected_sha256":hash,
+                    "edits":[{"kind":"replace_exact","old_text":"dup","new_text":"SECOND","occurrence":2}]}]
+            }),
+        ),
+    ));
+    assert_eq!(out["changed"], true);
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "dup\nkeep\nSECOND\n"
+    );
+}
+
+#[test]
+fn file_apply_text_edits_occurrence_out_of_range_is_actionable_and_atomic() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, "dup\ndup\n").unwrap();
+    let hash = sha256_hex_bytes(&std::fs::read(&file).unwrap());
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "recovery_metadata_version": 1,
+                "changes": [{"kind":"edit","path":"target.txt","expected_sha256":hash,
+                    "edits":[{"kind":"delete_exact","old_text":"dup","occurrence":3}]}]
+            }),
+        ),
+    ));
+    assert_eq!(out["error_kind"], "edit_conflict");
+    assert_eq!(
+        out["conflict_recovery"]["conflict_kind"],
+        "occurrence_out_of_range"
+    );
+    assert_eq!(out["conflict_recovery"]["match_count"], 2);
+    assert_eq!(out["conflict_recovery"]["requested_occurrence"], 3);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "dup\ndup\n");
+}
+
+#[test]
+fn file_apply_text_edits_sha_conflict_precedes_occurrence_selection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, "dup\ndup\n").unwrap();
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "recovery_metadata_version": 1,
+                "changes": [{"kind":"edit","path":"target.txt","expected_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "edits":[{"kind":"replace_exact","old_text":"dup","new_text":"SECOND","occurrence":2}]}]
+            }),
+        ),
+    ));
+    assert_eq!(out["error_kind"], "sha256_conflict");
+    assert_eq!(out["conflict_recovery"]["conflict_kind"], "sha256_mismatch");
+    assert_eq!(out["conflict_recovery"]["recovery_action"], "reread_file");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "dup\ndup\n");
+}
+
+#[test]
+fn file_apply_text_edits_multiline_and_crlf_candidates_use_source_lines() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, b"head\r\na\r\nb\r\nmid\r\na\r\nb\r\n").unwrap();
+    let hash = sha256_hex_bytes(&std::fs::read(&file).unwrap());
+    let conflict = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "recovery_metadata_version":1,
+                "changes":[{"kind":"edit","path":"target.txt","expected_sha256":hash,
+                    "edits":[{"kind":"replace_exact","old_text":"a\nb\n","new_text":"X\n"}]}]
+            }),
+        ),
+    ));
+    assert_eq!(
+        conflict["conflict_recovery"]["candidate_ranges"][0]["start_line"],
+        2
+    );
+    assert_eq!(
+        conflict["conflict_recovery"]["candidate_ranges"][0]["end_line"],
+        3
+    );
+    assert_eq!(
+        conflict["conflict_recovery"]["candidate_ranges"][1]["start_line"],
+        5
+    );
+    let success = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "recovery_metadata_version":1,
+                "changes":[{"kind":"edit","path":"target.txt","expected_sha256":hash,
+                    "edits":[{"kind":"replace_exact","old_text":"a\nb\n","new_text":"X\n","occurrence":2}]}]
+            }),
+        ),
+    ));
+    assert_eq!(success["changed"], true);
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"head\r\na\r\nb\r\nmid\r\nX\r\n"
+    );
+}
+
+#[test]
+fn file_apply_text_edits_old_server_payload_keeps_legacy_conflict_shape() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, "dup\ndup\n").unwrap();
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "edits":[{"kind":"replace_exact","old_text":"dup","new_text":"x"}]
+            }),
+        ),
+    ));
+    assert_eq!(out["error_kind"], "edit_conflict");
+    assert!(out.get("conflict_recovery").is_none());
+}
+
+#[test]
+fn file_apply_text_edits_new_payload_is_legacy_deserializable_and_fail_closed() {
+    #[derive(serde::Deserialize)]
+    struct LegacyEdit {
+        kind: crate::apply_edits_shared::ApplyTextEditKind,
+        #[serde(default)]
+        old_text: Option<String>,
+        #[serde(default)]
+        new_text: Option<String>,
+        #[serde(default)]
+        anchor_text: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct LegacyChange {
+        kind: crate::apply_edits_shared::ApplyFileChangeKind,
+        path: String,
+        #[serde(default)]
+        to_path: Option<String>,
+        #[serde(default)]
+        content: Option<String>,
+        #[serde(default)]
+        edits: Vec<LegacyEdit>,
+        #[serde(default)]
+        expected_sha256: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct LegacyPayload {
+        changes: Vec<LegacyChange>,
+        #[serde(default)]
+        dry_run: Option<bool>,
+    }
+    let value = serde_json::json!({
+        "recovery_metadata_version":1,
+        "changes":[{"kind":"edit","path":"target.txt","expected_sha256":"a".repeat(64),
+            "edits":[{"kind":"replace_exact","old_text":"dup","new_text":"x","occurrence":2}]}],
+        "dry_run":false
+    });
+    let legacy: LegacyPayload = serde_json::from_value(value).unwrap();
+    assert_eq!(legacy.changes.len(), 1);
+    let change = &legacy.changes[0];
+    assert_eq!(
+        change.kind,
+        crate::apply_edits_shared::ApplyFileChangeKind::Edit
+    );
+    assert_eq!(change.path, "target.txt");
+    assert_eq!(
+        change.expected_sha256.as_deref(),
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    );
+    assert!(change.to_path.is_none() && change.content.is_none());
+    assert_eq!(legacy.dry_run, Some(false));
+    let edit = &change.edits[0];
+    assert_eq!(
+        edit.kind,
+        crate::apply_edits_shared::ApplyTextEditKind::ReplaceExact
+    );
+    assert_eq!(edit.new_text.as_deref(), Some("x"));
+    assert!(edit.anchor_text.is_none());
+    let needle = edit.old_text.as_deref().unwrap();
+    assert_eq!(
+        "dup\ndup\n".matches(needle).count(),
+        2,
+        "pre-feature Runner sees no occurrence and its unique-only semantics still fail closed"
+    );
+}
+
+#[test]
 fn file_apply_text_edits_rejects_overlapping_edits() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());

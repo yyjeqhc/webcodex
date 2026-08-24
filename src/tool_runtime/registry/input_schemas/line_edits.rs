@@ -13,11 +13,16 @@ fn apply_text_edit_schema() -> Value {
                     "old_text": {
                         "type": "string",
                         "minLength": 1,
-                        "description": "Exact unique text to replace; must be non-empty."
+                        "description": "Exact text to replace; must be non-empty and is unique by default unless occurrence is supplied."
                     },
                     "new_text": {
                         "type": "string",
                         "description": "Replacement text. May be empty; omitting it preserves the existing wire behavior of replacing with an empty string."
+                    },
+                    "occurrence": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional 1-based exact occurrence selector. Use direct retry only when conflict_recovery advertises selector support; expected_sha256 remains authoritative."
                     }
                 },
                 "required": ["kind", "old_text"]
@@ -30,7 +35,12 @@ fn apply_text_edit_schema() -> Value {
                     "old_text": {
                         "type": "string",
                         "minLength": 1,
-                        "description": "Exact unique text to delete; must be non-empty."
+                        "description": "Exact text to delete; must be non-empty and is unique by default unless occurrence is supplied."
+                    },
+                    "occurrence": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional 1-based exact occurrence selector. Use direct retry only when conflict_recovery advertises selector support; expected_sha256 remains authoritative."
                     }
                 },
                 "required": ["kind", "old_text"]
@@ -43,12 +53,17 @@ fn apply_text_edit_schema() -> Value {
                     "anchor_text": {
                         "type": "string",
                         "minLength": 1,
-                        "description": "Exact unique anchor before which new_text is inserted."
+                        "description": "Exact anchor before which new_text is inserted; unique by default unless occurrence is supplied."
                     },
                     "new_text": {
                         "type": "string",
                         "minLength": 1,
                         "description": "Non-empty text inserted before anchor_text."
+                    },
+                    "occurrence": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional 1-based exact occurrence selector. Use direct retry only when conflict_recovery advertises selector support; expected_sha256 remains authoritative."
                     }
                 },
                 "required": ["kind", "anchor_text", "new_text"]
@@ -61,12 +76,17 @@ fn apply_text_edit_schema() -> Value {
                     "anchor_text": {
                         "type": "string",
                         "minLength": 1,
-                        "description": "Exact unique anchor after which new_text is inserted."
+                        "description": "Exact anchor after which new_text is inserted; unique by default unless occurrence is supplied."
                     },
                     "new_text": {
                         "type": "string",
                         "minLength": 1,
                         "description": "Non-empty text inserted after anchor_text."
+                    },
+                    "occurrence": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional 1-based exact occurrence selector. Use direct retry only when conflict_recovery advertises selector support; expected_sha256 remains authoritative."
                     }
                 },
                 "required": ["kind", "anchor_text", "new_text"]

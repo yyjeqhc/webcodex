@@ -28,6 +28,7 @@ async fn dispatch_records_edit_tool_usage_without_sensitive_args() {
                         old_text: Some("a".to_string()),
                         new_text: Some("b".to_string()),
                         anchor_text: None,
+                        occurrence: None,
                     }],
                     expected_sha256: Some("a".repeat(64)),
                 }],

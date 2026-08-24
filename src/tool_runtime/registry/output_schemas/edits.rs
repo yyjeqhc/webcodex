@@ -3,6 +3,46 @@ use serde_json::Value;
 use super::common::{
     array_schema, nullable_schema, open_object_schema, schema_type, wrapped_output_schema,
 };
+use serde_json::json;
+
+fn edit_conflict_recovery_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "schema_version": {"type": "integer", "const": 1},
+            "conflict_kind": {"type": "string", "enum": [
+                "multiple_matches", "match_not_found", "occurrence_out_of_range",
+                "overlapping_edits", "sha256_mismatch"
+            ]},
+            "recovery_action": {"type": "string", "enum": [
+                "select_occurrence_or_refine_match", "reread_or_refine_match",
+                "choose_valid_occurrence_or_refine_match", "refine_edit_batch", "reread_file"
+            ]},
+            "occurrence_selector_supported": {"type": "boolean"},
+            "match_count": {"type": "integer", "minimum": 0},
+            "requested_occurrence": {"type": "integer", "minimum": 1},
+            "candidate_ranges": {
+                "type": "array", "maxItems": 8,
+                "items": {
+                    "type": "object", "additionalProperties": false,
+                    "properties": {
+                        "occurrence": {"type": "integer", "minimum": 1},
+                        "start_line": {"type": "integer", "minimum": 1},
+                        "end_line": {"type": "integer", "minimum": 1}
+                    },
+                    "required": ["occurrence", "start_line", "end_line"]
+                }
+            },
+            "candidates_truncated": {"type": "boolean"},
+            "conflicting_edit_indices": {
+                "type": "array", "maxItems": 2,
+                "items": {"type": "integer", "minimum": 0, "maximum": 19}
+            }
+        },
+        "required": ["schema_version", "conflict_kind", "recovery_action", "occurrence_selector_supported"]
+    })
+}
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
@@ -106,6 +146,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "changed_paths",
                 schema_type("array", "Paths touched by the edit batch."),
+            ),
+            (
+                "conflict_recovery",
+                edit_conflict_recovery_schema(),
             ),
         ])),
         _ => None,

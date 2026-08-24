@@ -2,8 +2,44 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{ShellAgentResultRequest, ShellClientCapabilities};
+use crate::shell_protocol::{
+    ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,
+};
 use serde_json::Value;
+
+#[test]
+fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "apply_text_edits");
+    let edit_variants = spec.input_schema["properties"]["changes"]["items"]["oneOf"][0]
+        ["properties"]["edits"]["items"]["oneOf"]
+        .as_array()
+        .unwrap();
+    assert_eq!(edit_variants.len(), 4);
+    for variant in edit_variants {
+        assert_eq!(variant["properties"]["occurrence"]["type"], "integer");
+        assert_eq!(variant["properties"]["occurrence"]["minimum"], 1);
+        assert!(!variant["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("occurrence")));
+    }
+    let output = &spec.output_schema["properties"]["output"]["properties"]["conflict_recovery"];
+    assert_eq!(output["properties"]["schema_version"]["const"], 1);
+    assert_eq!(output["properties"]["candidate_ranges"]["maxItems"], 8);
+    assert!(output["properties"]["conflict_kind"]["enum"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("multiple_matches")));
+
+    let openapi = crate::openapi::build_openapi_spec();
+    let occurrence = &openapi["components"]["schemas"]["ToolCallRequest"]["properties"]["changes"]
+        ["items"]["properties"]["edits"]["items"]["properties"]["occurrence"];
+    assert_eq!(occurrence["type"], "integer");
+    assert_eq!(occurrence["minimum"], 1);
+    assert!(spec.description.contains("occurrence"));
+    assert!(spec.description.chars().count() <= 300);
+}
 
 #[test]
 fn apply_text_edits_replace_exact_large_block() {
@@ -293,6 +329,199 @@ fn apply_text_edits_rejects_bare_cr_edit_text_without_file_line_endings() {
         files::apply_text_edits_to_string(original, "src/x.rs", &edits, None, false).unwrap_err();
     assert!(err.contains("bare CR"), "{err}");
     assert!(err.contains("No files were modified"), "{err}");
+}
+
+#[test]
+fn apply_text_edits_occurrence_selects_exact_second_match_in_test_mirror() {
+    let original = "dup\nkeep\ndup\n";
+    let mut edit = text_edit(
+        ApplyTextEditKind::ReplaceExact,
+        Some("dup"),
+        Some("SECOND"),
+        None,
+    );
+    edit.occurrence = Some(2);
+    let sha = files::sha256_hex_bytes(original.as_bytes());
+    let (updated, _) =
+        files::apply_text_edits_to_string(original, "src/x.rs", &[edit], Some(&sha), false)
+            .unwrap();
+    assert_eq!(updated, "dup\nkeep\nSECOND\n");
+}
+
+#[test]
+fn apply_text_edits_stale_sha_still_rejects_before_occurrence() {
+    let original = "dup\ndup\n";
+    let mut edit = text_edit(
+        ApplyTextEditKind::ReplaceExact,
+        Some("dup"),
+        Some("SECOND"),
+        None,
+    );
+    edit.occurrence = Some(2);
+    let error = files::apply_text_edits_to_string(
+        original,
+        "src/x.rs",
+        &[edit],
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        false,
+    )
+    .unwrap_err();
+    assert!(error.contains("expected_file_sha256 mismatch"));
+    assert!(!error.contains("occurrence"));
+}
+
+async fn assert_no_apply_text_edits_runner_request(runtime: &ToolRuntime, client_id: &str) {
+    let request = runtime
+        .shell_clients
+        .poll(ShellAgentPollRequest {
+            client_id: client_id.to_string(),
+            agent_instance_id: "inst".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        request.is_none(),
+        "unexpected hidden apply_text_edits Runner request"
+    );
+}
+
+#[tokio::test]
+async fn apply_text_edits_conflict_then_same_sha_occurrence_retry_needs_no_hidden_read() {
+    let runtime = runtime_with_agent_project("ate-recovery");
+    register_agent(
+        &runtime,
+        "ate-recovery",
+        None,
+        ShellClientCapabilities {
+            file_write: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("ate-recovery");
+    let sha = "a".repeat(64);
+
+    let first = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let sha = sha.clone();
+        async move {
+            runtime
+                .apply_text_edits(
+                    project,
+                    vec![edit_change(
+                        "src/lib.rs",
+                        &sha,
+                        vec![text_edit(
+                            ApplyTextEditKind::ReplaceExact,
+                            Some("dup"),
+                            Some("SECOND"),
+                            None,
+                        )],
+                    )],
+                    None,
+                )
+                .await
+        }
+    });
+    let first_request = wait_for_patch_agent_request(&runtime, "ate-recovery").await;
+    let first_payload: Value =
+        serde_json::from_str(first_request.content.as_deref().unwrap()).unwrap();
+    assert_eq!(first_payload["recovery_metadata_version"], 1);
+    assert!(first_payload["changes"][0]["edits"][0]["occurrence"].is_null());
+    runtime.shell_clients.complete(ShellAgentResultRequest {
+        client_id: "ate-recovery".to_string(),
+        agent_instance_id: "inst".to_string(),
+        request_id: first_request.request_id,
+        exit_code: Some(0),
+        stdout: Some(serde_json::json!({
+            "changed": false,
+            "error_kind": "edit_conflict",
+            "state_changed": false,
+            "change_index": 0,
+            "edit_index": 0,
+            "kind": "replace_exact",
+            "path": "src/lib.rs",
+            "conflict_recovery": {
+                "schema_version": 1,
+                "conflict_kind": "multiple_matches",
+                "match_count": 2,
+                "occurrence_selector_supported": true,
+                "candidate_ranges": [
+                    {"occurrence":1,"start_line":1,"end_line":1},
+                    {"occurrence":2,"start_line":3,"end_line":3}
+                ],
+                "candidates_truncated": false,
+                "recovery_action": "select_occurrence_or_refine_match"
+            },
+            "error": "Rejected transactional file batch: exact match is ambiguous. No files were modified."
+        }).to_string()),
+        stderr: Some(String::new()),
+        duration_ms: Some(1),
+        error: None,
+    }).await.unwrap();
+    let conflict = first.await.unwrap();
+    assert!(!conflict.success);
+    assert_eq!(conflict.output["conflict_recovery"]["match_count"], 2);
+    let output_schema = crate::tool_runtime::registry::output_schema_for_tool("apply_text_edits");
+    let serialized_conflict = serde_json::to_value(&conflict).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+        &serialized_conflict,
+        &output_schema,
+    )
+    .unwrap_or_else(|error| panic!("structured conflict must match output schema: {error}"));
+    assert_no_apply_text_edits_runner_request(&runtime, "ate-recovery").await;
+
+    let second = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let sha = sha.clone();
+        async move {
+            let mut edit = text_edit(
+                ApplyTextEditKind::ReplaceExact,
+                Some("dup"),
+                Some("SECOND"),
+                None,
+            );
+            edit.occurrence = Some(2);
+            runtime
+                .apply_text_edits(
+                    project,
+                    vec![edit_change("src/lib.rs", &sha, vec![edit])],
+                    None,
+                )
+                .await
+        }
+    });
+    let second_request = wait_for_patch_agent_request(&runtime, "ate-recovery").await;
+    let second_payload: Value =
+        serde_json::from_str(second_request.content.as_deref().unwrap()).unwrap();
+    assert_eq!(second_payload["changes"][0]["expected_sha256"], sha);
+    assert_eq!(second_payload["changes"][0]["edits"][0]["occurrence"], 2);
+    runtime
+        .shell_clients
+        .complete(ShellAgentResultRequest {
+            client_id: "ate-recovery".to_string(),
+            agent_instance_id: "inst".to_string(),
+            request_id: second_request.request_id,
+            exit_code: Some(0),
+            stdout: Some(
+                serde_json::json!({
+                    "dry_run": false, "applied_count": 1, "changed": true,
+                    "would_change": true, "files": [], "changed_paths": ["src/lib.rs"]
+                })
+                .to_string(),
+            ),
+            stderr: Some(String::new()),
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await
+        .unwrap();
+    let success = second.await.unwrap();
+    assert!(success.success, "{:?}", success.error);
+    assert_no_apply_text_edits_runner_request(&runtime, "ate-recovery").await;
 }
 
 #[tokio::test]

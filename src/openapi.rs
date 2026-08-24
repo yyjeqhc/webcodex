@@ -1233,7 +1233,8 @@ fn schemas() -> Value {
                                         "kind": {"type": "string", "enum": ["replace_exact", "insert_after", "insert_before", "delete_exact"], "description": "Exact edit kind; use only the fields documented on edits for that kind."},
                                         "old_text": {"type": "string", "minLength": 1, "description": "Required for replace_exact/delete_exact; forbidden for insert_before/insert_after."},
                                         "new_text": {"type": "string", "description": "Replacement for replace_exact (may be empty or omitted); required non-empty for insert_before/insert_after; forbidden for delete_exact."},
-                                        "anchor_text": {"type": "string", "minLength": 1, "description": "Required for insert_before/insert_after; forbidden for replace_exact/delete_exact."}
+                                        "anchor_text": {"type": "string", "minLength": 1, "description": "Required for insert_before/insert_after; forbidden for replace_exact/delete_exact."},
+                                        "occurrence": {"type": "integer", "minimum": 1, "description": "Optional 1-based exact occurrence selector; use only when structured conflict recovery advertises selector support. expected_sha256 remains required."}
                                     }
                                 }
                             }

@@ -2617,14 +2617,38 @@ fn compact_finish_output(decision: &Value) -> Value {
 }
 
 fn compact_finish_validation(validation: &Value) -> Value {
+    let latest_status = validation
+        .get("latest_status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let successes = validation
+        .get("successes")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let unresolved_failure_count = validation
+        .pointer("/unresolved_failures/count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    // Full validation history intentionally remains `mixed` after a failure is
+    // resolved. Summary-only closeout instead reports the current authoritative
+    // state so resolved history does not masquerade as an open validation
+    // problem while the dedicated resolved count still preserves that history.
+    let status = if latest_status == "passed" && successes > 0 && unresolved_failure_count == 0 {
+        "passed"
+    } else {
+        validation
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("not_run")
+    };
     json!({
-        "status": validation.get("status").cloned().unwrap_or_else(|| json!("not_run")),
+        "status": status,
         "reason": validation.get("reason").cloned().unwrap_or(Value::Null),
-        "latest_status": validation.get("latest_status").cloned().unwrap_or_else(|| json!("unknown")),
-        "successes": validation.get("successes").and_then(Value::as_u64).unwrap_or(0),
+        "latest_status": latest_status,
+        "successes": successes,
         "failures": validation.get("failures").and_then(Value::as_u64).unwrap_or(0),
         "resolved_failure_count": validation.pointer("/resolved_failures/count").and_then(Value::as_u64).unwrap_or(0),
-        "unresolved_failure_count": validation.pointer("/unresolved_failures/count").and_then(Value::as_u64).unwrap_or(0),
+        "unresolved_failure_count": unresolved_failure_count,
         "cargo_test_zero_tests_run": validation_has_cargo_test_zero_tests(validation),
     })
 }

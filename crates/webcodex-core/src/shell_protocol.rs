@@ -2313,10 +2313,39 @@ pub struct ShellJobStructuredExecutionMetadata {
     pub script_bytes: Option<usize>,
     pub arg_count: usize,
     pub stdin_present: bool,
+    /// Admission-derived opaque validation identity. It is either a proven
+    /// structured `target:` identity or a generic body-free `command:` identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_identity: Option<String>,
+    /// Present only when admission proved exact equivalence to one canonical
+    /// structured validation tool. Parser output never populates this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_tool: Option<String>,
 }
 
 impl ShellJobStructuredExecutionMetadata {
     pub fn is_valid(&self) -> bool {
+        let identity_valid = self.validation_identity.as_deref().is_none_or(|value| {
+            let suffix = value
+                .strip_prefix("target:")
+                .or_else(|| value.strip_prefix("command:"));
+            suffix.is_some_and(|suffix| {
+                suffix.len() == 24 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        });
+        let validation_tool_valid = match self.validation_tool.as_deref() {
+            None => true,
+            Some(tool) => {
+                matches!(tool, "cargo_fmt" | "cargo_check" | "cargo_test")
+                    && self
+                        .validation_identity
+                        .as_deref()
+                        .is_some_and(|identity| identity.starts_with("target:"))
+            }
+        };
+        if !identity_valid || !validation_tool_valid {
+            return false;
+        }
         match self.execution_source.as_str() {
             "run_process" | "run_detached_process" => {
                 self.language.is_none()

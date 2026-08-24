@@ -668,8 +668,8 @@ fn parse_cargo_test_counts_aggregates_multiple_harness_summaries() {
 #[test]
 fn parse_cargo_test_counts_does_not_use_last_summary_wins() {
     let (passed, failed) = parse_cargo_test_counts(
-        "test result: FAILED. 10 passed; 4 failed\n\
-         test result: ok. 1 passed; 0 failed\n",
+        "test result: FAILED. 10 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out\n\
+         test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
     );
     assert_eq!(passed, Some(11));
     assert_eq!(failed, Some(4));

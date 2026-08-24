@@ -2068,6 +2068,8 @@ async fn structured_progress_rejects_invalid_order_and_preserves_fail_fast_plan(
         validation: None,
         sandbox: None,
         visibility: crate::shell_client::ShellJobVisibility::Public,
+        validation_identity: None,
+        validation_tool: None,
         structured_execution: None,
         stdin: None,
         detached_idempotency_key: None,

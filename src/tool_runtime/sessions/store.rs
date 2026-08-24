@@ -1719,11 +1719,8 @@ impl SessionStore {
     ) -> bool {
         let session_id = session_id.trim();
         let job_id = job_id.trim();
-        let valid_target = validation_target_id
-            .strip_prefix("target:")
-            .is_some_and(|suffix| {
-                suffix.len() == 24 && suffix.as_bytes().iter().all(u8::is_ascii_hexdigit)
-            });
+        let valid_target =
+            super::super::tool_audit::is_validation_execution_identity(validation_target_id);
         let Some(timestamp) = finished_at else {
             // Reconciliation must never substitute wall-clock read time for
             // authoritative execution activity.
@@ -1740,7 +1737,14 @@ impl SessionStore {
                 .any(|candidate| *candidate == job_id)
             || !matches!(
                 tool_name,
-                "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test"
+                "cargo_fmt"
+                    | "cargo_check"
+                    | "cargo_test"
+                    | "go_test"
+                    | "run_process"
+                    | "run_script"
+                    | "run_shell"
+                    | "run_job"
             )
             || !valid_target
             || !matches!(
@@ -1760,6 +1764,20 @@ impl SessionStore {
             _ => "command_exit_nonzero".to_string(),
         });
         let classification = SessionToolClassification::for_tool(tool_name);
+        let mut input_summary = serde_json::json!({
+            "execution_identity": validation_target_id,
+        });
+        if validation_target_id.starts_with("target:") {
+            input_summary["validation_target_id"] = serde_json::json!(validation_target_id);
+        }
+        if let Some(validation_tool) = validation_output_summary
+            .as_ref()
+            .and_then(|summary| summary.get("validation_tool"))
+            .and_then(Value::as_str)
+            .filter(|tool| matches!(*tool, "cargo_fmt" | "cargo_check" | "cargo_test"))
+        {
+            input_summary["validation_tool"] = serde_json::json!(validation_tool);
+        }
         let event = SessionEvent {
             event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
             call_id: None,
@@ -1802,9 +1820,7 @@ impl SessionStore {
             job_id: Some(job_id.to_string()),
             persistent_shell: None,
             effect_evidence: None,
-            input_summary: Some(serde_json::json!({
-                "validation_target_id": validation_target_id,
-            })),
+            input_summary: Some(input_summary),
             validation_output_summary,
             permission: None,
             instruction: None,

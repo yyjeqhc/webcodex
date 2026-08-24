@@ -524,6 +524,8 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
                     executable: "/bin/echo".to_string(),
                     args: vec!["literal;$(touch never-executed)".to_string()],
                 })),
+                validation_identity: Some("target:0123456789abcdef01234567".to_string()),
+                validation_tool: Some("cargo_test".to_string()),
                 stdin: Some("typed stdin".to_string()),
                 ..Default::default()
             },
@@ -568,6 +570,15 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
         Some("run_process")
     );
     assert!(restored.recovered_after_server_restart);
+    let restored_metadata = restored.structured_execution.as_ref().unwrap();
+    assert_eq!(
+        restored_metadata.validation_identity.as_deref(),
+        Some("target:0123456789abcdef01234567")
+    );
+    assert_eq!(
+        restored_metadata.validation_tool.as_deref(),
+        Some("cargo_test")
+    );
     assert!(
         registry_b
             .poll(ShellAgentPollRequest {
@@ -722,6 +733,8 @@ async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_wit
                     script: script_body.clone(),
                     args: vec![script_arg.clone()],
                 })),
+                validation_identity: Some("command:fedcba9876543210fedcba98".to_string()),
+                validation_tool: None,
                 stdin: Some(script_stdin.clone()),
                 ..Default::default()
             },
@@ -791,6 +804,11 @@ async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_wit
     assert_eq!(metadata.script_bytes, Some(script_body.len()));
     assert_eq!(metadata.arg_count, 1);
     assert!(metadata.stdin_present);
+    assert_eq!(
+        metadata.validation_identity.as_deref(),
+        Some("command:fedcba9876543210fedcba98")
+    );
+    assert!(metadata.validation_tool.is_none());
     assert!(recovered.recovered_after_server_restart);
     let (_, stdout, stderr, _, _) = registry_b
         .job_log(&job.job_id, None, None, None)

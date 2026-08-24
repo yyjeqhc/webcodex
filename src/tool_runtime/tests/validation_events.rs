@@ -527,6 +527,22 @@ fn cargo_test_run_metadata_aggregates_complete_harness_summaries() {
 
     assert!(metadata.tests_detected);
     assert_eq!(metadata.tests_run_count, Some(4));
+    assert_eq!(metadata.tests_passed, Some(3));
+    assert_eq!(metadata.tests_failed, Some(1));
+    assert_eq!(metadata.zero_tests_run, Some(false));
+}
+
+#[test]
+fn cargo_test_run_metadata_keeps_positive_aggregate_when_last_harness_is_zero() {
+    let metadata = parse_cargo_test_run_metadata(
+        "running 2788 tests\n\
+         test result: ok. 2788 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n\n\
+         running 0 tests\n\
+         test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+    );
+    assert_eq!(metadata.tests_passed, Some(2788));
+    assert_eq!(metadata.tests_failed, Some(0));
+    assert_eq!(metadata.tests_run_count, Some(2788));
     assert_eq!(metadata.zero_tests_run, Some(false));
 }
 
@@ -543,6 +559,8 @@ fn cargo_test_run_metadata_does_not_guess_from_running_or_partial_summary() {
         let metadata = parse_cargo_test_run_metadata(output);
         assert!(metadata.tests_detected, "{output:?}");
         assert_eq!(metadata.tests_run_count, None, "{output:?}");
+        assert_eq!(metadata.tests_passed, None, "{output:?}");
+        assert_eq!(metadata.tests_failed, None, "{output:?}");
         assert_eq!(metadata.zero_tests_run, None, "{output:?}");
     }
 }
@@ -1029,6 +1047,318 @@ fn same_validation_identity_success_resolves_failure_without_deleting_history() 
         false
     );
     assert_eq!(validation["events_total"], 2);
+}
+
+#[test]
+fn proven_generic_cargo_test_resolves_same_generic_and_structured_target_only() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let generic_input = json!({
+        "project": "agent:eval:demo", "executable": "cargo",
+        "args": ["test", "focused", "-p", "webcodex"], "cwd": ".", "purpose": "test"
+    });
+    let generic_input = crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
+        "run_process",
+        &generic_input,
+    );
+    let failed_output = json!({
+        "exit_code": 101, "purpose": "test",
+        "stdout_tail": "running 1 test\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        "stderr_tail": "", "stdout_truncated": false, "stderr_truncated": false,
+        "tests_detected": true, "tests_run_count": 1, "zero_tests_run": false
+    });
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_process",
+        generic_input.clone(),
+        false,
+        failed_output.clone(),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_process",
+        generic_input.clone(),
+        true,
+        json!({
+            "exit_code": 0, "purpose": "test",
+            "stdout_tail": "running 1 test\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "", "stdout_truncated": false, "stderr_truncated": false,
+            "tests_detected": true, "tests_run_count": 1, "zero_tests_run": false
+        }),
+    );
+    let validation =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(50)).unwrap());
+    assert_eq!(validation["resolved_failures"]["count"], 1);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+
+    assert!(validation["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|event| {
+            event["identity"]
+                .as_str()
+                .is_some_and(|identity| identity.starts_with("target:"))
+        }));
+
+    let cross = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &cross.session_id,
+        "run_process",
+        generic_input,
+        false,
+        failed_output,
+    );
+    record_finished_tool(
+        &store,
+        &cross.session_id,
+        "cargo_test",
+        json!({
+            "project": "agent:eval:demo", "package": "webcodex", "filter": "different", "cwd": ".",
+            "all_targets": false, "all_features": false, "no_default_features": false,
+            "no_run": false, "features": null
+        }),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 1 test\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "", "stdout_truncated": false, "stderr_truncated": false,
+            "tests_detected": true, "tests_run_count": 1, "zero_tests_run": false
+        }),
+    );
+    let before_structured =
+        validation_summary_for_session(&store.summary(&cross.session_id, Some(50)).unwrap());
+    assert_eq!(before_structured["unresolved_failures"]["count"], 1);
+
+    record_finished_tool(
+        &store,
+        &cross.session_id,
+        "cargo_test",
+        json!({
+            "project": "agent:eval:demo", "package": "webcodex", "filter": "focused", "cwd": ".",
+            "all_targets": false, "all_features": false, "no_default_features": false,
+            "no_run": false, "features": null
+        }),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 1 test\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "", "stdout_truncated": false, "stderr_truncated": false,
+            "tests_detected": true, "tests_run_count": 1, "zero_tests_run": false
+        }),
+    );
+    let validation =
+        validation_summary_for_session(&store.summary(&cross.session_id, Some(50)).unwrap());
+    assert_eq!(validation["resolved_failures"]["count"], 1);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+}
+
+#[test]
+fn generic_validation_scope_and_complex_script_identity_fail_closed() {
+    use crate::tool_runtime::tool_audit::{
+        run_process_validation_identity, run_script_validation_identity,
+    };
+    let x = run_process_validation_identity(
+        "cargo",
+        &[
+            "test".into(),
+            "focused".into(),
+            "-p".into(),
+            "webcodex".into(),
+        ],
+        None,
+        Some("."),
+        Some("test"),
+    )
+    .unwrap();
+    let y = run_process_validation_identity(
+        "cargo",
+        &[
+            "test".into(),
+            "other".into(),
+            "-p".into(),
+            "webcodex".into(),
+        ],
+        None,
+        Some("."),
+        Some("test"),
+    )
+    .unwrap();
+    assert!(x.identity.starts_with("target:"));
+    assert!(y.identity.starts_with("target:"));
+    assert_ne!(x.identity, y.identity);
+    let complex = run_script_validation_identity(
+        "bash",
+        "set -e; cargo test focused; echo done",
+        &[],
+        None,
+        Some("."),
+        Some("test"),
+    )
+    .unwrap();
+    assert!(complex.identity.starts_with("command:"));
+    assert!(complex.validation_tool.is_none());
+}
+
+#[test]
+fn complex_run_script_failure_keeps_generic_identity_and_cannot_be_resolved_by_structured_pass() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let script = "set -e\ncargo test focused -p webcodex\necho done";
+    let input = crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
+        "run_script",
+        &json!({
+            "project": "agent:eval:demo", "language": "bash", "script": script,
+            "args": [], "stdin": null, "cwd": ".", "purpose": "test"
+        }),
+    );
+    assert!(input["execution_identity"]
+        .as_str()
+        .is_some_and(|identity| identity.starts_with("command:")));
+    assert!(input.get("validation_target_id").is_none());
+    assert!(!serde_json::to_string(&input).unwrap().contains(script));
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_script",
+        input,
+        false,
+        json!({
+            "exit_code": 101, "purpose": "test",
+            "stdout_tail": "running 1 test\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "", "stdout_truncated": false, "stderr_truncated": false,
+            "tests_detected": true, "tests_run_count": 1, "tests_passed": 0,
+            "tests_failed": 1, "zero_tests_run": false
+        }),
+    );
+    let before =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(50)).unwrap());
+    assert_eq!(before["unresolved_failures"]["count"], 1);
+    assert_eq!(before["latest"]["tests_run_count"], 1);
+    assert_eq!(before["latest"]["tests_passed"], 0);
+    assert_eq!(before["latest"]["tests_failed"], 1);
+
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({
+            "project": "agent:eval:demo", "package": "webcodex", "filter": "focused", "cwd": ".",
+            "all_targets": false, "all_features": false, "no_default_features": false,
+            "no_run": false, "features": null
+        }),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 1 test\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "", "stdout_truncated": false, "stderr_truncated": false,
+            "tests_detected": true, "tests_run_count": 1, "tests_passed": 1,
+            "tests_failed": 0, "zero_tests_run": false
+        }),
+    );
+    let after =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(50)).unwrap());
+    assert_eq!(after["unresolved_failures"]["count"], 1);
+    assert_eq!(after["resolved_failures"]["count"], 0);
+}
+
+#[test]
+fn generic_job_failure_identity_survives_restart_and_resolves_with_structured_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 20);
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let input = crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
+        "run_process",
+        &json!({
+            "project": "agent:eval:demo", "executable": "cargo",
+            "args": ["test", "focused", "-p", "webcodex"], "cwd": ".", "purpose": "test"
+        }),
+    );
+    let target = input["validation_target_id"].as_str().unwrap().to_string();
+    let terminal_output = json!({
+        "exit_code": 101, "purpose": "test", "validation_tool": "cargo_test",
+        "stdout_tail": "running 1 test\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        "stderr_tail": "", "stdout_truncated": false, "stderr_truncated": false,
+        "tests_detected": true, "tests_run_count": 1, "tests_passed": 0,
+        "tests_failed": 1, "zero_tests_run": false
+    });
+    let terminal_summary = crate::tool_runtime::sessions::execution_output_summary_for_tool_result(
+        "run_process",
+        &terminal_output,
+    );
+    assert!(store.record_validation_job_terminal(
+        &session.session_id,
+        "job_generic_failed",
+        &["job_generic_failed"],
+        "run_process",
+        Some("agent:eval:demo".to_string()),
+        &target,
+        "failed",
+        Some(101),
+        Some(false),
+        Some(100),
+        Some(110),
+        Some(10_000),
+        terminal_summary,
+    ));
+    let failed = validation_summary_for_session(&store.summary(&session.session_id, None).unwrap());
+    assert_eq!(failed["unresolved_failures"]["count"], 1);
+    assert_eq!(failed["latest"]["identity"], target);
+    store.flush_persistence();
+    drop(store);
+
+    let restored = SessionStore::with_persistence(&ledger, 10, 20);
+    record_finished_tool(
+        &restored,
+        &session.session_id,
+        "cargo_test",
+        json!({
+            "project": "agent:eval:demo", "package": "webcodex", "filter": "focused", "cwd": ".",
+            "all_targets": false, "all_features": false, "no_default_features": false,
+            "no_run": false, "features": null
+        }),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 1 test\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "", "stdout_truncated": false, "stderr_truncated": false,
+            "tests_detected": true, "tests_run_count": 1, "tests_passed": 1,
+            "tests_failed": 0, "zero_tests_run": false
+        }),
+    );
+    let resolved =
+        validation_summary_for_session(&restored.summary(&session.session_id, None).unwrap());
+    assert_eq!(resolved["resolved_failures"]["count"], 1);
+    assert_eq!(resolved["unresolved_failures"]["count"], 0);
+}
+
+#[test]
+fn contradictory_legacy_cargo_counts_are_downgraded_to_unproven() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo", "filter": "focused"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 3 tests\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "", "stdout_truncated": false, "stderr_truncated": false,
+            "tests_detected": true, "tests_run_count": 0, "zero_tests_run": true
+        }),
+    );
+    let validation =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(50)).unwrap());
+    assert!(validation["latest"]["tests_run_count"].is_null());
+    assert!(validation["latest"]["tests_passed"].is_null());
+    assert!(validation["latest"]["tests_failed"].is_null());
+    assert!(validation["latest"]["zero_tests_run"].is_null());
 }
 
 #[test]
@@ -1642,6 +1972,129 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
     assert_eq!(handoff.output["hard_blockers"], json!([]));
 }
 
+#[tokio::test]
+async fn promoted_run_process_cargo_test_materializes_canonical_validation_evidence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime =
+        test_runtime().with_structured_execution_sync_wait(std::time::Duration::from_millis(40));
+    let auth = open_auth_context();
+    register_agent_projects_for_auth(
+        &runtime,
+        "validation-process-job",
+        &auth,
+        crate::shell_protocol::ShellClientCapabilities {
+            shell: true,
+            async_jobs: true,
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            structured_process_argv: true,
+            structured_execution_jobs: true,
+            ..Default::default()
+        },
+        vec![registered_project("demo", &tmp.path().to_string_lossy())],
+    )
+    .await;
+    let project = "agent:validation-process-job:demo".to_string();
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::RunProcess {
+                        project,
+                        executable: "cargo".to_string(),
+                        args: vec![
+                            "test".to_string(),
+                            "focused".to_string(),
+                            "-p".to_string(),
+                            "webcodex".to_string(),
+                        ],
+                        stdin: None,
+                        session_id: Some(session_id),
+                        timeout_secs: Some(121),
+                        cwd: Some(".".to_string()),
+                        purpose: Some(ExecutionPurpose::Test),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_agent_request_for_client(&runtime, "validation-process-job").await;
+    assert_eq!(request.kind, "start_process_job");
+    assert_eq!(request.process.as_ref().unwrap().executable, "cargo");
+    let handoff = task.await.unwrap();
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["promoted_to_job"], true);
+    let job_id = handoff.output["job_id"].as_str().unwrap().to_string();
+    let admitted = runtime.shell_clients.get_job(&job_id).await.unwrap();
+    let metadata = admitted.structured_execution.as_ref().unwrap();
+    assert_eq!(metadata.execution_source, "run_process");
+    assert_eq!(metadata.validation_tool.as_deref(), Some("cargo_test"));
+    let target = metadata
+        .validation_identity
+        .as_deref()
+        .expect("admission-derived validation identity")
+        .to_string();
+    assert!(target.starts_with("target:"));
+
+    runtime
+        .shell_clients
+        .update_job(crate::shell_protocol::ShellAgentJobUpdateRequest {
+            client_id: "validation-process-job".to_string(),
+            agent_instance_id: "inst-validation-process-job".to_string(),
+            update_seq: None,
+            job_id: job_id.clone(),
+            request_id: Some(request.request_id),
+            status: "completed".to_string(),
+            stdout_chunk: None,
+            stderr_chunk: None,
+            stdout_tail: Some(
+                "running 1 test\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
+                    .to_string(),
+            ),
+            stderr_tail: Some(String::new()),
+            log_snapshot: None,
+            exit_code: Some(0),
+            duration_ms: Some(12),
+            error: None,
+            command_execution_state: Some(crate::shell_protocol::ShellCommandExecutionState::Completed),
+            validation_progress: None,
+            finished: true,
+        })
+        .await
+        .unwrap();
+
+    let summary = runtime
+        .dispatch_with_auth(
+            ToolCall::ValidationSummary {
+                project,
+                session_id,
+                limit: Some(20),
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(summary.success, "{:?}", summary.error);
+    let validation = &summary.output["validation"];
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+    let latest = &validation["latest"];
+    assert_eq!(latest["execution_source"], "run_process");
+    assert_eq!(latest["validation_kind"], "test");
+    assert_eq!(latest["identity"], target);
+    assert_eq!(latest["tests_run_count"], 1);
+    assert_eq!(latest["tests_passed"], 1);
+    assert_eq!(latest["tests_failed"], 0);
+    assert_eq!(latest["zero_tests_run"], false);
+}
+
 #[test]
 fn successful_validation_followed_by_failure_marks_historical_failure_unresolved() {
     let store = SessionStore::default();
@@ -1938,14 +2391,15 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     .await;
     let finish_compact = finish_compact_task.await.unwrap();
     assert!(finish_compact.success, "{:?}", finish_compact.error);
+    assert_eq!(finish_compact.output["validation"]["status"], "mixed");
+    assert_eq!(finish_compact.output["validation"]["successes"], 1);
+    assert_eq!(finish_compact.output["validation"]["failures"], 1);
     assert_eq!(
-        finish_compact.output["validation"], finish.output["validation"],
-        "summary_only finish must preserve the full structured validation evidence"
+        finish_compact.output["validation"]["unresolved_failure_count"],
+        1
     );
-    assert_no_raw_validation_output_fields(
-        &finish_compact.output["validation"],
-        "summary-only finish validation summary",
-    );
+    assert!(finish_compact.output["validation"].get("events").is_none());
+    assert!(finish_compact.output["validation"].get("latest").is_none());
 }
 
 fn record_finished_tool(

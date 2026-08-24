@@ -12,9 +12,7 @@ use super::helpers::{
 use super::local_jobs::LocalJobRecord;
 use super::shell::{command_execution_state_name, ProjectCommandOutput};
 use super::tool_result::ToolResult;
-use super::validation_parser::{
-    aggregate_cargo_test_summaries, parse_complete_cargo_test_summary_counts,
-};
+use super::validation_parser::parse_complete_cargo_test_summary_counts;
 use super::validation_profile::{
     validation_adapter_for_tool, ValidationAdapter, ValidationCommandOptions,
 };
@@ -62,22 +60,25 @@ pub(crate) fn count_rustc_diagnostics(text: &str, prefix: &str) -> usize {
 /// Uses the same multi-harness aggregation as diagnostics `test_summary` so
 /// top-level `tests_passed` / `tests_failed` stay consistent when the bounded
 /// tails still contain every summary.
+#[cfg(test)]
 pub(crate) fn parse_cargo_test_counts(text: &str) -> (Option<u64>, Option<u64>) {
-    match aggregate_cargo_test_summaries(text.lines()) {
-        Some(summary) => (summary.passed, summary.failed),
-        None => (None, None),
-    }
+    let metadata = parse_cargo_test_run_metadata(text);
+    (metadata.tests_passed, metadata.tests_failed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CargoTestRunMetadata {
     pub(crate) tests_detected: bool,
     pub(crate) tests_run_count: Option<u64>,
+    pub(crate) tests_passed: Option<u64>,
+    pub(crate) tests_failed: Option<u64>,
     pub(crate) zero_tests_run: Option<bool>,
 }
 
 pub(crate) fn parse_cargo_test_run_metadata(text: &str) -> CargoTestRunMetadata {
     let mut tests_run_count = 0_u64;
+    let mut tests_passed = 0_u64;
+    let mut tests_failed = 0_u64;
     let mut complete_summary_found = false;
     let mut incomplete_summary_found = false;
     let mut tests_detected = false;
@@ -106,6 +107,8 @@ pub(crate) fn parse_cargo_test_run_metadata(text: &str) -> CargoTestRunMetadata 
         match parse_complete_cargo_test_summary_counts(line) {
             Some((passed, failed)) => {
                 complete_summary_found = true;
+                tests_passed = tests_passed.saturating_add(passed);
+                tests_failed = tests_failed.saturating_add(failed);
                 tests_run_count = tests_run_count
                     .saturating_add(passed)
                     .saturating_add(failed);
@@ -122,12 +125,16 @@ pub(crate) fn parse_cargo_test_run_metadata(text: &str) -> CargoTestRunMetadata 
         CargoTestRunMetadata {
             tests_detected,
             tests_run_count: Some(tests_run_count),
+            tests_passed: Some(tests_passed),
+            tests_failed: Some(tests_failed),
             zero_tests_run: Some(tests_run_count == 0),
         }
     } else {
         CargoTestRunMetadata {
             tests_detected,
             tests_run_count: None,
+            tests_passed: None,
+            tests_failed: None,
             zero_tests_run: None,
         }
     }
@@ -1143,6 +1150,8 @@ impl ToolRuntime {
                     }),
                     visibility: crate::shell_client::ShellJobVisibility::HiddenUntilHandoff,
                     sandbox: sandbox.map(str::to_string),
+                    validation_identity: None,
+                    validation_tool: None,
                     structured_execution: None,
                     stdin: None,
                     detached_idempotency_key: None,

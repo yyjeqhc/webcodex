@@ -922,11 +922,27 @@ pub(crate) fn validation_output_summary_for_tool_result(
             }),
         "executor": output.get("executor").cloned().unwrap_or(Value::Null),
         "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
+        "validation_tool": output.get("validation_tool").cloned().unwrap_or(Value::Null),
     });
-    if matches!(tool_name, "cargo_test" | "go_test") {
-        summary["tests_detected"] = cargo_test_tests_detected(output);
-        summary["tests_run_count"] = cargo_test_tests_run_count(output);
-        summary["zero_tests_run"] = cargo_test_zero_tests_run(output);
+    if matches!(
+        tool_name,
+        "cargo_test" | "go_test" | "run_process" | "run_script" | "run_shell" | "run_job"
+    ) {
+        if output.get("tests_detected").is_some() {
+            summary["tests_detected"] = cargo_test_tests_detected(output);
+        }
+        if output.get("tests_run_count").is_some() {
+            summary["tests_run_count"] = cargo_test_tests_run_count(output);
+        }
+        if output.get("tests_passed").is_some() {
+            summary["tests_passed"] = cargo_test_tests_passed(output);
+        }
+        if output.get("tests_failed").is_some() {
+            summary["tests_failed"] = cargo_test_tests_failed(output);
+        }
+        if output.get("zero_tests_run").is_some() {
+            summary["zero_tests_run"] = cargo_test_zero_tests_run(output);
+        }
     }
     if tool_name == "cargo_test" {
         if let Some(assertion) = sanitized_test_count_assertion(output.get("test_count_assertion"))
@@ -986,11 +1002,23 @@ pub(super) fn sanitize_persisted_validation_output_summary(
         "shell": object.get("shell").and_then(Value::as_str),
         "executor": object.get("executor").and_then(Value::as_str),
         "execution_state": object.get("execution_state").and_then(Value::as_str),
+        "validation_tool": object.get("validation_tool").and_then(Value::as_str),
     });
-    if matches!(tool_name, "cargo_test" | "go_test") {
-        summary["tests_detected"] = persisted_cargo_test_tests_detected(object);
+    if matches!(
+        tool_name,
+        "cargo_test" | "go_test" | "run_process" | "run_script" | "run_shell" | "run_job"
+    ) {
+        if object.contains_key("tests_detected") {
+            summary["tests_detected"] = persisted_cargo_test_tests_detected(object);
+        }
         if object.contains_key("tests_run_count") {
             summary["tests_run_count"] = persisted_cargo_test_tests_run_count(object);
+        }
+        if object.contains_key("tests_passed") {
+            summary["tests_passed"] = persisted_cargo_test_tests_passed(object);
+        }
+        if object.contains_key("tests_failed") {
+            summary["tests_failed"] = persisted_cargo_test_tests_failed(object);
         }
         if object.contains_key("zero_tests_run") {
             summary["zero_tests_run"] = persisted_cargo_test_zero_tests_run(object);
@@ -1051,6 +1079,20 @@ pub(super) fn cargo_test_tests_run_count(output: &Value) -> Value {
         .map_or(Value::Null, |count| json!(count))
 }
 
+pub(super) fn cargo_test_tests_passed(output: &Value) -> Value {
+    output
+        .get("tests_passed")
+        .and_then(Value::as_u64)
+        .map_or(Value::Null, |count| json!(count))
+}
+
+pub(super) fn cargo_test_tests_failed(output: &Value) -> Value {
+    output
+        .get("tests_failed")
+        .and_then(Value::as_u64)
+        .map_or(Value::Null, |count| json!(count))
+}
+
 pub(super) fn cargo_test_zero_tests_run(output: &Value) -> Value {
     output
         .get("zero_tests_run")
@@ -1072,6 +1114,20 @@ pub(super) fn persisted_cargo_test_tests_run_count(
 ) -> Value {
     object
         .get("tests_run_count")
+        .and_then(Value::as_u64)
+        .map_or(Value::Null, |count| json!(count))
+}
+
+pub(super) fn persisted_cargo_test_tests_passed(object: &serde_json::Map<String, Value>) -> Value {
+    object
+        .get("tests_passed")
+        .and_then(Value::as_u64)
+        .map_or(Value::Null, |count| json!(count))
+}
+
+pub(super) fn persisted_cargo_test_tests_failed(object: &serde_json::Map<String, Value>) -> Value {
+    object
+        .get("tests_failed")
         .and_then(Value::as_u64)
         .map_or(Value::Null, |count| json!(count))
 }

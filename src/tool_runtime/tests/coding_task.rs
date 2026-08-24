@@ -1922,8 +1922,9 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
         result.output["tool_failures"]["actionable_unexpected_count"],
         0
     );
-    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["status"], "passed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(full.output["validation"]["status"], "mixed");
     assert_eq!(result.output["validation"]["resolved_failure_count"], 1);
     assert_eq!(result.output["validation"]["unresolved_failure_count"], 0);
     assert_eq!(result.output["task_outcome"]["status"], "pass");

@@ -15,7 +15,8 @@ use super::session_context::{
 };
 use super::sessions::{SessionEvent, SessionSummary};
 use super::tool_audit::{
-    is_structured_validation_target_identity, structured_validation_target_identity,
+    is_structured_validation_target_identity, is_validation_execution_identity,
+    structured_validation_target_identity,
 };
 use super::validation_parser::{
     ValidationDiagnostics, PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION,
@@ -73,6 +74,10 @@ pub(crate) struct ValidationEvent {
     pub(crate) tests_detected: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tests_run_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tests_passed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tests_failed: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) zero_tests_run: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -438,24 +443,59 @@ impl ToolRuntime {
             {
                 continue;
             }
-            let Some(validation) = status.output.get("validation").and_then(Value::as_object)
-            else {
-                continue;
-            };
-            let Some(tool_name) = validation
-                .get("tool")
+            let validation = status.output.get("validation").and_then(Value::as_object);
+            let structured_execution = job.get("structured_execution").and_then(Value::as_object);
+            let terminal_status = status
+                .output
+                .get("status")
                 .and_then(Value::as_str)
-                .filter(|tool| validation_adapter_for_tool(tool).is_some())
-            else {
-                continue;
-            };
-            let Some(validation_target_id) = validation
-                .get("validation_target_id")
-                .and_then(Value::as_str)
-                .filter(|value| is_structured_validation_target_identity(value))
-            else {
-                continue;
-            };
+                .unwrap_or(status_name);
+            let (tool_name, validation_target_id, validation_tool, validation_passed) =
+                if let Some(validation) = validation {
+                    let Some(tool_name) = validation
+                        .get("tool")
+                        .and_then(Value::as_str)
+                        .filter(|tool| validation_adapter_for_tool(tool).is_some())
+                    else {
+                        continue;
+                    };
+                    let Some(identity) = validation
+                        .get("validation_target_id")
+                        .and_then(Value::as_str)
+                        .filter(|value| is_structured_validation_target_identity(value))
+                    else {
+                        continue;
+                    };
+                    (
+                        tool_name,
+                        identity,
+                        Some(tool_name),
+                        validation.get("passed").and_then(Value::as_bool),
+                    )
+                } else {
+                    let Some(metadata) = structured_execution else {
+                        continue;
+                    };
+                    let Some(source) = metadata
+                        .get("execution_source")
+                        .and_then(Value::as_str)
+                        .filter(|source| matches!(*source, "run_process" | "run_script"))
+                    else {
+                        continue;
+                    };
+                    let Some(identity) = metadata
+                        .get("validation_identity")
+                        .and_then(Value::as_str)
+                        .filter(|identity| is_validation_execution_identity(identity))
+                    else {
+                        continue;
+                    };
+                    let validation_tool = metadata
+                        .get("validation_tool")
+                        .and_then(Value::as_str)
+                        .filter(|tool| validation_adapter_for_tool(tool).is_some());
+                    (source, identity, validation_tool, None)
+                };
             let log = self
                 .job_log_for_auth(job_id.to_string(), None, Some(200), auth, None, None)
                 .await;
@@ -469,35 +509,61 @@ impl ToolRuntime {
                     "stderr_truncated": true,
                 })
             };
-            for field in [
-                "passed",
-                "warnings_count",
-                "errors_count",
-                "tests_detected",
-                "tests_run_count",
-                "tests_passed",
-                "tests_failed",
-                "zero_tests_run",
-                "test_count_assertion",
-                "diagnostics",
-            ] {
-                if let Some(value) = validation.get(field) {
-                    output[field] = value.clone();
+            if let Some(validation) = validation {
+                for field in [
+                    "passed",
+                    "warnings_count",
+                    "errors_count",
+                    "tests_detected",
+                    "tests_run_count",
+                    "tests_passed",
+                    "tests_failed",
+                    "zero_tests_run",
+                    "test_count_assertion",
+                    "diagnostics",
+                ] {
+                    if let Some(value) = validation.get(field) {
+                        output[field] = value.clone();
+                    }
+                }
+            } else {
+                let detected = super::jobs::detected_job_summary(
+                    job.get("command_summary").and_then(Value::as_str),
+                    job.get("purpose").and_then(Value::as_str),
+                    terminal_status,
+                    status.output.get("exit_code").and_then(Value::as_i64),
+                    output
+                        .get("stdout_tail")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    output
+                        .get("stderr_tail")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                );
+                for field in [
+                    "tests_detected",
+                    "tests_run_count",
+                    "tests_passed",
+                    "tests_failed",
+                    "zero_tests_run",
+                ] {
+                    if let Some(value) = detected.get(field) {
+                        output[field] = value.clone();
+                    }
                 }
             }
             for field in ["purpose", "command_summary", "cwd", "shell", "executor"] {
                 if output.get(field).is_none_or(Value::is_null) {
-                    output[field] = status.output.get(field).cloned().unwrap_or(Value::Null);
+                    output[field] = job.get(field).cloned().unwrap_or(Value::Null);
                 }
             }
             if output.get("purpose").is_none_or(Value::is_null) {
                 output["purpose"] = json!("validation");
             }
-            let terminal_status = status
-                .output
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or(status_name);
+            if let Some(validation_tool) = validation_tool {
+                output["validation_tool"] = json!(validation_tool);
+            }
             output["execution_state"] = json!(match terminal_status {
                 "timeout" | "timed_out" => "timed_out",
                 "stopped" | "cancelled" => "cancelled",
@@ -520,7 +586,7 @@ impl ToolRuntime {
                 validation_target_id,
                 terminal_status,
                 status.output.get("exit_code").and_then(Value::as_i64),
-                validation.get("passed").and_then(Value::as_bool),
+                validation_passed,
                 status.output.get("started_at").and_then(Value::as_i64),
                 status.output.get("ended_at").and_then(Value::as_i64),
                 status.output.get("duration_ms").and_then(Value::as_u64),
@@ -716,8 +782,7 @@ fn validation_event_decides_historical_failure_status(event: &ValidationEvent) -
 }
 
 fn cargo_test_unproven_execution_success(event: &ValidationEvent) -> bool {
-    event.tool_name == "cargo_test"
-        && event.validation_kind == "test"
+    event.validation_kind == "test"
         && event.success
         && (event.tests_run_count.is_none() || event.zero_tests_run.is_none())
 }
@@ -925,7 +990,7 @@ fn validation_event_from_finished(
         stdout_lines,
         stderr_lines,
     ) = execution_output_evidence(finished);
-    let (tests_detected, tests_run_count, zero_tests_run) =
+    let (tests_detected, tests_run_count, tests_passed, tests_failed, zero_tests_run) =
         validation_test_run_metadata(finished, adapter, diagnostics.as_ref());
     let test_count_assertion = finished
         .validation_output_summary
@@ -938,6 +1003,8 @@ fn validation_event_from_finished(
             "parser_available": diagnostics.as_ref().is_some_and(|value| value.available),
             "tests_detected": tests_detected,
             "tests_run_count": tests_run_count,
+            "tests_passed": tests_passed,
+            "tests_failed": tests_failed,
             "zero_tests_run": zero_tests_run,
         })
     });
@@ -969,6 +1036,8 @@ fn validation_event_from_finished(
         detected_summary,
         tests_detected,
         tests_run_count,
+        tests_passed,
+        tests_failed,
         zero_tests_run,
         test_count_assertion,
         stdout_lines,
@@ -984,30 +1053,52 @@ fn validation_adapter_for_execution(
     finished: &SessionEvent,
     started: Option<&SessionEvent>,
 ) -> Option<&'static dyn ValidationAdapter> {
-    validation_adapter_for_tool(&finished.tool_name).or_else(|| {
-        let command = started
-            .and_then(|event| event.input_summary.as_ref())
-            .and_then(|input| {
-                input
-                    .get("command_summary")
-                    .or_else(|| input.get("command"))
-            })
-            .and_then(Value::as_str)
-            .or_else(|| {
-                finished
-                    .validation_output_summary
-                    .as_ref()
-                    .and_then(|summary| summary.get("command_summary"))
-                    .and_then(Value::as_str)
-            })?;
-        let mut words = command.split_whitespace();
-        match (words.next(), words.next()) {
-            (Some("cargo"), Some("fmt")) => validation_adapter_for_tool("cargo_fmt"),
-            (Some("cargo"), Some("check")) => validation_adapter_for_tool("cargo_check"),
-            (Some("cargo"), Some("test")) => validation_adapter_for_tool("cargo_test"),
-            _ => None,
-        }
-    })
+    validation_adapter_for_tool(&finished.tool_name)
+        .or_else(|| {
+            started
+                .and_then(|event| event.input_summary.as_ref())
+                .and_then(|input| input.get("validation_tool"))
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    finished
+                        .input_summary
+                        .as_ref()
+                        .and_then(|input| input.get("validation_tool"))
+                        .and_then(Value::as_str)
+                })
+                .or_else(|| {
+                    finished
+                        .validation_output_summary
+                        .as_ref()
+                        .and_then(|summary| summary.get("validation_tool"))
+                        .and_then(Value::as_str)
+                })
+                .and_then(validation_adapter_for_tool)
+        })
+        .or_else(|| {
+            let command = started
+                .and_then(|event| event.input_summary.as_ref())
+                .and_then(|input| {
+                    input
+                        .get("command_summary")
+                        .or_else(|| input.get("command"))
+                })
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    finished
+                        .validation_output_summary
+                        .as_ref()
+                        .and_then(|summary| summary.get("command_summary"))
+                        .and_then(Value::as_str)
+                })?;
+            let mut words = command.split_whitespace();
+            match (words.next(), words.next()) {
+                (Some("cargo"), Some("fmt")) => validation_adapter_for_tool("cargo_fmt"),
+                (Some("cargo"), Some("check")) => validation_adapter_for_tool("cargo_check"),
+                (Some("cargo"), Some("test")) => validation_adapter_for_tool("cargo_test"),
+                _ => None,
+            }
+        })
 }
 
 fn execution_string(
@@ -1043,8 +1134,26 @@ fn execution_identity(
     {
         return format!("assertion:{assertion}");
     }
+    if let Some(identity) = started
+        .and_then(|event| event.input_summary.as_ref())
+        .and_then(|input| input.get("execution_identity"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            finished
+                .input_summary
+                .as_ref()
+                .and_then(|input| input.get("execution_identity"))
+                .and_then(Value::as_str)
+        })
+        .filter(|value| is_validation_execution_identity(value))
+    {
+        return identity.to_string();
+    }
     if validation_adapter_for_tool(tool_name).is_some() {
-        if let Some(input) = started.and_then(|event| event.input_summary.as_ref()) {
+        if let Some(input) = started
+            .and_then(|event| event.input_summary.as_ref())
+            .or(finished.input_summary.as_ref())
+        {
             if let Some(identity) = input
                 .get("validation_target_id")
                 .and_then(Value::as_str)
@@ -1248,11 +1357,29 @@ fn validation_test_run_metadata(
     finished: &SessionEvent,
     adapter: Option<&dyn ValidationAdapter>,
     diagnostics: Option<&ValidationDiagnostics>,
-) -> (Option<bool>, Option<u64>, Option<bool>) {
-    if !adapter.is_some_and(ValidationAdapter::reports_test_run_metadata) {
-        return (None, None, None);
-    }
+) -> (
+    Option<bool>,
+    Option<u64>,
+    Option<u64>,
+    Option<u64>,
+    Option<bool>,
+) {
     let summary = finished.validation_output_summary.as_ref();
+    let explicit_test_metadata = summary.is_some_and(|value| {
+        [
+            "tests_detected",
+            "tests_run_count",
+            "tests_passed",
+            "tests_failed",
+            "zero_tests_run",
+        ]
+        .into_iter()
+        .any(|field| value.get(field).is_some())
+    });
+    if !adapter.is_some_and(ValidationAdapter::reports_test_run_metadata) && !explicit_test_metadata
+    {
+        return (None, None, None, None, None);
+    }
     let parsed_test_summary = diagnostics.and_then(|value| value.test_summary.as_ref());
     let truncated = summary
         .and_then(|value| value.get("stdout_truncated"))
@@ -1262,29 +1389,94 @@ fn validation_test_run_metadata(
             .and_then(|value| value.get("stderr_truncated"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
-    let parsed_tests_run = (!truncated)
-        .then(|| {
-            parsed_test_summary.map(|value| {
-                value
-                    .passed
-                    .unwrap_or(0)
-                    .saturating_add(value.failed.unwrap_or(0))
-            })
-        })
+    let parsed_passed = (!truncated)
+        .then(|| parsed_test_summary.and_then(|value| value.passed))
         .flatten();
+    let parsed_failed = (!truncated)
+        .then(|| parsed_test_summary.and_then(|value| value.failed))
+        .flatten();
+    let parsed_tests_run = match (parsed_passed, parsed_failed) {
+        (Some(passed), Some(failed)) => Some(passed.saturating_add(failed)),
+        _ => None,
+    };
     let tests_detected = summary
         .and_then(|value| value.get("tests_detected"))
         .and_then(Value::as_bool)
         .or_else(|| Some(parsed_test_summary.is_some()));
-    let tests_run_count = match summary.and_then(|value| value.get("tests_run_count")) {
-        Some(value) => value.as_u64(),
-        None => parsed_tests_run,
+
+    let explicit_tests_run_field = summary.and_then(|value| value.get("tests_run_count"));
+    let explicit_tests_passed_field = summary.and_then(|value| value.get("tests_passed"));
+    let explicit_tests_failed_field = summary.and_then(|value| value.get("tests_failed"));
+    let explicit_zero_tests_field = summary.and_then(|value| value.get("zero_tests_run"));
+    if [
+        explicit_tests_run_field,
+        explicit_tests_passed_field,
+        explicit_tests_failed_field,
+        explicit_zero_tests_field,
+    ]
+    .into_iter()
+    .flatten()
+    .any(Value::is_null)
+    {
+        return (tests_detected, None, None, None, None);
+    }
+
+    let explicit_tests_run = explicit_tests_run_field.and_then(Value::as_u64);
+    let explicit_tests_passed = explicit_tests_passed_field.and_then(Value::as_u64);
+    let explicit_tests_failed = explicit_tests_failed_field.and_then(Value::as_u64);
+    let explicit_zero_tests = explicit_zero_tests_field.and_then(Value::as_bool);
+    let explicit_pair_run = match (explicit_tests_passed, explicit_tests_failed) {
+        (Some(passed), Some(failed)) => Some(passed.saturating_add(failed)),
+        _ => None,
     };
-    let zero_tests_run = match summary.and_then(|value| value.get("zero_tests_run")) {
-        Some(value) => value.as_bool(),
-        None => parsed_tests_run.map(|count| count == 0),
-    };
-    (tests_detected, tests_run_count, zero_tests_run)
+    let explicit_coherent = match (explicit_tests_run, explicit_pair_run) {
+        (Some(run), Some(pair_run)) => run == pair_run,
+        _ => true,
+    } && match (
+        explicit_tests_run.or(explicit_pair_run),
+        explicit_zero_tests,
+    ) {
+        (Some(run), Some(zero)) => zero == (run == 0),
+        _ => true,
+    } && !(explicit_zero_tests == Some(true)
+        && (explicit_tests_passed.is_some_and(|count| count > 0)
+            || explicit_tests_failed.is_some_and(|count| count > 0)));
+
+    let sources_agree = [
+        (explicit_tests_run, parsed_tests_run),
+        (explicit_tests_passed, parsed_passed),
+        (explicit_tests_failed, parsed_failed),
+    ]
+    .into_iter()
+    .all(|(explicit, parsed)| match (explicit, parsed) {
+        (Some(explicit), Some(parsed)) => explicit == parsed,
+        _ => true,
+    });
+    if !explicit_coherent || !sources_agree {
+        return (tests_detected, None, None, None, None);
+    }
+
+    let tests_passed = explicit_tests_passed.or(parsed_passed);
+    let tests_failed = explicit_tests_failed.or(parsed_failed);
+    let tests_run_count = explicit_tests_run
+        .or(explicit_pair_run)
+        .or(parsed_tests_run);
+    let zero_tests_run = explicit_zero_tests.or_else(|| tests_run_count.map(|count| count == 0));
+    if matches!((tests_run_count, tests_passed, tests_failed), (Some(run), Some(passed), Some(failed)) if run != passed.saturating_add(failed))
+        || (zero_tests_run == Some(true)
+            && (tests_run_count.is_some_and(|count| count > 0)
+                || tests_passed.is_some_and(|count| count > 0)
+                || tests_failed.is_some_and(|count| count > 0)))
+    {
+        return (tests_detected, None, None, None, None);
+    }
+    (
+        tests_detected,
+        tests_run_count,
+        tests_passed,
+        tests_failed,
+        zero_tests_run,
+    )
 }
 
 fn cargo_test_zero_tests_success(event: &ValidationEvent) -> bool {

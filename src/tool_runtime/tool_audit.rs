@@ -38,6 +38,47 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                     )),
                 );
             }
+            if let Some(identity) =
+                obj.get("executable")
+                    .and_then(Value::as_str)
+                    .and_then(|executable| {
+                        let args = obj
+                            .get("args")
+                            .and_then(Value::as_array)
+                            .map(|values| {
+                                values
+                                    .iter()
+                                    .map(|value| value.as_str().map(str::to_string))
+                                    .collect::<Option<Vec<_>>>()
+                            })
+                            .flatten()
+                            .unwrap_or_default();
+                        run_process_validation_identity(
+                            executable,
+                            &args,
+                            obj.get("stdin").and_then(Value::as_str),
+                            obj.get("cwd").and_then(Value::as_str),
+                            obj.get("purpose").and_then(Value::as_str),
+                        )
+                    })
+            {
+                out.insert(
+                    "execution_identity".to_string(),
+                    Value::String(identity.identity.clone()),
+                );
+                if is_structured_validation_target_identity(&identity.identity) {
+                    out.insert(
+                        "validation_target_id".to_string(),
+                        Value::String(identity.identity),
+                    );
+                }
+                if let Some(tool) = identity.validation_tool {
+                    out.insert(
+                        "validation_tool".to_string(),
+                        Value::String(tool.to_string()),
+                    );
+                }
+            }
         }
         "run_detached_process" => {
             out.insert(
@@ -126,6 +167,47 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 ),
             );
             copy_keys(obj, &mut out, &["timeout_secs", "cwd", "purpose"]);
+            if let (Some(language), Some(script)) = (
+                obj.get("language").and_then(Value::as_str),
+                obj.get("script").and_then(Value::as_str),
+            ) {
+                let args = obj
+                    .get("args")
+                    .and_then(Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .map(|value| value.as_str().map(str::to_string))
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .flatten()
+                    .unwrap_or_default();
+                if let Some(identity) = run_script_validation_identity(
+                    language,
+                    script,
+                    &args,
+                    obj.get("stdin").and_then(Value::as_str),
+                    obj.get("cwd").and_then(Value::as_str),
+                    obj.get("purpose").and_then(Value::as_str),
+                ) {
+                    out.insert(
+                        "execution_identity".to_string(),
+                        Value::String(identity.identity.clone()),
+                    );
+                    if is_structured_validation_target_identity(&identity.identity) {
+                        out.insert(
+                            "validation_target_id".to_string(),
+                            Value::String(identity.identity),
+                        );
+                    }
+                    if let Some(tool) = identity.validation_tool {
+                        out.insert(
+                            "validation_tool".to_string(),
+                            Value::String(tool.to_string()),
+                        );
+                    }
+                }
+            }
         }
         "run_shell" | "run_job" | "session_shell_exec" => {
             out.insert(
@@ -1260,6 +1342,249 @@ pub(crate) fn is_structured_validation_target_identity(value: &str) -> bool {
         && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+const GENERIC_VALIDATION_IDENTITY_PREFIX: &str = "command:";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GenericValidationIdentity {
+    pub(crate) identity: String,
+    pub(crate) validation_tool: Option<&'static str>,
+}
+
+pub(crate) fn is_validation_execution_identity(value: &str) -> bool {
+    if is_structured_validation_target_identity(value) {
+        return true;
+    }
+    value
+        .strip_prefix(GENERIC_VALIDATION_IDENTITY_PREFIX)
+        .is_some_and(|suffix| {
+            suffix.len() == STRUCTURED_VALIDATION_TARGET_HEX_LEN
+                && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+}
+
+fn validation_like_purpose(purpose: Option<&str>) -> bool {
+    purpose.is_some_and(|purpose| {
+        matches!(
+            purpose,
+            "validation" | "test" | "build" | "format" | "release"
+        )
+    })
+}
+
+fn generic_validation_digest<'a>(
+    source: &str,
+    purpose: &str,
+    cwd: Option<&str>,
+    parts: impl IntoIterator<Item = &'a str>,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex-generic-validation-v1\0");
+    hasher.update(source.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(purpose.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(cwd.unwrap_or(".").as_bytes());
+    for part in parts {
+        hasher.update(b"\0");
+        hasher.update((part.len() as u64).to_le_bytes());
+        hasher.update(part.as_bytes());
+    }
+    let digest = format!("{:x}", hasher.finalize());
+    format!(
+        "{GENERIC_VALIDATION_IDENTITY_PREFIX}{}",
+        &digest[..STRUCTURED_VALIDATION_TARGET_HEX_LEN]
+    )
+}
+
+fn canonical_cargo_validation_target(
+    argv: &[String],
+    cwd: Option<&str>,
+) -> Option<(&'static str, String)> {
+    let (subcommand, rest) = argv.split_first()?;
+    let mut input = serde_json::Map::new();
+    input.insert(
+        "cwd".to_string(),
+        Value::String(cwd.unwrap_or(".").to_string()),
+    );
+    let tool = match subcommand.as_str() {
+        "fmt" => {
+            let check = match rest {
+                [] => false,
+                [separator, check] if separator == "--" && check == "--check" => true,
+                _ => return None,
+            };
+            input.insert("check".to_string(), Value::Bool(check));
+            "cargo_fmt"
+        }
+        "check" | "test" => {
+            let is_test = subcommand == "test";
+            let mut package: Option<String> = None;
+            let mut features: Option<String> = None;
+            let mut filter: Option<String> = None;
+            let mut all_targets = false;
+            let mut all_features = false;
+            let mut no_default_features = false;
+            let mut no_run = false;
+            let mut index = 0;
+            while index < rest.len() {
+                let arg = &rest[index];
+                match arg.as_str() {
+                    "-p" | "--package" | "--features" => {
+                        let value = rest.get(index + 1)?.clone();
+                        let slot = if arg == "--features" {
+                            &mut features
+                        } else {
+                            &mut package
+                        };
+                        if slot.replace(value).is_some() {
+                            return None;
+                        }
+                        index += 2;
+                        continue;
+                    }
+                    "--all-targets" if !all_targets => all_targets = true,
+                    "--all-features" if !all_features => all_features = true,
+                    "--no-default-features" if !no_default_features => no_default_features = true,
+                    "--no-run" if is_test && !no_run => no_run = true,
+                    _ if arg.starts_with("--package=") && package.is_none() => {
+                        package = Some(arg.trim_start_matches("--package=").to_string());
+                    }
+                    _ if arg.starts_with("--features=") && features.is_none() => {
+                        features = Some(arg.trim_start_matches("--features=").to_string());
+                    }
+                    _ if is_test && !arg.starts_with('-') && filter.is_none() => {
+                        filter = Some(arg.to_string());
+                    }
+                    _ => return None,
+                }
+                index += 1;
+            }
+            let package = match package {
+                Some(value) => crate::shell_protocol::normalize_cargo_value(&value).ok()?,
+                None => None,
+            };
+            let features = match features {
+                Some(value) => crate::shell_protocol::normalize_cargo_value(&value).ok()?,
+                None => None,
+            };
+            input.insert("package".to_string(), serde_json::json!(package));
+            input.insert("features".to_string(), serde_json::json!(features));
+            input.insert("all_targets".to_string(), Value::Bool(all_targets));
+            input.insert("all_features".to_string(), Value::Bool(all_features));
+            input.insert(
+                "no_default_features".to_string(),
+                Value::Bool(no_default_features),
+            );
+            if is_test {
+                let filter = match filter {
+                    Some(value) => {
+                        crate::shell_protocol::normalize_rust_test_filter(&value).ok()?
+                    }
+                    None => None,
+                };
+                input.insert("filter".to_string(), serde_json::json!(filter));
+                input.insert("no_run".to_string(), Value::Bool(no_run));
+                "cargo_test"
+            } else {
+                "cargo_check"
+            }
+        }
+        _ => return None,
+    };
+    let identity = structured_validation_target_identity(tool, &Value::Object(input))?;
+    Some((tool, identity))
+}
+
+pub(crate) fn run_process_validation_identity(
+    executable: &str,
+    args: &[String],
+    stdin: Option<&str>,
+    cwd: Option<&str>,
+    purpose: Option<&str>,
+) -> Option<GenericValidationIdentity> {
+    if !validation_like_purpose(purpose) {
+        return None;
+    }
+    if executable == "cargo" && stdin.is_none() {
+        if let Some((validation_tool, identity)) = canonical_cargo_validation_target(args, cwd) {
+            return Some(GenericValidationIdentity {
+                identity,
+                validation_tool: Some(validation_tool),
+            });
+        }
+    }
+    let purpose = purpose?;
+    let mut parts = Vec::with_capacity(args.len() + 2);
+    parts.push(executable);
+    parts.extend(args.iter().map(String::as_str));
+    if let Some(stdin) = stdin {
+        parts.push(stdin);
+    }
+    Some(GenericValidationIdentity {
+        identity: generic_validation_digest("run_process", purpose, cwd, parts),
+        validation_tool: None,
+    })
+}
+
+fn simple_script_argv(script: &str) -> Option<Vec<String>> {
+    let trimmed = script.trim();
+    if trimmed.is_empty()
+        || trimmed.lines().count() != 1
+        || trimmed.chars().any(|character| {
+            matches!(
+                character,
+                ';' | '|' | '&' | '$' | '`' | '\\' | '\'' | '"' | '<' | '>' | '(' | ')' | '{' | '}'
+            )
+        })
+    {
+        return None;
+    }
+    let argv = trimmed
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    (!argv.is_empty()).then_some(argv)
+}
+
+pub(crate) fn run_script_validation_identity(
+    language: &str,
+    script: &str,
+    args: &[String],
+    stdin: Option<&str>,
+    cwd: Option<&str>,
+    purpose: Option<&str>,
+) -> Option<GenericValidationIdentity> {
+    if !validation_like_purpose(purpose) {
+        return None;
+    }
+    if matches!(language, "sh" | "bash") && args.is_empty() && stdin.is_none() {
+        if let Some(argv) = simple_script_argv(script) {
+            if argv.first().is_some_and(|program| program == "cargo") {
+                if let Some((validation_tool, identity)) =
+                    canonical_cargo_validation_target(&argv[1..], cwd)
+                {
+                    return Some(GenericValidationIdentity {
+                        identity,
+                        validation_tool: Some(validation_tool),
+                    });
+                }
+            }
+        }
+    }
+    let purpose = purpose?;
+    let mut parts = Vec::with_capacity(args.len() + 3);
+    parts.push(language);
+    parts.push(script);
+    parts.extend(args.iter().map(String::as_str));
+    if let Some(stdin) = stdin {
+        parts.push(stdin);
+    }
+    Some(GenericValidationIdentity {
+        identity: generic_validation_digest("run_script", purpose, cwd, parts),
+        validation_tool: None,
+    })
+}
+
 fn normalized_validation_target_cwd(value: Option<&Value>) -> Option<String> {
     let Some(value) = value else {
         return Some(".".to_string());
@@ -2129,19 +2454,36 @@ impl ToolCall {
                 cwd,
                 purpose,
                 ..
-            } => serde_json::json!({
-                "project": project,
-                "executable_present": true,
-                "arg_count": args.len(),
-                "stdin_present": stdin.is_some(),
-                "process_summary": crate::shell_client::process_preview(
+            } => {
+                let identity = run_process_validation_identity(
                     executable,
-                    args.iter().map(String::as_str),
-                ),
-                "timeout_secs": timeout_secs,
-                "cwd": cwd,
-                "purpose": purpose,
-            }),
+                    args,
+                    stdin.as_deref(),
+                    cwd.as_deref(),
+                    purpose.as_ref().map(|purpose| purpose.as_str()),
+                );
+                let mut value = serde_json::json!({
+                    "project": project,
+                    "executable_present": true,
+                    "arg_count": args.len(),
+                    "stdin_present": stdin.is_some(),
+                    "process_summary": crate::shell_client::process_preview(
+                        executable,
+                        args.iter().map(String::as_str),
+                    ),
+                    "timeout_secs": timeout_secs,
+                    "cwd": cwd,
+                    "purpose": purpose,
+                });
+                if let Some(identity) = identity {
+                    value["execution_identity"] = serde_json::json!(identity.identity);
+                    if identity.validation_tool.is_some() {
+                        value["validation_target_id"] = value["execution_identity"].clone();
+                        value["validation_tool"] = serde_json::json!(identity.validation_tool);
+                    }
+                }
+                value
+            }
             Self::CodingAgentStart {
                 project,
                 provider_id,
@@ -2180,16 +2522,34 @@ impl ToolCall {
                 cwd,
                 purpose,
                 ..
-            } => serde_json::json!({
-                "project": project,
-                "language": language,
-                "script_bytes": script.len(),
-                "arg_count": args.len(),
-                "stdin_present": stdin.is_some(),
-                "timeout_secs": timeout_secs,
-                "cwd": cwd,
-                "purpose": purpose,
-            }),
+            } => {
+                let identity = run_script_validation_identity(
+                    language.as_str(),
+                    script,
+                    args,
+                    stdin.as_deref(),
+                    cwd.as_deref(),
+                    purpose.as_ref().map(|purpose| purpose.as_str()),
+                );
+                let mut value = serde_json::json!({
+                    "project": project,
+                    "language": language,
+                    "script_bytes": script.len(),
+                    "arg_count": args.len(),
+                    "stdin_present": stdin.is_some(),
+                    "timeout_secs": timeout_secs,
+                    "cwd": cwd,
+                    "purpose": purpose,
+                });
+                if let Some(identity) = identity {
+                    value["execution_identity"] = serde_json::json!(identity.identity);
+                    if identity.validation_tool.is_some() {
+                        value["validation_target_id"] = value["execution_identity"].clone();
+                        value["validation_tool"] = serde_json::json!(identity.validation_tool);
+                    }
+                }
+                value
+            }
             Self::RunShell {
                 project,
                 command,

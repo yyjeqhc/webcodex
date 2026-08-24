@@ -15,6 +15,7 @@ use super::shell::{agent_command_lifecycle, dispatch_uncertainty_lifecycle};
 use super::structured_execution::{
     await_hidden_structured_job, HiddenStructuredJobWait, StructuredExecutionBudget,
 };
+use super::tool_audit::run_script_validation_identity;
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_client::{
@@ -101,6 +102,14 @@ impl ToolRuntime {
         }
         let summary = script_preview(language.as_str(), payload.script.len(), payload.args.len());
         let declared_purpose = purpose.unwrap_or_default();
+        let validation_identity = run_script_validation_identity(
+            language.as_str(),
+            &payload.script,
+            &payload.args,
+            stdin.as_deref(),
+            cwd.as_deref(),
+            Some(declared_purpose.as_str()),
+        );
         let proj = match self.resolve_project(&project).await {
             Ok(project) => project,
             Err(error) => {
@@ -226,6 +235,12 @@ impl ToolRuntime {
                             visibility: ShellJobVisibility::HiddenUntilHandoff,
                             sandbox: sandbox.map(str::to_string),
                             structured_execution: Some(StructuredJobExecution::Script(payload)),
+                            validation_identity: validation_identity
+                                .as_ref()
+                                .map(|identity| identity.identity.clone()),
+                            validation_tool: validation_identity
+                                .as_ref()
+                                .and_then(|identity| identity.validation_tool.map(str::to_string)),
                             stdin,
                             ..Default::default()
                         },

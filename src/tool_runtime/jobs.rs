@@ -34,7 +34,7 @@ pub(crate) fn is_terminal_job_status(status: &str) -> bool {
     )
 }
 
-fn detected_job_summary(
+pub(crate) fn detected_job_summary(
     command_summary: Option<&str>,
     purpose: Option<&str>,
     status: &str,
@@ -79,12 +79,11 @@ fn detected_job_summary(
     if kind == "test" {
         let combined = format!("{stdout}\n{stderr}");
         let metadata = super::cargo::parse_cargo_test_run_metadata(&combined);
-        let (passed, failed) = super::cargo::parse_cargo_test_counts(&combined);
         detected["tests_detected"] = json!(metadata.tests_detected);
         detected["tests_run_count"] = json!(metadata.tests_run_count);
         detected["zero_tests_run"] = json!(metadata.zero_tests_run);
-        detected["tests_passed"] = json!(passed);
-        detected["tests_failed"] = json!(failed);
+        detected["tests_passed"] = json!(metadata.tests_passed);
+        detected["tests_failed"] = json!(metadata.tests_failed);
     }
     detected
 }
@@ -145,12 +144,11 @@ pub(crate) fn structured_validation_evidence(
         }
         "test" => {
             let metadata = super::cargo::parse_cargo_test_run_metadata(&combined);
-            let (tests_passed, tests_failed) = super::cargo::parse_cargo_test_counts(&combined);
             evidence.tests_detected = Some(metadata.tests_detected);
             if !truncated {
                 evidence.tests_run_count = metadata.tests_run_count;
-                evidence.tests_passed = tests_passed;
-                evidence.tests_failed = tests_failed;
+                evidence.tests_passed = metadata.tests_passed;
+                evidence.tests_failed = metadata.tests_failed;
                 evidence.zero_tests_run = metadata.zero_tests_run;
             }
         }
@@ -1526,6 +1524,8 @@ impl ToolRuntime {
                         validation: None,
                         visibility: crate::shell_client::ShellJobVisibility::Public,
                         sandbox,
+                        validation_identity: None,
+                        validation_tool: None,
                         structured_execution: None,
                         stdin: None,
                         detached_idempotency_key: None,
@@ -2191,14 +2191,30 @@ impl ToolRuntime {
             let Some(session_id) = job.session_id.as_deref() else {
                 continue;
             };
+            let generic_validation = job
+                .structured_execution
+                .as_ref()
+                .and_then(|metadata| metadata.validation_identity.as_deref())
+                .is_some()
+                && job.purpose.as_deref().is_some_and(|purpose| {
+                    matches!(
+                        purpose,
+                        "validation" | "test" | "build" | "format" | "release"
+                    )
+                });
             if job.project_id.as_deref() == Some(project)
                 && requested.contains(session_id)
-                && job.validation.is_some()
+                && (job.validation.is_some() || generic_validation)
             {
+                let mut summary = agent_job_summary_value(job);
+                summary["purpose"] = json!(job.purpose);
+                summary["cwd"] = json!(job.project_cwd);
+                summary["shell"] = json!(job.shell);
+                summary["command_summary"] = json!(job.command_preview);
                 grouped
                     .entry(session_id.to_string())
                     .or_default()
-                    .push(agent_job_summary_value(job));
+                    .push(summary);
             }
         }
         if local_jobs_visible_to_auth(auth) {

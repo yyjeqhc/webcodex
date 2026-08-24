@@ -441,6 +441,8 @@ pub(crate) struct ShellJobStartMetadata {
     pub(crate) validation: Option<ShellJobValidationMetadata>,
     pub(crate) visibility: ShellJobVisibility,
     pub(crate) sandbox: Option<String>,
+    pub(crate) validation_identity: Option<String>,
+    pub(crate) validation_tool: Option<String>,
     pub(crate) structured_execution: Option<StructuredJobExecution>,
     pub(crate) stdin: Option<String>,
     /// Detached-only caller replay key. Consumed to derive the logical Job
@@ -601,6 +603,8 @@ impl ShellClientRegistry {
         let sandbox = metadata.sandbox;
         let validation_steps = metadata.validation_steps;
         let validation = metadata.validation;
+        let validation_identity = metadata.validation_identity.clone();
+        let validation_tool = metadata.validation_tool.clone();
         let structured_execution = metadata.structured_execution;
         let structured_stdin = metadata.stdin;
         if validation_steps.len() > 3
@@ -653,6 +657,8 @@ impl ShellClientRegistry {
                     script_bytes: None,
                     arg_count: process.args.len(),
                     stdin_present: structured_stdin.is_some(),
+                    validation_identity: validation_identity.clone(),
+                    validation_tool: validation_tool.clone(),
                 };
                 (
                     "start_process_job",
@@ -679,6 +685,8 @@ impl ShellClientRegistry {
                     script_bytes: None,
                     arg_count: process.args.len(),
                     stdin_present: structured_stdin.is_some(),
+                    validation_identity: validation_identity.clone(),
+                    validation_tool: validation_tool.clone(),
                 };
                 (
                     "start_detached_process_job",
@@ -709,6 +717,8 @@ impl ShellClientRegistry {
                     script_bytes: Some(script.script.len()),
                     arg_count: script.args.len(),
                     stdin_present: structured_stdin.is_some(),
+                    validation_identity: validation_identity.clone(),
+                    validation_tool: validation_tool.clone(),
                 };
                 (
                     "start_script_job",

@@ -13,6 +13,7 @@ use super::shell::{
 use super::structured_execution::{
     await_hidden_structured_job, HiddenStructuredJobWait, StructuredExecutionBudget,
 };
+use super::tool_audit::run_process_validation_identity;
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_client::{
@@ -662,6 +663,13 @@ impl ToolRuntime {
         }
         let summary = process_preview(&process.executable, process.args.iter().map(String::as_str));
         let declared_purpose = purpose.unwrap_or_default();
+        let validation_identity = run_process_validation_identity(
+            &process.executable,
+            &process.args,
+            stdin.as_deref(),
+            cwd.as_deref(),
+            Some(declared_purpose.as_str()),
+        );
         let proj = match self.resolve_project(&project).await {
             Ok(project) => project,
             Err(error) => {
@@ -786,6 +794,12 @@ impl ToolRuntime {
                             visibility: ShellJobVisibility::HiddenUntilHandoff,
                             sandbox: sandbox.map(str::to_string),
                             structured_execution: Some(StructuredJobExecution::Process(process)),
+                            validation_identity: validation_identity
+                                .as_ref()
+                                .map(|identity| identity.identity.clone()),
+                            validation_tool: validation_identity
+                                .as_ref()
+                                .and_then(|identity| identity.validation_tool.map(str::to_string)),
                             stdin,
                             ..Default::default()
                         },

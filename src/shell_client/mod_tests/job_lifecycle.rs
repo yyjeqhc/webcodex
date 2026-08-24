@@ -16,6 +16,8 @@ async fn validation_job_rechecks_cargo_test_count_assertion_capability_after_dow
         build: None,
         job_concurrency_limit: None,
         job_inventory: None,
+        coding_agent_providers: None,
+        coding_agent_inventory: None,
         client_id: "cargo-assertion-fence".to_string(),
         agent_instance_id: "inst".to_string(),
         display_name: None,

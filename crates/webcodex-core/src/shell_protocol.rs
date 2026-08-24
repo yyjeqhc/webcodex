@@ -3087,6 +3087,8 @@ mod envelope_tests {
                 script_bytes: None,
                 arg_count: 3,
                 stdin_present: true,
+                validation_identity: None,
+                validation_tool: None,
             }),
         });
         request
@@ -3149,6 +3151,8 @@ mod envelope_tests {
                 script_bytes: Some(18),
                 arg_count: 2,
                 stdin_present: true,
+                validation_identity: None,
+                validation_tool: None,
             }),
         });
         request

@@ -5,6 +5,8 @@ pub(crate) mod computer;
 pub(crate) mod config;
 pub(crate) mod detached_job;
 pub(crate) mod dispatch;
+#[cfg(windows)]
+pub(crate) mod exit_diagnostics;
 pub(crate) mod external_tools;
 pub(crate) mod files;
 pub(crate) mod lsp;

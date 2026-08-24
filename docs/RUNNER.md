@@ -348,6 +348,26 @@ After a machine reboot, a hosted `connect` profile is restarted by rerunning
 `webcodex connect` or `webcodex agent start --profile <profile>`. Automatic
 startup at logon is not implemented for hosted profiles.
 
+On Windows, each Runner process also writes one small bounded lifecycle record under
+`%LOCALAPPDATA%\webcodex\runner-exit-diagnostics-v1\<runner-hash>\` (falling
+back to `%USERPROFILE%\.local\state\webcodex` and then `%TEMP%\webcodex` through
+the normal Runner state-path rules). Only the newest eight process records are
+retained. A record contains the local PID, process start time, build identity,
+transport, shutdown-signal observation, transport return class, and clean/fatal
+terminal classification. A sibling `*.panic.json` file is written best-effort
+when a Rust panic hook runs and contains only the thread name and source location;
+it never stores the panic payload. These diagnostics never contain credentials,
+commands, Job output, request payloads, or Server response bodies, and a state
+write failure never changes Runner lifecycle behavior.
+
+For an unexpected supervised exit, correlate the supervisor's PID/timestamp with
+the matching lifecycle record. `terminal=null` means the process disappeared
+before Rust recorded a clean/fatal return. A panic sibling narrows that to a Rust
+panic; `shutdown_signal_received_at_unix_ms` without a terminal record points to
+an interrupted graceful-shutdown path. If neither is present, investigate an
+external/native process termination or supervisor action before adding broader
+Runner telemetry.
+
 ## macOS local dogfood signing
 
 macOS privacy grants such as Screen Recording and Accessibility should not be

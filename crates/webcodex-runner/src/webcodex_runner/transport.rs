@@ -4,6 +4,8 @@ use super::config::{
 };
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 use super::detached_job::DetachedJobStore;
+#[cfg(windows)]
+use super::exit_diagnostics::RunnerExitDiagnostics;
 use super::lsp::LspSupervisor;
 use super::projects::AgentProjectCache;
 use super::shutdown::{
@@ -166,6 +168,8 @@ pub(crate) struct AgentRuntimeState {
     reload_threads: Arc<BackgroundThreads>,
     background_threads: Arc<BackgroundThreads>,
     dispatches: ActivityTracker,
+    #[cfg(windows)]
+    exit_diagnostics: Option<Arc<RunnerExitDiagnostics>>,
 }
 
 impl AgentRuntimeState {
@@ -189,6 +193,8 @@ impl AgentRuntimeState {
             reload_threads: Arc::new(BackgroundThreads::default()),
             background_threads: Arc::new(BackgroundThreads::default()),
             dispatches: ActivityTracker::default(),
+            #[cfg(windows)]
+            exit_diagnostics: None,
         }
     }
 
@@ -199,6 +205,10 @@ impl AgentRuntimeState {
         self.jobs.stop_accepting_work();
         self.persistent_shells.close_all("runner_shutdown");
         self.lsp.begin_shutdown_until(deadline);
+        #[cfg(windows)]
+        if let Some(diagnostics) = self.exit_diagnostics.as_ref() {
+            diagnostics.mark_shutdown_signal_received();
+        }
     }
 
     fn shutdown_flag(&self) -> Arc<AtomicBool> {
@@ -1344,7 +1354,8 @@ pub(crate) fn run_agent(cfg: AgentConfig, config_path: PathBuf, once: bool) -> R
     // Generate the per-process agent instance identity once. It is stable for
     // the whole process lifetime, including across WebSocket reconnects, so the
     // server can treat this process as a single active lease for `client_id`.
-    // It is not a secret and is never persisted to disk.
+    // It is not a secret and is never persisted to disk. Windows exit diagnostics
+    // use a separate local diagnostic id and therefore preserve that boundary.
     let agent_instance_id = uuid::Uuid::new_v4().to_string();
     let transport = cfg
         .transport
@@ -1353,9 +1364,37 @@ pub(crate) fn run_agent(cfg: AgentConfig, config_path: PathBuf, once: bool) -> R
         .filter(|s| !s.is_empty())
         .unwrap_or(TRANSPORT_WEBSOCKET)
         .to_string();
+    #[cfg(windows)]
+    let exit_diagnostics = {
+        let build = crate::runner_build_info();
+        match RunnerExitDiagnostics::start(
+            &cfg.client_id,
+            &cfg.server_url,
+            &transport,
+            crate::process_started_at(),
+            build.version.as_deref(),
+            build.git_commit.as_deref(),
+            build.git_dirty,
+        ) {
+            Ok(diagnostics) => {
+                diagnostics.install_panic_hook();
+                Some(diagnostics)
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "Windows Runner exit diagnostics unavailable; Runner continues");
+                None
+            }
+        }
+    };
     // The LSP supervisor belongs to the agent process rather than any server
     // transport session and is shared across reconnects.
     let runtime = AgentRuntimeState::new(&cfg, config_path.clone());
+    #[cfg(windows)]
+    let runtime = {
+        let mut runtime = runtime;
+        runtime.exit_diagnostics = exit_diagnostics.clone();
+        runtime
+    };
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     match DetachedJobStore::default_root_for_runner(&cfg.client_id, &cfg.server_url) {
         Ok(root) => match runtime.jobs.recover_detached_jobs(
@@ -1378,8 +1417,21 @@ pub(crate) fn run_agent(cfg: AgentConfig, config_path: PathBuf, once: bool) -> R
             tracing::error!(error = %error, "detached Job state root is unavailable");
         }
     }
-    let shutdown_listener = install_shutdown_listener(runtime.clone())?;
+    let shutdown_listener = match install_shutdown_listener(runtime.clone()) {
+        Ok(listener) => listener,
+        Err(error) => {
+            #[cfg(windows)]
+            if let Some(diagnostics) = exit_diagnostics.as_ref() {
+                diagnostics.mark_terminal(false, "shutdown_listener_install_failed", None);
+            }
+            return Err(error);
+        }
+    };
     runtime.register_background_thread(shutdown_listener);
+    #[cfg(windows)]
+    if let Some(diagnostics) = exit_diagnostics.as_ref() {
+        diagnostics.mark_running();
+    }
     #[cfg(unix)]
     match install_reload_listener(Arc::clone(&runtime.config)) {
         Ok(reload_listener) => runtime.register_reload_thread(reload_listener),
@@ -1394,7 +1446,23 @@ pub(crate) fn run_agent(cfg: AgentConfig, config_path: PathBuf, once: bool) -> R
         TRANSPORT_AUTO => run_auto_agent(cfg, once, &agent_instance_id, &runtime),
         _ => run_polling_agent(cfg, once, &agent_instance_id, &runtime),
     };
-    runtime.shutdown();
+    #[cfg(windows)]
+    if let Some(diagnostics) = exit_diagnostics.as_ref() {
+        diagnostics.mark_transport_returned(result.is_ok());
+    }
+    let _shutdown = runtime.shutdown();
+    #[cfg(windows)]
+    if let Some(diagnostics) = exit_diagnostics.as_ref() {
+        diagnostics.mark_terminal(
+            result.is_ok(),
+            if result.is_ok() {
+                "transport_completed"
+            } else {
+                "transport_returned_error"
+            },
+            Some(&_shutdown),
+        );
+    }
     result
 }
 

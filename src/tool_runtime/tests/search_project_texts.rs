@@ -1028,6 +1028,73 @@ async fn search_project_texts_does_not_retry_nontransient_agent_failures() {
 }
 
 #[tokio::test]
+async fn search_project_texts_rejects_nonleading_backend_markers() {
+    for (client_id, stdout) in [
+        (
+            "batch-search-bare-marker",
+            "{\"backend\":\"rg\"}\nsrc/a.rs:1:needle\n".to_string(),
+        ),
+        (
+            "batch-search-late-marker",
+            "src/z.rs:1:needle\n{\"webcodex_search\":{\"backend\":\"rg\"}}\n".to_string(),
+        ),
+        (
+            "batch-search-truncated-marker",
+            "[output truncated to last 12000 bytes]\nsrc/z.rs:1:needle\n{\"webcodex_search\":{\"backend\":\"rg\"}}\n"
+                .to_string(),
+        ),
+    ] {
+        let result = run_single_agent_batch_response(
+            client_id,
+            query("needle", None),
+            0,
+            stdout,
+            "",
+        )
+        .await;
+        let item = &result.output["items"][0];
+        assert_eq!(item["success"], false, "client {client_id}");
+        assert_eq!(
+            item["output"]["reason_code"], "search_execution_failed",
+            "client {client_id}"
+        );
+        assert_eq!(
+            item["output"]["failure_stage"], "backend_protocol",
+            "client {client_id}"
+        );
+        assert_eq!(
+            item["output"]["detail_code"], "backend_identity_missing",
+            "client {client_id}"
+        );
+        assert!(item["output"]["backend"].is_null(), "client {client_id}");
+    }
+}
+
+#[tokio::test]
+async fn search_project_texts_timeout_tail_cannot_promote_late_marker_records() {
+    let mut timeout_query = query("needle", None);
+    timeout_query.timeout_secs = Some(1);
+    let result = run_single_agent_batch_response(
+        "batch-search-timeout-tail-marker",
+        timeout_query,
+        -1,
+        "[output truncated to last 12000 bytes]\nsrc/z.rs:1:needle\n{\"webcodex_search\":{\"backend\":\"rg\"}}\n"
+            .to_string(),
+        "command timed out after 1 seconds",
+    )
+    .await;
+
+    let output = &result.output["items"][0]["output"];
+    assert_eq!(result.output["items"][0]["success"], false);
+    assert_eq!(output["reason_code"], "timeout");
+    assert_eq!(output["failure_stage"], "agent_execution");
+    assert_eq!(output["detail_code"], "timeout");
+    assert!(output["backend"].is_null());
+    assert!(output.get("matches").is_none());
+    assert!(!serde_json::to_string(&result).unwrap().contains("src/z.rs"));
+}
+
+#[tokio::test]
 async fn search_project_texts_mixed_batch_preserves_failure_and_empty_result_fidelity() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();

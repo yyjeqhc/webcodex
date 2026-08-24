@@ -1636,12 +1636,15 @@ fn search_project_text_grep_fallback_excludes_ignored_claude_worktrees() {
 }
 
 #[test]
-fn parse_search_project_text_output_reports_backend_and_limit_truncation() {
+fn parse_search_project_text_output_accepts_leading_canonical_marker_and_reports_limit_truncation()
+{
     let stdout = concat!(
-        "{\"backend\":\"rg\"}\n",
+        "\n",
+        " \r\n",
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
         "src/a.rs:1:needle one\n",
         "src/b.rs:2:needle two\n",
-        "{\"backend\":\"rg\"}\n",
+        "{\"webcodex_search\":{\"backend\":\"grep\"}}\n",
     );
     let options = SearchOptions::normalize(SearchRequest {
         limit: Some(1),
@@ -1934,6 +1937,27 @@ fn search_markerless_output_cannot_be_reported_as_a_search_result() {
         let rendered = serde_json::to_string(&result).unwrap();
         assert!(!rendered.contains("PowerShell parser"));
         assert!(!rendered.contains("startup noise"));
+    }
+}
+
+#[test]
+fn search_backend_identity_requires_leading_canonical_namespaced_marker() {
+    let options = SearchOptions::normalize(raw_search_request()).unwrap();
+    for stdout in [
+        "{\"backend\":\"rg\"}\nsrc/a.rs:1:needle\n",
+        "src/z.rs:1:needle\n{\"webcodex_search\":{\"backend\":\"rg\"}}\n",
+        "[output truncated to last 12000 bytes]\nsrc/z.rs:1:needle\n{\"webcodex_search\":{\"backend\":\"rg\"}}\n",
+    ] {
+        let result = search_project_text_output("demo", &options, stdout, Some(0), "");
+        assert!(!result.success, "stdout={stdout:?}");
+        assert_search_output_keys_are_declared(&result.output);
+        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["failure_stage"], "backend_protocol");
+        assert_eq!(result.output["reason_code"], "backend_identity_missing");
+        assert!(result.output["backend"].is_null());
+        let rendered = serde_json::to_string(&result).unwrap();
+        assert!(!rendered.contains("src/a.rs"));
+        assert!(!rendered.contains("src/z.rs"));
     }
 }
 

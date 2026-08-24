@@ -803,8 +803,9 @@ enum SearchTruncation {
     /// The `head -c` byte budget cut the stream, possibly mid-record; the
     /// parser drops the partial tail so only complete records are returned.
     OutputBytes,
-    /// stdout was transport-truncated (the Runner keeps a tail of the output);
-    /// the kept tail is honored but the prefix marks it incomplete.
+    /// stdout was transport-truncated (the Runner keeps a tail of the output).
+    /// Public identity validation rejects prefix loss before retained records
+    /// can be promoted; this remains parser-level truncation metadata only.
     Transport,
     /// The search did not finish within the effective timeout; records
     /// collected before the timeout are still complete and trusted.
@@ -844,52 +845,68 @@ struct SearchBackendStatus {
     feature_unavailable: bool,
     marker_present: bool,
     marker_invalid: bool,
+    payload_start: usize,
 }
 
-fn parse_search_backend_status(stdout: &str) -> SearchBackendStatus {
-    let mut marker_invalid = false;
-    for line in stdout.lines() {
-        let value = match serde_json::from_str::<Value>(line) {
-            Ok(value) => value,
-            Err(_) => {
-                marker_invalid |= line.contains("webcodex_search");
-                continue;
-            }
-        };
-        let marker = if let Some(marker) = value.get("webcodex_search") {
-            marker
-        } else if value.get("backend").is_some() {
-            &value
-        } else {
-            continue;
-        };
-        let Some(backend) = marker.get("backend").and_then(Value::as_str) else {
-            marker_invalid = true;
-            continue;
-        };
-        if !matches!(backend, "rg" | "grep" | "native" | "claude_code")
-            || marker
-                .get("feature_unavailable")
-                .is_some_and(|value| !value.is_boolean())
-        {
-            marker_invalid = true;
-            continue;
-        }
-        return SearchBackendStatus {
-            backend: backend.to_string(),
-            feature_unavailable: marker
-                .get("feature_unavailable")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            marker_present: true,
-            marker_invalid: false,
-        };
-    }
+fn missing_search_backend_status(marker_invalid: bool) -> SearchBackendStatus {
     SearchBackendStatus {
         backend: "grep".to_string(),
         feature_unavailable: false,
         marker_present: false,
         marker_invalid,
+        payload_start: 0,
+    }
+}
+
+/// Return the first non-empty stdout line and the byte offset immediately after
+/// it. Blank transport padding is tolerated, but no non-empty payload may
+/// precede the backend marker.
+fn first_search_payload_line(stdout: &str) -> Option<(&str, usize)> {
+    let mut offset = 0;
+    for segment in stdout.split_inclusive('\n') {
+        let next_offset = offset + segment.len();
+        let line = segment.strip_suffix('\n').unwrap_or(segment);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if !line.trim().is_empty() {
+            return Some((line, next_offset));
+        }
+        offset = next_offset;
+    }
+    None
+}
+
+fn parse_search_backend_status(stdout: &str) -> SearchBackendStatus {
+    let Some((line, payload_start)) = first_search_payload_line(stdout) else {
+        return missing_search_backend_status(false);
+    };
+    let value = match serde_json::from_str::<Value>(line) {
+        Ok(value) => value,
+        Err(_) => return missing_search_backend_status(line.contains("webcodex_search")),
+    };
+    let Some(marker) = value.get("webcodex_search") else {
+        // Bare {"backend": ...} objects and arbitrary JSON payload are not
+        // trusted identity evidence.
+        return missing_search_backend_status(false);
+    };
+    let Some(backend) = marker.get("backend").and_then(Value::as_str) else {
+        return missing_search_backend_status(true);
+    };
+    if !matches!(backend, "rg" | "grep" | "native" | "claude_code")
+        || marker
+            .get("feature_unavailable")
+            .is_some_and(|value| !value.is_boolean())
+    {
+        return missing_search_backend_status(true);
+    }
+    SearchBackendStatus {
+        backend: backend.to_string(),
+        feature_unavailable: marker
+            .get("feature_unavailable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        marker_present: true,
+        marker_invalid: false,
+        payload_start,
     }
 }
 
@@ -1005,18 +1022,11 @@ fn parse_search_line_record(line: &str) -> Option<SearchLineRecord> {
 /// payload. Low-level parser helpers still tolerate markerless input, but the
 /// public search result path rejects it before parsing.
 fn search_payload_start(stdout: &str) -> usize {
-    let Some(newline) = stdout.find('\n') else {
-        return 0;
-    };
-    let line = &stdout[..newline];
-    let Some(()) = serde_json::from_str::<Value>(line).ok().and_then(|value| {
-        let marker = value.get("webcodex_search").unwrap_or(&value);
-        let backend = marker.get("backend").and_then(Value::as_str)?;
-        matches!(backend, "rg" | "grep" | "native" | "claude_code").then_some(())
-    }) else {
-        return 0;
-    };
-    newline + 1
+    let status = parse_search_backend_status(stdout);
+    status
+        .marker_present
+        .then_some(status.payload_start)
+        .unwrap_or(0)
 }
 
 /// Enforce the formal search payload budget in Rust and retain the shell's
@@ -2226,10 +2236,7 @@ mod tests {
     }
 
     #[test]
-    fn search_transport_truncated_stdout_is_not_mistaken_for_complete() {
-        // The Runner keeps a tail of oversized output prefixed with a marker;
-        // that marker proves the output was truncated and must be reported as
-        // transport truncation, not a complete result.
+    fn search_transport_truncated_stdout_cannot_recover_backend_identity() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
             path: None,
@@ -2248,16 +2255,15 @@ mod tests {
             "{\"webcodex_search\":{\"backend\":\"rg\"}}\n",
         );
         let result = search_project_text_output("demo", &options, stdout, Some(0), "");
-        assert!(result.success, "{:?}", result.error);
-        assert_eq!(result.output["truncated"], true);
-        assert_eq!(result.output["truncation_reason"], "transport");
-        let matches = result.output["matches"].as_array().unwrap();
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0]["path"], "src/z.rs");
+        assert!(!result.success, "{:?}", result.output);
+        assert_eq!(result.output["failure_stage"], "backend_protocol");
+        assert_eq!(result.output["reason_code"], "backend_identity_missing");
+        assert!(result.output["backend"].is_null());
+        assert!(!serde_json::to_string(&result).unwrap().contains("src/z.rs"));
     }
 
     #[test]
-    fn search_transport_marker_forms_preserve_complete_matches() {
+    fn search_transport_marker_forms_cannot_recover_match_identity() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
             path: None,
@@ -2276,24 +2282,21 @@ mod tests {
                 "{marker}{{\"webcodex_search\":{{\"backend\":\"rg\"}}}}\nsrc/a.rs:1:needle one\nsrc/b.rs:2:needle two\n"
             );
             let result = search_project_text_output("demo", &options, &stdout, Some(0), "");
-            assert!(result.success, "marker {marker:?}: {:?}", result.error);
-            assert_eq!(result.output["truncated"], true, "marker {marker:?}");
+            assert!(!result.success, "marker {marker:?}: {:?}", result.output);
             assert_eq!(
-                result.output["truncation_reason"], "transport",
+                result.output["failure_stage"], "backend_protocol",
                 "marker {marker:?}"
             );
-            let paths = result.output["matches"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|item| item["path"].as_str().unwrap())
-                .collect::<Vec<_>>();
-            assert_eq!(paths, ["src/a.rs", "src/b.rs"], "marker {marker:?}");
+            assert_eq!(
+                result.output["reason_code"], "backend_identity_missing",
+                "marker {marker:?}"
+            );
+            assert!(result.output["backend"].is_null(), "marker {marker:?}");
         }
     }
 
     #[test]
-    fn search_transport_marker_forms_never_become_file_paths() {
+    fn search_transport_marker_forms_cannot_recover_file_identity() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
             path: None,
@@ -2312,28 +2315,21 @@ mod tests {
                 "{marker}{{\"webcodex_search\":{{\"backend\":\"rg\"}}}}\nsrc/a.rs\nsrc/b.rs\n"
             );
             let result = search_project_text_output("demo", &options, &stdout, Some(0), "");
-            assert!(result.success, "marker {marker:?}: {:?}", result.error);
-            assert_eq!(result.output["truncated"], true, "marker {marker:?}");
+            assert!(!result.success, "marker {marker:?}: {:?}", result.output);
             assert_eq!(
-                result.output["truncation_reason"], "transport",
+                result.output["failure_stage"], "backend_protocol",
                 "marker {marker:?}"
             );
-            let paths = result.output["files"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|item| item["path"].as_str().unwrap())
-                .collect::<Vec<_>>();
-            assert_eq!(paths, ["src/a.rs", "src/b.rs"], "marker {marker:?}");
-            assert!(
-                !paths.contains(&"[output truncated]"),
-                "Phase F long marker must not become a fake path"
+            assert_eq!(
+                result.output["reason_code"], "backend_identity_missing",
+                "marker {marker:?}"
             );
+            assert!(result.output["backend"].is_null(), "marker {marker:?}");
         }
     }
 
     #[test]
-    fn search_transport_marker_forms_make_counts_incomplete() {
+    fn search_transport_marker_forms_cannot_recover_count_identity() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
             path: None,
@@ -2352,23 +2348,16 @@ mod tests {
                 "{marker}{{\"webcodex_search\":{{\"backend\":\"rg\"}}}}\nsrc/a.rs:2\nsrc/b.rs:3\n"
             );
             let result = search_project_text_output("demo", &options, &stdout, Some(0), "");
-            assert!(result.success, "marker {marker:?}: {:?}", result.error);
-            assert_eq!(result.output["truncated"], true, "marker {marker:?}");
+            assert!(!result.success, "marker {marker:?}: {:?}", result.output);
             assert_eq!(
-                result.output["truncation_reason"], "transport",
+                result.output["failure_stage"], "backend_protocol",
                 "marker {marker:?}"
             );
-            assert_eq!(result.output["returned_file_count"], 2, "marker {marker:?}");
             assert_eq!(
-                result.output["returned_match_count"], 5,
+                result.output["reason_code"], "backend_identity_missing",
                 "marker {marker:?}"
             );
-            assert_eq!(result.output["count_complete"], false, "marker {marker:?}");
-            assert_eq!(
-                result.output["total_matches"],
-                Value::Null,
-                "marker {marker:?}"
-            );
+            assert!(result.output["backend"].is_null(), "marker {marker:?}");
         }
     }
 

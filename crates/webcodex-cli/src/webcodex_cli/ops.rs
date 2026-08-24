@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::time::Duration;
 use webcodex_admin::ServerHttpOptions;
 
 use super::{
@@ -7,6 +8,7 @@ use super::{
 };
 
 const DEFAULT_EXPECTED_TOOL_COUNT: u64 = 66;
+pub(crate) const DEFAULT_RUNNER_REQUEST_TIMEOUT_MS: u64 = 5_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OpsCommonOptions {
@@ -26,9 +28,17 @@ pub(crate) struct OpsSmokePreflightOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OpsRunnerOptions {
+    pub(crate) common: OpsCommonOptions,
+    pub(crate) client_id: String,
+    pub(crate) request_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OpsCommand {
     Status(OpsCommonOptions),
     Agents(OpsCommonOptions),
+    Runner(OpsRunnerOptions),
     Projects(OpsCommonOptions),
     SmokePreflight(OpsSmokePreflightOptions),
 }
@@ -39,6 +49,7 @@ impl OpsCommand {
             OpsCommand::Status(opts) | OpsCommand::Agents(opts) | OpsCommand::Projects(opts) => {
                 opts.strict
             }
+            OpsCommand::Runner(opts) => opts.common.strict,
             OpsCommand::SmokePreflight(opts) => opts.common.strict,
         }
     }
@@ -144,6 +155,30 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                 ),
             };
             render_ops_command_output(report, opts.json, render_ops_agents)
+        }
+        OpsCommand::Runner(opts) => {
+            let token = resolve_ops_token(&opts.common)?;
+            let report = match fetch_ops_json_output_bounded(
+                &opts.common.server_url,
+                &opts.common.server_http,
+                "/api/runtime/status",
+                token.as_deref(),
+                json!({"client_id": opts.client_id}),
+                opts.request_timeout_ms,
+            )
+            .await
+            {
+                Ok(runtime) => {
+                    ops_runner_report(&opts.common.server_url, &opts.client_id, &Some(runtime))
+                }
+                Err(failure) => ops_http_failure_report(
+                    &opts.common.server_url,
+                    "runtime_status",
+                    failure,
+                    token.is_some(),
+                ),
+            };
+            render_ops_command_output(report, opts.common.json, render_ops_runner)
         }
         OpsCommand::Projects(opts) => {
             let token = resolve_ops_token(&opts)?;
@@ -330,6 +365,7 @@ enum OpsHttpFailureKind {
     Unauthorized,
     Forbidden,
     Unreachable,
+    RequestTimeout,
     ServerError,
     NonJson,
     Malformed,
@@ -342,6 +378,7 @@ impl OpsHttpFailureKind {
             OpsHttpFailureKind::Unauthorized => "unauthorized",
             OpsHttpFailureKind::Forbidden => "forbidden",
             OpsHttpFailureKind::Unreachable => "runtime_unreachable",
+            OpsHttpFailureKind::RequestTimeout => "request_timeout",
             OpsHttpFailureKind::ServerError => "server_error",
             OpsHttpFailureKind::NonJson => "non_json_response",
             OpsHttpFailureKind::Malformed => "malformed_response",
@@ -393,6 +430,14 @@ impl OpsHttpFailure {
             content_type: None,
         }
     }
+
+    fn request_timeout() -> Self {
+        Self {
+            kind: OpsHttpFailureKind::RequestTimeout,
+            status_code: None,
+            content_type: None,
+        }
+    }
 }
 
 async fn fetch_ops_json_output(
@@ -412,6 +457,25 @@ async fn fetch_ops_json_output(
             value.is_some(),
         )),
         Err(e) => Err(OpsHttpFailure::from_transport_error(e)),
+    }
+}
+
+async fn fetch_ops_json_output_bounded(
+    server_url: &str,
+    server_http: &ServerHttpOptions,
+    path: &str,
+    token: Option<&str>,
+    body: Value,
+    request_timeout_ms: u64,
+) -> Result<Value, OpsHttpFailure> {
+    match tokio::time::timeout(
+        Duration::from_millis(request_timeout_ms),
+        fetch_ops_json_output(server_url, server_http, path, token, body),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(OpsHttpFailure::request_timeout()),
     }
 }
 
@@ -445,7 +509,10 @@ fn ops_http_failure_report(
     OpsReport {
         verdict: verdict.finish(),
         summary: json!({
-            "runtime_reachable": failure.kind != OpsHttpFailureKind::Unreachable,
+            "runtime_reachable": !matches!(
+                failure.kind,
+                OpsHttpFailureKind::Unreachable | OpsHttpFailureKind::RequestTimeout
+            ),
             "http": http.clone(),
         }),
         source: json!({
@@ -485,6 +552,7 @@ fn ops_http_failure_reason(failure: &OpsHttpFailure, token_present: bool) -> &'s
         OpsHttpFailureKind::Unauthorized => "unauthorized",
         OpsHttpFailureKind::Forbidden => "forbidden",
         OpsHttpFailureKind::Unreachable => "runtime_unreachable",
+        OpsHttpFailureKind::RequestTimeout => "request_timeout",
         OpsHttpFailureKind::ServerError => "server_error",
         OpsHttpFailureKind::NonJson => "non_json_response",
         OpsHttpFailureKind::Malformed => "malformed_response",
@@ -501,6 +569,9 @@ fn ops_http_failure_action(kind: OpsHttpFailureKind) -> &'static str {
             "use a bearer token with the required runtime, project, or job scope"
         }
         OpsHttpFailureKind::Unreachable => "check --server-url, DNS, firewall, and server process",
+        OpsHttpFailureKind::RequestTimeout => {
+            "retry the exact Runner observation within its bounded request deadline"
+        }
         OpsHttpFailureKind::ServerError => {
             "inspect WebCodex server logs for the failing ops request"
         }
@@ -685,6 +756,65 @@ pub(crate) fn ops_agents_report(server_url: &str, runtime: &Option<Value>) -> Op
         "stale_count": stale,
         "active_jobs": active_jobs,
         "agents": clients,
+    });
+    OpsReport {
+        verdict: verdict.finish(),
+        summary,
+        source: source_json(server_url, runtime_commit(runtime), "runtime_status"),
+    }
+}
+
+pub(crate) fn ops_runner_report(
+    server_url: &str,
+    expected_client_id: &str,
+    runtime: &Option<Value>,
+) -> OpsReport {
+    let mut verdict = OpsVerdict::pass();
+    let Some(runtime) = runtime.as_ref() else {
+        verdict.fail_reason(
+            "runtime_unreachable",
+            "check --server-url, network reachability, and bearer token",
+        );
+        return OpsReport {
+            verdict: verdict.finish(),
+            summary: json!({
+                "runtime_reachable": false,
+                "client_id": expected_client_id,
+            }),
+            source: source_json(server_url, None, "runtime_status"),
+        };
+    };
+    let focus = runtime.get("focus").filter(|value| value.is_object());
+    let Some(focus) = focus else {
+        verdict.fail_reason(
+            "runner_not_observed",
+            "verify the exact Runner client_id is registered and caller-visible",
+        );
+        return OpsReport {
+            verdict: verdict.finish(),
+            summary: json!({
+                "runtime_reachable": true,
+                "client_id": expected_client_id,
+                "connected": false,
+            }),
+            source: source_json(server_url, runtime_commit(runtime), "runtime_status"),
+        };
+    };
+    if focus.get("client_id").and_then(Value::as_str) != Some(expected_client_id) {
+        verdict.fail_reason(
+            "unexpected_runner_identity",
+            "retry the exact client_id query and inspect Server runtime registration",
+        );
+    }
+    let summary = json!({
+        "runtime_reachable": true,
+        "client_id": focus.get("client_id").cloned().unwrap_or(Value::Null),
+        "connected": focus.get("connected").cloned().unwrap_or(Value::Null),
+        "status": focus.get("status").cloned().unwrap_or(Value::Null),
+        "agent_instance_id": focus.get("agent_instance_id").cloned().unwrap_or(Value::Null),
+        "build": focus.get("build").cloned().unwrap_or(Value::Null),
+        "compatibility_status": focus.get("compatibility_status").cloned().unwrap_or(Value::Null),
+        "source_alignment": focus.get("source_alignment").cloned().unwrap_or(Value::Null),
     });
     OpsReport {
         verdict: verdict.finish(),
@@ -993,6 +1123,36 @@ pub(crate) fn render_ops_agents(report: &OpsReport, json_output: bool) -> Result
             display_value(&client["active_jobs"]),
             display_value(&client["pending_requests"]),
             display_value(&client["last_seen_age_secs"])
+        ));
+    }
+    out.push_str(&render_reasons(report));
+    Ok(out)
+}
+
+pub(crate) fn render_ops_runner(report: &OpsReport, json_output: bool) -> Result<String, String> {
+    if json_output {
+        return render_ops_json(report);
+    }
+    let mut out = render_overall_header(report);
+    out.push_str(&render_http_failure(report));
+    out.push_str("Runner:\n");
+    for field in [
+        "client_id",
+        "connected",
+        "status",
+        "agent_instance_id",
+        "compatibility_status",
+    ] {
+        out.push_str(&format!(
+            "  {field}: {}\n",
+            display_value(&report.summary[field])
+        ));
+    }
+    out.push_str("Build:\n");
+    for field in ["version", "git_commit", "git_dirty", "built_at"] {
+        out.push_str(&format!(
+            "  {field}: {}\n",
+            display_value(&report.summary["build"][field])
         ));
     }
     out.push_str(&render_reasons(report));

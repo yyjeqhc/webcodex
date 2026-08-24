@@ -1,7 +1,7 @@
 use super::support::*;
 use crate::webcodex_cli::ops::{
-    ops_agents_report, ops_exit_code, ops_projects_report, ops_smoke_preflight_report,
-    ops_status_report, render_ops_status,
+    ops_agents_report, ops_exit_code, ops_projects_report, ops_runner_report,
+    ops_smoke_preflight_report, ops_status_report, render_ops_runner, render_ops_status,
 };
 use crate::webcodex_cli::run_ops_command;
 use std::time::Duration;
@@ -43,6 +43,18 @@ fn ops_help_entrypoints_print_usage() {
                 "--env-file PATH",
                 "--token-file PATH",
                 "--token TOKEN",
+                "--json",
+                "--strict",
+            ],
+        ),
+        (
+            &["ops", "runner", "--help"],
+            &[
+                "Usage: webcodex ops runner",
+                "--client-id CLIENT_ID",
+                "--request-timeout-ms MS",
+                "--server-url URL",
+                "--token-file PATH",
                 "--json",
                 "--strict",
             ],
@@ -91,7 +103,7 @@ fn ops_help_entrypoints_print_usage() {
 #[test]
 fn top_level_help_mentions_ops() {
     let out = cli_exit(["--help"]).unwrap();
-    assert!(out.contains("ops status|agents|projects|smoke-preflight"));
+    assert!(out.contains("ops status|agents|runner|projects|smoke-preflight"));
 }
 
 #[test]
@@ -149,6 +161,41 @@ fn ops_smoke_preflight_requires_project() {
             assert!(stderr.contains("--project is required"));
         }
         other => panic!("expected missing project exit, got {other:?}"),
+    }
+}
+
+#[test]
+fn ops_runner_requires_exact_client_id() {
+    match cli_action(["ops", "runner", "--json"]) {
+        CliAction::Exit { code, stderr, .. } => {
+            assert_eq!(code, 2);
+            assert!(stderr.contains("--client-id is required"));
+        }
+        other => panic!("expected missing client-id exit, got {other:?}"),
+    }
+
+    match cli_action([
+        "ops",
+        "runner",
+        "--client-id",
+        "msi",
+        "--server-url",
+        "https://runtime.example",
+        "--token-file",
+        "/tmp/user-token",
+        "--json",
+    ]) {
+        CliAction::Ops(OpsCommand::Runner(opts)) => {
+            assert_eq!(opts.client_id, "msi");
+            assert_eq!(opts.request_timeout_ms, 5_000);
+            assert_eq!(opts.common.server_url, "https://runtime.example");
+            assert_eq!(
+                opts.common.token_file.as_deref(),
+                Some(Path::new("/tmp/user-token"))
+            );
+            assert!(opts.common.json);
+        }
+        other => panic!("expected ops runner action, got {other:?}"),
     }
 }
 
@@ -370,6 +417,33 @@ fn runtime_status_fixture() -> Value {
     })
 }
 
+fn runner_runtime_status_fixture() -> Value {
+    json!({
+        "service": "webcodex",
+        "build": {
+            "git_commit": "server123456",
+            "git_dirty": false
+        },
+        "focus": {
+            "client_id": "msi",
+            "connected": true,
+            "status": "online",
+            "agent_instance_id": "instance-new",
+            "build": {
+                "version": "0.3.8",
+                "git_commit": "candidate1234",
+                "git_dirty": false,
+                "built_at": "1787554000"
+            },
+            "compatibility_status": "compatible",
+            "source_alignment": {
+                "status": "different",
+                "git_commit_matches_server": false
+            }
+        }
+    })
+}
+
 fn projects_fixture(recommended: bool) -> Value {
     json!({
         "count": 1,
@@ -521,6 +595,10 @@ async fn run_ops_with_routes(
         OpsCommand::Agents(mut opts) => {
             opts.server_url = server_url;
             OpsCommand::Agents(opts)
+        }
+        OpsCommand::Runner(mut opts) => {
+            opts.common.server_url = server_url;
+            OpsCommand::Runner(opts)
         }
         OpsCommand::Projects(mut opts) => {
             opts.server_url = server_url;
@@ -725,6 +803,55 @@ fn ops_agents_maps_online_stale_and_jobs() {
     assert_eq!(report.summary["stale_count"], 1);
     assert!(report.summary.get("offline_count").is_none());
     assert_eq!(report.summary["active_jobs"], 1);
+}
+
+#[test]
+fn ops_runner_projects_only_exact_safe_runtime_identity() {
+    let secret = "wc_pat_projection_must_not_leak_0123456789";
+    let mut runtime = runner_runtime_status_fixture();
+    runtime["credential_material"] = json!(secret);
+    runtime["focus"]["credential_material"] = json!(secret);
+    let report = ops_runner_report("https://ops.example.test", "msi", &Some(runtime));
+    assert_eq!(report.verdict.status, "pass");
+    assert_eq!(report.summary["client_id"], "msi");
+    assert_eq!(report.summary["connected"], true);
+    assert_eq!(report.summary["agent_instance_id"], "instance-new");
+    assert_eq!(report.summary["build"]["git_commit"], "candidate1234");
+    assert_eq!(report.summary["build"]["git_dirty"], false);
+    assert_eq!(report.summary["source_alignment"]["status"], "different");
+    let rendered = render_ops_runner(&report, true).unwrap();
+    assert!(!rendered.contains(secret));
+    assert!(!rendered.contains("credential_material"));
+}
+
+#[tokio::test]
+async fn ops_runner_queries_exact_client_id_without_echoing_token() {
+    let secret = "wc_pat_runner_query_secret_0123456789";
+    let (server_url, stop_tx, handle) = spawn_ops_route_server(vec![(
+        "/api/runtime/status",
+        json_http_response(
+            200,
+            json!({"success": true, "output": runner_runtime_status_fixture()}),
+        ),
+    )]);
+    let mut common = ops_common_opts(server_url);
+    common.token = Some(secret.to_string());
+    common.json = true;
+    let output = run_ops_command(OpsCommand::Runner(OpsRunnerOptions {
+        common,
+        client_id: "msi".to_string(),
+        request_timeout_ms: 5_000,
+    }))
+    .await
+    .unwrap()
+    .stdout;
+    stop_tx.send(()).unwrap();
+    let requests = handle.join().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].contains(r#""client_id":"msi""#));
+    assert!(!output.contains(secret));
+    assert!(output.contains("instance-new"));
+    assert!(output.contains("candidate1234"));
 }
 
 #[test]

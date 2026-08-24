@@ -42,18 +42,19 @@ use webcodex_cli::{
     client_profile_user_token_file_for_scope, client_usage, connect_usage, current_user_home,
     default_client_output_dir_for_profile, default_device_name, default_server_paths,
     disconnect_usage, discover_internal_binary, is_effective_root, login_usage, logout_usage,
-    ops_agents_usage, ops_projects_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
-    pairing_create_usage, pairing_usage, render_token_generate, run_agent_install_service,
-    run_agent_service, run_agent_status, run_agent_token_create_local, run_client_enroll,
-    run_connect, run_disconnect, run_hosted_log_writer, run_internal_binary, run_login, run_logout,
-    run_ops_command, run_pairing_create, run_server_init, run_server_install_service,
-    run_server_service, run_server_status, run_setup_single_user, run_status,
-    run_token_create_local, server_init_usage, server_install_service_usage, server_status_usage,
-    server_usage, status_usage, system_user_home, system_user_is_root, usage,
+    ops_agents_usage, ops_projects_usage, ops_runner_usage, ops_smoke_preflight_usage,
+    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, render_token_generate,
+    run_agent_install_service, run_agent_service, run_agent_status, run_agent_token_create_local,
+    run_client_enroll, run_connect, run_disconnect, run_hosted_log_writer, run_internal_binary,
+    run_login, run_logout, run_ops_command, run_pairing_create, run_server_init,
+    run_server_install_service, run_server_service, run_server_status, run_setup_single_user,
+    run_status, run_token_create_local, server_init_usage, server_install_service_usage,
+    server_status_usage, server_usage, status_usage, system_user_home, system_user_is_root, usage,
     validate_client_profile, validate_service_file_scope, write_connect_result, write_secret_file,
     write_text_file, ConnectAuth, ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions,
-    OpsCommand, OpsCommonOptions, OpsSmokePreflightOptions, ServerStatusOptions, ServiceControl,
-    StatusOptions, AGENT_SERVICE_UNIT, DEFAULT_LOG_LINES, SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
+    OpsCommand, OpsCommonOptions, OpsRunnerOptions, OpsSmokePreflightOptions, ServerStatusOptions,
+    ServiceControl, StatusOptions, AGENT_SERVICE_UNIT, DEFAULT_LOG_LINES, SERVER_SERVICE_FILE,
+    SERVER_SERVICE_UNIT,
 };
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
 const SETUP_AGENT_SCOPES: &[&str] = &[
@@ -1243,6 +1244,23 @@ fn parse_ops_subcommand(args: &[String]) -> CliAction {
                 },
             }
         }
+        "runner" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: ops_runner_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_ops_runner(&args[1..]) {
+                Ok(opts) => CliAction::Ops(OpsCommand::Runner(opts)),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
         "projects" => {
             if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
                 return CliAction::Exit {
@@ -1329,6 +1347,48 @@ fn validate_ops_common(opts: &OpsCommonOptions) -> Result<OpsCommonOptions, Stri
         return Err("--token cannot be empty".to_string());
     }
     Ok(opts.clone())
+}
+
+fn parse_ops_runner(args: &[String]) -> Result<OpsRunnerOptions, String> {
+    let mut common = default_ops_common_options();
+    let mut client_id = String::new();
+    let mut request_timeout_ms = webcodex_cli::ops::DEFAULT_RUNNER_REQUEST_TIMEOUT_MS;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--client-id" => client_id = next_value(&mut iter, arg)?,
+            "--request-timeout-ms" => {
+                request_timeout_ms = next_value(&mut iter, arg)?
+                    .parse::<u64>()
+                    .map_err(|_| "--request-timeout-ms must be an integer".to_string())?;
+            }
+            "--server-url" | "--url" => common.server_url = next_value(&mut iter, arg)?,
+            "--proxy" => common.server_http.proxy = Some(next_value(&mut iter, arg)?),
+            "--no-system-proxy" => common.server_http.no_system_proxy = true,
+            "--env-file" => common.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--token-file" => common.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--token" => common.token = Some(next_value(&mut iter, arg)?),
+            "--json" => common.json = true,
+            "--strict" => common.strict = true,
+            other => return Err(format!("unknown ops runner flag: {}", other)),
+        }
+    }
+    common = validate_ops_common(&common)?;
+    let client_id = client_id.trim().to_string();
+    if client_id.is_empty() {
+        return Err("--client-id is required".to_string());
+    }
+    if client_id.chars().count() > 128 {
+        return Err("--client-id must contain 1..=128 characters".to_string());
+    }
+    if !(1..=30_000).contains(&request_timeout_ms) {
+        return Err("--request-timeout-ms must be within 1..=30000".to_string());
+    }
+    Ok(OpsRunnerOptions {
+        common,
+        client_id,
+        request_timeout_ms,
+    })
 }
 
 fn parse_ops_smoke_preflight(args: &[String]) -> Result<OpsSmokePreflightOptions, String> {

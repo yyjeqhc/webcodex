@@ -71,7 +71,9 @@ pub(crate) use login::{
     base_dir_or_default, default_device_name, run_login, run_logout, run_status, LoginOptions,
     LogoutOptions, StatusOptions,
 };
-pub(crate) use ops::{run_ops_command, OpsCommand, OpsCommonOptions, OpsSmokePreflightOptions};
+pub(crate) use ops::{
+    run_ops_command, OpsCommand, OpsCommonOptions, OpsRunnerOptions, OpsSmokePreflightOptions,
+};
 #[cfg(test)]
 pub(crate) use output::RevisionComparison;
 pub(crate) use output::{
@@ -115,9 +117,9 @@ pub(crate) use tokens::{
 pub(crate) use usage::{
     agent_init_usage, agent_install_service_usage, agent_status_usage, agent_usage,
     client_enroll_usage, client_usage, connect_usage, disconnect_usage, login_usage, logout_usage,
-    ops_agents_usage, ops_projects_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
-    pairing_create_usage, pairing_usage, server_init_usage, server_install_service_usage,
-    server_status_usage, server_usage, status_usage, usage,
+    ops_agents_usage, ops_projects_usage, ops_runner_usage, ops_smoke_preflight_usage,
+    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, server_init_usage,
+    server_install_service_usage, server_status_usage, server_usage, status_usage, usage,
 };
 
 #[cfg(test)]

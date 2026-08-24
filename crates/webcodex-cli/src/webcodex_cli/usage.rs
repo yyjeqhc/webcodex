@@ -20,7 +20,7 @@ Operator / service management:\n\
                                 Configure and manage the Server service\n\
   agent init|install|run|start|stop|restart|status|logs|uninstall\n\
                                 Manage the Runner service (historical `agent` namespace)\n\
-  ops status|agents|projects|smoke-preflight\n\
+  ops status|agents|runner|projects|smoke-preflight\n\
                                 Read-only operator workflow checks\n\n\
 Advanced / compatibility:\n\
   pairing create                Create a client enrollment code\n\
@@ -161,6 +161,7 @@ pub(crate) fn ops_usage() -> &'static str {
      Commands:\n\
        status                  Summarize runtime, tools, jobs, agents, and projects\n\
        agents                  Show compact agent fleet status\n\
+       runner                  Show one exact Runner registration/build identity\n\
        projects                Show compact project inventory and smoke suitability\n\
        smoke-preflight         Check a project before deploy smoke validation\n\n\
      Common flags:\n\
@@ -207,6 +208,25 @@ pub(crate) fn ops_agents_usage() -> &'static str {
        --json                  Print machine-readable output\n\
        --strict                Exit 2 when the ops report status is FAIL\n\
        -h, --help              Print help and exit\n"
+}
+
+pub(crate) fn ops_runner_usage() -> &'static str {
+    "Usage: webcodex ops runner --client-id CLIENT_ID [OPTIONS]\n\n\
+     Show one exact caller-visible Runner registration and build identity.\n\n\
+     Options:\n\
+       --client-id CLIENT_ID   Exact Runner client_id (required)\n\
+       --request-timeout-ms MS Bound one Server observation [default: 5000; max: 30000]\n\
+       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --url URL               Alias for --server-url\n\
+       --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
+       --no-system-proxy       Ignore proxy environment and connect directly\n\
+       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --token-file PATH       Read bearer token from file\n\
+       --token TOKEN           Bearer token input; never printed\n\
+       --json                  Print machine-readable output\n\
+       --strict                Exit 2 when the ops report status is FAIL\n\
+       -h, --help              Print help and exit\n\n\
+     This command is read-only and projects only bounded runtime identity fields.\n"
 }
 
 pub(crate) fn ops_projects_usage() -> &'static str {

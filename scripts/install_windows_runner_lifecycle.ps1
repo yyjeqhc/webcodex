@@ -47,6 +47,13 @@ if ($Apply) {
         'create' {
             if ($PSCmdlet.ShouldProcess("$($expected.TaskPath)$($expected.TaskName)", 'Create WebCodex Windows Runner lifecycle Scheduled Task')) {
                 $definition = New-WindowsRunnerScheduledTaskDefinition -ExpectedSpec $expected
+                $freshCurrent = Get-WindowsRunnerLifecycleTaskObservation `
+                    -TaskName $expected.TaskName `
+                    -TaskPath $expected.TaskPath `
+                    -ExpectedSupervisorPath $expected.SupervisorPath
+                $freshInventory = @(Get-WindowsRunnerPrimaryInventory)
+                $freshPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $freshCurrent -PrimaryInventory $freshInventory
+                $null = Assert-WindowsRunnerLifecycleEffectStillSafe -FreshPlan $freshPlan -ExpectedOperation 'create'
                 Register-ScheduledTask -TaskName $expected.TaskName -TaskPath $expected.TaskPath -InputObject $definition -ErrorAction Stop | Out-Null
                 $changed = $true
             }

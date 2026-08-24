@@ -107,11 +107,13 @@ try {
     $freshPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $missingTask -PrimaryInventory @()
     Assert-Equal 'create' $freshPlan.task_operation 'missing task did not produce create plan'
     Assert-True $freshPlan.can_apply 'fresh create plan was unexpectedly blocked'
+    $null = Assert-WindowsRunnerLifecycleEffectStillSafe -FreshPlan $freshPlan -ExpectedOperation 'create'
 
     $unsupervisedPrimary = [pscustomobject]@{ pid=77; process_creation_filetime=[uint64]88; normalized_executable_path=$expected.RunnerPath; runner_config_path=$expected.RunnerConfigPath; role='primary' }
     $unsafeFreshPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $missingTask -PrimaryInventory @($unsupervisedPrimary)
     Assert-HasMismatch $unsafeFreshPlan.runtime_mismatches 'unsupervised_primary_runner_count' 'fresh task plan ignored an already-running unsupervised primary'
     Assert-False $unsafeFreshPlan.can_apply 'fresh task plan could create beside an unsupervised primary'
+    $null = Assert-Throws { Assert-WindowsRunnerLifecycleEffectStillSafe -FreshPlan $unsafeFreshPlan -ExpectedOperation 'create' } 'changed before create effect'
 
     $exactTask = New-TestTaskObservation -Expected $expected
     $exactPrimary = [pscustomobject]@{ pid=101; process_creation_filetime=[uint64]202; normalized_executable_path=$expected.RunnerPath; runner_config_path=$expected.RunnerConfigPath; role='primary' }

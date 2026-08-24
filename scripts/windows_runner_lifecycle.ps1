@@ -503,7 +503,7 @@ function Assert-WindowsRunnerLifecycleSafeConvergence {
 function Assert-WindowsRunnerLifecycleEffectStillSafe {
     param(
         [Parameter(Mandatory = $true)]$FreshPlan,
-        [Parameter(Mandatory = $true)][ValidateSet('update','enable')][string]$ExpectedOperation
+        [Parameter(Mandatory = $true)][ValidateSet('create','update','enable')][string]$ExpectedOperation
     )
     if (-not [bool]$FreshPlan.can_apply -or [string]$FreshPlan.task_operation -ne $ExpectedOperation) {
         throw "Scheduled Task lifecycle changed before $ExpectedOperation effect; refusing stale mutation"

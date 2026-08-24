@@ -633,6 +633,51 @@ async function main() {
     assert.strictEqual(wrapper.needsNpmNetworkContext(["status"], false), false);
     assert.strictEqual(wrapper.needsNpmNetworkContext(["status"], true), true);
 
+    if (process.env.npm_execpath && /npm-cli\.js$/i.test(process.env.npm_execpath)) {
+      const windowsInvocation = wrapper.npmInvocation(
+        { npm_execpath: process.env.npm_execpath },
+        { platform: "win32" }
+      );
+      assert.strictEqual(windowsInvocation.program, process.execPath);
+      assert.deepStrictEqual(windowsInvocation.prefixArgs, [process.env.npm_execpath]);
+
+      const windowsConfigRoot = path.join(tmp, "wrapper-windows-config");
+      fs.mkdirSync(windowsConfigRoot, { recursive: true });
+      const windowsUserConfig = path.join(windowsConfigRoot, ".npmrc");
+      fs.writeFileSync(
+        windowsUserConfig,
+        "https-proxy=http://windows-user:windows-secret@proxy.example:8443/\nproxy=http://windows-user:windows-secret@proxy.example:8080/\nnoproxy=localhost\nstrict-ssl=false\n"
+      );
+      const windowsHydrated = wrapper.rehydrateNpmNetworkEnvironment(
+        {
+          PATH: process.env.PATH || "",
+          HOME: windowsConfigRoot,
+          USERPROFILE: windowsConfigRoot,
+          npm_config_userconfig: windowsUserConfig
+        },
+        {
+          platform: "win32",
+          npmCliPath: process.env.npm_execpath,
+          networkHelper: path.join(__dirname, "..", "bin", "npm-network-env.js")
+        }
+      );
+      assert.match(windowsHydrated.npm_config_https_proxy, /windows-user:windows-secret@/);
+      assert.match(windowsHydrated.npm_config_proxy, /windows-user:windows-secret@/);
+      assert.strictEqual(windowsHydrated.npm_config_noproxy, "localhost");
+      assert.strictEqual(windowsHydrated.npm_config_strict_ssl, "false");
+    }
+
+    const npmInvocation = wrapper.npmInvocation(process.env, { platform: PLATFORM });
+    assert.ok(npmInvocation, "npm invocation could not be resolved");
+    if (PLATFORM === "win32") {
+      assert.strictEqual(npmInvocation.program, process.execPath);
+      assert.strictEqual(npmInvocation.prefixArgs.length, 1);
+      assert.match(npmInvocation.prefixArgs[0], /npm-cli\.js$/i);
+    } else {
+      assert.strictEqual(npmInvocation.program, "npm");
+      assert.deepStrictEqual(npmInvocation.prefixArgs, []);
+    }
+
     if (PLATFORM !== "win32") {
       const networkRoot = path.join(tmp, "wrapper-network");
       const networkBin = path.join(networkRoot, "bin");
@@ -678,6 +723,56 @@ async function main() {
         { packageRoot: networkRoot, npmProgram: fakeNpm, networkHelper }
       );
       assert.strictEqual(inherited.npm_config_https_proxy, inheritedProxy);
+
+      // A lazy bootstrap needs npm's protected proxy long enough to download the
+      // native binaries, but a non-share native command must not inherit a proxy
+      // credential that was absent from the caller's original environment.
+      const scopedLazyRoot = path.join(tmp, "wrapper-lazy-network-scope");
+      fs.mkdirSync(scopedLazyRoot, { recursive: true });
+      const scopedLazyTarget = wrapper.nativePath({ packageRoot: scopedLazyRoot, platform: PLATFORM });
+      const bootstrapEnvMarker = path.join(scopedLazyRoot, "bootstrap-env");
+      const nativeEnvMarker = path.join(scopedLazyRoot, "native-env");
+      const escapedNativeMarker = nativeEnvMarker.replace(/'/g, "'\\''");
+      const scopedTargetScript = [
+        "#!/bin/sh",
+        'if [ -n "${npm_config_https_proxy-}" ]; then',
+        `  printf leaked > '${escapedNativeMarker}'`,
+        "else",
+        `  printf clean > '${escapedNativeMarker}'`,
+        "fi",
+        "exit 23",
+        ""
+      ].join("\n");
+      const scopedTargetBase64 = Buffer.from(scopedTargetScript, "utf8").toString("base64");
+      fs.writeFileSync(
+        path.join(scopedLazyRoot, "install.js"),
+        [
+          'const fs = require("fs");',
+          'const path = require("path");',
+          `const target = ${JSON.stringify(scopedLazyTarget)};`,
+          `fs.writeFileSync(${JSON.stringify(bootstrapEnvMarker)}, process.env.npm_config_https_proxy ? "hydrated" : "missing");`,
+          'fs.mkdirSync(path.dirname(target), { recursive: true });',
+          `fs.writeFileSync(target, Buffer.from(${JSON.stringify(scopedTargetBase64)}, "base64"), { mode: 0o755 });`,
+          ""
+        ].join("\n")
+      );
+      const priorExitCode = process.exitCode;
+      const scopedChild = wrapper.runNative({
+        packageRoot: scopedLazyRoot,
+        platform: PLATFORM,
+        argv: ["status"],
+        npmProgram: fakeNpm,
+        networkHelper
+      });
+      assert.ok(scopedChild, "lazy scoped native child was not started");
+      const scopedExitCode = await new Promise((resolve, reject) => {
+        scopedChild.once("error", reject);
+        scopedChild.once("exit", (code, signal) => signal ? reject(new Error(`scoped lazy child exited by ${signal}`)) : resolve(code));
+      });
+      process.exitCode = priorExitCode;
+      assert.strictEqual(scopedExitCode, 23);
+      assert.strictEqual(fs.readFileSync(bootstrapEnvMarker, "utf8"), "hydrated");
+      assert.strictEqual(fs.readFileSync(nativeEnvMarker, "utf8"), "clean");
     }
 
     if (PLATFORM !== "win32") {

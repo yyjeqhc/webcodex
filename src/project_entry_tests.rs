@@ -107,6 +107,29 @@ fn console_assets_are_validated_and_passed_only_to_the_serve_child() {
     assert!(error.message.contains("styles.css"));
 }
 
+#[test]
+fn npm_wrapper_network_credentials_are_removed_from_runtime_children() {
+    let mut command = tokio::process::Command::new("webcodex-runner");
+    for key in NPM_WRAPPER_NETWORK_ENV_KEYS {
+        command.env(key, "credential-like-value");
+    }
+    command.env("WEBCODEX_TEST_UNRELATED_ENV", "preserved");
+
+    remove_npm_wrapper_network_environment(&mut command);
+    let envs: Vec<_> = command.as_std().get_envs().collect();
+    for key in NPM_WRAPPER_NETWORK_ENV_KEYS {
+        assert!(
+            envs.iter()
+                .any(|(candidate, value)| { candidate.to_str() == Some(key) && value.is_none() }),
+            "runtime child did not remove wrapper-only environment key {key}"
+        );
+    }
+    assert!(envs.iter().any(|(key, value)| {
+        key.to_str() == Some("WEBCODEX_TEST_UNRELATED_ENV")
+            && value.and_then(|value| value.to_str()) == Some("preserved")
+    }));
+}
+
 fn fact<'a>(readiness: &'a ProjectReadiness, code: &str) -> &'a ReadinessFact {
     readiness
         .findings

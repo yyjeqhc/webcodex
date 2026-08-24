@@ -35,6 +35,23 @@ use tokio::process::{Child, Command};
 const DEFAULT_PROFILE: &str = "personal";
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 
+const NPM_WRAPPER_NETWORK_ENV_KEYS: [&str; 8] = [
+    "npm_config_https_proxy",
+    "npm_config_proxy",
+    "npm_config_noproxy",
+    "npm_config_no_proxy",
+    "npm_config_cafile",
+    "npm_config_ca",
+    "npm_config_strict_ssl",
+    "WEBCODEX_NPM_WRAPPER",
+];
+
+fn remove_npm_wrapper_network_environment(command: &mut Command) {
+    for key in NPM_WRAPPER_NETWORK_ENV_KEYS {
+        command.env_remove(key);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectCommandOptions {
     pub root: PathBuf,
@@ -735,6 +752,7 @@ pub(super) async fn start_local_runtime(
     let server_log = open_log(&paths.logs.join("server.log"))?;
     let server_error = server_log.try_clone().map_err(io_error)?;
     let mut server_command = Command::new(server_binary);
+    remove_npm_wrapper_network_environment(&mut server_command);
     server_command
         .current_dir(&paths.state)
         .env_remove("WEBCODEX_ENV_FILE")
@@ -801,7 +819,9 @@ pub(super) async fn start_local_runtime(
 
     let agent_log = open_log(&paths.logs.join("agent.log"))?;
     let agent_error = agent_log.try_clone().map_err(io_error)?;
-    let mut agent = Command::new(agent_binary)
+    let mut agent_command = Command::new(agent_binary);
+    remove_npm_wrapper_network_environment(&mut agent_command);
+    agent_command
         .arg("--config")
         .arg(&paths.agent_config)
         .current_dir(&paths.state)
@@ -809,15 +829,14 @@ pub(super) async fn start_local_runtime(
         .env_remove("WEBCODEX_AGENT_TOKEN")
         .stdout(Stdio::from(agent_log))
         .stderr(Stdio::from(agent_error))
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| {
-            ProductError::new(
-                "agent_offline",
-                "the local Agent could not start",
-                Some("Run webcodex doctor."),
-            )
-        })?;
+        .kill_on_drop(true);
+    let mut agent = agent_command.spawn().map_err(|_| {
+        ProductError::new(
+            "agent_offline",
+            "the local Agent could not start",
+            Some("Run webcodex doctor."),
+        )
+    })?;
     wait_for_ready(&mut server, &mut agent, options, &config, &connector_key).await?;
     Ok(LocalRuntimeHandle {
         project_name: config.project_name,

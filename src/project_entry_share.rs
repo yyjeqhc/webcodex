@@ -7,9 +7,9 @@ use super::setup_service::{
     write_new_private, ProjectConfig, ProjectPaths,
 };
 use super::{
-    configured_project, ensure_local_runtime_port_available, parse_options, setup,
-    start_local_runtime, LocalRuntimeOptions, ProductError, ProjectCommandOptions,
-    ProjectShareOAuthRuntimeOptions,
+    configured_project, ensure_local_runtime_port_available, parse_options,
+    remove_npm_wrapper_network_environment, setup, start_local_runtime, LocalRuntimeOptions,
+    ProductError, ProjectCommandOptions, ProjectShareOAuthRuntimeOptions,
 };
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
@@ -630,21 +630,22 @@ async fn start_cloudflare_quick_with_binary(
     local_url: &str,
     timeout: Duration,
 ) -> Result<(String, CloudflareTunnel), ProductError> {
-    let mut child = Command::new(binary)
+    let mut tunnel_command = Command::new(binary);
+    remove_npm_wrapper_network_environment(&mut tunnel_command);
+    tunnel_command
         .arg("tunnel")
         .arg("--url")
         .arg(local_url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| {
-            ProductError::new(
-                "tunnel_unavailable",
-                "cloudflared could not start",
-                Some("Check the cloudflared executable and retry webcodex share."),
-            )
-        })?;
+        .kill_on_drop(true);
+    let mut child = tunnel_command.spawn().map_err(|_| {
+        ProductError::new(
+            "tunnel_unavailable",
+            "cloudflared could not start",
+            Some("Check the cloudflared executable and retry webcodex share."),
+        )
+    })?;
     let stdout = child.stdout.take().ok_or_else(tunnel_runtime_error)?;
     let stderr = child.stderr.take().ok_or_else(tunnel_runtime_error)?;
     let recent = Arc::new(Mutex::new(VecDeque::with_capacity(TUNNEL_LOG_LINES)));

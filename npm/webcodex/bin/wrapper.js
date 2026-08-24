@@ -38,30 +38,69 @@ function normalizedNpmConfigValue(value) {
   return value;
 }
 
-function npmProgram(options = {}) {
-  if (options.npmProgram) return options.npmProgram;
+function resolveWindowsNpmCli(environment, options = {}) {
+  const explicit = options.npmCliPath;
+  if (explicit && fs.existsSync(explicit)) return path.resolve(explicit);
+
+  const lifecycle = environment && environment.npm_execpath;
+  if (typeof lifecycle === "string" && /npm-cli\.js$/i.test(lifecycle) && fs.existsSync(lifecycle)) {
+    return path.resolve(lifecycle);
+  }
+
+  const besideNode = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  if (fs.existsSync(besideNode)) return besideNode;
+
+  const searchPath = environment && (environment.PATH || environment.Path || environment.path);
+  if (typeof searchPath === "string") {
+    for (const directory of searchPath.split(path.delimiter)) {
+      if (!directory) continue;
+      const npmCmd = path.join(directory, "npm.cmd");
+      const npmCli = path.join(directory, "node_modules", "npm", "bin", "npm-cli.js");
+      if (fs.existsSync(npmCmd) && fs.existsSync(npmCli)) return npmCli;
+    }
+  }
+  return null;
+}
+
+function npmInvocation(environment, options = {}) {
+  if (options.npmProgram) {
+    return { program: options.npmProgram, prefixArgs: options.npmArgsPrefix || [] };
+  }
   const platform = options.platform || process.platform;
-  return platform === "win32" ? "npm.cmd" : "npm";
+  if (platform !== "win32") return { program: "npm", prefixArgs: [] };
+  const npmCli = resolveWindowsNpmCli(environment, options);
+  if (!npmCli) return null;
+  return { program: options.nodeProgram || process.execPath, prefixArgs: [npmCli] };
 }
 
 function captureProtectedNpmEnvironment(environment, options = {}) {
   const root = options.packageRoot || packageRoot();
   const helper = options.networkHelper || path.join(root, "bin", "npm-network-env.js");
   if (!fs.existsSync(helper)) return {};
-  const result = childProcess.spawnSync(
-    npmProgram(options),
-    ["exec", "--yes=false", "--", process.execPath, helper],
-    {
-      cwd: root,
-      env: environment,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: NPM_NETWORK_QUERY_TIMEOUT_MS,
-      maxBuffer: NPM_NETWORK_CAPTURE_BYTES,
-      windowsHide: true,
-      shell: false
-    }
-  );
+  const platform = options.platform || process.platform;
+  let program;
+  let args;
+  if (platform === "win32" && !options.npmProgram) {
+    const npmCli = resolveWindowsNpmCli(environment, options);
+    if (!npmCli) return {};
+    program = options.nodeProgram || process.execPath;
+    args = [helper, npmCli];
+  } else {
+    const invocation = npmInvocation(environment, options);
+    if (!invocation) return {};
+    program = invocation.program;
+    args = [...invocation.prefixArgs, "exec", "--yes=false", "--", process.execPath, helper];
+  }
+  const result = childProcess.spawnSync(program, args, {
+    cwd: root,
+    env: environment,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: NPM_NETWORK_QUERY_TIMEOUT_MS,
+    maxBuffer: NPM_NETWORK_CAPTURE_BYTES,
+    windowsHide: true,
+    shell: false
+  });
   if (result.error || result.signal || result.status !== 0 || typeof result.stdout !== "string") return {};
   let parsed;
   try {
@@ -83,7 +122,9 @@ function captureProtectedNpmEnvironment(environment, options = {}) {
 }
 
 function queryNpmConfigValue(key, environment, options = {}) {
-  const result = childProcess.spawnSync(npmProgram(options), ["config", "get", key], {
+  const invocation = npmInvocation(environment, options);
+  if (!invocation) return undefined;
+  const result = childProcess.spawnSync(invocation.program, [...invocation.prefixArgs, "config", "get", key], {
     cwd: options.packageRoot || packageRoot(),
     env: environment,
     encoding: "utf8",
@@ -147,6 +188,7 @@ function runNative(options = {}) {
   const target = options.target || nativePath(options);
   const argv = options.argv || process.argv.slice(2);
   const needsBootstrap = !fs.existsSync(target) && !customTarget;
+  const nativeNeedsNetworkContext = argv.length === 0 || argv[0] === "share";
   const networkEnvironment = needsNpmNetworkContext(argv, needsBootstrap)
     ? rehydrateNpmNetworkEnvironment(process.env, options)
     : process.env;
@@ -166,8 +208,9 @@ function runNative(options = {}) {
     return null;
   }
 
+  const nativeEnvironment = nativeNeedsNetworkContext ? networkEnvironment : process.env;
   const child = childProcess.spawn(target, argv, {
-    env: { ...networkEnvironment, WEBCODEX_NPM_WRAPPER: "1" },
+    env: { ...nativeEnvironment, WEBCODEX_NPM_WRAPPER: "1" },
     stdio: "inherit",
     windowsHide: false,
     shell: false
@@ -206,6 +249,7 @@ module.exports = {
   exeName,
   nativePath,
   needsNpmNetworkContext,
+  npmInvocation,
   queryNpmConfigValue,
   rehydrateNpmNetworkEnvironment,
   runNative

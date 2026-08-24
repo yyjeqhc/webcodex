@@ -26,7 +26,7 @@ async fn validation_job_rechecks_cargo_test_count_assertion_capability_after_dow
         host_context: None,
         capabilities: Some(capabilities),
         projects: None,
-        agent_protocol_version: None,
+        agent_protocol_version: Some("polling-v1".to_string()),
         policy: None,
     };
 

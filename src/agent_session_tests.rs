@@ -26,6 +26,8 @@ fn streaming_registration(client_id: &str, agent_instance_id: &str) -> ShellClie
         build: None,
         job_concurrency_limit: None,
         job_inventory: None,
+        coding_agent_providers: None,
+        coding_agent_inventory: None,
         client_id: client_id.to_string(),
         agent_instance_id: agent_instance_id.to_string(),
         display_name: None,

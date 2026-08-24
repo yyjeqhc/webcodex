@@ -412,7 +412,7 @@ async fn coding_agent_run_lookup_is_exact_when_bound_and_ambiguous_when_unbound(
                     ..Default::default()
                 }),
                 projects: None,
-                agent_protocol_version: None,
+                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             })
             .await
@@ -459,7 +459,7 @@ async fn coding_agent_registration_rejects_semantically_contradictory_snapshot()
                 ..Default::default()
             }),
             projects: None,
-            agent_protocol_version: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         };
     let base = webcodex_core::coding_agent::CodingAgentRunSnapshot {

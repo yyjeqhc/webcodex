@@ -109,7 +109,6 @@ fn validate_coding_agent_registration(
     }
 }
 
-
 struct StreamingSessionRegistration {
     connection_id: String,
     transport: String,

@@ -72,6 +72,28 @@ fn browser_backends_open_only_the_fixed_chatgpt_settings_target() {
 }
 
 #[test]
+fn helper_children_remove_npm_wrapper_network_environment() {
+    let command = helper_command("webcodex-helper");
+    let envs: Vec<_> = command.as_std().get_envs().collect();
+    for key in [
+        "npm_config_https_proxy",
+        "npm_config_proxy",
+        "npm_config_noproxy",
+        "npm_config_no_proxy",
+        "npm_config_cafile",
+        "npm_config_ca",
+        "npm_config_strict_ssl",
+        "WEBCODEX_NPM_WRAPPER",
+    ] {
+        assert!(
+            envs.iter()
+                .any(|(candidate, value)| candidate.to_str() == Some(key) && value.is_none()),
+            "helper child did not remove wrapper-only environment key {key}"
+        );
+    }
+}
+
+#[test]
 fn clipboard_status_never_claims_the_credential_was_copied() {
     assert_eq!(
         render_clipboard_status(ClipboardCopyOutcome::Copied),

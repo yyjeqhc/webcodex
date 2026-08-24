@@ -1,3 +1,4 @@
+use super::remove_npm_wrapper_network_environment;
 use std::io::IsTerminal;
 use std::process::Stdio;
 use std::time::Duration;
@@ -101,8 +102,14 @@ fn clipboard_commands(os: &str) -> Vec<HelperCommand> {
     }
 }
 
+fn helper_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    remove_npm_wrapper_network_environment(&mut command);
+    command
+}
+
 async fn run_clipboard_command(command: &HelperCommand, text: &str) -> bool {
-    let mut child = match Command::new(command.program)
+    let mut child = match helper_command(command.program)
         .args(command.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -134,7 +141,7 @@ async fn run_clipboard_command(command: &HelperCommand, text: &str) -> bool {
 
 #[cfg(unix)]
 async fn wait_for_empty_terminal_line() -> bool {
-    let mut child = match Command::new("sh")
+    let mut child = match helper_command("sh")
         .arg("-c")
         .arg("IFS= read -r line; [ -z \"$line\" ]")
         .stdin(Stdio::inherit())
@@ -156,7 +163,7 @@ async fn wait_for_empty_terminal_line() -> bool {
 
 async fn open_chatgpt_settings() -> bool {
     for command in browser_commands(std::env::consts::OS) {
-        let mut child = match Command::new(command.program)
+        let mut child = match helper_command(command.program)
             .args(command.args)
             .arg(CHATGPT_APP_SETTINGS_URL)
             .stdin(Stdio::null())

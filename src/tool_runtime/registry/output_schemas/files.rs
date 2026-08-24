@@ -323,9 +323,11 @@ fn search_project_texts_output_schema() -> Value {
         "count_complete": {"type": "boolean"},
         "total_matches": nullable_schema("integer", "Complete total in count mode; null when incomplete."),
         "truncated": {"type": "boolean"},
+        "budget_truncated": {"type": "boolean", "const": true},
+        "next_match_offset": {"type": "integer", "minimum": 1, "maximum": 199},
         "truncation_reason": {
             "anyOf": [
-                {"type": "string", "enum": ["limit", "output_bytes", "timeout", "transport"]},
+                {"type": "string", "enum": ["limit", "output_bytes", "timeout", "transport", "batch_response_budget"]},
                 {"type": "null"}
             ]
         }
@@ -431,6 +433,7 @@ fn search_project_texts_output_schema() -> Value {
             "items": {"type": "array", "maxItems": 8, "items": item_schema.clone()},
             "output_truncated": {"type": "boolean"},
             "next_index": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 7}, {"type": "null"}]},
+            "truncation_reason": {"type": "string", "enum": ["batch_response_budget", "hard_result_cap"]},
             "session_recorded": schema_type("boolean", "True when this batch call was recorded."),
             "session_id": schema_type("string", "Session id used for outer batch telemetry."),
             "session_event_id": schema_type("string", "Outer batch Session event id."),
@@ -690,7 +693,9 @@ fn read_files_output_schema() -> Value {
         "returned_lines": {"type": "integer", "minimum": 0, "maximum": 2000},
         "end_line": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
         "has_more": {"type": "boolean"},
-        "next_start_line": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]}
+        "next_start_line": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "budget_truncated": {"type": "boolean", "const": true},
+        "budget_next_limit": {"type": "integer", "minimum": 1, "maximum": 1999}
     });
     let read_success_full = json!({
         "type": "object",
@@ -713,6 +718,8 @@ fn read_files_output_schema() -> Value {
         "end_line",
         "has_more",
         "next_start_line",
+        "budget_truncated",
+        "budget_next_limit",
     ] {
         read_success_sparse_properties.remove(key);
     }
@@ -790,6 +797,7 @@ fn read_files_output_schema() -> Value {
             "items": {"type": "array", "maxItems": 8, "items": item_schema},
             "output_truncated": {"type": "boolean"},
             "next_index": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 7}, {"type": "null"}]},
+            "truncation_reason": {"type": "string", "enum": ["batch_response_budget", "hard_result_cap"]},
             "session_recorded": schema_type("boolean", "True when this batch call was recorded."),
             "session_id": schema_type("string", "Session id used for outer batch telemetry."),
             "session_event_id": schema_type("string", "Session event id for the outer batch call."),

@@ -57,6 +57,24 @@ fn read_files_input_schema_enforces_batch_and_item_bounds() {
         schema["properties"]["items"]["items"]["properties"]["path"]["minLength"],
         1
     );
+    assert_eq!(
+        schema["properties"]["max_result_bytes"]["default"],
+        64 * 1024
+    );
+    assert_eq!(
+        schema["properties"]["max_result_bytes"]["maximum"],
+        256 * 1024
+    );
+    assert!(validates(&json!({
+        "project": "demo",
+        "items": [{"path": "a.rs"}],
+        "max_result_bytes": 128 * 1024
+    })));
+    assert!(!validates(&json!({
+        "project": "demo",
+        "items": [{"path": "a.rs"}],
+        "max_result_bytes": 256 * 1024 + 1
+    })));
     assert!(!validates(&json!({
         "project": "demo",
         "items": [{"path": "a.rs", "unexpected": true}]
@@ -400,6 +418,7 @@ async fn read_files_dispatch_complete_batch_is_sparse_and_schema_valid() {
                         ],
                         session_id: None,
                         with_line_numbers: Some(true),
+                        max_result_bytes: None,
                     },
                     Some(&auth),
                 )
@@ -493,6 +512,7 @@ async fn read_files_dispatch_mixed_batch_keeps_outer_and_failure_semantics() {
                         items: vec![item("good.txt", None, None), item(".env", None, None)],
                         session_id: None,
                         with_line_numbers: None,
+                        max_result_bytes: None,
                     },
                     Some(&auth),
                 )
@@ -750,6 +770,7 @@ async fn read_files_records_one_outer_session_event_and_keeps_metadata_outer_onl
                         items: vec![item("a.rs", None, None), item("b.rs", None, None)],
                         session_id: Some(session_id),
                         with_line_numbers: None,
+                        max_result_bytes: None,
                     },
                     Some(&auth),
                 )

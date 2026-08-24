@@ -19,6 +19,7 @@ fn query(pattern: &str, mode: Option<SearchResultMode>) -> SearchProjectTextsQue
         exclude_globs: None,
         result_mode: mode,
         timeout_secs: None,
+        match_offset: None,
     }
 }
 
@@ -174,6 +175,32 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
         schema["properties"]["queries"]["items"]["additionalProperties"],
         false
     );
+    assert_eq!(
+        schema["properties"]["max_result_bytes"]["default"],
+        64 * 1024
+    );
+    assert_eq!(
+        schema["properties"]["max_result_bytes"]["maximum"],
+        256 * 1024
+    );
+    assert_eq!(
+        schema["properties"]["queries"]["items"]["properties"]["match_offset"]["maximum"],
+        199
+    );
+    assert!(validates(&json!({
+        "project": "demo",
+        "queries": [{"pattern": "needle", "match_offset": 199}],
+        "max_result_bytes": 128 * 1024
+    })));
+    assert!(!validates(&json!({
+        "project": "demo",
+        "queries": [{"pattern": "needle", "match_offset": 200}]
+    })));
+    assert!(!validates(&json!({
+        "project": "demo",
+        "queries": [{"pattern": "needle"}],
+        "max_result_bytes": 256 * 1024 + 1
+    })));
     assert!(
         schema["properties"].get("session_id").is_some(),
         "missing outer business session_id field"
@@ -468,6 +495,7 @@ async fn search_project_texts_default_matches_items_are_sparse_and_schema_valid(
                         project,
                         queries: vec![query("first", None), query("second", None)],
                         session_id: None,
+                        max_result_bytes: None,
                     },
                     Some(&auth),
                 )
@@ -559,6 +587,7 @@ async fn search_project_texts_dispatch_mixed_batch_only_sparsifies_success_item(
                         project,
                         queries: vec![query("steady", None), invalid],
                         session_id: None,
+                        max_result_bytes: None,
                     },
                     Some(&auth),
                 )
@@ -1474,6 +1503,7 @@ async fn search_project_texts_records_one_event_without_patterns_and_aggregates_
                             ),
                         ],
                         session_id: Some(session_id),
+                        max_result_bytes: None,
                     },
                     Some(&auth),
                 )

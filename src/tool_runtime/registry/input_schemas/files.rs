@@ -177,6 +177,15 @@ pub(crate) fn search_project_texts_input_schema() -> Value {
     query_properties
         .get_mut("pattern")
         .expect("search pattern schema")["minLength"] = json!(1);
+    query_properties.insert(
+        "match_offset".to_string(),
+        json!({
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 199,
+            "description": "Optional zero-based matches-mode continuation offset. Use only with the next_match_offset returned for a budget-truncated query; it projects the same canonical ordered backend result and does not change search execution."
+        }),
+    );
 
     let mut schema = object_schema(with_optional_session_id(vec![
         ("project", "string", "Agent-registered project id.", true),
@@ -185,6 +194,12 @@ pub(crate) fn search_project_texts_input_schema() -> Value {
             "array",
             "One to eight independent bounded text-search queries, returned in request order.",
             true,
+        ),
+        (
+            "max_result_bytes",
+            "integer",
+            "Optional final model-facing batch budget in bytes. Defaults to 64 KiB for ordinary exploration; increase only for explicit broad/deep search, up to the existing 256 KiB hard safety ceiling.",
+            false,
         ),
     ]));
     schema["properties"]["queries"] = json!({
@@ -199,6 +214,12 @@ pub(crate) fn search_project_texts_input_schema() -> Value {
             "properties": query_properties,
         }
     });
+    schema["properties"]["max_result_bytes"]["minimum"] =
+        json!(crate::tool_runtime::search_project_texts::MIN_SEARCH_PROJECT_TEXTS_RESULT_BYTES);
+    schema["properties"]["max_result_bytes"]["maximum"] =
+        json!(webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES);
+    schema["properties"]["max_result_bytes"]["default"] =
+        json!(crate::tool_runtime::search_project_texts::DEFAULT_SEARCH_PROJECT_TEXTS_RESULT_BYTES);
     schema
 }
 
@@ -232,6 +253,12 @@ pub(crate) fn read_files_input_schema() -> Value {
             "When true, every successful item returns numbered text instead of plain text.",
             false,
         ),
+        (
+            "max_result_bytes",
+            "integer",
+            "Optional final model-facing batch budget in bytes. Defaults to 64 KiB for ordinary exploration; increase only for explicit broad/deep reads, up to the existing 256 KiB hard safety ceiling.",
+            false,
+        ),
     ]));
     schema["properties"]["items"] = json!({
         "type": "array",
@@ -259,5 +286,11 @@ pub(crate) fn read_files_input_schema() -> Value {
             }
         }
     });
+    schema["properties"]["max_result_bytes"]["minimum"] =
+        json!(crate::tool_runtime::read_files::MIN_READ_FILES_RESULT_BYTES);
+    schema["properties"]["max_result_bytes"]["maximum"] =
+        json!(webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES);
+    schema["properties"]["max_result_bytes"]["default"] =
+        json!(crate::tool_runtime::read_files::DEFAULT_READ_FILES_RESULT_BYTES);
     schema
 }

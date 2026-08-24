@@ -61,6 +61,9 @@ downloads the matching release artifact, verifies its SHA-256 checksum, checks
 that all three binaries share one version/build identity, and atomically
 replaces the previous complete binary set. A failed download, extraction,
 checksum, or identity check leaves the previous installation intact.
+The artifact download honors npm lifecycle proxy, `noproxy`, `cafile`/`ca`, and
+`strict-ssl` settings, so installations behind the same corporate proxy or CA
+configuration used by npm do not need a separate WebCodex network setup.
 
 `webcodex-server` and `webcodex-runner` are package-local binaries rather than
 separate npm `bin` entries. The public CLI discovers them for `webcodex server`
@@ -123,6 +126,8 @@ webcodex connect https://webcodex.example
 package 只暴露一个公共命令 `webcodex`。安装时会下载匹配的 release artifact、校验
 SHA-256、确认三个 binary 版本/build identity 一致，再原子替换旧 binary set。下载、
 解压、checksum 或 identity 校验失败时，旧安装保持不变。
+artifact 下载会继承 npm lifecycle 中的 proxy、`noproxy`、`cafile`/`ca` 与
+`strict-ssl` 配置，因此使用企业代理或私有 CA 时不需要再单独配置 WebCodex 网络层。
 
 `webcodex-server` 与 `webcodex-runner` 是 package-local binaries，不单独作为 npm `bin`
 暴露。公共 CLI 会通过 `webcodex server` 和兼容保留的 `webcodex agent` Runner 管理

@@ -218,6 +218,32 @@ async function main() {
   assert.strictEqual(install.MAX_UNCOMPRESSED_BYTES, 256 * 1024 * 1024);
   assert.strictEqual(install.MAX_TAR_ENTRY_BYTES, 96 * 1024 * 1024);
   assert.strictEqual(install.MAX_REDIRECTS, 5);
+  assert.strictEqual(install.MAX_CA_FILE_BYTES, 4 * 1024 * 1024);
+  const httpsNetwork = install.resolveNpmNetworkOptions("https://github.com/example", {
+    npm_config_https_proxy: "http://proxy.example:8443",
+    npm_config_noproxy: "localhost",
+    npm_config_strict_ssl: "false"
+  });
+  assert.strictEqual(httpsNetwork.proxy.href, "http://proxy.example:8443/");
+  assert.strictEqual(httpsNetwork.noProxy, "localhost");
+  assert.strictEqual(httpsNetwork.ca, undefined);
+  assert.strictEqual(httpsNetwork.rejectUnauthorized, false);
+  const httpNetwork = install.resolveNpmNetworkOptions("http://example.test", {
+    npm_config_proxy: "http://proxy.example:8080",
+    npm_config_strict_ssl: "true"
+  });
+  assert.strictEqual(httpNetwork.proxy.href, "http://proxy.example:8080/");
+  assert.strictEqual(httpNetwork.noProxy, undefined);
+  assert.strictEqual(httpNetwork.ca, undefined);
+  assert.strictEqual(httpNetwork.rejectUnauthorized, true);
+  assert.match(
+    install.sanitizeNetworkErrorMessage("connect through http://user:secret@proxy.example:8080/path?token=hidden failed"),
+    /^connect through http:\/\/proxy\.example:8080\/\.\.\. failed$/
+  );
+  assert.doesNotMatch(
+    install.sanitizeNetworkErrorMessage("failed https://github.com/release?token=hidden"),
+    /token|hidden/
+  );
   assert.strictEqual(install.resolveRedirectUrl("http://example.test/a", "https://example.test/b").protocol, "https:");
   assert.strictEqual(install.resolveRedirectUrl("http://example.test/a", "/b").protocol, "http:");
   assert.throws(() => install.resolveRedirectUrl("https://example.test/a", "http://example.test/b?token=secret"), /HTTPS downgrade/);
@@ -288,6 +314,16 @@ async function main() {
     const archive = path.join(tmp, "artifact.tar.gz");
     archiveDirectory(archiveSource, archive);
     const manifestPath = path.join(tmp, "manifest.json");
+    const caFile = path.join(tmp, "corporate-ca.pem");
+    fs.writeFileSync(caFile, "-----BEGIN CERTIFICATE-----\ntest-ca\n-----END CERTIFICATE-----\n");
+    assert.strictEqual(
+      install.resolveNpmNetworkOptions("https://github.com/example", { npm_config_cafile: caFile }).ca,
+      fs.readFileSync(caFile, "utf8")
+    );
+    assert.throws(
+      () => install.resolveNpmNetworkOptions("https://github.com/example", { npm_config_cafile: path.join(tmp, "missing-ca.pem") }),
+      /npm cafile could not be read \(ENOENT\)/
+    );
     writeManifest(manifestPath, manifestFor(pathToFileURL(archive).toString(), install.sha256File(archive)));
     const downloaded = path.join(tmp, "downloaded");
     await install.installFromManifest(manifestPath, testOptions({ destinationDir: downloaded, tempDir: tmp }));
@@ -317,6 +353,53 @@ async function main() {
         downloaded, tmp, /HTTP 503/
       );
     });
+
+    await withServer((_req, res) => { res.end("proxy-delivered"); }, async (proxyBase) => {
+      const proxiedDest = path.join(tmp, "proxied-download.bin");
+      await install.fetchToFile("http://origin.invalid/artifact.tar.gz?token=hidden", proxiedDest, {
+        label: "Proxy",
+        totalTimeoutMs: 500,
+        maxBytes: 1024,
+        environment: { npm_config_proxy: proxyBase }
+      });
+      assert.strictEqual(fs.readFileSync(proxiedDest, "utf8"), "proxy-delivered");
+      fs.rmSync(proxiedDest, { force: true });
+    });
+
+    await withServer((_req, res) => { res.end("direct-delivered"); }, async (targetBase) => {
+      await withServer((_req, res) => { res.statusCode = 502; res.end("proxy must be bypassed"); }, async (proxyBase) => {
+        const directDest = path.join(tmp, "no-proxy-download.bin");
+        await install.fetchToFile(`${targetBase}/artifact.tar.gz`, directDest, {
+          label: "No proxy",
+          totalTimeoutMs: 500,
+          maxBytes: 1024,
+          environment: { npm_config_proxy: proxyBase, npm_config_noproxy: "127.0.0.1" }
+        });
+        assert.strictEqual(fs.readFileSync(directDest, "utf8"), "direct-delivered");
+        fs.rmSync(directDest, { force: true });
+      });
+    });
+
+    {
+      const errorDest = path.join(tmp, "network-error.bin");
+      await assert.rejects(
+        () => install.fetchToFile("http://127.0.0.1:9/artifact.tar.gz?token=hidden", errorDest, {
+          label: "Artifact",
+          firstByteTimeoutMs: 500,
+          totalTimeoutMs: 1000,
+          maxBytes: 1024,
+          environment: {}
+        }),
+        (err) => {
+          assert.strictEqual(err.code, "ECONNREFUSED");
+          assert.match(err.message, /Artifact download request failed \(ECONNREFUSED\)/);
+          assert.match(err.message, /ECONNREFUSED/);
+          assert.doesNotMatch(err.message, /token|hidden|artifact\.tar\.gz/);
+          return true;
+        }
+      );
+      assert.ok(!fs.existsSync(errorDest));
+    }
 
     await withServer((_req, _res) => {}, async (base) => {
       await expectInstallFailure(

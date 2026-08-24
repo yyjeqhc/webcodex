@@ -6,8 +6,10 @@ const childProcess = require("child_process");
 const fs = require("fs");
 const http = require("http");
 const https = require("https");
+const net = require("net");
 const os = require("os");
 const path = require("path");
+const tls = require("tls");
 const { URL, fileURLToPath, pathToFileURL } = require("url");
 const zlib = require("zlib");
 
@@ -33,6 +35,7 @@ const MAX_ARTIFACT_BYTES = 128 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 const MAX_TAR_ENTRY_BYTES = 96 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
+const MAX_CA_FILE_BYTES = 4 * 1024 * 1024;
 
 const DEFAULT_MANIFEST_DOWNLOAD = Object.freeze({
   firstByteTimeoutMs: 15_000,
@@ -88,6 +91,276 @@ function resolveDownloadOptions(defaults, overrides, maxBytes, label) {
     maxBytes,
     label
   };
+}
+
+function firstEnvironmentValue(environment, names) {
+  for (const name of names) {
+    const raw = environment && environment[name];
+    if (typeof raw !== "string") continue;
+    const value = raw.trim();
+    if (value && value.toLowerCase() !== "null" && value.toLowerCase() !== "undefined") return value;
+  }
+  return undefined;
+}
+
+function networkErrorCode(error) {
+  let current = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (typeof current.code === "string" && current.code) return current.code;
+    current = current.cause;
+  }
+  return undefined;
+}
+
+function sanitizeNetworkErrorMessage(message) {
+  let value = String(message || "").replace(/[\r\n\t]+/g, " ").trim();
+  value = value.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi, (raw) => {
+    let candidate = raw;
+    let trailing = "";
+    while (/[),.;]$/.test(candidate)) {
+      trailing = candidate.slice(-1) + trailing;
+      candidate = candidate.slice(0, -1);
+    }
+    try {
+      const parsed = new URL(candidate);
+      return `${parsed.protocol}//${parsed.host}/...${trailing}`;
+    } catch (_err) {
+      return `[redacted URL]${trailing}`;
+    }
+  });
+  return value.length > 400 ? `${value.slice(0, 397)}...` : value;
+}
+
+function downloadTransportError(label, stage, error) {
+  const code = networkErrorCode(error);
+  const detail = sanitizeNetworkErrorMessage(error && error.message);
+  const prefix = `${label} download ${stage} failed${code ? ` (${code})` : ""}`;
+  const wrapped = new Error(detail ? `${prefix}: ${detail}` : prefix);
+  if (code) wrapped.code = code;
+  return wrapped;
+}
+
+function readNpmCaFile(file) {
+  let stat;
+  try {
+    stat = fs.statSync(file);
+  } catch (error) {
+    const code = networkErrorCode(error);
+    const wrapped = new Error(`npm cafile could not be read${code ? ` (${code})` : ""}`);
+    if (code) wrapped.code = code;
+    throw wrapped;
+  }
+  if (!stat.isFile()) throw new Error("npm cafile is not a regular file");
+  if (stat.size > MAX_CA_FILE_BYTES) throw new Error(`npm cafile exceeds the ${MAX_CA_FILE_BYTES}-byte size limit`);
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch (error) {
+    const code = networkErrorCode(error);
+    const wrapped = new Error(`npm cafile could not be read${code ? ` (${code})` : ""}`);
+    if (code) wrapped.code = code;
+    throw wrapped;
+  }
+}
+
+function defaultPort(protocol) {
+  return protocol === "https:" ? "443" : "80";
+}
+
+function noProxyMatches(url, noProxy) {
+  if (!noProxy) return false;
+  const target = url instanceof URL ? url : new URL(url);
+  const targetHost = target.hostname.toLowerCase();
+  const targetPort = target.port || defaultPort(target.protocol);
+  for (let entry of String(noProxy).split(",")) {
+    entry = entry.trim().toLowerCase();
+    if (!entry) continue;
+    if (entry === "*") return true;
+    if (entry.startsWith("*.")) entry = entry.slice(2);
+    else if (entry.startsWith(".")) entry = entry.slice(1);
+
+    let host = entry;
+    let port = null;
+    if (entry.startsWith("[")) {
+      const end = entry.indexOf("]");
+      if (end !== -1) {
+        host = entry.slice(1, end);
+        if (entry[end + 1] === ":") port = entry.slice(end + 2);
+      }
+    } else {
+      const colon = entry.lastIndexOf(":");
+      if (colon !== -1 && /^\d+$/.test(entry.slice(colon + 1))) {
+        host = entry.slice(0, colon);
+        port = entry.slice(colon + 1);
+      }
+    }
+    if (port && port !== targetPort) continue;
+    if (targetHost === host || targetHost.endsWith(`.${host}`)) return true;
+  }
+  return false;
+}
+
+function parseProxyUrl(value) {
+  let proxy;
+  try {
+    proxy = new URL(value);
+  } catch (_err) {
+    const error = new Error("npm proxy URL is invalid");
+    error.code = "EPROXY";
+    throw error;
+  }
+  if (proxy.protocol !== "http:" && proxy.protocol !== "https:") {
+    const error = new Error(`npm proxy protocol ${proxy.protocol} is unsupported`);
+    error.code = "EPROXY";
+    throw error;
+  }
+  if (!proxy.hostname) {
+    const error = new Error("npm proxy URL has no hostname");
+    error.code = "EPROXY";
+    throw error;
+  }
+  return proxy;
+}
+
+function resolveNpmNetworkOptions(url, environment = process.env) {
+  const parsed = url instanceof URL ? url : new URL(url);
+  const proxyNames = parsed.protocol === "https:"
+    ? ["npm_config_https_proxy", "npm_config_proxy", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
+    : ["npm_config_proxy", "HTTP_PROXY", "http_proxy"];
+  const proxyValue = firstEnvironmentValue(environment, proxyNames);
+  const noProxy = firstEnvironmentValue(environment, ["npm_config_noproxy", "npm_config_no_proxy", "NO_PROXY", "no_proxy"]);
+  const cafile = firstEnvironmentValue(environment, ["npm_config_cafile"]);
+  let ca = cafile ? readNpmCaFile(cafile) : firstEnvironmentValue(environment, ["npm_config_ca"]);
+  if (ca && !ca.includes("\n") && ca.includes("\\n")) ca = ca.replace(/\\n/g, "\n");
+
+  const strictSsl = firstEnvironmentValue(environment, ["npm_config_strict_ssl"]);
+  let rejectUnauthorized;
+  if (strictSsl !== undefined) {
+    const normalized = strictSsl.toLowerCase();
+    if (["false", "0", "no"].includes(normalized)) rejectUnauthorized = false;
+    else if (["true", "1", "yes"].includes(normalized)) rejectUnauthorized = true;
+  }
+
+  return {
+    proxy: proxyValue && !noProxyMatches(parsed, noProxy) ? parseProxyUrl(proxyValue) : null,
+    noProxy,
+    ca,
+    rejectUnauthorized
+  };
+}
+
+function proxyAuthorization(proxy) {
+  if (!proxy.username && !proxy.password) return undefined;
+  let username = proxy.username;
+  let password = proxy.password;
+  try { username = decodeURIComponent(username); } catch (_err) {}
+  try { password = decodeURIComponent(password); } catch (_err) {}
+  return `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`;
+}
+
+function tlsRequestOptions(network, hostname) {
+  const options = {};
+  if (network.ca !== undefined) options.ca = network.ca;
+  if (network.rejectUnauthorized !== undefined) options.rejectUnauthorized = network.rejectUnauthorized;
+  if (hostname && net.isIP(hostname) === 0) options.servername = hostname;
+  return options;
+}
+
+function startNetworkRequest(url, environment, onResponse, onError) {
+  const parsed = url instanceof URL ? url : new URL(url);
+  const network = resolveNpmNetworkOptions(parsed, environment);
+  let proxyRequest = null;
+  let targetRequest = null;
+  let tunnelSocket = null;
+  let secureSocket = null;
+  let destroyed = false;
+
+  const controller = {
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      if (targetRequest) targetRequest.destroy();
+      if (proxyRequest) proxyRequest.destroy();
+      if (secureSocket) secureSocket.destroy();
+      if (tunnelSocket) tunnelSocket.destroy();
+    }
+  };
+  const fail = (error) => {
+    if (!destroyed) onError(error);
+  };
+
+  if (!network.proxy) {
+    const client = parsed.protocol === "https:" ? https : http;
+    const requestOptions = parsed.protocol === "https:" ? tlsRequestOptions(network, parsed.hostname) : {};
+    targetRequest = client.get(parsed, requestOptions, onResponse);
+    targetRequest.on("error", fail);
+    return controller;
+  }
+
+  const proxy = network.proxy;
+  const proxyClient = proxy.protocol === "https:" ? https : http;
+  const auth = proxyAuthorization(proxy);
+  const proxyTls = proxy.protocol === "https:" ? tlsRequestOptions(network, proxy.hostname) : {};
+  const proxyPort = proxy.port || defaultPort(proxy.protocol);
+
+  if (parsed.protocol === "http:") {
+    const headers = { Host: parsed.host };
+    if (auth) headers["Proxy-Authorization"] = auth;
+    targetRequest = proxyClient.request({
+      ...proxyTls,
+      hostname: proxy.hostname,
+      port: proxyPort,
+      method: "GET",
+      path: parsed.href,
+      headers
+    }, onResponse);
+    targetRequest.on("error", fail);
+    targetRequest.end();
+    return controller;
+  }
+
+  const targetPort = parsed.port || "443";
+  const connectHeaders = { Host: `${parsed.hostname}:${targetPort}` };
+  if (auth) connectHeaders["Proxy-Authorization"] = auth;
+  proxyRequest = proxyClient.request({
+    ...proxyTls,
+    hostname: proxy.hostname,
+    port: proxyPort,
+    method: "CONNECT",
+    path: `${parsed.hostname}:${targetPort}`,
+    headers: connectHeaders
+  });
+  proxyRequest.on("connect", (response, socket, head) => {
+    if (destroyed) {
+      socket.destroy();
+      return;
+    }
+    tunnelSocket = socket;
+    if (response.statusCode !== 200) {
+      socket.destroy();
+      const error = new Error(`npm proxy CONNECT failed with HTTP ${response.statusCode || 0}`);
+      error.code = "EPROXY";
+      fail(error);
+      return;
+    }
+    if (head && head.length) socket.unshift(head);
+    const targetTls = tlsRequestOptions(network, parsed.hostname);
+    targetRequest = https.request({
+      hostname: parsed.hostname,
+      port: targetPort,
+      method: "GET",
+      path: `${parsed.pathname}${parsed.search}`,
+      headers: { Host: parsed.host },
+      createConnection: () => {
+        secureSocket = tls.connect({ ...targetTls, socket });
+        return secureSocket;
+      }
+    }, onResponse);
+    targetRequest.on("error", fail);
+    targetRequest.end();
+  });
+  proxyRequest.on("error", fail);
+  proxyRequest.end();
+  return controller;
 }
 
 function sha256File(file) {
@@ -165,7 +438,8 @@ function fetchToFile(url, dest, options = {}, redirects = 0, deadlineAt = null) 
     inactivityTimeoutMs: positiveLimit(options.inactivityTimeoutMs, 15_000, "inactivity timeout"),
     totalTimeoutMs: positiveLimit(options.totalTimeoutMs, 30_000, "total timeout"),
     maxBytes: positiveLimit(options.maxBytes, MAX_ARTIFACT_BYTES, "download byte limit"),
-    label: options.label || "Download"
+    label: options.label || "Download",
+    environment: options.environment || process.env
   };
 
   if (parsed.protocol === "file:") {
@@ -181,7 +455,7 @@ function fetchToFile(url, dest, options = {}, redirects = 0, deadlineAt = null) 
   }
 
   return new Promise((resolve, reject) => {
-    const client = parsed.protocol === "https:" ? https : http;
+    let request = null;
     let response = null;
     let file = null;
     let settled = false;
@@ -206,7 +480,7 @@ function fetchToFile(url, dest, options = {}, redirects = 0, deadlineAt = null) 
       clearTimers();
       if (response) response.destroy();
       if (file) file.destroy();
-      request.destroy();
+      if (request) request.destroy();
       removePartial();
       reject(message instanceof Error ? message : new Error(message));
     };
@@ -235,7 +509,8 @@ function fetchToFile(url, dest, options = {}, redirects = 0, deadlineAt = null) 
       )
       : null;
 
-    const request = client.get(parsed, (res) => {
+    try {
+      request = startNetworkRequest(parsed, resolved.environment, (res) => {
       response = res;
       clearTimeout(firstByteTimer);
       const status = res.statusCode || 0;
@@ -307,11 +582,13 @@ function fetchToFile(url, dest, options = {}, redirects = 0, deadlineAt = null) 
         if (!settled) file.end();
       });
       res.on("aborted", () => fail(`${resolved.label} download ended before completion`));
-      res.on("error", () => fail(`${resolved.label} download failed while reading the response`));
+      res.on("error", (error) => fail(downloadTransportError(resolved.label, "response", error)));
       file.on("error", () => fail(`${resolved.label} download failed while writing the temporary file`));
       file.on("finish", () => file.close(succeed));
-    });
-    request.on("error", () => fail(`${resolved.label} download request failed`));
+      }, (error) => fail(downloadTransportError(resolved.label, "request", error)));
+    } catch (error) {
+      fail(downloadTransportError(resolved.label, "request", error));
+    }
   });
 }
 
@@ -546,7 +823,7 @@ async function loadManifest(manifestPathOrUrl, options = {}) {
         limits.maxManifestBytes,
         "Manifest"
       );
-      await fetchToFile(input, tmp, downloadOptions);
+      await fetchToFile(input, tmp, { ...downloadOptions, environment: options.environment });
       return { manifest: readJsonFileBounded(tmp, limits.maxManifestBytes), baseUrl: new URL(input) };
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -586,7 +863,7 @@ async function installFromManifest(manifestPathOrUrl, options = {}) {
       limits.maxArtifactBytes,
       "Artifact"
     );
-    await fetchToFile(artifactUrl, tmp, downloadOptions);
+    await fetchToFile(artifactUrl, tmp, { ...downloadOptions, environment: options.environment });
     verifySha256(tmp, artifact.sha256);
     return installBinarySet(
       (stagedDir) => extractTarGz(tmp, stagedDir, { ...options, platform, limits }),
@@ -620,6 +897,7 @@ module.exports = {
   DEFAULT_ARTIFACT_DOWNLOAD,
   DEFAULT_MANIFEST_DOWNLOAD,
   MAX_ARTIFACT_BYTES,
+  MAX_CA_FILE_BYTES,
   MAX_MANIFEST_BYTES,
   MAX_REDIRECTS,
   MAX_TAR_ENTRY_BYTES,
@@ -639,9 +917,11 @@ module.exports = {
   loadManifest,
   platformKey,
   readJsonFileBounded,
+  resolveNpmNetworkOptions,
   resolveLimits,
   resolveRedirectUrl,
   runtimeBinaryFiles,
+  sanitizeNetworkErrorMessage,
   sha256File,
   validateBinarySet,
   validateManifest,

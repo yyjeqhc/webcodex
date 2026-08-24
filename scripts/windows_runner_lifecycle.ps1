@@ -63,6 +63,32 @@ function Get-PowerShellFileArgument {
     return [string]$argv[8]
 }
 
+function Test-WindowsRunnerLifecycleSupervisorOwnership {
+    param(
+        [string]$ObservedSupervisorPath,
+        [string]$ExpectedSupervisorPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ObservedSupervisorPath) -or [string]::IsNullOrWhiteSpace($ExpectedSupervisorPath)) {
+        return $false
+    }
+    try {
+        if (-not [System.IO.Path]::IsPathRooted($ObservedSupervisorPath) -or -not [System.IO.Path]::IsPathRooted($ExpectedSupervisorPath)) {
+            return $false
+        }
+        $observed = [System.IO.Path]::GetFullPath($ObservedSupervisorPath)
+        $expected = [System.IO.Path]::GetFullPath($ExpectedSupervisorPath)
+        return $observed -ieq $expected
+    } catch {
+        return $false
+    }
+}
+
+function Get-WindowsRunnerLifecycleTaskEnabled {
+    param([Parameter(Mandatory = $true)]$Task)
+    return [bool]$Task.Settings.Enabled
+}
+
 function ConvertTo-WindowsAccountSid {
     param([Parameter(Mandatory = $true)][string]$UserId)
     try {
@@ -145,7 +171,8 @@ function New-WindowsRunnerScheduledTaskDefinition {
 function Get-WindowsRunnerLifecycleTaskObservation {
     param(
         [Parameter(Mandatory = $true)][string]$TaskName,
-        [string]$TaskPath = '\'
+        [string]$TaskPath = '\',
+        [string]$ExpectedSupervisorPath
     )
 
     if (-not $TaskName.StartsWith('WebCodex ', [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -197,10 +224,9 @@ function Get-WindowsRunnerLifecycleTaskObservation {
     if ($execute) {
         $isPowerShell = ([System.IO.Path]::GetFileName($execute) -ieq 'powershell.exe')
     }
-    $looksWebCodex = $false
-    if ($supervisor) {
-        $looksWebCodex = ($supervisor.IndexOf('webcodex', [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
-    }
+    $ownsExpectedSupervisor = Test-WindowsRunnerLifecycleSupervisorOwnership `
+        -ObservedSupervisorPath $supervisor `
+        -ExpectedSupervisorPath $ExpectedSupervisorPath
 
     $principalSid = ConvertTo-WindowsAccountSid -UserId ([string]$task.Principal.UserId)
     $triggers = @($task.Triggers)
@@ -215,14 +241,14 @@ function Get-WindowsRunnerLifecycleTaskObservation {
 
     return [pscustomobject][ordered]@{
         Exists = $true
-        Enabled = ([string]$task.State -ne 'Disabled')
+        Enabled = Get-WindowsRunnerLifecycleTaskEnabled -Task $task
         State = [string]$task.State
         ActionCount = $actions.Count
         ActionExecutable = $execute
         ActionArguments = $arguments
         WorkingDirectory = $working
         SupervisorPath = $supervisor
-        IsLifecycleLike = ($actions.Count -eq 1 -and $isPowerShell -and $supervisor -and $TaskName.StartsWith('WebCodex ', [System.StringComparison]::OrdinalIgnoreCase) -and $looksWebCodex)
+        IsLifecycleLike = ($actions.Count -eq 1 -and $isPowerShell -and $supervisor -and $TaskName.StartsWith('WebCodex ', [System.StringComparison]::OrdinalIgnoreCase) -and $ownsExpectedSupervisor)
         PrincipalSid = $principalSid
         PrincipalLogonType = [string]$task.Principal.LogonType
         PrincipalRunLevel = [string]$task.Principal.RunLevel
@@ -326,9 +352,15 @@ function Get-WindowsRunnerLifecyclePlan {
     if (-not $CurrentTask.Exists) {
         $taskOperation = 'create'
     } else {
-        if (-not $CurrentTask.IsLifecycleLike) {
+        $ownsExpectedSupervisor = Test-WindowsRunnerLifecycleSupervisorOwnership `
+            -ObservedSupervisorPath ([string]$CurrentTask.SupervisorPath) `
+            -ExpectedSupervisorPath ([string]$ExpectedSpec.SupervisorPath)
+        if (-not $CurrentTask.IsLifecycleLike -or -not $ownsExpectedSupervisor) {
             $blocked = $true
-            $taskMismatches += [pscustomobject]@{ field = 'task_identity'; expected = 'WebCodex PowerShell supervisor task'; observed = 'unrecognized existing task' }
+            $taskMismatches += [pscustomobject]@{ field = 'task_identity'; expected = 'WebCodex lifecycle task owned by the exact expected supervisor path'; observed = 'unrecognized or differently-owned existing task' }
+        }
+        if (-not $ownsExpectedSupervisor) {
+            $taskMismatches += [pscustomobject]@{ field = 'task_supervisor_path'; expected = $ExpectedSpec.SupervisorPath; observed = $CurrentTask.SupervisorPath }
         }
         if ($CurrentTask.ActionCount -ne 1) {
             $definitionMismatch = $true
@@ -411,13 +443,20 @@ function Get-WindowsRunnerLifecyclePlan {
         task_path = $ExpectedSpec.TaskPath
         task_operation = $taskOperation
         can_apply = $canApply
-        idempotent_noop = ($taskOperation -eq 'noop' -and $runtimeMismatches.Count -eq 0)
+        idempotent_noop = ($taskOperation -eq 'noop' -and $canApply -and $runtimeMismatches.Count -eq 0)
         expected_runner_path = $ExpectedSpec.RunnerPath
         expected_runner_config_path = $ExpectedSpec.RunnerConfigPath
         expected_supervisor_path = $ExpectedSpec.SupervisorPath
         expected_working_directory = $ExpectedSpec.WorkingDirectory
         task_mismatches = @($taskMismatches)
         runtime_mismatches = @($runtimeMismatches)
+    }
+}
+
+function Assert-WindowsRunnerLifecycleSafeConvergence {
+    param([Parameter(Mandatory = $true)]$Plan)
+    if (-not [bool]$Plan.idempotent_noop) {
+        throw 'Scheduled Task lifecycle apply did not converge to a safe idempotent lifecycle state'
     }
 }
 

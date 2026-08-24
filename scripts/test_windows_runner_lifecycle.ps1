@@ -75,6 +75,14 @@ try {
     Assert-Equal ($expected | ConvertTo-Json -Compress) ($expectedAgain | ConvertTo-Json -Compress) 'fresh lifecycle spec was not deterministic'
     Assert-Equal $expected.SupervisorPath (Get-PowerShellFileArgument -Arguments $expected.ActionArguments) 'supported supervisor argv was not recognized'
     Assert-Equal $null (Get-PowerShellFileArgument -Arguments ($expected.ActionArguments + ' --token ' + $secret)) 'extra potentially-secret supervisor argv was treated as safe'
+    Assert-True (Test-WindowsRunnerLifecycleSupervisorOwnership -ObservedSupervisorPath $expected.SupervisorPath -ExpectedSupervisorPath $expected.SupervisorPath) 'exact expected supervisor path did not establish lifecycle ownership'
+
+    $differentSupervisorPath = Join-Path $tempRoot 'different supervisor.ps1'
+    $webCodexBackupSupervisorPath = Join-Path $tempRoot 'webcodex-backup.ps1'
+    Set-Content -LiteralPath $differentSupervisorPath -Encoding UTF8 -Value '# different fixture supervisor'
+    Set-Content -LiteralPath $webCodexBackupSupervisorPath -Encoding UTF8 -Value '# unrelated webcodex-named fixture supervisor'
+    Assert-False (Test-WindowsRunnerLifecycleSupervisorOwnership -ObservedSupervisorPath $differentSupervisorPath -ExpectedSupervisorPath $expected.SupervisorPath) 'different supervisor path established lifecycle ownership'
+    Assert-False (Test-WindowsRunnerLifecycleSupervisorOwnership -ObservedSupervisorPath $webCodexBackupSupervisorPath -ExpectedSupervisorPath $expected.SupervisorPath) 'path merely containing webcodex established lifecycle ownership'
 
     $definition = New-WindowsRunnerScheduledTaskDefinition -ExpectedSpec $expected
     Assert-Equal 1 @($definition.Actions).Count 'task definition action count changed'
@@ -106,6 +114,23 @@ try {
     $exactPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $exactTask -PrimaryInventory @($exactPrimary)
     Assert-Equal 'noop' $exactPlan.task_operation 'repeated same lifecycle config was not idempotent'
     Assert-True $exactPlan.idempotent_noop 'exact lifecycle did not report idempotent noop'
+    Assert-True $exactPlan.can_apply 'exact expected-supervisor lifecycle was not updateable'
+
+    $differentSupervisorTask = New-TestTaskObservation -Expected $expected
+    $differentSupervisorTask.SupervisorPath = [System.IO.Path]::GetFullPath($differentSupervisorPath)
+    $differentSupervisorTask.ActionArguments = Get-WindowsRunnerSupervisorArguments -SupervisorPath $differentSupervisorTask.SupervisorPath
+    $differentSupervisorTask.IsLifecycleLike = $false
+    $differentSupervisorPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $differentSupervisorTask -PrimaryInventory @($exactPrimary)
+    Assert-False $differentSupervisorPlan.can_apply 'different valid supervisor path was allowed to overwrite an existing task'
+    Assert-HasMismatch $differentSupervisorPlan.task_mismatches 'task_identity' 'different supervisor ownership did not report task identity mismatch'
+    Assert-HasMismatch $differentSupervisorPlan.task_mismatches 'task_supervisor_path' 'different supervisor ownership did not report supervisor mismatch'
+
+    $webCodexBackupTask = New-TestTaskObservation -Expected $expected
+    $webCodexBackupTask.SupervisorPath = [System.IO.Path]::GetFullPath($webCodexBackupSupervisorPath)
+    $webCodexBackupTask.ActionArguments = Get-WindowsRunnerSupervisorArguments -SupervisorPath $webCodexBackupTask.SupervisorPath
+    $webCodexBackupTask.IsLifecycleLike = $false
+    $webCodexBackupPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $webCodexBackupTask -PrimaryInventory @($exactPrimary)
+    Assert-False $webCodexBackupPlan.can_apply 'webcodex-named unrelated supervisor path established ownership'
 
     $actionMismatch = New-TestTaskObservation -Expected $expected -ActionArguments '-NoProfile -File "C:\wrong\supervisor.ps1"'
     $actionPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $actionMismatch -PrimaryInventory @($exactPrimary)
@@ -120,6 +145,9 @@ try {
     $unrelatedPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $unrelatedTask -PrimaryInventory @($exactPrimary)
     Assert-False $unrelatedPlan.can_apply 'unrecognized existing task was allowed to update'
     Assert-HasMismatch $unrelatedPlan.task_mismatches 'task_identity' 'unrecognized task mismatch was not reported'
+    Assert-Equal 'noop' $unrelatedPlan.task_operation 'unrecognized exact-definition task unexpectedly changed task operation'
+    Assert-False $unrelatedPlan.idempotent_noop 'task_operation=noop masked failed ownership in idempotent convergence'
+    $null = Assert-Throws { Assert-WindowsRunnerLifecycleSafeConvergence -Plan $unrelatedPlan } 'did not converge to a safe idempotent lifecycle state'
 
     $otherWorking = Join-Path $tempRoot 'other-work'
     New-Item -ItemType Directory -Path $otherWorking | Out-Null
@@ -132,6 +160,20 @@ try {
     $settingsPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $settingsMismatch -PrimaryInventory @($exactPrimary)
     Assert-HasMismatch $settingsPlan.task_mismatches 'task_restart_count' 'owned restart setting mismatch was not reported'
 
+    $runningDisabledRawTask = [pscustomobject]@{ State='Running'; Settings=[pscustomobject]@{ Enabled=$false } }
+    $readyEnabledRawTask = [pscustomobject]@{ State='Ready'; Settings=[pscustomobject]@{ Enabled=$true } }
+    Assert-False (Get-WindowsRunnerLifecycleTaskEnabled -Task $runningDisabledRawTask) 'Settings.Enabled=false was ignored while task state was Running'
+    Assert-True (Get-WindowsRunnerLifecycleTaskEnabled -Task $readyEnabledRawTask) 'Settings.Enabled=true was ignored while task state was Ready'
+
+    $runningDisabledTask = New-TestTaskObservation -Expected $expected -Enabled $false -State 'Running'
+    $runningDisabledPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $runningDisabledTask -PrimaryInventory @($exactPrimary)
+    Assert-False $runningDisabledTask.Enabled 'running disabled fixture lost Settings.Enabled authority'
+    Assert-Equal 'enable' $runningDisabledPlan.task_operation 'running task with Settings.Enabled=false did not require enable'
+
+    $readyEnabledTask = New-TestTaskObservation -Expected $expected -Enabled $true -State 'Ready'
+    $readyEnabledStatus = New-WindowsRunnerLifecycleStatusProjection -ExpectedRunnerPath $expected.RunnerPath -TaskObservation $readyEnabledTask -PrimaryInventory @()
+    Assert-True $readyEnabledStatus.task_enabled 'ready task with Settings.Enabled=true was reported disabled'
+
     $otherRunner = Join-Path $tempRoot 'other\webcodex-runner.exe'
     New-Item -ItemType Directory -Path (Split-Path -Parent $otherRunner) | Out-Null
     New-Item -ItemType File -Path $otherRunner | Out-Null
@@ -139,6 +181,10 @@ try {
     $runnerPathPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $exactTask -PrimaryInventory @($wrongPrimary)
     Assert-HasMismatch $runnerPathPlan.runtime_mismatches 'runner_path' 'Runner path mismatch was not reported'
     Assert-False $runnerPathPlan.can_apply 'running wrong-path lifecycle was allowed to apply silently'
+    Assert-Equal 'noop' $runnerPathPlan.task_operation 'runtime mismatch unexpectedly changed task definition operation'
+    Assert-False $runnerPathPlan.idempotent_noop 'task_operation=noop masked runtime mismatch in idempotent convergence'
+    $null = Assert-Throws { Assert-WindowsRunnerLifecycleSafeConvergence -Plan $runnerPathPlan } 'did not converge to a safe idempotent lifecycle state'
+    $null = Assert-WindowsRunnerLifecycleSafeConvergence -Plan $exactPlan
 
     $planText = $exactPlan | ConvertTo-Json -Depth 8 -Compress
     Assert-False $planText.Contains($secret) 'lifecycle plan leaked config secret contents'

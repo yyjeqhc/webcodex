@@ -30,7 +30,10 @@ $expected = New-WindowsRunnerLifecycleExpectedSpec `
     -TaskName $TaskName `
     -TaskPath $TaskPath `
     -WorkingDirectory $WorkingDirectory
-$current = Get-WindowsRunnerLifecycleTaskObservation -TaskName $expected.TaskName -TaskPath $expected.TaskPath
+$current = Get-WindowsRunnerLifecycleTaskObservation `
+    -TaskName $expected.TaskName `
+    -TaskPath $expected.TaskPath `
+    -ExpectedSupervisorPath $expected.SupervisorPath
 $inventory = @(Get-WindowsRunnerPrimaryInventory)
 $plan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $current -PrimaryInventory $inventory
 
@@ -69,12 +72,13 @@ if ($Apply) {
     }
 
     if ($changed) {
-        $afterTask = Get-WindowsRunnerLifecycleTaskObservation -TaskName $expected.TaskName -TaskPath $expected.TaskPath
+        $afterTask = Get-WindowsRunnerLifecycleTaskObservation `
+            -TaskName $expected.TaskName `
+            -TaskPath $expected.TaskPath `
+            -ExpectedSupervisorPath $expected.SupervisorPath
         $afterInventory = @(Get-WindowsRunnerPrimaryInventory)
         $plan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $afterTask -PrimaryInventory $afterInventory
-        if ($plan.task_operation -ne 'noop') {
-            throw "Scheduled Task lifecycle apply did not converge to the expected task definition"
-        }
+        $null = Assert-WindowsRunnerLifecycleSafeConvergence -Plan $plan
     }
 
     $plan | Add-Member -NotePropertyName applied -NotePropertyValue $changed -Force

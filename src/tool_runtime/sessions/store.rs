@@ -2369,6 +2369,8 @@ fn coding_agent_lifecycle_event(
         event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
         session_id: session_id.to_string(),
         kind: bound_summary_string(kind),
+        context_revision: None,
+        context_result_summary: None,
         call_id: None,
         timestamp: now,
         transport: "system".to_string(),

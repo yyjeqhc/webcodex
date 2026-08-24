@@ -379,6 +379,14 @@ supervisor remains an explicit host-specific input: the lifecycle helpers inspec
 and register the task around that script but never rewrite its proxy, routing, or
 other machine policy.
 
+The first-class lifecycle is intentionally least-privileged: it registers the
+interactive current-user principal with Scheduled Task `RunLevel=Limited` (LUA),
+not `Highest`. The Runner binary, supervisor script, and config may live in the
+user's writable profile/repository tree, so an elevated task must not consume
+those inputs as an implicit UAC boundary. If a future host needs privileged OS
+operations, model that as a separate explicit privileged helper/boundary rather
+than elevating the model-facing Runner lifecycle.
+
 Use the read-only status surface to inspect the task plus exact primary process
 identity (PID + creation FILETIME). Same-path `--webcodex-internal-*` roles are
 excluded by the shared Windows Runner identity helper:
@@ -403,6 +411,12 @@ powershell -NoProfile -File scripts/install_windows_runner_lifecycle.ps1 `
   -Json
 # Review the plan, then repeat with -Apply when an operator change is intended.
 ```
+
+An existing owned lifecycle registered with `RunLevel=Highest` is reported as
+`task_principal_run_level` drift and plans an `update` to `Limited`. Applying that
+definition changes future task launches only: an already-running Runner keeps its
+existing Windows token until an operator-controlled stop/restart. This installer
+never performs that restart itself.
 
 The dogfood deployment helper keeps build and deploy separate. Its operator CLI
 resolution order is explicit `-WebCodexCliPath`, then the current repo's

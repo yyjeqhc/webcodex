@@ -75,6 +75,7 @@ try {
     $expected = New-WindowsRunnerLifecycleExpectedSpec -RunnerPath $runnerPath -RunnerConfigPath $configPath -SupervisorPath $supervisorPath -TaskName 'WebCodex Test Runner' -WorkingDirectory $workingDirectory
     $expectedAgain = New-WindowsRunnerLifecycleExpectedSpec -RunnerPath $runnerPath -RunnerConfigPath $configPath -SupervisorPath $supervisorPath -TaskName 'WebCodex Test Runner' -WorkingDirectory $workingDirectory
     Assert-Equal ($expected | ConvertTo-Json -Compress) ($expectedAgain | ConvertTo-Json -Compress) 'fresh lifecycle spec was not deterministic'
+    Assert-Equal 'Limited' $expected.PrincipalRunLevel 'first-class lifecycle must use the least-privileged Scheduled Task run level'
     Assert-Equal $expected.SupervisorPath (Get-PowerShellFileArgument -Arguments $expected.ActionArguments) 'supported supervisor argv was not recognized'
     Assert-Equal $expected.SupervisorPath (Get-PowerShellLifecycleSupervisorArgument -Arguments $expected.ActionArguments) 'canonical supervisor ownership argv was not recognized'
     Assert-Equal $null (Get-PowerShellFileArgument -Arguments ($expected.ActionArguments + ' --token ' + $secret)) 'extra potentially-secret supervisor argv was treated as safe'
@@ -96,7 +97,7 @@ try {
     Assert-Equal 1 @($definition.Triggers).Count 'task definition trigger count changed'
     Assert-Equal 'MSFT_TaskLogonTrigger' ([string]$definition.Triggers[0].CimClass.CimClassName) 'task definition trigger type changed'
     Assert-Equal 'Interactive' ([string]$definition.Principal.LogonType) 'task definition logon type changed'
-    Assert-Equal 'Highest' ([string]$definition.Principal.RunLevel) 'task definition run level changed'
+    Assert-Equal 'Limited' ([string]$definition.Principal.RunLevel) 'task definition run level changed'
     Assert-Equal 20 ([int]$definition.Settings.RestartCount) 'task definition restart count changed'
     Assert-Equal 'PT1M' ([string]$definition.Settings.RestartInterval) 'task definition restart interval changed'
     Assert-Equal 'PT0S' ([string]$definition.Settings.ExecutionTimeLimit) 'task definition execution limit changed'
@@ -121,6 +122,14 @@ try {
     Assert-Equal 'noop' $exactPlan.task_operation 'repeated same lifecycle config was not idempotent'
     Assert-True $exactPlan.idempotent_noop 'exact lifecycle did not report idempotent noop'
     Assert-True $exactPlan.can_apply 'exact expected-supervisor lifecycle was not updateable'
+
+    $highestTask = New-TestTaskObservation -Expected $expected
+    $highestTask.PrincipalRunLevel = 'Highest'
+    $highestPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $highestTask -PrimaryInventory @($exactPrimary)
+    Assert-Equal 'update' $highestPlan.task_operation 'legacy Highest lifecycle did not require a least-privilege update'
+    Assert-True $highestPlan.can_apply 'owned legacy Highest lifecycle could not be migrated to Limited'
+    Assert-HasMismatch $highestPlan.task_mismatches 'task_principal_run_level' 'Highest-to-Limited privilege drift was not reported'
+    Assert-Equal 'Limited' $highestPlan.expected_principal_run_level 'plan did not expose the least-privileged expected run level'
 
     $differentSupervisorTask = New-TestTaskObservation -Expected $expected
     $differentSupervisorTask.SupervisorPath = [System.IO.Path]::GetFullPath($differentSupervisorPath)
@@ -219,6 +228,7 @@ try {
     Assert-Equal 101 $statusOne.primary_runners[0].pid 'status lost primary PID'
     Assert-Equal ([uint64]202) $statusOne.primary_runners[0].process_creation_filetime 'status lost creation FILETIME'
     Assert-Equal 'primary' $statusOne.primary_runners[0].role 'status role changed'
+    Assert-Equal 'Limited' $statusOne.task_principal_run_level 'status did not expose the Scheduled Task run level'
 
     $statusZero = New-WindowsRunnerLifecycleStatusProjection -ExpectedRunnerPath $expected.RunnerPath -TaskObservation $exactTask -PrimaryInventory @()
     Assert-Equal 0 $statusZero.primary_runner_count 'zero-primary status changed'

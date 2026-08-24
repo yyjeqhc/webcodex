@@ -170,7 +170,7 @@ function New-WindowsRunnerLifecycleExpectedSpec {
         ActionArguments = Get-WindowsRunnerSupervisorArguments -SupervisorPath $supervisor
         PrincipalSid = $userSid
         PrincipalLogonType = 'Interactive'
-        PrincipalRunLevel = 'Highest'
+        PrincipalRunLevel = 'Limited'
         TriggerCount = 1
         TriggerType = 'MSFT_TaskLogonTrigger'
         TriggerSid = $userSid
@@ -366,6 +366,7 @@ function New-WindowsRunnerLifecycleStatusProjection {
         task_exists = [bool]$TaskObservation.Exists
         task_enabled = [bool]$TaskObservation.Enabled
         task_state = [string]$TaskObservation.State
+        task_principal_run_level = $TaskObservation.PrincipalRunLevel
         task_action_executable = $TaskObservation.ActionExecutable
         task_action_arguments = $TaskObservation.ActionArguments
         task_working_directory = $TaskObservation.WorkingDirectory
@@ -488,6 +489,7 @@ function Get-WindowsRunnerLifecyclePlan {
         expected_runner_config_path = $ExpectedSpec.RunnerConfigPath
         expected_supervisor_path = $ExpectedSpec.SupervisorPath
         expected_working_directory = $ExpectedSpec.WorkingDirectory
+        expected_principal_run_level = $ExpectedSpec.PrincipalRunLevel
         task_mismatches = @($taskMismatches)
         runtime_mismatches = @($runtimeMismatches)
     }

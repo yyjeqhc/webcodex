@@ -1624,12 +1624,17 @@ mod tests {
             other => panic!("expected request on B, got {:?}", other.kind()),
         }
 
-        // A must not receive the (already-dispatched) request: it stays quiet.
-        let stolen =
-            tokio::time::timeout(Duration::from_millis(500), read_quic_frame(&mut recv_a)).await;
+        // P5a actively cancels A once B commits. The stale connection must
+        // terminate promptly rather than remaining open/quiet behind a dead
+        // request pump. Any successfully decoded application envelope here
+        // would mean A stayed authoritative long enough to receive traffic.
+        let stale_exit =
+            tokio::time::timeout(Duration::from_millis(500), read_quic_frame(&mut recv_a))
+                .await
+                .expect("replaced QUIC connection A must terminate promptly");
         assert!(
-            stolen.is_err(),
-            "stale quic connection pump must not steal the request dispatched to B"
+            stale_exit.is_err(),
+            "replaced QUIC connection A must close instead of receiving an application envelope"
         );
 
         send_a.finish().unwrap();

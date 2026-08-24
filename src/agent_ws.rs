@@ -1552,18 +1552,20 @@ mod tests {
         // Sleep so a successful touch would observably advance last_seen.
         tokio::time::sleep(Duration::from_millis(1100)).await;
 
-        // A sends a Ping. The server replies with a Pong (best-effort keepalive
-        // echo) but the underlying touch must be rejected, so B's last_seen is
-        // unchanged.
-        ws_a.send(TungsteniteMessage::Text(
-            AgentEnvelope::Ping { ts: 1 }.to_json().unwrap().into(),
-        ))
-        .await
-        .unwrap();
-        // Best-effort: drain the Pong if it arrived so it doesn't back up.
-        let _ = tokio::time::timeout(Duration::from_millis(500), recv_envelope(&mut ws_a)).await;
-        // Give the server a moment to finish processing.
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        // P5a actively terminates A after B commits, so a stale socket no
+        // longer remains usable as a keepalive source at all. Observe its
+        // terminal state within a bounded window, then verify B's liveness was
+        // not refreshed while only the replaced connection was being closed.
+        let stale_exit = tokio::time::timeout(Duration::from_millis(500), ws_a.next())
+            .await
+            .expect("replaced WebSocket A must terminate promptly");
+        assert!(
+            matches!(
+                stale_exit,
+                None | Some(Ok(TungsteniteMessage::Close(_))) | Some(Err(_))
+            ),
+            "replaced WebSocket A must close instead of receiving application traffic"
+        );
 
         let after_a = registry
             .get_client_view("ws-stale-ping")
@@ -1572,7 +1574,7 @@ mod tests {
             .last_seen;
         assert_eq!(
             after_a, before,
-            "stale instance ping must not refresh active last_seen"
+            "replaced instance termination must not refresh active last_seen"
         );
 
         // B sends a Ping and its liveness IS refreshed.
@@ -1655,12 +1657,17 @@ mod tests {
             other => panic!("expected request on B, got {:?}", other),
         }
 
-        // A must not receive the (already-dispatched) request: it remains
-        // quiet. Give it a window and assert nothing arrives.
-        let stolen = tokio::time::timeout(Duration::from_millis(500), ws_a.next()).await;
+        // P5a actively cancels A once B commits. The stale socket must
+        // terminate promptly; it must not remain open/quiet behind a dead pump.
+        let stale_exit = tokio::time::timeout(Duration::from_millis(500), ws_a.next())
+            .await
+            .expect("replaced WebSocket A must terminate promptly");
         assert!(
-            stolen.is_err(),
-            "stale connection pump must not steal the request dispatched to B"
+            matches!(
+                stale_exit,
+                None | Some(Ok(TungsteniteMessage::Close(_))) | Some(Err(_))
+            ),
+            "replaced WebSocket A must close instead of receiving application traffic"
         );
     }
 }

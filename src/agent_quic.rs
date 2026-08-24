@@ -314,8 +314,8 @@ async fn handle_quic_connection(
     //    transport credential is already gone; only AuthContext and the
     //    registration payload enter shared session state.
     let notify = Arc::new(Notify::new());
-    let view = match registry
-        .register_streaming_session(
+    let (view, cancel) = match registry
+        .register_streaming_session_with_cancel(
             register_payload,
             Some(&auth),
             &connection_id,
@@ -324,7 +324,7 @@ async fn handle_quic_connection(
         )
         .await
     {
-        Ok(view) => view,
+        Ok(session) => session,
         Err(e) => {
             tracing::warn!(
                 client_id = %client_id,
@@ -386,6 +386,7 @@ async fn handle_quic_connection(
             agent_instance_id: &agent_instance_id,
             connection_id: &connection_id,
             notify,
+            cancel,
             transport_label: "quic",
         },
         out_tx,

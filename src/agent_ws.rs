@@ -121,8 +121,8 @@ async fn handle_agent_ws(
     // 2. Commit the complete streaming session in one registry transaction.
     //    Transport identity comes from this handler, not the raw protocol label.
     let notify = Arc::new(Notify::new());
-    let view = match registry
-        .register_streaming_session(
+    let (view, cancel) = match registry
+        .register_streaming_session_with_cancel(
             register_payload,
             auth.as_ref(),
             &connection_id,
@@ -131,7 +131,7 @@ async fn handle_agent_ws(
         )
         .await
     {
-        Ok(view) => view,
+        Ok(session) => session,
         Err(e) => {
             send_envelope_or_log(
                 &mut ws,
@@ -207,6 +207,7 @@ async fn handle_agent_ws(
             agent_instance_id: &agent_instance_id,
             connection_id: &connection_id,
             notify,
+            cancel,
             transport_label: "websocket",
         },
         out_tx,

@@ -220,9 +220,9 @@ impl Default for ClaudeCodeMcpConfig {
 /// Agent-side QUIC transport configuration (`[quic]` in `agent.toml`). All
 /// fields are required when `transport = "quic"`; `run_quic_agent` validates
 /// them before connecting. The token is NOT stored here — it stays in the
-/// top-level `token` field and is carried in the `Register` envelope's
-/// `auth_token` field, mirroring the `Authorization: Bearer` header used by
-/// the websocket/polling paths.
+/// top-level `AgentConfig.token`. QUIC encodes that credential only in its v1
+/// transport-specific first-register frame; it never enters `AgentEnvelope`.
+/// WebSocket and polling continue to use `Authorization: Bearer`.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub(crate) struct QuicClientConfig {
     /// `host:port` of the server's QUIC listener (e.g. `host:8443`).

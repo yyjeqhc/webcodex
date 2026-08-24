@@ -85,8 +85,8 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
         vec![project_summary("original", "/tmp/original")],
     );
     initial.agent_protocol_version = Some("websocket-v1".to_string());
-    registry
-        .register_streaming_session(
+    let (_view_a, cancel_a) = registry
+        .register_streaming_session_with_cancel(
             initial,
             None,
             "connection-a",
@@ -108,7 +108,7 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
     );
     rejected.agent_protocol_version = Some("future-v2".to_string());
     let error = registry
-        .register_streaming_session(
+        .register_streaming_session_with_cancel(
             rejected,
             None,
             "connection-b",
@@ -118,6 +118,17 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
         .await
         .unwrap_err();
     assert_eq!(error, "agent_protocol_version is unsupported");
+    assert!(
+        !*cancel_a.borrow(),
+        "failed replacement must not cancel the authoritative connection"
+    );
+    assert!(
+        registry
+            .get_client_view_for_connection("atomic-preserve", "atomic-instance", "connection-a")
+            .await
+            .expect("failed replacement must preserve connection A")
+            .connected
+    );
 
     let inner = registry.inner.lock().await;
     let after = inner.clients.get("atomic-preserve").unwrap();

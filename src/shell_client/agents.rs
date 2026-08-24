@@ -26,7 +26,7 @@ use crate::shell_protocol::{
 };
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
-use tokio::sync::Notify;
+use tokio::sync::{watch, Notify};
 use webcodex_core::coding_agent::{
     validate_coding_agent_run_snapshot, validate_provider_id as validate_coding_agent_provider_id,
     validate_provider_instance_id as validate_coding_agent_provider_instance_id,
@@ -109,10 +109,12 @@ fn validate_coding_agent_registration(
     }
 }
 
+
 struct StreamingSessionRegistration {
     connection_id: String,
     transport: String,
     notify: Arc<Notify>,
+    cancel: watch::Sender<bool>,
 }
 
 impl ShellClientRegistry {
@@ -132,6 +134,7 @@ impl ShellClientRegistry {
         self.register_session(body, auth, None).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn register_streaming_session(
         &self,
         body: ShellClientRegisterRequest,
@@ -139,6 +142,53 @@ impl ShellClientRegistry {
         connection_id: &str,
         transport: &str,
         notify: Arc<Notify>,
+    ) -> Result<ShellClientView, String> {
+        let (cancel, _cancelled) = watch::channel(false);
+        self.register_streaming_session_with_cancel_sender(
+            body,
+            auth,
+            connection_id,
+            transport,
+            notify,
+            cancel,
+        )
+        .await
+    }
+
+    /// Production streaming registration returns the receiver for the concrete
+    /// connection cancellation lease. The receiver is created before
+    /// validation but becomes authoritative only if `register_session` commits;
+    /// a failed replacement cannot signal the currently active session.
+    pub(crate) async fn register_streaming_session_with_cancel(
+        &self,
+        body: ShellClientRegisterRequest,
+        auth: Option<&crate::auth::AuthContext>,
+        connection_id: &str,
+        transport: &str,
+        notify: Arc<Notify>,
+    ) -> Result<(ShellClientView, watch::Receiver<bool>), String> {
+        let (cancel, cancelled) = watch::channel(false);
+        let view = self
+            .register_streaming_session_with_cancel_sender(
+                body,
+                auth,
+                connection_id,
+                transport,
+                notify,
+                cancel,
+            )
+            .await?;
+        Ok((view, cancelled))
+    }
+
+    async fn register_streaming_session_with_cancel_sender(
+        &self,
+        body: ShellClientRegisterRequest,
+        auth: Option<&crate::auth::AuthContext>,
+        connection_id: &str,
+        transport: &str,
+        notify: Arc<Notify>,
+        cancel: watch::Sender<bool>,
     ) -> Result<ShellClientView, String> {
         validate_id(connection_id, "connection_id")?;
         if !matches!(
@@ -154,6 +204,7 @@ impl ShellClientRegistry {
                 connection_id: connection_id.to_string(),
                 transport: transport.to_string(),
                 notify,
+                cancel,
             }),
         )
         .await
@@ -481,6 +532,14 @@ impl ShellClientRegistry {
         if let Some(inventory) = job_inventory.as_ref() {
             preflight_inventory_locked(&inner, &client_id, &agent_instance_id, inventory)?;
         }
+        // All fallible validation/preflight is complete. Capture the previous
+        // streaming session's cancellation sender now, but do not signal it
+        // until the new authoritative record/notifier/connection lease is fully
+        // committed and the registry mutex has been released.
+        let replaced_streaming_cancel = inner
+            .notifiers
+            .get(&client_id)
+            .map(|entry| entry.cancel.clone());
         if replaced_instance {
             let replaced_instance_id = replaced_instance_id
                 .as_deref()
@@ -565,6 +624,7 @@ impl ShellClientRegistry {
                 client_id.clone(),
                 NotifierEntry {
                     notify: streaming.notify,
+                    cancel: streaming.cancel,
                     agent_instance_id: agent_instance_id.clone(),
                     connection_id: Some(streaming.connection_id),
                 },
@@ -602,7 +662,12 @@ impl ShellClientRegistry {
                 "runner job inventory reconciled"
             );
         }
-        Ok(Self::client_view_locked(&inner, &client_id).expect("client just inserted"))
+        let view = Self::client_view_locked(&inner, &client_id).expect("client just inserted");
+        drop(inner);
+        if let Some(cancel) = replaced_streaming_cancel {
+            let _ = cancel.send(true);
+        }
+        Ok(view)
     }
 
     /// Test-only hook for observability projections that need to model a
@@ -906,10 +971,12 @@ impl ShellClientRegistry {
                 client_id
             ));
         }
+        let (cancel, _cancelled) = watch::channel(false);
         inner.notifiers.insert(
             client_id.to_string(),
             NotifierEntry {
                 notify,
+                cancel,
                 agent_instance_id: agent_instance_id.to_string(),
                 connection_id: connection_id.map(str::to_string),
             },

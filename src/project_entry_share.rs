@@ -3,7 +3,7 @@ use super::setup_service::{
     write_new_private, ProjectConfig, ProjectPaths,
 };
 use super::{
-    configured_project, ensure_local_runtime_port_available, executable_name, parse_options, setup,
+    configured_project, ensure_local_runtime_port_available, parse_options, setup,
     start_local_runtime, LocalRuntimeOptions, ProductError, ProjectCommandOptions,
     ProjectShareOAuthRuntimeOptions,
 };
@@ -408,9 +408,11 @@ fn tunnel_runtime_error() -> ProductError {
 }
 
 pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductError> {
-    // Fail before setup/state creation when the default public-share dependency is absent.
+    // Resolve or acquire the default public-share dependency before project setup/state creation.
     let cloudflared_binary = match options.tunnel {
-        TunnelProvider::CloudflareQuick => Some(locate_cloudflared()?),
+        TunnelProvider::CloudflareQuick => {
+            Some(super::cloudflared_service::resolve_cloudflared().await?)
+        }
         TunnelProvider::None => None,
     };
     setup(&options.project)?;
@@ -597,39 +599,6 @@ fn render_share_oauth_ready(
     )
 }
 
-fn locate_cloudflared() -> Result<PathBuf, ProductError> {
-    let override_bin = std::env::var_os("WEBCODEX_CLOUDFLARED_BIN").map(PathBuf::from);
-    require_cloudflared_from(override_bin.as_deref(), std::env::var_os("PATH").as_deref())
-}
-
-fn require_cloudflared_from(
-    override_bin: Option<&Path>,
-    path: Option<&std::ffi::OsStr>,
-) -> Result<PathBuf, ProductError> {
-    locate_cloudflared_from(override_bin, path).ok_or_else(|| {
-        ProductError::new(
-            "tunnel_unavailable",
-            "cloudflared is required for the default public HTTPS share and was not found",
-            Some(
-                "Install cloudflared from Cloudflare's official downloads (https://developers.cloudflare.com/tunnel/downloads/), ensure it is on PATH, then retry; or use webcodex share --tunnel none for local-only debugging.",
-            ),
-        )
-    })
-}
-
-fn locate_cloudflared_from(
-    override_bin: Option<&Path>,
-    path: Option<&std::ffi::OsStr>,
-) -> Option<PathBuf> {
-    if let Some(binary) = override_bin {
-        return binary.is_file().then(|| binary.to_path_buf());
-    }
-    let path = path?;
-    std::env::split_paths(path)
-        .map(|directory| directory.join(executable_name("cloudflared")))
-        .find(|candidate| candidate.is_file())
-}
-
 async fn start_cloudflare_quick_with_binary(
     binary: &Path,
     local_url: &str,
@@ -797,20 +766,6 @@ mod tests {
             parse_quick_tunnel_url("https://bad.trycloudflare.com/mcp"),
             None
         );
-    }
-
-    #[test]
-    fn missing_cloudflared_reports_actionable_error() {
-        let temp = tempfile::tempdir().unwrap();
-        let error = require_cloudflared_from(Some(&temp.path().join("missing")), None).unwrap_err();
-        assert_eq!(error.code, "tunnel_unavailable");
-        assert!(error
-            .message
-            .contains("required for the default public HTTPS share"));
-        assert!(error.message.contains("was not found"));
-        let next_action = error.next_action.unwrap();
-        assert!(next_action.contains("https://developers.cloudflare.com/tunnel/downloads/"));
-        assert!(next_action.contains("--tunnel none"));
     }
 
     #[test]

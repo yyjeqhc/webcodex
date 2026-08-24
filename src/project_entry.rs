@@ -4,6 +4,8 @@
 //! Browser console project the same structured readiness facts; none parse
 //! human-formatted output to decide whether coding is ready.
 
+#[path = "project_entry_cloudflared.rs"]
+mod cloudflared_service;
 #[path = "project_entry_setup.rs"]
 mod setup_service;
 #[path = "project_entry_share.rs"]

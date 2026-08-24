@@ -15,9 +15,9 @@ Supported platforms are Linux x64/arm64, macOS arm64, Windows x64, and native
 Windows arm64. The installer wrapper requires Node.js 18 or newer. Windows is a
 CLI + Runner client platform in this release: local Server runtime and
 `webcodex share` are unsupported there, so use `webcodex connect <server-url>`
-against a remote Linux Server. The `share` steps below apply to Linux/macOS and
-the default public flow also requires
-[`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) on `PATH`.
+against a remote Linux Server. The `share` steps below apply to Linux/macOS.
+For the default public flow, WebCodex reuses `WEBCODEX_CLOUDFLARED_BIN` or a
+`cloudflared` on `PATH`, and otherwise downloads a pinned, verified managed copy.
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -25,9 +25,10 @@ cd /path/to/your/repository
 webcodex share
 ```
 
-You do not need to run `setup`, `doctor`, or `run` first. `share` configures the
-project, starts a local Server + Runner, opens a temporary Cloudflare Quick
-Tunnel, and prints the MCP URL and temporary credential.
+You do not need to run `setup`, `doctor`, or `run` first. `share` prepares the
+tunnel dependency when needed, configures the project, starts a local Server +
+Runner, opens a temporary Cloudflare Quick Tunnel, and prints the MCP URL and
+temporary credential.
 
 When it says **WebCodex ready**:
 
@@ -86,8 +87,8 @@ npm package 会为支持的平台安装原生 `webcodex`、`webcodex-server`、
 wrapper 需要 Node.js 18 或更新版本。本版本的 Windows 是 CLI + Runner 客户端平台，
 不支持本地 Server runtime 或 `webcodex share`；Windows 请使用
 `webcodex connect <server-url>` 连接远程 Linux Server。下面的 `share` 步骤适用于
-Linux/macOS，默认公网流程还需要把
-[`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) 安装到 `PATH`。
+Linux/macOS。默认公网流程会优先复用 `WEBCODEX_CLOUDFLARED_BIN` 或 `PATH` 中已有的
+`cloudflared`，否则自动下载固定版本、校验后由 WebCodex 管理。
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -95,8 +96,9 @@ cd /path/to/your/repository
 webcodex share
 ```
 
-第一次不需要先执行 `setup`、`doctor` 或 `run`。`share` 会配置项目、启动本地 Server +
-Runner、打开临时 Cloudflare Quick Tunnel，并输出 MCP URL 与临时 credential。
+第一次不需要先执行 `setup`、`doctor` 或 `run`。`share` 会在需要时先准备 tunnel 依赖，
+然后配置项目、启动本地 Server + Runner、打开临时 Cloudflare Quick Tunnel，并输出 MCP URL
+与临时 credential。
 
 出现 **WebCodex ready** 后：
 

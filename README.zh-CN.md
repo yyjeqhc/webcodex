@@ -11,9 +11,9 @@ Runner 在仓库所在机器上执行文件、Git、命令与测试操作；仓�
 Windows 版本支持 CLI + Runner 连接远程 Linux Server；Windows 上请使用
 `webcodex connect <server-url>`。如果还没有 Server，需要先在 Linux 上部署一个。
 
-默认的临时公网分享依赖
-[`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/)。先安装它并确保在
-`PATH` 中，然后执行：
+默认临时公网分享会优先复用 `WEBCODEX_CLOUDFLARED_BIN` 或 `PATH` 中已有的
+`cloudflared`；如果没有，在支持的 Linux/macOS 平台上 WebCodex 会自动下载并校验自己管理的
+副本。然后执行：
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -21,9 +21,9 @@ cd /path/to/your/repository
 webcodex share
 ```
 
-`share` 是完整入口：它会配置当前 Git 项目、启动本地 WebCodex Server + Runner、创建
-临时 Connector credential，并打开 Cloudflare Quick Tunnel。第一次使用**不需要**先运行
-`setup`、`doctor` 或 `run`。
+`share` 是完整入口：需要时它会先准备 tunnel 依赖，然后配置当前 Git 项目、启动本地
+WebCodex Server + Runner、创建临时 Connector credential，并打开 Cloudflare Quick Tunnel。
+第一次使用**不需要**先运行 `setup`、`doctor` 或 `run`。
 
 命令显示 **WebCodex ready** 后保持终端运行，并按它输出的值配置 ChatGPT：
 

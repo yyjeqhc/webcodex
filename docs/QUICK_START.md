@@ -12,8 +12,9 @@ instead. If no Server exists yet, see [Deployment](DEPLOYMENT.md).
 
 - Node.js 18+ for the npm installer.
 - Git on `PATH` and a Git repository you can safely inspect/edit.
-- On Linux/macOS, [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/)
-  on `PATH` for the default temporary public HTTPS share.
+- No separate `cloudflared` installation is required for the default Linux/macOS
+  temporary public share. WebCodex reuses an explicit/PATH binary or downloads a
+  pinned, verified managed copy when needed.
 
 Install WebCodex:
 
@@ -40,9 +41,10 @@ later.
 The default share is temporary. Keep the terminal open; Ctrl-C stops the local
 runtime, tunnel, URL, and temporary credential.
 
-If `cloudflared` is missing, WebCodex fails before project setup/state creation
-and tells you where to install it. Install it and retry, or use `--tunnel none`
-for local-only debugging.
+If `cloudflared` is missing, WebCodex acquires a pinned Cloudflare release into
+private user state before project setup/state creation, verifies the artifact and
+binary, and then continues. Set `WEBCODEX_CLOUDFLARED_BIN` to force a trusted
+binary, or use `--tunnel none` for local-only debugging.
 
 ## 2. Add WebCodex to ChatGPT
 
@@ -171,7 +173,7 @@ Common examples:
 
 | Symptom | Next action |
 | --- | --- |
-| `cloudflared` missing | Install it from the official Cloudflare downloads and retry, or use `share --tunnel none` locally |
+| managed `cloudflared` acquisition fails | Check network/proxy access and retry; alternatively set `WEBCODEX_CLOUDFLARED_BIN` to a trusted binary or use `share --tunnel none` locally |
 | loopback port already in use | Stop the conflicting process and retry |
 | local/manual runtime stopped | `webcodex run` |
 | Runner unavailable on an existing hosted profile | rerun `connect` or inspect `webcodex agent status --profile <profile>` |

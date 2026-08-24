@@ -11,8 +11,8 @@ Server runtime；Windows 用户需要已有的远程 Linux Server，并改用
 
 - npm installer 需要 Node.js 18+。
 - `PATH` 中有 Git，并准备一个可以安全查看/编辑的 Git 仓库。
-- Linux/macOS 的默认临时公网 HTTPS 分享需要把
-  [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) 安装到 `PATH`。
+- Linux/macOS 默认临时公网 HTTPS 分享不再要求单独安装 `cloudflared`。WebCodex 会优先
+  复用显式指定或 `PATH` 中的 binary；没有时自动下载固定版本并校验后使用。
 
 安装 WebCodex：
 
@@ -37,8 +37,9 @@ webcodex share
 默认 share 是临时的。保持终端运行；Ctrl-C 会停止本地 runtime 与 tunnel，同时使 URL 和
 临时 credential 失效。
 
-如果缺少 `cloudflared`，WebCodex 会在创建项目 setup/state 之前失败，并给出官方安装地址。
-安装后重试；或者仅本地调试时使用 `--tunnel none`。
+如果缺少 `cloudflared`，WebCodex 会在创建项目 setup/state 之前把固定版本下载到私有用户
+状态目录，校验 artifact 与最终 binary 后继续。可用 `WEBCODEX_CLOUDFLARED_BIN` 强制指定
+可信 binary；仅本地调试时也可以使用 `--tunnel none`。
 
 ## 2. 在 ChatGPT 中添加 WebCodex
 
@@ -151,7 +152,7 @@ webcodex doctor
 
 | 现象 | 下一步 |
 | --- | --- |
-| 缺少 `cloudflared` | 从 Cloudflare 官方下载并安装后重试；仅本地调试可用 `share --tunnel none` |
+| WebCodex-managed `cloudflared` 获取失败 | 检查网络/代理后重试；也可用 `WEBCODEX_CLOUDFLARED_BIN` 指定可信 binary，或仅本地调试时用 `share --tunnel none` |
 | loopback 端口已被占用 | 停掉冲突进程后重试 |
 | 本地/手动 runtime 未运行 | `webcodex run` |
 | 已有 hosted profile 的 Runner 不可用 | 重跑 `connect` 或检查 `webcodex agent status --profile <profile>` |

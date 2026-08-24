@@ -14,9 +14,9 @@ Linux and macOS. Windows builds support the CLI + Runner against a remote Linux
 Server; on Windows use `webcodex connect <server-url>`. If you do not already
 have a Server, deploy one on Linux first.
 
-For the default temporary public share, install
-[`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) and make
-sure it is on `PATH`. Then:
+For the default temporary public share, WebCodex reuses `cloudflared` from
+`WEBCODEX_CLOUDFLARED_BIN` or `PATH` when available. Otherwise, on supported
+Linux/macOS platforms it downloads and verifies a WebCodex-managed copy automatically. Then:
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -24,10 +24,10 @@ cd /path/to/your/repository
 webcodex share
 ```
 
-`share` is self-contained: it configures the current Git project, starts a local
-WebCodex Server + Runner, creates a temporary Connector credential, and opens a
-Cloudflare Quick Tunnel. You do **not** need to run `setup`, `doctor`, or `run`
-first.
+`share` is self-contained: it prepares the tunnel dependency when needed,
+configures the current Git project, starts a local WebCodex Server + Runner,
+creates a temporary Connector credential, and opens a Cloudflare Quick Tunnel.
+You do **not** need to run `setup`, `doctor`, or `run` first.
 
 When the command reports **WebCodex ready**, keep that terminal open and use the
 values it prints:

@@ -628,6 +628,58 @@ async function main() {
     assert.strictEqual(wrapper.bootstrapNative({ packageRoot: bootstrapRoot }), true);
     assert.strictEqual(fs.readFileSync(bootstrapMarker, "utf8"), "ok");
 
+    assert.strictEqual(wrapper.needsNpmNetworkContext([], false), true);
+    assert.strictEqual(wrapper.needsNpmNetworkContext(["share"], false), true);
+    assert.strictEqual(wrapper.needsNpmNetworkContext(["status"], false), false);
+    assert.strictEqual(wrapper.needsNpmNetworkContext(["status"], true), true);
+
+    if (PLATFORM !== "win32") {
+      const networkRoot = path.join(tmp, "wrapper-network");
+      const networkBin = path.join(networkRoot, "bin");
+      fs.mkdirSync(networkBin, { recursive: true });
+      const networkHelper = path.join(__dirname, "..", "bin", "npm-network-env.js");
+      const fakeNpm = path.join(networkRoot, "fake-npm");
+      const protectedProxy = "http://wrapper-user:wrapper-secret@proxy.example:8443/";
+      fs.writeFileSync(
+        fakeNpm,
+        [
+          "#!/bin/sh",
+          "if [ \"$1\" = exec ] && [ \"$2\" = --yes=false ] && [ \"$3\" = -- ]; then",
+          `  printf '%s' '${JSON.stringify({ npm_config_https_proxy: protectedProxy, npm_config_proxy: protectedProxy, npm_config_noproxy: "localhost", npm_config_cafile: "/private/ca.pem", ignored_secret: "must-not-propagate" }).replace(/'/g, "'\\''")}'`,
+          "  exit 0",
+          "fi",
+          "if [ \"$1\" = config ] && [ \"$2\" = get ]; then",
+          "  case \"$3\" in",
+          "    ca) printf '%s\\n' '-----BEGIN CERTIFICATE-----\\nwrapper-ca\\n-----END CERTIFICATE-----' ; exit 0 ;;",
+          "    strict-ssl) printf '%s\\n' false ; exit 0 ;;",
+          "  esac",
+          "fi",
+          "printf '%s\\n' 'http://leak-user:leak-secret@should-not-appear.invalid/' >&2",
+          "exit 9",
+          ""
+        ].join("\n"),
+        { mode: 0o700 }
+      );
+      const hydrated = wrapper.rehydrateNpmNetworkEnvironment(
+        { PATH: process.env.PATH || "" },
+        { packageRoot: networkRoot, npmProgram: fakeNpm, networkHelper }
+      );
+      assert.strictEqual(hydrated.npm_config_https_proxy, protectedProxy);
+      assert.strictEqual(hydrated.npm_config_proxy, protectedProxy);
+      assert.strictEqual(hydrated.npm_config_noproxy, "localhost");
+      assert.strictEqual(hydrated.npm_config_cafile, "/private/ca.pem");
+      assert.match(hydrated.npm_config_ca, /wrapper-ca/);
+      assert.strictEqual(hydrated.npm_config_strict_ssl.trim(), "false");
+      assert.strictEqual(hydrated.ignored_secret, undefined);
+
+      const inheritedProxy = "http://existing-user:existing-secret@existing.example:8080/";
+      const inherited = wrapper.rehydrateNpmNetworkEnvironment(
+        { PATH: process.env.PATH || "", npm_config_https_proxy: inheritedProxy },
+        { packageRoot: networkRoot, npmProgram: fakeNpm, networkHelper }
+      );
+      assert.strictEqual(inherited.npm_config_https_proxy, inheritedProxy);
+    }
+
     if (PLATFORM !== "win32") {
       const lazyRoot = path.join(tmp, "wrapper-lazy");
       fs.mkdirSync(lazyRoot, { recursive: true });

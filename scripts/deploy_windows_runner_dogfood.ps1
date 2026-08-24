@@ -10,13 +10,14 @@
 # Any failure after destructive replacement begins performs bounded rollback and
 # must prove a fresh rollback instance/build Ready before recovery is considered
 # established. The Server binary/service is never modified by this helper.
+# Candidate/CLI defaults are dogfood-first; this helper never runs Cargo itself.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Candidate,
+    [Alias('Candidate')]
+    [string]$CandidatePath,
 
     [string]$RunnerPath = "$env:USERPROFILE\.local\bin\webcodex-runner.exe",
-    [string]$WebCodexCliPath = "$env:USERPROFILE\.local\bin\webcodex.exe",
+    [string]$WebCodexCliPath,
     [string]$TaskName = "WebCodex MSI Dogfood Runner",
     [string]$TaskPath = "\",
 
@@ -33,6 +34,7 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "windows_runner_process_identity.ps1")
 . (Join-Path $PSScriptRoot "windows_runner_readiness.ps1")
+. (Join-Path $PSScriptRoot "windows_runner_lifecycle.ps1")
 
 function Get-RunnerIdentity {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -68,7 +70,11 @@ function Wait-Until {
     throw $FailureMessage
 }
 
-$Candidate = [System.IO.Path]::GetFullPath($Candidate)
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$candidateSelection = Resolve-WebCodexRunnerCandidatePath -ExplicitPath $CandidatePath -RepoRoot $repoRoot
+$cliSelection = Resolve-WebCodexOperatorCliPath -ExplicitPath $WebCodexCliPath -RepoRoot $repoRoot
+$Candidate = $candidateSelection.Path
+$WebCodexCliPath = $cliSelection.Path
 $RunnerPath = [System.IO.Path]::GetFullPath($RunnerPath)
 $RunnerDir = Split-Path -Parent $RunnerPath
 if (-not (Test-Path -LiteralPath $RunnerDir -PathType Container)) {
@@ -212,6 +218,8 @@ try {
     Write-Output "  expected_build:        commit=$($candidateBuild.GitCommit) dirty=$($candidateBuild.GitDirty)"
     Write-Output "  observed_build:        commit=$($candidateReadyObservation.build.git_commit) dirty=$($candidateReadyObservation.build.git_dirty)"
     Write-Output "  candidate:             $candidateIdentity"
+    Write-Output "  candidate_source:      $($candidateSelection.Source)"
+    Write-Output "  operator_cli_source:   $($cliSelection.Source)"
     Write-Output "  previous:              $previousIdentity"
     Write-Output "  rollback:              $rollbackPath"
     Write-Output "  task:                  $TaskPath$TaskName"

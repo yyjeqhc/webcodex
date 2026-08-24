@@ -368,6 +368,51 @@ an interrupted graceful-shutdown path. If neither is present, investigate an
 external/native process termination or supervisor action before adding broader
 Runner telemetry.
 
+### Windows dogfood Runner lifecycle
+
+For Windows dogfood hosts that need an interactive desktop session, the supported
+host-specific topology is a Scheduled Task that runs a PowerShell supervisor; the
+supervisor launches the exact primary `webcodex-runner.exe` through WMI
+`Win32_Process.Create`. This preserves the Runner's own ManagedChild/Job Object
+semantics instead of making Task Scheduler the direct Runner process owner. The
+supervisor remains an explicit host-specific input: the lifecycle helpers inspect
+and register the task around that script but never rewrite its proxy, routing, or
+other machine policy.
+
+Use the read-only status surface to inspect the task plus exact primary process
+identity (PID + creation FILETIME). Same-path `--webcodex-internal-*` roles are
+excluded by the shared Windows Runner identity helper:
+
+```powershell
+powershell -NoProfile -File scripts/status_windows_runner_lifecycle.ps1 -Json
+```
+
+`install_windows_runner_lifecycle.ps1` is plan-only unless `-Apply` is supplied.
+It canonicalizes and validates the Runner, config, supervisor, and working-directory
+paths; reports task/runtime mismatches; and refuses to update an existing task that
+does not look like a WebCodex PowerShell-supervisor lifecycle. Applying the plan
+creates, updates, or enables only that Scheduled Task definition. It does not
+replace the Runner binary, read token contents, start/restart the Runner, or change
+the supervisor script:
+
+```powershell
+powershell -NoProfile -File scripts/install_windows_runner_lifecycle.ps1 `
+  -RunnerConfigPath <agent.toml> `
+  -SupervisorPath <supervisor.ps1> `
+  -WorkingDirectory <repo-root> `
+  -Json
+# Review the plan, then repeat with -Apply when an operator change is intended.
+```
+
+The dogfood deployment helper keeps build and deploy separate. Its operator CLI
+resolution order is explicit `-WebCodexCliPath`, then the current repo's
+`target\\dogfood\\webcodex.exe`, then the installed CLI. The installed fallback
+must support `webcodex ops runner` or deployment fails closed. Runner candidate
+resolution is explicit `-CandidatePath` (legacy `-Candidate` remains an alias),
+then `target\\dogfood\\webcodex-runner.exe`; the helper never runs Cargo itself.
+Replacement success and rollback still use the existing exact process identity and
+bounded fresh control-plane readiness proofs.
+
 ## macOS local dogfood signing
 
 macOS privacy grants such as Screen Recording and Accessibility should not be

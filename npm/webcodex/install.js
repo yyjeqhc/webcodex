@@ -305,12 +305,16 @@ function startNetworkRequest(url, environment, onResponse, onError) {
   if (parsed.protocol === "http:") {
     const headers = { Host: parsed.host };
     if (auth) headers["Proxy-Authorization"] = auth;
+    const proxyTarget = new URL(parsed);
+    // URI fragments are client-local state and must never cross the HTTP
+    // boundary, including in the absolute-form request target sent to a proxy.
+    proxyTarget.hash = "";
     targetRequest = proxyClient.request({
       ...proxyTls,
       hostname: proxy.hostname,
       port: proxyPort,
       method: "GET",
-      path: parsed.href,
+      path: proxyTarget.href,
       headers
     }, onResponse);
     targetRequest.on("error", fail);

@@ -354,17 +354,25 @@ async function main() {
       );
     });
 
-    await withServer((_req, res) => { res.end("proxy-delivered"); }, async (proxyBase) => {
-      const proxiedDest = path.join(tmp, "proxied-download.bin");
-      await install.fetchToFile("http://origin.invalid/artifact.tar.gz?token=hidden", proxiedDest, {
-        label: "Proxy",
-        totalTimeoutMs: 500,
-        maxBytes: 1024,
-        environment: { npm_config_proxy: proxyBase }
+    {
+      let observedProxyTarget = null;
+      await withServer((req, res) => {
+        observedProxyTarget = req.url;
+        res.end("proxy-delivered");
+      }, async (proxyBase) => {
+        const proxiedDest = path.join(tmp, "proxied-download.bin");
+        await install.fetchToFile("http://origin.invalid/artifact.tar.gz?token=visible#fragment-secret", proxiedDest, {
+          label: "Proxy",
+          totalTimeoutMs: 500,
+          maxBytes: 1024,
+          environment: { npm_config_proxy: proxyBase }
+        });
+        assert.strictEqual(fs.readFileSync(proxiedDest, "utf8"), "proxy-delivered");
+        assert.match(observedProxyTarget, /token=visible/);
+        assert.doesNotMatch(observedProxyTarget, /fragment-secret/);
+        fs.rmSync(proxiedDest, { force: true });
       });
-      assert.strictEqual(fs.readFileSync(proxiedDest, "utf8"), "proxy-delivered");
-      fs.rmSync(proxiedDest, { force: true });
-    });
+    }
 
     await withServer((_req, res) => { res.end("direct-delivered"); }, async (targetBase) => {
       await withServer((_req, res) => { res.statusCode = 502; res.end("proxy must be bypassed"); }, async (proxyBase) => {

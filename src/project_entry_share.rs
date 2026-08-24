@@ -729,8 +729,57 @@ async fn drain_tunnel_readers(mut stdout_task: JoinHandle<()>, mut stderr_task: 
     }
 }
 
+fn sanitize_tunnel_log_line(line: &str) -> String {
+    line.split_whitespace()
+        .map(|token| {
+            let Some(scheme_end) = token.find("://") else {
+                return token.to_string();
+            };
+            let bytes = token.as_bytes();
+            let mut start = scheme_end;
+            while start > 0
+                && (bytes[start - 1].is_ascii_alphanumeric()
+                    || matches!(bytes[start - 1], b'+' | b'-' | b'.'))
+            {
+                start -= 1;
+            }
+            let mut end = token.len();
+            while end > scheme_end + 3
+                && matches!(
+                    token.as_bytes()[end - 1],
+                    b')' | b']' | b'}' | b',' | b';' | b'.'
+                )
+            {
+                end -= 1;
+            }
+            let candidate = &token[start..end];
+            let redacted = url::Url::parse(candidate)
+                .ok()
+                .and_then(|parsed| {
+                    let host = parsed.host_str()?;
+                    let host = if host.contains(':') {
+                        format!("[{host}]")
+                    } else {
+                        host.to_string()
+                    };
+                    let port = parsed
+                        .port()
+                        .map(|port| format!(":{port}"))
+                        .unwrap_or_default();
+                    Some(format!("{}://{host}{port}/...", parsed.scheme()))
+                })
+                .unwrap_or_else(|| "[redacted URL]".to_string());
+            format!("{}{}{}", &token[..start], redacted, &token[end..])
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn record_tunnel_line(recent: &Arc<Mutex<VecDeque<String>>>, line: &str) {
-    let mut line = line.to_string();
+    // Tunnel diagnostics are model/user-facing on startup failure. Sanitize URL
+    // credentials, paths, and query strings before retaining a bounded log tail;
+    // Quick Tunnel URL discovery still parses the original unsanitized line.
+    let mut line = sanitize_tunnel_log_line(line);
     if line.len() > TUNNEL_LOG_LINE_BYTES {
         let mut end = TUNNEL_LOG_LINE_BYTES;
         while !line.is_char_boundary(end) {
@@ -906,6 +955,23 @@ mod tests {
         assert!(output.find("MCP URL:").unwrap() < output.find("Details").unwrap());
         assert!(output.contains("fenced to this share process"));
         assert!(output.contains("externally managed"));
+    }
+
+    #[test]
+    fn tunnel_startup_diagnostics_redact_url_credentials_and_private_components() {
+        let recent = Arc::new(Mutex::new(VecDeque::new()));
+        record_tunnel_line(
+            &recent,
+            "ERR proxy=https://proxy-user:proxy-secret@proxy.example:8443/private/path?token=hidden",
+        );
+        let summary = bounded_tunnel_log_summary(&recent);
+        assert!(summary.contains("https://proxy.example:8443/..."));
+        for secret in ["proxy-user", "proxy-secret", "private/path", "token=hidden"] {
+            assert!(
+                !summary.contains(secret),
+                "tunnel diagnostic leaked {secret}"
+            );
+        }
     }
 
     #[test]

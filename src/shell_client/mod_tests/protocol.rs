@@ -79,6 +79,47 @@ fn protocol_serde_parses_agent_protocol_version() {
 }
 
 #[tokio::test]
+async fn latest_stable_v038_registration_fixtures_are_accepted() {
+    const V038_COMMIT: &str = "477c1f754e8b5c7d9f0e8b1c073487532a749101";
+    for (protocol, transport) in [
+        (AGENT_PROTOCOL_VERSION_POLLING_V1, TRANSPORT_POLLING),
+        (AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, TRANSPORT_WEBSOCKET),
+        (AGENT_PROTOCOL_VERSION_QUIC_V1, TRANSPORT_QUIC),
+    ] {
+        // Frozen representative v0.3.8 registration shape. Newer additive
+        // capability fields are deliberately absent and must remain fail-closed.
+        let fixture = format!(
+            r#"{{"client_id":"compat-{transport}","agent_instance_id":"inst-v038-{transport}","display_name":"v0.3.8 fixture","hostname":"stable-host","capabilities":{{"shell":true,"file_read":true,"job_state_reconciliation":false}},"projects":[],"agent_protocol_version":"{protocol}","process_started_at":1700000000,"build":{{"version":"0.3.8","git_commit":"{V038_COMMIT}","git_dirty":false}},"job_concurrency_limit":4}}"#
+        );
+        let registration: ShellClientRegisterRequest = serde_json::from_str(&fixture).unwrap();
+        let caps = registration.capabilities.as_ref().unwrap();
+        assert!(caps.shell);
+        assert!(caps.file_read);
+        assert!(!caps.computer_text_input);
+        assert!(!caps.structured_file_delete);
+
+        let registry = ShellClientRegistry::default();
+        let view = if transport == TRANSPORT_POLLING {
+            registry.register(registration).await.unwrap()
+        } else {
+            registry
+                .register_streaming_session(
+                    registration,
+                    None,
+                    &format!("connection-{transport}"),
+                    transport,
+                    Arc::new(Notify::new()),
+                )
+                .await
+                .unwrap()
+        };
+        assert!(view.connected);
+        assert_eq!(view.agent_protocol_version, protocol);
+        assert_eq!(view.transport, transport);
+    }
+}
+
+#[tokio::test]
 async fn register_without_protocol_version_is_rejected() {
     let registry = ShellClientRegistry::default();
     let mut registration = runner_registration("oe", "inst", Vec::new());

@@ -54,6 +54,31 @@ WebSocket 的 first-party Runner 使用 `Authorization: Bearer <token>`。Server
 transport 支持窗口后即可删除该 fallback。Polling 使用 bearer 头。QUIC 把凭据限制
 在 transport-specific v1 首个注册帧中，共享 agent envelope 不再携带凭据。
 
+### Server/Runner 滚动兼容
+
+保证的滚动升级窗口是：**当前开发版 Server/Runner ↔ latest stable
+Server/Runner release**。这里的 latest stable 指项目最近发布的非 prerelease
+版本化 Server/Runner；建立本约定时为 v0.3.8
+(`477c1f754e8b5c7d9f0e8b1c073487532a749101`)。更早 release 只提供 best-effort
+兼容，除非某个兼容面被明确单独保留。
+
+`polling-v1`、`websocket-v1`、`quic-v1` 以及对应的 `v2` inventory label
+是 rolling-compatibility ingress adapter，不表示彼此独立的 canonical protocol
+generation。注册仍然 fail closed：`agent_protocol_version` 必须存在且受支持。
+正式 v0.1.0 的 first-party Runner 已发送 v1 label，因此 pre-release 的省略行为
+不属于支持窗口。旧 peer 省略新增 capability 时继续按 fail-closed 语义处理（通常为
+`false`/不可用）；在旧 Server 明确声明支持前也不会发送 project-inventory paging。
+
+`/api/agents/ws?token=...` 是独立、明确保留的历史例外，因为 v0.1.0 的公开文档
+曾发布该用法；first-party Runner 使用 `Authorization: Bearer`，该例外只保留到
+legacy compatibility window 被明确结束。今后若移除兼容面或有意打破上述滚动兼容，
+必须在对应 release notes 中明确说明。
+
+QUIC 升级注意：`[quic].keepalive_interval_secs` 现在会真实配置 Quinn transport
+keepalive；默认仍为 20 秒，有效范围为 `1..=25`。历史上大于 25 的值虽然能够被接受，
+但该设置当时实际是 no-op；升级前必须调整。Runner 对越界值直接拒绝，不做 silent
+clamp。
+
 ## 注册项目
 
 项目存放在 Runner 机器上。Runner 把允许的目录注册给 Server；Server 不扫描文件

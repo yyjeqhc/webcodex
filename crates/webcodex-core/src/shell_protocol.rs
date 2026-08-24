@@ -3282,6 +3282,39 @@ mod envelope_tests {
     }
 
     #[test]
+    fn current_websocket_register_remains_latest_stable_v038_envelope_readable() {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "snake_case")]
+        enum LatestStableV038Envelope {
+            Register {
+                #[serde(flatten)]
+                payload: ShellClientRegisterRequest,
+                #[serde(default)]
+                auth_token: Option<String>,
+            },
+        }
+
+        let json = AgentEnvelope::Register {
+            payload: sample_register(),
+        }
+        .to_json()
+        .unwrap();
+        match serde_json::from_str::<LatestStableV038Envelope>(&json).unwrap() {
+            LatestStableV038Envelope::Register {
+                payload,
+                auth_token,
+            } => {
+                assert_eq!(payload.client_id, "ws-1");
+                assert_eq!(
+                    payload.agent_protocol_version.as_deref(),
+                    Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1)
+                );
+                assert!(auth_token.is_none());
+            }
+        }
+    }
+
+    #[test]
     fn legacy_capabilities_default_persistent_shell_to_false() {
         let capabilities: ShellClientCapabilities =
             serde_json::from_str(r#"{"shell":true,"jobs":true}"#).unwrap();

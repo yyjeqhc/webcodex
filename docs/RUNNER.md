@@ -63,6 +63,36 @@ support window is explicitly retired. Polling uses the bearer header. QUIC
 keeps its credential in the transport-specific v1 first-register frame while
 the shared agent envelope remains credential-free.
 
+### Rolling Server/Runner compatibility
+
+The guaranteed rolling-upgrade window is **current development Server/Runner ↔
+the latest stable Server/Runner release**. "Latest stable" means the project's
+most recent non-prerelease versioned Server/Runner release; when this contract
+was introduced that release is v0.3.8 (`477c1f754e8b5c7d9f0e8b1c073487532a749101`).
+Older releases are best-effort unless a compatibility surface is explicitly
+retained.
+
+Agent protocol labels such as `polling-v1`, `websocket-v1`, `quic-v1` and their
+`v2` inventory variants are rolling-compatibility ingress adapters, not claims
+of independent canonical protocol generations. Registration still fails closed:
+`agent_protocol_version` must be present and supported. Official v0.1.0
+first-party Runners already sent the v1 labels, so pre-release omission is not
+part of the supported window. Additive capability fields remain fail-closed when
+an older peer omits them (normally `false`/unavailable), and project-inventory
+paging is not sent to an older Server until support is explicitly signalled.
+
+The deprecated `/api/agents/ws?token=...` handshake is a separately documented
+historical exception because v0.1.0 published it; the first-party Runner uses
+`Authorization: Bearer` and the exception remains only until that legacy window
+is explicitly retired. Any future removal or intentional break in rolling
+Server/Runner compatibility must be called out in the applicable release notes.
+
+QUIC upgrade note: `[quic].keepalive_interval_secs` now actively configures
+Quinn transport keepalive. The default remains 20 seconds and the accepted
+range is `1..=25`. Older configurations above 25 seconds were previously
+accepted while the setting was effectively a no-op; adjust them before upgrade.
+The Runner rejects out-of-range values rather than silently clamping them.
+
 ## Registering projects
 
 Projects live on the Runner machine. The Runner registers allowed directories

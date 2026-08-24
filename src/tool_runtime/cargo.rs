@@ -12,7 +12,9 @@ use super::helpers::{
 use super::local_jobs::LocalJobRecord;
 use super::shell::{command_execution_state_name, ProjectCommandOutput};
 use super::tool_result::ToolResult;
-use super::validation_parser::aggregate_cargo_test_summaries;
+use super::validation_parser::{
+    aggregate_cargo_test_summaries, parse_complete_cargo_test_summary_counts,
+};
 use super::validation_profile::{
     validation_adapter_for_tool, ValidationAdapter, ValidationCommandOptions,
 };
@@ -76,31 +78,47 @@ pub(crate) struct CargoTestRunMetadata {
 
 pub(crate) fn parse_cargo_test_run_metadata(text: &str) -> CargoTestRunMetadata {
     let mut tests_run_count = 0_u64;
+    let mut complete_summary_found = false;
+    let mut incomplete_summary_found = false;
     let mut tests_detected = false;
 
     for line in text.lines() {
         let trimmed = line.trim_start();
-        let Some(rest) = trimmed.strip_prefix("running ") else {
-            continue;
-        };
-        let mut parts = rest.split_whitespace();
-        let Some(raw_count) = parts.next() else {
-            continue;
-        };
-        let Some(label) = parts.next() else {
-            continue;
-        };
-        if label != "test" && label != "tests" {
+        if let Some(rest) = trimmed.strip_prefix("running ") {
+            let mut parts = rest.split_whitespace();
+            if parts
+                .next()
+                .is_some_and(|count| count.parse::<u64>().is_ok())
+                && parts
+                    .next()
+                    .is_some_and(|label| label == "test" || label == "tests")
+            {
+                // `running N tests` includes ignored items. It is useful only
+                // as a harness-detection signal, never as executed-count proof.
+                tests_detected = true;
+            }
+        }
+
+        if !line.contains("test result:") {
             continue;
         }
-        let Ok(count) = raw_count.parse::<u64>() else {
-            continue;
-        };
         tests_detected = true;
-        tests_run_count = tests_run_count.saturating_add(count);
+        match parse_complete_cargo_test_summary_counts(line) {
+            Some((passed, failed)) => {
+                complete_summary_found = true;
+                tests_run_count = tests_run_count
+                    .saturating_add(passed)
+                    .saturating_add(failed);
+            }
+            None => {
+                // A partial/malformed summary makes the aggregate unproven;
+                // do not promote counts observed in other retained sections.
+                incomplete_summary_found = true;
+            }
+        }
     }
 
-    if tests_detected {
+    if complete_summary_found && !incomplete_summary_found {
         CargoTestRunMetadata {
             tests_detected,
             tests_run_count: Some(tests_run_count),

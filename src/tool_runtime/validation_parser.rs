@@ -673,6 +673,27 @@ fn is_stable_assertion_signature(line: &str) -> bool {
     line == "assertion failed" || (line.starts_with("assertion ") && line.ends_with(" failed"))
 }
 
+/// Parse the executed-test fields from one complete-enough canonical libtest
+/// summary.
+///
+/// The caller treats `None` for a line containing `test result:` as incomplete
+/// evidence. A canonical outcome plus `passed`, `failed`, and `ignored` must all
+/// be present so a partial prefix cannot prove a minimum. Only `passed` and
+/// `failed` are returned: ignored, measured, and filtered items are deliberately
+/// not execution-count authority.
+pub(crate) fn parse_complete_cargo_test_summary_counts(line: &str) -> Option<(u64, u64)> {
+    let line = sanitize_line(line);
+    let result = line.strip_prefix("test result:")?.trim_start();
+    if !result.starts_with("ok.") && !result.starts_with("FAILED.") {
+        return None;
+    }
+    let summary = parse_test_summary_line(&line)?;
+    let passed = summary.passed?;
+    let failed = summary.failed?;
+    summary.ignored?;
+    Some((passed, failed))
+}
+
 fn parse_test_summary_line(line: &str) -> Option<CargoTestSummary> {
     let line = sanitize_line(line);
     if !line.contains("test result:") {

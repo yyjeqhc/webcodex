@@ -2800,6 +2800,51 @@ mod recovery_projection_tests {
             .unwrap()
         };
 
+        let ignored_only_default = project(
+            "running 1 test\n\ntest ignored_only ... ignored\n\ntest result: ok. 0 passed; 0 failed; 1 ignored\n",
+            false,
+            None,
+        );
+        assert_eq!(ignored_only_default["passed"], true);
+        assert_eq!(ignored_only_default["tests_run_count"], 0);
+        assert_eq!(ignored_only_default["zero_tests_run"], true);
+        assert!(ignored_only_default.get("test_count_assertion").is_none());
+
+        let ignored_only_required = project(
+            "running 1 test\n\ntest ignored_only ... ignored\n\ntest result: ok. 0 passed; 0 failed; 1 ignored\n",
+            false,
+            Some(1),
+        );
+        assert_eq!(ignored_only_required["passed"], false);
+        assert_eq!(ignored_only_required["tests_run_count"], 0);
+        assert_eq!(
+            ignored_only_required["test_count_assertion"]["reason_code"],
+            "minimum_not_met"
+        );
+
+        let one_passed_with_ignored = project(
+            "running 6 tests\n\ntest result: ok. 1 passed; 0 failed; 5 ignored\n",
+            false,
+            Some(1),
+        );
+        assert_eq!(one_passed_with_ignored["passed"], true);
+        assert_eq!(one_passed_with_ignored["tests_run_count"], 1);
+        assert_eq!(
+            one_passed_with_ignored["test_count_assertion"]["reason_code"],
+            "minimum_satisfied"
+        );
+        let one_passed_below_two = project(
+            "running 6 tests\n\ntest result: ok. 1 passed; 0 failed; 5 ignored\n",
+            false,
+            Some(2),
+        );
+        assert_eq!(one_passed_below_two["passed"], false);
+        assert_eq!(one_passed_below_two["tests_run_count"], 1);
+        assert_eq!(
+            one_passed_below_two["test_count_assertion"]["reason_code"],
+            "minimum_not_met"
+        );
+
         let compatible_zero = project(
             "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored\n",
             false,
@@ -2839,7 +2884,9 @@ mod recovery_projection_tests {
 
         for unproven in [
             project("", false, Some(1)),
-            project("running 10 tests\n", true, Some(6)),
+            project("running 10 tests\n", false, Some(6)),
+            project("test result: ok. 10 passed;\n", false, Some(6)),
+            project("test result: ok. 10 passed; 0 failed\n", true, Some(6)),
         ] {
             assert_eq!(unproven["passed"], false);
             assert!(unproven["tests_run_count"].is_null());
@@ -2866,6 +2913,26 @@ mod recovery_projection_tests {
         assert!(
             command_failure.get("test_count_assertion").is_none(),
             "a real Cargo failure must not be overwritten by postcondition evaluation"
+        );
+
+        let failing_tests = validation_job_projection(
+            Some("cargo_test"),
+            Some("test"),
+            "failed",
+            Some(101),
+            "running 3 tests\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored\n",
+            "",
+            false,
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(failing_tests["passed"], false);
+        assert_eq!(failing_tests["tests_run_count"], 3);
+        assert_eq!(failing_tests["tests_passed"], 2);
+        assert_eq!(failing_tests["tests_failed"], 1);
+        assert!(
+            failing_tests.get("test_count_assertion").is_none(),
+            "executed-test evidence must not overwrite Cargo process failure"
         );
     }
 

@@ -473,18 +473,78 @@ fn validation_summary_exposes_failed_test_details_on_latest_and_latest_failure()
 }
 
 #[test]
-fn cargo_test_run_metadata_sums_mixed_rust_test_harness_sections() {
+fn cargo_test_run_metadata_counts_only_executed_tests() {
     let metadata = parse_cargo_test_run_metadata(
-        "running 0 tests\n\
-         test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n\n\
-         running 1 test\n\
-         test archived_items_do_not_count_toward_total_quantity ... ok\n\
-         test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        "running 7 tests\n\
+         test result: ok. 1 passed; 0 failed; 3 ignored; 2 measured; 4 filtered out\n",
     );
 
     assert!(metadata.tests_detected);
     assert_eq!(metadata.tests_run_count, Some(1));
     assert_eq!(metadata.zero_tests_run, Some(false));
+
+    let measured_only = parse_cargo_test_run_metadata(
+        "running 2 tests\n\
+         test result: ok. 0 passed; 0 failed; 0 ignored; 2 measured; 0 filtered out\n",
+    );
+    assert_eq!(measured_only.tests_run_count, Some(0));
+    assert_eq!(measured_only.zero_tests_run, Some(true));
+}
+
+#[test]
+fn cargo_test_run_metadata_reports_ignored_only_as_zero_executed() {
+    let metadata = parse_cargo_test_run_metadata(
+        "running 1 test\n\
+         test ignored_only ... ignored\n\
+         test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out\n",
+    );
+
+    assert!(metadata.tests_detected);
+    assert_eq!(metadata.tests_run_count, Some(0));
+    assert_eq!(metadata.zero_tests_run, Some(true));
+}
+
+#[test]
+fn cargo_test_run_metadata_counts_failed_tests_as_executed() {
+    let metadata = parse_cargo_test_run_metadata(
+        "running 3 tests\n\
+         test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n",
+    );
+
+    assert!(metadata.tests_detected);
+    assert_eq!(metadata.tests_run_count, Some(3));
+    assert_eq!(metadata.zero_tests_run, Some(false));
+}
+
+#[test]
+fn cargo_test_run_metadata_aggregates_complete_harness_summaries() {
+    let metadata = parse_cargo_test_run_metadata(
+        "running 5 tests\n\
+         test result: ok. 2 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out\n\n\
+         running 6 tests\n\
+         test result: FAILED. 1 passed; 1 failed; 4 ignored; 0 measured; 0 filtered out\n",
+    );
+
+    assert!(metadata.tests_detected);
+    assert_eq!(metadata.tests_run_count, Some(4));
+    assert_eq!(metadata.zero_tests_run, Some(false));
+}
+
+#[test]
+fn cargo_test_run_metadata_does_not_guess_from_running_or_partial_summary() {
+    for output in [
+        "running 10 tests\n",
+        "running 10 tests\ntest result: ok. 10 passed;\n",
+        "test result: ok. 10 passed; 0 failed\n",
+        "test result: unknown. 10 passed; 0 failed; 0 ignored\n",
+        "test result: FAILED. 2 passed; 1 failed; 0 ignored\n\
+         test result: ok. 4 passed;\n",
+    ] {
+        let metadata = parse_cargo_test_run_metadata(output);
+        assert!(metadata.tests_detected, "{output:?}");
+        assert_eq!(metadata.tests_run_count, None, "{output:?}");
+        assert_eq!(metadata.zero_tests_run, None, "{output:?}");
+    }
 }
 
 #[test]

@@ -4,7 +4,7 @@
 use super::*;
 
 #[tokio::test]
-async fn fast_cargo_test_count_failure_records_failed_session_evidence() {
+async fn fast_cargo_test_require_tests_rejects_ignored_only_and_records_failed_session_evidence() {
     let client_id = "vhandoff-fast-test-count";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(300));
@@ -43,8 +43,8 @@ async fn fast_cargo_test_count_failure_records_failed_session_evidence() {
                         features: None,
                         package: None,
                         no_run: None,
-                        require_tests: None,
-                        min_tests: Some(2),
+                        require_tests: Some(true),
+                        min_tests: None,
                         timeout_secs: Some(600),
                     },
                     Some(&auth),
@@ -60,7 +60,7 @@ async fn fast_cargo_test_count_failure_records_failed_session_evidence() {
             &request.request_id,
             &job_id,
             "completed",
-            "running 1 test\n\ntest result: ok. 1 passed; 0 failed; 0 ignored\n",
+            "running 1 test\n\ntest ignored_only ... ignored\n\ntest result: ok. 0 passed; 0 failed; 1 ignored\n",
             "",
             Some(0),
             completed_progress(),
@@ -80,6 +80,9 @@ async fn fast_cargo_test_count_failure_records_failed_session_evidence() {
         result.output["test_count_assertion"]["reason_code"],
         "minimum_not_met"
     );
+    assert_eq!(result.output["tests_run_count"], 0);
+    assert_eq!(result.output["zero_tests_run"], true);
+    assert_eq!(result.output["test_count_assertion"]["actual_tests_run"], 0);
     assert_cargo_result_matches_schema("cargo_test", &result);
     assert!(
         runtime.list_jobs_for_auth(None, None, None).await.output["jobs"]
@@ -171,7 +174,7 @@ async fn handoff_cargo_test_count_failure_preserves_completed_job_and_failed_ses
             &request.request_id,
             &job_id,
             "completed",
-            "running 1 test\n\ntest result: ok. 1 passed; 0 failed; 0 ignored\n",
+            "running 1 test\n\ntest ignored_only ... ignored\n\ntest result: ok. 0 passed; 0 failed; 1 ignored\n",
             "",
             Some(0),
             completed_progress(),
@@ -197,7 +200,7 @@ async fn handoff_cargo_test_count_failure_preserves_completed_job_and_failed_ses
     );
     assert_eq!(
         status.output["validation"]["test_count_assertion"]["actual_tests_run"],
-        1
+        0
     );
 
     let log = runtime
@@ -282,7 +285,7 @@ async fn agent_job_cargo_test_assertion_requires_durable_runner_capability() {
         request.request_id,
         ShellCommandExecutionState::Completed,
         Some(0),
-        "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored\n",
+        "running 1 test\n\ntest ignored_only ... ignored\n\ntest result: ok. 0 passed; 0 failed; 1 ignored\n",
         "",
         None,
     )
@@ -295,6 +298,8 @@ async fn agent_job_cargo_test_assertion_requires_durable_runner_capability() {
         short.output["test_count_assertion"]["reason_code"],
         "minimum_not_met"
     );
+    assert_eq!(short.output["tests_run_count"], 0);
+    assert_eq!(short.output["zero_tests_run"], true);
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
 
     let long = runtime
@@ -344,6 +349,10 @@ mod tests {
 
     #[test]
     fn two() {}
+
+    #[test]
+    #[ignore]
+    fn ignored_only() {}
 }
 "#,
     );
@@ -374,6 +383,64 @@ mod tests {
     assert_eq!(compatible_zero.output["zero_tests_run"], true);
     assert!(compatible_zero.output.get("test_count_assertion").is_none());
     assert_cargo_result_matches_schema("cargo_test", &compatible_zero);
+
+    let ignored_default = runtime
+        .run_readonly_validation_local_job(
+            "cargo_test",
+            "demo",
+            &config,
+            None,
+            "cargo test ignored_only",
+            validation_adapter_for_tool("cargo_test").unwrap(),
+            ValidationCommandOptions {
+                filter: Some("ignored_only".to_string()),
+                ..Default::default()
+            },
+            ExecutionPurpose::Test,
+            30,
+            5,
+            None,
+        )
+        .await;
+    assert!(ignored_default.success, "{:?}", ignored_default.error);
+    assert_eq!(ignored_default.output["exit_code"], 0);
+    assert_eq!(ignored_default.output["passed"], true);
+    assert_eq!(ignored_default.output["tests_run_count"], 0);
+    assert_eq!(ignored_default.output["zero_tests_run"], true);
+    assert!(ignored_default.output.get("test_count_assertion").is_none());
+
+    let ignored_required = runtime
+        .run_readonly_validation_local_job(
+            "cargo_test",
+            "demo",
+            &config,
+            None,
+            "cargo test ignored_only",
+            validation_adapter_for_tool("cargo_test").unwrap(),
+            ValidationCommandOptions {
+                filter: Some("ignored_only".to_string()),
+                ..Default::default()
+            },
+            ExecutionPurpose::Test,
+            30,
+            5,
+            Some(1),
+        )
+        .await;
+    assert!(!ignored_required.success);
+    assert_eq!(ignored_required.output["exit_code"], 0);
+    assert_eq!(ignored_required.output["passed"], false);
+    assert_eq!(ignored_required.output["tests_run_count"], 0);
+    assert_eq!(ignored_required.output["zero_tests_run"], true);
+    assert_eq!(
+        ignored_required.output["test_count_assertion"]["reason_code"],
+        "minimum_not_met"
+    );
+    assert_eq!(
+        ignored_required.output["test_count_assertion"]["actual_tests_run"],
+        0
+    );
+    assert_cargo_result_matches_schema("cargo_test", &ignored_required);
 
     let rejected_zero = runtime
         .run_readonly_validation_local_job(

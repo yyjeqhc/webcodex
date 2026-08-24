@@ -406,7 +406,7 @@ async fn cargo_test_passing_output_includes_empty_failed_test_details_diagnostic
         "cargo-pass-diag",
         &req.request_id,
         0,
-        "running 12 tests\n\
+        "running 14 tests\n\
 test result: ok. 12 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out\n",
         "",
     )
@@ -476,6 +476,7 @@ test result: ok. 0 passed; 0 failed; 2 ignored\n",
     assert_eq!(result.output["failure_kind"], "validation_failed");
     // Top-level counts (full combined output) and diagnostics (bounded tails)
     // must agree when every summary is still present in the tails.
+    assert_eq!(result.output["tests_run_count"], 6);
     assert_eq!(result.output["tests_passed"], 5);
     assert_eq!(result.output["tests_failed"], 1);
     let diagnostics = &result.output["diagnostics"];

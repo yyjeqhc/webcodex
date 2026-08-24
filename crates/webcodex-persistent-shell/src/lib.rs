@@ -3385,14 +3385,13 @@ Start-Sleep -Milliseconds 500
         let manager = PersistentShellManager::new(ShellLimits::default());
         let shell_id = format!("wc_shell_forge_{label}");
         let session_id = format!("wc_sess_forge_{label}");
-        manager
-            .open(launch_with_program(
-                temp.path(),
-                &shell_id,
-                &session_id,
-                program,
-            ))
-            .unwrap();
+        let mut launch = launch_with_program(temp.path(), &shell_id, &session_id, program);
+        // This adversarial regression intentionally inventories PowerShell-visible
+        // state. GitHub's Windows image can expose substantially more host/module
+        // metadata than a local runner, so retain a larger but still bounded test
+        // transcript rather than silently dropping the earliest evidence.
+        launch.max_output_bytes = 1024 * 1024;
+        manager.open(launch).unwrap();
 
         let worker_manager = manager.clone();
         let worker_shell_id = shell_id.clone();
@@ -3461,6 +3460,10 @@ Start-Sleep -Milliseconds 500
             result.error_code
         );
         assert_eq!(result.shell_state, ShellState::Running);
+        assert!(
+            !result.stdout_truncated && !result.stderr_truncated,
+            "{label}: adversarial visibility evidence was truncated"
+        );
         assert!(
             result.duration_ms >= 400,
             "{label}: completion arrived before the 500ms user sleep returned: {}ms",

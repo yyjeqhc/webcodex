@@ -354,6 +354,7 @@ struct RunEntry {
     changed: Condvar,
     cancel_requested: AtomicBool,
     prompt_dispatch: Mutex<PromptDispatchGateState>,
+    terminal_transition: Mutex<()>,
 }
 
 impl RunEntry {
@@ -368,11 +369,21 @@ impl RunEntry {
             changed: Condvar::new(),
             cancel_requested: AtomicBool::new(false),
             prompt_dispatch: Mutex::new(PromptDispatchGateState::PrePrompt),
+            terminal_transition: Mutex::new(()),
         }
     }
 
     fn snapshot(&self) -> CodingAgentRunSnapshot {
         self.state.lock().unwrap().snapshot.clone()
+    }
+
+    fn begin_terminal_transition(&self) -> Option<std::sync::MutexGuard<'_, ()>> {
+        let transition = self.terminal_transition.lock().unwrap();
+        if self.snapshot().state.terminal() {
+            None
+        } else {
+            Some(transition)
+        }
     }
 
     fn update_snapshot(&self, mut update: impl FnMut(&mut CodingAgentRunSnapshot)) {
@@ -716,6 +727,9 @@ impl CodingAgentManager {
     }
 
     fn finish_pre_prompt_cancelled(&self, run_id: &str, entry: &Arc<RunEntry>) {
+        let Some(_terminal_transition) = entry.begin_terminal_transition() else {
+            return;
+        };
         let terminal = CodingAgentTerminal {
             stop_reason: None,
             error_code: None,
@@ -2017,6 +2031,9 @@ impl CodingAgentManager {
     }
 
     fn setup_failure(&self, run_id: &str, entry: &Arc<RunEntry>, code: &str, message: &str) {
+        let Some(_terminal_transition) = entry.begin_terminal_transition() else {
+            return;
+        };
         let terminal = CodingAgentTerminal {
             stop_reason: None,
             error_code: Some(code.to_string()),
@@ -2042,6 +2059,9 @@ impl CodingAgentManager {
     }
 
     fn finish_failed(&self, run_id: &str, entry: &Arc<RunEntry>, code: &str, message: String) {
+        let Some(_terminal_transition) = entry.begin_terminal_transition() else {
+            return;
+        };
         let terminal = CodingAgentTerminal {
             stop_reason: None,
             error_code: Some(code.to_string()),
@@ -2074,6 +2094,9 @@ impl CodingAgentManager {
         stop_reason: &str,
         message: Option<&str>,
     ) {
+        let Some(_terminal_transition) = entry.begin_terminal_transition() else {
+            return;
+        };
         let terminal = CodingAgentTerminal {
             stop_reason: Some(stop_reason.to_string()),
             error_code: if state == CodingAgentRunState::Failed {
@@ -2103,6 +2126,9 @@ impl CodingAgentManager {
     }
 
     fn mark_lost(&self, run_id: &str, entry: &Arc<RunEntry>, code: &str) {
+        let Some(_terminal_transition) = entry.begin_terminal_transition() else {
+            return;
+        };
         let terminal = CodingAgentTerminal {
             stop_reason: None,
             error_code: Some(code.to_string()),
@@ -3068,6 +3094,84 @@ for line in sys.stdin:
             Some(CodingAgentResponsePayload::Start { run }) => Some(run.run_id.clone()),
             _ => None,
         }
+    }
+
+    #[test]
+    fn concurrent_pre_prompt_terminal_transitions_commit_one_terminal_truth() {
+        let temp = TempDir::new().unwrap();
+        let cfg = fake_config("unused-provider".to_string(), Vec::new());
+        let manager = CodingAgentManager::with_store(&cfg, temp.path().join("store")).unwrap();
+        let provider = manager.providers().remove(0);
+        let run = "wc_agent_run_terminalrace01";
+        let timestamp = now();
+        let record = DurableRunRecord {
+            schema_version: STORE_SCHEMA_VERSION,
+            run_id: run.to_string(),
+            intent_fingerprint: "fingerprint".to_string(),
+            authority_fingerprint: "auth_test".to_string(),
+            runtime_project_id: "agent:test:demo".to_string(),
+            provider_id: "codex".to_string(),
+            provider_instance_id: provider.provider_instance_id,
+            state: CodingAgentRunState::Starting,
+            execution_state: CodingAgentExecutionState::NotStarted,
+            dispatch_phase: DurableDispatchPhase::BeforePromptBarrier,
+            created_at: timestamp,
+            updated_at: timestamp,
+            terminal: None,
+        };
+        manager.store.write(&record).unwrap();
+        let entry = Arc::new(RunEntry::new(record.snapshot(0)));
+        manager
+            .runs
+            .lock()
+            .unwrap()
+            .insert(run.to_string(), Arc::clone(&entry));
+
+        let race = Arc::new(std::sync::Barrier::new(3));
+        let failure_manager = Arc::clone(&manager);
+        let failure_entry = Arc::clone(&entry);
+        let failure_race = Arc::clone(&race);
+        let failure = thread::spawn(move || {
+            failure_race.wait();
+            failure_manager.setup_failure(run, &failure_entry, "setup_failed", "setup failed");
+        });
+        let cancel_manager = Arc::clone(&manager);
+        let cancel_entry = Arc::clone(&entry);
+        let cancel_race = Arc::clone(&race);
+        let cancel = thread::spawn(move || {
+            cancel_race.wait();
+            cancel_manager.finish_pre_prompt_cancelled(run, &cancel_entry);
+        });
+        race.wait();
+        failure.join().unwrap();
+        cancel.join().unwrap();
+
+        let snapshot = entry.snapshot();
+        assert!(matches!(
+            snapshot.state,
+            CodingAgentRunState::Cancelled | CodingAgentRunState::Failed
+        ));
+        assert_eq!(
+            snapshot.execution_state,
+            CodingAgentExecutionState::NotStarted
+        );
+        validate_coding_agent_run_snapshot(&snapshot).unwrap();
+
+        let durable = manager.store.read(run).unwrap().unwrap();
+        assert_eq!(durable.dispatch_phase, DurableDispatchPhase::Terminal);
+        assert_eq!(durable.state, snapshot.state);
+        assert_eq!(durable.execution_state, snapshot.execution_state);
+        assert_eq!(durable.terminal, snapshot.terminal);
+
+        let live = entry.state.lock().unwrap();
+        assert_eq!(
+            live.events
+                .iter()
+                .filter(|event| event.kind == CodingAgentEventKind::Terminal)
+                .count(),
+            1,
+            "a terminal race emitted more than one terminal event"
+        );
     }
 
     #[test]

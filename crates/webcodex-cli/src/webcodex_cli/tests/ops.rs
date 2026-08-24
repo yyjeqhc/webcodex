@@ -276,15 +276,14 @@ async fn ops_http_403_reports_forbidden() {
 
 #[tokio::test]
 async fn ops_connection_failure_reports_runtime_unreachable() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
+    let (addr, handle) = spawn_connection_drop_server();
     let output = run_ops_command(OpsCommand::Status(ops_common_opts(format!(
         "http://{addr}"
     ))))
     .await
     .unwrap()
     .stdout;
+    handle.join().unwrap();
     assert!(output.contains("Overall: FAIL"), "{output}");
     assert!(output.contains("runtime_unreachable"), "{output}");
 }

@@ -191,9 +191,7 @@ async fn server_status_token_file_takes_priority_over_env_file() {
 
 #[tokio::test]
 async fn server_status_connection_failure_reports_unreachable_without_token() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
+    let (addr, handle) = spawn_connection_drop_server();
 
     let tmp = tempfile::tempdir().unwrap();
     let env_file = tmp.path().join("webcodex.env");
@@ -208,6 +206,7 @@ async fn server_status_connection_failure_reports_unreachable_without_token() {
     ]))
     .unwrap();
     let output = run_server_status(opts).await.unwrap();
+    handle.join().unwrap();
     assert!(output.contains("HTTP reachable:        no"));
     assert!(output.contains("HTTP error:"));
     assert!(!output.contains(token));

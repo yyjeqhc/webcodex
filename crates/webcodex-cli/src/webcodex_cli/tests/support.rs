@@ -26,3 +26,32 @@ pub(super) fn direct_server_http() -> ServerHttpOptions {
         no_system_proxy: true,
     }
 }
+
+/// Keep the ephemeral port owned until the client actually connects, then close
+/// the accepted socket without an HTTP response. Dropping a probe listener
+/// before the request lets another concurrent test reuse the port on Windows.
+pub(super) fn spawn_connection_drop_server() -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    drop(stream);
+                    return;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "connection-failure fixture was never contacted"
+                    );
+                    thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(error) => panic!("connection-failure fixture accept failed: {error}"),
+            }
+        }
+    });
+    (addr, handle)
+}

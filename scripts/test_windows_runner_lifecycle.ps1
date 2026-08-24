@@ -13,8 +13,10 @@ function Assert-Equal($Expected, $Actual, [string]$Message) {
 function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
     try { & $Action; throw "Expected failure matching '$Pattern'" }
     catch {
-        if ($_.Exception.Message -notmatch $Pattern) { throw }
-        return $_.Exception.Message
+        $message = [string]$_.Exception.Message
+        $errorId = [string]$_.FullyQualifiedErrorId
+        if ($message -notmatch $Pattern -and $errorId -notmatch $Pattern) { throw }
+        return $message
     }
 }
 function Assert-HasMismatch($Items, [string]$Field, [string]$Message) {
@@ -203,10 +205,10 @@ try {
     $planText = $exactPlan | ConvertTo-Json -Depth 8 -Compress
     Assert-False $planText.Contains($secret) 'lifecycle plan leaked config secret contents'
 
-    $null = Assert-Throws { New-WindowsRunnerLifecycleExpectedSpec -RunnerPath (Join-Path $tempRoot 'missing.exe') -RunnerConfigPath $configPath -SupervisorPath $supervisorPath -TaskName 'WebCodex Test Runner' -WorkingDirectory $workingDirectory } 'does not exist|Cannot find path'
-    $null = Assert-Throws { New-WindowsRunnerLifecycleExpectedSpec -RunnerPath $runnerPath -RunnerConfigPath (Join-Path $tempRoot 'missing.toml') -SupervisorPath $supervisorPath -TaskName 'WebCodex Test Runner' -WorkingDirectory $workingDirectory } 'does not exist|Cannot find path'
-    $null = Assert-Throws { New-WindowsRunnerLifecycleExpectedSpec -RunnerPath $runnerPath -RunnerConfigPath $configPath -SupervisorPath (Join-Path $tempRoot 'missing.ps1') -TaskName 'WebCodex Test Runner' -WorkingDirectory $workingDirectory } 'does not exist|Cannot find path'
-    $null = Assert-Throws { New-WindowsRunnerLifecycleExpectedSpec -RunnerPath $runnerPath -RunnerConfigPath $configPath -SupervisorPath $supervisorPath -TaskName 'WebCodex Test Runner' -WorkingDirectory (Join-Path $tempRoot 'missing-dir') } 'does not exist|Cannot find path'
+    $null = Assert-Throws { New-WindowsRunnerLifecycleExpectedSpec -RunnerPath (Join-Path $tempRoot 'missing.exe') -RunnerConfigPath $configPath -SupervisorPath $supervisorPath -TaskName 'WebCodex Test Runner' -WorkingDirectory $workingDirectory } 'does not exist|Cannot find path|PathNotFound'
+    $null = Assert-Throws { New-WindowsRunnerLifecycleExpectedSpec -RunnerPath $runnerPath -RunnerConfigPath (Join-Path $tempRoot 'missing.toml') -SupervisorPath $supervisorPath -TaskName 'WebCodex Test Runner' -WorkingDirectory $workingDirectory } 'does not exist|Cannot find path|PathNotFound'
+    $null = Assert-Throws { New-WindowsRunnerLifecycleExpectedSpec -RunnerPath $runnerPath -RunnerConfigPath $configPath -SupervisorPath (Join-Path $tempRoot 'missing.ps1') -TaskName 'WebCodex Test Runner' -WorkingDirectory $workingDirectory } 'does not exist|Cannot find path|PathNotFound'
+    $null = Assert-Throws { New-WindowsRunnerLifecycleExpectedSpec -RunnerPath $runnerPath -RunnerConfigPath $configPath -SupervisorPath $supervisorPath -TaskName 'WebCodex Test Runner' -WorkingDirectory (Join-Path $tempRoot 'missing-dir') } 'does not exist|Cannot find path|PathNotFound'
     $null = Assert-Throws { New-WindowsRunnerLifecycleExpectedSpec -RunnerPath $runnerPath -RunnerConfigPath $configPath -SupervisorPath $supervisorPath -TaskName 'Unrelated Task' -WorkingDirectory $workingDirectory } 'TaskName must identify a WebCodex task'
 
     # B. Status projection preserves exact PID+creation identity and handles cardinality/task state.

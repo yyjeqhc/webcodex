@@ -165,6 +165,31 @@ function Assert-PreReplacementRunnerObservation {
     return $Observation
 }
 
+function Stop-CapturedPrimaryRunnerForRollback {
+    param(
+        [Parameter(Mandatory = $true)]$Identity,
+        [scriptblock]$IsLive = { param($Captured) Test-CapturedProcessIdentityLive -Identity $Captured },
+        [scriptblock]$StopExact = { param($Captured) Stop-CapturedPrimaryRunner -Identity $Captured }
+    )
+
+    if (-not (& $IsLive $Identity)) {
+        return 'already_exited'
+    }
+    try {
+        & $StopExact $Identity
+        return 'terminated'
+    } catch {
+        # Disabling the Scheduled Task asks the existing supervisor to stop its
+        # Runner too. If that concurrent stop wins, no termination effect remains
+        # to perform. Only accept that race when the exact captured PID+creation
+        # identity is now dead; a still-live identity keeps the P1a failure closed.
+        if (-not (& $IsLive $Identity)) {
+            return 'exited_during_stop'
+        }
+        throw
+    }
+}
+
 function Wait-RunnerControlPlaneReadiness {
     param(
         [Parameter(Mandatory = $true)][scriptblock]$Observe,

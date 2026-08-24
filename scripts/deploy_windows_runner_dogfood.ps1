@@ -167,12 +167,9 @@ try {
         return $false
     }
 
-    # Catch immediate startup failures before declaring the local handoff good.
-    Start-Sleep -Seconds 3
-    $null = Assert-CapturedPrimaryRunnerIdentity -Identity $newPrimary
-    if ((Get-PrimaryRunnerProcesses -ExactPath $RunnerPath).Count -ne 1) {
-        throw "New Runner did not remain the exactly-one primary Runner after startup"
-    }
+    # P1b replaces the old arbitrary three-second persistence heuristic with the
+    # stronger bounded Server readiness proof below. The local primary was exact
+    # at startup and is revalidated again after Server readiness before success.
 
     $candidateObserve = {
         param([int]$RequestTimeoutMilliseconds)
@@ -199,6 +196,9 @@ try {
         -FailOnBuildMismatch
     $candidateReadyObservation = $candidateReady.Observation
     $null = Assert-CapturedPrimaryRunnerIdentity -Identity $newPrimary
+    if ((Get-PrimaryRunnerProcesses -ExactPath $RunnerPath).Count -ne 1) {
+        throw "New Runner did not remain the exactly-one primary Runner after readiness"
+    }
 
     # Successful handoff: remove stale per-deployment staging images but retain
     # one concrete rollback binary for the next operator action.
@@ -222,7 +222,17 @@ try {
     $rollbackReadyObservation = $null
 
     try {
-        Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue | Out-Null
+        # Capture the local candidate before disabling the Task. The existing
+        # supervisor also reacts to Task disable by stopping its Runner, so doing
+        # discovery afterward can race with that intentional concurrent exit.
+        $rollbackStopTarget = $null
+        $rollbackMatches = @(Get-PrimaryRunnerProcesses -ExactPath $RunnerPath)
+        if ($rollbackMatches.Count -gt 1) {
+            throw "Multiple primary Runners found during rollback: $($rollbackMatches.Count)"
+        }
+        if ($rollbackMatches.Count -eq 1) {
+            $rollbackStopTarget = $rollbackMatches[0]
+        }
 
         # Capture any fresh candidate instance already visible before stopping it,
         # so that a stale candidate registration cannot satisfy rollback readiness.
@@ -243,17 +253,18 @@ try {
             # Best-effort only: the bounded rollback readiness proof below remains authoritative.
         }
 
-        $rollbackStopTarget = $null
-        $rollbackMatches = @(Get-PrimaryRunnerProcesses -ExactPath $RunnerPath)
-        if ($rollbackMatches.Count -gt 1) {
-            throw "Multiple primary Runners found during rollback: $($rollbackMatches.Count)"
-        }
-        if ($rollbackMatches.Count -eq 1) {
-            $rollbackStopTarget = $rollbackMatches[0]
-            Stop-CapturedPrimaryRunner -Identity $rollbackStopTarget
+        Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue | Out-Null
+        if ($rollbackStopTarget) {
+            $null = Stop-CapturedPrimaryRunnerForRollback -Identity $rollbackStopTarget
             Wait-Until -TimeoutSecs $StopTimeoutSecs -FailureMessage "Runner identity did not stop during rollback" -Condition {
                 -not (Test-CapturedProcessIdentityLive -Identity $rollbackStopTarget)
             }
+        }
+        Wait-Until -TimeoutSecs $StopTimeoutSecs -FailureMessage "Scheduled Task wrapper did not stop during rollback" -Condition {
+            (Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath).State -ne "Running"
+        }
+        if ((Get-PrimaryRunnerProcesses -ExactPath $RunnerPath).Count -ne 0) {
+            throw "Primary Runner remained live after rollback stop"
         }
 
         if ($rollbackAvailable -and (Test-Path -LiteralPath $rollbackPath -PathType Leaf)) {

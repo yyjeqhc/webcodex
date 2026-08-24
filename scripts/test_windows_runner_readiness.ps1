@@ -83,6 +83,29 @@ Assert-Equal "ready" $decision.State "exact rollback build was not Ready"
 $decision = Get-RunnerReadinessDecision -Observation $rollbackObservation -ExpectedClientId "msi" -ExpectedBuild $candidateBuild -DisallowedAgentInstanceIds @($oldInstanceId, "instance-new")
 Assert-Equal "mismatch" $decision.State "rollback build incorrectly satisfied candidate expectation"
 
+# Rollback stop tolerates only the exact captured identity exiting concurrently
+# after Task disable; a still-live identity preserves P1a fail-closed behavior.
+$identityFixture = [pscustomobject]@{ Id = 123; CreationTime = [uint64]456 }
+$script:liveChecks = @($true, $false)
+$stopOutcome = Stop-CapturedPrimaryRunnerForRollback `
+    -Identity $identityFixture `
+    -IsLive { param($Identity) $next = $script:liveChecks[0]; $script:liveChecks = @($script:liveChecks | Select-Object -Skip 1); return $next } `
+    -StopExact { param($Identity) throw "exact role no longer provable" }
+Assert-Equal "exited_during_stop" $stopOutcome "concurrent supervisor exit aborted rollback"
+
+$stopOutcome = Stop-CapturedPrimaryRunnerForRollback `
+    -Identity $identityFixture `
+    -IsLive { param($Identity) return $false } `
+    -StopExact { param($Identity) throw "stop should not run" }
+Assert-Equal "already_exited" $stopOutcome "already-exited rollback identity was not accepted"
+
+$null = Assert-Throws {
+    Stop-CapturedPrimaryRunnerForRollback `
+        -Identity $identityFixture `
+        -IsLive { param($Identity) return $true } `
+        -StopExact { param($Identity) throw "exact role no longer provable" }
+} "exact role no longer provable"
+
 # Absolute deadline: transient progress never resets the original deadline, and
 # each control-plane request receives at most the remaining deadline budget.
 $script:fakeNow = [DateTime]::Parse("2026-08-24T00:00:00Z").ToUniversalTime()

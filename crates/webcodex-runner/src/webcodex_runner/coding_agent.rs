@@ -2960,6 +2960,33 @@ for line in sys.stdin:
     }
 
     #[cfg(unix)]
+    fn wait_for_terminal_observation(
+        manager: &CodingAgentManager,
+        run: &str,
+    ) -> CodingAgentObserveResult {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let entry = manager.runs.lock().unwrap().get(run).cloned().unwrap();
+            let observation = entry
+                .observe(None, 64, 0)
+                .expect("retained fake Run cursor must be valid");
+            if observation.run.state.terminal()
+                && observation
+                    .events
+                    .iter()
+                    .any(|event| event.kind == CodingAgentEventKind::Terminal)
+            {
+                return observation;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for terminal ACP observation: {observation:?}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[cfg(unix)]
     fn run_scenario(
         scenario: &str,
         config: BTreeMap<String, CodingAgentConfigValue>,
@@ -2974,31 +3001,7 @@ for line in sys.stdin:
         let run = "wc_agent_run_0123456789abcdef".to_string();
         let response = manager.handle(start_request(&manager, &root, &run, config), &projects);
         assert!(response.error.is_none(), "{:?}", response.error);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            if manager
-                .runs
-                .lock()
-                .unwrap()
-                .get(&run)
-                .unwrap()
-                .snapshot()
-                .state
-                .terminal()
-            {
-                break;
-            }
-            assert!(Instant::now() < deadline);
-            thread::sleep(Duration::from_millis(20));
-        }
-        let observation = manager
-            .runs
-            .lock()
-            .unwrap()
-            .get(&run)
-            .unwrap()
-            .observe(None, 64, 0)
-            .expect("retained fake Run cursor must be valid");
+        let observation = wait_for_terminal_observation(&manager, &run);
         std::mem::forget(temp);
         (manager, run, observation)
     }
@@ -3228,8 +3231,8 @@ for line in sys.stdin:
             &projects,
         );
         assert!(response.error.is_none(), "{:?}", response.error);
-        let terminal = wait_for_snapshot(&manager, run, |snapshot| snapshot.state.terminal());
-        assert_eq!(terminal.state, CodingAgentRunState::Completed);
+        let observation = wait_for_terminal_observation(&manager, run);
+        assert_eq!(observation.run.state, CodingAgentRunState::Completed);
 
         let log = wire_log(&temp);
         assert_eq!(
@@ -3260,14 +3263,6 @@ for line in sys.stdin:
         );
         assert_eq!(session_new.pointer("/params/mcpServers"), Some(&json!([])));
 
-        let observation = manager
-            .runs
-            .lock()
-            .unwrap()
-            .get(run)
-            .unwrap()
-            .observe(None, 64, 0)
-            .expect("retained fake Run cursor must be valid");
         for kind in [
             CodingAgentEventKind::AgentMessage,
             CodingAgentEventKind::Reasoning,

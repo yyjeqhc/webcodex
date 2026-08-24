@@ -200,15 +200,19 @@ impl AgentRuntimeState {
 
     fn request_shutdown_signal(&self) {
         self.coordinator.request_signal();
+        #[cfg(windows)]
+        if let Some(diagnostics) = self.exit_diagnostics.as_ref() {
+            // Persist signal provenance before any cleanup work. If the process
+            // disappears while cleanup is in progress, the lifecycle record must
+            // still distinguish an interrupted graceful shutdown from an exit
+            // that never entered Rust shutdown handling.
+            diagnostics.mark_shutdown_signal_received();
+        }
         let deadline = self.coordinator.deadline().instant();
         self.config.begin_shutdown();
         self.jobs.stop_accepting_work();
         self.persistent_shells.close_all("runner_shutdown");
         self.lsp.begin_shutdown_until(deadline);
-        #[cfg(windows)]
-        if let Some(diagnostics) = self.exit_diagnostics.as_ref() {
-            diagnostics.mark_shutdown_signal_received();
-        }
     }
 
     fn shutdown_flag(&self) -> Arc<AtomicBool> {

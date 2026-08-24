@@ -11,7 +11,7 @@ use super::shutdown::lock_unpoison;
 use super::AgentPolicy;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -50,11 +50,11 @@ struct SshPoolState {
     test_config_path: Option<PathBuf>,
 }
 
-/// Lightweight, process-local OpenSSH multiplex pool.
+/// Runner-local OpenSSH resource preparation state.
 ///
-/// Each `ssh` command still opens an independent remote exec channel. The
-/// control socket only reuses the authenticated transport and is not restored
-/// across a Runner restart.
+/// Unix one-shot and persistent SSH paths reuse a process-local multiplex
+/// transport. Windows persistent SSH resolves the same named resources but owns
+/// one direct long-lived ssh.exe channel instead; no mux state is created there.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SshConnectionPool {
     state: Arc<Mutex<SshPoolState>>,
@@ -67,8 +67,9 @@ pub(crate) struct PreparedSshCommand {
 }
 
 /// A ready-to-spawn long-lived SSH shell command with the resource's default
-/// remote cwd. Used only by the Unix remote persistent-shell transport.
-#[cfg(unix)]
+/// remote cwd. Unix reuses the authenticated mux transport; Windows opens one
+/// direct long-lived ssh.exe channel owned by the persistent-shell transport.
+#[cfg(any(unix, windows))]
 pub(crate) struct PreparedPersistentShellCommand {
     pub(crate) command: Command,
     pub(crate) default_cwd: Option<String>,
@@ -81,12 +82,27 @@ impl SshConnectionPool {
         if !cfg!(unix) {
             return false;
         }
-        Command::new("ssh")
+        Command::new(ssh_executable())
             .arg("-V")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
             .is_ok()
+    }
+
+    /// Whether this host can open a named SSH persistent shell. Unlike the
+    /// existing one-shot SSH path, Windows does not require Unix ControlMaster
+    /// sockets: one long-lived ssh.exe process is itself the persistent channel.
+    pub(crate) fn persistent_shell_available() -> bool {
+        if !cfg!(any(unix, windows)) {
+            return false;
+        }
+        Command::new(ssh_executable())
+            .arg("-V")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
     }
 
     /// Resolve a named resource, establish/reuse its control transport, and
@@ -208,13 +224,16 @@ impl SshConnectionPool {
         }
     }
 
-    /// Resolve a named resource, establish/reuse its control transport, and
-    /// construct a ready-to-spawn `ssh` command that runs one long-lived remote
-    /// shell. Unlike `prepare_command`, the remote command is just the shell
-    /// binary (no `-c` script); the Runner drives it over stdin. The long-lived
-    /// channel reuses the same authenticated control socket (`ControlMaster=no
-    /// -S <path>`) and never creates a second master.
-    #[cfg(unix)]
+    /// Resolve a named resource and construct a ready-to-spawn `ssh` command
+    /// that runs one long-lived remote shell. The remote command is just sh/bash
+    /// (no `-c` script); the Runner drives it over stdin.
+    ///
+    /// Unix preserves the existing authenticated ControlMaster reuse. OpenSSH for
+    /// Windows does not provide a usable Unix-domain mux socket in the supported
+    /// Runner environment, so Windows opens one direct BatchMode ssh.exe channel.
+    /// Authentication, Host aliases, and keys still come only from the Runner's
+    /// local OpenSSH configuration; no credential or executable is caller input.
+    #[cfg(any(unix, windows))]
     pub(crate) fn prepare_persistent_shell_command(
         &self,
         generation: u64,
@@ -223,9 +242,6 @@ impl SshConnectionPool {
         session_id: &str,
         shell_program: &str,
     ) -> Result<PreparedPersistentShellCommand, String> {
-        if !cfg!(unix) {
-            return Err("ssh_shell_unavailable: this Runner host does not support SSH resources; shell was not started".to_string());
-        }
         if !is_safe_resource_name(resource_name) {
             return Err(
                 "ssh_resource_invalid: resource name is invalid; shell was not started".to_string(),
@@ -246,29 +262,49 @@ impl SshConnectionPool {
                 ));
             }
         };
-        let connection = self.connection_for(
-            generation,
-            resource_name,
-            session_id,
-            &resource.host,
-            resource.default_cwd.as_deref(),
-        )?;
-        let mut ssh = ssh_command(&connection);
-        ssh.arg("-o")
-            .arg("BatchMode=yes")
-            .arg("-o")
-            .arg("LogLevel=ERROR")
-            .arg("-o")
-            .arg("ControlMaster=no")
-            .arg("-S")
-            .arg(&connection.control_path)
-            .arg(&connection.host)
-            .arg(shell_program);
-        configure_private_process_group(&mut ssh);
-        Ok(PreparedPersistentShellCommand {
-            command: ssh,
-            default_cwd: connection.default_cwd.clone(),
-        })
+
+        #[cfg(unix)]
+        {
+            let connection = self.connection_for(
+                generation,
+                resource_name,
+                session_id,
+                &resource.host,
+                resource.default_cwd.as_deref(),
+            )?;
+            let mut ssh = ssh_command(&connection);
+            ssh.arg("-o")
+                .arg("BatchMode=yes")
+                .arg("-o")
+                .arg("LogLevel=ERROR")
+                .arg("-o")
+                .arg("ControlMaster=no")
+                .arg("-S")
+                .arg(&connection.control_path)
+                .arg(&connection.host)
+                .arg(shell_program);
+            configure_private_process_group(&mut ssh);
+            return Ok(PreparedPersistentShellCommand {
+                command: ssh,
+                default_cwd: connection.default_cwd.clone(),
+            });
+        }
+
+        #[cfg(windows)]
+        {
+            let _ = generation;
+            let mut ssh = Command::new(ssh_executable());
+            ssh.arg("-o")
+                .arg("BatchMode=yes")
+                .arg("-o")
+                .arg("LogLevel=ERROR")
+                .arg(&resource.host)
+                .arg(shell_program);
+            Ok(PreparedPersistentShellCommand {
+                command: ssh,
+                default_cwd: resource.default_cwd.clone(),
+            })
+        }
     }
 
     /// Release every Session's generation for a resource that is no longer
@@ -696,11 +732,26 @@ fn control_master_pid(connection: &SshConnection) -> Option<i32> {
 }
 
 fn ssh_command(connection: &SshConnection) -> Command {
-    let mut command = Command::new("ssh");
-    if let Some(config_path) = &connection.config_path {
+    ssh_command_with_config(connection.config_path.as_deref())
+}
+
+fn ssh_command_with_config(config_path: Option<&Path>) -> Command {
+    let mut command = Command::new(ssh_executable());
+    if let Some(config_path) = config_path {
         command.arg("-F").arg(config_path);
     }
     command
+}
+
+fn ssh_executable() -> &'static str {
+    #[cfg(windows)]
+    {
+        "ssh.exe"
+    }
+    #[cfg(not(windows))]
+    {
+        "ssh"
+    }
 }
 
 fn normalize_remote_cwd(cwd: Option<&str>) -> Result<Option<String>, String> {
@@ -2349,5 +2400,61 @@ mod tests {
             "failed open must leave no usable shell: {stale:?}"
         );
         assert_eq!(stale.stdout, "", "{stale:?}");
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_persistent_tests {
+    use super::*;
+    use crate::webcodex_runner::config::SshResourceConfig;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn windows_persistent_shell_prepares_direct_literal_ssh_exe_argv() {
+        let mut resources = BTreeMap::new();
+        resources.insert(
+            "spe".to_string(),
+            SshResourceConfig {
+                host: "spe".to_string(),
+                default_cwd: Some("/srv/webcodex".to_string()),
+            },
+        );
+        let config = SshConfig { resources };
+        let pool = SshConnectionPool::default();
+        let prepared = pool
+            .prepare_persistent_shell_command(7, &config, "spe", "wc_sess_windows_ssh", "bash")
+            .expect("prepare Windows persistent SSH command");
+
+        assert_eq!(prepared.command.get_program(), "ssh.exe");
+        let args = prepared
+            .command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec!["-o", "BatchMode=yes", "-o", "LogLevel=ERROR", "spe", "bash"]
+        );
+        assert!(!args.iter().any(|arg| arg.contains("ControlMaster")));
+        assert!(!args.iter().any(|arg| arg == "-S"));
+        assert_eq!(prepared.default_cwd.as_deref(), Some("/srv/webcodex"));
+    }
+
+    #[test]
+    fn windows_persistent_shell_capability_tracks_ssh_exe_discovery() {
+        let executable_available = Command::new("ssh.exe")
+            .arg("-V")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        assert_eq!(
+            SshConnectionPool::persistent_shell_available(),
+            executable_available
+        );
+        assert!(
+            !SshConnectionPool::is_available(),
+            "one-shot SSH remains Unix-only in this focused slice"
+        );
     }
 }

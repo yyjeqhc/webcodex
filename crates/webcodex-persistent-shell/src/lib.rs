@@ -279,14 +279,20 @@ pub trait ShellTransport: Send + Sync {
         progress: &mut CompletionProgress,
     ) -> WaitOutcome;
     fn try_wait(&self) -> Option<ExitStatus>;
-    /// Signal the shell's process group during timeout recovery. Best-effort:
-    /// the manager decides whether to keep or poison the shell based on whether
-    /// synchronization is recovered afterward.
+    /// Best-effort timeout interruption. The transport chooses the narrowest
+    /// process-lifecycle primitive its host supports; the manager decides whether
+    /// to keep or poison the shell only from subsequent synchronization evidence.
     fn interrupt(&self);
     fn shutdown(&self);
     fn terminate_remaining_group_after_exit(&self);
     fn stdout(&self) -> &Arc<Mutex<BoundedBuffer>>;
     fn stderr(&self) -> &Arc<Mutex<BoundedBuffer>>;
+    /// Validate the shell-reported cwd in the transport's path namespace.
+    /// Local transports use the host platform's path rules. Remote transports
+    /// can override this when their shell path syntax differs from the Runner.
+    fn reported_cwd_is_absolute(&self, cwd: &Path) -> bool {
+        cwd.is_absolute()
+    }
     /// Opaque binding metadata captured at open. The shared manager stores it
     /// on the entry so callers can validate bindings that a transport depends
     /// on (e.g. an SSH resource + config generation). The default is no
@@ -750,7 +756,7 @@ impl PersistentShellManager {
             &mut completion,
         ) {
             WaitOutcome::Frame(frame) if frame.status == 0 => {
-                if !frame.cwd.is_absolute() {
+                if !entry.process.reported_cwd_is_absolute(&frame.cwd) {
                     self.transition_terminal(
                         entry,
                         ShellState::Poisoned,
@@ -977,7 +983,7 @@ impl PersistentShellManager {
 
         match resolved {
             WaitOutcome::Frame(frame) => {
-                if !frame.cwd.is_absolute() {
+                if !entry.process.reported_cwd_is_absolute(&frame.cwd) {
                     self.transition_terminal(
                         &entry,
                         ShellState::Poisoned,

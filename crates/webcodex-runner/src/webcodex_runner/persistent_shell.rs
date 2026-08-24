@@ -4,14 +4,13 @@ use super::config::{
     validate_shell_config, AgentPolicy, ShellConfig, ShellProfileConfig, SshConfig,
 };
 use super::projects::{find_project_shell_context_by_id, AgentProjectShellContext};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use super::remote_shell::{remote_shell_bootstrap, RemoteShellTransport};
 #[cfg(unix)]
 use super::shell::shell_quote;
 #[cfg(windows)]
 use super::shell::shell_quote_powershell;
 use super::shell::{base_shell_env, cwd_allowed};
-#[cfg(unix)]
 use super::ssh::SshConnectionPool;
 use crate::shell_protocol::{
     PersistentShellRequest, PersistentShellResult, ShellAgentShellRequest,
@@ -19,7 +18,7 @@ use crate::shell_protocol::{
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use webcodex_persistent_shell::canonical_dialect;
 use webcodex_persistent_shell::{
     PersistentShellManager as ProcessManager, ShellError, ShellExecResult, ShellIdentity,
@@ -27,32 +26,23 @@ use webcodex_persistent_shell::{
 };
 
 const EXECUTOR_AGENT: &str = "agent";
-/// Only the Unix remote (SSH) transport opens shells under this executor id.
-#[cfg(unix)]
+/// Remote named-SSH persistent shells use this executor on supported hosts.
+#[cfg(any(unix, windows))]
 const EXECUTOR_SSH: &str = "ssh";
 const TERMINAL_RECORDS: usize = 128;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PersistentShellManager {
     processes: ProcessManager,
-    /// Pool reused only by the Unix remote (SSH) persistent shell transport.
-    #[cfg(unix)]
+    /// Runner-local SSH authority/preparation state. Windows persistent SSH uses
+    /// the named-resource resolver without Unix ControlMaster multiplexing.
     ssh_pool: SshConnectionPool,
 }
 
 impl PersistentShellManager {
-    /// `ssh_pool` is consumed only by the Unix remote (SSH) transport. The
-    /// parameter stays on every platform so the constructor signature is
-    /// identical across targets; Windows names it with a leading underscore
-    /// because it is intentionally unused there.
-    pub(crate) fn new(
-        shell: &ShellConfig,
-        #[cfg(unix)] ssh_pool: super::ssh::SshConnectionPool,
-        #[cfg(not(unix))] _ssh_pool: super::ssh::SshConnectionPool,
-    ) -> Self {
+    pub(crate) fn new(shell: &ShellConfig, ssh_pool: super::ssh::SshConnectionPool) -> Self {
         Self {
             processes: ProcessManager::new(limits(shell)),
-            #[cfg(unix)]
             ssh_pool,
         }
     }
@@ -146,7 +136,7 @@ impl PersistentShellManager {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn open_ssh(
         &self,
         policy: &AgentPolicy,
@@ -246,9 +236,7 @@ impl PersistentShellManager {
         }
     }
 
-    /// Windows Stage 1 supports only the local persistent PowerShell transport.
-    /// Named SSH persistent shells remain unsupported and are not advertised.
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     fn open_ssh(
         &self,
         _policy: &AgentPolicy,
@@ -264,7 +252,7 @@ impl PersistentShellManager {
             &operation.workflow_session_id,
             &operation.runtime_project_id,
             "persistent_shell_unsupported",
-            "named SSH persistent shell is not supported on Windows",
+            "named SSH persistent shell is not supported on this Runner host",
         )
     }
 
@@ -1544,6 +1532,7 @@ mod tests {
 
 #[cfg(all(test, windows))]
 mod windows_tests {
+    use super::super::config::SshResourceConfig;
     use super::super::ssh::SshConnectionPool;
     use super::*;
     use crate::shell_protocol::ShellAgentShellRequest;
@@ -1589,6 +1578,45 @@ mod windows_tests {
                 purpose: None,
             }),
         }
+    }
+
+    fn ssh_request(
+        action: &str,
+        shell_id: &str,
+        resource: &str,
+        command: Option<&str>,
+    ) -> ShellAgentShellRequest {
+        serde_json::from_value(serde_json::json!({
+            "request_id": format!("req-ssh-{action}-{shell_id}"),
+            "client_id": "msi",
+            "kind": "persistent_shell",
+            "command": command.unwrap_or(""),
+            "timeout_secs": 5,
+            "requested_by": "tester",
+            "created_at": 0,
+            "job_context": {
+                "runtime_project_id": "agent:msi:demo",
+                "workflow_session_id": "wc_sess_windows",
+                "ssh_resource": resource,
+                "project_cwd": ".",
+                "purpose": "other",
+                "shell": "remote",
+                "command_preview": "",
+                "validation_steps": []
+            },
+            "persistent_shell": {
+                "action": action,
+                "shell_id": shell_id,
+                "workflow_session_id": "wc_sess_windows",
+                "runtime_project_id": "agent:msi:demo",
+                "cwd": null,
+                "shell": "bash",
+                "command": command,
+                "timeout_secs": 5,
+                "purpose": null
+            }
+        }))
+        .expect("build Windows named-SSH persistent-shell request")
     }
 
     fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, AgentPolicy) {
@@ -1817,5 +1845,305 @@ mod windows_tests {
         )
         .unwrap_err();
         assert_eq!(error.0, "persistent_shell_config_invalid");
+    }
+
+    #[test]
+    fn windows_named_ssh_resource_routes_remote_without_changing_local_powershell() {
+        let (_temp, _project, projects, policy) = fixture();
+        let shell = ShellConfig::default();
+        let manager = PersistentShellManager::new(&shell, SshConnectionPool::default());
+
+        let mut local_bash = request("open", "wc_shell_local_bash", None);
+        local_bash.persistent_shell.as_mut().unwrap().shell = Some("bash".to_string());
+        let local = manager.handle(
+            &policy,
+            &shell,
+            &SshConfig::default(),
+            1,
+            &projects,
+            &local_bash,
+        );
+        assert_eq!(
+            local.error_code.as_deref(),
+            Some("persistent_shell_dialect_unsupported"),
+            "Windows local shell must remain PowerShell: {local:?}"
+        );
+
+        let remote = manager.handle(
+            &policy,
+            &shell,
+            &SshConfig::default(),
+            1,
+            &projects,
+            &ssh_request("open", "wc_shell_remote_missing", "missing", None),
+        );
+        assert_eq!(
+            remote.error_code.as_deref(),
+            Some("ssh_persistent_shell_spawn_failed"),
+            "named resource must route to SSH before local PowerShell validation: {remote:?}"
+        );
+        assert!(
+            remote
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_resource_not_found")),
+            "missing named SSH resource must fail from SSH authority: {remote:?}"
+        );
+        assert_eq!(manager.active_count(), 0);
+    }
+
+    #[test]
+    fn windows_named_ssh_persistent_shell_real_transport_opt_in() {
+        let Ok(host) = std::env::var("WEBCODEX_TEST_WINDOWS_SSH_HOST") else {
+            eprintln!("skipping Windows SSH persistent-shell integration test; WEBCODEX_TEST_WINDOWS_SSH_HOST is unset");
+            return;
+        };
+        let (_temp, _project, projects, mut policy) = fixture();
+        let shell = ShellConfig::default();
+        let mut resources = BTreeMap::new();
+        resources.insert(
+            "dogfood".to_string(),
+            SshResourceConfig {
+                host,
+                default_cwd: Some("/tmp".to_string()),
+            },
+        );
+        let config = SshConfig { resources };
+        let manager = PersistentShellManager::new(&shell, SshConnectionPool::default());
+
+        let opened = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            7,
+            &projects,
+            &ssh_request("open", "wc_shell_win_ssh_state", "dogfood", None),
+        );
+        assert_eq!(opened.shell_state, "running", "{opened:?}");
+        assert_eq!(opened.shell.as_deref(), Some("bash"), "{opened:?}");
+        assert_eq!(opened.cwd.as_deref(), Some("/tmp"), "{opened:?}");
+
+        let setup = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            7,
+            &projects,
+            &ssh_request(
+                "exec",
+                "wc_shell_win_ssh_state",
+                "dogfood",
+                Some("export WC_WIN_SSH=ready; cd /tmp; wc_win_fn() { printf fn; }"),
+            ),
+        );
+        assert_eq!(setup.exit_code, Some(0), "{setup:?}");
+        let observed = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            7,
+            &projects,
+            &ssh_request(
+                "exec",
+                "wc_shell_win_ssh_state",
+                "dogfood",
+                Some("printf '%s|%s|' \"$WC_WIN_SSH\" \"$PWD\"; wc_win_fn; printf '|中文🙂'; printf '错误🙂' >&2"),
+            ),
+        );
+        assert_eq!(observed.exit_code, Some(0), "{observed:?}");
+        assert!(
+            observed.stdout.contains("ready|/tmp|fn|中文🙂"),
+            "{observed:?}"
+        );
+        assert!(observed.stderr.contains("错误🙂"), "{observed:?}");
+        assert!(!observed.stdout.contains("WCPS"), "{observed:?}");
+        assert!(!observed.stderr.contains("WCPS"), "{observed:?}");
+
+        let failed = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            7,
+            &projects,
+            &ssh_request("exec", "wc_shell_win_ssh_state", "dogfood", Some("false")),
+        );
+        assert_eq!(failed.exit_code, Some(1), "{failed:?}");
+        assert_eq!(failed.shell_state, "running", "{failed:?}");
+        let next = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            7,
+            &projects,
+            &ssh_request(
+                "exec",
+                "wc_shell_win_ssh_state",
+                "dogfood",
+                Some("printf clean"),
+            ),
+        );
+        assert_eq!(next.stdout, "clean", "{next:?}");
+        assert!(next.stderr.is_empty(), "previous stderr leaked: {next:?}");
+
+        policy.max_output_bytes = 1024;
+        let bounded = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            7,
+            &projects,
+            &ssh_request(
+                "exec",
+                "wc_shell_win_ssh_state",
+                "dogfood",
+                Some("i=0; while [ \"$i\" -lt 5000 ]; do printf x; i=$((i+1)); done"),
+            ),
+        );
+        assert!(bounded.stdout_truncated, "{bounded:?}");
+        assert!(
+            bounded.stdout.len() <= policy.max_output_bytes,
+            "{bounded:?}"
+        );
+
+        let mut removed = config.clone();
+        removed.resources.remove("dogfood");
+        let removed_status = manager.handle(
+            &policy,
+            &shell,
+            &removed,
+            7,
+            &projects,
+            &ssh_request("status", "wc_shell_win_ssh_state", "dogfood", None),
+        );
+        assert_eq!(
+            removed_status.error_code.as_deref(),
+            Some("shell_reset_required"),
+            "{removed_status:?}"
+        );
+        assert_eq!(manager.active_count(), 0, "{removed_status:?}");
+
+        let generation_open = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            7,
+            &projects,
+            &ssh_request("open", "wc_shell_win_ssh_generation", "dogfood", None),
+        );
+        assert_eq!(
+            generation_open.shell_state, "running",
+            "{generation_open:?}"
+        );
+        let stale = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            8,
+            &projects,
+            &ssh_request("status", "wc_shell_win_ssh_generation", "dogfood", None),
+        );
+        assert_eq!(
+            stale.error_code.as_deref(),
+            Some("shell_reset_required"),
+            "{stale:?}"
+        );
+        assert_eq!(manager.active_count(), 0, "{stale:?}");
+
+        let reopened = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            8,
+            &projects,
+            &ssh_request("open", "wc_shell_win_ssh_timeout", "dogfood", None),
+        );
+        assert_eq!(reopened.shell_state, "running", "{reopened:?}");
+        let mut timeout_request = ssh_request(
+            "exec",
+            "wc_shell_win_ssh_timeout",
+            "dogfood",
+            Some("sleep 3; printf late"),
+        );
+        timeout_request
+            .persistent_shell
+            .as_mut()
+            .unwrap()
+            .timeout_secs = Some(1);
+        let timed_out = manager.handle(&policy, &shell, &config, 8, &projects, &timeout_request);
+        assert_eq!(timed_out.execution_state, "timed_out", "{timed_out:?}");
+        assert_ne!(timed_out.shell_state, "running", "{timed_out:?}");
+        assert_eq!(
+            timed_out.error_code.as_deref(),
+            Some("shell_reset_required"),
+            "{timed_out:?}"
+        );
+        let after_timeout = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            8,
+            &projects,
+            &ssh_request(
+                "exec",
+                "wc_shell_win_ssh_timeout",
+                "dogfood",
+                Some("printf forbidden"),
+            ),
+        );
+        assert!(!after_timeout.command_started, "{after_timeout:?}");
+
+        let reopened = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            8,
+            &projects,
+            &ssh_request("open", "wc_shell_win_ssh_exit", "dogfood", None),
+        );
+        assert_eq!(reopened.shell_state, "running", "{reopened:?}");
+        let exited = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            8,
+            &projects,
+            &ssh_request("exec", "wc_shell_win_ssh_exit", "dogfood", Some("exit 7")),
+        );
+        assert_eq!(exited.shell_state, "exited", "{exited:?}");
+        assert_eq!(exited.exit_code, Some(7), "{exited:?}");
+        let after_exit = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            8,
+            &projects,
+            &ssh_request(
+                "exec",
+                "wc_shell_win_ssh_exit",
+                "dogfood",
+                Some("printf forbidden"),
+            ),
+        );
+        assert!(!after_exit.command_started, "{after_exit:?}");
+
+        let reopened = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            8,
+            &projects,
+            &ssh_request("open", "wc_shell_win_ssh_close", "dogfood", None),
+        );
+        assert_eq!(reopened.shell_state, "running", "{reopened:?}");
+        let closed = manager.handle(
+            &policy,
+            &shell,
+            &config,
+            8,
+            &projects,
+            &ssh_request("close", "wc_shell_win_ssh_close", "dogfood", None),
+        );
+        assert_eq!(closed.shell_state, "closed", "{closed:?}");
+        assert_eq!(manager.active_count(), 0, "{closed:?}");
     }
 }

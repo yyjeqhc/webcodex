@@ -14,11 +14,10 @@ pub(crate) mod output_text;
 pub(crate) mod patches;
 pub(crate) mod persistent_shell;
 pub(crate) mod projects;
-// The remote SSH persistent-shell transport is built on Unix process groups and
-// inherited descriptors. Windows Stage 1 has a separate local PowerShell
-// transport, while `ssh_persistent_shell` remains false there, so this remote
-// module stays compiled only on Unix.
-#[cfg(unix)]
+// Remote persistent shells always run POSIX sh/bash on the SSH target. Their
+// local child ownership is platform-specific: Unix uses a private process group,
+// while Windows owns ssh.exe through ManagedChild's Job Object.
+#[cfg(any(unix, windows))]
 pub(crate) mod remote_shell;
 pub(crate) mod shell;
 pub(crate) mod shutdown;

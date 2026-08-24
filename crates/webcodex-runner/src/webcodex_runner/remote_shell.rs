@@ -1,10 +1,13 @@
 //! Remote persistent-shell transport: one long-lived `sh`/`bash` running on a
 //! Workflow Session's SSH resource.
 //!
-//! The transport spawns `ssh -o ControlMaster=no -S <pool path> <host> <shell>`
-//! on the Runner host, reusing the existing [`SshConnectionPool`]'s
-//! authenticated control socket for auth and Host-alias resolution. No second
-//! SSH configuration, authentication, or connection pool is introduced.
+//! On Unix the transport spawns `ssh -o ControlMaster=no -S <pool path> <host>
+//! <shell>` and reuses the existing [`SshConnectionPool`]'s authenticated mux
+//! transport. On Windows it spawns one direct long-lived `ssh.exe <host> <shell>`
+//! because OpenSSH-for-Windows has no usable Unix control socket in this runtime.
+//! Both paths delegate authentication and Host-alias resolution to the Runner's
+//! local OpenSSH configuration; no second credential or model-facing SSH input is
+//! introduced.
 //!
 //! Because an SSH exec channel exposes only stdout and stderr (no extra control
 //! FD), the remote shell reserves FD 7 (a dup of the channel's original stdout)
@@ -20,8 +23,10 @@ use super::config::SshConfig;
 use super::shutdown::lock_unpoison;
 use super::ssh::{PreparedPersistentShellCommand, SshConnectionPool};
 use std::io::{Read, Write};
-use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ExitStatus, Stdio};
+use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::process::Child;
+use std::process::{ChildStdin, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -31,10 +36,14 @@ use webcodex_persistent_shell::{
     CompletionProgress, ControlFrame, ShellError, ShellTransport, TransportMetadata, WaitOutcome,
     CONTROL_MAGIC, STDERR_SYNC_MAGIC, STDOUT_SYNC_MAGIC,
 };
+#[cfg(windows)]
+use webcodex_process::ManagedChild;
 
 /// How long to wait for the ssh child to exit after signalling it during
 /// shutdown/interrupt before forcing a kill. Mirrors the local shell's grace.
 const REMOTE_SIGNAL_GRACE: Duration = Duration::from_millis(100);
+#[cfg(windows)]
+const REMOTE_READER_JOIN_GRACE: Duration = Duration::from_millis(250);
 /// Poll interval for non-blocking reads and completion waits.
 const REMOTE_READ_SLEEP: Duration = Duration::from_millis(5);
 /// Bound on a single control-frame field, matching the local control reader.
@@ -44,8 +53,12 @@ const CONTROL_CHANNEL_CAPACITY: usize = 2;
 
 /// A remote persistent shell ready to be driven by the shared manager.
 pub(crate) struct RemoteShellTransport {
+    #[cfg(unix)]
     child: Mutex<Child>,
+    #[cfg(windows)]
+    child: Mutex<ManagedChild>,
     stdin: Mutex<Option<ChildStdin>>,
+    #[cfg(unix)]
     process_group_id: u32,
     /// Named SSH resource this shell is bound to, captured at open so the
     /// shared manager can validate it against the current Runner config.
@@ -92,26 +105,39 @@ impl RemoteShellTransport {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(unix)]
         let mut child = command.spawn().map_err(|error| {
             ShellError::new(
                 "ssh_persistent_shell_spawn_failed",
                 format!("failed to spawn remote persistent shell: {error}"),
             )
         })?;
+        #[cfg(windows)]
+        let mut child = ManagedChild::spawn(&mut command).map_err(|error| {
+            ShellError::new(
+                "ssh_persistent_shell_spawn_failed",
+                format!("failed to spawn managed remote persistent shell: {error}"),
+            )
+        })?;
+        #[cfg(unix)]
         let process_group_id = child.id();
-        let stdin = child.stdin.take().ok_or_else(|| {
+        #[cfg(unix)]
+        let child_stdio = &mut child;
+        #[cfg(windows)]
+        let child_stdio = child.child_mut();
+        let stdin = child_stdio.stdin.take().ok_or_else(|| {
             ShellError::new(
                 "ssh_persistent_shell_spawn_failed",
                 "remote persistent shell stdin pipe was not created",
             )
         })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
+        let stdout = child_stdio.stdout.take().ok_or_else(|| {
             ShellError::new(
                 "ssh_persistent_shell_spawn_failed",
                 "remote persistent shell stdout pipe was not created",
             )
         })?;
-        let stderr = child.stderr.take().ok_or_else(|| {
+        let stderr = child_stdio.stderr.take().ok_or_else(|| {
             ShellError::new(
                 "ssh_persistent_shell_spawn_failed",
                 "remote persistent shell stderr pipe was not created",
@@ -148,6 +174,7 @@ impl RemoteShellTransport {
             Self {
                 child: Mutex::new(child),
                 stdin: Mutex::new(Some(stdin)),
+                #[cfg(unix)]
                 process_group_id,
                 resource_name: resource_name.to_string(),
                 generation,
@@ -232,6 +259,21 @@ impl RemoteShellTransport {
                 || (stdout_disconnected && !progress.stdout_synced)
                 || (stderr_disconnected && !progress.stderr_synced)
             {
+                #[cfg(windows)]
+                {
+                    // Windows pipe EOF can become visible just before the direct
+                    // ssh.exe exit status. Give only the remaining command budget,
+                    // capped by the normal ownership grace, to classify a real
+                    // process exit instead of spuriously reporting framing loss.
+                    let grace = deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(REMOTE_SIGNAL_GRACE);
+                    if !grace.is_zero() {
+                        if let Some(status) = self.wait_for_direct_exit(grace) {
+                            return WaitOutcome::Exited(status);
+                        }
+                    }
+                }
                 // The ssh child died before reaching sync. Report it as a lost
                 // control channel so the manager poisons the shell.
                 return WaitOutcome::ControlLost;
@@ -247,11 +289,42 @@ impl RemoteShellTransport {
         lock_unpoison(&self.child).try_wait().ok().flatten()
     }
 
+    #[cfg(windows)]
+    fn wait_for_direct_exit(&self, timeout: Duration) -> Option<ExitStatus> {
+        let deadline = Instant::now().checked_add(timeout)?;
+        loop {
+            if let Some(status) = self.try_wait() {
+                return Some(status);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(windows)]
+    fn terminate_managed_tree(&self) {
+        let mut child = lock_unpoison(&self.child);
+        let _ = child.terminate_tree();
+        let _ = child.wait_tree_exit(REMOTE_SIGNAL_GRACE);
+    }
+
     fn interrupt(&self) {
-        // SIGINT the ssh child's private process group so the remote shell and
-        // any foreground command receive the interrupt. The manager decides
-        // whether sync is recovered afterward.
-        let _ = signal_process_group(self.process_group_id, libc::SIGINT);
+        #[cfg(unix)]
+        {
+            // SIGINT the ssh child's private process group so the remote shell and
+            // any foreground command receive the interrupt. The manager decides
+            // whether sync is recovered afterward.
+            let _ = signal_process_group(self.process_group_id, libc::SIGINT);
+        }
+        #[cfg(windows)]
+        {
+            // Redirected Windows OpenSSH has no safe command-scoped Ctrl-C
+            // primitive. Force the owned Job Object tree down; the manager's
+            // recovery wait then observes exit and never reuses an uncertain stream.
+            self.terminate_managed_tree();
+        }
     }
 
     fn shutdown(&self) {
@@ -263,44 +336,52 @@ impl RemoteShellTransport {
             self.finish_readers();
             return;
         }
-        let _ = signal_process_group(self.process_group_id, libc::SIGTERM);
-        let deadline = Instant::now() + REMOTE_SIGNAL_GRACE;
-        while Instant::now() < deadline {
-            if self.try_wait().is_some() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        if self.try_wait().is_none() {
-            let _ = signal_process_group(self.process_group_id, libc::SIGKILL);
-            let kill_deadline = Instant::now() + REMOTE_SIGNAL_GRACE;
-            while Instant::now() < kill_deadline {
+        #[cfg(unix)]
+        {
+            let _ = signal_process_group(self.process_group_id, libc::SIGTERM);
+            let deadline = Instant::now() + REMOTE_SIGNAL_GRACE;
+            while Instant::now() < deadline {
                 if self.try_wait().is_some() {
                     break;
                 }
                 thread::sleep(Duration::from_millis(5));
             }
+            if self.try_wait().is_none() {
+                let _ = signal_process_group(self.process_group_id, libc::SIGKILL);
+                let kill_deadline = Instant::now() + REMOTE_SIGNAL_GRACE;
+                while Instant::now() < kill_deadline {
+                    if self.try_wait().is_some() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
         }
+        #[cfg(windows)]
+        self.terminate_managed_tree();
         self.finish_readers();
     }
 
     fn terminate_remaining_group_after_exit(&self) {
-        // The remote shell runs inside the ssh child's process group; once the
-        // child has exited there is nothing local to reap, but any reader still
-        // blocked means the pipe is held open by a peer. Forcing the readers
-        // stops is the remote analogue of clearing the local group.
+        // Once the direct ssh child exits, any locally owned descendants or pipe
+        // holders must still be reclaimed before this transport is considered done.
         if !self.reader_threads_running() {
             self.finish_readers();
             return;
         }
-        let _ = signal_process_group(self.process_group_id, libc::SIGTERM);
-        let deadline = Instant::now() + REMOTE_SIGNAL_GRACE;
-        while Instant::now() < deadline && self.reader_threads_running() {
-            thread::sleep(Duration::from_millis(5));
+        #[cfg(unix)]
+        {
+            let _ = signal_process_group(self.process_group_id, libc::SIGTERM);
+            let deadline = Instant::now() + REMOTE_SIGNAL_GRACE;
+            while Instant::now() < deadline && self.reader_threads_running() {
+                thread::sleep(Duration::from_millis(5));
+            }
+            if self.reader_threads_running() {
+                let _ = signal_process_group(self.process_group_id, libc::SIGKILL);
+            }
         }
-        if self.reader_threads_running() {
-            let _ = signal_process_group(self.process_group_id, libc::SIGKILL);
-        }
+        #[cfg(windows)]
+        self.terminate_managed_tree();
         self.finish_readers();
     }
 
@@ -312,9 +393,23 @@ impl RemoteShellTransport {
 
     fn finish_readers(&self) {
         self.readers_stop.store(true, Ordering::SeqCst);
-        if let Some(handles) = lock_unpoison(&self.reader_threads).take() {
-            for handle in handles {
-                let _ = handle.join();
+        let Some(mut handles) = lock_unpoison(&self.reader_threads).take() else {
+            return;
+        };
+        #[cfg(unix)]
+        for handle in handles {
+            let _ = handle.join();
+        }
+        #[cfg(windows)]
+        {
+            let deadline = Instant::now() + REMOTE_READER_JOIN_GRACE;
+            while Instant::now() < deadline && handles.iter().any(|handle| !handle.is_finished()) {
+                thread::sleep(Duration::from_millis(5));
+            }
+            for handle in handles.drain(..) {
+                if handle.is_finished() {
+                    let _ = handle.join();
+                }
             }
         }
     }
@@ -366,6 +461,13 @@ impl ShellTransport for RemoteShellTransport {
 
     fn stderr(&self) -> &Arc<Mutex<BoundedBuffer>> {
         &self.stderr
+    }
+
+    fn reported_cwd_is_absolute(&self, cwd: &Path) -> bool {
+        // The remote shell is always POSIX sh/bash, even when its local ssh.exe
+        // transport runs on Windows. Do not apply Windows Path::is_absolute to
+        // the remote namespace (`/tmp` is not absolute under Windows rules).
+        cwd.to_string_lossy().starts_with('/')
     }
 
     fn metadata(&self) -> Option<TransportMetadata> {
@@ -652,6 +754,7 @@ fn process_control_pending(
     }
 }
 
+#[cfg(unix)]
 fn signal_process_group(process_group_id: u32, signal: i32) -> Result<(), ShellError> {
     let process_group_id = i32::try_from(process_group_id).map_err(|_| {
         ShellError::new(

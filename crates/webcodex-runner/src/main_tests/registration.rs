@@ -187,8 +187,8 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     );
     assert_eq!(
         caps.ssh_persistent_shell,
-        SshConnectionPool::is_available() && cfg!(unix),
-        "Windows Stage 1 must not advertise SSH persistent shells"
+        SshConnectionPool::persistent_shell_available(),
+        "SSH persistent-shell capability must match the platform backend and local OpenSSH availability"
     );
     assert!(caps.structured_validation_argv);
     assert!(caps.structured_cargo_test_count_assertion);

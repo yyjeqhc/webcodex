@@ -3158,6 +3158,27 @@ fn validate_runner_job_context(
     }) {
         return Err("job recovery context validation metadata is invalid".to_string());
     }
+    if context
+        .structured_execution
+        .as_ref()
+        .is_some_and(|metadata| !metadata.is_valid())
+    {
+        return Err("job recovery context structured execution metadata is invalid".to_string());
+    }
+    // validation_identity / validation_tool are server-admission-derived opaque
+    // metadata. The Runner validates their closed shape above, then preserves
+    // them while checking the execution fields it can authoritatively derive
+    // from the typed request.
+    let (validation_identity, validation_tool) = context
+        .structured_execution
+        .as_ref()
+        .map(|metadata| {
+            (
+                metadata.validation_identity.clone(),
+                metadata.validation_tool.clone(),
+            )
+        })
+        .unwrap_or((None, None));
     let expected_structured = match request.kind.as_str() {
         "start_process_job" => {
             if !request.command.is_empty()
@@ -3176,6 +3197,8 @@ fn validate_runner_job_context(
                 script_bytes: None,
                 arg_count: process.args.len(),
                 stdin_present: request.stdin.is_some(),
+                validation_identity: validation_identity.clone(),
+                validation_tool: validation_tool.clone(),
             })
         }
         "start_detached_process_job" => {
@@ -3199,6 +3222,8 @@ fn validate_runner_job_context(
                 script_bytes: None,
                 arg_count: process.args.len(),
                 stdin_present: request.stdin.is_some(),
+                validation_identity: validation_identity.clone(),
+                validation_tool: validation_tool.clone(),
             })
         }
         "start_script_job" => {
@@ -3222,6 +3247,8 @@ fn validate_runner_job_context(
                 script_bytes: Some(script.script.len()),
                 arg_count: script.args.len(),
                 stdin_present: request.stdin.is_some(),
+                validation_identity: validation_identity.clone(),
+                validation_tool: validation_tool.clone(),
             })
         }
         _ => None,

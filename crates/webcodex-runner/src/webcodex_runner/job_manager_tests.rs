@@ -385,6 +385,8 @@ fn detached_job_request(
                 script_bytes: None,
                 arg_count: 3,
                 stdin_present: false,
+                validation_identity: None,
+                validation_tool: None,
             }),
         },
         launch: DetachedLaunchSpec {
@@ -1013,6 +1015,8 @@ fn structured_process_context(
         script_bytes: None,
         arg_count,
         stdin_present,
+        validation_identity: None,
+        validation_tool: None,
     });
     context
 }
@@ -1048,6 +1052,8 @@ fn structured_script_context(
         script_bytes: Some(script_bytes),
         arg_count,
         stdin_present,
+        validation_identity: None,
+        validation_tool: None,
     });
     context
 }
@@ -3155,6 +3161,8 @@ fn structured_job_snapshot_preserves_post_spawn_outcome_unknown() {
             script_bytes: None,
             arg_count: 0,
             stdin_present: false,
+            validation_identity: None,
+            validation_tool: None,
         });
     lock_unpoison(&manager.jobs).insert(
         snapshot.job_id.clone(),

@@ -494,6 +494,45 @@ fn runner_recovery_context_rejects_cross_product_go_test_metadata() {
     assert!(error.contains("validation metadata is invalid"), "{error}");
 }
 
+#[test]
+fn runner_recovery_context_accepts_server_validation_identity_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut request = shell_job_request(temp.path(), "");
+    request.kind = "start_process_job".to_string();
+    request.process = Some(shell_protocol::ShellProcessArgv {
+        executable: "cargo".to_string(),
+        args: vec!["test".to_string(), "focused".to_string()],
+    });
+    let context = request.job_context.as_mut().unwrap();
+    context.purpose = Some("test".to_string());
+    context.shell = Some("direct_argv".to_string());
+    context.command_preview = "cargo test focused".to_string();
+    context.structured_execution = Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+        execution_source: "run_process".to_string(),
+        language: None,
+        script_bytes: None,
+        arg_count: 2,
+        stdin_present: false,
+        validation_identity: Some("target:0123456789abcdef01234567".to_string()),
+        validation_tool: Some("cargo_test".to_string()),
+    });
+    let context = context.clone();
+
+    validate_runner_job_context(&context, &request, "ws-client").unwrap();
+
+    let mut invalid = context;
+    invalid
+        .structured_execution
+        .as_mut()
+        .unwrap()
+        .validation_identity = Some("target:not-valid".to_string());
+    let error = validate_runner_job_context(&invalid, &request, "ws-client").unwrap_err();
+    assert!(
+        error.contains("structured execution metadata is invalid"),
+        "{error}"
+    );
+}
+
 fn wait_for_job_envelope(
     rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
     message: &str,

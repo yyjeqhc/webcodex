@@ -203,9 +203,11 @@ per-call cwd
 ```
 
 Each SSH `run_shell` / `run_job` command gets an independent remote exec
-channel. The Runner may reuse the authenticated transport for the same
-Session/resource pair, but it does not preserve `cd`, exports, aliases,
-functions, umask, or shell-process state between commands.
+channel and requires the Runner's `ssh_shell` capability. The Runner may reuse
+the authenticated transport for the same Session/resource pair, but it does not
+preserve `cd`, exports, aliases, functions, umask, or shell-process state between
+commands. This one-shot/background capability is independent of named SSH
+persistent-shell support.
 
 Raw shell text has one shared model-authored ceiling of 16,000 UTF-8 bytes for
 `run_shell`, raw `run_job`, and `session_shell_exec`. Larger shell program text
@@ -246,10 +248,11 @@ shell per Workflow Session: `sh`/`bash` on Unix, or the configured PowerShell
 program/profile on Windows. For an `agent:<client>:<project>` the Runner owns
 and controls the shell. Without `execution_context.resource`, it runs against
 the registered project host. With a named resource, the Runner opens a remote
-persistent shell through that SSH resource; this requires the Runner's SSH and
-SSH-persistent-shell capabilities and never silently falls back locally. Windows
-Stage 1 does not advertise SSH persistent shells. The
-process manager also has a Server-owned executor branch for a hosting surface
+persistent shell through that SSH resource; this requires `persistent_shell` +
+`ssh_persistent_shell`, not the separate one-shot/background `ssh_shell`
+capability, and never silently falls back locally. Windows Stage 2 supports this
+same named SSH persistent-shell model through its OpenSSH client while the remote
+shell remains `sh`/`bash`. The process manager also has a Server-owned executor branch for a hosting surface
 that supplies a Server-local project, although the current built-in public
 project registry advertises Agent projects only. `inspect` and `read_only`
 Sessions cannot open or execute a persistent shell.

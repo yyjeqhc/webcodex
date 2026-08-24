@@ -188,31 +188,14 @@ impl ToolRuntime {
             }
         }
         if ssh_resource.is_some() {
-            // Every SSH-resource request routes to a Runner-local SSH
-            // connection pool (`run_ssh_shell` / `start_ssh_shell_job`).
-            // `ssh_shell` was introduced together with SSH resource routing in
-            // the same change, so it is both necessary and sufficient to
-            // guarantee a legacy Runner understands SSH resources instead of
-            // silently executing the command on the Runner host.
-            if !self
-                .shell_clients
-                .client_supports_for_auth(&client_id, SHELL_CLIENT_CAPABILITY_SSH_SHELL, auth)
-                .await
-                .map_err(ToolResult::err)?
-            {
-                return Err(agent_capability_unavailable_result(format!(
-                    "agent_capability_unavailable: agent client {} does not support {}",
-                    client_id, SHELL_CLIENT_CAPABILITY_SSH_SHELL
-                )));
-            }
-            // Only `OpenSessionShell` inherits the Session SSH resource at this
-            // pre-dispatch authorization point. Its ordinary `persistent_shell`
-            // capability is already enforced through the tool definition; the
-            // SSH-specific capability is the additional fail-closed gate for a
-            // Runner predating SSH persistent shells. Later exec/status/close
-            // operations route by the shell record created during open.
-            if matches!(call, ToolCall::OpenSessionShell { .. })
-                && !self
+            if matches!(call, ToolCall::OpenSessionShell { .. }) {
+                // `OpenSessionShell` already requires `persistent_shell` through
+                // the tool definition. A named persistent SSH shell has its own
+                // additive capability and deliberately does not require the
+                // one-shot/background `ssh_shell` capability. Later
+                // exec/status/close route by the resource saved in the shell
+                // record rather than inheriting Session context here.
+                if !self
                     .shell_clients
                     .client_supports_for_auth(
                         &client_id,
@@ -221,11 +204,27 @@ impl ToolRuntime {
                     )
                     .await
                     .map_err(ToolResult::err)?
-            {
-                return Err(agent_capability_unavailable_result(format!(
-                    "agent_capability_unavailable: agent client {} does not support {}",
-                    client_id, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL
-                )));
+                {
+                    return Err(agent_capability_unavailable_result(format!(
+                        "agent_capability_unavailable: agent client {} does not support {}",
+                        client_id, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL
+                    )));
+                }
+            } else {
+                // Accepted one-shot/background SSH-resource execution still
+                // requires the historical `ssh_shell` capability. Structured
+                // process/script resource calls have already failed closed above.
+                if !self
+                    .shell_clients
+                    .client_supports_for_auth(&client_id, SHELL_CLIENT_CAPABILITY_SSH_SHELL, auth)
+                    .await
+                    .map_err(ToolResult::err)?
+                {
+                    return Err(agent_capability_unavailable_result(format!(
+                        "agent_capability_unavailable: agent client {} does not support {}",
+                        client_id, SHELL_CLIENT_CAPABILITY_SSH_SHELL
+                    )));
+                }
             }
         }
         Ok(())

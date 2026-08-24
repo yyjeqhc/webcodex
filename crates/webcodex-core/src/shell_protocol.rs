@@ -229,18 +229,18 @@ pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
 pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS: &str = "async_shell_jobs";
-/// Runner-side SSH shell execution for Workflow Session resources. This is
-/// deliberately separate from ordinary local shell support: older runners
-/// must reject a Session-bound SSH request rather than silently running it on
-/// their local project checkout.
+/// Runner-side one-shot/background SSH shell execution for Workflow Session
+/// resources. This is deliberately separate from persistent SSH support: older
+/// runners must reject such a Session-bound SSH request rather than silently
+/// running it on their local project checkout.
 pub const SHELL_CLIENT_CAPABILITY_SSH_SHELL: &str = "ssh_shell";
-/// Command-oriented, long-lived local shell processes owned by one Workflow
-/// Session. Missing on older runners and therefore fails closed.
+/// Command-oriented, long-lived shell processes owned by one Workflow Session.
+/// Missing on older runners and therefore fails closed.
 pub const SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL: &str = "persistent_shell";
 /// Long-lived persistent shells opened on a Workflow Session's SSH resource.
-/// This is deliberately separate from `ssh_shell` and `persistent_shell`: an
-/// SSH persistent shell requires all three, and older runners that predate it
-/// must reject the request rather than silently opening a local shell.
+/// This is additive to `persistent_shell` and independent of the one-shot
+/// `ssh_shell` capability; older runners that predate it must reject the request
+/// rather than silently opening a local shell.
 pub const SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL: &str = "ssh_persistent_shell";
 pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV: &str = "structured_validation_argv";
 /// The Runner preserves the optional Cargo test-count postcondition in durable
@@ -487,8 +487,8 @@ pub struct ShellClientCapabilities {
     pub async_jobs: bool,
     #[serde(default)]
     pub async_shell_jobs: bool,
-    /// The Runner can execute a Workflow Session's configured SSH resource.
-    /// Missing on older runners and therefore fails closed.
+    /// The Runner can execute one-shot/background shell work through a Workflow
+    /// Session's configured SSH resource. Missing on older runners fails closed.
     #[serde(default)]
     pub ssh_shell: bool,
     /// The Runner supports explicit Workflow Session persistent shells on its
@@ -496,8 +496,8 @@ pub struct ShellClientCapabilities {
     #[serde(default)]
     pub persistent_shell: bool,
     /// The Runner can open a long-lived persistent shell on a Workflow Session's
-    /// SSH resource. Missing on older runners and therefore fails closed; it is
-    /// never inferred from `ssh_shell` + `persistent_shell`.
+    /// SSH resource. Missing on older runners fails closed; this is independent
+    /// of `ssh_shell` and is never inferred from another capability combination.
     #[serde(default)]
     pub ssh_persistent_shell: bool,
     /// Validation plans use a fixed executable plus argv, never shell text.

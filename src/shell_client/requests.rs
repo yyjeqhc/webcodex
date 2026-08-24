@@ -1335,9 +1335,9 @@ impl ShellClientRegistry {
     ///
     /// `job_context` carries safe Session/resource metadata so the Runner can
     /// route an SSH persistent shell to its bound resource; it is `None` for
-    /// local persistent shells. SSH persistent shells additionally require the
-    /// `ssh_persistent_shell` capability (plus `ssh_shell` and
-    /// `persistent_shell`); absence fails closed before enqueue.
+    /// local persistent shells. SSH persistent shells require
+    /// `persistent_shell` plus the additive `ssh_persistent_shell` capability;
+    /// `ssh_shell` remains the separate one-shot/background SSH capability.
     pub(crate) async fn enqueue_persistent_shell(
         &self,
         client_id: String,
@@ -1416,13 +1416,13 @@ impl ShellClientRegistry {
                 "agent_capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL}"
             ));
         }
-        // An SSH persistent shell requires all three capabilities; a legacy
-        // runner that predates ssh_persistent_shell must fail closed here rather
-        // than silently opening a local shell on the Runner host.
+        // `persistent_shell` is checked above. A named SSH persistent shell
+        // additionally requires only `ssh_persistent_shell`; it intentionally
+        // does not depend on the one-shot/background `ssh_shell` capability.
         if job_context
             .as_ref()
             .is_some_and(|ctx| ctx.ssh_resource.is_some())
-            && (!client.capabilities.ssh_shell || !client.capabilities.ssh_persistent_shell)
+            && !client.capabilities.ssh_persistent_shell
         {
             return Err(format!(
                 "agent_capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL}"

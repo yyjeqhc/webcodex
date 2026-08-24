@@ -702,13 +702,8 @@ async fn capability_modes_and_ssh_resource_fail_closed_without_enqueue() {
         .unwrap()
         .contains("agent_capability_unavailable"));
 
-    let ssh_context = sessions::SessionExecutionContext {
-        default_cwd: None,
-        default_shell: None,
-        resource: Some("prod".to_string()),
-    };
     let (ssh_runtime, ssh_project, ssh_session) =
-        setup(temp.path(), true, SessionMode::Normal, Some(ssh_context)).await;
+        setup_ssh_with_capabilities(temp.path(), "prod", true, false).await;
     let ssh = {
         let auth = auth_context(None, true);
         ssh_runtime
@@ -727,16 +722,17 @@ async fn capability_modes_and_ssh_resource_fail_closed_without_enqueue() {
     assert_eq!(ssh.output["error_kind"], "agent_capability_unavailable");
     assert_eq!(ssh.output["recovery_kind"], "none");
     assert!(ssh.output.get("recovery_tool").is_none());
-    // An SSH persistent shell routes through the SSH connection pool and the
-    // persistent-shell manager, so it requires ssh_shell + ssh_persistent_shell
-    // (persistent_shell is enforced through the PersistentShell tool
-    // capability). The default test agent advertises only persistent_shell, so
-    // the request fails closed without enqueuing.
+    // A legacy Runner may support one-shot SSH plus persistent shells while
+    // predating the additive SSH-persistent capability. It still fails closed
+    // before enqueue rather than falling back to a local persistent shell.
     assert!(ssh
         .error
         .as_deref()
         .unwrap()
-        .contains("agent_capability_unavailable"));
+        .contains("ssh_persistent_shell"));
+    assert!(probe_patch_agent_request(&ssh_runtime, CLIENT)
+        .await
+        .is_none());
 
     for mode in [SessionMode::Inspect, SessionMode::ReadOnly] {
         let (runtime, project, session) = setup(temp.path(), true, mode, None).await;
@@ -764,9 +760,11 @@ async fn capability_modes_and_ssh_resource_fail_closed_without_enqueue() {
 /// the bound resource, and later exec/status/close route by the saved record
 /// (not the current Session context). A context change after open must not
 /// redirect an already-open shell.
-async fn setup_ssh(
+async fn setup_ssh_with_capabilities(
     root: &std::path::Path,
     resource: &str,
+    ssh_shell: bool,
+    ssh_persistent_shell: bool,
 ) -> (ToolRuntime, String, sessions::SessionSummary) {
     let runtime = test_runtime();
     register_agent_with_projects(
@@ -775,9 +773,10 @@ async fn setup_ssh(
         None,
         ShellClientCapabilities {
             shell: true,
+            async_jobs: true,
             persistent_shell: true,
-            ssh_shell: true,
-            ssh_persistent_shell: true,
+            ssh_shell,
+            ssh_persistent_shell,
             ..Default::default()
         },
         vec![ShellAgentProjectSummary {
@@ -818,12 +817,69 @@ async fn setup_ssh(
     (runtime, project, session)
 }
 
+async fn setup_ssh(
+    root: &std::path::Path,
+    resource: &str,
+) -> (ToolRuntime, String, sessions::SessionSummary) {
+    // Exact Windows Stage 2 capability shape: persistent SSH is available even
+    // though the existing one-shot/background SSH capability remains absent.
+    setup_ssh_with_capabilities(root, resource, false, true).await
+}
+
 #[tokio::test]
 async fn ssh_persistent_shell_enqueues_with_bound_resource_and_routes_by_record() {
     let temp = tempfile::tempdir().unwrap();
     let (runtime, project, session) = setup_ssh(temp.path(), "prod").await;
+    let auth = auth_context(None, true);
 
-    // Open carries the bound SSH resource on job_context.
+    let one_shot = runtime
+        .dispatch_with_auth(
+            ToolCall::RunShell {
+                project: project.clone(),
+                command: "printf one-shot".to_string(),
+                session_id: Some(session.session_id.clone()),
+                timeout_secs: Some(30),
+                cwd: None,
+                purpose: None,
+                shell: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(!one_shot.success, "{one_shot:?}");
+    assert_eq!(
+        one_shot.output["error_kind"],
+        "agent_capability_unavailable"
+    );
+    assert!(one_shot.error.as_deref().unwrap().contains("ssh_shell"));
+
+    let background = runtime
+        .dispatch_with_auth(
+            ToolCall::RunJob {
+                project: project.clone(),
+                command: "printf background".to_string(),
+                session_id: Some(session.session_id.clone()),
+                timeout_secs: Some(30),
+                cwd: None,
+                purpose: None,
+                shell: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(!background.success, "{background:?}");
+    assert_eq!(
+        background.output["error_kind"],
+        "agent_capability_unavailable"
+    );
+    assert!(background.error.as_deref().unwrap().contains("ssh_shell"));
+    assert!(
+        probe_patch_agent_request(&runtime, CLIENT).await.is_none(),
+        "one-shot/background SSH work must not enqueue without ssh_shell"
+    );
+
+    // Open carries the bound SSH resource on job_context and must still enqueue
+    // with persistent_shell=true + ssh_persistent_shell=true + ssh_shell=false.
     let open_task = dispatch(
         runtime.clone(),
         ToolCall::OpenSessionShell {
@@ -885,6 +941,30 @@ async fn ssh_persistent_shell_enqueues_with_bound_resource_and_routes_by_record(
     let exec = exec_task.await.unwrap();
     assert!(exec.success, "{exec:?}");
     assert_eq!(exec.output["stdout"], "remote");
+
+    let status_task = dispatch(
+        runtime.clone(),
+        ToolCall::SessionShellStatus {
+            project: project.clone(),
+            session_id: session.session_id.clone(),
+            shell_id: shell_id.clone(),
+        },
+    );
+    let status_request = next_persistent_request(&runtime).await;
+    assert_eq!(
+        status_request.persistent_shell.as_ref().unwrap().action,
+        "status"
+    );
+    assert_eq!(
+        status_request
+            .job_context
+            .as_ref()
+            .and_then(|ctx| ctx.ssh_resource.as_deref()),
+        Some("prod"),
+        "status must route by the saved SSH resource binding"
+    );
+    complete(&runtime, &status_request, "running", "idle", "", None, None).await;
+    assert!(status_task.await.unwrap().success);
 
     // Close also routes by the saved record.
     let close_task = dispatch(

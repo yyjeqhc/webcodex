@@ -7,11 +7,23 @@ edition.workspace = true
 [dependencies]
 uuid = { version = "1", features = ["v4"] }
 
-# Process-group / descriptor primitives used only by the local persistent shell
-# (`setsid`, `dup2`, `fcntl`, `kill`). Windows has no persistent shell yet and
-# the crate fails closed there, so libc is never needed on that target.
+# Process-group / descriptor primitives used only by the Unix local persistent
+# shell (`setsid`, `dup2`, `fcntl`, `kill`).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Windows local persistent shells use the existing managed Job Object process
+# tree owner, Base64-safe stdin framing, and a per-shell private control dir.
+[target.'cfg(windows)'.dependencies]
+base64 = "0.22"
+tempfile = "3"
+webcodex-process = { path = "../webcodex-process" }
+
 [dev-dependencies]
 tempfile = "3"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }

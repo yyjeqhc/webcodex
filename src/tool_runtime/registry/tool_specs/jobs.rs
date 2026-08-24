@@ -32,7 +32,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "open_session_shell",
-            "Open one bounded, long-lived sh/bash process for an active Workflow Session. Its cwd, variables, functions, and umask are isolated from one-shot commands and every other Session.",
+            "Open one bounded, long-lived configured local shell for an active Workflow Session (sh/bash on Unix, PowerShell on Windows). Its cwd, variables, functions, and process-local state are isolated from one-shot commands and every other Session.",
             open_session_shell_input_schema(),
         ),
         tool_spec(

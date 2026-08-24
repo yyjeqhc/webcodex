@@ -70,7 +70,7 @@ pub(crate) fn shell_quote(value: &str) -> String {
 /// PowerShell's single-quoted strings are literal, so spaces, backslashes,
 /// double quotes, `$`, Unicode, and `C:\...` Windows paths need no further
 /// escaping; only `'` does.
-fn shell_quote_powershell(value: &str) -> String {
+pub(crate) fn shell_quote_powershell(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 

@@ -1,26 +1,26 @@
 //! Bounded, command-oriented persistent shell processes.
 //!
-//! A shell managed here is a real long-lived `sh`/`bash` process. Commands are
-//! serialized, stdout/stderr are retained in bounded ring buffers, and command
-//! completion plus stream-drain boundaries use dedicated inherited descriptors.
-//! This crate deliberately does not provide a PTY, raw input, resize, or
-//! terminal byte-stream API.
+//! A shell managed here is a real long-lived local shell process (`sh`/`bash`
+//! on Unix or configured PowerShell on Windows). Commands are serialized,
+//! stdout/stderr are retained in bounded ring buffers, and command completion
+//! plus stream-drain boundaries use transport-private control framing. This
+//! crate deliberately does not provide a PTY, raw input, resize, or terminal
+//! byte-stream API.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-// `mpsc` is used only by the Unix local-shell readers; Windows has no shell yet.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-// The local persistent shell spawn/primitives below are Unix-only. Windows has
-// no persistent shell yet; `spawn_shell_process` fails closed there and these
-// imports are compiled out entirely.
+#[cfg(windows)]
+mod windows;
+
 #[cfg(unix)]
 use std::ffi::OsString;
 #[cfg(unix)]
@@ -46,18 +46,15 @@ const CONTROL_FD: i32 = 9;
 pub const CONTROL_MAGIC: &[u8] = b"WCPS1";
 pub const STDOUT_SYNC_MAGIC: &[u8] = b"WCPSO1";
 pub const STDERR_SYNC_MAGIC: &[u8] = b"WCPSE1";
-// Constants used only by the Unix local-shell implementation are declared
-// `cfg(unix)` so they do not warn as dead on Windows, where the local shell is
-// fail-closed.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const CONTROL_FIELD_MAX_BYTES: usize = 8 * 1024;
 #[cfg(unix)]
 const CONTROL_CHANNEL_CAPACITY: usize = 2;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const OUTPUT_SYNC_CHANNEL_CAPACITY: usize = 2;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const OUTPUT_READ_SLEEP: Duration = Duration::from_millis(5);
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const PROCESS_SIGNAL_GRACE: Duration = Duration::from_millis(100);
 const TIMEOUT_RECOVERY_WINDOW: Duration = Duration::from_millis(750);
 const OPEN_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -111,8 +108,10 @@ pub struct ShellLaunch {
     pub dialect: String,
     pub profile: Option<String>,
     pub program: String,
-    /// Arguments used to start the long-lived shell. Command-mode flags such
-    /// as `-c` must not be supplied.
+    /// Startup arguments owned by the selected shell/profile before any
+    /// transport-specific payload mode. Unix command-mode `-c` is forbidden;
+    /// Windows receives the configured PowerShell prefix arguments and the
+    /// transport appends its private `-File` bootstrap.
     pub args: Vec<String>,
     pub initial_cwd: PathBuf,
     pub env: HashMap<String, String>,
@@ -594,7 +593,9 @@ impl PersistentShellManager {
 
         #[cfg(unix)]
         let process: Box<dyn ShellTransport> = Box::new(spawn_shell_process(&launch)?);
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        let process: Box<dyn ShellTransport> = windows::spawn_shell_process(&launch)?;
+        #[cfg(not(any(unix, windows)))]
         let process: Box<dyn ShellTransport> = spawn_shell_process(&launch)?;
         let timestamp = now_ts();
 
@@ -1640,21 +1641,25 @@ impl ShellTransport for ShellProcess {
     }
 }
 
-#[cfg(unix)]
+pub const fn local_shell_supported() -> bool {
+    cfg!(any(unix, windows))
+}
+
+#[cfg(any(unix, windows))]
 fn ensure_local_shell_supported() -> Result<(), ShellError> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn ensure_local_shell_supported() -> Result<(), ShellError> {
     Err(persistent_shell_unsupported_error())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn persistent_shell_unsupported_error() -> ShellError {
     ShellError::new(
         "persistent_shell_unsupported",
-        "persistent shell is not supported on Windows yet",
+        "persistent local shell is not supported on this platform",
     )
 }
 
@@ -1680,20 +1685,43 @@ fn validate_launch(launch: &ShellLaunch) -> Result<(), ShellError> {
             ));
         }
     }
+    #[cfg(unix)]
     if !matches!(launch.dialect.as_str(), "sh" | "bash") {
         return Err(ShellError::new(
             "persistent_shell_dialect_unsupported",
-            "persistent shells support only sh or bash",
+            "Unix persistent shells support only sh or bash",
         ));
     }
-    if launch
-        .args
-        .iter()
-        .any(|arg| arg == "-c" || arg.contains('\0'))
-    {
+    #[cfg(windows)]
+    if launch.dialect != "powershell" {
+        return Err(ShellError::new(
+            "persistent_shell_dialect_unsupported",
+            "Windows persistent shells require a configured PowerShell program",
+        ));
+    }
+    if launch.args.iter().any(|arg| arg.contains('\0')) {
         return Err(ShellError::new(
             "persistent_shell_invalid_open",
-            "persistent shell startup args cannot contain -c or NUL",
+            "persistent shell startup args cannot contain NUL",
+        ));
+    }
+    #[cfg(windows)]
+    if launch.args.iter().any(|arg| {
+        matches!(
+            arg.to_ascii_lowercase().as_str(),
+            "-command" | "-encodedcommand" | "-file"
+        )
+    }) {
+        return Err(ShellError::new(
+            "persistent_shell_invalid_open",
+            "Windows persistent shell startup args cannot contain PowerShell command/file payload switches",
+        ));
+    }
+    #[cfg(unix)]
+    if launch.args.iter().any(|arg| arg == "-c") {
+        return Err(ShellError::new(
+            "persistent_shell_invalid_open",
+            "Unix persistent shell startup args cannot contain -c",
         ));
     }
     if !launch.initial_cwd.is_dir() {
@@ -1705,7 +1733,7 @@ fn validate_launch(launch: &ShellLaunch) -> Result<(), ShellError> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn drain_sync_receiver(
     receiver: &Mutex<mpsc::Receiver<String>>,
     token: &str,
@@ -1990,12 +2018,7 @@ fn spawn_shell_process(launch: &ShellLaunch) -> Result<ShellProcess, ShellError>
     })
 }
 
-/// Windows has no persistent shell implementation yet. Fail closed with a
-/// stable, explicit error instead of spawning a degraded child that could not
-/// honor the FD-7/8/9 protocol, silently pretending to succeed, or panicking.
-/// The concrete `ShellProcess` type is Unix-only, so the Windows stub reports
-/// through the boxed trait and `open` never constructs a shell on Windows.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn spawn_shell_process(_launch: &ShellLaunch) -> Result<Box<dyn ShellTransport>, ShellError> {
     Err(persistent_shell_unsupported_error())
 }
@@ -2078,7 +2101,7 @@ fn spawn_output_reader(
         })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn process_output_pending(
     pending: &mut Vec<u8>,
     buffer: &Arc<Mutex<BoundedBuffer>>,
@@ -2278,13 +2301,15 @@ fn spawn_idle_sweeper(weak: Weak<ManagerInner>) {
 }
 
 pub fn canonical_dialect(program: &str) -> Option<&'static str> {
-    match Path::new(program)
+    let basename = Path::new(program)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(program)
-    {
+        .to_ascii_lowercase();
+    match basename.as_str() {
         "sh" => Some("sh"),
         "bash" => Some("bash"),
+        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => Some("powershell"),
         _ => None,
     }
 }
@@ -3029,75 +3054,316 @@ mod tests {
     }
 }
 
-/// Windows-specific fail-closed tests. Persistent shells are not implemented
-/// on Windows yet; every entry point must return a stable, explicit
-/// `persistent_shell_unsupported` error rather than panic, pretend to succeed,
-/// or silently degrade.
-#[cfg(all(test, not(unix)))]
+#[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
+    use std::sync::Barrier;
 
-    fn unsupported_launch(root: &Path) -> ShellLaunch {
+    const PROJECT: &str = "agent:msi:test";
+
+    fn launch(root: &Path, shell_id: &str, session_id: &str) -> ShellLaunch {
+        let env = std::env::vars().collect::<HashMap<_, _>>();
         ShellLaunch {
             identity: ShellIdentity {
-                shell_id: "wc_shell_windows".to_string(),
-                workflow_session_id: "wc_sess_windows".to_string(),
-                runtime_project_id: "agent:oe:test".to_string(),
-                executor: "local".to_string(),
-                client_id: None,
+                shell_id: shell_id.to_string(),
+                workflow_session_id: session_id.to_string(),
+                runtime_project_id: PROJECT.to_string(),
+                executor: "agent".to_string(),
+                client_id: Some("msi".to_string()),
             },
-            dialect: "bash".to_string(),
+            dialect: "powershell".to_string(),
             profile: None,
-            program: "bash".to_string(),
-            args: vec!["--noprofile".to_string(), "--norc".to_string()],
+            program: "powershell.exe".to_string(),
+            args: vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+            ],
             initial_cwd: root.to_path_buf(),
-            env: HashMap::new(),
+            env,
             initialization: None,
-            max_output_bytes: 4096,
+            max_output_bytes: 64 * 1024,
         }
     }
 
+    fn exec(
+        manager: &PersistentShellManager,
+        shell_id: &str,
+        session_id: &str,
+        command: &str,
+    ) -> ShellExecResult {
+        manager
+            .exec(
+                shell_id,
+                session_id,
+                PROJECT,
+                command,
+                Duration::from_secs(5),
+            )
+            .unwrap()
+    }
+
+    fn process_alive(pid: u32) -> bool {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return false;
+        }
+        let mut exit_code = 0u32;
+        let ok = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
+        unsafe { CloseHandle(handle) };
+        ok == 1 && exit_code == 259
+    }
+
     #[test]
-    fn open_fails_closed_with_stable_unsupported_error() {
+    fn state_stdout_stderr_and_unicode_persist() {
         let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("sub")).unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
-        let error = manager.open(unsupported_launch(temp.path())).unwrap_err();
-        assert_eq!(error.code, "persistent_shell_unsupported");
-        assert_eq!(
-            error.message,
-            "persistent shell is not supported on Windows yet"
+        manager
+            .open(launch(temp.path(), "wc_shell_state", "wc_sess_state"))
+            .unwrap();
+
+        let set = exec(
+            &manager,
+            "wc_shell_state",
+            "wc_sess_state",
+            "$env:WEBCODEX_PERSIST_TEST='alpha'; Set-Location -LiteralPath 'sub'; $WC_LOCAL='beta'; function WC_FN { [Console]::Out.Write('fn') }",
         );
-        // The failed open must not register any shell or start background work.
-        assert_eq!(manager.active_count(), 0);
-        assert!(!manager.inner.sweeper_started.load(Ordering::SeqCst));
+        assert_eq!(set.exit_code, Some(0));
+        let observed = exec(
+            &manager,
+            "wc_shell_state",
+            "wc_sess_state",
+            "[Console]::Out.Write($env:WEBCODEX_PERSIST_TEST + '|' + (Get-Location).Path + '|' + $WC_LOCAL + '|'); WC_FN; [Console]::Error.Write('stderr-only')",
+        );
+        assert!(observed.stdout.starts_with("alpha|"), "{}", observed.stdout);
+        assert!(
+            observed.stdout.contains("\\sub|beta|fn"),
+            "{}",
+            observed.stdout
+        );
+        assert_eq!(observed.stderr, "stderr-only");
+
+        let unicode = exec(
+            &manager,
+            "wc_shell_state",
+            "wc_sess_state",
+            "[Console]::Out.Write(\"hello`r`n中文`r`n🙂`r`nmixed ASCII + Unicode\")",
+        );
+        assert_eq!(
+            unicode.stdout,
+            "hello\r\n中文\r\n🙂\r\nmixed ASCII + Unicode"
+        );
+        assert!(!unicode.stdout.contains("WCPSO1"));
+        assert!(!unicode.stderr.contains("WCPSE1"));
+        let host_unicode = exec(
+            &manager,
+            "wc_shell_state",
+            "wc_sess_state",
+            "Write-Output '中文🙂 host-output'",
+        );
+        assert!(
+            host_unicode.stdout.contains("中文🙂 host-output"),
+            "{:?}",
+            host_unicode.stdout
+        );
     }
 
     #[test]
-    fn unsupported_error_does_not_panic() {
+    fn command_failure_does_not_lose_shell() {
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
-        let result = manager.open(unsupported_launch(temp.path()));
-        // The error is returned, not panicked; the code and message are stable
-        // so callers can match on them.
-        let error = result.unwrap_err();
-        assert_eq!(error.code, "persistent_shell_unsupported");
-        assert!(format!("{error}").contains("not supported on Windows"));
+        manager
+            .open(launch(temp.path(), "wc_shell_failure", "wc_sess_failure"))
+            .unwrap();
+        let failed = exec(
+            &manager,
+            "wc_shell_failure",
+            "wc_sess_failure",
+            "Write-Error 'expected-failure'",
+        );
+        assert_eq!(failed.exit_code, Some(1));
+        assert_eq!(failed.shell_state, ShellState::Running);
+        assert!(
+            failed.stderr.contains("expected-failure"),
+            "stdout={:?} stderr={:?}",
+            failed.stdout,
+            failed.stderr
+        );
+        let next = exec(
+            &manager,
+            "wc_shell_failure",
+            "wc_sess_failure",
+            "[Console]::Out.Write('still-running')",
+        );
+        assert_eq!(next.stdout, "still-running");
     }
 
     #[test]
-    fn spawn_shell_process_reports_unsupported() {
+    fn shell_exit_is_terminal_and_next_exec_fails_closed() {
         let temp = tempfile::tempdir().unwrap();
-        // The concrete `ShellProcess` type is Unix-only, so the Windows stub
-        // returns the boxed trait and reports through `ShellError`.
-        match spawn_shell_process(&unsupported_launch(temp.path())) {
-            Ok(_) => panic!("Windows persistent shell must fail closed, not spawn"),
-            Err(error) => {
-                assert_eq!(error.code, "persistent_shell_unsupported");
-                assert_eq!(
-                    error.message,
-                    "persistent shell is not supported on Windows yet"
-                );
-            }
+        let manager = PersistentShellManager::new(ShellLimits::default());
+        manager
+            .open(launch(temp.path(), "wc_shell_exit", "wc_sess_exit"))
+            .unwrap();
+        let exited = exec(&manager, "wc_shell_exit", "wc_sess_exit", "exit 7");
+        assert_eq!(exited.shell_state, ShellState::Exited);
+        assert_eq!(exited.exit_code, Some(7));
+        let error = manager
+            .exec(
+                "wc_shell_exit",
+                "wc_sess_exit",
+                PROJECT,
+                "[Console]::Out.Write('forbidden')",
+                Duration::from_secs(1),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "persistent_shell_stale");
+    }
+
+    #[test]
+    fn timeout_poisoning_is_bounded_and_never_reuses_uncertain_stream() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = PersistentShellManager::new(ShellLimits::default());
+        manager
+            .open(launch(temp.path(), "wc_shell_timeout", "wc_sess_timeout"))
+            .unwrap();
+        let started = Instant::now();
+        let timed = manager
+            .exec(
+                "wc_shell_timeout",
+                "wc_sess_timeout",
+                PROJECT,
+                "Start-Sleep -Seconds 5",
+                Duration::from_millis(100),
+            )
+            .unwrap();
+        assert_eq!(timed.execution_state, "timed_out");
+        assert_eq!(timed.shell_state, ShellState::Poisoned);
+        assert_eq!(timed.error_code.as_deref(), Some("shell_reset_required"));
+        assert!(started.elapsed() < Duration::from_secs(3));
+        let error = manager
+            .exec(
+                "wc_shell_timeout",
+                "wc_sess_timeout",
+                PROJECT,
+                "[Console]::Out.Write('forbidden')",
+                Duration::from_secs(1),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "persistent_shell_stale");
+    }
+
+    #[test]
+    fn marker_like_user_output_cannot_complete_control_framing() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = PersistentShellManager::new(ShellLimits::default());
+        manager
+            .open(launch(temp.path(), "wc_shell_marker", "wc_sess_marker"))
+            .unwrap();
+        let result = exec(
+            &manager,
+            "wc_shell_marker",
+            "wc_sess_marker",
+            "[Console]::Out.Write('WCPS1 fake WCPSO1 fake WCPSE1 fake'); Start-Sleep -Milliseconds 150; [Console]::Out.Write('|done')",
+        );
+        assert!(result.command_completed);
+        assert!(result.duration_ms >= 100);
+        assert_eq!(result.stdout, "WCPS1 fake WCPSO1 fake WCPSE1 fake|done");
+    }
+
+    #[test]
+    fn concurrent_exec_is_serialized_by_busy_guard() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = PersistentShellManager::new(ShellLimits::default());
+        manager
+            .open(launch(temp.path(), "wc_shell_busy_win", "wc_sess_busy_win"))
+            .unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let worker_manager = manager.clone();
+        let worker_barrier = Arc::clone(&barrier);
+        let worker = thread::spawn(move || {
+            worker_barrier.wait();
+            worker_manager
+                .exec(
+                    "wc_shell_busy_win",
+                    "wc_sess_busy_win",
+                    PROJECT,
+                    "Start-Sleep -Milliseconds 300; [Console]::Out.Write('first')",
+                    Duration::from_secs(2),
+                )
+                .unwrap()
+        });
+        barrier.wait();
+        while !manager
+            .status("wc_shell_busy_win", "wc_sess_busy_win", PROJECT)
+            .unwrap()
+            .busy
+        {
+            thread::yield_now();
         }
+        let busy = manager
+            .exec(
+                "wc_shell_busy_win",
+                "wc_sess_busy_win",
+                PROJECT,
+                "[Console]::Out.Write('second')",
+                Duration::from_secs(1),
+            )
+            .unwrap_err();
+        assert_eq!(busy.code, "shell_busy");
+        assert_eq!(worker.join().unwrap().stdout, "first");
+    }
+
+    #[test]
+    fn close_is_idempotent_and_kills_owned_descendants() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = PersistentShellManager::new(ShellLimits::default());
+        manager
+            .open(launch(
+                temp.path(),
+                "wc_shell_close_win",
+                "wc_sess_close_win",
+            ))
+            .unwrap();
+        let child = exec(
+            &manager,
+            "wc_shell_close_win",
+            "wc_sess_close_win",
+            "$p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30' -PassThru; [Console]::Out.Write($p.Id)",
+        );
+        let child_pid: u32 = child.stdout.parse().unwrap();
+        assert!(process_alive(child_pid));
+        let closed = manager
+            .close(
+                "wc_shell_close_win",
+                "wc_sess_close_win",
+                PROJECT,
+                "explicit_close",
+            )
+            .unwrap();
+        assert_eq!(closed.summary.state, ShellState::Closed);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline && process_alive(child_pid) {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            !process_alive(child_pid),
+            "owned child {child_pid} leaked after close"
+        );
+        let again = manager
+            .close(
+                "wc_shell_close_win",
+                "wc_sess_close_win",
+                PROJECT,
+                "explicit_close",
+            )
+            .unwrap();
+        assert!(again.already_closed);
     }
 }

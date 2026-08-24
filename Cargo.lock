@@ -5191,9 +5191,12 @@ dependencies = [
 name = "webcodex-persistent-shell"
 version = "0.3.8"
 dependencies = [
+ "base64",
  "libc",
  "tempfile",
  "uuid",
+ "webcodex-process",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

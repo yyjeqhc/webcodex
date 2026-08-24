@@ -15,9 +15,9 @@ pub(crate) mod patches;
 pub(crate) mod persistent_shell;
 pub(crate) mod projects;
 // The remote SSH persistent-shell transport is built on Unix process groups and
-// inherited descriptors; Windows has no persistent shell yet (the local shell
-// fails closed there and `ssh_persistent_shell` is advertised false), so the
-// whole module is compiled out on non-Unix targets.
+// inherited descriptors. Windows Stage 1 has a separate local PowerShell
+// transport, while `ssh_persistent_shell` remains false there, so this remote
+// module stays compiled only on Unix.
 #[cfg(unix)]
 pub(crate) mod remote_shell;
 pub(crate) mod shell;

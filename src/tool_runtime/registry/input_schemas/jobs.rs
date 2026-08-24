@@ -298,7 +298,7 @@ pub(crate) fn open_session_shell_input_schema() -> Value {
         (
             "shell",
             "string",
-            "Optional long-lived shell dialect: sh or bash.",
+            "Optional Unix local-shell override: sh or bash. Omit on Windows so the Runner uses its configured PowerShell program/profile.",
             false,
         ),
     ]);
@@ -325,7 +325,7 @@ pub(crate) fn session_shell_exec_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Command timeout in seconds (1..=3600, default 60). A timeout interrupts the process group and requires verified resynchronization.",
+            "Command timeout in seconds (1..=3600, default 60). Timeout recovery requires verified framing resynchronization; otherwise the shell is poisoned and terminated before reuse.",
             false,
         ),
         (

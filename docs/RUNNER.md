@@ -239,6 +239,14 @@ shell_profile = "conda-ml"
 Resolution order: `project.shell_profile`, then `shell.default_profile`, then
 the plain shell config (no snapshot).
 
+`open_session_shell` is the separate long-lived shell path. On Unix it keeps a
+real `sh`/`bash` process; on Windows Stage 1 it keeps the configured
+`powershell.exe`/`pwsh.exe`-compatible process and reuses the same profile/env
+selection. Windows PowerShell shell/profile args must retain their normal final
+`-Command` flag in configuration; the persistent transport replaces that
+one-shot payload mode internally with its private bootstrap. Windows named SSH
+persistent shells and PTY/ConPTY terminal emulation are not part of Stage 1.
+
 Security notes for profiles:
 
 - Never put tokens in `init_script`, and never `echo` secrets into it — the

@@ -1878,7 +1878,7 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities.ssh_shell = SshConnectionPool::is_available();
     // This binary installs the bounded, process-local persistent-shell
     // manager. Older binaries omit this field and therefore fail closed.
-    capabilities.persistent_shell = cfg!(unix);
+    capabilities.persistent_shell = webcodex_persistent_shell::local_shell_supported();
     // SSH persistent shells reuse the same OpenSSH executable as `ssh_shell`.
     // Older binaries omit this field and therefore fail closed; it is never
     // inferred from `ssh_shell` + `persistent_shell`.

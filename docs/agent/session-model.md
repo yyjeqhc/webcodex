@@ -241,20 +241,25 @@ session_shell_status
 close_session_shell
 ```
 
-Opening creates one real long-lived `sh` or `bash` process, at most one active
-shell per Workflow Session. For an `agent:<client>:<project>` the Runner owns
+Opening creates one real long-lived local shell process, at most one active
+shell per Workflow Session: `sh`/`bash` on Unix, or the configured PowerShell
+program/profile on Windows. For an `agent:<client>:<project>` the Runner owns
 and controls the shell. Without `execution_context.resource`, it runs against
 the registered project host. With a named resource, the Runner opens a remote
 persistent shell through that SSH resource; this requires the Runner's SSH and
-SSH-persistent-shell capabilities and never silently falls back locally. The
+SSH-persistent-shell capabilities and never silently falls back locally. Windows
+Stage 1 does not advertise SSH persistent shells. The
 process manager also has a Server-owned executor branch for a hosting surface
 that supplies a Server-local project, although the current built-in public
 project registry advertises Agent projects only. `inspect` and `read_only`
 Sessions cannot open or execute a persistent shell.
 
 Local open resolution is explicit `cwd`/`shell`, then the exact Session's
-`default_cwd`/`default_shell`, then the project/Runner defaults. For an SSH
-persistent shell, cwd precedence is explicit open `cwd`, Session `default_cwd`,
+`default_cwd`/`default_shell`, then the project/Runner defaults. The explicit
+`sh`/`bash` override is Unix-only; Windows callers omit it and the Runner uses
+the configured PowerShell program/profile, failing closed for incompatible
+configuration. For an SSH persistent shell, cwd precedence is explicit open
+`cwd`, Session `default_cwd`,
 the named resource's default cwd, then the remote login default; the selected
 Session `default_shell` is also inherited when `shell` is omitted. Profile
 environment and initialization run once at open. Later commands retain the
@@ -276,12 +281,14 @@ disconnect/shutdown, and detected process/control-channel damage release the
 process group and its pipes.
 
 Commands are serialized; a concurrent command receives `shell_busy`. Output is
-bounded independently for stdout and stderr. Completion uses a dedicated
-control file descriptor with a high-entropy per-command token, not a marker in
-ordinary output. On timeout, the owner interrupts the shell process group and
-waits for a bounded synchronization frame. If synchronization cannot be
-proved, it kills the group, marks the shell poisoned/lost, returns
-`shell_reset_required`, and never writes another command to that process.
+bounded independently for stdout and stderr. Completion uses transport-private
+control framing with a high-entropy per-command token, never an ordinary output
+marker: Unix uses inherited control descriptors; Windows uses a private control
+file plus exact stdout/stderr drain boundaries. On timeout the owner performs
+only the platform's safe bounded recovery attempt. If framing synchronization
+cannot be proved, it terminates the owned process tree, marks the shell
+poisoned/lost, returns `shell_reset_required`, and never writes another command
+to that process.
 
 Persistent shells are process-local and are not durable Job records. Neither a
 Server nor Runner restart claims to recover or reattach one from ledger data.

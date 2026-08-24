@@ -315,7 +315,7 @@ pub(crate) fn dialect_for_program(program: &str) -> Option<ShellDialect> {
         .unwrap_or(program)
     {
         "sh" | "bash" => Some(ShellDialect::Posix),
-        "powershell" | "powershell.exe" | "pwsh" => Some(ShellDialect::PowerShell),
+        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => Some(ShellDialect::PowerShell),
         _ => None,
     }
 }

@@ -19,7 +19,6 @@ fn query(pattern: &str, mode: Option<SearchResultMode>) -> SearchProjectTextsQue
         exclude_globs: None,
         result_mode: mode,
         timeout_secs: None,
-        match_offset: None,
     }
 }
 
@@ -183,23 +182,24 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
         schema["properties"]["max_result_bytes"]["maximum"],
         256 * 1024
     );
-    assert!(schema["properties"]["max_result_bytes"]["description"]
+    let budget_description = schema["properties"]["max_result_bytes"]["description"]
         .as_str()
+        .unwrap();
+    assert!(budget_description.contains("whole-query"));
+    assert!(budget_description.contains("narrow"));
+    let removed_input_cursor = ["match", "offset"].join("_");
+    assert!(schema["properties"]["queries"]["items"]["properties"]
+        .get(&removed_input_cursor)
+        .is_none());
+    let mut removed_cursor_input = json!({
+        "project": "demo",
+        "queries": [{"pattern": "needle"}]
+    });
+    removed_cursor_input["queries"][0]
+        .as_object_mut()
         .unwrap()
-        .contains("protocol overlays"));
-    assert_eq!(
-        schema["properties"]["queries"]["items"]["properties"]["match_offset"]["maximum"],
-        199
-    );
-    assert!(validates(&json!({
-        "project": "demo",
-        "queries": [{"pattern": "needle", "match_offset": 199}],
-        "max_result_bytes": 128 * 1024
-    })));
-    assert!(!validates(&json!({
-        "project": "demo",
-        "queries": [{"pattern": "needle", "match_offset": 200}]
-    })));
+        .insert(removed_input_cursor, json!(1));
+    assert!(!validates(&removed_cursor_input));
     assert!(!validates(&json!({
         "project": "demo",
         "queries": [{"pattern": "needle"}],
@@ -258,12 +258,16 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
     );
     let success_full = &batch.output_schema["properties"]["output"]["anyOf"][0]["anyOf"][0]
         ["properties"]["items"]["items"]["properties"]["output"]["anyOf"][0]["anyOf"][0];
-    assert!(
-        success_full["properties"]["truncation_reason"]["anyOf"][0]["enum"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("hard_result_cap"))
-    );
+    let removed_output_cursor = ["next", "match", "offset"].join("_");
+    assert!(success_full["properties"]
+        .get(&removed_output_cursor)
+        .is_none());
+    assert!(success_full["properties"].get("budget_truncated").is_none());
+    let producer_reasons = success_full["properties"]["truncation_reason"]["anyOf"][0]["enum"]
+        .as_array()
+        .unwrap();
+    assert!(!producer_reasons.contains(&json!("batch_response_budget")));
+    assert!(!producer_reasons.contains(&json!("hard_result_cap")));
     let failure = &batch.output_schema["properties"]["output"]["anyOf"][0]["anyOf"][0]
         ["properties"]["items"]["items"]["properties"]["output"]["anyOf"][1];
     assert_eq!(

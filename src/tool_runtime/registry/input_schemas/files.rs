@@ -177,16 +177,6 @@ pub(crate) fn search_project_texts_input_schema() -> Value {
     query_properties
         .get_mut("pattern")
         .expect("search pattern schema")["minLength"] = json!(1);
-    query_properties.insert(
-        "match_offset".to_string(),
-        json!({
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 199,
-            "description": "Optional zero-based matches-mode continuation offset. Use only with the next_match_offset returned for a budget-truncated query; it projects the same canonical ordered backend result and does not change search execution."
-        }),
-    );
-
     let mut schema = object_schema(with_optional_session_id(vec![
         ("project", "string", "Agent-registered project id.", true),
         (
@@ -198,7 +188,7 @@ pub(crate) fn search_project_texts_input_schema() -> Value {
         (
             "max_result_bytes",
             "integer",
-            "Optional primary model-facing batch projection budget in bytes. Defaults to 64 KiB; raise only for explicit broad/deep search, up to 256 KiB. Independently bounded Session/continuity protocol overlays are preserved outside this budget.",
+            "Optional primary model-facing batch projection budget in bytes. Defaults to 64 KiB and caps at 256 KiB. Continuation is whole-query via next_index; if the first remaining query cannot fit, raise this budget or narrow that query's limit/context/path. Independently bounded Session/continuity overlays remain outside this budget.",
             false,
         ),
     ]));

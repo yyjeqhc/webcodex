@@ -110,92 +110,6 @@ fn projected_batch_len(base_len: usize, item_bytes: usize, item_count: usize) ->
         .saturating_add(item_count.saturating_sub(1))
 }
 
-fn apply_match_offset(mut item: Value, match_offset: usize) -> Value {
-    if match_offset == 0 || item["success"].as_bool() != Some(true) {
-        return item;
-    }
-    let Some(output) = item.get_mut("output").and_then(Value::as_object_mut) else {
-        return item;
-    };
-    if output.get("result_mode").and_then(Value::as_str) != Some("matches") {
-        return item;
-    }
-    let Some(matches) = output.get_mut("matches").and_then(Value::as_array_mut) else {
-        return item;
-    };
-    let drain = match_offset.min(matches.len());
-    matches.drain(..drain);
-    let remaining = matches.len();
-    output.insert("count".to_string(), json!(remaining));
-    item
-}
-
-fn truncate_matches_item(
-    item: &Value,
-    keep_matches: usize,
-    budget_truncation_reason: &str,
-) -> Option<Value> {
-    if item["success"].as_bool() != Some(true) || keep_matches == 0 {
-        return None;
-    }
-    let output = item.get("output")?.as_object()?;
-    if output.get("result_mode")?.as_str()? != "matches" {
-        return None;
-    }
-    let matches = output.get("matches")?.as_array()?;
-    if keep_matches >= matches.len() || matches.len() <= 1 {
-        return None;
-    }
-
-    let mut projected = item.clone();
-    let projected_output = projected.get_mut("output")?.as_object_mut()?;
-    projected_output.insert("matches".to_string(), json!(matches[..keep_matches]));
-    projected_output.insert("count".to_string(), json!(keep_matches));
-    projected_output.insert("budget_truncated".to_string(), json!(true));
-    projected_output.insert("truncated".to_string(), json!(true));
-    if projected_output
-        .get("truncation_reason")
-        .is_some_and(Value::is_null)
-    {
-        projected_output.insert(
-            "truncation_reason".to_string(),
-            json!(budget_truncation_reason),
-        );
-    }
-    Some(projected)
-}
-
-fn truncate_matches_item_to_fit(
-    item: &Value,
-    max_item_bytes: usize,
-    match_offset: usize,
-    budget_truncation_reason: &str,
-) -> Option<Value> {
-    let match_count = item.get("output")?.get("matches")?.as_array()?.len();
-    if match_count <= 1 {
-        return None;
-    }
-
-    let mut low = 1usize;
-    let mut high = match_count - 1;
-    let mut best = None;
-    while low <= high {
-        let keep = low + (high - low) / 2;
-        let Some(mut candidate) = truncate_matches_item(item, keep, budget_truncation_reason)
-        else {
-            break;
-        };
-        candidate["output"]["next_match_offset"] = json!(match_offset.saturating_add(keep));
-        if serialized_value_len(&candidate) <= max_item_bytes {
-            best = Some(candidate);
-            low = keep.saturating_add(1);
-        } else {
-            high = keep.saturating_sub(1);
-        }
-    }
-    best
-}
-
 fn retryable_agent_request_failure(result: &ToolResult) -> bool {
     !result.success
         && result.output.get("code").and_then(Value::as_str) == Some("search_request_dropped")
@@ -206,7 +120,6 @@ fn apply_output_budget(
     requested_count: usize,
     completed: Vec<Value>,
     default_queries: &[bool],
-    match_offsets: &[usize],
     max_result_bytes: Option<usize>,
 ) -> Value {
     let result_budget = normalized_result_budget(max_result_bytes);
@@ -262,23 +175,10 @@ fn apply_output_budget(
             continue;
         }
 
-        let separator_bytes = usize::from(!returned.is_empty());
-        let max_item_bytes = payload_budget
-            .saturating_sub(base_len)
-            .saturating_sub(returned_item_bytes)
-            .saturating_sub(separator_bytes);
-        if let Some(partial) = truncate_matches_item_to_fit(
-            &item,
-            max_item_bytes,
-            match_offsets.get(index).copied().unwrap_or(0),
-            truncation_reason,
-        ) {
-            returned.push(partial);
-            // Continue this same query with its item-local next_match_offset.
-            next_index = Some(index);
-        } else {
-            next_index = Some(index);
-        }
+        // Search batch continuation is query-granular. Backend match order is
+        // intentionally unstable, so exposing a partial query and resuming by
+        // match position would permit duplicates and gaps across reruns.
+        next_index = Some(index);
         break;
     }
 
@@ -468,7 +368,6 @@ fn batch_item(index: usize, mut result: ToolResult) -> Value {
 pub(crate) fn apply_model_facing_output_budget(
     result: &mut ToolResult,
     default_queries: &[bool],
-    match_offsets: &[usize],
     max_result_bytes: Option<usize>,
 ) {
     if !result.success {
@@ -500,7 +399,6 @@ pub(crate) fn apply_model_facing_output_budget(
         requested_count,
         completed,
         default_queries,
-        match_offsets,
         max_result_bytes,
     );
     let Some(root) = result.output.as_object_mut() else {
@@ -558,56 +456,19 @@ impl ToolRuntime {
             stream::iter(queries.into_iter().enumerate().map(|(index, query)| {
                 let project = &resolved.config;
                 let output_project = runtime_project_id.as_str();
-                let match_offset = query.match_offset.unwrap_or(0);
                 async move {
-                    let offset_out_of_range = match_offset >= 200;
-                    let offset_wrong_mode = match_offset > 0
-                        && !matches!(
-                            query.result_mode,
-                            None | Some(super::SearchResultMode::Matches)
-                        );
-                    let result = if offset_out_of_range || offset_wrong_mode {
-                        let reason = if offset_out_of_range {
-                            "out_of_range"
-                        } else {
-                            "matches_mode_only"
-                        };
-                        ToolResult::err_with_output(
-                            "invalid match_offset for search_project_texts",
-                            json!({
-                                "code": "invalid_search_request",
-                                "failure_stage": "request_validation",
-                                "reason_code": "invalid_search_request",
-                                "field": "match_offset",
-                                "reason": reason,
-                            }),
-                        )
-                    } else {
-                        match SearchOptions::normalize(query.into()) {
-                            Ok(options) if project.is_agent() => {
-                                let first = self
-                                    .search_one_resolved_project_text(
-                                        project,
-                                        output_project,
-                                        options.clone(),
-                                        Some(deadline),
-                                    )
-                                    .await;
-                                if retryable_agent_request_failure(&first)
-                                    && Instant::now() < deadline
-                                {
-                                    self.search_one_resolved_project_text(
-                                        project,
-                                        output_project,
-                                        options,
-                                        Some(deadline),
-                                    )
-                                    .await
-                                } else {
-                                    first
-                                }
-                            }
-                            Ok(options) => {
+                    let result = match SearchOptions::normalize(query.into()) {
+                        Ok(options) if project.is_agent() => {
+                            let first = self
+                                .search_one_resolved_project_text(
+                                    project,
+                                    output_project,
+                                    options.clone(),
+                                    Some(deadline),
+                                )
+                                .await;
+                            if retryable_agent_request_failure(&first) && Instant::now() < deadline
+                            {
                                 self.search_one_resolved_project_text(
                                     project,
                                     output_project,
@@ -615,11 +476,22 @@ impl ToolRuntime {
                                     Some(deadline),
                                 )
                                 .await
+                            } else {
+                                first
                             }
-                            Err(error) => error.into_tool_result(),
                         }
+                        Ok(options) => {
+                            self.search_one_resolved_project_text(
+                                project,
+                                output_project,
+                                options,
+                                Some(deadline),
+                            )
+                            .await
+                        }
+                        Err(error) => error.into_tool_result(),
                     };
-                    apply_match_offset(batch_item(index, result), match_offset)
+                    batch_item(index, result)
                 }
             }))
             .buffer_unordered(MAX_SEARCH_PROJECT_TEXTS_CONCURRENCY)
@@ -710,7 +582,7 @@ mod tests {
             None,
             None,
         ));
-        apply_model_facing_output_budget(&mut result, &[true; 8], &[0; 8], None);
+        apply_model_facing_output_budget(&mut result, &[true; 8], None);
         assert_eq!(result.output["output_truncated"], false);
         assert!(result.output["next_index"].is_null());
         assert_eq!(result.output["items"].as_array().unwrap().len(), 8);
@@ -764,7 +636,6 @@ mod tests {
                 item(2, "z".repeat(120 * 1024)),
             ],
             &[false, false, false],
-            &[0, 0, 0],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
         );
         assert_eq!(output["returned_count"], 2);
@@ -790,32 +661,25 @@ mod tests {
     }
 
     #[test]
-    fn default_search_budget_partials_matches_and_explicit_large_returns_more() {
+    fn single_query_soft_budget_omits_whole_item_then_larger_budget_returns_it() {
         let completed = vec![default_matches_item(0, 120, 900)];
-        let default =
-            apply_output_budget("agent:oe:demo", 1, completed.clone(), &[true], &[0], None);
+        let default = apply_output_budget("agent:oe:demo", 1, completed.clone(), &[true], None);
+        assert_eq!(default["returned_count"], 0);
+        assert!(default["items"].as_array().unwrap().is_empty());
+        assert_eq!(default["next_index"], 0);
+        assert_eq!(default["output_truncated"], true);
+        assert_eq!(default["truncation_reason"], "batch_response_budget");
+
         let large = apply_output_budget(
             "agent:oe:demo",
             1,
             completed,
             &[true],
-            &[0],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
         );
-        let partial = &default["items"][0]["output"];
-        let kept = partial["matches"].as_array().unwrap().len();
-        assert!(kept > 0 && kept < 120);
-        assert_eq!(default["next_index"], 0);
-        assert_eq!(default["truncation_reason"], "batch_response_budget");
-        assert_eq!(partial["budget_truncated"], true);
-        assert_eq!(partial["next_match_offset"], kept);
-        assert_eq!(partial["truncated"], true);
-        assert_eq!(partial["truncation_reason"], "batch_response_budget");
-        assert!(
-            serde_json::to_vec(&ToolResult::ok(default)).unwrap().len()
-                <= DEFAULT_SEARCH_PROJECT_TEXTS_RESULT_BYTES
-        );
         assert_eq!(large["output_truncated"], false);
+        assert!(large["next_index"].is_null());
+        assert_eq!(large["returned_count"], 1);
         assert_eq!(
             large["items"][0]["output"]["matches"]
                 .as_array()
@@ -826,73 +690,66 @@ mod tests {
     }
 
     #[test]
-    fn search_match_offset_continuation_has_no_duplicates_or_gaps() {
-        let original = matches_item(0, 100, 1000);
+    fn whole_query_continuation_is_independent_of_backend_match_order() {
+        let first_query = default_matches_item(0, 1, 100);
+        let omitted_query = default_matches_item(1, 90, 900);
         let first = apply_output_budget(
             "agent:oe:demo",
-            1,
-            vec![original.clone()],
-            &[false],
-            &[0],
+            2,
+            vec![first_query.clone(), omitted_query],
+            &[true, true],
             None,
         );
-        let first_matches = first["items"][0]["output"]["matches"]
-            .as_array()
-            .unwrap()
-            .clone();
-        let offset = first["items"][0]["output"]["next_match_offset"]
-            .as_u64()
-            .unwrap() as usize;
-        let remaining = apply_match_offset(original.clone(), offset);
-        let second = apply_output_budget(
+        assert_eq!(first["returned_count"], 1);
+        assert_eq!(first["items"][0], first_query);
+        assert_eq!(first["next_index"], 1);
+        assert_eq!(first["output_truncated"], true);
+
+        // A suffix rerun is a fresh query execution. Deliberately reverse its
+        // match order to prove continuation does not stitch by match position.
+        let mut rerun = default_matches_item(0, 90, 900);
+        rerun["output"]["matches"].as_array_mut().unwrap().reverse();
+        let rerun_matches = rerun["output"]["matches"].clone();
+        let continuation = apply_output_budget(
             "agent:oe:demo",
             1,
-            vec![remaining],
-            &[false],
-            &[offset],
+            vec![rerun],
+            &[true],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
         );
-        let mut joined = first_matches;
-        joined.extend(
-            second["items"][0]["output"]["matches"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .cloned(),
-        );
-        assert_eq!(
-            joined,
-            original["output"]["matches"].as_array().unwrap().clone()
-        );
+        assert_eq!(continuation["output_truncated"], false);
+        assert_eq!(continuation["returned_count"], 1);
+        assert_eq!(continuation["items"][0]["output"]["matches"], rerun_matches);
     }
 
     #[test]
-    fn budget_truncation_preserves_existing_producer_reason() {
-        let mut original = matches_item(0, 100, 1000);
-        original["output"]["truncated"] = json!(true);
-        original["output"]["truncation_reason"] = json!("limit");
-        let output = apply_output_budget("agent:oe:demo", 1, vec![original], &[false], &[0], None);
-        assert_eq!(output["items"][0]["output"]["budget_truncated"], true);
-        assert_eq!(output["items"][0]["output"]["truncation_reason"], "limit");
+    fn fitting_producer_truncation_remains_independent_of_batch_budget() {
+        for reason in ["limit", "output_bytes"] {
+            let mut original = matches_item(0, 2, 100);
+            original["output"]["truncated"] = json!(true);
+            original["output"]["truncation_reason"] = json!(reason);
+            let expected = original.clone();
+            let output = apply_output_budget("agent:oe:demo", 1, vec![original], &[false], None);
+            assert_eq!(output["output_truncated"], false);
+            assert!(output["next_index"].is_null());
+            assert_eq!(output["items"][0], expected);
+        }
     }
 
     #[test]
-    fn hard_cap_partial_uses_consistent_outer_and_inner_reason() {
+    fn hard_cap_pressure_omits_oversized_query_without_partial_matches() {
         let output = apply_output_budget(
             "agent:oe:demo",
             1,
             vec![matches_item(0, 199, 2_000)],
             &[false],
-            &[0],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
         );
+        assert_eq!(output["returned_count"], 0);
+        assert!(output["items"].as_array().unwrap().is_empty());
+        assert_eq!(output["next_index"], 0);
         assert_eq!(output["output_truncated"], true);
         assert_eq!(output["truncation_reason"], "hard_result_cap");
-        assert_eq!(
-            output["items"][0]["output"]["truncation_reason"],
-            "hard_result_cap"
-        );
-        assert_eq!(output["items"][0]["output"]["budget_truncated"], true);
     }
 
     #[test]

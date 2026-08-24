@@ -34,7 +34,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "search_project_texts",
-            "Run 1 to 8 searches in request order with isolated failures and two Runner requests in flight. The primary batch projection defaults to ~64 KiB; max_result_bytes raises it to the hard cap. Session/continuity overlays stay separately bounded. Truncated matches return next_index/next_match_offset.",
+            "Run 1 to 8 searches in request order with isolated failures and two Runner requests in flight. Primary batch budget is ~64 KiB, up to 256 KiB. Budget continuation returns whole queries via next_index; if the first remaining query cannot fit, raise max_result_bytes or narrow it.",
             search_project_texts_input_schema(),
         ),
         tool_spec(

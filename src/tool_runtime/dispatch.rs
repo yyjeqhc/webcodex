@@ -190,13 +190,8 @@ impl SearchModelProjection {
 /// result while the model-facing projection can account for sparse semantics.
 enum BatchResponseBudgetProjection {
     None,
-    ReadFiles {
-        max_result_bytes: Option<usize>,
-    },
-    SearchProjectTexts {
-        max_result_bytes: Option<usize>,
-        match_offsets: Vec<usize>,
-    },
+    ReadFiles { max_result_bytes: Option<usize> },
+    SearchProjectTexts { max_result_bytes: Option<usize> },
 }
 
 impl BatchResponseBudgetProjection {
@@ -208,15 +203,9 @@ impl BatchResponseBudgetProjection {
                 max_result_bytes: *max_result_bytes,
             },
             ToolCall::SearchProjectTexts {
-                queries,
-                max_result_bytes,
-                ..
+                max_result_bytes, ..
             } => Self::SearchProjectTexts {
                 max_result_bytes: *max_result_bytes,
-                match_offsets: queries
-                    .iter()
-                    .map(|query| query.match_offset.unwrap_or(0))
-                    .collect(),
             },
             _ => Self::None,
         }
@@ -1212,10 +1201,7 @@ impl ToolRuntime {
             BatchResponseBudgetProjection::ReadFiles { max_result_bytes } => {
                 super::read_files::apply_model_facing_output_budget(&mut result, *max_result_bytes);
             }
-            BatchResponseBudgetProjection::SearchProjectTexts {
-                max_result_bytes,
-                match_offsets,
-            } => {
+            BatchResponseBudgetProjection::SearchProjectTexts { max_result_bytes } => {
                 let default_queries = match &search_projection {
                     SearchModelProjection::Batch { default_queries } => default_queries.as_slice(),
                     _ => &[],
@@ -1223,7 +1209,6 @@ impl ToolRuntime {
                 super::search_project_texts::apply_model_facing_output_budget(
                     &mut result,
                     default_queries,
-                    match_offsets,
                     *max_result_bytes,
                 );
             }

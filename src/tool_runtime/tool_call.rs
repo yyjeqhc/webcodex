@@ -69,10 +69,6 @@ pub struct SearchProjectTextsQuery {
     pub result_mode: Option<SearchResultMode>,
     #[serde(default)]
     pub timeout_secs: Option<i64>,
-    /// Zero-based matches-mode projection offset used only to continue a
-    /// budget-truncated batch query. It never changes backend search order.
-    #[serde(default)]
-    pub match_offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

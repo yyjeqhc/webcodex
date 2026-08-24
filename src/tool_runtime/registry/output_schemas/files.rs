@@ -323,11 +323,9 @@ fn search_project_texts_output_schema() -> Value {
         "count_complete": {"type": "boolean"},
         "total_matches": nullable_schema("integer", "Complete total in count mode; null when incomplete."),
         "truncated": {"type": "boolean"},
-        "budget_truncated": {"type": "boolean", "const": true},
-        "next_match_offset": {"type": "integer", "minimum": 1, "maximum": 199},
         "truncation_reason": {
             "anyOf": [
-                {"type": "string", "enum": ["limit", "output_bytes", "timeout", "transport", "batch_response_budget", "hard_result_cap"]},
+                {"type": "string", "enum": ["limit", "output_bytes", "timeout", "transport"]},
                 {"type": "null"}
             ]
         }

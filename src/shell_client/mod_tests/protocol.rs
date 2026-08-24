@@ -97,6 +97,7 @@ async fn latest_stable_v038_registration_fixtures_are_accepted() {
         assert!(caps.file_read);
         assert!(!caps.computer_text_input);
         assert!(!caps.structured_file_delete);
+        assert!(!caps.apply_text_edit_occurrence);
 
         let registry = ShellClientRegistry::default();
         let view = if transport == TRANSPORT_POLLING {
@@ -549,6 +550,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 artifact_export_chunk_read: true,
                 artifact_export_streaming_metadata: true,
                 structured_file_delete: true,
+                apply_text_edit_occurrence: true,
                 git: true,
                 jobs: true,
                 async_jobs: true,

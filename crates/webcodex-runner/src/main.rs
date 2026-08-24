@@ -1871,6 +1871,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // This binary implements the complete bounded structured delete contract.
     // Older binaries omit the field and therefore keep using the Server's legacy path.
     capabilities.structured_file_delete = true;
+    // This binary enforces ApplyTextEditInput.occurrence exactly. Older binaries
+    // omit this additive effect-semantics capability and must not receive selectors.
+    capabilities.apply_text_edit_occurrence = true;
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;
     // SSH support intentionally depends on the local OpenSSH executable.

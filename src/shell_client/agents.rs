@@ -450,6 +450,19 @@ impl ShellClientRegistry {
                     .to_string(),
             );
         }
+        // Occurrence enforcement is effect semantics, not optional response
+        // metadata. A same-process reconnect cannot withdraw it while an
+        // occurrence-bearing edit admitted for that process may still be queued.
+        if inner.clients.get(&client_id).is_some_and(|existing| {
+            existing.agent_instance_id == agent_instance_id
+                && existing.capabilities.apply_text_edit_occurrence
+                && !capabilities.apply_text_edit_occurrence
+        }) {
+            return Err(
+                "same runner instance cannot downgrade apply_text_edit_occurrence capability"
+                    .to_string(),
+            );
+        }
         // The dedicated internal-POSIX request kind is also binary support.
         // A same-process reconnect cannot withdraw it while queued requests may
         // still target that exact instance.

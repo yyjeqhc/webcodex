@@ -6,6 +6,7 @@ use super::validation::validate_project_summary;
 use super::ShellClientRegistry;
 use crate::shell_protocol::{
     ShellAgentProjectSummary, ShellClientCapabilities,
+    SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA, SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS, SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS,
@@ -67,6 +68,7 @@ pub(super) fn capability_enabled(caps: &ShellClientCapabilities, capability: &st
             caps.artifact_export_streaming_metadata
         }
         SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE => caps.structured_file_delete,
+        SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE => caps.apply_text_edit_occurrence,
         SHELL_CLIENT_CAPABILITY_GIT => caps.git,
         SHELL_CLIENT_CAPABILITY_JOBS => caps.jobs,
         SHELL_CLIENT_CAPABILITY_ASYNC_JOBS => caps.async_jobs,
@@ -150,7 +152,7 @@ impl ShellClientRegistry {
 
     /// Check whether a registered agent client supports a named capability.
     /// Recognized capability names: `shell`, `file_read`, `file_write`,
-    /// `structured_file_delete`,
+    /// `structured_file_delete`, `apply_text_edit_occurrence`,
     /// `git`, `jobs`, `async_jobs`, `async_shell_jobs`,
     /// `ssh_shell`, `persistent_shell`, `structured_validation_argv`,
     /// `structured_cargo_test_count_assertion`, `structured_go_test_json`,

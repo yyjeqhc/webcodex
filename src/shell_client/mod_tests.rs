@@ -197,6 +197,9 @@ mod connection_lease;
 #[path = "mod_tests/structured_file_delete.rs"]
 mod structured_file_delete;
 
+#[path = "mod_tests/apply_text_edit_occurrence.rs"]
+mod apply_text_edit_occurrence;
+
 #[path = "mod_tests/computer_observe.rs"]
 mod computer_observe;
 

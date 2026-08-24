@@ -586,6 +586,7 @@ mod tests {
                     artifact_export_chunk_read: false,
                     artifact_export_streaming_metadata: false,
                     structured_file_delete: true,
+                    apply_text_edit_occurrence: false,
                     git: false,
                     jobs: true,
                     async_jobs: true,

@@ -13,6 +13,22 @@ fn recoverable_write_rejection(reason: impl AsRef<str>) -> String {
     )
 }
 
+fn apply_text_edit_occurrence_capability_rejection(reason: impl AsRef<str>) -> ToolResult {
+    let reason = reason.as_ref();
+    ToolResult::err_with_output(
+        format!(
+            "Rejected before write: {reason}.\nNo files were modified.\nRetry guidance: upgrade the Runner or refine the edit to a unique exact match without occurrence."
+        ),
+        json!({
+            "state_changed": false,
+            "error_kind": "agent_capability_unavailable",
+            "failure_kind": "capability_unavailable",
+            "capability": crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
+            "retry_guidance": "upgrade the Runner or refine the edit to a unique exact match without occurrence"
+        }),
+    )
+}
+
 /// Maximum decoded size for whole-payload/model-facing artifact operations.
 /// These paths aggregate content or return it as base64/JSON, so they remain at
 /// 10 MiB even though data-plane upload/export paths admit larger files.
@@ -947,6 +963,10 @@ impl ToolRuntime {
                 return apply_text_edits_preflight_rejection(message);
             }
         }
+        let requires_occurrence_capability = changes
+            .iter()
+            .flat_map(|change| change.edits.iter())
+            .any(|edit| edit.occurrence.is_some());
 
         let payload = json!({
             "changes": changes,
@@ -988,31 +1008,39 @@ impl ToolRuntime {
             .first()
             .map(|change| change.path.clone())
             .expect("non-empty changes validated above");
-        let (request_id, rx) = match self
-            .shell_clients
-            .enqueue_file_op(
-                ShellFileOpRequest {
-                    op: "apply_text_edits".to_string(),
-                    client_id,
-                    path: routing_path,
-                    cwd: Some(proj.path.clone()),
-                    content: Some(serialized),
-                    max_bytes: None,
-                    old_text: None,
-                    pattern: None,
-                    expected_sha256: None,
-                    expected_prefix: None,
-                    start_line: None,
-                    end_line: None,
-                    line: None,
-                    create_dirs: false,
-                    wait_timeout_secs: wait_timeout,
-                },
-                "tool_runtime".to_string(),
-            )
-            .await
-        {
+        let request = ShellFileOpRequest {
+            op: "apply_text_edits".to_string(),
+            client_id,
+            path: routing_path,
+            cwd: Some(proj.path.clone()),
+            content: Some(serialized),
+            max_bytes: None,
+            old_text: None,
+            pattern: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
+            create_dirs: false,
+            wait_timeout_secs: wait_timeout,
+        };
+        let enqueue_result = if requires_occurrence_capability {
+            self.shell_clients
+                .enqueue_apply_text_edits_with_occurrence(request, "tool_runtime".to_string())
+                .await
+        } else {
+            self.shell_clients
+                .enqueue_file_op(request, "tool_runtime".to_string())
+                .await
+        };
+        let (request_id, rx) = match enqueue_result {
             Ok(r) => r,
+            Err(e)
+                if requires_occurrence_capability && e.starts_with("capability_unavailable:") =>
+            {
+                return apply_text_edit_occurrence_capability_rejection(e)
+            }
             Err(e) => return ToolResult::err(recoverable_write_rejection(e)),
         };
         let resp = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {

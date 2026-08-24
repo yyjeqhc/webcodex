@@ -225,6 +225,10 @@ pub const SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA: &str =
 /// Missing on older Runners and false; never inferred from file_write, shell,
 /// protocol version, transport, or operating system.
 pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE: &str = "structured_file_delete";
+/// The Runner understands and enforces the optional 1-based exact occurrence
+/// selector in ApplyTextEditInput. Missing on older Runners is false and is
+/// never inferred from other file capabilities, protocol, build, transport, or OS.
+pub const SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE: &str = "apply_text_edit_occurrence";
 pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
 pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
@@ -379,6 +383,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
+    SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
     SHELL_CLIENT_CAPABILITY_GIT,
     SHELL_CLIENT_CAPABILITY_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
@@ -479,6 +484,10 @@ pub struct ShellClientCapabilities {
     /// containment and file-only semantics. Missing on older Runners is false.
     #[serde(default, skip_serializing_if = "is_false")]
     pub structured_file_delete: bool,
+    /// Correct enforcement of ApplyTextEditInput.occurrence. Missing on older
+    /// Runners is false and is never inferred from another capability.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub apply_text_edit_occurrence: bool,
     #[serde(default)]
     pub git: bool,
     #[serde(default)]
@@ -667,6 +676,7 @@ impl Default for ShellClientCapabilities {
             artifact_export_chunk_read: false,
             artifact_export_streaming_metadata: false,
             structured_file_delete: false,
+            apply_text_edit_occurrence: false,
             git: false,
             jobs: false,
             async_jobs: false,
@@ -3217,6 +3227,7 @@ mod envelope_tests {
                 artifact_export_chunk_read: false,
                 artifact_export_streaming_metadata: false,
                 structured_file_delete: false,
+                apply_text_edit_occurrence: false,
                 git: false,
                 jobs: true,
                 async_jobs: true,

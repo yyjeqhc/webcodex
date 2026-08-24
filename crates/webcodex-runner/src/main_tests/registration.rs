@@ -155,6 +155,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         assert!(caps.structured_go_test_tool, "{expected_str}");
         assert!(caps.structured_go_test_packages, "{expected_str}");
         assert!(caps.structured_file_delete, "{expected_str}");
+        assert!(caps.apply_text_edit_occurrence, "{expected_str}");
         assert_eq!(body.agent_instance_id, "inst-1");
         assert_eq!(
             body.agent_protocol_version.as_deref(),
@@ -178,6 +179,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     assert!(caps.artifact_export_chunk_read);
     assert!(caps.artifact_export_streaming_metadata);
     assert!(caps.structured_file_delete);
+    assert!(caps.apply_text_edit_occurrence);
     assert!(caps.async_jobs);
     assert!(caps.async_shell_jobs);
     assert_eq!(

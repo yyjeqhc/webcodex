@@ -205,6 +205,9 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             // The running binary advertises structured deletion only after its
             // complete project-root-enforced handler is installed.
             structured_file_delete: false,
+            // Exact occurrence selectors are a running-binary capability; static
+            // generated config must remain false for rolling compatibility.
+            apply_text_edit_occurrence: false,
             git: true,
             jobs: true,
             async_jobs: true,

@@ -128,7 +128,7 @@ async fn register_agent_with_lsp_capabilities(
                     updated_at: 1,
                     shell_profile: None,
                 }]),
-                agent_protocol_version: Some("test".to_string()),
+                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(&auth("u1")),

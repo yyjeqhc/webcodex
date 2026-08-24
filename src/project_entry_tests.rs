@@ -248,7 +248,7 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
                     updated_at: 1,
                     shell_profile: None,
                 }]),
-                agent_protocol_version: Some("test".to_string()),
+                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(&agent_auth),

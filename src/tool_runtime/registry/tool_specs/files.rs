@@ -34,7 +34,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "search_project_texts",
-            "Run 1 to 8 searches in request order with isolated failures and two Runner requests in flight. Default model-facing output uses a ~64 KiB shared budget; max_result_bytes raises it for explicit deep search up to the hard cap. Budget-truncated matches return next_index/next_match_offset.",
+            "Run 1 to 8 searches in request order with isolated failures and two Runner requests in flight. The primary batch projection defaults to ~64 KiB; max_result_bytes raises it to the hard cap. Session/continuity overlays stay separately bounded. Truncated matches return next_index/next_match_offset.",
             search_project_texts_input_schema(),
         ),
         tool_spec(
@@ -44,7 +44,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "read_files",
-            "Read 1 to 8 UTF-8 file ranges in request order with isolated failures and four Runner reads in flight. Default model-facing output uses a ~64 KiB shared budget; max_result_bytes raises it up to 256 KiB. Partial reads return next_index, next_start_line, and budget_next_limit.",
+            "Read 1 to 8 UTF-8 file ranges in request order with isolated failures and four Runner reads in flight. The primary batch projection defaults to ~64 KiB; max_result_bytes raises it to 256 KiB. Session/continuity overlays stay separately bounded. Partial reads return deterministic cursors.",
             read_files_input_schema(),
         ),
     ]

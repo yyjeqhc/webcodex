@@ -4677,6 +4677,130 @@ fn simultaneous_model_facing_results_allocate_unique_ordered_revisions() {
     assert!(next.recovery_events.is_empty());
 }
 
+#[test]
+fn batch_budget_preserves_compact_and_recovery_session_protocol_overlays() {
+    fn canonical_read_batch(text: String) -> Value {
+        let default_limit =
+            webcodex_workspace::file_read_range::EffectiveRange::new(None, None).limit;
+        json!({
+            "project": "proj",
+            "requested_count": 1,
+            "returned_count": 1,
+            "succeeded_count": 1,
+            "failed_count": 0,
+            "items": [{
+                "index": 0,
+                "path": "src/lib.rs",
+                "success": true,
+                "output": {
+                    "text": text,
+                    "format": "plain",
+                    "path": "src/lib.rs",
+                    "sha256": "a".repeat(64),
+                    "start_line": 1,
+                    "limit": default_limit,
+                    "total_lines": 1,
+                    "returned_lines": 1,
+                    "end_line": 1,
+                    "has_more": false,
+                    "next_start_line": null
+                },
+                "error": null
+            }],
+            "output_truncated": false,
+            "next_index": null
+        })
+    }
+
+    let store = SessionStore::new(10, 100);
+    let session = store.start_session(
+        Some("proj".to_string()),
+        Some("batch budget overlays".to_string()),
+    );
+    let first = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"content": "seed"}),
+    );
+    assert_eq!(first.context_revision, 1);
+
+    let compact_batch = canonical_read_batch("x".repeat(56 * 1024));
+    let exact = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_files",
+        SessionContextRevisionAck::Revision(1),
+        true,
+        compact_batch.clone(),
+    );
+    assert_eq!(exact.context_revision, 2);
+    let mut exact_response = super::super::ToolResult::ok(compact_batch);
+    super::super::session_context::add_session_telemetry_hint(
+        &mut exact_response,
+        &store,
+        &session.session_id,
+        Some(exact.event_id.clone()),
+    );
+    assert!(
+        super::super::session_context::add_session_context_continuity(&mut exact_response, &exact,)
+    );
+    assert_eq!(exact_response.output["session_context_revision"], 2);
+    assert!(exact_response.output.get("session_continuity").is_none());
+    assert!(exact_response.output.get("session_recovery").is_none());
+
+    super::super::read_files::apply_model_facing_output_budget(&mut exact_response, None);
+    super::super::dispatch::sparsify_complete_read_success("read_files", &mut exact_response);
+    assert_eq!(exact_response.output["session_recorded"], true);
+    assert_eq!(exact_response.output["session_id"], session.session_id);
+    assert_eq!(exact_response.output["session_context_revision"], 2);
+    assert!(exact_response.output.get("session_continuity").is_none());
+    assert!(exact_response.output.get("session_recovery").is_none());
+    assert!(
+        serde_json::to_vec(&exact_response).unwrap().len()
+            <= super::super::read_files::DEFAULT_READ_FILES_RESULT_BYTES,
+        "compact exact Session overlays must fit inside the reserved default result budget"
+    );
+    assert_eq!(store.context_revision(&session.session_id), Some(2));
+
+    let stale_batch = canonical_read_batch("y".repeat(8 * 1024));
+    let stale = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_files",
+        SessionContextRevisionAck::Revision(1),
+        true,
+        stale_batch.clone(),
+    );
+    assert_eq!(stale.context_revision, 3);
+    assert_eq!(stale.recovery_events.len(), 1);
+    let mut stale_response = super::super::ToolResult::ok(stale_batch);
+    super::super::session_context::add_session_telemetry_hint(
+        &mut stale_response,
+        &store,
+        &session.session_id,
+        Some(stale.event_id.clone()),
+    );
+    assert!(
+        super::super::session_context::add_session_context_continuity(&mut stale_response, &stale,)
+    );
+    assert_eq!(
+        stale_response.output["session_continuity"]["status"],
+        "behind"
+    );
+    let continuity = stale_response.output["session_continuity"].clone();
+    let recovery = stale_response.output["session_recovery"].clone();
+
+    super::super::read_files::apply_model_facing_output_budget(&mut stale_response, None);
+    super::super::dispatch::sparsify_complete_read_success("read_files", &mut stale_response);
+    assert_eq!(stale_response.output["session_context_revision"], 3);
+    assert_eq!(stale_response.output["session_continuity"], continuity);
+    assert_eq!(stale_response.output["session_recovery"], recovery);
+    assert_eq!(store.context_revision(&session.session_id), Some(3));
+}
+
 #[tokio::test]
 async fn bounded_session_context_recovery_adds_current_handoff_before_latest_ack() {
     let runtime = super::super::ToolRuntime::new_for_tests();

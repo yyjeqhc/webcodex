@@ -327,7 +327,7 @@ fn search_project_texts_output_schema() -> Value {
         "next_match_offset": {"type": "integer", "minimum": 1, "maximum": 199},
         "truncation_reason": {
             "anyOf": [
-                {"type": "string", "enum": ["limit", "output_bytes", "timeout", "transport", "batch_response_budget"]},
+                {"type": "string", "enum": ["limit", "output_bytes", "timeout", "transport", "batch_response_budget", "hard_result_cap"]},
                 {"type": "null"}
             ]
         }

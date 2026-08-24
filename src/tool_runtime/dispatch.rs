@@ -184,6 +184,45 @@ impl SearchModelProjection {
     }
 }
 
+/// Batch response-budget inputs captured before the ToolCall is moved into
+/// canonical execution. Budgeting is intentionally deferred until after
+/// Session recording/decorations so the recorder keeps seeing the canonical
+/// result while the model-facing projection can account for sparse semantics.
+enum BatchResponseBudgetProjection {
+    None,
+    ReadFiles {
+        max_result_bytes: Option<usize>,
+    },
+    SearchProjectTexts {
+        max_result_bytes: Option<usize>,
+        match_offsets: Vec<usize>,
+    },
+}
+
+impl BatchResponseBudgetProjection {
+    fn capture(call: &ToolCall) -> Self {
+        match call {
+            ToolCall::ReadFiles {
+                max_result_bytes, ..
+            } => Self::ReadFiles {
+                max_result_bytes: *max_result_bytes,
+            },
+            ToolCall::SearchProjectTexts {
+                queries,
+                max_result_bytes,
+                ..
+            } => Self::SearchProjectTexts {
+                max_result_bytes: *max_result_bytes,
+                match_offsets: queries
+                    .iter()
+                    .map(|query| query.match_offset.unwrap_or(0))
+                    .collect(),
+            },
+            _ => Self::None,
+        }
+    }
+}
+
 fn caller_uses_default_search_controls(
     result_mode: &Option<super::SearchResultMode>,
     timeout_secs: &Option<i64>,
@@ -208,7 +247,7 @@ fn caller_uses_default_search_controls(
 /// requests stay explicit. Batch defaults may inherit a smaller remaining
 /// timeout from the shared outer deadline without making that derived value
 /// model-relevant.
-fn sparsify_complete_default_search_output(
+pub(crate) fn sparsify_complete_default_search_output(
     output: &mut serde_json::Map<String, Value>,
     allow_batch_deadline_reduction: bool,
 ) -> bool {
@@ -341,12 +380,24 @@ fn sparsify_complete_default_search_success(
     }
 }
 
+pub(crate) fn sparsify_complete_default_search_batch_success(
+    default_queries: &[bool],
+    result: &mut ToolResult,
+) {
+    sparsify_complete_default_search_success(
+        &SearchModelProjection::Batch {
+            default_queries: default_queries.to_vec(),
+        },
+        result,
+    );
+}
+
 /// Remove range bookkeeping only when the returned text is provably the complete
 /// file. `sha256` and `total_lines` remain explicit freshness/content-shape
 /// evidence. Partial reads and every real continuation keep the canonical full
 /// range tuple. In a batch, the outer item path remains the navigation identity,
 /// so an identical inner path is redundant.
-fn sparsify_complete_file_read_output(
+pub(crate) fn sparsify_complete_file_read_output(
     output: &mut serde_json::Map<String, Value>,
     duplicate_outer_path: Option<&str>,
 ) -> bool {
@@ -413,7 +464,7 @@ fn sparsify_complete_file_read_output(
     true
 }
 
-fn sparsify_complete_read_success(tool_name: &str, result: &mut ToolResult) {
+pub(crate) fn sparsify_complete_read_success(tool_name: &str, result: &mut ToolResult) {
     if !result.success || !matches!(tool_name, "read_file" | "read_files") {
         return;
     }
@@ -1081,6 +1132,7 @@ impl ToolRuntime {
         let activity_context =
             Self::capture_workspace_activity_context(&call, activity_project.as_deref());
         let search_projection = SearchModelProjection::capture(&call);
+        let batch_budget_projection = BatchResponseBudgetProjection::capture(&call);
         let tool_name = call.tool_name();
         let mut result = self
             .dispatch_authorized_inner(
@@ -1152,6 +1204,27 @@ impl ToolRuntime {
                         tool: tool_name.to_string(),
                         observed_at: chrono::Utc::now().timestamp(),
                     },
+                );
+            }
+        }
+        match &batch_budget_projection {
+            BatchResponseBudgetProjection::None => {}
+            BatchResponseBudgetProjection::ReadFiles { max_result_bytes } => {
+                super::read_files::apply_model_facing_output_budget(&mut result, *max_result_bytes);
+            }
+            BatchResponseBudgetProjection::SearchProjectTexts {
+                max_result_bytes,
+                match_offsets,
+            } => {
+                let default_queries = match &search_projection {
+                    SearchModelProjection::Batch { default_queries } => default_queries.as_slice(),
+                    _ => &[],
+                };
+                super::search_project_texts::apply_model_facing_output_budget(
+                    &mut result,
+                    default_queries,
+                    match_offsets,
+                    *max_result_bytes,
                 );
             }
         }

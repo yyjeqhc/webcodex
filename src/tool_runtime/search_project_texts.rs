@@ -70,6 +70,7 @@ fn batch_output(
     output
 }
 
+#[cfg(test)]
 fn serialized_batch_len(output: &Value) -> usize {
     serde_json::to_vec(&ToolResult::ok(output.clone()))
         .map(|bytes| bytes.len())
@@ -80,6 +81,27 @@ fn serialized_value_len(value: &Value) -> usize {
     serde_json::to_vec(value)
         .map(|bytes| bytes.len())
         .unwrap_or(usize::MAX)
+}
+
+fn projected_batch_serialized_len(output: &Value, default_queries: &[bool]) -> usize {
+    let mut projected = ToolResult::ok(output.clone());
+    super::dispatch::sparsify_complete_default_search_batch_success(
+        default_queries,
+        &mut projected,
+    );
+    serde_json::to_vec(&projected)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX)
+}
+
+fn projected_search_item_len(item: &Value, default_query: bool) -> usize {
+    let mut projected = item.clone();
+    if default_query && projected["success"].as_bool() == Some(true) {
+        if let Some(output) = projected.get_mut("output").and_then(Value::as_object_mut) {
+            super::dispatch::sparsify_complete_default_search_output(output, true);
+        }
+    }
+    serialized_value_len(&projected)
 }
 
 fn projected_batch_len(base_len: usize, item_bytes: usize, item_count: usize) -> usize {
@@ -108,7 +130,11 @@ fn apply_match_offset(mut item: Value, match_offset: usize) -> Value {
     item
 }
 
-fn truncate_matches_item(item: &Value, keep_matches: usize) -> Option<Value> {
+fn truncate_matches_item(
+    item: &Value,
+    keep_matches: usize,
+    budget_truncation_reason: &str,
+) -> Option<Value> {
     if item["success"].as_bool() != Some(true) || keep_matches == 0 {
         return None;
     }
@@ -133,7 +159,7 @@ fn truncate_matches_item(item: &Value, keep_matches: usize) -> Option<Value> {
     {
         projected_output.insert(
             "truncation_reason".to_string(),
-            json!("batch_response_budget"),
+            json!(budget_truncation_reason),
         );
     }
     Some(projected)
@@ -143,6 +169,7 @@ fn truncate_matches_item_to_fit(
     item: &Value,
     max_item_bytes: usize,
     match_offset: usize,
+    budget_truncation_reason: &str,
 ) -> Option<Value> {
     let match_count = item.get("output")?.get("matches")?.as_array()?.len();
     if match_count <= 1 {
@@ -154,7 +181,8 @@ fn truncate_matches_item_to_fit(
     let mut best = None;
     while low <= high {
         let keep = low + (high - low) / 2;
-        let Some(mut candidate) = truncate_matches_item(item, keep) else {
+        let Some(mut candidate) = truncate_matches_item(item, keep, budget_truncation_reason)
+        else {
             break;
         };
         candidate["output"]["next_match_offset"] = json!(match_offset.saturating_add(keep));
@@ -177,6 +205,7 @@ fn apply_output_budget(
     project: &str,
     requested_count: usize,
     completed: Vec<Value>,
+    default_queries: &[bool],
     match_offsets: &[usize],
     max_result_bytes: Option<usize>,
 ) -> Value {
@@ -190,7 +219,10 @@ fn apply_output_budget(
         None,
         None,
     );
-    if serialized_batch_len(&complete) <= payload_budget {
+    // First evaluate the exact sparse model projection. Canonical search
+    // metadata stays intact unless that final applicable projection itself
+    // exceeds the response budget.
+    if projected_batch_serialized_len(&complete, default_queries) <= payload_budget {
         return complete;
     }
 
@@ -199,21 +231,25 @@ fn apply_output_budget(
     } else {
         "batch_response_budget"
     };
-    let base_len = serialized_batch_len(&batch_output(
-        project,
-        requested_count,
-        Vec::new(),
-        true,
-        Some(0),
-        Some(truncation_reason),
-    ));
+    let base_len = projected_batch_serialized_len(
+        &batch_output(
+            project,
+            requested_count,
+            Vec::new(),
+            true,
+            Some(0),
+            Some(truncation_reason),
+        ),
+        default_queries,
+    );
     let mut returned = Vec::with_capacity(completed.len());
     let mut returned_item_bytes = 0usize;
     let mut next_index = None;
 
     for item in completed {
         let index = item["index"].as_u64().unwrap_or(returned.len() as u64) as usize;
-        let item_len = serialized_value_len(&item);
+        let item_len =
+            projected_search_item_len(&item, default_queries.get(index).copied().unwrap_or(false));
         let candidate_item_count = returned.len() + 1;
         if projected_batch_len(
             base_len,
@@ -235,6 +271,7 @@ fn apply_output_budget(
             &item,
             max_item_bytes,
             match_offsets.get(index).copied().unwrap_or(0),
+            truncation_reason,
         ) {
             returned.push(partial);
             // Continue this same query with its item-local next_match_offset.
@@ -253,7 +290,7 @@ fn apply_output_budget(
         next_index,
         Some(truncation_reason),
     );
-    while serialized_batch_len(&output) > payload_budget {
+    while projected_batch_serialized_len(&output, default_queries) > payload_budget {
         let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) else {
             break;
         };
@@ -428,36 +465,84 @@ fn batch_item(index: usize, mut result: ToolResult) -> Value {
     })
 }
 
+pub(crate) fn apply_model_facing_output_budget(
+    result: &mut ToolResult,
+    default_queries: &[bool],
+    match_offsets: &[usize],
+    max_result_bytes: Option<usize>,
+) {
+    if !result.success {
+        return;
+    }
+    let Some(output) = result.output.as_object() else {
+        return;
+    };
+    let Some(project) = output
+        .get("project")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let Some(requested_count) = output
+        .get("requested_count")
+        .and_then(Value::as_u64)
+        .map(|count| count as usize)
+    else {
+        return;
+    };
+    let Some(completed) = output.get("items").and_then(Value::as_array).cloned() else {
+        return;
+    };
+
+    let budgeted = apply_output_budget(
+        &project,
+        requested_count,
+        completed,
+        default_queries,
+        match_offsets,
+        max_result_bytes,
+    );
+    let Some(root) = result.output.as_object_mut() else {
+        return;
+    };
+    for key in [
+        "project",
+        "requested_count",
+        "returned_count",
+        "succeeded_count",
+        "failed_count",
+        "items",
+        "output_truncated",
+        "next_index",
+        "truncation_reason",
+    ] {
+        root.remove(key);
+    }
+    if let Some(budgeted) = budgeted.as_object() {
+        for (key, value) in budgeted {
+            root.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 impl ToolRuntime {
-    #[cfg(test)]
     pub(crate) async fn search_project_texts(
         &self,
         project: String,
         queries: Vec<SearchProjectTextsQuery>,
     ) -> ToolResult {
-        self.search_project_texts_with_budget(project, queries, None)
-            .await
-    }
-
-    pub(crate) async fn search_project_texts_with_budget(
-        &self,
-        project: String,
-        queries: Vec<SearchProjectTextsQuery>,
-        max_result_bytes: Option<usize>,
-    ) -> ToolResult {
         let resolved = match self.resolve_project_input(&project).await {
             Ok(project) => project,
             Err(error) => return error.into_tool_result(),
         };
-        self.search_project_texts_resolved_with_budget(&resolved, queries, max_result_bytes)
-            .await
+        self.search_project_texts_resolved(&resolved, queries).await
     }
 
-    pub(crate) async fn search_project_texts_resolved_with_budget(
+    pub(crate) async fn search_project_texts_resolved(
         &self,
         resolved: &ResolvedProject,
         queries: Vec<SearchProjectTextsQuery>,
-        max_result_bytes: Option<usize>,
     ) -> ToolResult {
         if !(1..=MAX_SEARCH_PROJECT_TEXTS_QUERIES).contains(&queries.len()) {
             return ToolResult::err("search_project_texts requires 1 to 8 queries");
@@ -466,11 +551,6 @@ impl ToolRuntime {
         let runtime_project_id = resolved.resolved_id.clone();
         let requested_count = queries.len();
         let deadline = Instant::now() + self.search_project_texts_deadline;
-        let match_offsets = queries
-            .iter()
-            .map(|query| query.match_offset.unwrap_or(0))
-            .collect::<Vec<_>>();
-
         // Validation, Runner enqueue, and response waiting all happen inside
         // the concurrency slot. A third query cannot enter the Runner queue
         // while two earlier queries still hold their slots.
@@ -547,12 +627,13 @@ impl ToolRuntime {
             .await;
         completed.sort_by_key(|item| item["index"].as_u64().unwrap_or(u64::MAX));
 
-        ToolResult::ok(apply_output_budget(
+        ToolResult::ok(batch_output(
             &runtime_project_id,
             requested_count,
             completed,
-            &match_offsets,
-            max_result_bytes,
+            false,
+            None,
+            None,
         ))
     }
 }
@@ -588,6 +669,69 @@ mod tests {
         })
     }
 
+    fn default_matches_item(index: usize, count: usize, preview_bytes: usize) -> Value {
+        let mut item = matches_item(index, count, preview_bytes);
+        let output = item["output"].as_object_mut().unwrap();
+        output.insert("path".to_string(), json!("."));
+        output.insert("effective_timeout_secs".to_string(), json!(30));
+        output.insert("exit_code".to_string(), json!(0));
+        output.insert("context_before".to_string(), json!(0));
+        output.insert("context_after".to_string(), json!(0));
+        item
+    }
+
+    #[test]
+    fn complete_default_sparse_fit_is_not_preemptively_budget_truncated() {
+        let payload_budget =
+            DEFAULT_SEARCH_PROJECT_TEXTS_RESULT_BYTES - MODEL_RESULT_ENVELOPE_RESERVE_BYTES;
+        let mut selected = None;
+        for preview_bytes in 6_000..=9_000 {
+            let completed = (0..8)
+                .map(|index| default_matches_item(index, 1, preview_bytes))
+                .collect::<Vec<_>>();
+            let canonical = batch_output("agent:oe:demo", 8, completed.clone(), false, None, None);
+            let canonical_bytes = serialized_batch_len(&canonical);
+            let sparse_bytes = projected_batch_serialized_len(&canonical, &[true; 8]);
+            if canonical_bytes > payload_budget && sparse_bytes <= payload_budget {
+                selected = Some((completed, canonical_bytes, sparse_bytes));
+                break;
+            }
+        }
+        let (completed, canonical_bytes, sparse_bytes) =
+            selected.expect("test fixture must straddle canonical/sparse budget boundary");
+        assert!(canonical_bytes > payload_budget);
+        assert!(sparse_bytes <= payload_budget);
+
+        let mut result = ToolResult::ok(batch_output(
+            "agent:oe:demo",
+            8,
+            completed.clone(),
+            false,
+            None,
+            None,
+        ));
+        apply_model_facing_output_budget(&mut result, &[true; 8], &[0; 8], None);
+        assert_eq!(result.output["output_truncated"], false);
+        assert!(result.output["next_index"].is_null());
+        assert_eq!(result.output["items"].as_array().unwrap().len(), 8);
+        for (actual, expected) in result.output["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(completed.iter())
+        {
+            assert_eq!(actual["output"]["matches"], expected["output"]["matches"]);
+        }
+
+        super::super::dispatch::sparsify_complete_default_search_batch_success(
+            &[true; 8],
+            &mut result,
+        );
+        assert!(result.output.get("output_truncated").is_none());
+        assert!(result.output.get("next_index").is_none());
+        assert_eq!(result.output["items"].as_array().unwrap().len(), 8);
+    }
+
     #[test]
     fn output_budget_keeps_whole_items_and_reserves_outer_metadata_space() {
         let item = |index, text: String| {
@@ -619,6 +763,7 @@ mod tests {
                 item(1, "y".repeat(120 * 1024)),
                 item(2, "z".repeat(120 * 1024)),
             ],
+            &[false, false, false],
             &[0, 0, 0],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
         );
@@ -646,12 +791,14 @@ mod tests {
 
     #[test]
     fn default_search_budget_partials_matches_and_explicit_large_returns_more() {
-        let completed = vec![matches_item(0, 120, 900)];
-        let default = apply_output_budget("agent:oe:demo", 1, completed.clone(), &[0], None);
+        let completed = vec![default_matches_item(0, 120, 900)];
+        let default =
+            apply_output_budget("agent:oe:demo", 1, completed.clone(), &[true], &[0], None);
         let large = apply_output_budget(
             "agent:oe:demo",
             1,
             completed,
+            &[true],
             &[0],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
         );
@@ -681,7 +828,14 @@ mod tests {
     #[test]
     fn search_match_offset_continuation_has_no_duplicates_or_gaps() {
         let original = matches_item(0, 100, 1000);
-        let first = apply_output_budget("agent:oe:demo", 1, vec![original.clone()], &[0], None);
+        let first = apply_output_budget(
+            "agent:oe:demo",
+            1,
+            vec![original.clone()],
+            &[false],
+            &[0],
+            None,
+        );
         let first_matches = first["items"][0]["output"]["matches"]
             .as_array()
             .unwrap()
@@ -694,6 +848,7 @@ mod tests {
             "agent:oe:demo",
             1,
             vec![remaining],
+            &[false],
             &[offset],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
         );
@@ -716,9 +871,28 @@ mod tests {
         let mut original = matches_item(0, 100, 1000);
         original["output"]["truncated"] = json!(true);
         original["output"]["truncation_reason"] = json!("limit");
-        let output = apply_output_budget("agent:oe:demo", 1, vec![original], &[0], None);
+        let output = apply_output_budget("agent:oe:demo", 1, vec![original], &[false], &[0], None);
         assert_eq!(output["items"][0]["output"]["budget_truncated"], true);
         assert_eq!(output["items"][0]["output"]["truncation_reason"], "limit");
+    }
+
+    #[test]
+    fn hard_cap_partial_uses_consistent_outer_and_inner_reason() {
+        let output = apply_output_budget(
+            "agent:oe:demo",
+            1,
+            vec![matches_item(0, 199, 2_000)],
+            &[false],
+            &[0],
+            Some(MAX_SERIALIZED_OUTPUT_BYTES),
+        );
+        assert_eq!(output["output_truncated"], true);
+        assert_eq!(output["truncation_reason"], "hard_result_cap");
+        assert_eq!(
+            output["items"][0]["output"]["truncation_reason"],
+            "hard_result_cap"
+        );
+        assert_eq!(output["items"][0]["output"]["budget_truncated"], true);
     }
 
     #[test]

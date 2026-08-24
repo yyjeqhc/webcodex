@@ -35,22 +35,14 @@ impl ToolRuntime {
                 items,
                 session_id: _,
                 with_line_numbers,
-                max_result_bytes,
+                max_result_bytes: _,
             } => match project_resolution {
                 Some(Ok(resolved)) => {
-                    self.read_files_resolved_with_budget(
-                        &resolved,
-                        items,
-                        with_line_numbers,
-                        max_result_bytes,
-                    )
-                    .await
-                }
-                Some(Err(error)) => error.into_tool_result(),
-                None => {
-                    self.read_files_with_budget(project, items, with_line_numbers, max_result_bytes)
+                    self.read_files_resolved(&resolved, items, with_line_numbers)
                         .await
                 }
+                Some(Err(error)) => error.into_tool_result(),
+                None => self.read_files(project, items, with_line_numbers).await,
             },
             ToolCall::ListProjectFiles {
                 project,
@@ -129,21 +121,11 @@ impl ToolRuntime {
                 project,
                 queries,
                 session_id: _,
-                max_result_bytes,
+                max_result_bytes: _,
             } => match project_resolution {
-                Some(Ok(resolved)) => {
-                    self.search_project_texts_resolved_with_budget(
-                        &resolved,
-                        queries,
-                        max_result_bytes,
-                    )
-                    .await
-                }
+                Some(Ok(resolved)) => self.search_project_texts_resolved(&resolved, queries).await,
                 Some(Err(error)) => error.into_tool_result(),
-                None => {
-                    self.search_project_texts_with_budget(project, queries, max_result_bytes)
-                        .await
-                }
+                None => self.search_project_texts(project, queries).await,
             },
             ToolCall::WriteProjectFile {
                 project,

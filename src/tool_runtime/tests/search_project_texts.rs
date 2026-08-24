@@ -183,6 +183,10 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
         schema["properties"]["max_result_bytes"]["maximum"],
         256 * 1024
     );
+    assert!(schema["properties"]["max_result_bytes"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("protocol overlays"));
     assert_eq!(
         schema["properties"]["queries"]["items"]["properties"]["match_offset"]["maximum"],
         199
@@ -251,6 +255,14 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
         single.input_schema["required"],
         json!(["project", "pattern"]),
         "single-query schema remains unchanged"
+    );
+    let success_full = &batch.output_schema["properties"]["output"]["anyOf"][0]["anyOf"][0]
+        ["properties"]["items"]["items"]["properties"]["output"]["anyOf"][0]["anyOf"][0];
+    assert!(
+        success_full["properties"]["truncation_reason"]["anyOf"][0]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("hard_result_cap"))
     );
     let failure = &batch.output_schema["properties"]["output"]["anyOf"][0]["anyOf"][0]
         ["properties"]["items"]["items"]["properties"]["output"]["anyOf"][1];
@@ -563,6 +575,70 @@ async fn search_project_texts_default_matches_items_are_sparse_and_schema_valid(
     let serialized = serde_json::to_value(&result).unwrap();
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
         .unwrap_or_else(|error| panic!("sparse batch search success must match schema: {error}"));
+}
+
+#[tokio::test]
+async fn search_project_texts_dispatch_large_default_batch_uses_sparse_fit_before_budget() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-sparse-budget-order";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+    let patterns = (0..8)
+        .map(|index| format!("needle-{index}"))
+        .collect::<Vec<_>>();
+    let expected_preview = "x".repeat(7_400);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        let patterns = patterns.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectTexts {
+                        project,
+                        queries: patterns
+                            .iter()
+                            .map(|pattern| query(pattern, None))
+                            .collect(),
+                        session_id: None,
+                        max_result_bytes: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    for _ in 0..8 {
+        let request = wait_for_patch_agent_request(&runtime, client_id).await;
+        let pattern = request_pattern(&request);
+        let path = format!("src/{pattern}.rs");
+        let stdout = search_stdout("matches", &path, &expected_preview);
+        complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, &stdout, "")
+            .await;
+    }
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert!(
+        result.output.get("output_truncated").is_none(),
+        "{}",
+        result.output
+    );
+    assert!(
+        result.output.get("next_index").is_none(),
+        "{}",
+        result.output
+    );
+    let items = result.output["items"].as_array().unwrap();
+    assert_eq!(items.len(), 8);
+    for item in items {
+        assert_eq!(item["output"]["matches"][0]["preview"], expected_preview);
+        assert!(item["output"].get("backend").is_none());
+        assert!(item["output"].get("truncation_reason").is_none());
+    }
 }
 
 #[tokio::test]

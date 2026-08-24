@@ -50,6 +50,7 @@ fn batch_output(
     output
 }
 
+#[cfg(test)]
 fn serialized_batch_len(output: &Value) -> usize {
     serde_json::to_vec(&ToolResult::ok(output.clone()))
         .map(|bytes| bytes.len())
@@ -60,6 +61,31 @@ fn serialized_value_len(value: &Value) -> usize {
     serde_json::to_vec(value)
         .map(|bytes| bytes.len())
         .unwrap_or(usize::MAX)
+}
+
+fn projected_batch_serialized_len(output: &Value) -> usize {
+    let mut projected = ToolResult::ok(output.clone());
+    super::dispatch::sparsify_complete_read_success("read_files", &mut projected);
+    serde_json::to_vec(&projected)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX)
+}
+
+fn projected_read_item_len(item: &Value) -> usize {
+    let mut projected = item.clone();
+    if projected["success"].as_bool() == Some(true) {
+        let outer_path = projected
+            .get("path")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if let (Some(outer_path), Some(output)) = (
+            outer_path,
+            projected.get_mut("output").and_then(Value::as_object_mut),
+        ) {
+            super::dispatch::sparsify_complete_file_read_output(output, Some(&outer_path));
+        }
+    }
+    serialized_value_len(&projected)
 }
 
 fn projected_batch_len(base_len: usize, item_bytes: usize, item_count: usize) -> usize {
@@ -145,7 +171,10 @@ fn apply_output_budget(
         None,
         None,
     );
-    if serialized_batch_len(&complete) <= payload_budget {
+    // Budget the shape the model would actually receive after the existing
+    // sparse projection. The canonical representation remains available for
+    // Session recording and for any partial-item cursor construction below.
+    if projected_batch_serialized_len(&complete) <= payload_budget {
         return complete;
     }
 
@@ -157,7 +186,7 @@ fn apply_output_budget(
     // The truncated empty shape fixes all outer-field byte costs up front.
     // Counts and indices are single digits for this 1..=8 batch, so each item
     // can then be accounted exactly by its own serialized size plus one comma.
-    let base_len = serialized_batch_len(&batch_output(
+    let base_len = projected_batch_serialized_len(&batch_output(
         project,
         requested_count,
         Vec::new(),
@@ -171,7 +200,7 @@ fn apply_output_budget(
 
     for item in completed {
         let index = item["index"].as_u64().unwrap_or(returned.len() as u64) as usize;
-        let item_len = serialized_value_len(&item);
+        let item_len = projected_read_item_len(&item);
         let candidate_item_count = returned.len() + 1;
         if projected_batch_len(
             base_len,
@@ -210,7 +239,7 @@ fn apply_output_budget(
     // Defensive exact serialization fallback. Normal accounting above is O(n)
     // plus an O(log lines) partial-item search; this loop should never execute
     // unless a future outer-field change invalidates the fixed-size arithmetic.
-    while serialized_batch_len(&output) > payload_budget {
+    while projected_batch_serialized_len(&output) > payload_budget {
         let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) else {
             break;
         };
@@ -230,39 +259,78 @@ fn apply_output_budget(
     output
 }
 
+pub(crate) fn apply_model_facing_output_budget(
+    result: &mut ToolResult,
+    max_result_bytes: Option<usize>,
+) {
+    if !result.success {
+        return;
+    }
+    let Some(output) = result.output.as_object() else {
+        return;
+    };
+    let Some(project) = output
+        .get("project")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let Some(requested_count) = output
+        .get("requested_count")
+        .and_then(Value::as_u64)
+        .map(|count| count as usize)
+    else {
+        return;
+    };
+    let Some(completed) = output.get("items").and_then(Value::as_array).cloned() else {
+        return;
+    };
+
+    let budgeted = apply_output_budget(&project, requested_count, completed, max_result_bytes);
+    let Some(root) = result.output.as_object_mut() else {
+        return;
+    };
+    for key in [
+        "project",
+        "requested_count",
+        "returned_count",
+        "succeeded_count",
+        "failed_count",
+        "items",
+        "output_truncated",
+        "next_index",
+        "truncation_reason",
+    ] {
+        root.remove(key);
+    }
+    if let Some(budgeted) = budgeted.as_object() {
+        for (key, value) in budgeted {
+            root.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 impl ToolRuntime {
-    #[cfg(test)]
     pub(crate) async fn read_files(
         &self,
         project: String,
         items: Vec<ReadFilesItem>,
         with_line_numbers: Option<bool>,
     ) -> ToolResult {
-        self.read_files_with_budget(project, items, with_line_numbers, None)
-            .await
-    }
-
-    pub(crate) async fn read_files_with_budget(
-        &self,
-        project: String,
-        items: Vec<ReadFilesItem>,
-        with_line_numbers: Option<bool>,
-        max_result_bytes: Option<usize>,
-    ) -> ToolResult {
         let resolved = match self.resolve_project_input(&project).await {
             Ok(project) => project,
             Err(error) => return ToolResult::err(error),
         };
-        self.read_files_resolved_with_budget(&resolved, items, with_line_numbers, max_result_bytes)
+        self.read_files_resolved(&resolved, items, with_line_numbers)
             .await
     }
 
-    pub(crate) async fn read_files_resolved_with_budget(
+    pub(crate) async fn read_files_resolved(
         &self,
         resolved: &ResolvedProject,
         items: Vec<ReadFilesItem>,
         with_line_numbers: Option<bool>,
-        max_result_bytes: Option<usize>,
     ) -> ToolResult {
         if !(1..=MAX_READ_FILES_ITEMS).contains(&items.len())
             || items.iter().any(|item| item.path.trim().is_empty())
@@ -307,11 +375,13 @@ impl ToolRuntime {
             .await;
         completed.sort_by_key(|item| item["index"].as_u64().unwrap_or(u64::MAX));
 
-        ToolResult::ok(apply_output_budget(
+        ToolResult::ok(batch_output(
             &runtime_project_id,
             requested_count,
             completed,
-            max_result_bytes,
+            false,
+            None,
+            None,
         ))
     }
 }
@@ -341,6 +411,79 @@ mod tests {
             },
             "error": null
         })
+    }
+
+    fn default_complete_item(index: usize, lines: &[String]) -> Value {
+        let returned_lines = lines.len();
+        let default_limit =
+            webcodex_workspace::file_read_range::EffectiveRange::new(None, None).limit;
+        json!({
+            "index": index,
+            "path": format!("src/{index}.rs"),
+            "success": true,
+            "output": {
+                "text": lines.join("\n"),
+                "format": "plain",
+                "path": format!("src/{index}.rs"),
+                "sha256": "d".repeat(64),
+                "start_line": 1,
+                "limit": default_limit,
+                "total_lines": returned_lines,
+                "returned_lines": returned_lines,
+                "end_line": if returned_lines == 0 { Value::Null } else { json!(returned_lines) },
+                "has_more": false,
+                "next_start_line": null
+            },
+            "error": null
+        })
+    }
+
+    #[test]
+    fn complete_default_sparse_fit_is_not_preemptively_budget_truncated() {
+        let payload_budget = DEFAULT_READ_FILES_RESULT_BYTES - MODEL_RESULT_ENVELOPE_RESERVE_BYTES;
+        let mut selected = None;
+        for text_bytes in 6_000..=9_000 {
+            let completed = (0..8)
+                .map(|index| default_complete_item(index, &["x".repeat(text_bytes)]))
+                .collect::<Vec<_>>();
+            let canonical = batch_output("agent:oe:demo", 8, completed.clone(), false, None, None);
+            let canonical_bytes = serialized_batch_len(&canonical);
+            let sparse_bytes = projected_batch_serialized_len(&canonical);
+            if canonical_bytes > payload_budget && sparse_bytes <= payload_budget {
+                selected = Some((completed, canonical_bytes, sparse_bytes));
+                break;
+            }
+        }
+        let (completed, canonical_bytes, sparse_bytes) =
+            selected.expect("test fixture must straddle canonical/sparse budget boundary");
+        assert!(canonical_bytes > payload_budget);
+        assert!(sparse_bytes <= payload_budget);
+
+        let mut result = ToolResult::ok(batch_output(
+            "agent:oe:demo",
+            8,
+            completed.clone(),
+            false,
+            None,
+            None,
+        ));
+        apply_model_facing_output_budget(&mut result, None);
+        assert_eq!(result.output["output_truncated"], false);
+        assert!(result.output["next_index"].is_null());
+        assert_eq!(result.output["items"].as_array().unwrap().len(), 8);
+        for (actual, expected) in result.output["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(completed.iter())
+        {
+            assert_eq!(actual["output"]["text"], expected["output"]["text"]);
+        }
+
+        super::super::dispatch::sparsify_complete_read_success("read_files", &mut result);
+        assert!(result.output.get("output_truncated").is_none());
+        assert!(result.output.get("next_index").is_none());
+        assert_eq!(result.output["items"].as_array().unwrap().len(), 8);
     }
 
     #[test]
@@ -442,7 +585,7 @@ mod tests {
         let lines = (0..900)
             .map(|index| format!("第{index:04}行-{}", "界".repeat(40)))
             .collect::<Vec<_>>();
-        let completed = vec![ranged_item(0, 1, &lines)];
+        let completed = vec![default_complete_item(0, &lines)];
 
         let default = apply_output_budget("agent:oe:demo", 1, completed.clone(), None);
         let large = apply_output_budget(

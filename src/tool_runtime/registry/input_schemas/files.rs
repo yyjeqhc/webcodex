@@ -198,7 +198,7 @@ pub(crate) fn search_project_texts_input_schema() -> Value {
         (
             "max_result_bytes",
             "integer",
-            "Optional final model-facing batch budget in bytes. Defaults to 64 KiB for ordinary exploration; increase only for explicit broad/deep search, up to the existing 256 KiB hard safety ceiling.",
+            "Optional primary model-facing batch projection budget in bytes. Defaults to 64 KiB; raise only for explicit broad/deep search, up to 256 KiB. Independently bounded Session/continuity protocol overlays are preserved outside this budget.",
             false,
         ),
     ]));
@@ -256,7 +256,7 @@ pub(crate) fn read_files_input_schema() -> Value {
         (
             "max_result_bytes",
             "integer",
-            "Optional final model-facing batch budget in bytes. Defaults to 64 KiB for ordinary exploration; increase only for explicit broad/deep reads, up to the existing 256 KiB hard safety ceiling.",
+            "Optional primary model-facing batch projection budget in bytes. Defaults to 64 KiB; raise only for explicit broad/deep reads, up to 256 KiB. Independently bounded Session/continuity protocol overlays are preserved outside this budget.",
             false,
         ),
     ]));

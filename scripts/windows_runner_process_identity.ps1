@@ -149,9 +149,10 @@ namespace WebCodex {
 function Test-PrimaryRunnerArguments {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
 
-    # argv[0] is the executable. Any current/future internal Runner mode is not a
-    # primary Runner, regardless of executable pathname.
-    foreach ($argument in @($Arguments | Select-Object -Skip 1)) {
+    # CommandLine normally includes the executable as argv[0], but do not rely on
+    # that representation: any current/future internal Runner token anywhere in
+    # parsed argv is non-primary.
+    foreach ($argument in @($Arguments)) {
         if ($argument.StartsWith("--webcodex-internal-", [System.StringComparison]::Ordinal)) {
             return $false
         }

@@ -21,6 +21,7 @@ Assert-True (Test-PrimaryRunnerArguments -Arguments @("webcodex-runner.exe", "--
 Assert-False (Test-PrimaryRunnerArguments -Arguments @("webcodex-runner.exe", "--webcodex-internal-detached-supervisor", "x")) "detached supervisor was classified primary"
 Assert-False (Test-PrimaryRunnerArguments -Arguments @("webcodex-runner.exe", "--webcodex-internal-detached-watchdog", "x")) "detached watchdog was classified primary"
 Assert-False (Test-PrimaryRunnerArguments -Arguments @("webcodex-runner.exe", "--webcodex-internal-future-mode")) "future internal mode was classified primary"
+Assert-False (Test-PrimaryRunnerArguments -Arguments @("--webcodex-internal-detached-supervisor", "x")) "internal mode in the first parsed argv token was classified primary"
 
 # Same executable path is intentionally not sufficient: role comes from exact argv.
 $normal = Test-PrimaryRunnerArguments -Arguments @("C:\same\webcodex-runner.exe")

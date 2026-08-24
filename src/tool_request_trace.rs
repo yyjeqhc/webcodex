@@ -41,8 +41,9 @@ tokio::task_local! {
 
 const TRACE_CORRELATION_TTL_SECS: i64 = 24 * 60 * 60;
 const MAX_TRACE_CORRELATIONS: usize = 8_192;
+const TRACE_STORE_RECONCILE_INTERVAL: Duration = Duration::from_secs(60);
 
-static TRACE_IO_LOCK: Mutex<()> = Mutex::new(());
+static TRACE_IO_STATE: OnceLock<Mutex<TraceStoreAccounting>> = OnceLock::new();
 static TRACE_CORRELATIONS: OnceLock<Mutex<TraceCorrelations>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
@@ -59,11 +60,51 @@ struct TraceCorrelations {
     jobs: HashMap<String, TraceCorrelation>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TraceDirInfo {
     path: PathBuf,
     bytes: u64,
     modified: SystemTime,
+    evictable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TraceStoreConfig {
+    root: PathBuf,
+    retention: Duration,
+    budget: u64,
+}
+
+#[derive(Debug)]
+struct TraceStoreAccounting {
+    config: Option<TraceStoreConfig>,
+    initialized: bool,
+    total_bytes: u64,
+    traces: HashMap<String, TraceDirInfo>,
+    last_reconcile: Option<Instant>,
+    #[cfg(test)]
+    filesystem_scans: u64,
+}
+
+impl Default for TraceStoreAccounting {
+    fn default() -> Self {
+        Self {
+            config: None,
+            initialized: false,
+            total_bytes: 0,
+            traces: HashMap::new(),
+            last_reconcile: None,
+            #[cfg(test)]
+            filesystem_scans: 0,
+        }
+    }
+}
+
+impl TraceStoreAccounting {
+    fn invalidate(&mut self) {
+        self.initialized = false;
+        self.last_reconcile = None;
+    }
 }
 
 /// Whether tool-request lifecycle tracing is enabled.
@@ -193,6 +234,18 @@ fn trace_budget() -> u64 {
     crate::config::tool_request_trace_max_total_bytes()
 }
 
+fn trace_store_config() -> TraceStoreConfig {
+    TraceStoreConfig {
+        root: trace_root(),
+        retention: trace_retention(),
+        budget: trace_budget(),
+    }
+}
+
+fn trace_io_state() -> &'static Mutex<TraceStoreAccounting> {
+    TRACE_IO_STATE.get_or_init(|| Mutex::new(TraceStoreAccounting::default()))
+}
+
 fn directory_stats(path: &Path) -> io::Result<(u64, SystemTime)> {
     let metadata = fs::metadata(path)?;
     let mut bytes = if metadata.is_file() {
@@ -238,10 +291,12 @@ fn trace_dirs(root: &Path, active_trace_id: &str) -> io::Result<Vec<TraceDirInfo
             continue;
         }
         let (bytes, modified) = directory_stats(&path)?;
+        let evictable = path.join(TRACE_OWNER_MARKER).is_file();
         dirs.push(TraceDirInfo {
             path,
             bytes,
             modified,
+            evictable,
         });
     }
     Ok(dirs)
@@ -277,45 +332,233 @@ fn open_private_append(path: &Path) -> io::Result<fs::File> {
     Ok(file)
 }
 
-/// Enforce age and total-byte bounds before one new file/event is persisted.
-/// The active trace is never deleted out from under its current write; if it
-/// alone cannot fit, the new capture is omitted instead.
-fn reserve_trace_capacity(root: &Path, trace_id: &str, incoming: u64) -> io::Result<bool> {
-    fs::create_dir_all(root)?;
-    let retention = trace_retention();
-    let now = SystemTime::now();
-    for info in trace_dirs(root, trace_id)? {
-        if info.path.file_name().and_then(|name| name.to_str()) == Some(trace_id) {
+fn remove_accounted_trace(accounting: &mut TraceStoreAccounting, trace_id: &str) {
+    if let Some(info) = accounting.traces.remove(trace_id) {
+        accounting.total_bytes = accounting.total_bytes.saturating_sub(info.bytes);
+    }
+}
+
+fn scan_trace_store(
+    accounting: &mut TraceStoreAccounting,
+    config: &TraceStoreConfig,
+    active_trace_id: &str,
+) -> io::Result<(HashMap<String, TraceDirInfo>, u64)> {
+    #[cfg(test)]
+    {
+        accounting.filesystem_scans = accounting.filesystem_scans.saturating_add(1);
+    }
+
+    let previous = accounting
+        .config
+        .as_ref()
+        .is_some_and(|previous| previous.root == config.root)
+        .then(|| accounting.traces.clone());
+    let mut traces = HashMap::new();
+    let mut total_bytes = 0_u64;
+    for info in trace_dirs(&config.root, active_trace_id)? {
+        let Some(trace_id) = info
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+        else {
             continue;
-        }
-        if now
-            .duration_since(info.modified)
-            .map(|age| age > retention)
-            .unwrap_or(false)
-        {
-            let _ = fs::remove_dir_all(info.path);
+        };
+        total_bytes = total_bytes.saturating_add(info.bytes);
+        traces.insert(trace_id, info);
+    }
+
+    // A failed cleanup can remove the owner marker before remove_dir_all reports
+    // failure. Keep any process-known residue in the budget until it disappears;
+    // never make it evictable without a current owner marker.
+    if let Some(previous) = previous {
+        for (trace_id, mut info) in previous {
+            if traces.contains_key(&trace_id) || !info.path.exists() {
+                continue;
+            }
+            match directory_stats(&info.path) {
+                Ok((bytes, modified)) => {
+                    info.bytes = bytes;
+                    info.modified = modified;
+                    info.evictable = false;
+                    total_bytes = total_bytes.saturating_add(bytes);
+                    traces.insert(trace_id, info);
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
         }
     }
 
-    let mut dirs = trace_dirs(root, trace_id)?;
-    let mut total = dirs
+    Ok((traces, total_bytes))
+}
+
+fn prune_expired_traces(
+    accounting: &mut TraceStoreAccounting,
+    config: &TraceStoreConfig,
+    active_trace_id: &str,
+) -> io::Result<()> {
+    let now = SystemTime::now();
+    let expired = accounting
+        .traces
         .iter()
-        .fold(0_u64, |sum, info| sum.saturating_add(info.bytes));
-    if total.saturating_add(incoming) <= trace_budget() {
-        return Ok(true);
-    }
-    dirs.sort_by_key(|info| info.modified);
-    for info in dirs {
-        if info.path.file_name().and_then(|name| name.to_str()) == Some(trace_id) {
+        .filter(|(trace_id, info)| {
+            trace_id.as_str() != active_trace_id
+                && info.evictable
+                && now
+                    .duration_since(info.modified)
+                    .map(|age| age > config.retention)
+                    .unwrap_or(false)
+        })
+        .map(|(trace_id, _)| trace_id.clone())
+        .collect::<Vec<_>>();
+
+    for trace_id in expired {
+        let Some(path) = accounting
+            .traces
+            .get(&trace_id)
+            .map(|info| info.path.clone())
+        else {
+            continue;
+        };
+        if !path.join(TRACE_OWNER_MARKER).is_file() {
+            if let Some(info) = accounting.traces.get_mut(&trace_id) {
+                info.evictable = false;
+            }
+            accounting.invalidate();
             continue;
         }
-        if total.saturating_add(incoming) <= trace_budget() {
+        match fs::remove_dir_all(&path) {
+            Ok(()) => remove_accounted_trace(accounting, &trace_id),
+            Err(_) => {
+                // Keep the old byte count rather than assuming any partial
+                // cleanup succeeded. The next foreground capture reconciles it.
+                accounting.invalidate();
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reconcile_trace_store(
+    accounting: &mut TraceStoreAccounting,
+    config: &TraceStoreConfig,
+    active_trace_id: &str,
+) -> io::Result<()> {
+    fs::create_dir_all(&config.root)?;
+    let (traces, total_bytes) = scan_trace_store(accounting, config, active_trace_id)?;
+    accounting.config = Some(config.clone());
+    accounting.initialized = true;
+    accounting.total_bytes = total_bytes;
+    accounting.traces = traces;
+    accounting.last_reconcile = Some(Instant::now());
+    prune_expired_traces(accounting, config, active_trace_id)?;
+    Ok(())
+}
+
+fn accounting_requires_reconcile(
+    accounting: &TraceStoreAccounting,
+    config: &TraceStoreConfig,
+) -> bool {
+    !accounting.initialized
+        || accounting.config.as_ref() != Some(config)
+        || accounting
+            .last_reconcile
+            .map(|last| last.elapsed() >= TRACE_STORE_RECONCILE_INTERVAL)
+            .unwrap_or(true)
+}
+
+/// Enforce age and total-byte bounds before one new file/event is persisted.
+/// The first operation, configuration changes, invalidation, and low-frequency
+/// foreground maintenance rebuild accounting from the filesystem. Ordinary
+/// captures use the cached total and trace index without recursively scanning
+/// the store. The active trace is never deleted out from under its own write.
+fn reserve_trace_capacity(
+    accounting: &mut TraceStoreAccounting,
+    config: &TraceStoreConfig,
+    trace_id: &str,
+    incoming: u64,
+) -> io::Result<bool> {
+    fs::create_dir_all(&config.root)?;
+    if accounting_requires_reconcile(accounting, config) {
+        reconcile_trace_store(accounting, config, trace_id)?;
+    }
+    if accounting.total_bytes.saturating_add(incoming) <= config.budget {
+        return Ok(true);
+    }
+
+    let mut candidates = accounting
+        .traces
+        .iter()
+        .filter(|(candidate_id, info)| candidate_id.as_str() != trace_id && info.evictable)
+        .map(|(candidate_id, info)| (candidate_id.clone(), info.modified))
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(_, modified)| *modified);
+
+    for (candidate_id, _) in candidates {
+        if accounting.total_bytes.saturating_add(incoming) <= config.budget {
             break;
         }
-        fs::remove_dir_all(&info.path)?;
-        total = total.saturating_sub(info.bytes);
+        let Some(path) = accounting
+            .traces
+            .get(&candidate_id)
+            .map(|info| info.path.clone())
+        else {
+            continue;
+        };
+        // Revalidate ownership immediately before destructive cleanup. This is
+        // O(1) and closes the external/manual marker-removal race without
+        // reintroducing recursive hot-path traversal.
+        if !path.join(TRACE_OWNER_MARKER).is_file() {
+            if let Some(info) = accounting.traces.get_mut(&candidate_id) {
+                info.evictable = false;
+            }
+            accounting.invalidate();
+            continue;
+        }
+        match fs::remove_dir_all(&path) {
+            Ok(()) => remove_accounted_trace(accounting, &candidate_id),
+            Err(error) => {
+                // Do not deduct a failed eviction. The unchanged cached byte
+                // count is conservative even if remove_dir_all made partial
+                // progress; force a filesystem rebuild before the next capture.
+                accounting.invalidate();
+                return Err(error);
+            }
+        }
     }
-    Ok(total.saturating_add(incoming) <= trace_budget())
+
+    Ok(accounting.total_bytes.saturating_add(incoming) <= config.budget)
+}
+
+fn commit_trace_write(
+    accounting: &mut TraceStoreAccounting,
+    config: &TraceStoreConfig,
+    trace_id: &str,
+    bytes: u64,
+) {
+    let now = SystemTime::now();
+    let entry = accounting
+        .traces
+        .entry(trace_id.to_string())
+        .or_insert_with(|| TraceDirInfo {
+            path: config.root.join(trace_id),
+            bytes: 0,
+            modified: now,
+            evictable: true,
+        });
+    entry.bytes = entry.bytes.saturating_add(bytes);
+    entry.modified = now;
+    entry.evictable = true;
+    accounting.total_bytes = accounting.total_bytes.saturating_add(bytes);
+}
+
+fn remove_file_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn base_event(trace_id: &str, event: &str) -> Value {
@@ -337,25 +580,37 @@ fn merge_event_fields(event: &mut Value, fields: Value) {
     event.extend(fields);
 }
 
-fn append_event_locked(root: &Path, trace_id: &str, event: &Value) -> io::Result<bool> {
+fn append_event_locked(
+    accounting: &mut TraceStoreAccounting,
+    config: &TraceStoreConfig,
+    trace_id: &str,
+    event: &Value,
+) -> io::Result<bool> {
     let mut line = serde_json::to_vec(event).map_err(io::Error::other)?;
     line.push(b'\n');
-    if !reserve_trace_capacity(root, trace_id, line.len() as u64)? {
+    if !reserve_trace_capacity(accounting, config, trace_id, line.len() as u64)? {
         return Ok(false);
     }
-    let trace_dir = root.join(trace_id);
+    let trace_dir = config.root.join(trace_id);
     create_private_trace_dir(&trace_dir)?;
     ensure_trace_owner_marker(&trace_dir)?;
     let mut file = open_private_append(&trace_dir.join("events.jsonl"))?;
-    file.write_all(&line)?;
+    if let Err(error) = file.write_all(&line) {
+        // write_all may have appended a prefix. Force the next foreground
+        // operation to rescan rather than undercount an uncertain file length.
+        accounting.invalidate();
+        return Err(error);
+    }
+    commit_trace_write(accounting, config, trace_id, line.len() as u64);
     Ok(true)
 }
 
 fn persist_metadata_event(trace_id: &str, event: Value) -> io::Result<bool> {
-    let _lock = TRACE_IO_LOCK
+    let mut accounting = trace_io_state()
         .lock()
         .map_err(|_| io::Error::other("tool trace I/O lock poisoned"))?;
-    append_event_locked(&trace_root(), trace_id, &event)
+    let config = trace_store_config();
+    append_event_locked(&mut accounting, &config, trace_id, &event)
 }
 
 fn persist_payload(
@@ -384,14 +639,14 @@ fn persist_payload(
     event_line.push(b'\n');
     let incoming = (compressed.len() + event_line.len()) as u64;
 
-    let _lock = TRACE_IO_LOCK
+    let mut accounting = trace_io_state()
         .lock()
         .map_err(|_| io::Error::other("tool trace I/O lock poisoned"))?;
-    let root = trace_root();
-    if !reserve_trace_capacity(&root, trace_id, incoming)? {
+    let config = trace_store_config();
+    if !reserve_trace_capacity(&mut accounting, &config, trace_id, incoming)? {
         return Ok(None);
     }
-    let trace_dir = root.join(trace_id);
+    let trace_dir = config.root.join(trace_id);
     let payload_dir = trace_dir.join("payloads");
     create_private_trace_dir(&trace_dir)?;
     ensure_trace_owner_marker(&trace_dir)?;
@@ -404,20 +659,53 @@ fn persist_payload(
     options.mode(0o600);
     let mut temp_file = options.open(&temp_path)?;
     #[cfg(unix)]
-    temp_file.set_permissions(fs::Permissions::from_mode(0o600))?;
-    temp_file.write_all(&compressed)?;
-    temp_file.flush()?;
+    if let Err(error) = temp_file.set_permissions(fs::Permissions::from_mode(0o600)) {
+        drop(temp_file);
+        if remove_file_if_present(&temp_path).is_err() {
+            accounting.invalidate();
+        }
+        return Err(error);
+    }
+    if let Err(error) = temp_file.write_all(&compressed) {
+        drop(temp_file);
+        if remove_file_if_present(&temp_path).is_err() {
+            accounting.invalidate();
+        }
+        return Err(error);
+    }
+    if let Err(error) = temp_file.flush() {
+        drop(temp_file);
+        if remove_file_if_present(&temp_path).is_err() {
+            accounting.invalidate();
+        }
+        return Err(error);
+    }
     drop(temp_file);
     if let Err(error) = fs::rename(&temp_path, &final_path) {
-        let _ = fs::remove_file(&temp_path);
+        if remove_file_if_present(&temp_path).is_err() {
+            accounting.invalidate();
+        }
         return Err(error);
     }
-    if let Err(error) = open_private_append(&trace_dir.join("events.jsonl"))
-        .and_then(|mut file| file.write_all(&event_line))
-    {
-        let _ = fs::remove_file(&final_path);
+
+    let mut event_file = match open_private_append(&trace_dir.join("events.jsonl")) {
+        Ok(file) => file,
+        Err(error) => {
+            if remove_file_if_present(&final_path).is_err() {
+                accounting.invalidate();
+            }
+            return Err(error);
+        }
+    };
+    if let Err(error) = event_file.write_all(&event_line) {
+        // The append may have written a prefix. Even if payload cleanup succeeds,
+        // the store total is uncertain until the next reconciliation.
+        let _ = remove_file_if_present(&final_path);
+        accounting.invalidate();
         return Err(error);
     }
+
+    commit_trace_write(&mut accounting, &config, trace_id, incoming);
     Ok(Some((raw.len(), compressed.len(), digest, relative_path)))
 }
 
@@ -893,6 +1181,25 @@ mod tests {
         entries.flatten().map(|entry| entry.path()).collect()
     }
 
+    fn reset_trace_store_accounting() {
+        *trace_io_state().lock().unwrap() = TraceStoreAccounting::default();
+    }
+
+    fn event_line_len(event: &Value) -> u64 {
+        serde_json::to_vec(event).unwrap().len() as u64 + 1
+    }
+
+    fn accounting_snapshot() -> (PathBuf, u64, usize, u64) {
+        let accounting = trace_io_state().lock().unwrap();
+        let config = accounting.config.as_ref().expect("trace accounting config");
+        (
+            config.root.clone(),
+            accounting.total_bytes,
+            accounting.traces.len(),
+            accounting.filesystem_scans,
+        )
+    }
+
     #[test]
     fn jsonrpc_id_safe_never_echoes_raw_string() {
         let secret = "very-secret-request-id-value";
@@ -1005,6 +1312,293 @@ mod tests {
         );
         guard.capture_payload("raw_arguments", &json!({"content": "must-not-truncate"}));
         assert!(payload_files(temp.path(), "trace-budget").is_empty());
+    }
+
+    #[test]
+    fn full_mode_accounting_tracks_writes_without_rescanning_hot_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+
+        let trace_id = "trace-accounting-hot-path";
+        assert!(persist_metadata_event(trace_id, json!({"event": "first"})).unwrap());
+        let scans_after_first = accounting_snapshot().3;
+        assert_eq!(scans_after_first, 1);
+
+        assert!(persist_payload(
+            trace_id,
+            "raw_arguments",
+            &json!({"content": "payload".repeat(512)})
+        )
+        .unwrap()
+        .is_some());
+        assert!(persist_metadata_event(trace_id, json!({"event": "last"})).unwrap());
+
+        let (_, cached_total, trace_count, scans_after_writes) = accounting_snapshot();
+        let actual_total = directory_stats(&temp.path().join(trace_id)).unwrap().0;
+        assert_eq!(trace_count, 1);
+        assert_eq!(cached_total, actual_total);
+        assert_eq!(scans_after_writes, scans_after_first);
+    }
+
+    #[test]
+    fn full_mode_accounting_rebuilds_when_trace_root_changes() {
+        let first_root = tempfile::tempdir().unwrap();
+        let second_root = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            first_root.path().to_string_lossy().as_ref(),
+        );
+        reset_trace_store_accounting();
+        assert!(persist_metadata_event("trace-first-root", json!({"event": "first"})).unwrap());
+        let first_scans = accounting_snapshot().3;
+
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            second_root.path().to_string_lossy().as_ref(),
+        );
+        assert!(persist_metadata_event("trace-second-root", json!({"event": "second"})).unwrap());
+        let (root, _, trace_count, scans) = accounting_snapshot();
+        assert_eq!(root, second_root.path());
+        assert_eq!(trace_count, 1);
+        assert_eq!(scans, first_scans + 1);
+        assert!(second_root
+            .path()
+            .join("trace-second-root/events.jsonl")
+            .exists());
+    }
+
+    #[test]
+    fn full_mode_accounting_rebuilds_when_same_root_config_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_RETENTION_HOURS", "2");
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+        assert!(persist_metadata_event("trace-config", json!({"event": "first"})).unwrap());
+        let first_scans = accounting_snapshot().3;
+
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_RETENTION_HOURS", "3");
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "16777216");
+        assert!(persist_metadata_event("trace-config", json!({"event": "second"})).unwrap());
+        let accounting = trace_io_state().lock().unwrap();
+        assert_eq!(accounting.filesystem_scans, first_scans + 1);
+        assert_eq!(
+            accounting.config.as_ref().unwrap().retention,
+            Duration::from_secs(3 * 60 * 60)
+        );
+        assert_eq!(accounting.config.as_ref().unwrap().budget, 16_777_216);
+    }
+
+    #[test]
+    fn full_mode_due_maintenance_reconciles_external_owned_drift() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+        assert!(persist_metadata_event("trace-known", json!({"event": "first"})).unwrap());
+        let first_scans = accounting_snapshot().3;
+
+        let external = temp.path().join("trace-external-owned");
+        create_private_trace_dir(&external).unwrap();
+        ensure_trace_owner_marker(&external).unwrap();
+        fs::write(external.join("events.jsonl"), vec![b'x'; 311]).unwrap();
+        {
+            let mut accounting = trace_io_state().lock().unwrap();
+            accounting.last_reconcile = Some(Instant::now() - TRACE_STORE_RECONCILE_INTERVAL);
+        }
+
+        assert!(persist_metadata_event("trace-known", json!({"event": "second"})).unwrap());
+        let (_, cached_total, trace_count, scans) = accounting_snapshot();
+        assert_eq!(scans, first_scans + 1);
+        assert_eq!(trace_count, 2);
+        assert_eq!(cached_total, directory_stats(temp.path()).unwrap().0);
+    }
+
+    #[test]
+    fn full_mode_invalidated_accounting_rebuilds_on_next_write() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+        let trace_id = "trace-rebuild-invalidated";
+        assert!(persist_metadata_event(trace_id, json!({"event": "first"})).unwrap());
+        let first_scans = accounting_snapshot().3;
+        trace_io_state().lock().unwrap().invalidate();
+
+        assert!(persist_metadata_event(trace_id, json!({"event": "second"})).unwrap());
+        let (_, cached_total, _, scans) = accounting_snapshot();
+        assert_eq!(scans, first_scans + 1);
+        assert_eq!(
+            cached_total,
+            directory_stats(&temp.path().join(trace_id)).unwrap().0
+        );
+    }
+
+    #[test]
+    fn full_mode_budget_eviction_updates_cached_total_without_rescan() {
+        let temp = tempfile::tempdir().unwrap();
+        let event = json!({"event": "budget", "padding": "x".repeat(128)});
+        let line_len = event_line_len(&event);
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES",
+            &(line_len * 2).to_string(),
+        );
+        reset_trace_store_accounting();
+
+        assert!(persist_metadata_event("trace-oldest", event.clone()).unwrap());
+        assert!(persist_metadata_event("trace-newer", event.clone()).unwrap());
+        let scans_before_eviction = accounting_snapshot().3;
+        {
+            let mut accounting = trace_io_state().lock().unwrap();
+            accounting.traces.get_mut("trace-oldest").unwrap().modified = SystemTime::UNIX_EPOCH;
+            accounting.traces.get_mut("trace-newer").unwrap().modified =
+                SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+        }
+
+        assert!(persist_metadata_event("trace-current", event).unwrap());
+        let (_, cached_total, trace_count, scans_after_eviction) = accounting_snapshot();
+        assert!(!temp.path().join("trace-oldest").exists());
+        assert!(temp.path().join("trace-newer").exists());
+        assert!(temp.path().join("trace-current").exists());
+        assert_eq!(trace_count, 2);
+        assert_eq!(cached_total, line_len * 2);
+        assert_eq!(cached_total, directory_stats(temp.path()).unwrap().0);
+        assert_eq!(scans_after_eviction, scans_before_eviction);
+    }
+
+    #[test]
+    fn full_mode_active_trace_is_not_evicted_for_its_own_write() {
+        let temp = tempfile::tempdir().unwrap();
+        let event = json!({"event": "active", "padding": "x".repeat(64)});
+        let line_len = event_line_len(&event);
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES",
+            &line_len.to_string(),
+        );
+        reset_trace_store_accounting();
+
+        assert!(persist_metadata_event("trace-active", event.clone()).unwrap());
+        assert!(!persist_metadata_event("trace-active", event).unwrap());
+        let events = fs::read_to_string(temp.path().join("trace-active/events.jsonl")).unwrap();
+        assert_eq!(events.lines().count(), 1);
+        assert_eq!(accounting_snapshot().1, line_len);
+    }
+
+    #[test]
+    fn full_mode_cached_trace_losing_owner_marker_is_never_evicted() {
+        let temp = tempfile::tempdir().unwrap();
+        let event = json!({"event": "ownership", "padding": "x".repeat(64)});
+        let line_len = event_line_len(&event);
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES",
+            &line_len.to_string(),
+        );
+        reset_trace_store_accounting();
+
+        assert!(persist_metadata_event("trace-owned", event.clone()).unwrap());
+        let owned_dir = temp.path().join("trace-owned");
+        fs::remove_file(owned_dir.join(TRACE_OWNER_MARKER)).unwrap();
+
+        assert!(!persist_metadata_event("trace-current", event).unwrap());
+        assert!(owned_dir.join("events.jsonl").exists());
+        assert!(!temp.path().join("trace-current/events.jsonl").exists());
+        let accounting = trace_io_state().lock().unwrap();
+        assert_eq!(accounting.total_bytes, line_len);
+        assert!(!accounting.initialized);
+        assert!(!accounting.traces["trace-owned"].evictable);
+    }
+
+    #[test]
+    fn full_mode_retention_prunes_owned_non_active_cached_trace() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_RETENTION_HOURS", "1");
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+        assert!(persist_metadata_event("trace-expired", json!({"event": "old"})).unwrap());
+
+        let config = trace_store_config();
+        let mut accounting = trace_io_state().lock().unwrap();
+        accounting.traces.get_mut("trace-expired").unwrap().modified = SystemTime::UNIX_EPOCH;
+        prune_expired_traces(&mut accounting, &config, "trace-active").unwrap();
+        assert_eq!(accounting.total_bytes, 0);
+        assert!(!accounting.traces.contains_key("trace-expired"));
+        drop(accounting);
+        assert!(!temp.path().join("trace-expired").exists());
+    }
+
+    #[test]
+    fn full_mode_fresh_accounting_rebuild_counts_existing_owned_trace() {
+        let temp = tempfile::tempdir().unwrap();
+        let existing = temp.path().join("trace-existing");
+        create_private_trace_dir(&existing).unwrap();
+        ensure_trace_owner_marker(&existing).unwrap();
+        fs::write(existing.join("events.jsonl"), vec![b'x'; 257]).unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+
+        let event = json!({"event": "after-restart"});
+        let line_len = event_line_len(&event);
+        assert!(persist_metadata_event("trace-new", event).unwrap());
+        let (_, cached_total, trace_count, scans) = accounting_snapshot();
+        assert_eq!(scans, 1);
+        assert_eq!(trace_count, 2);
+        assert_eq!(cached_total, 257 + line_len);
+        assert_eq!(cached_total, directory_stats(temp.path()).unwrap().0);
     }
 
     #[test]

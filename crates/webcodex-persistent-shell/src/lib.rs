@@ -3404,7 +3404,12 @@ Start-Sleep -Milliseconds 500
                 &worker_session_id,
                 PROJECT,
                 FORGE_PRIVATE_COMPLETION_COMMAND,
-                Duration::from_secs(3),
+                // Windows CI can spend several seconds in PowerShell/.NET
+                // introspection before reaching the deliberate 500ms sleep.
+                // Keep the security assertions time-relative below, but give
+                // the command enough bounded wall-clock budget to finish on a
+                // cold or contended runner.
+                Duration::from_secs(10),
             );
             set_test_command_token(None);
             result.unwrap()

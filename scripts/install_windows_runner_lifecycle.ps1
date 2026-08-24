@@ -57,12 +57,26 @@ if ($Apply) {
             }
             if ($PSCmdlet.ShouldProcess("$($expected.TaskPath)$($expected.TaskName)", 'Update WebCodex Windows Runner lifecycle Scheduled Task definition')) {
                 $definition = New-WindowsRunnerScheduledTaskDefinition -ExpectedSpec $expected
+                $freshCurrent = Get-WindowsRunnerLifecycleTaskObservation `
+                    -TaskName $expected.TaskName `
+                    -TaskPath $expected.TaskPath `
+                    -ExpectedSupervisorPath $expected.SupervisorPath
+                $freshInventory = @(Get-WindowsRunnerPrimaryInventory)
+                $freshPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $freshCurrent -PrimaryInventory $freshInventory
+                $null = Assert-WindowsRunnerLifecycleEffectStillSafe -FreshPlan $freshPlan -ExpectedOperation 'update'
                 Register-ScheduledTask -TaskName $expected.TaskName -TaskPath $expected.TaskPath -InputObject $definition -Force -ErrorAction Stop | Out-Null
                 $changed = $true
             }
         }
         'enable' {
             if ($PSCmdlet.ShouldProcess("$($expected.TaskPath)$($expected.TaskName)", 'Enable WebCodex Windows Runner lifecycle Scheduled Task')) {
+                $freshCurrent = Get-WindowsRunnerLifecycleTaskObservation `
+                    -TaskName $expected.TaskName `
+                    -TaskPath $expected.TaskPath `
+                    -ExpectedSupervisorPath $expected.SupervisorPath
+                $freshInventory = @(Get-WindowsRunnerPrimaryInventory)
+                $freshPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $freshCurrent -PrimaryInventory $freshInventory
+                $null = Assert-WindowsRunnerLifecycleEffectStillSafe -FreshPlan $freshPlan -ExpectedOperation 'enable'
                 Enable-ScheduledTask -TaskName $expected.TaskName -TaskPath $expected.TaskPath -ErrorAction Stop | Out-Null
                 $changed = $true
             }

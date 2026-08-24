@@ -74,7 +74,9 @@ try {
     $expectedAgain = New-WindowsRunnerLifecycleExpectedSpec -RunnerPath $runnerPath -RunnerConfigPath $configPath -SupervisorPath $supervisorPath -TaskName 'WebCodex Test Runner' -WorkingDirectory $workingDirectory
     Assert-Equal ($expected | ConvertTo-Json -Compress) ($expectedAgain | ConvertTo-Json -Compress) 'fresh lifecycle spec was not deterministic'
     Assert-Equal $expected.SupervisorPath (Get-PowerShellFileArgument -Arguments $expected.ActionArguments) 'supported supervisor argv was not recognized'
+    Assert-Equal $expected.SupervisorPath (Get-PowerShellLifecycleSupervisorArgument -Arguments $expected.ActionArguments) 'canonical supervisor ownership argv was not recognized'
     Assert-Equal $null (Get-PowerShellFileArgument -Arguments ($expected.ActionArguments + ' --token ' + $secret)) 'extra potentially-secret supervisor argv was treated as safe'
+    Assert-Equal $null (Get-PowerShellLifecycleSupervisorArgument -Arguments ($expected.ActionArguments + ' --token ' + $secret)) 'extra supervisor argv established lifecycle ownership'
     Assert-True (Test-WindowsRunnerLifecycleSupervisorOwnership -ObservedSupervisorPath $expected.SupervisorPath -ExpectedSupervisorPath $expected.SupervisorPath) 'exact expected supervisor path did not establish lifecycle ownership'
 
     $differentSupervisorPath = Join-Path $tempRoot 'different supervisor.ps1'
@@ -132,10 +134,20 @@ try {
     $webCodexBackupPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $webCodexBackupTask -PrimaryInventory @($exactPrimary)
     Assert-False $webCodexBackupPlan.can_apply 'webcodex-named unrelated supervisor path established ownership'
 
-    $actionMismatch = New-TestTaskObservation -Expected $expected -ActionArguments '-NoProfile -File "C:\wrong\supervisor.ps1"'
+    $driftArguments = $expected.ActionArguments.Replace('-WindowStyle Hidden', '-WindowStyle Normal')
+    Assert-Equal $null (Get-PowerShellFileArgument -Arguments $driftArguments) 'noncanonical action drift was treated as safe for raw projection'
+    $driftSupervisor = Get-PowerShellLifecycleSupervisorArgument -Arguments $driftArguments
+    Assert-Equal $expected.SupervisorPath $driftSupervisor 'reconcilable action drift lost exact supervisor ownership'
+    $actionMismatch = New-TestTaskObservation -Expected $expected -ActionArguments '<unrecognized>'
+    $actionMismatch.SupervisorPath = $driftSupervisor
+    $actionMismatch.IsLifecycleLike = Test-WindowsRunnerLifecycleSupervisorOwnership -ObservedSupervisorPath $driftSupervisor -ExpectedSupervisorPath $expected.SupervisorPath
     $actionPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $actionMismatch -PrimaryInventory @($exactPrimary)
     Assert-Equal 'update' $actionPlan.task_operation 'action mismatch did not require update'
+    Assert-True $actionPlan.can_apply 'same-supervisor action drift was not safely reconcilable'
     Assert-HasMismatch $actionPlan.task_mismatches 'task_action_arguments' 'action mismatch was not reported'
+    $null = Assert-WindowsRunnerLifecycleEffectStillSafe -FreshPlan $actionPlan -ExpectedOperation 'update'
+    $null = Assert-Throws { Assert-WindowsRunnerLifecycleEffectStillSafe -FreshPlan $exactPlan -ExpectedOperation 'update' } 'changed before update effect'
+    $null = Assert-Throws { Assert-WindowsRunnerLifecycleEffectStillSafe -FreshPlan $differentSupervisorPlan -ExpectedOperation 'update' } 'changed before update effect'
 
     $executableMismatch = New-TestTaskObservation -Expected $expected -ActionExecutable 'C:\\unexpected\\powershell.exe'
     $executablePlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $executableMismatch -PrimaryInventory @($exactPrimary)
@@ -169,6 +181,8 @@ try {
     $runningDisabledPlan = Get-WindowsRunnerLifecyclePlan -ExpectedSpec $expected -CurrentTask $runningDisabledTask -PrimaryInventory @($exactPrimary)
     Assert-False $runningDisabledTask.Enabled 'running disabled fixture lost Settings.Enabled authority'
     Assert-Equal 'enable' $runningDisabledPlan.task_operation 'running task with Settings.Enabled=false did not require enable'
+    $null = Assert-WindowsRunnerLifecycleEffectStillSafe -FreshPlan $runningDisabledPlan -ExpectedOperation 'enable'
+    $null = Assert-Throws { Assert-WindowsRunnerLifecycleEffectStillSafe -FreshPlan $exactPlan -ExpectedOperation 'enable' } 'changed before enable effect'
 
     $readyEnabledTask = New-TestTaskObservation -Expected $expected -Enabled $true -State 'Ready'
     $readyEnabledStatus = New-WindowsRunnerLifecycleStatusProjection -ExpectedRunnerPath $expected.RunnerPath -TaskObservation $readyEnabledTask -PrimaryInventory @()

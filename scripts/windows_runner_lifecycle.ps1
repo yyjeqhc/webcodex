@@ -63,6 +63,45 @@ function Get-PowerShellFileArgument {
     return [string]$argv[8]
 }
 
+function Get-PowerShellLifecycleSupervisorArgument {
+    param([Parameter(Mandatory = $true)][string]$Arguments)
+
+    try {
+        $argv = @(ConvertFrom-WindowsCommandLine -CommandLine ('powershell.exe ' + $Arguments))
+    } catch {
+        return $null
+    }
+    if ($argv.Count -lt 3) { return $null }
+
+    $seen = @{}
+    for ($i = 1; $i -lt $argv.Count; $i++) {
+        $argument = [string]$argv[$i]
+        if ($argument -ieq '-File') {
+            if ($seen.ContainsKey('File') -or $i + 1 -ne $argv.Count - 1) { return $null }
+            $supervisor = [string]$argv[$i + 1]
+            if ([string]::IsNullOrWhiteSpace($supervisor)) { return $null }
+            return $supervisor
+        }
+        if ($argument -ieq '-NoProfile' -or $argument -ieq '-NonInteractive') {
+            $key = $argument.ToLowerInvariant()
+            if ($seen.ContainsKey($key)) { return $null }
+            $seen[$key] = $true
+            continue
+        }
+        if ($argument -ieq '-WindowStyle' -or $argument -ieq '-ExecutionPolicy') {
+            $key = $argument.ToLowerInvariant()
+            if ($seen.ContainsKey($key) -or $i + 1 -ge $argv.Count) { return $null }
+            $value = [string]$argv[$i + 1]
+            if ([string]::IsNullOrWhiteSpace($value) -or $value.StartsWith('-')) { return $null }
+            $seen[$key] = $true
+            $i++
+            continue
+        }
+        return $null
+    }
+    return $null
+}
+
 function Test-WindowsRunnerLifecycleSupervisorOwnership {
     param(
         [string]$ObservedSupervisorPath,
@@ -218,8 +257,9 @@ function Get-WindowsRunnerLifecycleTaskObservation {
     $execute = if ($action) { [string]$action.Execute } else { $null }
     $rawArguments = if ($action) { [string]$action.Arguments } else { $null }
     $working = if ($action) { [string]$action.WorkingDirectory } else { $null }
-    $supervisor = if ($rawArguments) { Get-PowerShellFileArgument -Arguments $rawArguments } else { $null }
-    $arguments = if ($supervisor) { $rawArguments } elseif ($rawArguments) { '<unrecognized>' } else { $null }
+    $safeSupervisor = if ($rawArguments) { Get-PowerShellFileArgument -Arguments $rawArguments } else { $null }
+    $supervisor = if ($rawArguments) { Get-PowerShellLifecycleSupervisorArgument -Arguments $rawArguments } else { $null }
+    $arguments = if ($safeSupervisor) { $rawArguments } elseif ($rawArguments) { '<unrecognized>' } else { $null }
     $isPowerShell = $false
     if ($execute) {
         $isPowerShell = ([System.IO.Path]::GetFileName($execute) -ieq 'powershell.exe')
@@ -458,6 +498,17 @@ function Assert-WindowsRunnerLifecycleSafeConvergence {
     if (-not [bool]$Plan.idempotent_noop) {
         throw 'Scheduled Task lifecycle apply did not converge to a safe idempotent lifecycle state'
     }
+}
+
+function Assert-WindowsRunnerLifecycleEffectStillSafe {
+    param(
+        [Parameter(Mandatory = $true)]$FreshPlan,
+        [Parameter(Mandatory = $true)][ValidateSet('update','enable')][string]$ExpectedOperation
+    )
+    if (-not [bool]$FreshPlan.can_apply -or [string]$FreshPlan.task_operation -ne $ExpectedOperation) {
+        throw "Scheduled Task lifecycle changed before $ExpectedOperation effect; refusing stale mutation"
+    }
+    return $FreshPlan
 }
 
 function Test-WebCodexOpsRunnerSupport {

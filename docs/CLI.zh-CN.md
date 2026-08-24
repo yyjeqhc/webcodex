@@ -107,6 +107,7 @@ detached-process 行为。
 | --- | --- |
 | `webcodex ops status` | 汇总 runtime、工具、任务、agent 与项目 |
 | `webcodex ops agents` | 简洁的 agent 队列状态 |
+| `webcodex ops runner --client-id <id>` | 精确读取单个 Runner 的注册与构建状态 |
 | `webcodex ops projects` | 项目清单与 smoke 适用性 |
 | `webcodex ops smoke-preflight --project <id>` | 为某项目做 deploy smoke 预检 |
 

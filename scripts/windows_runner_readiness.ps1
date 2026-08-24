@@ -86,7 +86,7 @@ function Get-RunnerControlPlaneObservation {
     try {
         $response = ($raw -join "`n") | ConvertFrom-Json -ErrorAction Stop
     } catch {
-        throw "Control-plane Runner observation returned invalid JSON"
+        throw "Control-plane Runner observation returned invalid JSON; WebCodexCliPath must point to a CLI that supports 'ops runner'"
     }
     if ($exitCode -ne 0) {
         $reason = @($response.blocking_reasons | Select-Object -First 1)

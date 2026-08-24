@@ -116,6 +116,7 @@ keep their detached-process behavior when `--scope` is omitted.
 | --- | --- |
 | `webcodex ops status` | Summarize runtime, tools, jobs, agents, and projects |
 | `webcodex ops agents` | Compact agent fleet status |
+| `webcodex ops runner --client-id <id>` | Exact read-only Runner registration/build status |
 | `webcodex ops projects` | Project inventory and smoke suitability |
 | `webcodex ops smoke-preflight --project <id>` | Preflight one project for a deploy smoke |
 

@@ -4,6 +4,8 @@
 //! Browser console project the same structured readiness facts; none parse
 //! human-formatted output to decide whether coding is ready.
 
+#[path = "project_entry_client_handoff.rs"]
+mod client_handoff_service;
 #[path = "project_entry_cloudflared.rs"]
 mod cloudflared_service;
 #[path = "project_entry_setup.rs"]
@@ -206,7 +208,7 @@ pub(crate) fn parse_options(
 pub(crate) fn usage() -> &'static str {
     "Usage: webcodex share [--root PATH] [--profile NAME] [--state-dir PATH]\n\
                      [--tunnel cloudflare|none] [--auth bearer|oauth]\n\
-                     [--oauth-redirect-uri URL] [--public-url URL]\n\
+                     [--oauth-redirect-uri URL] [--public-url URL] [--no-copy-url]\n\
        webcodex status [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
        webcodex doctor [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
        webcodex setup [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
@@ -214,8 +216,9 @@ pub(crate) fn usage() -> &'static str {
                               [--console-assets-dir ABSOLUTE_PATH]\n\n\
 `share` is the first-run path for ChatGPT/remote MCP: it performs project setup,\n\
 starts the local Server + Runner, and exposes a temporary credential. The default\n\
-Cloudflare Quick Tunnel requires `cloudflared` on PATH. `setup`, `doctor`, and\n\
-`run` remain the local/manual workflow; setup writes private state without\n\
+Cloudflare Quick Tunnel reuses or auto-manages a verified `cloudflared`. Public\n\
+share best-effort copies only the MCP URL; use `--no-copy-url` to disable that.\n\
+`setup`, `doctor`, and `run` remain the local/manual workflow; setup writes private state without\n\
 starting services. `run` is the explicit foreground local runtime step. Its optional\n\
 `--console-assets-dir` enables loopback-only development assets for that run.\n\
 `--auth oauth` adds project-bound OAuth while preserving that project grant.\n\

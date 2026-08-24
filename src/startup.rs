@@ -261,5 +261,6 @@ mod tests {
         assert_eq!(code, 0);
         assert!(stdout.contains("webcodex status"));
         assert!(stderr.is_empty());
+        assert!(project_entry::usage().contains("--no-copy-url"));
     }
 }

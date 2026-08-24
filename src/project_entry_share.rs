@@ -1,3 +1,7 @@
+use super::client_handoff_service::{
+    copy_mcp_url, maybe_spawn_chatgpt_open_prompt, mcp_url, render_clipboard_status,
+    ClipboardCopyOutcome,
+};
 use super::setup_service::{
     create_private_dir, generate_project_credential, read_private_value, read_project_credential,
     write_new_private, ProjectConfig, ProjectPaths,
@@ -42,6 +46,7 @@ pub(crate) struct ShareCommandOptions {
     pub(crate) auth: ShareAuth,
     pub(crate) oauth_redirect_uri: Option<String>,
     pub(crate) public_url: Option<String>,
+    pub(crate) copy_url: bool,
 }
 
 pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions, String> {
@@ -49,6 +54,7 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
     let mut auth = ShareAuth::Bearer;
     let mut oauth_redirect_uri = None;
     let mut public_url = None;
+    let mut copy_url = true;
     let mut project_args = Vec::new();
     let mut index = 0;
     while index < args.len() {
@@ -107,6 +113,7 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
                     return Err("--public-url may be specified only once".to_string());
                 }
             }
+            "--no-copy-url" => copy_url = false,
             flag => project_args.push(flag.to_string()),
         }
         index += 1;
@@ -133,6 +140,7 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
         auth,
         oauth_redirect_uri,
         public_url,
+        copy_url,
     })
 }
 
@@ -500,6 +508,20 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
     };
     println!("{ready}");
 
+    let remote_client_handoff =
+        options.tunnel == TunnelProvider::CloudflareQuick || externally_managed;
+    let clipboard_outcome = if remote_client_handoff {
+        copy_mcp_url(&mcp_url(&runtime.public_url), options.copy_url).await
+    } else {
+        ClipboardCopyOutcome::Disabled
+    };
+    if let Some(status) = render_clipboard_status(clipboard_outcome) {
+        println!("\n{status}");
+    }
+    let handoff_task = remote_client_handoff
+        .then(maybe_spawn_chatgpt_open_prompt)
+        .flatten();
+
     let outcome = if let Some(tunnel) = tunnel.as_mut() {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => Ok(()),
@@ -513,6 +535,10 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
         }
     };
 
+    if let Some(task) = handoff_task {
+        task.abort();
+        let _ = task.await;
+    }
     runtime.stop().await;
     if let Some(tunnel) = tunnel.as_mut() {
         tunnel.stop().await;
@@ -775,6 +801,7 @@ mod tests {
         assert_eq!(default.auth, ShareAuth::Bearer);
         assert!(default.oauth_redirect_uri.is_none());
         assert!(default.public_url.is_none());
+        assert!(default.copy_url);
         let explicit =
             parse_share_options(&["--tunnel".to_string(), "cloudflare".to_string()]).unwrap();
         assert_eq!(explicit.tunnel, TunnelProvider::CloudflareQuick);
@@ -799,6 +826,8 @@ mod tests {
             "https://client.example/callback".to_string(),
         ])
         .is_err());
+        let no_copy = parse_share_options(&["--no-copy-url".to_string()]).unwrap();
+        assert!(!no_copy.copy_url);
         let stable = parse_share_options(&[
             "--tunnel".to_string(),
             "none".to_string(),

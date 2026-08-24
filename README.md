@@ -29,11 +29,13 @@ configures the current Git project, starts a local WebCodex Server + Runner,
 creates a temporary Connector credential, and opens a Cloudflare Quick Tunnel.
 You do **not** need to run `setup`, `doctor`, or `run` first.
 
-When the command reports **WebCodex ready**, keep that terminal open and use the
-values it prints:
+When the command reports **WebCodex ready**, keep that terminal open. For a
+public share, WebCodex best-effort copies the **MCP URL** to the clipboard; the
+credential is never copied automatically. In an interactive terminal, press
+Enter to open ChatGPT App settings, then:
 
-1. In ChatGPT, enable **Developer Mode** and create a **custom app** using MCP.
-2. Paste the printed **MCP URL**.
+1. In ChatGPT, enable **Developer Mode** and go to **Settings -> Apps -> Create**.
+2. Paste the copied **MCP URL** (or copy the printed fallback URL).
 3. Choose **Access token / API key** or the equivalent Bearer-token option.
 4. Paste the printed temporary **Credential**.
 5. Run **Scan Tools**.
@@ -48,6 +50,7 @@ apps, and write/modify actions are controlled by the ChatGPT plan, workspace, an
 admin settings; WebCodex cannot widen client-side app permissions. The CLI output
 is the source of truth for the WebCodex URL, authentication type, and credential
 for that run.
+Use `webcodex share --no-copy-url` when clipboard access is undesirable.
 
 A default `share` URL and credential are temporary and stop working when the
 command exits. `webcodex share --tunnel none` is available for local-only MCP

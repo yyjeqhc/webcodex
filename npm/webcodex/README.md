@@ -30,14 +30,18 @@ tunnel dependency when needed, configures the project, starts a local Server +
 Runner, opens a temporary Cloudflare Quick Tunnel, and prints the MCP URL and
 temporary credential.
 
-When it says **WebCodex ready**:
+When it says **WebCodex ready**, public share best-effort copies the MCP URL but
+never the credential. In an interactive terminal, press Enter to open ChatGPT
+App settings. Then:
 
-1. In ChatGPT Developer Mode, create a custom MCP app.
-2. Paste the printed MCP URL.
+1. Enable Developer Mode and go to Settings -> Apps -> Create.
+2. Paste the copied MCP URL, or copy the printed fallback URL.
 3. Choose Access token / API key (Bearer token).
 4. Paste the printed Credential.
 5. Scan Tools.
 6. Try: `Inspect this repository and summarize its structure. Do not make changes.`
+
+Use `webcodex share --no-copy-url` to disable clipboard access.
 
 The default share is temporary and ends when the command exits. For local-only
 MCP debugging, `webcodex share --tunnel none` does not require `cloudflared`.
@@ -100,14 +104,17 @@ webcodex share
 然后配置项目、启动本地 Server + Runner、打开临时 Cloudflare Quick Tunnel，并输出 MCP URL
 与临时 credential。
 
-出现 **WebCodex ready** 后：
+出现 **WebCodex ready** 后，公网 share 会 best-effort 复制 MCP URL，但绝不会自动复制
+credential；交互式终端可以按 Enter 打开 ChatGPT App 设置。然后：
 
-1. 在 ChatGPT Developer Mode 创建 MCP custom app。
-2. 填入输出的 MCP URL。
+1. 开启 Developer Mode，进入 Settings -> Apps -> Create。
+2. 粘贴已复制的 MCP URL；失败时使用终端打印的 fallback URL。
 3. 认证选择 Access token / API key（Bearer token）。
 4. 填入输出的 Credential。
 5. Scan Tools。
 6. 第一条可先说：`检查这个仓库并总结它的结构。先不要做任何修改。`
+
+使用 `webcodex share --no-copy-url` 可以关闭剪贴板访问。
 
 默认 share 会在命令退出时结束。仅做本地 MCP 调试可用
 `webcodex share --tunnel none`，此时不需要 `cloudflared`。ChatGPT Developer Mode、custom

@@ -43,13 +43,17 @@ webcodex share
 
 ## 2. 在 ChatGPT 中添加 WebCodex
 
-终端出现 **WebCodex ready** 后，直接按 **What to do next** 中的值填写：
+终端出现 **WebCodex ready** 后，终端中打印的值仍然是 source of truth。公网 share 会
+best-effort 把 MCP URL 复制到剪贴板，但 credential 永远不会自动复制；交互式终端可按
+Enter 打开 ChatGPT App 设置。然后：
 
-1. 在 ChatGPT 开启 **Developer Mode**，创建基于 MCP 的 **custom app**。
-2. **MCP URL** 填输出的 `https://.../mcp`。
+1. 在 ChatGPT 开启 **Developer Mode**，进入 **Settings -> Apps -> Create**。
+2. 粘贴已复制的 **MCP URL**；复制失败时使用输出的 `https://.../mcp`。
 3. 默认 share 的认证选择 **Access token / API key**（Bearer token）。
 4. 粘贴输出的 **Credential (this share only)**。
 5. 点击 **Scan Tools**。
+
+如不希望访问剪贴板，使用 `webcodex share --no-copy-url`。
 
 Console 故意不显示 credential。以后即使打开 `/console`，认证值也应来自成功的 CLI 首次
 输出，而不是浏览器页面。ChatGPT Developer Mode、custom MCP app 与 write/modify action

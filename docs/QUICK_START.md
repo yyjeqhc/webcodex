@@ -48,14 +48,18 @@ binary, or use `--tunnel none` for local-only debugging.
 
 ## 2. Add WebCodex to ChatGPT
 
-When the terminal reports **WebCodex ready**, use the values printed under
-**What to do next**:
+When the terminal reports **WebCodex ready**, the printed values remain the
+source of truth. For a public share, WebCodex best-effort copies the MCP URL to
+the clipboard but never copies the credential automatically. In an interactive
+terminal, press Enter to open ChatGPT App settings. Then:
 
-1. In ChatGPT, enable **Developer Mode** and create a **custom app** using MCP.
-2. Set **MCP URL** to the printed `https://.../mcp` value.
+1. In ChatGPT, enable **Developer Mode** and go to **Settings -> Apps -> Create**.
+2. Paste the copied **MCP URL**, or use the printed `https://.../mcp` fallback.
 3. For the default share, choose **Access token / API key** (Bearer token).
 4. Paste the printed **Credential (this share only)**.
 5. Run **Scan Tools**.
+
+Use `webcodex share --no-copy-url` to suppress the clipboard attempt.
 
 The Console intentionally does not display that credential. If you later open
 `/console`, get connection credentials from the successful CLI output, not from

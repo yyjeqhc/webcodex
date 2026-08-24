@@ -1,6 +1,45 @@
 use super::support::*;
 
 #[test]
+fn bare_interactive_repo_defaults_to_share_only_on_supported_desktop_unix() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    let nested = repo.join("src/nested");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::create_dir_all(&nested).unwrap();
+
+    assert_eq!(
+        first_run_default_args(Vec::new(), Some(&nested), "linux", true),
+        vec!["share".to_string()]
+    );
+    assert_eq!(
+        first_run_default_args(Vec::new(), Some(&nested), "macos", true),
+        vec!["share".to_string()]
+    );
+    assert!(first_run_default_args(Vec::new(), Some(&nested), "windows", true).is_empty());
+    assert!(first_run_default_args(Vec::new(), Some(&nested), "linux", false).is_empty());
+    assert!(first_run_default_args(Vec::new(), Some(temp.path()), "linux", true).is_empty());
+
+    let explicit = vec!["--help".to_string()];
+    assert_eq!(
+        first_run_default_args(explicit.clone(), Some(&nested), "linux", true),
+        explicit
+    );
+}
+
+#[test]
+fn bare_interactive_linked_worktree_marker_also_defaults_to_share() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("worktree");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join(".git"), "gitdir: /tmp/example\n").unwrap();
+    assert_eq!(
+        first_run_default_args(Vec::new(), Some(&repo), "linux", true),
+        vec!["share".to_string()]
+    );
+}
+
+#[test]
 fn cli_help_and_version_exit_before_dispatch() {
     match cli_action(["--help"]) {
         CliAction::Exit { code, stdout, .. } => {
@@ -90,7 +129,7 @@ fn common_help_entrypoints_smoke() {
         (
             &["--help"],
             &[
-                "Usage: webcodex <COMMAND>",
+                "Usage: webcodex [COMMAND]",
                 "Start here:",
                 "share",
                 "connect",
@@ -131,7 +170,8 @@ fn top_level_help_prioritizes_first_run_without_hiding_advanced_commands() {
     let connect = out.find("\nconnect").unwrap();
     let operator = out.find("Operator / service management:").unwrap();
     assert!(start_here < share && share < connect && connect < operator);
-    assert!(out.contains("cloudflared"));
+    assert!(out.contains("(no command)"));
+    assert!(out.contains("run `webcodex` inside a Git repo"));
     assert!(out.contains("Windows -> use `webcodex connect <server-url>`"));
     assert!(out.contains("historical `agent` namespace"));
     assert!(out.contains("agent-tokens create|"));

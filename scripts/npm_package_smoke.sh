@@ -136,6 +136,16 @@ if find "$UNPACK/package" -type f \( -name '.env' -o -name '*token*' -o -name 'w
     exit 1
 fi
 
+echo "[npm-smoke] proving one-shot npx lazy bootstrap from the packed tarball"
+NPX_CACHE="$TMP/npx-cache"
+WEBCODEX_BINARY_DIR="$BIN_DIR" npm_config_cache="$NPX_CACHE" npm_config_ignore_scripts=true \
+    npx --yes --package "$TARBALL" webcodex --version >/dev/null
+NPX_PACKAGE_DIR="$(find "$NPX_CACHE/_npx" -path '*/node_modules/@yyjeqhc/webcodex' -type d -print -quit)"
+test -n "$NPX_PACKAGE_DIR"
+for name in webcodex webcodex-server webcodex-runner; do
+    test -x "$NPX_PACKAGE_DIR/vendor/bin/$name"
+done
+
 echo "[npm-smoke] installing tarball into temporary prefix without host lifecycle policy"
 npm install --global --prefix "$PREFIX" --ignore-scripts --no-audit --no-fund "$TARBALL"
 INSTALLED_PACKAGE="$PREFIX/lib/node_modules/@yyjeqhc/webcodex"

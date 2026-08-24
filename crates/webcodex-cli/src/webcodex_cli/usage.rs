@@ -1,7 +1,8 @@
 pub(crate) fn usage() -> &'static str {
-    "Usage: webcodex <COMMAND>\n\n\
+    "Usage: webcodex [COMMAND]\n\n\
 Unified command-line interface for WebCodex.\n\n\
 Start here:\n\
+  (no command)                  Interactive Git repo shortcut for `share` on Linux/macOS\n\
   share                         Share the current project for ChatGPT/MCP over HTTPS (Linux/macOS)\n\
   connect                       Connect the current project to an existing Server\n\
   status                        Show concise project coding readiness\n\
@@ -34,7 +35,7 @@ Advanced / compatibility:\n\
 Options:\n\
   -h, --help                    Print help and exit\n\
   -V, --version                 Print version and exit\n\n\
-First ChatGPT connection: Linux/macOS -> install `cloudflared` and run `webcodex share`; Windows -> use `webcodex connect <server-url>` with a remote Linux Server.\n"
+First ChatGPT connection: Linux/macOS -> run `webcodex` inside a Git repo (or explicit `webcodex share`); Windows -> use `webcodex connect <server-url>` with a remote Linux Server.\n"
 }
 
 pub(crate) fn connect_usage() -> &'static str {

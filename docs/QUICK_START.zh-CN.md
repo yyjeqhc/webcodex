@@ -3,7 +3,8 @@
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
 本指南用尽可能少的概念，把一个本地 Git 仓库通过 MCP 接入 ChatGPT。在 Linux/macOS
-上，普通第一次使用的主命令是 `webcodex share`。Windows 不支持 `share` 所需的本地
+的交互式 Git checkout 中，裸 `webcodex` 是最短 first-run 入口，并会进入正常的
+`webcodex share` 工作流。Windows 不支持 `share` 所需的本地
 Server runtime；Windows 用户需要已有的远程 Linux Server，并改用
 `webcodex connect <server-url>`。如果还没有 Server，请先看[部署指南](DEPLOYMENT.zh-CN.md)。
 
@@ -14,24 +15,41 @@ Server runtime；Windows 用户需要已有的远程 Linux Server，并改用
 - Linux/macOS 默认临时公网 HTTPS 分享不再要求单独安装 `cloudflared`。WebCodex 会优先
   复用显式指定或 `PATH` 中的 binary；没有时自动下载固定版本并校验后使用。
 
-安装 WebCodex：
+不全局安装也可以直接试用：
+
+```bash
+cd /path/to/your/repository
+npx --yes @yyjeqhc/webcodex
+```
+
+也可以先全局安装一次：
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
 
-在 Linux/macOS 上只做本地 MCP 调试时，`webcodex share --tunnel none` 不需要
+npm wrapper 在第一次执行时可以 lazy bootstrap 经过校验的 native binary，因此 npx 路径
+不依赖 npm 是否保留 postinstall 产生的文件。在 Linux/macOS 上只做本地 MCP 调试时，
+`webcodex share --tunnel none` 不需要
 `cloudflared`。
 
 ## 1. 分享当前仓库
 
+前面的 `npx --yes @yyjeqhc/webcodex` 已经会直接进入这条 first-run 路径。如果选择了
+全局安装，再运行：
+
 ```bash
 cd /path/to/your/repository
-webcodex share
+webcodex
+# 显式/脚本友好的等价入口：
+# webcodex share
 ```
 
-这一条命令会完成项目设置、启动本地 Server + Runner、创建临时 Connector credential、
-打开 Cloudflare Quick Tunnel，并等待 MCP endpoint 可用。除非你明确需要后文的手动/本地
+裸 `webcodex` 只会在 Linux/macOS + 交互式终端 + Git checkout 中这样自动分发；脚本、
+非交互调用和 repo 外目录仍显示普通 CLI help。需要确定性行为时继续显式使用 `share`。
+
+这一条 first-run 路径会完成项目设置、启动本地 Server + Runner、创建临时 Connector
+credential、打开 Cloudflare Quick Tunnel，并等待 MCP endpoint 可用。除非你明确需要后文的手动/本地
 工作流，否则不要先跑 `setup`、`doctor` 或 `run`。
 
 默认 share 是临时的。保持终端运行；Ctrl-C 会停止本地 runtime 与 tunnel，同时使 URL 和

@@ -20,8 +20,9 @@ The CLI produces three binaries when built from source:
 `webcodex --help` lists the top-level namespaces. The sections below explain
 what each namespace is for.
 
-For a first ChatGPT connection on Linux/macOS, the normal entry is simply
-`webcodex share` in the repository. It performs project setup, starts the local
+For a first ChatGPT connection on Linux/macOS, running bare `webcodex` in an
+interactive Git checkout is a convenience shortcut for `webcodex share`. The
+explicit `share` command remains the deterministic/script-friendly entry. It performs project setup, starts the local
 Server and Runner, and exposes a temporary HTTPS MCP endpoint. For the default
 Quick Tunnel, WebCodex prefers `WEBCODEX_CLOUDFLARED_BIN`, then `cloudflared` on
 `PATH`, and otherwise acquires a pinned, verified managed copy before creating
@@ -36,6 +37,7 @@ These commands work on the current Git project.
 
 | Command | Purpose | Notes |
 | --- | --- | --- |
+| `webcodex` (no command) | Fast interactive first-run shortcut | Only auto-dispatches to `share` on Linux/macOS when stdin/stdout are terminals and the current directory is inside a Git checkout; otherwise normal help is shown. |
 | `webcodex share` | Share the current project for ChatGPT/MCP over HTTPS | Linux/macOS first-run path; includes setup, starts the local Server + Runner, auto-manages verified `cloudflared` when needed, and best-effort copies the public MCP URL. Unavailable on Windows. |
 | `webcodex connect <server>` | Connect the current project to an existing Server | Long-lived path when you already have a Server URL; defaults to hosted shared-key. |
 | `webcodex status` | Concise project coding readiness | Short summary; `doctor` is the full diagnostic check. |

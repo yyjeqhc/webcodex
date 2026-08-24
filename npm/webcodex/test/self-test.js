@@ -610,6 +610,41 @@ async function main() {
     // arguments, and propagate the exit code. On Windows the fixture is
     // node.exe — a real PE image — with a `-e` script that echoes the
     // forwarded arguments and exits 23; on Unix it is the sh fixture.
+    const bootstrapRoot = path.join(tmp, "wrapper-bootstrap");
+    fs.mkdirSync(bootstrapRoot, { recursive: true });
+    const bootstrapMarker = path.join(bootstrapRoot, "bootstrap-marker");
+    fs.writeFileSync(
+      path.join(bootstrapRoot, "install.js"),
+      `require("fs").writeFileSync(${JSON.stringify(bootstrapMarker)}, "ok");\n`
+    );
+    assert.strictEqual(wrapper.bootstrapNative({ packageRoot: bootstrapRoot }), true);
+    assert.strictEqual(fs.readFileSync(bootstrapMarker, "utf8"), "ok");
+
+    if (PLATFORM !== "win32") {
+      const lazyRoot = path.join(tmp, "wrapper-lazy");
+      fs.mkdirSync(lazyRoot, { recursive: true });
+      const lazyTarget = wrapper.nativePath({ packageRoot: lazyRoot, platform: PLATFORM });
+      fs.writeFileSync(
+        path.join(lazyRoot, "install.js"),
+        [
+          'const fs = require("fs");',
+          'const path = require("path");',
+          `const target = ${JSON.stringify(lazyTarget)};`,
+          'fs.mkdirSync(path.dirname(target), { recursive: true });',
+          'fs.writeFileSync(target, "#!/bin/sh\\nprintf \'%s\\n\' \\\"$1\\\"\\nexit 23\\n", { mode: 0o755 });',
+          ''
+        ].join("\n")
+      );
+      const lazyProbe = childProcess.spawnSync(
+        process.execPath,
+        [path.join(__dirname, "wrapper-lazy-probe.js"), lazyRoot, "lazy-argument"],
+        { encoding: "utf8" }
+      );
+      assert.strictEqual(lazyProbe.status, 23, lazyProbe.stderr);
+      assert.strictEqual(lazyProbe.stdout.trim(), "lazy-argument");
+      assert.ok(fs.existsSync(lazyTarget));
+    }
+
     let wrapperTarget;
     let wrapperArgs;
     if (PLATFORM === "win32") {

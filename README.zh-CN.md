@@ -11,17 +11,29 @@ Runner 在仓库所在机器上执行文件、Git、命令与测试操作；仓�
 Windows 版本支持 CLI + Runner 连接远程 Linux Server；Windows 上请使用
 `webcodex connect <server-url>`。如果还没有 Server，需要先在 Linux 上部署一个。
 
-默认临时公网分享会优先复用 `WEBCODEX_CLOUDFLARED_BIN` 或 `PATH` 中已有的
-`cloudflared`；如果没有，在支持的 Linux/macOS 平台上 WebCodex 会自动下载并校验自己管理的
-副本。然后执行：
+Linux/macOS 最快的试用路径不需要全局安装：
+
+```bash
+cd /path/to/your/repository
+npx --yes @yyjeqhc/webcodex
+```
+
+如果 npm lifecycle 没有留下 native binary，wrapper 会在第一次执行时用同一套校验与原子安装
+逻辑 lazy bootstrap。希望长期保留 CLI 时再全局安装：
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 cd /path/to/your/repository
-webcodex share
+webcodex
 ```
 
-`share` 是完整入口：需要时它会先准备 tunnel 依赖，然后配置当前 Git 项目、启动本地
+在 Linux/macOS 的交互式 Git 仓库中，裸 `webcodex` 等价于普通 first-run 的
+`webcodex share`。脚本/非交互调用、Windows、以及 Git checkout 之外不会自动启动 runtime；
+需要确定性分发时继续显式使用 `webcodex share`。
+
+默认临时公网分享会优先复用 `WEBCODEX_CLOUDFLARED_BIN` 或 `PATH` 中已有的
+`cloudflared`；如果没有，WebCodex 会自动下载并校验自己管理的副本。`share` 是完整入口：
+需要时它会先准备 tunnel 依赖，然后配置当前 Git 项目、启动本地
 WebCodex Server + Runner、创建临时 Connector credential，并打开 Cloudflare Quick Tunnel。
 第一次使用**不需要**先运行 `setup`、`doctor` 或 `run`。
 

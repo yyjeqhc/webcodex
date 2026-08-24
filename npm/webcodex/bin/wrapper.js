@@ -19,9 +19,45 @@ function nativePath(options = {}) {
   return pathApi.join(root, "vendor", "bin", exeName("webcodex", platform));
 }
 
+function bootstrapNative(options = {}) {
+  const root = options.packageRoot || packageRoot();
+  const installScript = options.installScript || path.join(root, "install.js");
+  if (!fs.existsSync(installScript)) {
+    console.error("WebCodex installation is incomplete: install.js is missing. Reinstall the npm package.");
+    return false;
+  }
+  const result = childProcess.spawnSync(process.execPath, [installScript], {
+    cwd: root,
+    env: process.env,
+    stdio: "inherit",
+    windowsHide: false,
+    shell: false
+  });
+  if (result.error) {
+    console.error(`Failed to bootstrap the native WebCodex binaries: ${result.error.message}`);
+    return false;
+  }
+  if (result.signal) {
+    console.error(`WebCodex native bootstrap was terminated by ${result.signal}.`);
+    return false;
+  }
+  return result.status === 0;
+}
+
 function runNative(options = {}) {
+  const customTarget = Boolean(options.target);
   const target = options.target || nativePath(options);
   const argv = options.argv || process.argv.slice(2);
+  if (!fs.existsSync(target) && !customTarget) {
+    bootstrapNative(options);
+    // A concurrent first launch may have completed the same atomic install even
+    // if this process's bootstrap attempt lost the final rename race.
+    if (!fs.existsSync(target)) {
+      console.error("WebCodex installation is incomplete: the native webcodex binary is still missing after bootstrap.");
+      process.exitCode = 127;
+      return null;
+    }
+  }
   if (!fs.existsSync(target)) {
     console.error("WebCodex installation is incomplete: the native webcodex binary is missing. Reinstall the npm package.");
     process.exitCode = 127;
@@ -61,4 +97,4 @@ function runNative(options = {}) {
   return child;
 }
 
-module.exports = { exeName, nativePath, runNative };
+module.exports = { bootstrapNative, exeName, nativePath, runNative };

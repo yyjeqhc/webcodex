@@ -16,8 +16,8 @@
 //! execution remains in the separate `webcodex-server` and `webcodex-runner`
 //! binaries.
 
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{IsTerminal, Write};
+use std::path::{Path, PathBuf};
 
 mod webcodex_cli;
 
@@ -294,6 +294,29 @@ struct AgentStatusOptions {
     user_token_file: Option<PathBuf>,
     agent_token_file: Option<PathBuf>,
     json: bool,
+}
+
+fn first_run_default_args(
+    args: Vec<String>,
+    cwd: Option<&Path>,
+    platform: &str,
+    interactive: bool,
+) -> Vec<String> {
+    if !args.is_empty()
+        || !interactive
+        || !matches!(platform, "linux" | "macos")
+        || !cwd.is_some_and(path_is_inside_git_checkout)
+    {
+        return args;
+    }
+    vec!["share".to_string()]
+}
+
+fn path_is_inside_git_checkout(path: &Path) -> bool {
+    path.ancestors().any(|ancestor| {
+        let marker = ancestor.join(".git");
+        marker.is_dir() || marker.is_file()
+    })
 }
 
 fn cli_action<I, S>(args: I) -> CliAction
@@ -2413,7 +2436,10 @@ fn windows_unsupported_platform_action(args: &[String]) -> Option<&'static str> 
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let cwd = std::env::current_dir().ok();
+    let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let args = first_run_default_args(raw_args, cwd.as_deref(), std::env::consts::OS, interactive);
     #[cfg(windows)]
     if let Some(message) = windows_unsupported_platform_action(&args) {
         eprintln!("{message}");

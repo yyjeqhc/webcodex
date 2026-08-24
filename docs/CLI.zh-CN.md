@@ -16,8 +16,9 @@ Server API 完成。
 
 `webcodex --help` 会列出顶层命名空间。下面按命名空间说明各自的用途。
 
-在 Linux/macOS 上第一次连接 ChatGPT 时，普通用户通常只需要在仓库中运行
-`webcodex share`。它会完成项目设置、启动本地 Server 与 Runner，并暴露临时 HTTPS
+在 Linux/macOS 上第一次连接 ChatGPT 时，交互式 Git checkout 中运行裸 `webcodex`
+就是 `webcodex share` 的 convenience shortcut；显式 `share` 仍然是脚本/确定性分发入口。
+它会完成项目设置、启动本地 Server 与 Runner，并暴露临时 HTTPS
 MCP endpoint。默认 Quick Tunnel 会依次优先使用 `WEBCODEX_CLOUDFLARED_BIN`、`PATH`
 中的 `cloudflared`；两者都没有时，会在创建项目/share 状态之前自动获取固定版本、完成
 校验并使用 WebCodex 管理的副本。Windows 不支持这条本地 Server/share 路径，请改用
@@ -31,6 +32,7 @@ MCP endpoint。默认 Quick Tunnel 会依次优先使用 `WEBCODEX_CLOUDFLARED_B
 
 | 命令 | 用途 | 说明 |
 | --- | --- | --- |
+| `webcodex`（无子命令） | 快速交互式 first-run shortcut | 仅 Linux/macOS + stdin/stdout 为终端 + 当前目录位于 Git checkout 时自动进入 `share`；否则照常显示 help。 |
 | `webcodex share` | 通过 HTTPS 把当前项目接入 ChatGPT/MCP | Linux/macOS 首次使用主路径；包含 setup、启动本地 Server + Runner、按需自动管理经过校验的 `cloudflared`，并 best-effort 复制公网 MCP URL。Windows 不可用。 |
 | `webcodex connect <server>` | 把当前项目接入已有的 Server | 已经拥有 Server URL 时的长期路径；默认使用 hosted shared-key。 |
 | `webcodex status` | 简洁的项目 coding 就绪状态 | 简短状态；`doctor` 提供完整诊断。 |

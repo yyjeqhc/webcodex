@@ -3,9 +3,11 @@
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
 This guide gets one local Git repository into ChatGPT through MCP with the fewest
-concepts possible. On Linux/macOS the normal first-run command is `webcodex share`.
-Windows does not support the local Server runtime used by `share`; Windows users
-need an existing remote Linux Server and should use `webcodex connect <server-url>`
+concepts possible. On Linux/macOS, bare `webcodex` in an interactive Git checkout
+is the shortest first-run entry and dispatches to the normal `webcodex share`
+workflow. Windows does not support the local Server runtime used by `share`;
+Windows users need an existing remote Linux Server and should use
+`webcodex connect <server-url>`
 instead. If no Server exists yet, see [Deployment](DEPLOYMENT.md).
 
 ## Prerequisites
@@ -16,24 +18,43 @@ instead. If no Server exists yet, see [Deployment](DEPLOYMENT.md).
   temporary public share. WebCodex reuses an explicit/PATH binary or downloads a
   pinned, verified managed copy when needed.
 
-Install WebCodex:
+For a one-shot trial without a global install:
+
+```bash
+cd /path/to/your/repository
+npx --yes @yyjeqhc/webcodex
+```
+
+Or install the CLI once:
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
 
+The npm wrapper can lazily bootstrap the verified native binaries on first
+execution, so the npx path does not depend on npm preserving postinstall output.
 On Linux/macOS, local MCP debugging with `webcodex share --tunnel none` does not
 need `cloudflared`.
 
 ## 1. Share the repository
 
+The `npx --yes @yyjeqhc/webcodex` command above already enters this first-run
+path. If you installed the CLI globally instead, run:
+
 ```bash
 cd /path/to/your/repository
-webcodex share
+webcodex
+# explicit/script-friendly equivalent:
+# webcodex share
 ```
 
-That single command performs the project setup, starts the local Server + Runner,
-creates a temporary Connector credential, opens a Cloudflare Quick Tunnel, and
+Bare `webcodex` only auto-dispatches this way for an interactive Linux/macOS
+terminal inside a Git checkout. Non-interactive invocations and non-repository
+directories still show the normal CLI help. The explicit `share` command remains
+the deterministic entry for scripts.
+
+That single first-run path performs the project setup, starts the local Server +
+Runner, creates a temporary Connector credential, opens a Cloudflare Quick Tunnel, and
 waits for the MCP endpoint to become usable. Do not run `setup`, `doctor`, or
 `run` first unless you specifically want the manual/local workflow described
 later.

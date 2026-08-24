@@ -19,11 +19,25 @@ against a remote Linux Server. The `share` steps below apply to Linux/macOS.
 For the default public flow, WebCodex reuses `WEBCODEX_CLOUDFLARED_BIN` or a
 `cloudflared` on `PATH`, and otherwise downloads a pinned, verified managed copy.
 
+Try it without a global install:
+
+```bash
+cd /path/to/your/repository
+npx --yes @yyjeqhc/webcodex
+```
+
+Or install it once and use the same bare first-run entry:
+
 ```bash
 npm install -g @yyjeqhc/webcodex
 cd /path/to/your/repository
-webcodex share
+webcodex
 ```
+
+If npm/npx did not retain postinstall output, the wrapper lazily runs the same
+verified native installer before launching. Bare `webcodex` auto-dispatches to
+`share` only in an interactive Linux/macOS Git checkout; use explicit
+`webcodex share` for scripts or deterministic dispatch.
 
 You do not need to run `setup`, `doctor`, or `run` first. `share` prepares the
 tunnel dependency when needed, configures the project, starts a local Server +
@@ -94,11 +108,24 @@ wrapper 需要 Node.js 18 或更新版本。本版本的 Windows 是 CLI + Runne
 Linux/macOS。默认公网流程会优先复用 `WEBCODEX_CLOUDFLARED_BIN` 或 `PATH` 中已有的
 `cloudflared`，否则自动下载固定版本、校验后由 WebCodex 管理。
 
+无需全局安装即可试用：
+
+```bash
+cd /path/to/your/repository
+npx --yes @yyjeqhc/webcodex
+```
+
+也可以全局安装后使用同样的裸 first-run 入口：
+
 ```bash
 npm install -g @yyjeqhc/webcodex
 cd /path/to/your/repository
-webcodex share
+webcodex
 ```
+
+如果 npm/npx 没有保留 postinstall 输出，wrapper 会在启动前 lazy 执行同一套经过校验的
+native installer。裸 `webcodex` 只在 Linux/macOS 的交互式 Git checkout 中自动进入
+`share`；脚本或需要确定性分发时继续显式使用 `webcodex share`。
 
 第一次不需要先执行 `setup`、`doctor` 或 `run`。`share` 会在需要时先准备 tunnel 依赖，
 然后配置项目、启动本地 Server + Runner、打开临时 Cloudflare Quick Tunnel，并输出 MCP URL

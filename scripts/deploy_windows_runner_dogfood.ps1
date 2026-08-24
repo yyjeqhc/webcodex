@@ -27,6 +27,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "windows_runner_process_identity.ps1")
 
 function Get-RunnerIdentity {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -43,19 +44,6 @@ function Get-RunnerIdentity {
         throw "Runner version probe returned an unexpected identity for $Path"
     }
     return $identity
-}
-
-function Get-ExactRunnerProcesses {
-    param([Parameter(Mandatory = $true)][string]$ExactPath)
-
-    $normalized = [System.IO.Path]::GetFullPath($ExactPath)
-    return @(Get-Process -Name "webcodex-runner" -ErrorAction SilentlyContinue | Where-Object {
-        try {
-            $_.Path -and ([System.IO.Path]::GetFullPath($_.Path) -ieq $normalized)
-        } catch {
-            $false
-        }
-    })
 }
 
 function Wait-Until {
@@ -94,6 +82,7 @@ if (-not (Test-Path -LiteralPath $RunnerPath -PathType Leaf)) {
     throw "Existing Runner is required so deployment has a concrete rollback binary: $RunnerPath"
 }
 $previousIdentity = Get-RunnerIdentity -Path $RunnerPath
+$oldPrimary = Get-ExactlyOnePrimaryRunner -ExactPath $RunnerPath
 
 # Copy first so the source may be a build directory, network path, or even the
 # current RunnerPath. The staged image is fully verified before the old process
@@ -115,11 +104,9 @@ try {
     # replacement after we intentionally terminate the old Runner.
     Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Out-Null
 
-    foreach ($process in Get-ExactRunnerProcesses -ExactPath $RunnerPath) {
-        Stop-Process -Id $process.Id -Force -ErrorAction Stop
-    }
-    Wait-Until -TimeoutSecs $StopTimeoutSecs -FailureMessage "Old Runner process did not exit before replacement" -Condition {
-        (Get-ExactRunnerProcesses -ExactPath $RunnerPath).Count -eq 0
+    Stop-CapturedPrimaryRunner -Identity $oldPrimary
+    Wait-Until -TimeoutSecs $StopTimeoutSecs -FailureMessage "Old Runner process identity did not exit before replacement" -Condition {
+        -not (Test-CapturedProcessIdentityLive -Identity $oldPrimary)
     }
     Wait-Until -TimeoutSecs $StopTimeoutSecs -FailureMessage "Scheduled Task wrapper did not stop before replacement" -Condition {
         (Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath).State -ne "Running"
@@ -145,14 +132,21 @@ try {
 
     Enable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Out-Null
     Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
-    Wait-Until -TimeoutSecs $StartTimeoutSecs -FailureMessage "New Runner process did not start" -Condition {
-        (Get-ExactRunnerProcesses -ExactPath $RunnerPath).Count -eq 1
+    $newPrimary = $null
+    Wait-Until -TimeoutSecs $StartTimeoutSecs -FailureMessage "New primary Runner process did not start" -Condition {
+        $matches = @(Get-PrimaryRunnerProcesses -ExactPath $RunnerPath)
+        if ($matches.Count -eq 1) {
+            $script:newPrimary = $matches[0]
+            return $true
+        }
+        return $false
     }
 
     # Catch immediate startup failures before declaring the local handoff good.
     Start-Sleep -Seconds 3
-    if ((Get-ExactRunnerProcesses -ExactPath $RunnerPath).Count -ne 1) {
-        throw "New Runner did not remain alive after startup"
+    $null = Assert-CapturedPrimaryRunnerIdentity -Identity $newPrimary
+    if ((Get-PrimaryRunnerProcesses -ExactPath $RunnerPath).Count -ne 1) {
+        throw "New Runner did not remain the exactly-one primary Runner after startup"
     }
 
     # Successful handoff: remove stale per-deployment staging images but retain
@@ -173,11 +167,17 @@ try {
 
     try {
         Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue | Out-Null
-        foreach ($process in Get-ExactRunnerProcesses -ExactPath $RunnerPath) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        $rollbackStopTarget = $null
+        $rollbackMatches = @(Get-PrimaryRunnerProcesses -ExactPath $RunnerPath)
+        if ($rollbackMatches.Count -gt 1) {
+            throw "Multiple primary Runners found during rollback: $($rollbackMatches.Count)"
         }
-        Wait-Until -TimeoutSecs $StopTimeoutSecs -FailureMessage "Runner did not stop during rollback" -Condition {
-            (Get-ExactRunnerProcesses -ExactPath $RunnerPath).Count -eq 0
+        if ($rollbackMatches.Count -eq 1) {
+            $rollbackStopTarget = $rollbackMatches[0]
+            Stop-CapturedPrimaryRunner -Identity $rollbackStopTarget
+            Wait-Until -TimeoutSecs $StopTimeoutSecs -FailureMessage "Runner identity did not stop during rollback" -Condition {
+                -not (Test-CapturedProcessIdentityLive -Identity $rollbackStopTarget)
+            }
         }
 
         if ($rollbackAvailable -and (Test-Path -LiteralPath $rollbackPath -PathType Leaf)) {
@@ -192,8 +192,8 @@ try {
         Enable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue | Out-Null
         if (Test-Path -LiteralPath $RunnerPath -PathType Leaf) {
             Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
-            Wait-Until -TimeoutSecs $StartTimeoutSecs -FailureMessage "Rollback Runner did not restart" -Condition {
-                (Get-ExactRunnerProcesses -ExactPath $RunnerPath).Count -eq 1
+            Wait-Until -TimeoutSecs $StartTimeoutSecs -FailureMessage "Rollback primary Runner did not restart" -Condition {
+                (Get-PrimaryRunnerProcesses -ExactPath $RunnerPath).Count -eq 1
             }
         }
     } catch {

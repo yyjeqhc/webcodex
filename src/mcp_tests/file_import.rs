@@ -15,7 +15,9 @@ impl McpImportStartupEnvGuard {
             "WEBCODEX_OAUTH2_ENABLED",
             "WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS",
         ];
-        let env_lock = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let env_lock = crate::admin_cli::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous = NAMES
             .iter()
             .map(|name| (*name, std::env::var_os(name)))

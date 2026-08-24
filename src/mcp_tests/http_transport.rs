@@ -188,6 +188,43 @@ fn stateless_tool_output(body: &Value) -> &Value {
     &body["result"]["structuredContent"]["output"]
 }
 
+fn full_trace_dir_with_payload(
+    root: &std::path::Path,
+    phase: &str,
+    expected: &Value,
+) -> std::path::PathBuf {
+    for entry in std::fs::read_dir(root).unwrap().flatten() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(events) = std::fs::read_to_string(path.join("events.jsonl")) else {
+            continue;
+        };
+        for event in events
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        {
+            if event["event"] != "tool_trace_payload_captured" || event["phase"] != phase {
+                continue;
+            }
+            let Some(relative) = event["payload_path"].as_str() else {
+                continue;
+            };
+            let Ok(compressed) = std::fs::read(path.join(relative)) else {
+                continue;
+            };
+            let Ok(raw) = zstd::stream::decode_all(compressed.as_slice()) else {
+                continue;
+            };
+            if serde_json::from_slice::<Value>(&raw).ok().as_ref() == Some(expected) {
+                return path;
+            }
+        }
+    }
+    panic!("missing full-trace payload phase {phase} matching this request");
+}
+
 async fn start_stateless_observation_session(
     service: &Service,
     id: i64,
@@ -227,18 +264,19 @@ async fn stateless_full_trace_preserves_raw_context_ack_and_records_effective_in
     let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
     let service = Service::new(build_test_router(config, db, runtime));
     let arguments = json!({"ack_session_context_revision": 42});
-    let (status, body) =
-        stateless_2026_tool_call(&service, "secret", 41, "list_tools", arguments, None).await;
+    let (status, body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        41,
+        "list_tools",
+        arguments.clone(),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["result"]["isError"], false, "{body}");
 
-    let trace_dirs = std::fs::read_dir(trace_root.path())
-        .unwrap()
-        .flatten()
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .collect::<Vec<_>>();
-    assert_eq!(trace_dirs.len(), 1);
-    let trace_dir = trace_dirs[0].path();
+    let trace_dir = full_trace_dir_with_payload(trace_root.path(), "raw_arguments", &arguments);
     let events = std::fs::read_to_string(trace_dir.join("events.jsonl")).unwrap();
     let events = events
         .lines()

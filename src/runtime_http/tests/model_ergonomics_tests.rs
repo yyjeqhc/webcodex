@@ -45,7 +45,7 @@ async fn api_model_ergonomics_success_is_exact_and_queryable() {
     assert_eq!(body["success"], true);
 
     let telemetry = single_model_ergonomics(&db, "ergonomics-success", "tool_manifest");
-    assert_eq!(telemetry["schema_version"], 1);
+    assert_eq!(telemetry["schema_version"], 2);
     assert_eq!(telemetry["tool_name"], "tool_manifest");
     assert_eq!(telemetry["tool_category"], "runtime");
     assert_eq!(telemetry["success"], true);

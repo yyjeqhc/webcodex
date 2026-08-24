@@ -1395,10 +1395,25 @@ fn validation_test_run_metadata(
     let parsed_failed = (!truncated)
         .then(|| parsed_test_summary.and_then(|value| value.failed))
         .flatten();
-    let parsed_tests_run = match (parsed_passed, parsed_failed) {
-        (Some(passed), Some(failed)) => Some(passed.saturating_add(failed)),
+    let parsed_ignored = (!truncated)
+        .then(|| parsed_test_summary.and_then(|value| value.ignored))
+        .flatten();
+    // Go's structured test count includes skipped tests, while Cargo's canonical
+    // count intentionally remains passed + failed. Reconcile each tool against
+    // the same semantics used by its structured Job projection.
+    let include_ignored = finished.tool_name == "go_test";
+    let component_tests_run = |passed: Option<u64>, failed: Option<u64>| match (passed, failed) {
+        (Some(passed), Some(failed)) => {
+            let run = passed.saturating_add(failed);
+            if include_ignored {
+                parsed_ignored.map(|ignored| run.saturating_add(ignored))
+            } else {
+                Some(run)
+            }
+        }
         _ => None,
     };
+    let parsed_tests_run = component_tests_run(parsed_passed, parsed_failed);
     let tests_detected = summary
         .and_then(|value| value.get("tests_detected"))
         .and_then(Value::as_bool)
@@ -1425,15 +1440,12 @@ fn validation_test_run_metadata(
     let explicit_tests_passed = explicit_tests_passed_field.and_then(Value::as_u64);
     let explicit_tests_failed = explicit_tests_failed_field.and_then(Value::as_u64);
     let explicit_zero_tests = explicit_zero_tests_field.and_then(Value::as_bool);
-    let explicit_pair_run = match (explicit_tests_passed, explicit_tests_failed) {
-        (Some(passed), Some(failed)) => Some(passed.saturating_add(failed)),
-        _ => None,
-    };
-    let explicit_coherent = match (explicit_tests_run, explicit_pair_run) {
-        (Some(run), Some(pair_run)) => run == pair_run,
+    let explicit_component_run = component_tests_run(explicit_tests_passed, explicit_tests_failed);
+    let explicit_coherent = match (explicit_tests_run, explicit_component_run) {
+        (Some(run), Some(component_run)) => run == component_run,
         _ => true,
     } && match (
-        explicit_tests_run.or(explicit_pair_run),
+        explicit_tests_run.or(explicit_component_run),
         explicit_zero_tests,
     ) {
         (Some(run), Some(zero)) => zero == (run == 0),
@@ -1459,10 +1471,11 @@ fn validation_test_run_metadata(
     let tests_passed = explicit_tests_passed.or(parsed_passed);
     let tests_failed = explicit_tests_failed.or(parsed_failed);
     let tests_run_count = explicit_tests_run
-        .or(explicit_pair_run)
+        .or(explicit_component_run)
         .or(parsed_tests_run);
     let zero_tests_run = explicit_zero_tests.or_else(|| tests_run_count.map(|count| count == 0));
-    if matches!((tests_run_count, tests_passed, tests_failed), (Some(run), Some(passed), Some(failed)) if run != passed.saturating_add(failed))
+    let component_run = component_tests_run(tests_passed, tests_failed);
+    if matches!((tests_run_count, component_run), (Some(run), Some(component_run)) if run != component_run)
         || (zero_tests_run == Some(true)
             && (tests_run_count.is_some_and(|count| count > 0)
                 || tests_passed.is_some_and(|count| count > 0)

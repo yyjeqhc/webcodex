@@ -119,7 +119,9 @@ pub(crate) struct AuthEnvGuard {
 #[cfg(test)]
 impl AuthEnvGuard {
     pub(crate) fn new() -> Self {
-        let env_lock = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let env_lock = crate::admin_cli::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         Self {
             _env_lock: env_lock,
             shared_key_enabled: std::env::var_os("WEBCODEX_SHARED_KEY_ENABLED"),

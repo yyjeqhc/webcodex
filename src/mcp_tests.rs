@@ -57,7 +57,9 @@ fn with_model_surface_env<T>(value: Option<&str>, operation: impl FnOnce() -> T)
         }
     }
 
-    let guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+    let guard = crate::admin_cli::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let previous = std::env::var_os(crate::model_surface::MCP_MODEL_SURFACE_ENV);
     match value {
         Some(value) => std::env::set_var(crate::model_surface::MCP_MODEL_SURFACE_ENV, value),

@@ -1840,25 +1840,12 @@ async fn finish_coding_task_does_not_resolve_a_different_validation_identity() {
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 0);
     assert_eq!(result.output["validation"]["status"], "mixed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
-    assert_eq!(
-        result.output["validation"]["historical_failures"]["count"],
-        1
-    );
-    assert_eq!(
-        result.output["validation"]["historical_failures"]["resolved"],
-        false
-    );
-    assert_eq!(
-        result.output["validation"]["historical_failures"]["unresolved"],
-        true
-    );
+    assert_eq!(result.output["validation"]["resolved_failure_count"], 0);
+    assert_eq!(result.output["validation"]["unresolved_failure_count"], 1);
     assert_eq!(result.output["task_outcome"]["status"], "fail");
     assert_eq!(result.output["task_outcome"]["blocking"], true);
     assert_task_outcome_shape(&result.output["task_outcome"]);
-    assert_eq!(
-        result.output["evidence_history"]["status"],
-        "mixed_unresolved"
-    );
+    assert!(result.output.get("evidence_history").is_none());
     assert_eq!(result.output["evidence_integrity"]["status"], "clean");
     assert_reason_list_contains(
         &result.output["task_outcome"],
@@ -2045,12 +2032,11 @@ async fn finish_coding_task_resolved_history_keeps_real_workspace_advisory() {
     .await;
 
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["status"], "passed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
-    assert_eq!(
-        result.output["evidence_history"]["status"],
-        "mixed_resolved"
-    );
+    assert_eq!(result.output["validation"]["resolved_failure_count"], 1);
+    assert_eq!(result.output["validation"]["unresolved_failure_count"], 0);
+    assert!(result.output.get("evidence_history").is_none());
     assert_eq!(result.output["task_outcome"]["status"], "warn");
     assert_eq!(result.output["task_outcome"]["blocking"], false);
     assert_reason_list_contains(
@@ -2063,14 +2049,7 @@ async fn finish_coding_task_resolved_history_keeps_real_workspace_advisory() {
         "warning_reasons",
         "historical_validation_failures_resolved",
     );
-    assert!(result.output["informational_notes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|note| note.as_str()
-            == Some(
-                "historical validation failures were resolved by later successful validation"
-            )));
+    assert!(result.output.get("informational_notes").is_none());
 }
 
 #[tokio::test]
@@ -2115,12 +2094,11 @@ async fn finish_coding_task_resolved_history_keeps_real_tool_failure_blocking() 
     .await;
 
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["status"], "passed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
-    assert_eq!(
-        result.output["evidence_history"]["status"],
-        "mixed_resolved"
-    );
+    assert_eq!(result.output["validation"]["resolved_failure_count"], 1);
+    assert_eq!(result.output["validation"]["unresolved_failure_count"], 0);
+    assert!(result.output.get("evidence_history").is_none());
     assert_eq!(result.output["task_outcome"]["status"], "fail");
     assert_eq!(result.output["task_outcome"]["blocking"], true);
     assert_reason_list_contains(
@@ -2128,14 +2106,7 @@ async fn finish_coding_task_resolved_history_keeps_real_tool_failure_blocking() 
         "blocking_reasons",
         "unexpected_tool_failures",
     );
-    assert!(result.output["informational_notes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|note| note.as_str()
-            == Some(
-                "historical validation failures were resolved by later successful validation"
-            )));
+    assert!(result.output.get("informational_notes").is_none());
 }
 
 #[tokio::test]
@@ -2227,7 +2198,8 @@ async fn failure_history_fail_closed_attempts_do_not_block_clean_finish() {
         &result.output["suggested_next_actions"],
         "review unexpected failed tool calls before proceeding",
     );
-    assert!(result.output["informational_notes"]
+    assert!(result.output.get("informational_notes").is_none());
+    assert!(full.output["informational_notes"]
         .as_array()
         .unwrap()
         .iter()

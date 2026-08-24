@@ -53,32 +53,32 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
         "contract": BUILTIN_CODING_WORKFLOW_CONTRACT,
         "version": BUILTIN_CODING_WORKFLOW_VERSION,
         "authority": "model_guidance_only",
-        "role_selection": "Apply a role when the task instruction explicitly names it; role guidance does not create Session mode or execution authority.",
+        "role_selection": "Apply a named role only when the task says so; role guidance creates no Session mode or authority.",
         "model_protocol": {
-            "session_context_ack": "When a Session-aware ToolResult returns session_context_revision=N, echo the newest remembered N as ack_session_context_revision on the next Session-aware call. If the revision is unknown, omit the ACK rather than guessing; missing or stale ACK never blocks the business tool and may return bounded recovery context.",
-            "normal_closeout": "Use finish_coding_task(summary_only=true) for normal successful closeout. Use the full closeout only for unresolved validation investigation, evidence inconsistency diagnosis, or handoff/debug detail inspection."
+            "session_context_ack": "Echo the newest remembered session_context_revision as ack_session_context_revision on the next Session-aware call; if unknown, omit the ACK rather than guessing. Missing/stale ACK never blocks the business tool.",
+            "normal_closeout": "Normal success: finish_coding_task(summary_only=true); full closeout only for unresolved validation/evidence or handoff/debug detail."
         },
         "roles": {
             "implementation_owner": {
-                "purpose": "Implement one coherent change through the existing authoritative architecture.",
+                "purpose": "Implement one coherent change through the authoritative architecture.",
                 "guidance": [
-                    "Map the complete authoritative vertical slice before editing.",
-                    "Close the existing architecture end to end before local hardening.",
-                    "Minimize new concepts rather than touched-file count.",
-                    "Use compiler, type, schema, and exhaustiveness failures to close missing adapters, registries, and projections.",
-                    "When assertion_name is used for a logical validation, reuse the same assertion_name when rerunning it after a fix so the ledger can resolve that validation identity.",
-                    "After focused validation, review completeness and trust, bounds, privacy, and replay.",
-                    "Fix correctness issues discovered during the pass; do not fragment the implementation around undemonstrated speculative concerns."
+                    "Map the authoritative vertical slice before editing.",
+                    "Close it end to end before local hardening.",
+                    "Minimize new concepts, not touched-file count.",
+                    "Use compiler/schema/exhaustiveness failures to find missing adapters and projections.",
+                    "When used, reuse the same assertion_name after a fix to resolve that validation identity.",
+                    "After validation, review completeness, trust, bounds, privacy, and replay.",
+                    "Fix discovered correctness issues; do not fragment the change around speculative concerns."
                 ]
             },
             "independent_review": {
-                "purpose": "Independently challenge an already implemented change and correct concrete findings.",
+                "purpose": "Independently challenge the change and correct concrete findings.",
                 "guidance": [
-                    "Inspect the implemented change independently rather than assuming the implementation pass was correct.",
-                    "Challenge semantic contracts and invariants before relying on passing tests.",
-                    "Focus on authority, bounds, malformed inputs or producers, privacy, replay and races, timeout and correlation, and fail-closed behavior.",
-                    "Make concrete findings-driven corrections and add focused regression evidence.",
-                    "Do not broaden the review into unrelated redesign."
+                    "Inspect independently; do not assume the implementation pass was correct.",
+                    "Challenge contracts and invariants before trusting passing tests.",
+                    "Focus on authority, bounds, malformed data, privacy, replay/races, timeout/correlation, and fail-closed behavior.",
+                    "Correct concrete findings and add focused regression evidence.",
+                    "Do not broaden into unrelated redesign."
                 ]
             }
         }

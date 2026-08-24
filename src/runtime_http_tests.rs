@@ -603,6 +603,43 @@ async fn http_tool_call(service: &Service, body: Value) -> (StatusCode, Value) {
     (status, body)
 }
 
+fn full_trace_dir_with_payload(
+    root: &std::path::Path,
+    phase: &str,
+    expected: &Value,
+) -> std::path::PathBuf {
+    for entry in std::fs::read_dir(root).unwrap().flatten() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(events) = std::fs::read_to_string(path.join("events.jsonl")) else {
+            continue;
+        };
+        for event in events
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        {
+            if event["event"] != "tool_trace_payload_captured" || event["phase"] != phase {
+                continue;
+            }
+            let Some(relative) = event["payload_path"].as_str() else {
+                continue;
+            };
+            let Ok(compressed) = std::fs::read(path.join(relative)) else {
+                continue;
+            };
+            let Ok(raw) = zstd::stream::decode_all(compressed.as_slice()) else {
+                continue;
+            };
+            if serde_json::from_slice::<Value>(&raw).ok().as_ref() == Some(expected) {
+                return path;
+            }
+        }
+    }
+    panic!("missing full-trace payload phase {phase} matching this request");
+}
+
 #[tokio::test]
 async fn http_tools_call_full_trace_captures_raw_effective_and_final_payloads() {
     let trace_root = tempfile::tempdir().unwrap();
@@ -624,13 +661,7 @@ async fn http_tools_call_full_trace_captures_raw_effective_and_final_payloads() 
     assert_eq!(status, StatusCode::OK, "{response}");
     assert_eq!(response["success"], true);
 
-    let trace_dirs = std::fs::read_dir(trace_root.path())
-        .unwrap()
-        .flatten()
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .collect::<Vec<_>>();
-    assert_eq!(trace_dirs.len(), 1);
-    let trace_dir = trace_dirs[0].path();
+    let trace_dir = full_trace_dir_with_payload(trace_root.path(), "raw_request_body", &request);
     let events = std::fs::read_to_string(trace_dir.join("events.jsonl")).unwrap();
     let events = events
         .lines()
@@ -685,12 +716,7 @@ async fn http_tools_call_full_trace_captures_pre_dispatch_error_response() {
         .as_str()
         .is_some_and(|error| error.contains("tool")));
 
-    let trace_dir = std::fs::read_dir(trace_root.path())
-        .unwrap()
-        .flatten()
-        .find(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .expect("one full-trace directory")
-        .path();
+    let trace_dir = full_trace_dir_with_payload(trace_root.path(), "final_response", &response);
     let events = std::fs::read_to_string(trace_dir.join("events.jsonl")).unwrap();
     let final_payload_path = events
         .lines()

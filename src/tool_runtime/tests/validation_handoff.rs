@@ -2056,7 +2056,7 @@ async fn handoff_job_terminal_failure_is_validation_failed_not_timeout() {
             &request.request_id,
             &job_id,
             "failed",
-            "test result: FAILED. 0 passed; 1 failed\n",
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored\n",
             "",
             Some(101),
             ShellJobValidationProgress {

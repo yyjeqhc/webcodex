@@ -1015,7 +1015,11 @@ fn handoff_brief_schema_is_shared_strict_and_absent_from_startup() {
     let handoff_schema =
         &handoff.output_schema["properties"]["output"]["properties"]["handoff_brief"];
 
-    assert_eq!(finish_schema, handoff_schema);
+    let mut finish_shape = finish_schema.clone();
+    let mut handoff_shape = handoff_schema.clone();
+    finish_shape.as_object_mut().unwrap().remove("description");
+    handoff_shape.as_object_mut().unwrap().remove("description");
+    assert_eq!(finish_shape, handoff_shape);
     assert_all_objects_strict(finish_schema, "handoff_brief");
     let truncated_description = finish_schema["properties"]["task"]["properties"]
         ["root_instruction"]["properties"]["truncated"]["description"]
@@ -1276,7 +1280,7 @@ async fn finish_and_handoff_surfaces_return_the_same_brief_for_the_same_snapshot
                     ToolCall::FinishCodingTask {
                         project,
                         session_id,
-                        summary_only: true,
+                        summary_only: false,
                         include_diff: Some(false),
                         include_workspace: Some(false),
                         include_hygiene: Some(false),

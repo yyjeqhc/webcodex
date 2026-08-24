@@ -740,7 +740,8 @@ fn work_on_project_projection_fails_closed_for_wrong_field_type() {
 fn work_on_project_projection_fails_closed_for_noncanonical_workflow() {
     for include_workflow_guidance in [true, false] {
         let mut output = valid_work_on_project_projection_input();
-        output["workflow"]["version"] = json!(2);
+        output["workflow"]["version"] =
+            json!(crate::tool_runtime::startup_brief::BUILTIN_CODING_WORKFLOW_VERSION + 1);
 
         let result = crate::tool_runtime::coding_task::project_work_on_project_output_with_workflow(
             SAMPLE_PROJECT.to_string(),

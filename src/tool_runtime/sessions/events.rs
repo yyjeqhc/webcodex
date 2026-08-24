@@ -900,8 +900,12 @@ pub(super) fn sanitize_persisted_validation_output_summary(
     });
     if matches!(tool_name, "cargo_test" | "go_test") {
         summary["tests_detected"] = persisted_cargo_test_tests_detected(object);
-        summary["tests_run_count"] = persisted_cargo_test_tests_run_count(object);
-        summary["zero_tests_run"] = persisted_cargo_test_zero_tests_run(object);
+        if object.contains_key("tests_run_count") {
+            summary["tests_run_count"] = persisted_cargo_test_tests_run_count(object);
+        }
+        if object.contains_key("zero_tests_run") {
+            summary["zero_tests_run"] = persisted_cargo_test_zero_tests_run(object);
+        }
     }
     if tool_name == "cargo_test" {
         if let Some(assertion) = sanitized_test_count_assertion(object.get("test_count_assertion"))

@@ -548,6 +548,94 @@ fn cargo_test_run_metadata_does_not_guess_from_running_or_partial_summary() {
 }
 
 #[test]
+fn cargo_test_session_metadata_preserves_explicit_unproven_count_authority() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo", "filter": "focused"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "test result: ok. 10 passed; 0 failed\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": null,
+            "zero_tests_run": null
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    let event = &validation["latest"];
+
+    assert_eq!(event["success"], true);
+    assert_eq!(event["tests_detected"], true);
+    assert!(event["tests_run_count"].is_null());
+    assert!(event["zero_tests_run"].is_null());
+    assert!(event["detected_summary"]["tests_run_count"].is_null());
+    assert!(event["detected_summary"]["zero_tests_run"].is_null());
+    assert_eq!(event["diagnostics"]["test_summary"]["passed"], 10);
+    assert_eq!(event["diagnostics"]["test_summary"]["failed"], 0);
+}
+
+#[test]
+fn legacy_persisted_cargo_test_metadata_absence_uses_diagnostics_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 10);
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo", "filter": "legacy"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "test result: ok. 2 passed; 0 failed; 0 ignored\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 2,
+            "zero_tests_run": false
+        }),
+    );
+    store.flush_persistence();
+    drop(store);
+
+    let mut ledger_json: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let events = ledger_json["sessions"][0]["events"].as_array_mut().unwrap();
+    let finished = events
+        .iter_mut()
+        .find(|event| event["kind"] == "tool_call_finished" && event["tool_name"] == "cargo_test")
+        .unwrap();
+    let output_summary = finished["validation_output_summary"]
+        .as_object_mut()
+        .unwrap();
+    output_summary.remove("tests_run_count");
+    output_summary.remove("zero_tests_run");
+    std::fs::write(&ledger, serde_json::to_vec(&ledger_json).unwrap()).unwrap();
+
+    let restored = SessionStore::with_persistence(&ledger, 10, 10);
+    let session = restored.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    let event = &validation["latest"];
+
+    assert_eq!(event["tests_detected"], true);
+    assert_eq!(event["tests_run_count"], 2);
+    assert_eq!(event["zero_tests_run"], false);
+    assert_eq!(event["diagnostics"]["test_summary"]["passed"], 2);
+    assert_eq!(event["diagnostics"]["test_summary"]["failed"], 0);
+}
+
+#[test]
 fn validation_summary_exposes_cargo_test_zero_tests_metadata() {
     let store = SessionStore::default();
     let session = store.start_session(Some("agent:eval:demo".to_string()), None);
@@ -794,6 +882,60 @@ fn failed_cargo_test_followed_by_zero_tests_remains_historically_unresolved() {
     assert_eq!(validation["historical_failures"]["count"], 1);
     assert_eq!(validation["historical_failures"]["resolved"], false);
     assert_eq!(validation["historical_failures"]["unresolved"], true);
+}
+
+#[test]
+fn failed_cargo_test_followed_by_unproven_success_remains_historically_unresolved() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let arguments = json!({"project": "agent:eval:demo", "filter": "focused"});
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        arguments.clone(),
+        false,
+        json!({"exit_code": 101}),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        arguments,
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "test result: ok. 10 passed; 0 failed\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": null,
+            "zero_tests_run": null
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["status"], "mixed");
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["latest"]["success"], true);
+    assert!(validation["latest"]["tests_run_count"].is_null());
+    assert!(validation["latest"]["zero_tests_run"].is_null());
+    assert_eq!(
+        validation["latest"]["diagnostics"]["test_summary"]["passed"],
+        10
+    );
+    assert_eq!(
+        validation["latest"]["diagnostics"]["test_summary"]["failed"],
+        0
+    );
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["historical_failures"]["resolved"], false);
+    assert_eq!(validation["historical_failures"]["unresolved"], true);
+    assert_eq!(validation["resolved_failures"]["count"], 0);
+    assert_eq!(validation["unresolved_failures"]["count"], 1);
 }
 
 #[test]

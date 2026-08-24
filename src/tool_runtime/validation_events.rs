@@ -712,7 +712,14 @@ fn classify_validation_failures(
 }
 
 fn validation_event_decides_historical_failure_status(event: &ValidationEvent) -> bool {
-    !cargo_test_zero_tests_success(event)
+    !cargo_test_zero_tests_success(event) && !cargo_test_unproven_execution_success(event)
+}
+
+fn cargo_test_unproven_execution_success(event: &ValidationEvent) -> bool {
+    event.tool_name == "cargo_test"
+        && event.validation_kind == "test"
+        && event.success
+        && (event.tests_run_count.is_none() || event.zero_tests_run.is_none())
 }
 
 fn no_historical_failures() -> ValidationHistoricalFailures {
@@ -1269,14 +1276,14 @@ fn validation_test_run_metadata(
         .and_then(|value| value.get("tests_detected"))
         .and_then(Value::as_bool)
         .or_else(|| Some(parsed_test_summary.is_some()));
-    let tests_run_count = summary
-        .and_then(|value| value.get("tests_run_count"))
-        .and_then(Value::as_u64)
-        .or(parsed_tests_run);
-    let zero_tests_run = summary
-        .and_then(|value| value.get("zero_tests_run"))
-        .and_then(Value::as_bool)
-        .or_else(|| parsed_tests_run.map(|count| count == 0));
+    let tests_run_count = match summary.and_then(|value| value.get("tests_run_count")) {
+        Some(value) => value.as_u64(),
+        None => parsed_tests_run,
+    };
+    let zero_tests_run = match summary.and_then(|value| value.get("zero_tests_run")) {
+        Some(value) => value.as_bool(),
+        None => parsed_tests_run.map(|count| count == 0),
+    };
     (tests_detected, tests_run_count, zero_tests_run)
 }
 

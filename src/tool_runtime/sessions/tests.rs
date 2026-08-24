@@ -4622,13 +4622,47 @@ fn simultaneous_model_facing_results_allocate_unique_ordered_revisions() {
             )
             .unwrap()
     });
-    let mut revisions = vec![
-        a.join().unwrap().context_revision,
-        b.join().unwrap().context_revision,
-    ];
-    revisions.sort_unstable();
-    assert_eq!(revisions, vec![2, 3]);
+    let mut outcomes = vec![a.join().unwrap(), b.join().unwrap()];
+    outcomes.sort_by_key(|recorded| recorded.context_revision);
+    assert_eq!(
+        outcomes
+            .iter()
+            .map(|recorded| recorded.context_revision)
+            .collect::<Vec<_>>(),
+        vec![2, 3]
+    );
     assert_eq!(store.context_revision(&session.session_id), Some(3));
+
+    // The later completion started from the same model ACK as the earlier one,
+    // so its response must carry the intervening result before revision 3 can be
+    // safely acknowledged. Losing the revision-2 HTTP/MCP response must not make
+    // revision 2 disappear from the model's recoverable context prefix.
+    let later = &outcomes[1];
+    assert_eq!(later.pre_call_context_revision, 1);
+    assert_eq!(
+        later
+            .recovery_events
+            .iter()
+            .filter_map(|event| event.context_revision)
+            .collect::<Vec<_>>(),
+        vec![2]
+    );
+    let mut later_response = super::super::ToolResult::ok(json!({"content": "later"}));
+    assert!(
+        super::super::session_context::add_session_context_continuity(&mut later_response, later,)
+    );
+    assert_eq!(
+        later_response.output["session_continuity"]["status"],
+        "behind"
+    );
+    assert_eq!(
+        later_response.output["session_continuity"]["events_after_ack"],
+        1
+    );
+    assert_eq!(
+        later_response.output["session_recovery"]["model_facing_events"][0]["context_revision"],
+        2
+    );
 
     let next = record_model_facing_result(
         &store,
@@ -4641,6 +4675,56 @@ fn simultaneous_model_facing_results_allocate_unique_ordered_revisions() {
     assert_eq!(next.pre_call_context_revision, 3);
     assert_eq!(next.context_revision, 4);
     assert!(next.recovery_events.is_empty());
+}
+
+#[tokio::test]
+async fn bounded_session_context_recovery_adds_current_handoff_before_latest_ack() {
+    let runtime = super::super::ToolRuntime::new_for_tests();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("bounded continuity recovery".to_string()));
+    let mut latest = 0;
+    for _ in 0..25 {
+        let recorded = record_model_facing_result(
+            &runtime.sessions,
+            &session.session_id,
+            "read_file",
+            SessionContextRevisionAck::Revision(latest),
+            true,
+            json!({"content": "bounded"}),
+        );
+        latest = recorded.context_revision;
+    }
+    assert_eq!(latest, 25);
+
+    let stale = record_model_facing_result(
+        &runtime.sessions,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Revision(0),
+        true,
+        json!({"clean": true}),
+    );
+    assert_eq!(stale.pre_call_context_revision, 25);
+    assert_eq!(stale.context_revision, 26);
+    assert_eq!(stale.recovery_events.len(), 25);
+    assert!(!stale.history_lost);
+
+    let mut response = super::super::ToolResult::ok(json!({"clean": true}));
+    assert!(super::super::session_context::add_session_context_continuity(&mut response, &stale,));
+    assert_eq!(response.output["session_recovery"]["truncated"], true);
+    assert_eq!(response.output["session_recovery"]["omitted_count"], 5);
+    assert!(response.output["session_recovery"]
+        .get("current_handoff")
+        .is_none());
+
+    runtime
+        .add_session_history_recovery(&mut response, &stale, None)
+        .await;
+    assert!(
+        response.output["session_recovery"]["current_handoff"].is_object(),
+        "bounded event omission must add a compact current-state recovery before revision 26 is ACK-able"
+    );
 }
 
 #[test]

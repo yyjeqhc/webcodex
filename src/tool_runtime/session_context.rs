@@ -413,40 +413,41 @@ pub(crate) fn add_session_context_continuity(
         "session_context_revision".to_string(),
         Value::from(recorded.context_revision),
     );
+    let pre_response_context_revision = recorded.context_revision.saturating_sub(1);
     let (status, ack_revision, needs_recovery, events_after_ack) =
         match recorded.ack_session_context_revision {
+            // An ACK can only prove state that already existed when the request
+            // started. A numerically matching revision allocated by a concurrent
+            // completion after request admission is still a future/invalid ACK.
             sessions::SessionContextRevisionAck::Revision(revision)
-                if revision == recorded.pre_call_context_revision =>
+                if revision > recorded.pre_call_context_revision =>
+            {
+                (
+                    "invalid",
+                    Some(revision),
+                    true,
+                    pre_response_context_revision,
+                )
+            }
+            sessions::SessionContextRevisionAck::Revision(revision)
+                if revision == pre_response_context_revision =>
             {
                 ("exact", Some(revision), false, 0)
             }
-            sessions::SessionContextRevisionAck::Revision(revision)
-                if revision < recorded.pre_call_context_revision =>
-            {
-                (
-                    "behind",
-                    Some(revision),
-                    true,
-                    recorded.pre_call_context_revision.saturating_sub(revision),
-                )
-            }
             sessions::SessionContextRevisionAck::Revision(revision) => (
-                "invalid",
+                "behind",
                 Some(revision),
                 true,
-                recorded.pre_call_context_revision,
+                pre_response_context_revision.saturating_sub(revision),
             ),
             sessions::SessionContextRevisionAck::Unsupported => {
                 unreachable!("unsupported continuity requests return before response decoration")
             }
-            sessions::SessionContextRevisionAck::Unacknowledged => (
-                "unacknowledged",
-                None,
-                true,
-                recorded.pre_call_context_revision,
-            ),
+            sessions::SessionContextRevisionAck::Unacknowledged => {
+                ("unacknowledged", None, true, pre_response_context_revision)
+            }
             sessions::SessionContextRevisionAck::Invalid => {
-                ("invalid", None, true, recorded.pre_call_context_revision)
+                ("invalid", None, true, pre_response_context_revision)
             }
         };
     if needs_recovery {
@@ -505,9 +506,18 @@ impl ToolRuntime {
         recorded: &sessions::RecordedModelFacingToolCall,
         auth: Option<&AuthContext>,
     ) {
-        if !recorded.history_lost {
+        let response_recovery_truncated = result
+            .output
+            .pointer("/session_recovery/truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !recorded.history_lost && !response_recovery_truncated {
             return;
         }
+        // A compact current handoff is also required when retained exact events
+        // exceed the model-facing recovery-event cap. Otherwise the response
+        // would expose the latest ACK revision while omitting older consequences
+        // that the caller has never seen, allowing a later ACK to skip context.
         let project = self
             .sessions
             .session_project(&recorded.session_id)

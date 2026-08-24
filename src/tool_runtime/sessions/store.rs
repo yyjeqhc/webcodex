@@ -1468,8 +1468,14 @@ impl SessionStore {
                 return None;
             }
             let next_revision = record.context_revision.checked_add(1)?;
+            // A call may have started at revision N while another model-facing
+            // call completes before this result is recorded. The response for
+            // this result must recover those intervening completions before it
+            // exposes its own newer revision, otherwise a caller could ACK the
+            // newer revision without ever seeing a complete context prefix.
+            let pre_response_context_revision = next_revision.saturating_sub(1);
             let recovery_start = match ack_session_context_revision {
-                SessionContextRevisionAck::Unsupported => pre_call_context_revision,
+                SessionContextRevisionAck::Unsupported => pre_response_context_revision,
                 SessionContextRevisionAck::Revision(revision)
                     if revision <= pre_call_context_revision =>
                 {
@@ -1483,7 +1489,7 @@ impl SessionStore {
                 .filter_map(|candidate| {
                     let candidate_revision = candidate.context_revision?;
                     (candidate_revision > recovery_start
-                        && candidate_revision <= pre_call_context_revision)
+                        && candidate_revision <= pre_response_context_revision)
                         .then(|| candidate.as_ref().clone())
                 })
                 .collect::<Vec<_>>();
@@ -1492,9 +1498,9 @@ impl SessionStore {
                 SessionContextRevisionAck::Revision(revision)
                     if revision <= pre_call_context_revision =>
                 {
-                    pre_call_context_revision.saturating_sub(revision)
+                    pre_response_context_revision.saturating_sub(revision)
                 }
-                _ => pre_call_context_revision,
+                _ => pre_response_context_revision,
             };
             let history_lost = expected_recovery_count > recovery_events.len() as u64;
             event.context_revision = Some(next_revision);

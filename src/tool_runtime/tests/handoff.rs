@@ -2241,7 +2241,16 @@ async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test
         "cargo_test",
         json!({"project": project.clone()}),
         true,
-        json!({"exit_code": 0}),
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 1 test\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 1,
+            "zero_tests_run": false
+        }),
     );
 
     let result = dispatch_handoff_summary_only_with_agent(

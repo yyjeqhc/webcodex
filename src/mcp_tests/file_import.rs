@@ -88,6 +88,31 @@ async fn lock_mcp_import_test() -> tokio::sync::MutexGuard<'static, ()> {
     crate::tool_runtime::conversation_import::lock_import_test_network().await
 }
 
+fn run_mcp_import_in_large_stack_test_thread<F, Fut>(test: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()>,
+{
+    // These end-to-end import tests retain the OAuth/router/import fixture across
+    // several awaits. Keep their larger stack local to this test group instead
+    // of raising RUST_MIN_STACK for the whole suite.
+    let result = std::thread::Builder::new()
+        .name("mcp-file-import-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build isolated file-import test runtime")
+                .block_on(test());
+        })
+        .expect("spawn isolated file-import test thread")
+        .join();
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
 struct McpImportNetworkOverride;
 
 impl McpImportNetworkOverride {
@@ -691,8 +716,14 @@ fn mcp_file_import_trust_decision_reports_exact_failure_stage() {
     assert_eq!(trusted.active_client_registration_found, Some(true));
 }
 
-#[tokio::test]
-async fn oauth_mcp_file_import_startup_env_stateless_2026_crosses_provenance_gate() {
+#[test]
+fn oauth_mcp_file_import_startup_env_stateless_2026_crosses_provenance_gate() {
+    run_mcp_import_in_large_stack_test_thread(
+        oauth_mcp_file_import_startup_env_stateless_2026_crosses_provenance_gate_impl,
+    );
+}
+
+async fn oauth_mcp_file_import_startup_env_stateless_2026_crosses_provenance_gate_impl() {
     use crate::auth::{OAuth2Verifier, TokenVerifier};
     use sha2::{Digest, Sha256};
 
@@ -796,8 +827,12 @@ async fn oauth_mcp_file_import_startup_env_stateless_2026_crosses_provenance_gat
     assert!(!serialized.contains("file_stateless_host_rewritten"));
 }
 
-#[tokio::test]
-async fn oauth_mcp_file_import_trusted_client_saves_pptx() {
+#[test]
+fn oauth_mcp_file_import_trusted_client_saves_pptx() {
+    run_mcp_import_in_large_stack_test_thread(oauth_mcp_file_import_trusted_client_saves_pptx_impl);
+}
+
+async fn oauth_mcp_file_import_trusted_client_saves_pptx_impl() {
     use sha2::{Digest, Sha256};
 
     let _lock = lock_mcp_import_test().await;
@@ -880,8 +915,14 @@ async fn oauth_mcp_file_import_trusted_client_saves_pptx() {
     assert!(!error.contains(temporary_url));
 }
 
-#[tokio::test]
-async fn oauth_mcp_file_import_trusted_download_guards_remain_bounded() {
+#[test]
+fn oauth_mcp_file_import_trusted_download_guards_remain_bounded() {
+    run_mcp_import_in_large_stack_test_thread(
+        oauth_mcp_file_import_trusted_download_guards_remain_bounded_impl,
+    );
+}
+
+async fn oauth_mcp_file_import_trusted_download_guards_remain_bounded_impl() {
     let _lock = lock_mcp_import_test().await;
     let (_db_tmp, db) = test_db();
     let user = seed_user(&db, "alice");
@@ -972,8 +1013,14 @@ async fn oauth_mcp_file_import_trusted_download_guards_remain_bounded() {
     }
 }
 
-#[tokio::test]
-async fn mcp_file_import_untrusted_callers_fail_before_dns() {
+#[test]
+fn mcp_file_import_untrusted_callers_fail_before_dns() {
+    run_mcp_import_in_large_stack_test_thread(
+        mcp_file_import_untrusted_callers_fail_before_dns_impl,
+    );
+}
+
+async fn mcp_file_import_untrusted_callers_fail_before_dns_impl() {
     let _lock = lock_mcp_import_test().await;
     let _network = McpImportNetworkOverride::without_download();
     let (_db_tmp, db) = test_db();

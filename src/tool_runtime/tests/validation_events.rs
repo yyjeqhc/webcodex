@@ -1284,7 +1284,16 @@ fn structured_validation_target_resolves_equivalent_semantic_arguments() {
             "timeout_secs": 120,
         }),
         true,
-        json!({"exit_code": 0}),
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 1 test\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 1,
+            "zero_tests_run": false
+        }),
     );
 
     let session = store.summary(&session.session_id, Some(50)).unwrap();

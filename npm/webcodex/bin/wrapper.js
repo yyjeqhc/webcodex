@@ -65,6 +65,7 @@ function runNative(options = {}) {
   }
 
   const child = childProcess.spawn(target, argv, {
+    env: { ...process.env, WEBCODEX_NPM_WRAPPER: "1" },
     stdio: "inherit",
     windowsHide: false,
     shell: false

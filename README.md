@@ -38,8 +38,11 @@ runtime; use explicit `webcodex share` when deterministic dispatch matters.
 
 For the default temporary public share, WebCodex reuses `cloudflared` from
 `WEBCODEX_CLOUDFLARED_BIN` or `PATH` when available. Otherwise it downloads and
-verifies a WebCodex-managed copy automatically. `share` is self-contained: it
-prepares the tunnel dependency when needed, configures the current Git project,
+verifies a WebCodex-managed copy automatically. When launched through the npm
+wrapper, that managed download also reuses npm's proxy, `noproxy`, CA, and
+`strict-ssl` settings; otherwise standard proxy/system trust behavior remains
+available. `share` is self-contained: it prepares the tunnel dependency when
+needed, configures the current Git project,
 starts a local WebCodex Server + Runner,
 creates a temporary Connector credential, and opens a Cloudflare Quick Tunnel.
 You do **not** need to run `setup`, `doctor`, or `run` first.

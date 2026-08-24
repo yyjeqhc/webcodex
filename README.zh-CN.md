@@ -32,8 +32,10 @@ webcodex
 需要确定性分发时继续显式使用 `webcodex share`。
 
 默认临时公网分享会优先复用 `WEBCODEX_CLOUDFLARED_BIN` 或 `PATH` 中已有的
-`cloudflared`；如果没有，WebCodex 会自动下载并校验自己管理的副本。`share` 是完整入口：
-需要时它会先准备 tunnel 依赖，然后配置当前 Git 项目、启动本地
+`cloudflared`；如果没有，WebCodex 会自动下载并校验自己管理的副本。如果通过 npm wrapper
+启动，这次 managed 下载也会复用 npm 的 proxy、`noproxy`、CA 与 `strict-ssl` 配置；否则
+继续保留标准 proxy/系统信任配置路径。`share` 是完整入口：需要时它会先准备 tunnel 依赖，
+然后配置当前 Git 项目、启动本地
 WebCodex Server + Runner、创建临时 Connector credential，并打开 Cloudflare Quick Tunnel。
 第一次使用**不需要**先运行 `setup`、`doctor` 或 `run`。
 

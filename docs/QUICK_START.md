@@ -17,6 +17,9 @@ instead. If no Server exists yet, see [Deployment](DEPLOYMENT.md).
 - No separate `cloudflared` installation is required for the default Linux/macOS
   temporary public share. WebCodex reuses an explicit/PATH binary or downloads a
   pinned, verified managed copy when needed.
+  Through the npm wrapper, managed acquisition also inherits npm proxy,
+  `noproxy`, CA, and `strict-ssl` settings; standard proxy/system trust remains
+  the fallback outside npm-specific configuration.
 
 For a one-shot trial without a global install:
 

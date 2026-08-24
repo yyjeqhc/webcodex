@@ -147,6 +147,182 @@ fn managed_root_prefers_xdg_then_home_and_requires_private_user_base() {
     assert!(relative_home.message.contains("HOME"));
 }
 
+#[test]
+fn npm_network_environment_is_bounded_and_preserves_precedence() {
+    let values = std::collections::HashMap::from([
+        (
+            "npm_config_https_proxy",
+            "http://npm-user:npm-secret@npm-proxy.test:8443",
+        ),
+        ("npm_config_proxy", "http://npm-proxy.test:8080"),
+        ("npm_config_noproxy", "localhost,.internal.test"),
+        (
+            "npm_config_ca",
+            "-----BEGIN CERTIFICATE-----\\ninline-ca\\n-----END CERTIFICATE-----",
+        ),
+        ("npm_config_strict_ssl", "false"),
+        ("HTTPS_PROXY", "http://system-proxy.test:9443"),
+        ("NO_PROXY", "system.test"),
+    ]);
+    let npm = npm_network_settings_from_env_with(|name| {
+        values.get(name).map(|value| (*value).to_string())
+    });
+    let network = resolve_download_network_config_with(
+        "https://github.com/cloudflare/cloudflared",
+        &npm,
+        |name| values.get(name).map(|value| (*value).to_string()),
+    )
+    .unwrap();
+    assert_eq!(
+        network.proxy.as_deref(),
+        Some("http://npm-user:npm-secret@npm-proxy.test:8443")
+    );
+    assert_eq!(
+        network.no_proxy.as_deref(),
+        Some("localhost,.internal.test")
+    );
+    assert_eq!(network.reject_unauthorized, Some(false));
+    assert_eq!(
+        network.ca_pem.as_deref(),
+        Some(b"-----BEGIN CERTIFICATE-----\ninline-ca\n-----END CERTIFICATE-----".as_slice())
+    );
+}
+
+#[test]
+fn standard_proxy_environment_remains_the_fallback() {
+    let npm = NpmNetworkSettings::default();
+    let values = std::collections::HashMap::from([
+        ("HTTPS_PROXY", "http://system-proxy.test:9443"),
+        ("NO_PROXY", "localhost,127.0.0.1"),
+    ]);
+    let network = resolve_download_network_config_with(
+        "https://github.com/cloudflare/cloudflared",
+        &npm,
+        |name| values.get(name).map(|value| (*value).to_string()),
+    )
+    .unwrap();
+    assert_eq!(
+        network.proxy.as_deref(),
+        Some("http://system-proxy.test:9443")
+    );
+    assert_eq!(network.no_proxy.as_deref(), Some("localhost,127.0.0.1"));
+    assert_eq!(network.ca_pem, None);
+    assert_eq!(network.reject_unauthorized, None);
+}
+
+#[test]
+fn npm_cafile_is_bounded_and_errors_do_not_expose_paths_or_ca_content() {
+    let temp = tempfile::tempdir().unwrap();
+    let ca_file = temp.path().join("corporate-secret-ca.pem");
+    fs::write(&ca_file, b"not-a-real-certificate-but-bounded").unwrap();
+    let npm = NpmNetworkSettings {
+        cafile: Some(ca_file.to_string_lossy().into_owned()),
+        ..NpmNetworkSettings::default()
+    };
+    let network =
+        resolve_download_network_config_with("https://github.com", &npm, |_| None).unwrap();
+    assert_eq!(
+        network.ca_pem.as_deref(),
+        Some(b"not-a-real-certificate-but-bounded".as_slice())
+    );
+
+    let oversized = temp.path().join("too-large-secret-ca.pem");
+    let file = File::create(&oversized).unwrap();
+    file.set_len(CLOUDFLARED_MAX_CA_FILE_BYTES as u64 + 1)
+        .unwrap();
+    let error = resolve_download_network_config_with(
+        "https://github.com",
+        &NpmNetworkSettings {
+            cafile: Some(oversized.to_string_lossy().into_owned()),
+            ..NpmNetworkSettings::default()
+        },
+        |_| None,
+    )
+    .unwrap_err();
+    assert!(error.message.contains("size limit"));
+    assert!(!error.message.contains("too-large-secret-ca"));
+
+    let invalid_proxy = DownloadNetworkConfig {
+        proxy: Some("http://user:proxy-secret@[invalid".to_string()),
+        ..DownloadNetworkConfig::default()
+    };
+    let error = build_cloudflared_download_client(&invalid_proxy).unwrap_err();
+    assert!(error.message.contains("proxy URL"));
+    assert!(!error.message.contains("proxy-secret"));
+
+    let invalid_ca = DownloadNetworkConfig {
+        ca_pem: Some(
+            b"-----BEGIN CERTIFICATE-----\nprivate-ca-secret\n-----END CERTIFICATE-----\n".to_vec(),
+        ),
+        ..DownloadNetworkConfig::default()
+    };
+    let error = build_cloudflared_download_client(&invalid_ca).unwrap_err();
+    assert!(error.message.contains("CA bundle"));
+    assert!(!error.message.contains("private-ca-secret"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn npm_config_query_uses_fixed_argv_and_normalizes_null() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let npm = temp.path().join("fake-npm");
+    fs::write(
+        &npm,
+        b"#!/bin/sh\n[ \"$1\" = config ] && [ \"$2\" = get ] || exit 9\ncase \"$3\" in\n  proxy) printf '%s\\n' 'http://query-proxy.test:8080' ;;\n  ca) printf '%s\\n' null ;;\n  *) exit 8 ;;\nesac\n",
+    )
+    .unwrap();
+    fs::set_permissions(&npm, fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert_eq!(
+        query_npm_config_value_with(npm.as_os_str(), "proxy").await,
+        Some("http://query-proxy.test:8080".to_string())
+    );
+    assert_eq!(
+        query_npm_config_value_with(npm.as_os_str(), "ca").await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn explicit_proxy_and_no_proxy_are_applied_to_managed_downloads() {
+    let body = b"proxy-delivered".to_vec();
+    let temp = tempfile::tempdir().unwrap();
+    let proxied = temp.path().join("proxied.bin");
+    let (proxy_url, requests, proxy) = serve_once(body.clone()).await;
+    download_cloudflared_asset_with_network(
+        "http://origin.invalid/cloudflared?token=must-not-leak",
+        &proxied,
+        &DownloadNetworkConfig {
+            proxy: Some(proxy_url),
+            ..DownloadNetworkConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+    proxy.await.unwrap();
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    assert_eq!(fs::read(&proxied).unwrap(), body);
+
+    let direct = temp.path().join("direct.bin");
+    let (target_url, direct_requests, target) = serve_once(b"direct-delivered".to_vec()).await;
+    download_cloudflared_asset_with_network(
+        &target_url,
+        &direct,
+        &DownloadNetworkConfig {
+            proxy: Some("http://127.0.0.1:9".to_string()),
+            no_proxy: Some("127.0.0.1".to_string()),
+            ..DownloadNetworkConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+    target.await.unwrap();
+    assert_eq!(direct_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(fs::read_to_string(direct).unwrap(), "direct-delivered");
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn managed_binary_is_downloaded_verified_and_reused_without_network() {

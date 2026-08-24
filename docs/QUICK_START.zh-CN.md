@@ -14,6 +14,8 @@ Server runtime；Windows 用户需要已有的远程 Linux Server，并改用
 - `PATH` 中有 Git，并准备一个可以安全查看/编辑的 Git 仓库。
 - Linux/macOS 默认临时公网 HTTPS 分享不再要求单独安装 `cloudflared`。WebCodex 会优先
   复用显式指定或 `PATH` 中的 binary；没有时自动下载固定版本并校验后使用。
+  通过 npm wrapper 启动时，managed 下载还会继承 npm proxy、`noproxy`、CA 与
+  `strict-ssl` 配置；没有 npm-specific 配置时继续使用标准 proxy/系统信任路径。
 
 不全局安装也可以直接试用：
 

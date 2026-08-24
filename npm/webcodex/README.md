@@ -18,6 +18,9 @@ CLI + Runner client platform in this release: local Server runtime and
 against a remote Linux Server. The `share` steps below apply to Linux/macOS.
 For the default public flow, WebCodex reuses `WEBCODEX_CLOUDFLARED_BIN` or a
 `cloudflared` on `PATH`, and otherwise downloads a pinned, verified managed copy.
+The managed download reuses npm proxy/`noproxy`/CA/`strict-ssl` configuration when
+launched through this npm wrapper, while standard proxy/system trust remains the
+fallback when npm-specific settings are absent.
 
 Try it without a global install:
 
@@ -107,6 +110,8 @@ wrapper 需要 Node.js 18 或更新版本。本版本的 Windows 是 CLI + Runne
 `webcodex connect <server-url>` 连接远程 Linux Server。下面的 `share` 步骤适用于
 Linux/macOS。默认公网流程会优先复用 `WEBCODEX_CLOUDFLARED_BIN` 或 `PATH` 中已有的
 `cloudflared`，否则自动下载固定版本、校验后由 WebCodex 管理。
+通过 npm wrapper 启动时，这次 managed 下载会复用 npm proxy、`noproxy`、CA 与
+`strict-ssl` 配置；没有 npm-specific 配置时继续使用标准 proxy/系统信任路径。
 
 无需全局安装即可试用：
 

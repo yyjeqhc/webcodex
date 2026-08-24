@@ -50,7 +50,7 @@ function makeBinary(dir, name, identity = defaultIdentity()) {
   }
   fs.writeFileSync(
     file,
-    `#!/bin/sh\nif [ "\${1-}" = "--version" ]; then echo "${name} ${identity}"; exit 0; fi\nprintf '%s\\n' "$@"\nexit "\${WEBCODEX_TEST_EXIT:-0}"\n`,
+    `#!/bin/sh\nif [ "\${WEBCODEX_REQUIRE_WRAPPER_MARKER-}" = "1" ] && [ "\${WEBCODEX_NPM_WRAPPER-}" != "1" ]; then exit 24; fi\nif [ "\${1-}" = "--version" ]; then echo "${name} ${identity}"; exit 0; fi\nprintf '%s\\n' "$@"\nexit "\${WEBCODEX_TEST_EXIT:-0}"\n`,
     { mode: 0o755 }
   );
   return file;
@@ -649,7 +649,7 @@ async function main() {
     let wrapperArgs;
     if (PLATFORM === "win32") {
       wrapperTarget = process.execPath;
-      wrapperArgs = ["-e", "console.log(process.argv[1]); console.log(process.argv[2]); process.exitCode = 23;", "alpha", "two words"];
+      wrapperArgs = ["-e", "if (process.env.WEBCODEX_NPM_WRAPPER !== '1') process.exit(24); console.log(process.argv[1]); console.log(process.argv[2]); process.exitCode = 23;", "alpha", "two words"];
     } else {
       wrapperTarget = makeBinary(tmp, "wrapper-target");
       wrapperArgs = ["alpha", "two words"];
@@ -657,7 +657,7 @@ async function main() {
     const probe = childProcess.spawnSync(
       process.execPath,
       [path.join(__dirname, "wrapper-probe.js"), wrapperTarget, ...wrapperArgs],
-      { encoding: "utf8" }
+      { encoding: "utf8", env: { ...process.env, WEBCODEX_REQUIRE_WRAPPER_MARKER: "1" } }
     );
     assert.strictEqual(probe.status, 23, probe.stderr);
     assert.deepStrictEqual(probe.stdout.trim().split(/\r?\n/), ["alpha", "two words"]);

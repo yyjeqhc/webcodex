@@ -1,11 +1,14 @@
 use super::{executable_name, ProductError};
+use futures_util::future::join_all;
 use reqwest::header::USER_AGENT;
 use sha2::{Digest, Sha256};
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 const CLOUDFLARED_VERSION: &str = "2026.7.3";
@@ -15,6 +18,10 @@ const CLOUDFLARED_MAX_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
 const CLOUDFLARED_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 const CLOUDFLARED_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const CLOUDFLARED_VERIFY_TIMEOUT: Duration = Duration::from_secs(10);
+const CLOUDFLARED_MAX_CA_FILE_BYTES: usize = 4 * 1024 * 1024;
+const NPM_CONFIG_QUERY_TIMEOUT: Duration = Duration::from_secs(3);
+const NPM_CONFIG_MAX_VALUE_BYTES: usize = 4 * 1024 * 1024;
+const NPM_WRAPPER_MARKER: &str = "WEBCODEX_NPM_WRAPPER";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CloudflaredAsset {
@@ -23,6 +30,279 @@ struct CloudflaredAsset {
     archive_sha256: &'static str,
     binary_sha256: &'static str,
     gzip_archive: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct NpmNetworkSettings {
+    https_proxy: Option<String>,
+    proxy: Option<String>,
+    noproxy: Option<String>,
+    cafile: Option<String>,
+    ca: Option<String>,
+    strict_ssl: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct DownloadNetworkConfig {
+    proxy: Option<String>,
+    no_proxy: Option<String>,
+    ca_pem: Option<Vec<u8>>,
+    reject_unauthorized: Option<bool>,
+}
+
+fn normalized_config_value(value: Option<String>) -> Option<String> {
+    let value = value?.trim().to_string();
+    if value.is_empty()
+        || value.eq_ignore_ascii_case("null")
+        || value.eq_ignore_ascii_case("undefined")
+        || value == "[]"
+    {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn first_config_value<F>(get: &F, names: &[&str]) -> Option<String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    names
+        .iter()
+        .find_map(|name| normalized_config_value(get(name)))
+}
+
+fn npm_network_settings_from_env_with<F>(get: F) -> NpmNetworkSettings
+where
+    F: Fn(&str) -> Option<String>,
+{
+    NpmNetworkSettings {
+        https_proxy: first_config_value(&get, &["npm_config_https_proxy"]),
+        proxy: first_config_value(&get, &["npm_config_proxy"]),
+        noproxy: first_config_value(&get, &["npm_config_noproxy", "npm_config_no_proxy"]),
+        cafile: first_config_value(&get, &["npm_config_cafile"]),
+        ca: first_config_value(&get, &["npm_config_ca"]),
+        strict_ssl: first_config_value(&get, &["npm_config_strict_ssl"]),
+    }
+}
+
+async fn effective_npm_network_settings() -> NpmNetworkSettings {
+    let environment = npm_network_settings_from_env_with(|name| std::env::var(name).ok());
+    if std::env::var(NPM_WRAPPER_MARKER).ok().as_deref() != Some("1") {
+        return environment;
+    }
+
+    let values = join_all(
+        [
+            "https-proxy",
+            "proxy",
+            "noproxy",
+            "cafile",
+            "ca",
+            "strict-ssl",
+        ]
+        .into_iter()
+        .map(query_npm_config_value),
+    )
+    .await;
+    NpmNetworkSettings {
+        https_proxy: environment.https_proxy.or_else(|| values[0].clone()),
+        proxy: environment.proxy.or_else(|| values[1].clone()),
+        noproxy: environment.noproxy.or_else(|| values[2].clone()),
+        cafile: environment.cafile.or_else(|| values[3].clone()),
+        ca: environment.ca.or_else(|| values[4].clone()),
+        strict_ssl: environment.strict_ssl.or_else(|| values[5].clone()),
+    }
+}
+
+async fn query_npm_config_value(key: &str) -> Option<String> {
+    query_npm_config_value_with(OsStr::new("npm"), key).await
+}
+
+async fn query_npm_config_value_with(program: &OsStr, key: &str) -> Option<String> {
+    let mut child = Command::new(program)
+        .args(["config", "get", key])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let captured = tokio::time::timeout(NPM_CONFIG_QUERY_TIMEOUT, async {
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            let read = stdout.read(&mut buffer).await.ok()?;
+            if read == 0 {
+                break;
+            }
+            if bytes.len().saturating_add(read) > NPM_CONFIG_MAX_VALUE_BYTES {
+                return None;
+            }
+            bytes.extend_from_slice(&buffer[..read]);
+        }
+        Some(bytes)
+    })
+    .await;
+
+    let bytes = match captured {
+        Ok(Some(bytes)) => bytes,
+        _ => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return None;
+        }
+    };
+    let status = match tokio::time::timeout(NPM_CONFIG_QUERY_TIMEOUT, child.wait()).await {
+        Ok(Ok(status)) => status,
+        _ => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return None;
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+    normalized_config_value(String::from_utf8(bytes).ok())
+}
+
+fn resolve_download_network_config_with<F>(
+    url: &str,
+    npm: &NpmNetworkSettings,
+    get: F,
+) -> Result<DownloadNetworkConfig, ProductError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let parsed =
+        reqwest::Url::parse(url).map_err(|_| network_config_error("download URL is invalid"))?;
+    let standard_proxy = if parsed.scheme() == "https" {
+        first_config_value(
+            &get,
+            &[
+                "HTTPS_PROXY",
+                "https_proxy",
+                "HTTP_PROXY",
+                "http_proxy",
+                "ALL_PROXY",
+                "all_proxy",
+            ],
+        )
+    } else {
+        first_config_value(
+            &get,
+            &["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"],
+        )
+    };
+    let proxy = if parsed.scheme() == "https" {
+        npm.https_proxy
+            .clone()
+            .or_else(|| npm.proxy.clone())
+            .or(standard_proxy)
+    } else {
+        npm.proxy.clone().or(standard_proxy)
+    };
+    let no_proxy = npm
+        .noproxy
+        .clone()
+        .or_else(|| first_config_value(&get, &["NO_PROXY", "no_proxy"]));
+
+    let ca_pem = if let Some(cafile) = npm.cafile.as_deref() {
+        Some(read_npm_ca_file(Path::new(cafile))?)
+    } else if let Some(ca) = npm.ca.as_deref() {
+        let normalized = if !ca.contains('\n') && ca.contains("\\n") {
+            ca.replace("\\n", "\n")
+        } else {
+            ca.to_string()
+        };
+        if normalized.len() > CLOUDFLARED_MAX_CA_FILE_BYTES {
+            return Err(network_config_error("npm CA bundle exceeds the size limit"));
+        }
+        Some(normalized.into_bytes())
+    } else {
+        None
+    };
+
+    Ok(DownloadNetworkConfig {
+        proxy,
+        no_proxy,
+        ca_pem,
+        reject_unauthorized: parse_npm_strict_ssl(npm.strict_ssl.as_deref()),
+    })
+}
+
+fn parse_npm_strict_ssl(value: Option<&str>) -> Option<bool> {
+    match value?.trim().to_ascii_lowercase().as_str() {
+        "false" | "0" | "no" => Some(false),
+        "true" | "1" | "yes" => Some(true),
+        _ => None,
+    }
+}
+
+fn read_npm_ca_file(path: &Path) -> Result<Vec<u8>, ProductError> {
+    let metadata =
+        fs::metadata(path).map_err(|_| network_config_error("npm cafile could not be read"))?;
+    if !metadata.is_file() {
+        return Err(network_config_error("npm cafile is not a regular file"));
+    }
+    if metadata.len() > CLOUDFLARED_MAX_CA_FILE_BYTES as u64 {
+        return Err(network_config_error("npm cafile exceeds the size limit"));
+    }
+    let bytes = fs::read(path).map_err(|_| network_config_error("npm cafile could not be read"))?;
+    if bytes.len() > CLOUDFLARED_MAX_CA_FILE_BYTES {
+        return Err(network_config_error("npm cafile exceeds the size limit"));
+    }
+    Ok(bytes)
+}
+
+fn build_cloudflared_download_client(
+    network: &DownloadNetworkConfig,
+) -> Result<reqwest::Client, ProductError> {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(CLOUDFLARED_CONNECT_TIMEOUT)
+        .timeout(CLOUDFLARED_DOWNLOAD_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 5 {
+                return attempt.stop();
+            }
+            if attempt.previous().iter().any(|url| url.scheme() == "https")
+                && attempt.url().scheme() != "https"
+            {
+                return attempt.stop();
+            }
+            attempt.follow()
+        }));
+
+    if let Some(proxy_url) = network.proxy.as_deref() {
+        let mut proxy = reqwest::Proxy::all(proxy_url)
+            .map_err(|_| network_config_error("proxy URL is invalid or unsupported"))?;
+        if let Some(no_proxy) = network.no_proxy.as_deref() {
+            proxy = proxy.no_proxy(reqwest::NoProxy::from_string(no_proxy));
+        }
+        builder = builder.proxy(proxy);
+    }
+
+    if let Some(pem) = network.ca_pem.as_deref() {
+        let certificates = reqwest::Certificate::from_pem_bundle(pem)
+            .map_err(|_| network_config_error("npm CA bundle is invalid"))?;
+        if certificates.is_empty() {
+            return Err(network_config_error(
+                "npm CA bundle contains no certificates",
+            ));
+        }
+        for certificate in certificates {
+            builder = builder.add_root_certificate(certificate);
+        }
+    }
+    if network.reject_unauthorized == Some(false) {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+
+    builder
+        .build()
+        .map_err(|_| download_error("could not initialize the download client"))
 }
 
 pub(super) async fn resolve_cloudflared() -> Result<PathBuf, ProductError> {
@@ -234,22 +514,17 @@ fn create_private_tool_dir(path: &Path) -> Result<(), ProductError> {
 }
 
 async fn download_cloudflared_asset(url: &str, destination: &Path) -> Result<(), ProductError> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(CLOUDFLARED_CONNECT_TIMEOUT)
-        .timeout(CLOUDFLARED_DOWNLOAD_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= 5 {
-                return attempt.stop();
-            }
-            if attempt.previous().iter().any(|url| url.scheme() == "https")
-                && attempt.url().scheme() != "https"
-            {
-                return attempt.stop();
-            }
-            attempt.follow()
-        }))
-        .build()
-        .map_err(|_| download_error("could not initialize the download client"))?;
+    let npm = effective_npm_network_settings().await;
+    let network = resolve_download_network_config_with(url, &npm, |name| std::env::var(name).ok())?;
+    download_cloudflared_asset_with_network(url, destination, &network).await
+}
+
+async fn download_cloudflared_asset_with_network(
+    url: &str,
+    destination: &Path,
+    network: &DownloadNetworkConfig,
+) -> Result<(), ProductError> {
+    let client = build_cloudflared_download_client(network)?;
     let mut response = client
         .get(url)
         .header(
@@ -420,6 +695,14 @@ fn download_request_failure(error: &reqwest::Error) -> &'static str {
     } else {
         "request failed"
     }
+}
+
+fn network_config_error(detail: &str) -> ProductError {
+    ProductError::new(
+        "tunnel_unavailable",
+        format!("WebCodex could not apply network settings for managed cloudflared: {detail}"),
+        Some("Check npm/system proxy and CA configuration, then retry webcodex share; or set WEBCODEX_CLOUDFLARED_BIN / use --tunnel none."),
+    )
 }
 
 fn download_error(detail: &str) -> ProductError {

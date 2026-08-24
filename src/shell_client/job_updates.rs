@@ -897,6 +897,17 @@ impl ShellClientRegistry {
                 client_id
             ));
         }
+        if validation
+            .as_ref()
+            .and_then(|metadata| metadata.minimum_tests)
+            .is_some()
+            && !client.capabilities.structured_cargo_test_count_assertion
+        {
+            return Err(format!(
+                "structured_cargo_test_count_assertion_unavailable: agent client {} does not support durable Cargo test-count assertions",
+                client_id
+            ));
+        }
         if validation_steps
             .iter()
             .any(crate::shell_protocol::ShellJobValidationStep::is_structured_go_test_json)

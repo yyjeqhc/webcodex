@@ -31,6 +31,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
+#[cfg(unix)]
+use std::{os::unix::fs::OpenOptionsExt, os::unix::fs::PermissionsExt};
 use uuid::Uuid;
 
 tokio::task_local! {
@@ -212,7 +214,16 @@ fn directory_stats(path: &Path) -> io::Result<(u64, SystemTime)> {
     Ok((bytes, modified))
 }
 
-fn trace_dirs(root: &Path) -> io::Result<Vec<TraceDirInfo>> {
+const TRACE_OWNER_MARKER: &str = ".webcodex-tool-trace";
+
+fn trace_dir_owned_by_store(path: &Path, active_trace_id: &str) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name == active_trace_id || path.join(TRACE_OWNER_MARKER).is_file()
+}
+
+fn trace_dirs(root: &Path, active_trace_id: &str) -> io::Result<Vec<TraceDirInfo>> {
     if !root.exists() {
         return Ok(Vec::new());
     }
@@ -223,6 +234,9 @@ fn trace_dirs(root: &Path) -> io::Result<Vec<TraceDirInfo>> {
             continue;
         }
         let path = entry.path();
+        if !trace_dir_owned_by_store(&path, active_trace_id) {
+            continue;
+        }
         let (bytes, modified) = directory_stats(&path)?;
         dirs.push(TraceDirInfo {
             path,
@@ -233,6 +247,36 @@ fn trace_dirs(root: &Path) -> io::Result<Vec<TraceDirInfo>> {
     Ok(dirs)
 }
 
+fn create_private_trace_dir(path: &Path) -> io::Result<()> {
+    fs::create_dir_all(path)?;
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
+fn ensure_trace_owner_marker(trace_dir: &Path) -> io::Result<()> {
+    let marker = trace_dir.join(TRACE_OWNER_MARKER);
+    let mut options = OpenOptions::new();
+    options.create(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let file = options.open(marker)?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+fn open_private_append(path: &Path) -> io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let file = options.open(path)?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
 /// Enforce age and total-byte bounds before one new file/event is persisted.
 /// The active trace is never deleted out from under its current write; if it
 /// alone cannot fit, the new capture is omitted instead.
@@ -240,7 +284,7 @@ fn reserve_trace_capacity(root: &Path, trace_id: &str, incoming: u64) -> io::Res
     fs::create_dir_all(root)?;
     let retention = trace_retention();
     let now = SystemTime::now();
-    for info in trace_dirs(root)? {
+    for info in trace_dirs(root, trace_id)? {
         if info.path.file_name().and_then(|name| name.to_str()) == Some(trace_id) {
             continue;
         }
@@ -253,7 +297,7 @@ fn reserve_trace_capacity(root: &Path, trace_id: &str, incoming: u64) -> io::Res
         }
     }
 
-    let mut dirs = trace_dirs(root)?;
+    let mut dirs = trace_dirs(root, trace_id)?;
     let mut total = dirs
         .iter()
         .fold(0_u64, |sum, info| sum.saturating_add(info.bytes));
@@ -300,11 +344,9 @@ fn append_event_locked(root: &Path, trace_id: &str, event: &Value) -> io::Result
         return Ok(false);
     }
     let trace_dir = root.join(trace_id);
-    fs::create_dir_all(&trace_dir)?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(trace_dir.join("events.jsonl"))?;
+    create_private_trace_dir(&trace_dir)?;
+    ensure_trace_owner_marker(&trace_dir)?;
+    let mut file = open_private_append(&trace_dir.join("events.jsonl"))?;
     file.write_all(&line)?;
     Ok(true)
 }
@@ -351,18 +393,26 @@ fn persist_payload(
     }
     let trace_dir = root.join(trace_id);
     let payload_dir = trace_dir.join("payloads");
-    fs::create_dir_all(&payload_dir)?;
+    create_private_trace_dir(&trace_dir)?;
+    ensure_trace_owner_marker(&trace_dir)?;
+    create_private_trace_dir(&payload_dir)?;
     let final_path = payload_dir.join(&file_name);
     let temp_path = payload_dir.join(format!(".{file_name}.tmp"));
-    fs::write(&temp_path, &compressed)?;
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut temp_file = options.open(&temp_path)?;
+    #[cfg(unix)]
+    temp_file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    temp_file.write_all(&compressed)?;
+    temp_file.flush()?;
+    drop(temp_file);
     if let Err(error) = fs::rename(&temp_path, &final_path) {
         let _ = fs::remove_file(&temp_path);
         return Err(error);
     }
-    if let Err(error) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(trace_dir.join("events.jsonl"))
+    if let Err(error) = open_private_append(&trace_dir.join("events.jsonl"))
         .and_then(|mut file| file.write_all(&event_line))
     {
         let _ = fs::remove_file(&final_path);
@@ -955,6 +1005,68 @@ mod tests {
         );
         guard.capture_payload("raw_arguments", &json!({"content": "must-not-truncate"}));
         assert!(payload_files(temp.path(), "trace-budget").is_empty());
+    }
+
+    #[test]
+    fn full_mode_pruning_never_deletes_unowned_sibling_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let unrelated = temp.path().join(Uuid::new_v4().to_string());
+        fs::create_dir_all(&unrelated).unwrap();
+        fs::write(unrelated.join("keep.bin"), vec![b'x'; 16 * 1024]).unwrap();
+
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8192");
+        let trace_id = new_trace_id();
+        let guard = ToolRequestLifecycle::new(
+            "mcp",
+            trace_id.clone(),
+            "none",
+            "tools/call",
+            Some("list_tools".into()),
+        );
+        guard.capture_payload("raw_arguments", &json!({"probe": true}));
+
+        assert!(unrelated.join("keep.bin").exists());
+        assert_eq!(payload_files(temp.path(), &trace_id).len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn full_mode_trace_storage_is_private_on_unix() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        let trace_id = new_trace_id();
+        let guard = ToolRequestLifecycle::new(
+            "mcp",
+            trace_id.clone(),
+            "none",
+            "tools/call",
+            Some("write_project_file".into()),
+        );
+        guard.capture_payload("raw_arguments", &json!({"content": "private"}));
+
+        let trace_dir = temp.path().join(&trace_id);
+        let payload_dir = trace_dir.join("payloads");
+        let payload = payload_files(temp.path(), &trace_id)
+            .into_iter()
+            .next()
+            .expect("full trace payload");
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&trace_dir), 0o700);
+        assert_eq!(mode(&payload_dir), 0o700);
+        assert_eq!(mode(&trace_dir.join("events.jsonl")), 0o600);
+        assert_eq!(mode(&payload), 0o600);
     }
 
     #[tokio::test]

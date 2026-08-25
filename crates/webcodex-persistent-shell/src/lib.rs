@@ -3283,6 +3283,20 @@ mod windows_tests {
         assert_eq!(early_return.exit_code, Some(0), "{label}: plain return");
         assert_eq!(early_return.shell_state, ShellState::Running);
 
+        let shadow_renderer =
+            run("function global:Out-Default { process { } end { $global:LASTEXITCODE = 0 } }");
+        assert_eq!(
+            shadow_renderer.exit_code,
+            Some(0),
+            "{label}: renderer-shadow setup"
+        );
+        let shadowed_native_return = run("cmd.exe /d /c exit 7; return");
+        assert_eq!(
+            shadowed_native_return.exit_code,
+            Some(7),
+            "{label}: user-defined Out-Default intercepted trusted status capture"
+        );
+
         let native_failed = run("cmd.exe /d /c exit 7");
         assert_eq!(native_failed.exit_code, Some(7), "{label}: native failure");
 

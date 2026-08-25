@@ -200,7 +200,11 @@ namespace WebCodexPersistentShell
                     // Out-Default consumes user success output before the final component,
                     // so Invoke() returns only the controller-owned status value.
                     shell.AddScript(source, false);
-                    shell.AddCommand("Out-Default");
+                    // Pin the built-in renderer by module-qualified cmdlet identity. The
+                    // persistent user Runspace may contain a user-defined Out-Default
+                    // function or alias; resolving that name dynamically would let user
+                    // state run between source and the trusted status probe.
+                    shell.AddCommand("Microsoft.PowerShell.Core\\Out-Default");
                     shell.AddScript(StatusProbe, false);
                     results = shell.Invoke();
                 }

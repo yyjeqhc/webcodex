@@ -27,8 +27,9 @@ mod tests;
 // Only symbols referenced outside this module are re-exported here; internal
 // helpers stay `pub(super)` / module-private.
 pub(crate) use console::{
-    aggregate_console_list, WorkflowSessionConsoleAggregate, WorkflowSessionConsoleDetail,
-    WorkflowSessionConsoleList,
+    aggregate_console_list, WorkflowSessionConsoleAggregate,
+    WorkflowSessionConsoleAttentionOverview, WorkflowSessionConsoleDetail,
+    WorkflowSessionConsoleList, WorkflowSessionConsoleListItem,
 };
 pub(crate) use events::{
     exploration_tool_kind, is_valid_session_id, normalize_observed_project_path,

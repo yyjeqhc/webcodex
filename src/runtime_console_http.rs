@@ -7,7 +7,8 @@
 use crate::auth::{AuthContext, SCOPE_PROJECT_READ, SCOPE_RUNTIME_READ};
 use crate::tool_runtime::sessions::{
     aggregate_console_list, is_valid_session_id, SessionMessageKind, SessionMessagePriority,
-    WorkflowSessionConsoleAggregate, WorkflowSessionConsoleList,
+    WorkflowSessionConsoleAggregate, WorkflowSessionConsoleAttentionOverview,
+    WorkflowSessionConsoleList, WorkflowSessionConsoleListItem,
 };
 use crate::tool_runtime::{ToolCall, ToolRuntime};
 use salvo::prelude::*;
@@ -25,6 +26,9 @@ const MAX_STATUS_CHARS: usize = 64;
 const DEFAULT_RUNNER_PROJECT_LIMIT: usize = 24;
 const MAX_RUNNER_PROJECT_LIMIT: usize = 32;
 const CONSOLE_AGGREGATE_SESSION_LIMIT: usize = 50;
+const HOME_PROJECT_SCAN_LIMIT: usize = MAX_PROJECT_LIMIT;
+const HOME_SESSIONS_PER_PROJECT_LIMIT: usize = CONSOLE_AGGREGATE_SESSION_LIMIT;
+const HOME_RECENT_SESSION_LIMIT: usize = 10;
 const DEFAULT_MESSAGE_LIMIT: usize = 100;
 const MAX_MESSAGE_LIMIT: usize = 100;
 const MAX_OBSERVATION_TOKEN_CHARS: usize = 192;
@@ -133,6 +137,9 @@ struct RuntimeConsoleOverview {
     visible_projects: usize,
     projects_truncated: bool,
     workflow_sessions: RuntimeConsoleWorkflowAggregate,
+    recent_sessions: RuntimeConsoleRecentSessions,
+    runners: Vec<RuntimeConsoleRunnerSummary>,
+    projects: Vec<RuntimeConsoleProject>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -146,6 +153,47 @@ struct RuntimeConsoleWorkflowAggregate {
     projects_scanned: usize,
     projects_total: usize,
     truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeConsoleRecentSessions {
+    sessions: Vec<RuntimeConsoleRecentSession>,
+    returned: usize,
+    candidate_count: usize,
+    truncated: bool,
+    scan_truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeConsoleRecentSession {
+    client_id: String,
+    project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_name: Option<String>,
+    #[serde(flatten)]
+    session: WorkflowSessionConsoleListItem,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeConsoleRunnerSummary {
+    client_id: String,
+    connected: bool,
+    status: Option<String>,
+    transport: Option<String>,
+    last_seen_age_secs: Option<i64>,
+    version: Option<String>,
+    build_git_commit: Option<String>,
+    build_git_dirty: Option<bool>,
+    source_alignment: Option<String>,
+    version_matches_server: Option<bool>,
+    active_jobs: usize,
+    job_concurrency_limit: Option<u64>,
+    jobs_running: usize,
+    jobs_queued: usize,
+    visible_project_count: usize,
+    projects_scanned: usize,
+    projects_truncated: bool,
+    sessions: WorkflowSessionConsoleAggregate,
 }
 
 #[derive(Debug, Serialize)]
@@ -227,7 +275,7 @@ struct RuntimeConsoleProjects {
     truncated: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct RuntimeConsoleProject {
     id: String,
     client_id: String,
@@ -236,6 +284,8 @@ struct RuntimeConsoleProject {
     connected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     agent_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sessions: Option<WorkflowSessionConsoleAggregate>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -446,6 +496,251 @@ fn add_console_aggregate(
     target.truncated |= aggregate.sessions_truncated;
 }
 
+fn empty_console_aggregate() -> WorkflowSessionConsoleAggregate {
+    WorkflowSessionConsoleAggregate {
+        retained_sessions: 0,
+        returned_sessions: 0,
+        sessions_truncated: false,
+        active_sessions: 0,
+        running_sessions: 0,
+        latest_updated_at: None,
+        attention: WorkflowSessionConsoleAttentionOverview {
+            open_guidance: 0,
+            open_questions: 0,
+            open_risks: 0,
+            open_todos: 0,
+        },
+    }
+}
+
+fn merge_console_aggregate(
+    target: &mut WorkflowSessionConsoleAggregate,
+    aggregate: &WorkflowSessionConsoleAggregate,
+) {
+    target.retained_sessions = target
+        .retained_sessions
+        .saturating_add(aggregate.retained_sessions);
+    target.returned_sessions = target
+        .returned_sessions
+        .saturating_add(aggregate.returned_sessions);
+    target.sessions_truncated |= aggregate.sessions_truncated;
+    target.active_sessions = target
+        .active_sessions
+        .saturating_add(aggregate.active_sessions);
+    target.running_sessions = target
+        .running_sessions
+        .saturating_add(aggregate.running_sessions);
+    target.latest_updated_at = match (target.latest_updated_at, aggregate.latest_updated_at) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    };
+    target.attention.open_guidance = target
+        .attention
+        .open_guidance
+        .saturating_add(aggregate.attention.open_guidance);
+    target.attention.open_questions = target
+        .attention
+        .open_questions
+        .saturating_add(aggregate.attention.open_questions);
+    target.attention.open_risks = target
+        .attention
+        .open_risks
+        .saturating_add(aggregate.attention.open_risks);
+    target.attention.open_todos = target
+        .attention
+        .open_todos
+        .saturating_add(aggregate.attention.open_todos);
+}
+
+fn session_has_attention(session: &WorkflowSessionConsoleListItem) -> bool {
+    let attention = &session.overview.attention;
+    attention.open_guidance > 0
+        || attention.open_questions > 0
+        || attention.open_risks > 0
+        || attention.open_todos > 0
+}
+
+fn compare_recent_sessions(
+    left: &RuntimeConsoleRecentSession,
+    right: &RuntimeConsoleRecentSession,
+) -> std::cmp::Ordering {
+    let left_working = left.session.running_call || left.session.running_jobs > 0;
+    let right_working = right.session.running_call || right.session.running_jobs > 0;
+    right_working
+        .cmp(&left_working)
+        .then_with(|| {
+            session_has_attention(&right.session).cmp(&session_has_attention(&left.session))
+        })
+        .then_with(|| {
+            (right.session.lifecycle == "active").cmp(&(left.session.lifecycle == "active"))
+        })
+        .then_with(|| right.session.updated_at.cmp(&left.session.updated_at))
+        .then_with(|| left.client_id.cmp(&right.client_id))
+        .then_with(|| left.project_id.cmp(&right.project_id))
+        .then_with(|| left.session.session_id.cmp(&right.session.session_id))
+}
+
+fn finalize_recent_sessions(
+    mut candidates: Vec<RuntimeConsoleRecentSession>,
+    scan_truncated: bool,
+) -> RuntimeConsoleRecentSessions {
+    candidates.sort_by(compare_recent_sessions);
+    let candidate_count = candidates.len();
+    candidates.truncate(HOME_RECENT_SESSION_LIMIT);
+    RuntimeConsoleRecentSessions {
+        returned: candidates.len(),
+        candidate_count,
+        truncated: candidate_count > HOME_RECENT_SESSION_LIMIT,
+        scan_truncated,
+        sessions: candidates,
+    }
+}
+
+struct RuntimeConsoleHomeScan {
+    workflow: RuntimeConsoleWorkflowAggregate,
+    recent_sessions: RuntimeConsoleRecentSessions,
+    projects: Vec<RuntimeConsoleProject>,
+    runner_sessions: HashMap<String, WorkflowSessionConsoleAggregate>,
+    runner_projects_scanned: HashMap<String, usize>,
+    project_scan_truncated: bool,
+}
+
+fn scan_runtime_home(
+    runtime: &ToolRuntime,
+    visible: &RuntimeConsoleProjects,
+    running_jobs: &RunningJobSnapshot,
+) -> RuntimeConsoleHomeScan {
+    let mut workflow = RuntimeConsoleWorkflowAggregate {
+        projects_total: visible.total,
+        ..Default::default()
+    };
+    let mut recent_candidates = Vec::new();
+    let mut projected_projects = Vec::new();
+    let mut runner_sessions: HashMap<String, WorkflowSessionConsoleAggregate> = HashMap::new();
+    let mut runner_projects_scanned: HashMap<String, usize> = HashMap::new();
+    let project_scan_truncated =
+        visible.truncated || visible.projects.len().min(HOME_PROJECT_SCAN_LIMIT) < visible.total;
+    let mut session_scan_truncated = running_jobs.truncated;
+
+    for project in visible.projects.iter().take(HOME_PROJECT_SCAN_LIMIT) {
+        let mut list = runtime
+            .workflow_sessions_console_list(&project.id, Some(HOME_SESSIONS_PER_PROJECT_LIMIT));
+        apply_running_jobs_to_list(&mut list, &project.id, running_jobs);
+        let aggregate = aggregate_console_list(&list);
+        add_console_aggregate(&mut workflow, &aggregate);
+        workflow.projects_scanned = workflow.projects_scanned.saturating_add(1);
+        session_scan_truncated |= aggregate.sessions_truncated;
+
+        merge_console_aggregate(
+            runner_sessions
+                .entry(project.client_id.clone())
+                .or_insert_with(empty_console_aggregate),
+            &aggregate,
+        );
+        runner_projects_scanned
+            .entry(project.client_id.clone())
+            .and_modify(|count| *count = count.saturating_add(1))
+            .or_insert(1);
+
+        recent_candidates.extend(list.sessions.into_iter().map(|session| {
+            RuntimeConsoleRecentSession {
+                client_id: project.client_id.clone(),
+                project_id: project.id.clone(),
+                project_name: project.name.clone(),
+                session,
+            }
+        }));
+
+        let mut projected = project.clone();
+        projected.sessions = Some(aggregate);
+        projected_projects.push(projected);
+    }
+
+    workflow.truncated |= project_scan_truncated || session_scan_truncated;
+    let recent_sessions = finalize_recent_sessions(
+        recent_candidates,
+        project_scan_truncated || session_scan_truncated,
+    );
+    RuntimeConsoleHomeScan {
+        workflow,
+        recent_sessions,
+        projects: projected_projects,
+        runner_sessions,
+        runner_projects_scanned,
+        project_scan_truncated,
+    }
+}
+
+fn runner_fleet_rows(
+    agents: &Value,
+    status_clients: &[Value],
+    scan: &RuntimeConsoleHomeScan,
+) -> Vec<RuntimeConsoleRunnerSummary> {
+    let mut rows = agents
+        .get("agents")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|agent| {
+            let client_id = safe_string(agent.get("client_id"), MAX_CLIENT_ID_CHARS)?;
+            let status = status_clients.iter().find(|candidate| {
+                candidate.get("client_id").and_then(Value::as_str) == Some(client_id.as_str())
+            });
+            let build = agent.get("build").unwrap_or(&Value::Null);
+            let concurrency = agent.get("job_concurrency").unwrap_or(&Value::Null);
+            Some(RuntimeConsoleRunnerSummary {
+                client_id: client_id.clone(),
+                connected: safe_bool(agent.get("connected")),
+                status: safe_string(agent.get("status"), MAX_STATUS_CHARS),
+                transport: safe_string(agent.get("transport"), MAX_STATUS_CHARS),
+                last_seen_age_secs: agent.get("last_seen_age_secs").and_then(Value::as_i64),
+                version: safe_string(build.get("version"), 80),
+                build_git_commit: status
+                    .and_then(|value| safe_string(value.get("build_git_commit"), 80))
+                    .or_else(|| safe_string(build.get("git_commit"), 80)),
+                build_git_dirty: status
+                    .and_then(|value| value.get("build_git_dirty"))
+                    .and_then(Value::as_bool)
+                    .or_else(|| build.get("git_dirty").and_then(Value::as_bool)),
+                source_alignment: status.and_then(|value| {
+                    safe_string(
+                        value
+                            .get("source_alignment")
+                            .and_then(|alignment| alignment.get("status")),
+                        MAX_STATUS_CHARS,
+                    )
+                }),
+                version_matches_server: status
+                    .and_then(|value| value.get("version_matches_server"))
+                    .and_then(Value::as_bool),
+                active_jobs: safe_usize(agent.get("active_jobs")),
+                job_concurrency_limit: concurrency.get("limit").and_then(Value::as_u64),
+                jobs_running: safe_usize(concurrency.get("running")),
+                jobs_queued: safe_usize(concurrency.get("queued")),
+                visible_project_count: scan
+                    .runner_projects_scanned
+                    .get(&client_id)
+                    .copied()
+                    .unwrap_or(0),
+                projects_scanned: scan
+                    .runner_projects_scanned
+                    .get(&client_id)
+                    .copied()
+                    .unwrap_or(0),
+                projects_truncated: scan.project_scan_truncated,
+                sessions: scan
+                    .runner_sessions
+                    .get(&client_id)
+                    .cloned()
+                    .unwrap_or_else(empty_console_aggregate),
+            })
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| left.client_id.cmp(&right.client_id));
+    rows
+}
+
 async fn listed_projects_for_auth(
     runtime: &ToolRuntime,
     auth: &AuthContext,
@@ -509,6 +804,7 @@ fn project_selector_row(value: &Value) -> Option<RuntimeConsoleProject> {
         agent_status: value
             .get("agent_status")
             .and_then(|value| bounded_text(value, MAX_STATUS_CHARS)),
+        sessions: None,
     })
 }
 
@@ -774,24 +1070,28 @@ async fn overview_for_auth(
     });
     let project_access = project_read_available(auth);
     let visible = if project_access {
-        Some(projects_for_auth(runtime, auth, Some(MAX_PROJECT_LIMIT)).await?)
+        Some(projects_for_auth(runtime, auth, Some(HOME_PROJECT_SCAN_LIMIT)).await?)
     } else {
         None
     };
-    let mut workflow_aggregate = RuntimeConsoleWorkflowAggregate::default();
-    if let Some(visible) = visible.as_ref() {
-        workflow_aggregate.projects_total = visible.total;
-        for project in visible.projects.iter().take(DEFAULT_RUNNER_PROJECT_LIMIT) {
-            let list = runtime
-                .workflow_sessions_console_list(&project.id, Some(CONSOLE_AGGREGATE_SESSION_LIMIT));
-            let aggregate = aggregate_console_list(&list);
-            add_console_aggregate(&mut workflow_aggregate, &aggregate);
-            workflow_aggregate.projects_scanned += 1;
-        }
-        workflow_aggregate.truncated |= visible.truncated
-            || workflow_aggregate.projects_scanned < workflow_aggregate.projects_total;
-    }
-    let runner_count = safe_usize(summary.get("count")).max(status_clients.len());
+    let running_jobs = if visible.is_some() {
+        running_jobs_for_auth(runtime, auth, None).await?
+    } else {
+        RunningJobSnapshot::default()
+    };
+    let home = visible.as_ref().map_or_else(
+        || RuntimeConsoleHomeScan {
+            workflow: RuntimeConsoleWorkflowAggregate::default(),
+            recent_sessions: finalize_recent_sessions(Vec::new(), false),
+            projects: Vec::new(),
+            runner_sessions: HashMap::new(),
+            runner_projects_scanned: HashMap::new(),
+            project_scan_truncated: false,
+        },
+        |visible| scan_runtime_home(runtime, visible, &running_jobs),
+    );
+    let runners = runner_fleet_rows(&agents, &status_clients, &home);
+    let runner_count = safe_usize(summary.get("count")).max(runners.len());
     let online = safe_usize(summary.get("online"));
     let stale = safe_usize(summary.get("stale"));
     let unavailable = runner_count.saturating_sub(online.saturating_add(stale));
@@ -813,8 +1113,11 @@ async fn overview_for_auth(
         ),
         projects_available: project_access,
         visible_projects: visible.as_ref().map_or(0, |value| value.total),
-        projects_truncated: visible.as_ref().is_some_and(|value| value.truncated),
-        workflow_sessions: workflow_aggregate,
+        projects_truncated: home.project_scan_truncated,
+        workflow_sessions: home.workflow,
+        recent_sessions: home.recent_sessions,
+        runners,
+        projects: home.projects,
     })
 }
 
@@ -1308,6 +1611,37 @@ mod tests {
         (tmp, Service::new(router))
     }
 
+    fn recent_test_row(
+        client_id: &str,
+        project_id: &str,
+        session_id: &str,
+        updated_at: i64,
+        running: bool,
+        attention: bool,
+        active: bool,
+    ) -> RuntimeConsoleRecentSession {
+        let runtime = test_runtime();
+        runtime.sessions.start_session(
+            Some(project_id.to_string()),
+            Some(format!("Session {session_id}")),
+        );
+        let mut session = runtime
+            .workflow_sessions_console_list(project_id, Some(1))
+            .sessions
+            .remove(0);
+        session.session_id = session_id.to_string();
+        session.updated_at = updated_at;
+        session.running_call = running;
+        session.lifecycle = if active { "active" } else { "closed" }.to_string();
+        session.overview.attention.open_todos = usize::from(attention);
+        RuntimeConsoleRecentSession {
+            client_id: client_id.to_string(),
+            project_id: project_id.to_string(),
+            project_name: Some(format!("Project {project_id}")),
+            session,
+        }
+    }
+
     #[test]
     fn selector_uses_bounded_authoritative_client_id_without_parsing_project_id() {
         let projected = project_selector_row(&serde_json::json!({
@@ -1334,6 +1668,188 @@ mod tests {
             "connected": true
         }))
         .is_none());
+    }
+
+    #[test]
+    fn runtime_home_recent_ranking_is_working_attention_active_recent_then_identity() {
+        let rows = vec![
+            recent_test_row("z", "agent:z:idle", "idle", 400, false, false, false),
+            recent_test_row("b", "agent:b:active", "active", 300, false, false, true),
+            recent_test_row(
+                "a",
+                "agent:a:attention",
+                "attention",
+                200,
+                false,
+                true,
+                false,
+            ),
+            recent_test_row("c", "agent:c:working", "working", 100, true, false, false),
+            recent_test_row("a", "agent:a:tie", "tie-b", 50, false, false, false),
+            recent_test_row("a", "agent:a:tie", "tie-a", 50, false, false, false),
+        ];
+        let ranked = finalize_recent_sessions(rows, false);
+        assert_eq!(
+            ranked
+                .sessions
+                .iter()
+                .map(|row| row.session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["working", "attention", "active", "idle", "tie-a", "tie-b"]
+        );
+        assert!(!ranked.truncated);
+        assert!(!ranked.scan_truncated);
+    }
+
+    #[test]
+    fn runtime_home_recent_and_project_scans_are_explicitly_bounded() {
+        let recent = finalize_recent_sessions(
+            (0..HOME_RECENT_SESSION_LIMIT + 3)
+                .map(|index| {
+                    recent_test_row(
+                        "runner",
+                        "agent:runner:project",
+                        &format!("session-{index:02}"),
+                        index as i64,
+                        false,
+                        false,
+                        false,
+                    )
+                })
+                .collect(),
+            true,
+        );
+        assert_eq!(recent.returned, HOME_RECENT_SESSION_LIMIT);
+        assert_eq!(recent.candidate_count, HOME_RECENT_SESSION_LIMIT + 3);
+        assert!(recent.truncated);
+        assert!(recent.scan_truncated);
+
+        let runtime = test_runtime();
+        let visible = RuntimeConsoleProjects {
+            projects: (0..HOME_PROJECT_SCAN_LIMIT)
+                .map(|index| RuntimeConsoleProject {
+                    id: format!("agent:runner:project-{index}"),
+                    client_id: "runner".to_string(),
+                    name: Some(format!("Project {index}")),
+                    connected: true,
+                    agent_status: Some("online".to_string()),
+                    sessions: None,
+                })
+                .collect(),
+            total: HOME_PROJECT_SCAN_LIMIT + 1,
+            truncated: true,
+        };
+        let scan = scan_runtime_home(&runtime, &visible, &RunningJobSnapshot::default());
+        assert_eq!(scan.projects.len(), HOME_PROJECT_SCAN_LIMIT);
+        assert_eq!(scan.workflow.projects_scanned, HOME_PROJECT_SCAN_LIMIT);
+        assert_eq!(scan.workflow.projects_total, HOME_PROJECT_SCAN_LIMIT + 1);
+        assert!(scan.project_scan_truncated);
+        assert!(scan.workflow.truncated);
+        assert!(scan.recent_sessions.scan_truncated);
+    }
+
+    #[test]
+    fn runtime_home_runner_fleet_joins_health_build_jobs_projects_and_sessions() {
+        let mut sessions = empty_console_aggregate();
+        sessions.active_sessions = 2;
+        sessions.running_sessions = 1;
+        sessions.attention.open_todos = 3;
+        let scan = RuntimeConsoleHomeScan {
+            workflow: RuntimeConsoleWorkflowAggregate::default(),
+            recent_sessions: finalize_recent_sessions(Vec::new(), false),
+            projects: Vec::new(),
+            runner_sessions: HashMap::from([("runner-a".to_string(), sessions)]),
+            runner_projects_scanned: HashMap::from([("runner-a".to_string(), 4)]),
+            project_scan_truncated: false,
+        };
+        let agents = serde_json::json!({
+            "agents": [{
+                "client_id": "runner-a",
+                "connected": true,
+                "status": "online",
+                "transport": "websocket",
+                "last_seen_age_secs": 2,
+                "active_jobs": 3,
+                "job_concurrency": {"limit": 8, "running": 2, "queued": 1},
+                "build": {"version": "0.3.8", "git_commit": "agent-commit", "git_dirty": false}
+            }]
+        });
+        let status = vec![serde_json::json!({
+            "client_id": "runner-a",
+            "build_git_commit": "status-commit",
+            "build_git_dirty": true,
+            "version_matches_server": false,
+            "source_alignment": {"status": "different"}
+        })];
+        let rows = runner_fleet_rows(&agents, &status, &scan);
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.client_id, "runner-a");
+        assert_eq!(row.active_jobs, 3);
+        assert_eq!(row.job_concurrency_limit, Some(8));
+        assert_eq!(row.jobs_running, 2);
+        assert_eq!(row.jobs_queued, 1);
+        assert_eq!(row.visible_project_count, 4);
+        assert_eq!(row.sessions.active_sessions, 2);
+        assert_eq!(row.sessions.running_sessions, 1);
+        assert_eq!(row.sessions.attention.open_todos, 3);
+        assert_eq!(row.build_git_commit.as_deref(), Some("status-commit"));
+        assert_eq!(row.build_git_dirty, Some(true));
+        assert_eq!(row.source_alignment.as_deref(), Some("different"));
+        assert_eq!(row.version_matches_server, Some(false));
+    }
+
+    #[tokio::test]
+    async fn runtime_home_projects_and_recent_sessions_span_visible_runners() {
+        let runtime = test_runtime();
+        let auth = crate::auth::shared_key_context("runtime-home-fleet");
+        register_project(&runtime, "runner-a", "proj-a", "/private/a", Some(&auth)).await;
+        register_project(&runtime, "runner-b", "proj-b", "/private/b", Some(&auth)).await;
+        start_authorized_session(&runtime, "agent:runner-a:proj-a", &auth);
+        start_authorized_session(&runtime, "agent:runner-b:proj-b", &auth);
+
+        let home = overview_for_auth(&runtime, &auth).await.unwrap();
+        let recent_clients = home
+            .recent_sessions
+            .sessions
+            .iter()
+            .map(|row| row.client_id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            recent_clients,
+            std::collections::BTreeSet::from(["runner-a", "runner-b"])
+        );
+        assert_eq!(home.projects.len(), 2);
+        assert!(home
+            .projects
+            .iter()
+            .all(|project| project.sessions.is_some()));
+        assert_eq!(home.runners.len(), 2);
+        assert_eq!(home.workflow_sessions.projects_scanned, 2);
+        assert!(!home.projects_truncated);
+        assert!(!home.recent_sessions.scan_truncated);
+    }
+
+    #[tokio::test]
+    async fn runtime_home_recent_sessions_follow_project_authority() {
+        let runtime = test_runtime();
+        let auth_a = crate::auth::shared_key_context("runtime-home-a");
+        let auth_b = crate::auth::shared_key_context("runtime-home-b");
+        register_project(&runtime, "runner-a", "proj-a", "/private/a", Some(&auth_a)).await;
+        register_project(&runtime, "runner-b", "proj-b", "/private/b", Some(&auth_b)).await;
+        start_authorized_session(&runtime, "agent:runner-a:proj-a", &auth_a);
+        start_authorized_session(&runtime, "agent:runner-b:proj-b", &auth_b);
+
+        let home = overview_for_auth(&runtime, &auth_a).await.unwrap();
+        assert_eq!(home.projects.len(), 1);
+        assert_eq!(home.projects[0].id, "agent:runner-a:proj-a");
+        assert_eq!(home.recent_sessions.sessions.len(), 1);
+        assert_eq!(home.recent_sessions.sessions[0].client_id, "runner-a");
+        let serialized = serde_json::to_string(&home).unwrap();
+        assert!(!serialized.contains("runner-b"));
+        assert!(!serialized.contains("agent:runner-b:proj-b"));
+        assert!(!serialized.contains("/private/a"));
+        assert!(!serialized.contains("/private/b"));
     }
 
     #[tokio::test]
@@ -1526,8 +2042,15 @@ mod tests {
         assert_eq!(hosted_detail_value, direct_detail_value);
         assert_eq!(hosted_detail.running_jobs, 0);
         assert!(hosted_detail.running_jobs_complete);
-        let serialized = serde_json::to_string(&hosted_detail).unwrap();
+        let home = overview_for_auth(&runtime, &auth).await.unwrap();
+        assert_eq!(home.recent_sessions.sessions.len(), 1);
+        let serialized = format!(
+            "{}{}",
+            serde_json::to_string(&hosted_detail).unwrap(),
+            serde_json::to_string(&home).unwrap()
+        );
         assert!(!serialized.contains("/root/private/source.rs"));
+        assert!(!serialized.contains("/private/a"));
         assert!(serialized.contains("[private path]"));
     }
 

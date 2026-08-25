@@ -5314,7 +5314,7 @@ impl JobManager {
             drop(tx);
             let timeout_secs = request.timeout_secs.min(policy.max_timeout_secs).max(1);
             let mut transport_stderr = String::new();
-            let (mut status, exit_code, mut error) = loop {
+            let (mut status, exit_code, mut error, interrupted_after_dispatch) = loop {
                 let mut out = String::new();
                 let mut err = String::new();
                 while let Ok(chunk) = rx.try_recv() {
@@ -5346,23 +5346,31 @@ impl JobManager {
                     Ok(Some(status)) => {
                         if stop_requested.load(Ordering::SeqCst) {
                             break (
-                                "stopped".to_string(),
-                                Some(-1),
-                                Some("job stopped by request".to_string()),
+                                "failed".to_string(),
+                                None,
+                                Some(
+                                    "ssh_command_stopped_after_dispatch: local SSH tree was terminated, remote command outcome is unknown; do not blindly retry"
+                                        .to_string(),
+                                ),
+                                true,
                             );
                         }
                         if status.success() {
-                            break ("completed".to_string(), Some(0), None);
+                            break ("completed".to_string(), Some(0), None, false);
                         }
-                        break ("failed".to_string(), status.code(), None);
+                        break ("failed".to_string(), status.code(), None, false);
                     }
                     Ok(None) => {
                         if stop_requested.load(Ordering::SeqCst) {
                             let _ = terminate_managed_tree(&child);
                             break (
-                                "stopped".to_string(),
-                                Some(-1),
-                                Some("job stopped by request".to_string()),
+                                "failed".to_string(),
+                                None,
+                                Some(
+                                    "ssh_command_stopped_after_dispatch: local SSH tree was terminated, remote command outcome is unknown; do not blindly retry"
+                                        .to_string(),
+                                ),
+                                true,
                             );
                         }
                         if start.elapsed() >= Duration::from_secs(timeout_secs) {
@@ -5372,6 +5380,7 @@ impl JobManager {
                                 "timeout".to_string(),
                                 Some(-1),
                                 Some(format!("job timed out after {timeout_secs} seconds")),
+                                false,
                             );
                         }
                     }
@@ -5382,6 +5391,7 @@ impl JobManager {
                             Some(format!(
                                 "ssh_command_wait_failed: command may have started and was not retried: {wait_error}"
                             )),
+                            false,
                         );
                     }
                 }
@@ -5404,7 +5414,11 @@ impl JobManager {
             if !final_err.is_empty() {
                 append_bounded_tail(&mut transport_stderr, &final_err, 16 * 1024);
             }
-            let mut command_execution_state = raw_shell_job_terminal_lifecycle(&status, exit_code);
+            let mut command_execution_state = if interrupted_after_dispatch {
+                ShellCommandExecutionState::OutcomeUnknown
+            } else {
+                raw_shell_job_terminal_lifecycle(&status, exit_code)
+            };
             if tree_cleanup_uncertain {
                 status = "failed".to_string();
                 error = Some(

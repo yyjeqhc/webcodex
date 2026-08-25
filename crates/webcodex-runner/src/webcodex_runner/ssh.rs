@@ -1071,19 +1071,20 @@ fn run_piped_ssh_command(
         .unwrap_or_default();
     let mut stderr = String::from_utf8_lossy(&stderr).into_owned();
     if stopped {
-        append_line(&mut stderr, "job stopped by request");
-        let result = CommandResult {
-            exit_code: Some(-1),
+        append_line(
+            &mut stderr,
+            "webcodex: local SSH client was stopped after dispatch; remote command outcome is unknown; do not blindly retry",
+        );
+        return ShellCommandResult::outcome_unknown(CommandResult {
+            exit_code: None,
             stdout: Some(String::from_utf8_lossy(&stdout).into_owned()),
             stderr: Some(stderr),
             duration_ms: Some(start.elapsed().as_millis() as u64),
-            error: Some("job stopped".to_string()),
-        };
-        return if status.is_some() {
-            ShellCommandResult::completed(result)
-        } else {
-            ShellCommandResult::outcome_unknown(result)
-        };
+            error: Some(
+                "ssh_command_stopped_after_dispatch: local SSH tree was terminated, remote command outcome is unknown; do not blindly retry"
+                    .to_string(),
+            ),
+        });
     }
     if timed_out {
         append_line(
@@ -1749,11 +1750,18 @@ mod tests {
         assert!(!running.finished, "{running:?}");
         manager.stop("ssh-job-stop").expect("stop remote job");
         let stopped = wait_for_job_update(&mut rx, "ssh-job-stop", |update| update.finished);
-        assert_eq!(stopped.status, "stopped", "{stopped:?}");
-        assert_eq!(stopped.exit_code, Some(-1), "{stopped:?}");
+        assert_eq!(stopped.status, "failed", "{stopped:?}");
+        assert_eq!(stopped.exit_code, None, "{stopped:?}");
         assert_eq!(
             stopped.command_execution_state,
-            Some(crate::shell_protocol::ShellCommandExecutionState::Completed),
+            Some(crate::shell_protocol::ShellCommandExecutionState::OutcomeUnknown),
+            "{stopped:?}"
+        );
+        assert!(
+            stopped
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_command_stopped_after_dispatch")),
             "{stopped:?}"
         );
 
@@ -2737,6 +2745,11 @@ fn main() {
         thread::sleep(Duration::from_secs(60));
         return;
     }
+    if let Some(marker) = suffix(script, "WC_FAKE_WAIT_FOR_STOP::") {
+        fs::write(marker, format!("{}", std::process::id())).unwrap();
+        thread::sleep(Duration::from_secs(60));
+        return;
+    }
     if script.contains("WC_FAKE_SLEEP") {
         thread::sleep(Duration::from_secs(60));
         return;
@@ -3121,6 +3134,65 @@ fn main() {
     }
 
     #[test]
+    fn windows_one_shot_post_dispatch_stop_is_outcome_unknown_and_reaps_tree() {
+        let temp = tempfile::tempdir().unwrap();
+        let started_marker = temp.path().join("one-shot-stop.started");
+        let stop_requested = Arc::new(AtomicBool::new(false));
+        let stop_signal = Arc::clone(&stop_requested);
+        let marker_for_stop = started_marker.clone();
+        let stopper = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !marker_for_stop.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                marker_for_stop.exists(),
+                "fake SSH never reached dispatch point"
+            );
+            stop_signal.store(true, Ordering::SeqCst);
+        });
+
+        let result = run_ssh_shell_with_execution_state(
+            &fake_pool(),
+            7,
+            &ssh_config("spe", None),
+            &AgentPolicy::default(),
+            "spe",
+            "wc_sess_windows_one_shot_stop",
+            None,
+            &format!("WC_FAKE_WAIT_FOR_STOP::{}", started_marker.display()),
+            None,
+            30,
+            Some(stop_requested.as_ref()),
+            None,
+        );
+        stopper.join().expect("join one-shot SSH stopper");
+        let pid = std::fs::read_to_string(&started_marker)
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap();
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::OutcomeUnknown,
+            "{result:?}"
+        );
+        assert_eq!(result.result.exit_code, None, "{result:?}");
+        assert!(
+            result
+                .result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_command_stopped_after_dispatch")),
+            "{result:?}"
+        );
+        assert!(
+            wait_for_process_exit(pid),
+            "one-shot SSH client survived post-dispatch stop: {pid}"
+        );
+    }
+
+    #[test]
     fn windows_one_shot_spawn_failure_is_not_started() {
         let temp = tempfile::tempdir().unwrap();
         let pool = SshConnectionPool::with_test_executable(temp.path().join("missing-ssh.exe"));
@@ -3456,10 +3528,18 @@ fn main() {
         let stop_pid = grandchild_pid(&observed.log_snapshot.as_ref().unwrap().stdout.tail);
         manager.stop("win-ssh-stop").expect("stop Windows SSH job");
         let stopped = wait_for_job_update(&mut rx, "win-ssh-stop", |update| update.finished);
-        assert_eq!(stopped.status, "stopped", "{stopped:?}");
+        assert_eq!(stopped.status, "failed", "{stopped:?}");
+        assert_eq!(stopped.exit_code, None, "{stopped:?}");
         assert_eq!(
             stopped.command_execution_state,
-            Some(ShellCommandExecutionState::Completed),
+            Some(ShellCommandExecutionState::OutcomeUnknown),
+            "{stopped:?}"
+        );
+        assert!(
+            stopped
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_command_stopped_after_dispatch")),
             "{stopped:?}"
         );
         assert!(
@@ -3535,6 +3615,21 @@ fn main() {
             "background SSH grandchild survived Runner shutdown: {pid}"
         );
         assert!(!marker.exists());
+        let terminal = wait_for_job_update(&mut rx, "win-ssh-shutdown", |update| update.finished);
+        assert_eq!(terminal.status, "failed", "{terminal:?}");
+        assert_eq!(terminal.exit_code, None, "{terminal:?}");
+        assert_eq!(
+            terminal.command_execution_state,
+            Some(ShellCommandExecutionState::OutcomeUnknown),
+            "{terminal:?}"
+        );
+        assert!(
+            terminal
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_command_stopped_after_dispatch")),
+            "{terminal:?}"
+        );
     }
 
     #[test]

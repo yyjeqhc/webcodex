@@ -191,9 +191,8 @@ struct RuntimeConsoleRunnerSummary {
     job_concurrency_limit: Option<u64>,
     jobs_running: usize,
     jobs_queued: usize,
-    visible_project_count: usize,
     projects_scanned: usize,
-    projects_truncated: bool,
+    projects_scan_partial: bool,
     sessions: WorkflowSessionConsoleAggregate,
 }
 
@@ -689,6 +688,17 @@ fn runner_fleet_rows(
             });
             let build = agent.get("build").unwrap_or(&Value::Null);
             let concurrency = agent.get("job_concurrency").unwrap_or(&Value::Null);
+            let projects_scanned = scan
+                .runner_projects_scanned
+                .get(&client_id)
+                .copied()
+                .unwrap_or(0);
+            let mut sessions = scan
+                .runner_sessions
+                .get(&client_id)
+                .cloned()
+                .unwrap_or_else(empty_console_aggregate);
+            sessions.sessions_truncated |= scan.project_scan_truncated;
             Some(RuntimeConsoleRunnerSummary {
                 client_id: client_id.clone(),
                 connected: safe_bool(agent.get("connected")),
@@ -718,22 +728,9 @@ fn runner_fleet_rows(
                 job_concurrency_limit: concurrency.get("limit").and_then(Value::as_u64),
                 jobs_running: safe_usize(concurrency.get("running")),
                 jobs_queued: safe_usize(concurrency.get("queued")),
-                visible_project_count: scan
-                    .runner_projects_scanned
-                    .get(&client_id)
-                    .copied()
-                    .unwrap_or(0),
-                projects_scanned: scan
-                    .runner_projects_scanned
-                    .get(&client_id)
-                    .copied()
-                    .unwrap_or(0),
-                projects_truncated: scan.project_scan_truncated,
-                sessions: scan
-                    .runner_sessions
-                    .get(&client_id)
-                    .cloned()
-                    .unwrap_or_else(empty_console_aggregate),
+                projects_scanned,
+                projects_scan_partial: scan.project_scan_truncated,
+                sessions,
             })
         })
         .collect::<Vec<_>>();
@@ -1769,6 +1766,64 @@ mod tests {
         assert!(scan.project_scan_truncated);
         assert!(scan.workflow.truncated);
         assert!(scan.recent_sessions.scan_truncated);
+
+        let rows = runner_fleet_rows(
+            &serde_json::json!({"agents": [{"client_id": "runner", "connected": true}]}),
+            &[],
+            &scan,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].projects_scanned, HOME_PROJECT_SCAN_LIMIT);
+        assert!(rows[0].projects_scan_partial);
+        assert!(rows[0].sessions.sessions_truncated);
+        let serialized = serde_json::to_string(&rows[0]).unwrap();
+        assert!(!serialized.contains("visible_project_count"));
+    }
+
+    #[test]
+    fn runtime_home_project_session_bound_propagates_partial_to_runner() {
+        let runtime = test_runtime();
+        let project_id = "agent:runner:busy";
+        for index in 0..HOME_SESSIONS_PER_PROJECT_LIMIT + 3 {
+            runtime.sessions.start_session(
+                Some(project_id.to_string()),
+                Some(format!("Session {index}")),
+            );
+        }
+        let visible = RuntimeConsoleProjects {
+            projects: vec![RuntimeConsoleProject {
+                id: project_id.to_string(),
+                client_id: "runner".to_string(),
+                name: Some("Busy".to_string()),
+                path: Some("/root/git/busy".to_string()),
+                connected: true,
+                agent_status: Some("online".to_string()),
+                sessions: None,
+            }],
+            total: 1,
+            truncated: false,
+        };
+        let scan = scan_runtime_home(&runtime, &visible, &RunningJobSnapshot::default());
+        let project_sessions = scan.projects[0].sessions.as_ref().unwrap();
+        assert_eq!(
+            project_sessions.retained_sessions,
+            HOME_SESSIONS_PER_PROJECT_LIMIT + 3
+        );
+        assert_eq!(
+            project_sessions.returned_sessions,
+            HOME_SESSIONS_PER_PROJECT_LIMIT
+        );
+        assert!(project_sessions.sessions_truncated);
+
+        let rows = runner_fleet_rows(
+            &serde_json::json!({"agents": [{"client_id": "runner", "connected": true}]}),
+            &[],
+            &scan,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].projects_scanned, 1);
+        assert!(!rows[0].projects_scan_partial);
+        assert!(rows[0].sessions.sessions_truncated);
     }
 
     #[test]
@@ -1812,7 +1867,9 @@ mod tests {
         assert_eq!(row.job_concurrency_limit, Some(8));
         assert_eq!(row.jobs_running, 2);
         assert_eq!(row.jobs_queued, 1);
-        assert_eq!(row.visible_project_count, 4);
+        assert_eq!(row.projects_scanned, 4);
+        assert!(!row.projects_scan_partial);
+        assert!(!row.sessions.sessions_truncated);
         assert_eq!(row.sessions.active_sessions, 2);
         assert_eq!(row.sessions.running_sessions, 1);
         assert_eq!(row.sessions.attention.open_todos, 3);

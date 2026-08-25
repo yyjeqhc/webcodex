@@ -382,7 +382,12 @@ function renderProjectSelectors(projects: any[], truncated: boolean): void {
       if (project.sessions.running_sessions) appendChip(facts, countLabel(project.sessions.running_sessions, "RUNNING"), "tone-runtime");
       const attention = attentionLabel(project.sessions.attention);
       if (!attention.startsWith("No retained")) appendChip(facts, attention, "tone-warn");
-      const retained = document.createElement("span"); retained.className = "muted small"; retained.textContent = countLabel(project.sessions.retained_sessions, "retained Session"); facts.appendChild(retained);
+      if (project.sessions.sessions_truncated) appendChip(facts, "SESSION SCAN PARTIAL", "tone-warn");
+      const retained = document.createElement("span"); retained.className = "muted small";
+      retained.textContent = project.sessions.sessions_truncated
+        ? String(project.sessions.returned_sessions || 0) + " / " + String(project.sessions.retained_sessions || 0) + " Sessions projected · partial"
+        : countLabel(project.sessions.retained_sessions, "retained Session");
+      facts.appendChild(retained);
       if (typeof project.sessions.latest_updated_at === "number") {
         const updated = document.createElement("span"); updated.className = "muted small"; updated.textContent = "updated " + updatedLabel(project.sessions.latest_updated_at); facts.appendChild(updated);
       }
@@ -475,14 +480,20 @@ function renderRunnerFleet(runners: any[]): void {
     if (runner.build_git_dirty === true) appendChip(signals, "DIRTY", "tone-warn");
 
     const facts = document.createElement("div"); facts.className = "muted small fleet-row-facts";
-    facts.textContent = [
+    const projectFact = runner.projects_scan_partial
+      ? String(runner.projects_scanned || 0) + " Projects scanned"
+      : countLabel(runner.projects_scanned, "visible Project");
+    const factParts = [
       countLabel(runner.active_jobs, "active Job"),
       countLabel(runner.jobs_running, "running Job"),
       countLabel(runner.jobs_queued, "queued Job"),
       typeof runner.job_concurrency_limit === "number" ? "limit " + runner.job_concurrency_limit : "limit unavailable",
-      countLabel(runner.visible_project_count, "visible Project"),
+      projectFact,
       countLabel(runner.sessions?.active_sessions, "active Session"),
-    ].join(" · ") + (runner.projects_truncated ? " · project scan partial" : "");
+    ];
+    if (runner.projects_scan_partial) factParts.push("fleet scan partial");
+    if (runner.sessions?.sessions_truncated) factParts.push("Session scan partial");
+    facts.textContent = factParts.join(" · ");
     row.appendChild(main); row.appendChild(signals); row.appendChild(facts);
     const select = (): void => applyRunnerFilter(clientId);
     row.addEventListener("click", select);

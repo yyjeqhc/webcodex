@@ -323,6 +323,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(recentRender, /attentionLabel\(session\.overview\?\.attention\)/);
   assert.match(recentRender, /updatedLabel\(session\.updated_at\)/);
   assert.doesNotMatch(recentRender, /workflowSessionListOverviewFacts|summary-facts|validation/);
+  assert.doesNotMatch(recentRender, /\.sort\(/);
   assert.match(source, /applyRunnerFilter\(select\.value\)/);
   assert.match(source, /void fetchOverview\(refreshRuntimeOverview\(state\)\)/);
   assert.match(source, /body\.textContent = String\(message\?\.message \|\| ""\)/);
@@ -342,6 +343,16 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   const renderProjects = source.slice(renderProjectsStart, renderProjectsEnd);
   assert.match(renderProjects, /all\.textContent = "All Runners"/);
   assert.match(renderProjects, /switchProject\(String\(project\.client_id \|\| ""\), String\(project\.id \|\| ""\)\)/);
+  assert.match(renderProjects, /SESSION SCAN PARTIAL/);
+  assert.match(renderProjects, /Sessions projected · partial/);
+  const renderRunnersStart = source.indexOf("function renderRunnerFleet");
+  const renderRunnersEnd = source.indexOf("function renderRecentSessions", renderRunnersStart);
+  const renderRunners = source.slice(renderRunnersStart, renderRunnersEnd);
+  assert.match(renderRunners, /projects_scan_partial/);
+  assert.match(renderRunners, /Projects scanned/);
+  assert.match(renderRunners, /fleet scan partial/);
+  assert.match(renderRunners, /Session scan partial/);
+  assert.doesNotMatch(renderRunners, /visible_project_count/);
   const fetchProjectsStart = source.indexOf("async function fetchProjects");
   const fetchProjectsEnd = source.indexOf("function effectiveProjects", fetchProjectsStart);
   assert.doesNotMatch(source.slice(fetchProjectsStart, fetchProjectsEnd), /fetchOverview\(/);

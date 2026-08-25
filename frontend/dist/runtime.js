@@ -295,14 +295,12 @@ function reconcileRuntimeCollaborationMutationState(state, authoritativeRefresh 
                 && retainedReplacement?.message === uncertain.message;
         }
         if (confirmedWithdraw || confirmedReplace) {
-            collaboration.uncertainMutation = null;
             collaboration.mutationNotice = confirmedWithdraw
-                ? "Withdraw confirmed after refresh."
-                : "Replacement confirmed after refresh.";
+                ? "Withdraw observed after refresh; exact replay required to confirm durability."
+                : "Replacement observed after refresh; exact replay required to confirm durability.";
         }
         else if (authoritativeRefresh) {
-            collaboration.uncertainMutation = null;
-            collaboration.mutationNotice = "Outcome not observed in retained messages; review before retrying.";
+            collaboration.mutationNotice = "Outcome not observed in retained messages; exact replay required before live observation resumes.";
         }
     }
     if (collaboration.editTargetId) {
@@ -606,6 +604,26 @@ function markRuntimeCollaborationMutationUncertain(state, request, mutation) {
         ...(mutation?.kind === "replace" ? { message: String(mutation?.message || "") } : {}),
     };
     state.collaboration.mutationNotice = "Outcome unknown; refresh retained messages before retrying.";
+    return true;
+}
+function runtimeCollaborationMutationRecovery(state, request) {
+    if (!isCurrentRuntimeCollaborationRequest(state, request))
+        return null;
+    const mutation = state?.collaboration?.uncertainMutation;
+    const messageId = String(mutation?.messageId || "");
+    if (!mutation || !messageId)
+        return null;
+    return {
+        kind: mutation.kind === "replace" ? "replace" : "withdraw",
+        messageId,
+        ...(mutation.kind === "replace" ? { message: String(mutation.message || "") } : {}),
+    };
+}
+function completeRuntimeCollaborationMutationRecovery(state, request, notice) {
+    if (!isCurrentRuntimeCollaborationRequest(state, request))
+        return false;
+    state.collaboration.uncertainMutation = null;
+    state.collaboration.mutationNotice = String(notice || "");
     return true;
 }
 function takeRuntimeCollaborationMutationNotice(state) {
@@ -1745,6 +1763,65 @@ function renderCollaboration(statusText) {
     for (const message of messages)
         appendMessage(message, 0, false);
 }
+async function confirmCollaborationMutationDurability(request, mutation, controller) {
+    const replacing = mutation?.kind === "replace";
+    const payload = {
+        project: request.project,
+        session_id: request.sessionId,
+        message_id: String(mutation?.messageId || ""),
+    };
+    if (replacing)
+        payload.message = String(mutation?.message || "");
+    setText("runtime-message-send-status", replacing
+        ? "Confirming replacement durability…"
+        : "Confirming withdrawal durability…");
+    const response = await api(replacing ? "workflow-session-replace-message" : "workflow-session-withdraw-message", payload, controller.signal);
+    if (!response || !isCurrentRuntimeCollaborationRequest(state, request))
+        return false;
+    if (response.status === 401) {
+        lock("Credential rejected.");
+        return false;
+    }
+    if (response.status === 0 || response.status === 503) {
+        markRuntimeCollaborationMutationUncertain(state, request, mutation);
+        setRuntimeCollaborationPhase(state, request, "paused");
+        renderCollaboration("durability confirmation still uncertain · refresh before retry");
+        return false;
+    }
+    if (response.status === 403) {
+        setRuntimeCollaborationAvailable(state, request, false);
+        setRuntimeCollaborationPhase(state, request, "paused");
+        renderCollaboration();
+        return false;
+    }
+    if (response.status === 404 || response.status === 409) {
+        markRuntimeCollaborationMutationUncertain(state, request, mutation);
+        setRuntimeCollaborationPhase(state, request, "paused");
+        renderCollaboration("message changed during durability confirmation · refresh retained state");
+        return false;
+    }
+    const valid = replacing
+        ? response.ok && response.data?.original && response.data?.replacement
+        : response.ok && response.data?.message;
+    if (!valid) {
+        markRuntimeCollaborationMutationUncertain(state, request, mutation);
+        setRuntimeCollaborationPhase(state, request, "paused");
+        renderCollaboration("durability confirmation failed · refresh before retry");
+        return false;
+    }
+    if (replacing) {
+        adoptRuntimeCollaborationObservation(state, request, {
+            messages: [response.data.original, response.data.replacement],
+        });
+    }
+    else {
+        adoptRuntimeCollaborationObservation(state, request, { messages: [response.data.message] });
+    }
+    completeRuntimeCollaborationMutationRecovery(state, request, replacing
+        ? "Replacement durably confirmed after exact replay."
+        : "Withdraw durably confirmed after exact replay.");
+    return true;
+}
 async function loadRetainedCollaboration(request, controller) {
     // Establish the cursor before the retained snapshot. A mutation between these
     // two reads is then present in the snapshot, the subsequent delta, or both;
@@ -1804,6 +1881,9 @@ async function loadRetainedCollaboration(request, controller) {
     if (!adoptRuntimeCollaborationList(state, request, Array.isArray(response.data.messages) ? response.data.messages : []))
         return null;
     adoptRuntimeCollaborationObservation(state, request, baseline.data);
+    const mutationRecovery = runtimeCollaborationMutationRecovery(state, request);
+    if (mutationRecovery && !(await confirmCollaborationMutationDurability(request, mutationRecovery, controller)))
+        return null;
     setRuntimeCollaborationPhase(state, request, "live");
     setHumanJoinSendEnabled(true);
     renderCollaboration("bounded long-poll");

@@ -65,13 +65,11 @@ function reconcileRuntimeCollaborationMutationState(state: any, authoritativeRef
         && retainedReplacement?.message === uncertain.message;
     }
     if (confirmedWithdraw || confirmedReplace) {
-      collaboration.uncertainMutation = null;
       collaboration.mutationNotice = confirmedWithdraw
-        ? "Withdraw confirmed after refresh."
-        : "Replacement confirmed after refresh.";
+        ? "Withdraw observed after refresh; exact replay required to confirm durability."
+        : "Replacement observed after refresh; exact replay required to confirm durability.";
     } else if (authoritativeRefresh) {
-      collaboration.uncertainMutation = null;
-      collaboration.mutationNotice = "Outcome not observed in retained messages; review before retrying.";
+      collaboration.mutationNotice = "Outcome not observed in retained messages; exact replay required before live observation resumes.";
     }
   }
 
@@ -403,6 +401,29 @@ export function markRuntimeCollaborationMutationUncertain(state: any, request: a
     ...(mutation?.kind === "replace" ? { message: String(mutation?.message || "") } : {}),
   };
   state.collaboration.mutationNotice = "Outcome unknown; refresh retained messages before retrying.";
+  return true;
+}
+
+export function runtimeCollaborationMutationRecovery(state: any, request: any): any | null {
+  if (!isCurrentRuntimeCollaborationRequest(state, request)) return null;
+  const mutation = state?.collaboration?.uncertainMutation;
+  const messageId = String(mutation?.messageId || "");
+  if (!mutation || !messageId) return null;
+  return {
+    kind: mutation.kind === "replace" ? "replace" : "withdraw",
+    messageId,
+    ...(mutation.kind === "replace" ? { message: String(mutation.message || "") } : {}),
+  };
+}
+
+export function completeRuntimeCollaborationMutationRecovery(
+  state: any,
+  request: any,
+  notice: string
+): boolean {
+  if (!isCurrentRuntimeCollaborationRequest(state, request)) return false;
+  state.collaboration.uncertainMutation = null;
+  state.collaboration.mutationNotice = String(notice || "");
   return true;
 }
 

@@ -44,6 +44,8 @@ import {
   clearRuntimeCollaborationEditTarget,
   runtimeCollaborationEditTarget,
   markRuntimeCollaborationMutationUncertain,
+  runtimeCollaborationMutationRecovery,
+  completeRuntimeCollaborationMutationRecovery,
   takeRuntimeCollaborationMutationNotice,
 } from "./runtime_console_state.js";
 
@@ -934,6 +936,72 @@ function renderCollaboration(statusText?: string): void {
   for (const message of messages) appendMessage(message, 0, false);
 }
 
+async function confirmCollaborationMutationDurability(
+  request: any,
+  mutation: any,
+  controller: AbortController
+): Promise<boolean> {
+  const replacing = mutation?.kind === "replace";
+  const payload: any = {
+    project: request.project,
+    session_id: request.sessionId,
+    message_id: String(mutation?.messageId || ""),
+  };
+  if (replacing) payload.message = String(mutation?.message || "");
+  setText("runtime-message-send-status", replacing
+    ? "Confirming replacement durability…"
+    : "Confirming withdrawal durability…");
+  const response = await api(
+    replacing ? "workflow-session-replace-message" : "workflow-session-withdraw-message",
+    payload,
+    controller.signal
+  );
+  if (!response || !isCurrentRuntimeCollaborationRequest(state, request)) return false;
+  if (response.status === 401) { lock("Credential rejected."); return false; }
+  if (response.status === 0 || response.status === 503) {
+    markRuntimeCollaborationMutationUncertain(state, request, mutation);
+    setRuntimeCollaborationPhase(state, request, "paused");
+    renderCollaboration("durability confirmation still uncertain · refresh before retry");
+    return false;
+  }
+  if (response.status === 403) {
+    setRuntimeCollaborationAvailable(state, request, false);
+    setRuntimeCollaborationPhase(state, request, "paused");
+    renderCollaboration();
+    return false;
+  }
+  if (response.status === 404 || response.status === 409) {
+    markRuntimeCollaborationMutationUncertain(state, request, mutation);
+    setRuntimeCollaborationPhase(state, request, "paused");
+    renderCollaboration("message changed during durability confirmation · refresh retained state");
+    return false;
+  }
+  const valid = replacing
+    ? response.ok && response.data?.original && response.data?.replacement
+    : response.ok && response.data?.message;
+  if (!valid) {
+    markRuntimeCollaborationMutationUncertain(state, request, mutation);
+    setRuntimeCollaborationPhase(state, request, "paused");
+    renderCollaboration("durability confirmation failed · refresh before retry");
+    return false;
+  }
+  if (replacing) {
+    adoptRuntimeCollaborationObservation(state, request, {
+      messages: [response.data.original, response.data.replacement],
+    });
+  } else {
+    adoptRuntimeCollaborationObservation(state, request, { messages: [response.data.message] });
+  }
+  completeRuntimeCollaborationMutationRecovery(
+    state,
+    request,
+    replacing
+      ? "Replacement durably confirmed after exact replay."
+      : "Withdraw durably confirmed after exact replay."
+  );
+  return true;
+}
+
 async function loadRetainedCollaboration(request: any, controller: AbortController): Promise<string | null> {
   // Establish the cursor before the retained snapshot. A mutation between these
   // two reads is then present in the snapshot, the subsequent delta, or both;
@@ -957,6 +1025,8 @@ async function loadRetainedCollaboration(request: any, controller: AbortControll
   setRuntimeCollaborationAvailable(state, request, true);
   if (!adoptRuntimeCollaborationList(state, request, Array.isArray(response.data.messages) ? response.data.messages : [])) return null;
   adoptRuntimeCollaborationObservation(state, request, baseline.data);
+  const mutationRecovery = runtimeCollaborationMutationRecovery(state, request);
+  if (mutationRecovery && !(await confirmCollaborationMutationDurability(request, mutationRecovery, controller))) return null;
   setRuntimeCollaborationPhase(state, request, "live");
   setHumanJoinSendEnabled(true);
   renderCollaboration("bounded long-poll");

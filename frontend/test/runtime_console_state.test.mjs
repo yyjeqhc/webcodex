@@ -38,6 +38,8 @@ import {
   setRuntimeCollaborationEditTarget,
   runtimeCollaborationEditTarget,
   markRuntimeCollaborationMutationUncertain,
+  runtimeCollaborationMutationRecovery,
+  completeRuntimeCollaborationMutationRecovery,
   takeRuntimeCollaborationMutationNotice,
 } from "../dist/runtime_console_state.js";
 
@@ -370,7 +372,7 @@ test("withdraw and replacement responses merge by message id without duplicate h
   assert.equal(state.collaboration.messages[1].closure_kind, "withdrawn");
 });
 
-test("unknown mutation outcome never synthesizes a retry and refresh reconciles retained state", () => {
+test("unknown mutation outcome stays fenced until exact replay confirms durability", () => {
   const state = initialRuntimeConsoleState();
   beginRuntimeCredential(state);
   selectRuntimeProject(state, "runner", "agent:runner:project");
@@ -388,13 +390,32 @@ test("unknown mutation outcome never synthesizes a retry and refresh reconciles 
     { message_id: "wc_msg_old", kind: "guidance", status: "resolved", closure_kind: "superseded", superseded_by_message_id: "wc_msg_new", priority: "high", requires_ack: true, created_at: 1, message: "wrong" },
     { message_id: "wc_msg_new", kind: "guidance", status: "open", supersedes_message_id: "wc_msg_old", priority: "high", requires_ack: true, created_at: 2, message: "right" },
   ]);
-  assert.equal(state.collaboration.uncertainMutation, null);
+  assert.equal(state.collaboration.uncertainMutation.messageId, "wc_msg_old");
   assert.equal(runtimeCollaborationEditTarget(state), null);
-  assert.equal(takeRuntimeCollaborationMutationNotice(state), "Replacement confirmed after refresh.");
+  assert.equal(
+    takeRuntimeCollaborationMutationNotice(state),
+    "Replacement observed after refresh; exact replay required to confirm durability."
+  );
+  assert.deepEqual(runtimeCollaborationMutationRecovery(state, request), {
+    kind: "replace",
+    messageId: "wc_msg_old",
+    message: "right",
+  });
+  assert.equal(
+    completeRuntimeCollaborationMutationRecovery(
+      state, request, "Replacement durably confirmed after exact replay."
+    ),
+    true
+  );
+  assert.equal(state.collaboration.uncertainMutation, null);
+  assert.equal(
+    takeRuntimeCollaborationMutationNotice(state),
+    "Replacement durably confirmed after exact replay."
+  );
   assert.equal(state.collaboration.messages.length, 2);
 });
 
-test("unknown replace outcome reconciles from retained replacement even when source was evicted", () => {
+test("unknown replace outcome remains recoverable when retained source was evicted", () => {
   const state = initialRuntimeConsoleState();
   beginRuntimeCredential(state);
   selectRuntimeProject(state, "runner", "agent:runner:project");
@@ -407,8 +428,16 @@ test("unknown replace outcome reconciles from retained replacement even when sou
   adoptRuntimeCollaborationList(state, request, [
     { message_id: "wc_msg_new", kind: "note", status: "open", supersedes_message_id: "wc_msg_old", created_at: 2, message: "right" },
   ]);
-  assert.equal(state.collaboration.uncertainMutation, null);
-  assert.equal(takeRuntimeCollaborationMutationNotice(state), "Replacement confirmed after refresh.");
+  assert.equal(state.collaboration.uncertainMutation.messageId, "wc_msg_old");
+  assert.equal(
+    takeRuntimeCollaborationMutationNotice(state),
+    "Replacement observed after refresh; exact replay required to confirm durability."
+  );
+  assert.deepEqual(runtimeCollaborationMutationRecovery(state, request), {
+    kind: "replace",
+    messageId: "wc_msg_old",
+    message: "right",
+  });
 });
 
 test("only eligible open Human Join kinds expose mutation actions and ACK is not a lock", () => {
@@ -516,5 +545,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   const baselineAt = bootstrap.indexOf('api("workflow-session-observe"');
   const retainedListAt = bootstrap.indexOf('api("workflow-session-messages"');
   assert.ok(baselineAt >= 0 && retainedListAt > baselineAt, "live baseline must precede the retained snapshot to avoid a lost-update gap");
-  assert.match(bootstrap, /setRuntimeCollaborationPhase\(state, request, "live"\);[\s\S]*setHumanJoinSendEnabled\(true\)/);
+  assert.match(bootstrap, /runtimeCollaborationMutationRecovery\(state, request\)/);
+  assert.match(bootstrap, /confirmCollaborationMutationDurability\(request, mutationRecovery, controller\)/);
+  assert.match(bootstrap, /confirmCollaborationMutationDurability[\s\S]*setRuntimeCollaborationPhase\(state, request, "live"\);[\s\S]*setHumanJoinSendEnabled\(true\)/);
 });

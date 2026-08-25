@@ -97,6 +97,10 @@ class ManifestTests(unittest.TestCase):
             "tag": f"v{version}",
             "version": version,
             "image_tag": f"v{version}",
+            "deployment_assets": {
+                verifier.SERVER_BOOTSTRAP_ASSET: "f" * 64,
+            },
+            "deployment_source_sha": "2" * 40,
             "source_sha": "b" * 40,
             "created_at": "2026-08-25T05:00:00+00:00",
             "digest": "sha256:" + "c" * 64,
@@ -126,17 +130,35 @@ class ManifestTests(unittest.TestCase):
             ],
         }
         self.assertEqual(set(verifier.validate_github_assets(release, version)), set(names))
-        release["assets"].append(
-            {
-                "name": verifier.SERVER_IMAGE_METADATA,
-                "state": "uploaded",
-                "browser_download_url": "https://example.invalid/server-image.json",
-            }
-        )
-        self.assertIn(verifier.SERVER_IMAGE_METADATA, verifier.validate_github_assets(release, version))
+        for name in (verifier.SERVER_IMAGE_METADATA, *verifier.SERVER_DEPLOYMENT_ASSETS):
+            release["assets"].append(
+                {
+                    "name": name,
+                    "state": "uploaded",
+                    "browser_download_url": f"https://example.invalid/{name}",
+                }
+            )
+        validated = verifier.validate_github_assets(release, version)
+        self.assertTrue({verifier.SERVER_IMAGE_METADATA, *verifier.SERVER_DEPLOYMENT_ASSETS}.issubset(validated))
         release["assets"].append(
             {"name": "unexpected.bin", "state": "uploaded", "browser_download_url": "https://example.invalid/x"}
         )
+        with self.assertRaises(verifier.VerificationError):
+            verifier.validate_github_assets(release, version)
+
+    def test_github_assets_reject_partial_server_deployment_set(self) -> None:
+        version = "0.3.8"
+        names = [verifier.canonical_archive_name(version, platform) for platform in verifier.PLATFORMS]
+        names.extend(["SHA256SUMS", verifier.SERVER_IMAGE_METADATA])
+        release = {
+            "tag_name": f"v{version}",
+            "draft": False,
+            "prerelease": False,
+            "assets": [
+                {"name": name, "state": "uploaded", "browser_download_url": f"https://example.invalid/{name}"}
+                for name in names
+            ],
+        }
         with self.assertRaises(verifier.VerificationError):
             verifier.validate_github_assets(release, version)
 

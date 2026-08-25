@@ -548,6 +548,11 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("runner: ubuntu-24.04-arm", image)
         self.assertIn("push-by-digest=true", image)
         self.assertIn("webcodex-server-image.json", image)
+        self.assertIn("scripts/prepare_server_deployment_assets.py", image)
+        self.assertIn("ref: ${{ github.workflow_sha }}", image)
+        self.assertIn("deployment_source_sha", image)
+        self.assertIn("webcodex-server-bootstrap.sh", image)
+        self.assertIn("webcodex-server-compose.yaml", image)
         self.assertIn("Require anonymous GHCR availability", image)
 
     def test_compose_defaults_to_published_image_with_explicit_source_override(self) -> None:
@@ -561,7 +566,9 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("pull_policy: build", source)
         self.assertIn("build:\n", source)
         self.assertIn("--build-from-source", bootstrap)
-        self.assertIn("docker compose pull webcodex", bootstrap)
+        self.assertIn("COMPOSE_FILE=${COMPOSE_FILE:-compose.yaml}", bootstrap)
+        self.assertIn("compose config --images", bootstrap)
+        self.assertIn("compose pull webcodex", bootstrap)
         self.assertIn("compose.build.yaml up -d --build", bootstrap)
 
 

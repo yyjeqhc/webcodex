@@ -24,6 +24,9 @@ PLATFORMS = ("linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
 SERVER_IMAGE = "ghcr.io/yyjeqhc/webcodex-server"
 SERVER_IMAGE_METADATA = "webcodex-server-image.json"
+SERVER_BOOTSTRAP_ASSET = "webcodex-server-bootstrap.sh"
+SERVER_MATERIALIZED_COMPOSE = "webcodex-server-compose.yaml"
+SERVER_DEPLOYMENT_ASSETS = (SERVER_BOOTSTRAP_ASSET,)
 SERVER_IMAGE_PLATFORMS = ("linux/amd64", "linux/arm64")
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_NPM_TARBALL_BYTES = 16 * 1024 * 1024
@@ -268,6 +271,8 @@ def validate_server_image_metadata(value: dict, version: str) -> dict[str, str]:
         "tag",
         "version",
         "image_tag",
+        "deployment_assets",
+        "deployment_source_sha",
         "source_sha",
         "created_at",
         "digest",
@@ -279,6 +284,15 @@ def validate_server_image_metadata(value: dict, version: str) -> dict[str, str]:
         raise VerificationError("server image metadata does not match the release identity")
     if value.get("image_tag") != f"v{version.replace('+', '_')}":
         raise VerificationError("server image metadata has an invalid container version tag")
+    deployment_assets = value.get("deployment_assets")
+    if not isinstance(deployment_assets, dict) or set(deployment_assets) != set(SERVER_DEPLOYMENT_ASSETS):
+        raise VerificationError("server image metadata does not contain the canonical deployment assets")
+    for name, digest in deployment_assets.items():
+        if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+            raise VerificationError(f"server image metadata has an invalid deployment digest for {name}")
+    deployment_source_sha = value.get("deployment_source_sha")
+    if not isinstance(deployment_source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", deployment_source_sha):
+        raise VerificationError("server image metadata has an invalid deployment source SHA")
     source_sha = value.get("source_sha")
     if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
         raise VerificationError("server image metadata has an invalid source SHA")
@@ -294,7 +308,12 @@ def validate_server_image_metadata(value: dict, version: str) -> dict[str, str]:
     for platform, child in platforms.items():
         if not isinstance(child, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", child):
             raise VerificationError(f"server image metadata has an invalid child digest for {platform}")
-    return {"source_sha": source_sha, "digest": digest}
+    return {
+        "source_sha": source_sha,
+        "digest": digest,
+        "deployment_assets": deployment_assets,
+        "deployment_source_sha": deployment_source_sha,
+    }
 
 
 def validate_github_assets(release: dict, version: str) -> dict[str, dict]:
@@ -306,7 +325,7 @@ def validate_github_assets(release: dict, version: str) -> dict[str, dict]:
         raise VerificationError("GitHub Release is missing, draft/prerelease, or attached to the wrong tag")
     required = {canonical_archive_name(version, platform) for platform in PLATFORMS}
     required.add("SHA256SUMS")
-    allowed = required | {SERVER_IMAGE_METADATA}
+    server_assets = {SERVER_IMAGE_METADATA, *SERVER_DEPLOYMENT_ASSETS}
     assets = release.get("assets")
     if not isinstance(assets, list):
         raise VerificationError("GitHub Release assets are missing")
@@ -319,7 +338,9 @@ def validate_github_assets(release: dict, version: str) -> dict[str, dict]:
             raise VerificationError(f"GitHub Release contains duplicate asset: {name}")
         result[name] = asset
     names = set(result)
-    if not required.issubset(names) or not names.issubset(allowed):
+    post_publication = names & server_assets
+    expected = required | server_assets if post_publication else required
+    if names != expected:
         raise VerificationError(f"GitHub Release asset set mismatch: {sorted(result)}")
     for name, asset in result.items():
         if asset.get("state") != "uploaded" or not asset.get("browser_download_url"):
@@ -618,6 +639,26 @@ def verify_public_release(version: str, timeout: float) -> None:
             if not isinstance(image_metadata, dict):
                 raise VerificationError("server image metadata asset must be a JSON object")
             image_identity = validate_server_image_metadata(image_metadata, version)
+            deployment_assets = image_identity["deployment_assets"]
+            if not isinstance(deployment_assets, dict):
+                raise VerificationError("server deployment asset metadata is invalid")
+            asset = assets[SERVER_BOOTSTRAP_ASSET]
+            bootstrap_bytes = fetch_bytes(asset["browser_download_url"], MAX_JSON_BYTES, timeout)
+            github_digest = _asset_digest(asset)
+            actual_digest = hashlib.sha256(bootstrap_bytes).hexdigest()
+            if github_digest is not None and actual_digest != github_digest:
+                raise VerificationError("GitHub deployment bootstrap digest mismatch")
+            if actual_digest != deployment_assets[SERVER_BOOTSTRAP_ASSET]:
+                raise VerificationError("server deployment metadata digest mismatch")
+            try:
+                bootstrap_text = bootstrap_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise VerificationError("server deployment bootstrap is not UTF-8") from exc
+            pinned_image = f"{SERVER_IMAGE}@{image_identity['digest']}"
+            if bootstrap_text.count(pinned_image) != 1 or f"{SERVER_IMAGE}:latest" in bootstrap_text:
+                raise VerificationError("server deployment bootstrap is not pinned to the recorded image digest")
+            if f"compose_target={SERVER_MATERIALIZED_COMPOSE}" not in bootstrap_text:
+                raise VerificationError("server deployment bootstrap does not materialize the canonical compose file")
 
         print(f"npm={PACKAGE}@{version} manifest=ok")
         print(f"github_release=v{version} assets={len(assets)}")

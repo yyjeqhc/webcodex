@@ -247,25 +247,28 @@ CLI；有意不包含 Runner、项目仓库与工具链。正式 Release 会向
 `ghcr.io/yyjeqhc/webcodex-server` 发布同时支持 `linux/amd64` 与 `linux/arm64`
 的多架构镜像。
 
+普通 Server 部署不再需要 clone 仓库，也不需要 Rust toolchain。直接从最新公开 Release
+下载一个 self-contained bootstrap 再运行：
+
+```bash
+mkdir -p webcodex-server && cd webcodex-server
+curl -fLO https://github.com/yyjeqhc/webcodex/releases/latest/download/webcodex-server-bootstrap.sh
+sh webcodex-server-bootstrap.sh https://webcodex.example.com
+```
+
+Release 生成的 bootstrap 内嵌固定到该 Release 不可变 multi-arch image digest 的 Compose
+定义，并在本地 materialize 为 `webcodex-server-compose.yaml`。因此即使使用
+`latest/download` 这个便捷入口，脚本下载完成后部署目标也已经固定，同时不存在两个 Release
+资产分别下载时发生版本切换的竞态。需要明确选择某个版本时，只需把 URL 中的
+`releases/latest/download` 替换为 `releases/download/v<VERSION>`。bootstrap 会把实际
+`COMPOSE_FILE` 与精确 image reference 写入私有 `.env`，之后在该目录执行普通
+`docker compose` 命令仍会复用同一份固定部署。
+
+开发场景，或首个公开 GHCR 镜像尚未完成启用之前，再 clone 源码并显式选择 source build：
+
 ```bash
 git clone https://github.com/yyjeqhc/webcodex.git
 cd webcodex
-./deploy/docker/bootstrap.sh https://webcodex.example.com
-docker compose ps
-```
-
-默认 Compose 路径直接拉取 `ghcr.io/yyjeqhc/webcodex-server:latest`，不再要求部署
-主机现场编译 Rust。需要固定版本或固定到 GitHub Release 中
-`webcodex-server-image.json` 记录的不可变 digest 时，可以在 bootstrap 前指定镜像，例如：
-
-```bash
-WEBCODEX_SERVER_IMAGE=ghcr.io/yyjeqhc/webcodex-server:v0.3.9 \
-  ./deploy/docker/bootstrap.sh https://webcodex.example.com
-```
-
-开发场景，或首个公开 GHCR 镜像尚未完成启用之前，仍可显式选择源码构建：
-
-```bash
 ./deploy/docker/bootstrap.sh https://webcodex.example.com --build-from-source
 # 后续源码重建继续显式带上 override：
 docker compose -f compose.yaml -f compose.build.yaml up -d --build

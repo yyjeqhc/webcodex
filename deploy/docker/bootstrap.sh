@@ -15,7 +15,8 @@ if [ "$#" -eq 2 ]; then
     [ "$2" = "--build-from-source" ] || usage
     BUILD_FROM_SOURCE=true
 fi
-SERVER_IMAGE=${WEBCODEX_SERVER_IMAGE:-ghcr.io/yyjeqhc/webcodex-server:latest}
+COMPOSE_FILE=${COMPOSE_FILE:-compose.yaml}
+SERVER_IMAGE=${WEBCODEX_SERVER_IMAGE:-}
 
 case "$PUBLIC_URL" in
     https://*) ;;
@@ -43,12 +44,32 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 
+case "$COMPOSE_FILE" in
+    ""|/*|-*|../*|*/../*|*/..|*[!A-Za-z0-9._/-]*)
+        echo "invalid COMPOSE_FILE: expected a safe relative path" >&2
+        exit 2
+        ;;
+esac
+if [ ! -f "$COMPOSE_FILE" ]; then
+    echo "compose file not found: $COMPOSE_FILE" >&2
+    exit 1
+fi
+
+compose() {
+    docker compose -f "$COMPOSE_FILE" "$@"
+}
+
 if ! docker compose version >/dev/null 2>&1; then
     echo "docker compose v2 is required" >&2
     exit 1
 fi
 
 if [ "$BUILD_FROM_SOURCE" = false ]; then
+    if [ -z "$SERVER_IMAGE" ]; then
+        SERVER_IMAGE=$(WEBCODEX_TOKEN=0000000000000000000000000000000000000000000000000000000000000000 \
+            WEBCODEX_PUBLIC_URL="$PUBLIC_URL" \
+            compose config --images)
+    fi
     case "$SERVER_IMAGE" in
         ""|*[!A-Za-z0-9._/:@-]*)
             echo "invalid WEBCODEX_SERVER_IMAGE: expected a Docker image reference" >&2
@@ -58,7 +79,7 @@ if [ "$BUILD_FROM_SOURCE" = false ]; then
     if ! WEBCODEX_TOKEN=0000000000000000000000000000000000000000000000000000000000000000 \
         WEBCODEX_PUBLIC_URL="$PUBLIC_URL" \
         WEBCODEX_SERVER_IMAGE="$SERVER_IMAGE" \
-        docker compose pull webcodex; then
+        compose pull webcodex; then
         echo "could not pull the published WebCodex Server image: $SERVER_IMAGE" >&2
         echo "If the official image is not published/public yet, retry with --build-from-source." >&2
         exit 1
@@ -79,6 +100,7 @@ WEBCODEX_HOST_IP=127.0.0.1
 WEBCODEX_HOST_PORT=8080
 RUST_LOG=info
 WEBCODEX_MCP_MODEL_SURFACE=local-coding-v1
+COMPOSE_FILE=$COMPOSE_FILE
 EOF_ENV
 if [ "$BUILD_FROM_SOURCE" = false ]; then
     printf '%s\n' "WEBCODEX_SERVER_IMAGE=$SERVER_IMAGE" >> .env
@@ -98,12 +120,16 @@ if [ "$BUILD_FROM_SOURCE" = true ]; then
     fi
     WEBCODEX_BUILT_AT=$(date +%s)
     export WEBCODEX_GIT_COMMIT WEBCODEX_GIT_DIRTY WEBCODEX_BUILT_AT
-    docker compose -f compose.yaml -f compose.build.yaml up -d --build
+    if [ ! -f compose.build.yaml ]; then
+        echo "compose.build.yaml is required for --build-from-source" >&2
+        exit 1
+    fi
+    docker compose -f "$COMPOSE_FILE" -f compose.build.yaml up -d --build
     DEPLOYMENT_SOURCE="local source build"
 else
     # The image was pulled before .env was created, so startup cannot strand a
     # fresh bootstrap merely because the registry becomes briefly unavailable.
-    docker compose up -d --no-build --pull never
+    compose up -d --no-build --pull never
     DEPLOYMENT_SOURCE="$SERVER_IMAGE"
 fi
 
@@ -122,7 +148,7 @@ This Compose stack runs webcodex-server only. It does not run webcodex-runner
 and does not mount any source repository.
 
 After the reverse proxy is ready, create a short-lived pairing code with:
-  docker compose exec webcodex sh -lc 'webcodex pairing create --server-url "\$WEBCODEX_PUBLIC_URL" --username admin --ttl-secs 600'
+  docker compose -f "$COMPOSE_FILE" exec webcodex sh -lc 'webcodex pairing create --server-url "\$WEBCODEX_PUBLIC_URL" --username admin --ttl-secs 600'
 
 Keep .env private. It contains the bootstrap administrator token.
 EOF_DONE

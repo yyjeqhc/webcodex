@@ -281,27 +281,32 @@ Runner, project repositories, and toolchains. Official releases publish one
 multi-architecture image for `linux/amd64` and `linux/arm64` at
 `ghcr.io/yyjeqhc/webcodex-server`.
 
+An ordinary Server deployment does not require a repository clone or a Rust
+toolchain. Download the self-contained bootstrap from the latest public Release
+and run it:
+
+```bash
+mkdir -p webcodex-server && cd webcodex-server
+curl -fLO https://github.com/yyjeqhc/webcodex/releases/latest/download/webcodex-server-bootstrap.sh
+sh webcodex-server-bootstrap.sh https://webcodex.example.com
+```
+
+The Release-generated bootstrap embeds a Compose definition pinned to that
+Release's immutable multi-arch image digest and materializes it locally as
+`webcodex-server-compose.yaml`. Thus even the `latest/download` convenience URL
+produces a fixed deployment after download, without a race between multiple
+Release assets. To select a specific release instead, replace
+`releases/latest/download` with `releases/download/v<VERSION>`. The bootstrap
+records the materialized `COMPOSE_FILE` and exact image reference in its private
+`.env`; later plain `docker compose` commands in that directory therefore reuse
+the same pinned deployment.
+
+For development or before the first public GHCR image has been activated, clone
+the source and choose the explicit build path:
+
 ```bash
 git clone https://github.com/yyjeqhc/webcodex.git
 cd webcodex
-./deploy/docker/bootstrap.sh https://webcodex.example.com
-docker compose ps
-```
-
-The default Compose path pulls `ghcr.io/yyjeqhc/webcodex-server:latest`; it no
-longer compiles Rust on the deployment host. To pin a release or the immutable
-digest recorded in that GitHub Release's `webcodex-server-image.json`, set the
-image before bootstrap, for example:
-
-```bash
-WEBCODEX_SERVER_IMAGE=ghcr.io/yyjeqhc/webcodex-server:v0.3.9 \
-  ./deploy/docker/bootstrap.sh https://webcodex.example.com
-```
-
-For development or before the first public GHCR image has been activated, an
-explicit source build remains available:
-
-```bash
 ./deploy/docker/bootstrap.sh https://webcodex.example.com --build-from-source
 # Later source rebuilds use the same explicit override:
 docker compose -f compose.yaml -f compose.build.yaml up -d --build

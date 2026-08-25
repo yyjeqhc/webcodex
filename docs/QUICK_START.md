@@ -142,8 +142,9 @@ To remove only this repository from a hosted profile later:
 webcodex disconnect
 ```
 
-Self-hosting and managed identity are separate operator/advanced workflows; see
-[Deployment](DEPLOYMENT.md).
+Self-hosting and managed identity are separate operator/advanced workflows. If
+you need a Server first, the recommended Docker Server path is clone-free and
+uses three shell commands; see [Deployment](DEPLOYMENT.md#docker-server-only).
 
 ## Optional OAuth
 

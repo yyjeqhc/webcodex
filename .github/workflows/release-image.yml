@@ -289,6 +289,15 @@ jobs:
     outputs:
       digest: ${{ steps.publish.outputs.digest }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          # Deployment assets are part of the reviewed publication adapter rather
+          # than the immutable application source. Using workflow_sha preserves
+          # guarded backfill for older Releases whose tags predate this tooling.
+          ref: ${{ github.workflow_sha }}
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -316,6 +325,7 @@ jobs:
           SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           CREATED_AT: ${{ needs.resolve.outputs.created_at }}
           PUBLISH_LATEST: ${{ needs.resolve.outputs.publish_latest }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
           version_ref="$IMAGE:v$IMAGE_VERSION"
@@ -435,6 +445,37 @@ jobs:
           PY
           )
 
+          deployment_dir="$RUNNER_TEMP/server-deployment-assets"
+          deployment_summary="$RUNNER_TEMP/server-deployment-assets.json"
+          python3 scripts/prepare_server_deployment_assets.py \
+            --compose compose.yaml \
+            --bootstrap deploy/docker/bootstrap.sh \
+            --output-dir "$deployment_dir" \
+            --digest "$digest" \
+            --summary "$deployment_summary" >/dev/null
+          python3 - "$metadata" "$deployment_summary" "$WORKFLOW_SHA" <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          metadata_path, deployment_path, workflow_sha = sys.argv[1:]
+          value = json.load(open(metadata_path, encoding="utf-8"))
+          deployment = json.load(open(deployment_path, encoding="utf-8"))
+          assets = deployment.get("assets")
+          if not isinstance(assets, dict) or set(assets) != {"webcodex-server-bootstrap.sh"}:
+              raise SystemExit("server deployment asset summary is incomplete")
+          if not re.fullmatch(r"[0-9a-f]{40}", workflow_sha):
+              raise SystemExit("publication workflow source SHA is invalid")
+          value["deployment_source_sha"] = workflow_sha
+          value["deployment_assets"] = assets
+          tmp = metadata_path + ".tmp"
+          with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+              json.dump(value, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          os.replace(tmp, metadata_path)
+          PY
+
           # The numeric version is an immutable alias of vVERSION. Repair a
           # missing alias, but never retarget one that already points elsewhere.
           if numeric_json="$(docker buildx imagetools inspect "$numeric_ref" --format '{{json .Manifest}}' 2>/dev/null)"; then
@@ -454,17 +495,30 @@ jobs:
             docker buildx imagetools create -t "$IMAGE:latest" "$version_ref"
           fi
 
-          # The GitHub Release is the durable digest record. Missing metadata can
-          # be repaired after the canonical image is independently reconciled;
-          # existing metadata is immutable and must match byte-for-byte.
-          if gh release download "$TAG" --pattern "$metadata_name" --dir "$existing_metadata" >/dev/null 2>&1; then
-            if ! cmp -s "$metadata" "$existing_metadata/$metadata_name"; then
-              echo "$version_ref metadata differs from the immutable GitHub Release record." >&2
-              exit 1
+          # The GitHub Release is the durable digest/deployment record. Missing
+          # post-publication assets can be repaired only after the canonical image
+          # is reconciled; an existing asset must match byte-for-byte. Determine
+          # existence through release metadata so a transient download failure is
+          # never mistaken for permission to upload a duplicate.
+          # Upload the deployment bytes first and the metadata that commits to
+          # their digests last. A failure before metadata publication therefore
+          # never exposes a durable record claiming missing deployment bytes.
+          for asset in \
+            "$deployment_dir/webcodex-server-bootstrap.sh" \
+            "$metadata"; do
+            asset_name="$(basename "$asset")"
+            asset_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
+              --jq ".assets[] | select(.name == \"$asset_name\") | .id" | head -n 1)"
+            if [ -n "$asset_id" ]; then
+              gh release download "$TAG" --pattern "$asset_name" --dir "$existing_metadata"
+              if ! cmp -s "$asset" "$existing_metadata/$asset_name"; then
+                echo "$asset_name differs from the immutable GitHub Release record." >&2
+                exit 1
+              fi
+            else
+              gh release upload "$TAG" "$asset"
             fi
-          else
-            gh release upload "$TAG" "$metadata"
-          fi
+          done
 
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           {
@@ -473,6 +527,7 @@ jobs:
             echo "- digest: \`$digest\`"
             echo "- platforms: \`linux/amd64\`, \`linux/arm64\`"
             echo "- release metadata asset: \`$metadata_name\`"
+            echo "- clone-free asset: \`webcodex-server-bootstrap.sh\` (embeds digest-pinned Compose)"
           } >> "$GITHUB_STEP_SUMMARY"
 
   verify-public:
@@ -493,13 +548,37 @@ jobs:
           set -euo pipefail
           tmp="$RUNNER_TEMP/server-image-public"
           mkdir -p "$tmp"
-          gh release download "$TAG" --pattern webcodex-server-image.json --dir "$tmp"
-          readarray -t values < <(python3 - "$tmp/webcodex-server-image.json" <<'PY'
+          for name in webcodex-server-image.json webcodex-server-bootstrap.sh; do
+            gh release download "$TAG" --pattern "$name" --dir "$tmp"
+          done
+          readarray -t values < <(python3 - "$tmp" <<'PY'
+          import hashlib
           import json
+          import pathlib
+          import re
           import sys
-          value = json.load(open(sys.argv[1], encoding="utf-8"))
-          print(value["image"])
-          print(value["digest"])
+
+          root = pathlib.Path(sys.argv[1])
+          value = json.loads((root / "webcodex-server-image.json").read_text(encoding="utf-8"))
+          assets = value.get("deployment_assets")
+          name = "webcodex-server-bootstrap.sh"
+          if not isinstance(assets, dict) or set(assets) != {name}:
+              raise SystemExit("server deployment asset metadata is incomplete")
+          data = (root / name).read_bytes()
+          if hashlib.sha256(data).hexdigest() != assets[name]:
+              raise SystemExit("server deployment asset digest mismatch")
+          digest = value.get("digest")
+          image = value.get("image")
+          if not isinstance(image, str) or not isinstance(digest, str):
+              raise SystemExit("server image metadata is incomplete")
+          bootstrap = data.decode("utf-8")
+          pinned = f"{image}@{digest}"
+          if bootstrap.count(pinned) != 1 or re.search(r"webcodex-server:latest", bootstrap):
+              raise SystemExit("clone-free bootstrap is not pinned to the immutable image digest")
+          if "compose_target=webcodex-server-compose.yaml" not in bootstrap:
+              raise SystemExit("clone-free bootstrap does not materialize the canonical compose filename")
+          print(image)
+          print(digest)
           PY
           )
           image="${values[0]}"

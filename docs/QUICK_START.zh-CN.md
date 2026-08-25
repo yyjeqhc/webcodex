@@ -124,7 +124,8 @@ shared key，完整值只会在允许的首次 disclosure 中出现；status/log
 webcodex disconnect
 ```
 
-自托管和 managed identity 属于独立 operator/高级工作流，见[部署指南](DEPLOYMENT.zh-CN.md)。
+自托管和 managed identity 属于独立 operator/高级工作流。如果还需要先准备 Server，推荐的
+Docker Server 路径无需 clone 仓库，只需三条 shell 命令；见[部署指南](DEPLOYMENT.zh-CN.md#docker仅-server)。
 
 ## 可选 OAuth
 

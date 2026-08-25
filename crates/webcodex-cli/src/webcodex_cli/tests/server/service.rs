@@ -455,7 +455,7 @@ fn systemd_unit_rendering_quotes_paths_and_rejects_invalid_fields_in_dry_run() {
 }
 
 #[cfg(target_os = "linux")]
-fn verify_systemd_unit(unit: &str, name: &str) {
+fn verify_systemd_units(units: &[(&str, &str)]) {
     let available = std::process::Command::new("systemd-analyze")
         .arg("--version")
         .output()
@@ -465,16 +465,24 @@ fn verify_systemd_unit(unit: &str, name: &str) {
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join(name);
-    std::fs::write(&path, unit).unwrap();
-    let output = std::process::Command::new("systemd-analyze")
-        .arg("verify")
-        .arg(&path)
-        .output()
-        .unwrap();
+    let mut paths = Vec::with_capacity(units.len());
+    for (name, unit) in units {
+        let path = tmp.path().join(name);
+        std::fs::write(&path, unit).unwrap();
+        paths.push(path);
+    }
+    let mut command = std::process::Command::new("systemd-analyze");
+    command.arg("verify");
+    command.args(&paths);
+    let output = command.output().unwrap();
+    let names = units
+        .iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(", ");
     assert!(
         output.status.success(),
-        "systemd-analyze verify failed for {name}: {}",
+        "systemd-analyze verify failed for {names}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
@@ -514,12 +522,13 @@ fn generated_server_and_agent_units_pass_systemd_analyze_verify() {
         serde_json::from_str(&run_server_install_service(server).unwrap()).unwrap();
     let service_unit = server_json["units"]["service"].as_str().unwrap();
     let socket_unit = server_json["units"]["socket"].as_str().unwrap();
+    let service_name = server_json["service_unit"].as_str().unwrap();
+    let socket_name = server_json["socket_unit"].as_str().unwrap();
     assert!(service_unit.contains(&format!("EnvironmentFile={}\n", env_file.display())));
     assert!(service_unit.contains("WorkingDirectory=/var/lib/webcodex\n"));
     assert!(service_unit.contains("webcodex-server"));
     assert!(socket_unit.contains("ListenStream=127.0.0.1:8080\n"));
-    verify_systemd_unit(service_unit, "webcodex-default.service");
-    verify_systemd_unit(socket_unit, "webcodex-default.socket");
+    verify_systemd_units(&[(service_name, service_unit), (socket_name, socket_unit)]);
 
     let config = tmp.path().join("agent.toml");
     std::fs::write(&config, "server_url = \"http://127.0.0.1\"\n").unwrap();
@@ -540,7 +549,7 @@ fn generated_server_and_agent_units_pass_systemd_analyze_verify() {
     let agent_unit = run_agent_install_service(agent).unwrap();
     assert!(agent_unit.contains("webcodex-runner\" \"--config\""));
     assert!(agent_unit.contains("WorkingDirectory=/var/lib/webcodex\n"));
-    verify_systemd_unit(&agent_unit, "webcodex-runner-default.service");
+    verify_systemd_units(&[("webcodex-runner-default.service", &agent_unit)]);
 }
 
 #[cfg(target_os = "linux")]
@@ -575,12 +584,13 @@ fn special_supported_paths_pass_systemd_analyze_verify() {
         serde_json::from_str(&run_server_install_service(server).unwrap()).unwrap();
     let server_unit = server_json["units"]["service"].as_str().unwrap();
     let socket_unit = server_json["units"]["socket"].as_str().unwrap();
+    let service_name = server_json["service_unit"].as_str().unwrap();
+    let socket_name = server_json["socket_unit"].as_str().unwrap();
     assert!(server_unit.contains("\\x20"));
     assert!(server_unit.contains("\\x22"));
     assert!(server_unit.contains("\\x5c"));
     assert!(server_unit.contains("%%p"));
-    verify_systemd_unit(server_unit, "webcodex-special.service");
-    verify_systemd_unit(socket_unit, "webcodex-special.socket");
+    verify_systemd_units(&[(service_name, server_unit), (socket_name, socket_unit)]);
 
     let agent = parse_agent_install_service(&args(&[
         "--scope",
@@ -598,7 +608,7 @@ fn special_supported_paths_pass_systemd_analyze_verify() {
     .unwrap();
     let agent_unit = run_agent_install_service(agent).unwrap();
     assert!(agent_unit.contains("\\\"slash\\\\percent%%p.toml"));
-    verify_systemd_unit(&agent_unit, "webcodex-runner-special.service");
+    verify_systemd_units(&[("webcodex-runner-special.service", &agent_unit)]);
 }
 
 /// Unix-only: systemd service unit semantics with Unix absolute-path

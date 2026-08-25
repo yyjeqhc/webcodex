@@ -42,6 +42,11 @@ fn install_service_generates_expected_unit_without_tokens() {
     assert!(unit.contains("Service=webcodex.service\n"));
     assert!(unit.contains("# /etc/systemd/system/webcodex.socket\n"));
     assert!(unit.contains("ExecStart=\"/usr/local/bin/webcodex-server\"\n"));
+    assert!(unit.contains("TimeoutStopSec=330s\n"));
+    assert!(
+        webcodex::SERVER_SYSTEMD_TIMEOUT_STOP_SECS
+            > webcodex::SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECS
+    );
     assert!(unit.contains("WorkingDirectory=/var/lib/webcodex\n"));
     assert!(unit.contains("User=webcodex\n"));
     assert!(unit.contains("Group=webcodex\n"));
@@ -210,6 +215,10 @@ fn server_socket_rendering_uses_env_address_custom_sibling_and_no_start_projecti
         .as_str()
         .unwrap()
         .contains("Requires=custom-webcodex.socket\n"));
+    assert!(json["units"]["service"]
+        .as_str()
+        .unwrap()
+        .contains("TimeoutStopSec=330s\n"));
     assert!(json["units"]["socket"]
         .as_str()
         .unwrap()

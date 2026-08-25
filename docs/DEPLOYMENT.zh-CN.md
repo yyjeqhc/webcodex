@@ -99,10 +99,19 @@ webcodex server status --env-file /etc/webcodex/webcodex.env
 sudo systemctl restart webcodex.service
 ```
 
-正常替换路径不要 restart `webcodex.socket`。旧 Server 退出到新 Server 继承 listener
-期间，socket 仍持续绑定，因此在正常有界 backlog 条件下消除 listener gap / `ECONNREFUSED`
-窗口。已有 HTTP keep-alive、WebSocket 与 streaming connection 仍可能断开后重连；本轮
-不宣称 graceful in-flight drain，这属于后续独立 L2 capability。
+正常替换路径不要 restart `webcodex.socket`。旧 Server drain 到新 Server 继承 listener
+期间，socket 仍持续绑定，因此在正常有界 backlog 条件下消除 listener ownership gap /
+`ECONNREFUSED` 窗口。收到 SIGTERM（受管 restart/stop）或 Ctrl-C/SIGINT（前台运行）后，
+WebCodex 会要求 Salvo 停止 accept/admit 新 HTTP work，并给已经 dispatch 的有限生命周期
+request 最多 315 秒完成和写回 response。该值由普通 HTTP hard timeout 300 秒加 15 秒
+response/teardown margin 派生。生成的 systemd service 使用 `TimeoutStopSec=330s`，再留
+15 秒余量，避免 systemd 在应用自己的 bounded shutdown 之前先发 SIGKILL。
+
+这是 availability-preserving graceful restart，不是 overlapping generations。若已有合法
+request 接近最大 deadline，新 TCP connection 可能在 systemd socket backlog 中等待，直到
+旧进程退出并由新 Server 继承 listener，因此 restart latency 也可能接近该有限 request
+上限。已有 WebSocket、HTTP keep-alive 与 streaming connection 仍可能断开并重连；不保证
+WebSocket continuity，也不宣称 literal zero interruption。
 
 只有替换已有受管 pair 时才在 `server install` 上使用 `--overwrite`。如果当前仍是
 正在运行的 legacy direct-bind `webcodex.service`，第一次迁移属于单独的一次 migration

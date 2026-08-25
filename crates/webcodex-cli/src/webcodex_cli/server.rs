@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use webcodex::SERVER_SYSTEMD_TIMEOUT_STOP_SECS;
 use webcodex_admin::ServerHttpOptions;
 
 use crate::{
@@ -213,6 +214,9 @@ fn render_systemd_unit(
     unit.push_str(&format!("ExecStart={exec_start}\n"));
     unit.push_str("Restart=on-failure\n");
     unit.push_str("RestartSec=3\n");
+    unit.push_str(&format!(
+        "TimeoutStopSec={SERVER_SYSTEMD_TIMEOUT_STOP_SECS}s\n"
+    ));
     unit.push_str(&format!("WorkingDirectory={working_directory}\n"));
     if let Some(user) = &opts.user {
         unit.push_str(&format!("User={user}\n"));

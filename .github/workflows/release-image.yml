@@ -333,8 +333,8 @@ jobs:
           metadata_name=webcodex-server-image.json
           metadata="$RUNNER_TEMP/$metadata_name"
           manifest_json="$RUNNER_TEMP/manifest.json"
-          existing_metadata="$RUNNER_TEMP/existing-metadata"
-          mkdir -p "$existing_metadata"
+          release_record_dir="$RUNNER_TEMP/existing-release-record"
+          mkdir -p "$release_record_dir"
 
           refs=()
           shopt -s nullglob
@@ -445,15 +445,64 @@ jobs:
           PY
           )
 
-          deployment_dir="$RUNNER_TEMP/server-deployment-assets"
-          deployment_summary="$RUNNER_TEMP/server-deployment-assets.json"
-          python3 scripts/prepare_server_deployment_assets.py \
-            --compose compose.yaml \
-            --bootstrap deploy/docker/bootstrap.sh \
-            --output-dir "$deployment_dir" \
-            --digest "$digest" \
-            --summary "$deployment_summary" >/dev/null
-          python3 - "$metadata" "$deployment_summary" "$WORKFLOW_SHA" <<'PY'
+          release_json="$RUNNER_TEMP/release-assets.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$release_json"
+          metadata_asset_id="$(python3 - "$release_json" "$metadata_name" <<'PY'
+          import json
+          import sys
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          name = sys.argv[2]
+          print(next((str(asset["id"]) for asset in release.get("assets", []) if asset.get("name") == name), ""))
+          PY
+          )"
+          bootstrap_name=webcodex-server-bootstrap.sh
+          bootstrap_asset_id="$(python3 - "$release_json" "$bootstrap_name" <<'PY'
+          import json
+          import sys
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          name = sys.argv[2]
+          print(next((str(asset["id"]) for asset in release.get("assets", []) if asset.get("name") == name), ""))
+          PY
+          )"
+
+          durable_record_exists=false
+          if [ -n "$metadata_asset_id" ]; then
+            if [ -z "$bootstrap_asset_id" ]; then
+              echo "$metadata_name exists without $bootstrap_name; refusing partial durable record reconciliation." >&2
+              exit 1
+            fi
+            for name in "$metadata_name" "$bootstrap_name"; do
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$release_record_dir"
+            done
+            python3 - "$metadata" "$release_record_dir/$metadata_name" "$release_record_dir/$bootstrap_name" <<'PY'
+          import json
+          import sys
+
+          from scripts.verify_public_release import validate_server_image_release_record
+
+          expected_path, existing_path, bootstrap_path = sys.argv[1:]
+          expected = json.load(open(expected_path, encoding="utf-8"))
+          existing = json.load(open(existing_path, encoding="utf-8"))
+          validate_server_image_release_record(
+              existing,
+              expected["version"],
+              open(bootstrap_path, "rb").read(),
+              expected_base=expected,
+          )
+          PY
+            cp "$release_record_dir/$metadata_name" "$metadata"
+            durable_record_exists=true
+            echo "Existing immutable GitHub Release deployment record reconciled without regeneration."
+          else
+            deployment_dir="$RUNNER_TEMP/server-deployment-assets"
+            deployment_summary="$RUNNER_TEMP/server-deployment-assets.json"
+            python3 scripts/prepare_server_deployment_assets.py \
+              --compose compose.yaml \
+              --bootstrap deploy/docker/bootstrap.sh \
+              --output-dir "$deployment_dir" \
+              --digest "$digest" \
+              --summary "$deployment_summary" >/dev/null
+            python3 - "$metadata" "$deployment_summary" "$WORKFLOW_SHA" <<'PY'
           import json
           import os
           import re
@@ -475,6 +524,7 @@ jobs:
               handle.write("\n")
           os.replace(tmp, metadata_path)
           PY
+          fi
 
           # The numeric version is an immutable alias of vVERSION. Repair a
           # missing alias, but never retarget one that already points elsewhere.
@@ -495,30 +545,38 @@ jobs:
             docker buildx imagetools create -t "$IMAGE:latest" "$version_ref"
           fi
 
-          # The GitHub Release is the durable digest/deployment record. Missing
-          # post-publication assets can be repaired only after the canonical image
-          # is reconciled; an existing asset must match byte-for-byte. Determine
-          # existence through release metadata so a transient download failure is
-          # never mistaken for permission to upload a duplicate.
-          # Upload the deployment bytes first and the metadata that commits to
-          # their digests last. A failure before metadata publication therefore
-          # never exposes a durable record claiming missing deployment bytes.
-          for asset in \
-            "$deployment_dir/webcodex-server-bootstrap.sh" \
-            "$metadata"; do
-            asset_name="$(basename "$asset")"
-            asset_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
-              --jq ".assets[] | select(.name == \"$asset_name\") | .id" | head -n 1)"
-            if [ -n "$asset_id" ]; then
-              gh release download "$TAG" --pattern "$asset_name" --dir "$existing_metadata"
-              if ! cmp -s "$asset" "$existing_metadata/$asset_name"; then
-                echo "$asset_name differs from the immutable GitHub Release record." >&2
-                exit 1
+          # Once metadata exists, it is the immutable durable deployment record.
+          # A rerun from a newer reviewed workflow validates and preserves those
+          # exact bytes rather than trying to rewrite deployment_source_sha.
+          if [ "$durable_record_exists" = false ]; then
+            # Without metadata, a previous bootstrap upload is only a partial
+            # publication. It must still match the current reviewed bytes before
+            # metadata can commit to it.
+            for asset in \
+              "$deployment_dir/$bootstrap_name" \
+              "$metadata"; do
+              asset_name="$(basename "$asset")"
+              asset_id="$(python3 - "$release_json" "$asset_name" <<'PY'
+          import json
+          import sys
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          name = sys.argv[2]
+          print(next((str(item["id"]) for item in release.get("assets", []) if item.get("name") == name), ""))
+          PY
+              )"
+              if [ -n "$asset_id" ]; then
+                compare_dir="$RUNNER_TEMP/compare-$asset_name"
+                mkdir -p "$compare_dir"
+                gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$asset_name" --dir "$compare_dir"
+                if ! cmp -s "$asset" "$compare_dir/$asset_name"; then
+                  echo "$asset_name differs from the immutable GitHub Release record." >&2
+                  exit 1
+                fi
+              else
+                gh release upload "$TAG" "$asset"
               fi
-            else
-              gh release upload "$TAG" "$asset"
-            fi
-          done
+            done
+          fi
 
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           {

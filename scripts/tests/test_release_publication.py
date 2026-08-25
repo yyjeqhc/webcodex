@@ -549,10 +549,13 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("push-by-digest=true", image)
         self.assertIn("webcodex-server-image.json", image)
         self.assertIn("scripts/prepare_server_deployment_assets.py", image)
+        self.assertIn("validate_server_image_release_record", image)
         self.assertIn("ref: ${{ github.workflow_sha }}", image)
         self.assertIn("deployment_source_sha", image)
         self.assertIn("webcodex-server-bootstrap.sh", image)
         self.assertIn("webcodex-server-compose.yaml", image)
+        self.assertIn("durable_record_exists=false", image)
+        self.assertIn("Existing immutable GitHub Release deployment record reconciled without regeneration.", image)
         self.assertIn("Require anonymous GHCR availability", image)
         self.assertIn('gh release download "$TAG" --repo "$GITHUB_REPOSITORY"', image)
 

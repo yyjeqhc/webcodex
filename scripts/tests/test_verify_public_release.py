@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import struct
 import tarfile
@@ -88,6 +89,53 @@ class ManifestTests(unittest.TestCase):
         del manifest["artifacts"]["win32-arm64"]
         with self.assertRaises(verifier.VerificationError):
             verifier.validate_public_manifest(manifest, version)
+
+    def test_existing_server_image_release_record_preserves_immutable_deployment_source(self) -> None:
+        version = "0.3.8"
+        digest = "sha256:" + "c" * 64
+        bootstrap = (
+            "#!/bin/sh\n"
+            f"image: ${{WEBCODEX_SERVER_IMAGE:-{verifier.SERVER_IMAGE}@{digest}}}\n"
+            f"compose_target={verifier.SERVER_MATERIALIZED_COMPOSE}\n"
+        ).encode()
+        metadata = {
+            "schema_version": 1,
+            "image": verifier.SERVER_IMAGE,
+            "tag": f"v{version}",
+            "version": version,
+            "image_tag": f"v{version}",
+            "deployment_assets": {
+                verifier.SERVER_BOOTSTRAP_ASSET: hashlib.sha256(bootstrap).hexdigest(),
+            },
+            "deployment_source_sha": "2" * 40,
+            "source_sha": "b" * 40,
+            "created_at": "2026-08-20T15:13:57+08:00",
+            "digest": digest,
+            "platforms": {
+                "linux/amd64": "sha256:" + "d" * 64,
+                "linux/arm64": "sha256:" + "e" * 64,
+            },
+        }
+        expected_base = {key: metadata[key] for key in verifier.SERVER_IMAGE_BASE_METADATA_KEYS}
+        validated = verifier.validate_server_image_release_record(
+            metadata,
+            version,
+            bootstrap,
+            expected_base=expected_base,
+        )
+        self.assertEqual(validated["deployment_source_sha"], "2" * 40)
+
+        drifted = dict(expected_base)
+        drifted["digest"] = "sha256:" + "f" * 64
+        with self.assertRaises(verifier.VerificationError):
+            verifier.validate_server_image_release_record(metadata, version, bootstrap, expected_base=drifted)
+        with self.assertRaises(verifier.VerificationError):
+            verifier.validate_server_image_release_record(
+                metadata,
+                version,
+                bootstrap + b"# drift\n",
+                expected_base=expected_base,
+            )
 
     def test_server_image_metadata_requires_release_identity_and_two_platforms(self) -> None:
         version = "0.3.8"

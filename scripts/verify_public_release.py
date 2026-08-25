@@ -28,6 +28,19 @@ SERVER_BOOTSTRAP_ASSET = "webcodex-server-bootstrap.sh"
 SERVER_MATERIALIZED_COMPOSE = "webcodex-server-compose.yaml"
 SERVER_DEPLOYMENT_ASSETS = (SERVER_BOOTSTRAP_ASSET,)
 SERVER_IMAGE_PLATFORMS = ("linux/amd64", "linux/arm64")
+SERVER_IMAGE_BASE_METADATA_KEYS = frozenset(
+    {
+        "schema_version",
+        "image",
+        "tag",
+        "version",
+        "image_tag",
+        "source_sha",
+        "created_at",
+        "digest",
+        "platforms",
+    }
+)
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_NPM_TARBALL_BYTES = 16 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 128 * 1024 * 1024
@@ -314,6 +327,39 @@ def validate_server_image_metadata(value: dict, version: str) -> dict[str, str]:
         "deployment_assets": deployment_assets,
         "deployment_source_sha": deployment_source_sha,
     }
+
+
+def validate_server_image_release_record(
+    value: dict,
+    version: str,
+    bootstrap_bytes: bytes,
+    *,
+    expected_base: dict | None = None,
+) -> dict[str, str]:
+    identity = validate_server_image_metadata(value, version)
+    if expected_base is not None:
+        if set(expected_base) != SERVER_IMAGE_BASE_METADATA_KEYS:
+            raise VerificationError("expected server image base metadata has an unexpected schema")
+        for key in SERVER_IMAGE_BASE_METADATA_KEYS:
+            if value.get(key) != expected_base.get(key):
+                raise VerificationError(f"existing server image release record differs from canonical {key}")
+
+    deployment_assets = identity["deployment_assets"]
+    if not isinstance(deployment_assets, dict):
+        raise VerificationError("server deployment asset metadata is invalid")
+    actual_digest = hashlib.sha256(bootstrap_bytes).hexdigest()
+    if actual_digest != deployment_assets[SERVER_BOOTSTRAP_ASSET]:
+        raise VerificationError("server deployment metadata digest mismatch")
+    try:
+        bootstrap_text = bootstrap_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise VerificationError("server deployment bootstrap is not UTF-8") from exc
+    pinned_image = f"{SERVER_IMAGE}@{identity['digest']}"
+    if bootstrap_text.count(pinned_image) != 1 or f"{SERVER_IMAGE}:latest" in bootstrap_text:
+        raise VerificationError("server deployment bootstrap is not pinned to the recorded image digest")
+    if f"compose_target={SERVER_MATERIALIZED_COMPOSE}" not in bootstrap_text:
+        raise VerificationError("server deployment bootstrap does not materialize the canonical compose file")
+    return identity
 
 
 def validate_github_assets(release: dict, version: str) -> dict[str, dict]:
@@ -638,27 +684,13 @@ def verify_public_release(version: str, timeout: float) -> None:
                 raise VerificationError("server image metadata asset is not valid JSON") from exc
             if not isinstance(image_metadata, dict):
                 raise VerificationError("server image metadata asset must be a JSON object")
-            image_identity = validate_server_image_metadata(image_metadata, version)
-            deployment_assets = image_identity["deployment_assets"]
-            if not isinstance(deployment_assets, dict):
-                raise VerificationError("server deployment asset metadata is invalid")
             asset = assets[SERVER_BOOTSTRAP_ASSET]
             bootstrap_bytes = fetch_bytes(asset["browser_download_url"], MAX_JSON_BYTES, timeout)
             github_digest = _asset_digest(asset)
             actual_digest = hashlib.sha256(bootstrap_bytes).hexdigest()
             if github_digest is not None and actual_digest != github_digest:
                 raise VerificationError("GitHub deployment bootstrap digest mismatch")
-            if actual_digest != deployment_assets[SERVER_BOOTSTRAP_ASSET]:
-                raise VerificationError("server deployment metadata digest mismatch")
-            try:
-                bootstrap_text = bootstrap_bytes.decode("utf-8")
-            except UnicodeDecodeError as exc:
-                raise VerificationError("server deployment bootstrap is not UTF-8") from exc
-            pinned_image = f"{SERVER_IMAGE}@{image_identity['digest']}"
-            if bootstrap_text.count(pinned_image) != 1 or f"{SERVER_IMAGE}:latest" in bootstrap_text:
-                raise VerificationError("server deployment bootstrap is not pinned to the recorded image digest")
-            if f"compose_target={SERVER_MATERIALIZED_COMPOSE}" not in bootstrap_text:
-                raise VerificationError("server deployment bootstrap does not materialize the canonical compose file")
+            image_identity = validate_server_image_release_record(image_metadata, version, bootstrap_bytes)
 
         print(f"npm={PACKAGE}@{version} manifest=ok")
         print(f"github_release=v{version} assets={len(assets)}")

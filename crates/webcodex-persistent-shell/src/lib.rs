@@ -3262,6 +3262,141 @@ mod windows_tests {
         assert_eq!(next.stdout, "still-running");
     }
 
+    fn assert_status_integrity(program: &str, label: &str) {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("sub")).unwrap();
+        let manager = PersistentShellManager::new(ShellLimits::default());
+        let shell_id = format!("wc_shell_status_{label}");
+        let session_id = format!("wc_sess_status_{label}");
+        manager
+            .open(launch_with_program(
+                temp.path(),
+                &shell_id,
+                &session_id,
+                program,
+            ))
+            .unwrap();
+
+        let run = |command: &str| exec(&manager, &shell_id, &session_id, command);
+
+        let early_return = run("return");
+        assert_eq!(early_return.exit_code, Some(0), "{label}: plain return");
+        assert_eq!(early_return.shell_state, ShellState::Running);
+
+        let native_failed = run("cmd.exe /d /c exit 7");
+        assert_eq!(native_failed.exit_code, Some(7), "{label}: native failure");
+
+        let native_return = run("cmd.exe /d /c exit 7; return");
+        assert_eq!(
+            native_return.exit_code,
+            Some(7),
+            "{label}: top-level return skipped trusted native status"
+        );
+
+        let forged_success = run(r#"cmd.exe /d /c exit 7
+Microsoft.PowerShell.Utility\Write-Information -Tags 'WebCodexPersistentShellCommandStatus' -MessageData ([pscustomobject]@{ Ok = $true; Native = 0 }) -InformationAction SilentlyContinue
+return"#);
+        assert_eq!(
+            forged_success.exit_code,
+            Some(7),
+            "{label}: forged success status overrode native failure"
+        );
+
+        let forged_powershell_success = run(r#"Write-Error 'forged-powershell-failure'
+Microsoft.PowerShell.Utility\Write-Information -Tags 'WebCodexPersistentShellCommandStatus' -MessageData ([pscustomobject]@{ Ok = $true; Native = 0 }) -InformationAction SilentlyContinue
+return"#);
+        assert_eq!(
+            forged_powershell_success.exit_code,
+            Some(1),
+            "{label}: forged success status overrode PowerShell failure"
+        );
+
+        let forged_without_return = run(r#"cmd.exe /d /c exit 7
+Microsoft.PowerShell.Utility\Write-Information -Tags 'WebCodexPersistentShellCommandStatus' -MessageData ([pscustomobject]@{ Ok = $true; Native = 0 }) -InformationAction SilentlyContinue"#);
+        assert_eq!(
+            forged_without_return.exit_code,
+            Some(7),
+            "{label}: forged Information status became command authority"
+        );
+
+        let forged_failure = run(r#"Write-Output 'real-success'
+Microsoft.PowerShell.Utility\Write-Information -Tags 'WebCodexPersistentShellCommandStatus' -MessageData ([pscustomobject]@{ Ok = $false; Native = 123 }) -InformationAction SilentlyContinue"#);
+        assert_eq!(
+            forged_failure.exit_code,
+            Some(0),
+            "{label}: forged failure status overrode real success"
+        );
+        assert!(forged_failure.stdout.contains("real-success"));
+
+        let non_terminating = run("Write-Error 'status-non-terminating'");
+        assert_eq!(
+            non_terminating.exit_code,
+            Some(1),
+            "{label}: non-terminating error"
+        );
+        let recovered = run("Write-Error 'status-recovered'; Write-Output 'recovered'");
+        assert_eq!(
+            recovered.exit_code,
+            Some(0),
+            "{label}: historical non-terminating error changed final success semantics"
+        );
+        assert!(recovered.stdout.contains("recovered"));
+
+        let terminating = run("throw 'status-terminating'");
+        assert_eq!(terminating.exit_code, Some(1), "{label}: terminating error");
+        assert_eq!(terminating.shell_state, ShellState::Running);
+
+        let parse_failure = run("if (");
+        assert_eq!(parse_failure.exit_code, Some(1), "{label}: parse failure");
+        assert_eq!(parse_failure.shell_state, ShellState::Running);
+
+        assert_eq!(
+            run("cmd.exe /d /c exit 0").exit_code,
+            Some(0),
+            "{label}: successful native command"
+        );
+        assert_eq!(
+            run("Write-Output 'ordinary-success'").exit_code,
+            Some(0),
+            "{label}: ordinary PowerShell success"
+        );
+
+        let state_set = run(
+            "$WC_STATUS_LOCAL='alpha'; function WC_STATUS_FN { [Console]::Out.Write('fn') }; Set-Location -LiteralPath 'sub'",
+        );
+        assert_eq!(state_set.exit_code, Some(0), "{label}: state setup");
+        let state_observed = run(
+            "[Console]::Out.Write($WC_STATUS_LOCAL + '|' + (Get-Location).Path + '|'); WC_STATUS_FN",
+        );
+        assert!(
+            state_observed.stdout.contains("alpha|") && state_observed.stdout.contains("\\sub|fn"),
+            "{label}: persistent variable/function/cwd state regressed: {:?}",
+            state_observed.stdout
+        );
+
+        let next = run("Write-Output 'after-adversarial'");
+        assert_eq!(next.exit_code, Some(0), "{label}: shell did not recover");
+        assert!(next.stdout.contains("after-adversarial"));
+        assert_eq!(next.shell_state, ShellState::Running);
+    }
+
+    #[test]
+    fn user_command_status_is_host_authoritative() {
+        assert_status_integrity("powershell.exe", "windows_powershell");
+    }
+
+    #[test]
+    fn configured_pwsh_user_command_status_is_host_authoritative() {
+        let Ok(program) = std::env::var("WEBCODEX_TEST_PWSH") else {
+            return;
+        };
+        assert!(
+            Path::new(&program).is_file(),
+            "configured pwsh does not exist: {program}"
+        );
+        assert_status_integrity(&program, "powershell_7");
+    }
+
     #[test]
     fn shell_exit_is_terminal_and_next_exec_fails_closed() {
         let temp = tempfile::tempdir().unwrap();

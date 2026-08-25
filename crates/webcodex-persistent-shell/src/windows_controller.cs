@@ -1,4 +1,5 @@
 using System;
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Management.Automation;
@@ -87,7 +88,7 @@ namespace WebCodexPersistentShell
         private const string StderrMagic = "WCPSE1";
         private const string ControlMagic = "WCPS1";
         private const string StatusTag = "WebCodexPersistentShellCommandStatus";
-        private const string StatusPostamble = "\nMicrosoft.PowerShell.Utility\\Write-Information -Tags 'WebCodexPersistentShellCommandStatus' -MessageData ([pscustomobject]@{ Ok = $?; Native = $LASTEXITCODE }) -InformationAction SilentlyContinue";
+        private const string StatusProbe = "([int][bool]$?).ToString([Globalization.CultureInfo]::InvariantCulture) + ':' + ([int]$LASTEXITCODE).ToString([Globalization.CultureInfo]::InvariantCulture)";
         private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
         private static readonly Encoding Ascii = Encoding.ASCII;
 
@@ -185,6 +186,7 @@ namespace WebCodexPersistentShell
         private static int InvokeUserCommand(Runspace userRunspace, string source, Stream stderr)
         {
             int status = 0;
+            Collection<PSObject> results = null;
             using (PowerShell shell = PowerShell.Create())
             {
                 shell.Runspace = userRunspace;
@@ -192,14 +194,15 @@ namespace WebCodexPersistentShell
                 {
                     // Match the prior Windows transport's per-command native-status reset.
                     userRunspace.SessionStateProxy.SetVariable("LASTEXITCODE", 0);
-                    // Capture the same final `$?` / `$LASTEXITCODE` pair used by
-                    // the original Windows wrapper. Information is a separate
-                    // PowerShell stream and is silenced from user output; it is
-                    // command-status metadata only and never participates in
-                    // completion authentication.
-                    shell.AddScript(source + StatusPostamble, false);
+                    // Keep user source, user output rendering, and trusted status capture as
+                    // separate command components in one invocation. A top-level `return`
+                    // can end only the user script component; it cannot skip StatusProbe.
+                    // Out-Default consumes user success output before the final component,
+                    // so Invoke() returns only the controller-owned status value.
+                    shell.AddScript(source, false);
                     shell.AddCommand("Out-Default");
-                    shell.Invoke();
+                    shell.AddScript(StatusProbe, false);
+                    results = shell.Invoke();
                 }
                 catch (Exception error)
                 {
@@ -218,14 +221,14 @@ namespace WebCodexPersistentShell
                 if (status == 0)
                 {
                     int capturedStatus;
-                    if (TryReadCommandStatus(shell, out capturedStatus))
+                    if (TryReadCommandStatus(results, shell, out capturedStatus))
                     {
                         status = capturedStatus;
                     }
-                    else if (shell.HadErrors)
+                    else
                     {
-                        // Parse/terminating failures can skip the trusted
-                        // postamble. Preserve the previous fail-closed status.
+                        // Trusted status is mandatory. Never infer success from an
+                        // otherwise clean invocation when the host-owned result is absent.
                         status = 1;
                     }
                 }
@@ -233,48 +236,53 @@ namespace WebCodexPersistentShell
             return status;
         }
 
-        private static bool TryReadCommandStatus(PowerShell shell, out int status)
+        private static bool TryReadCommandStatus(Collection<PSObject> results, PowerShell shell, out int status)
         {
-            for (int index = shell.Streams.Information.Count - 1; index >= 0; index--)
+            status = 1;
+            if (results == null || results.Count != 1 || results[0] == null)
             {
-                InformationRecord record = shell.Streams.Information[index];
-                bool tagged = false;
+                return false;
+            }
+
+            string[] parts = results[0].ToString().Split(new char[] { ':' });
+            int nativeExitCode;
+            if (parts.Length != 2
+                || (parts[0] != "0" && parts[0] != "1")
+                || !Int32.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out nativeExitCode))
+            {
+                return false;
+            }
+
+            bool ok = parts[0] == "1";
+            bool statusStreamTampered = HasUserStatusRecord(shell);
+            if (statusStreamTampered && shell.HadErrors)
+            {
+                // The legacy public Information tag is no longer an authority channel.
+                // If user code writes it while this invocation also has real failure
+                // evidence, fail closed instead of allowing that write to turn the
+                // final `$?` back to success. A clean successful command remains clean,
+                // so a forged failure record cannot manufacture an exit code either.
+                status = nativeExitCode != 0 ? nativeExitCode : 1;
+            }
+            else
+            {
+                status = ok ? 0 : (nativeExitCode != 0 ? nativeExitCode : 1);
+            }
+            return true;
+        }
+
+        private static bool HasUserStatusRecord(PowerShell shell)
+        {
+            foreach (InformationRecord record in shell.Streams.Information)
+            {
                 foreach (string tag in record.Tags)
                 {
                     if (String.Equals(tag, StatusTag, StringComparison.Ordinal))
                     {
-                        tagged = true;
-                        break;
+                        return true;
                     }
-                }
-                if (!tagged)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    PSObject data = PSObject.AsPSObject(record.MessageData);
-                    PSPropertyInfo okProperty = data.Properties["Ok"];
-                    PSPropertyInfo nativeProperty = data.Properties["Native"];
-                    if (okProperty == null || nativeProperty == null)
-                    {
-                        continue;
-                    }
-                    bool ok = LanguagePrimitives.ConvertTo<bool>(okProperty.Value);
-                    int nativeExitCode = nativeProperty.Value == null
-                        ? 0
-                        : LanguagePrimitives.ConvertTo<int>(nativeProperty.Value);
-                    status = ok ? 0 : (nativeExitCode != 0 ? nativeExitCode : 1);
-                    return true;
-                }
-                catch (Exception)
-                {
-                    continue;
                 }
             }
-
-            status = 0;
             return false;
         }
 

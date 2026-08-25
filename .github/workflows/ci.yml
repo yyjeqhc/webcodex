@@ -207,8 +207,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Configure PowerShell 7 persistent-shell tests
+        shell: pwsh
+        run: |
+          $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+          "WEBCODEX_TEST_PWSH=$pwsh" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Run Windows persistent-shell tests (PowerShell 5.1 + PowerShell 7)
+        run: cargo test --locked -p webcodex-persistent-shell
       - name: Run Windows library and CLI tests
-        run: cargo test --locked -p webcodex-agent-config -p webcodex-process -p webcodex-persistent-shell -p webcodex-cli
+        run: cargo test --locked -p webcodex-agent-config -p webcodex-process -p webcodex-cli
       - name: Run Windows Runner tests
         # The Runner suite starts many real PowerShell/process-tree fixtures. On
         # hosted Windows, parallel test functions can starve process startup long

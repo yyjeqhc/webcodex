@@ -36,22 +36,23 @@ export PATH="$PWD/target/release:$PATH"
 
 这会生成 `webcodex`、`webcodex-server`、`webcodex-runner`。
 
-## 把仓库接入已有的 Server
+## 把仓库接入已有的 shared-key Server
 
-hosted shared-key 路径不需要本地 Server、数据库、反向代理或 systemd unit：
+hosted shared-key 路径不需要本地 Server、数据库、反向代理或 systemd unit，但需要一把
+该 Server 已接受的 shared key（通常由 operator 提供，或从本机已有受保护 profile 恢复）：
 
 ```bash
 cd /path/to/your/repository
-webcodex connect https://your-server.example
+webcodex connect https://your-server.example --key-file /private/path/shared-key
 ```
 
-`connect` 把当前目录作为项目，生成一把共享 key（`wck_...`，只打印一次），写入
-owner-only profile，启动 detached Runner，并等待 Server 同时看到 Runner 与项目。
-把输出的 `/mcp` URL 与 key 填入 MCP client。机器重启后，重新运行同一条
-`connect` 或使用 `webcodex agent start --profile <profile>`。
+`connect` 把当前目录作为项目，写入 owner-only profile，启动 detached Runner，并等待
+Server 同时看到 Runner 与项目。把输出的 `/mcp` URL 与 credential 填入 MCP client。
+机器重启后，重新运行同一条 `connect` 或使用 `webcodex agent start --profile <profile>`。
 
-自动化场景优先用 `--key-file <path>` 而不是 `--key`。不要同时传 `--key` 与
-`--key-file`。
+这不是刚完成 bootstrap 的自托管 Server 的首次 enrollment。那种情况应把 bootstrap
+administrator token 留在 Server，并按下文 pairing / `webcodex login` 流程接入仓库机器。
+shared-key 自动化场景优先使用 `--key-file <path>`，不要与 `--key` 同时传入。
 
 ## 首次生产部署
 

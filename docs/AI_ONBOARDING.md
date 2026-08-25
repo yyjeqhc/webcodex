@@ -59,20 +59,21 @@ client-side permissions are separate from WebCodex authorization:
 For local-only debugging, `webcodex share --tunnel none` avoids the Cloudflare
 Quick Tunnel and does not require `cloudflared`.
 
-## Existing Server path: `connect`
+## Existing shared-key Server path: `connect`
 
-Only use this path when a real Server URL is already available:
+Use this path only when a hosted Server is already configured for shared-key
+clients and the operator supplied that client credential (or the machine already
+has the protected profile):
 
 ```bash
 cd /path/to/your/repository
-webcodex connect https://webcodex.example
+webcodex connect https://webcodex.example --key-file /private/path/shared-key
 ```
 
 `connect` creates/reuses a profile, starts a detached Runner, waits for the same
 identity to see the Runner and project, then prints the MCP setup values before
-diagnostic details. If the command generates a shared key, it is printed in full
-only on its permitted first disclosure. A repeat connection reuses the protected
-profile without redisclosing the key.
+diagnostic details. Never obtain this shared key by copying a self-hosted Docker
+Server's `.env` bootstrap administrator token to the client.
 
 The inverse operation is:
 
@@ -83,23 +84,29 @@ webcodex disconnect
 It unregisters only the exact canonical repository; do not delete the checkout,
 `.git`, profile credential, or sibling project registrations.
 
-## OAuth and managed identity are opt-in complexity
+## Self-hosted enrollment and optional OAuth
 
-Use `share --auth oauth` or `connect --auth oauth` only when the client requires
-OAuth and the exact callback URL is known. Do not collapse OAuth client secrets,
-shared keys, Project Credentials, PATs, or Runner tokens into one concept.
-
-Use the managed flow when the user explicitly needs user identity, revocation,
-device authorization, audit, or organization administration:
+For a freshly bootstrapped self-hosted Server, managed pairing is the normal
+repository-machine enrollment path, not an optional reuse of the Server admin
+token. Create a short-lived pairing code on the Server, then redeem it as the
+ordinary user that will run project commands:
 
 ```bash
 webcodex login https://webcodex.example --code <wc_pair_...> \
   --allowed-root "$HOME/git"
+webcodex agent install --scope user \
+  --config <login-reported-agent-config>
 ```
 
-The managed path intentionally keeps user/API authority separate from Runner
-transport authority. See [Authentication](AUTH_MODEL.md) and [MCP](MCP.md) for
-the reference model.
+Use `share --auth oauth` or `connect --auth oauth` only when the client requires
+OAuth and the exact callback URL is known. Do not collapse OAuth client secrets,
+shared keys, Project Credentials, PATs, Runner tokens, or bootstrap administrator
+tokens into one concept.
+
+The same managed flow also supplies separate user/device identity, revocation,
+audit, and organization administration when those controls are needed. It keeps
+user/API authority separate from Runner transport authority. See
+[Authentication](AUTH_MODEL.md) and [MCP](MCP.md) for the reference model.
 
 ## What the AI may inspect
 

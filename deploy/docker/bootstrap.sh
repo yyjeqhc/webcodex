@@ -150,5 +150,12 @@ and does not mount any source repository.
 After the reverse proxy is ready, create a short-lived pairing code with:
   docker compose -f "$COMPOSE_FILE" exec webcodex sh -lc 'webcodex pairing create --server-url "\$WEBCODEX_PUBLIC_URL" --username admin --ttl-secs 600'
 
-Keep .env private. It contains the bootstrap administrator token.
+On each repository machine, redeem only that short-lived pairing code as the
+ordinary user who will run project commands:
+  webcodex login "$PUBLIC_URL" --code <wc_pair_...> --allowed-root "\$HOME/git"
+  webcodex agent install --scope user --config <login-reported-agent-config>
+
+Keep .env private. It contains the bootstrap administrator token. Do not copy
+that token to a repository machine or pass it to webcodex connect; connect is
+the separate hosted shared-key path.
 EOF_DONE

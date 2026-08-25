@@ -40,24 +40,27 @@ export PATH="$PWD/target/release:$PATH"
 
 This produces `webcodex`, `webcodex-server`, and `webcodex-runner`.
 
-## Connect a repository to an existing Server
+## Connect a repository to an existing shared-key Server
 
 The hosted shared-key path needs no local Server, database, reverse proxy, or
-systemd unit:
+systemd unit, but it does require a shared key accepted by that Server (normally
+supplied by its operator or recovered from an existing protected profile):
 
 ```bash
 cd /path/to/your/repository
-webcodex connect https://your-server.example
+webcodex connect https://your-server.example --key-file /private/path/shared-key
 ```
 
-`connect` uses the current directory as the project, generates a shared key
-(`wck_...`, printed once), writes an owner-only profile, starts a detached
-Runner, and waits until the Server sees both the Runner and the project. Use
-the printed `/mcp` URL and key in your MCP client. After a machine reboot,
-rerun the same `connect` or use `webcodex agent start --profile <profile>`.
+`connect` uses the current directory as the project, writes an owner-only
+profile, starts a detached Runner, and waits until the Server sees both the
+Runner and the project. Use the printed `/mcp` URL and credential in your MCP
+client. After a machine reboot, rerun the same `connect` or use
+`webcodex agent start --profile <profile>`.
 
-For automation, prefer `--key-file <path>` over `--key`. Do not pass `--key`
-and `--key-file` together.
+This is not first enrollment for a freshly self-hosted Server. For that case,
+keep the bootstrap administrator token on the Server and follow the pairing /
+`webcodex login` flow below. For automation of a shared-key deployment, prefer
+`--key-file <path>` over `--key`. Do not pass both.
 
 ## First production deployment
 

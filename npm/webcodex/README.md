@@ -66,15 +66,16 @@ ChatGPT Developer Mode, custom MCP apps, and write/modify actions are controlled
 by the ChatGPT plan, workspace, and admin settings; WebCodex cannot widen those
 client-side permissions.
 
-If you already operate a WebCodex Server, use the long-lived path instead:
+If you already operate a hosted WebCodex Server configured for shared-key
+clients, use the operator-provided client key with the long-lived path:
 
 ```bash
-webcodex connect https://webcodex.example
+webcodex connect https://webcodex.example --key-file /private/path/shared-key
 ```
 
 `connect` creates a reusable profile and prints the corresponding MCP setup
-values. A generated hosted shared key is disclosed in full only on its permitted
-first output; status/log commands do not reveal it.
+values. For a freshly self-hosted Docker Server, keep the bootstrap admin token
+on the Server and enroll repository machines with pairing + `webcodex login`.
 
 ### Package integrity
 
@@ -153,14 +154,15 @@ credential；交互式终端可以按 Enter 打开 ChatGPT App 设置。然后�
 MCP app 与 write/modify action 受 ChatGPT 套餐、workspace 和管理员设置控制；WebCodex
 不能扩大这些客户端侧权限。
 
-如果你已经运营一个 WebCodex Server，再使用长期路径：
+如果你已经运营一个明确支持 shared-key client 的 hosted WebCodex Server，使用 operator
+提供的 client key 走长期路径：
 
 ```bash
-webcodex connect https://webcodex.example
+webcodex connect https://webcodex.example --key-file /private/path/shared-key
 ```
 
-`connect` 会创建可复用 profile 并输出对应 MCP 配置。自动生成的 hosted shared key 只会在
-允许的首次输出中完整显示；status/log 不会泄露它。
+`connect` 会创建可复用 profile 并输出对应 MCP 配置。对于刚完成 Docker bootstrap 的自托管
+Server，把 bootstrap admin token 留在 Server，仓库机器通过 pairing + `webcodex login` 接入。
 
 ### Package 完整性
 

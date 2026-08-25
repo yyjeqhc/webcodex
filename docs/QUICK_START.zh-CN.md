@@ -107,16 +107,17 @@ webcodex task accept <task-id>
 
 ## 已有 Server：长期连接
 
-只有已经拥有 WebCodex Server URL 时，才用 `connect` 替代临时 `share`：
+如果已有 hosted Server 明确配置为 shared-key 接入，使用 operator 提供的 shared key，
+用 `connect` 替代临时 `share`：
 
 ```bash
 cd /path/to/your/repository
-webcodex connect https://webcodex.example
+webcodex connect https://webcodex.example --key-file /private/path/shared-key
 ```
 
 `connect` 创建/复用本地 profile、启动 detached Runner、等待 Server 看见 Runner 与项目，
-然后输出 MCP URL、认证类型、credential 来源、ChatGPT 提示和诊断 Details。若它自动生成
-shared key，完整值只会在允许的首次 disclosure 中出现；status/log 不会泄露它。
+然后输出 MCP URL、认证类型、credential 来源、ChatGPT 提示和诊断 Details。这里的 shared
+key 是 hosted client credential，不是自托管 Server 的 bootstrap administrator token。
 
 以后只注销当前仓库：
 
@@ -124,8 +125,10 @@ shared key，完整值只会在允许的首次 disclosure 中出现；status/log
 webcodex disconnect
 ```
 
-自托管和 managed identity 属于独立 operator/高级工作流。如果还需要先准备 Server，推荐的
-Docker Server 路径无需 clone 仓库，只需三条 shell 命令；见[部署指南](DEPLOYMENT.zh-CN.md#docker仅-server)。
+如果还需要先准备 Server，推荐的 Docker Server 路径无需 clone 仓库，只需三条 shell 命令；
+见[部署指南](DEPLOYMENT.zh-CN.md#docker仅-server)。bootstrap 完成后，在 Server 侧创建短期
+pairing code，在仓库机器上执行 `webcodex login`，再显式安装它报告的 Runner config。Server
+`.env` 和 bootstrap administrator token 始终留在 Server 机器上。
 
 ## 可选 OAuth
 

@@ -72,18 +72,20 @@ Job 保持可观察。底层权限边界不会因为 onboarding 简化而改变�
 
 ## 已有 Server 与长期部署
 
-只有在你**已经拥有** WebCodex Server URL 时，才使用长期 `connect` 路径：
+如果 hosted Server 的 operator 明确给了 shared key，用这个 shared-key identity 连接当前仓库：
 
 ```bash
 cd /path/to/your/repository
-webcodex connect https://webcodex.example
+webcodex connect https://webcodex.example --key-file /private/path/shared-key
 ```
 
 `connect` 会创建可复用的本地 profile、启动 Runner、等待项目在该 Server 上可见，并输出
-MCP 配置值。它是已有 Server 的长期路径，不是本地试用 WebCodex 的前置条件。
+MCP 配置值。它是 hosted shared-key 路径，不是刚完成 Docker bootstrap 的自托管 Server
+的 enrollment 路径。
 
-`webcodex login` 与 managed OAuth 是需要独立用户身份、撤销、审计或组织级控制时的高级
-身份路径。自托管属于 operator 工作流，见[部署指南](docs/DEPLOYMENT.zh-CN.md)。
+对于新的自托管 Server，把 bootstrap administrator token 留在 Server。Server 侧创建短期
+pairing code 后，在仓库机器上用 `webcodex login` 兑换，再显式把 CLI 报告的 Runner config
+安装成 user service。managed OAuth 仍是高级 identity 选项。完整流程见[部署指南](docs/DEPLOYMENT.zh-CN.md)。
 
 ## 工作方式
 

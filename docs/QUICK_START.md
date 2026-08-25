@@ -122,19 +122,20 @@ The online model cannot accept its own result.
 
 ## Existing Server: long-lived connection
 
-If you already have a WebCodex Server URL, use `connect` instead of temporary
+If an existing hosted Server is intentionally configured for shared-key clients,
+use `connect` with the shared key supplied by its operator instead of temporary
 `share`:
 
 ```bash
 cd /path/to/your/repository
-webcodex connect https://webcodex.example
+webcodex connect https://webcodex.example --key-file /private/path/shared-key
 ```
 
 `connect` creates/reuses a local profile, starts a detached Runner, waits until
 the Server can see the Runner and project, then prints the MCP URL,
 authentication type, credential source, ChatGPT hint, and diagnostic details.
-When it generates a shared key, the full value is shown only on the permitted
-first disclosure; status/log commands do not reveal it.
+The shared key is a hosted-client credential; it is not the bootstrap
+administrator token of a self-hosted Server.
 
 To remove only this repository from a hosted profile later:
 
@@ -142,9 +143,11 @@ To remove only this repository from a hosted profile later:
 webcodex disconnect
 ```
 
-Self-hosting and managed identity are separate operator/advanced workflows. If
-you need a Server first, the recommended Docker Server path is clone-free and
+If you need a Server first, the recommended Docker Server path is clone-free and
 uses three shell commands; see [Deployment](DEPLOYMENT.md#docker-server-only).
+After that bootstrap, enroll repository machines with a short-lived pairing code
+and `webcodex login`, then explicitly install the reported Runner config. Keep
+the Server `.env` and its bootstrap administrator token on the Server.
 
 ## Optional OAuth
 

@@ -85,22 +85,24 @@ not reveal credentials.
 
 ## Existing Server and long-lived deployments
 
-If you **already have** a WebCodex Server URL, connect the current repository to
-it instead:
+For a hosted Server whose operator intentionally gave you a shared key, connect
+the current repository with that shared-key identity:
 
 ```bash
 cd /path/to/your/repository
-webcodex connect https://webcodex.example
+webcodex connect https://webcodex.example --key-file /private/path/shared-key
 ```
 
 `connect` creates a reusable local profile, starts the Runner, waits for the
 project to become visible through that Server, and prints the MCP setup values.
-This is the long-lived hosted path; it is not the prerequisite for trying
-WebCodex locally.
+This is the hosted shared-key path; it is not the enrollment path for a freshly
+self-hosted Docker Server.
 
-`webcodex login` and managed OAuth are advanced identity paths for deployments
-that need separate users, revocation, audit, or organization-level controls.
-Self-hosting is an operator workflow; see [Deployment](docs/DEPLOYMENT.md).
+For a fresh self-hosted Server, keep its bootstrap administrator token on the
+Server. Create a short-lived pairing code there, then use `webcodex login` with
+that `wc_pair_...` code on the repository machine and explicitly install the
+reported Runner config as a user service. Managed OAuth remains an advanced
+identity option. See [Deployment](docs/DEPLOYMENT.md) for the complete flow.
 
 ## How it works
 

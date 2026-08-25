@@ -44,15 +44,17 @@ WebCodex scope 不会扩大这些客户端侧权限。
 
 ## 已有 Server
 
-如果已经拥有稳定的 WebCodex Server URL，使用长期路径：
+对于已经明确配置为 shared-key client 接入的 hosted Server，使用 operator 提供的 credential
+走长期 shared-key 路径：
 
 ```bash
-webcodex connect https://webcodex.example
+webcodex connect https://webcodex.example --key-file /private/path/shared-key
 ```
 
 `connect` 会启动/复用本地 Runner，并在连接验证完成后输出 MCP URL 与 credential source。
-自动生成的 shared key 只会在允许的首次输出中完整显示；status/log 不会泄露它。自托管见
-[部署指南](DEPLOYMENT.zh-CN.md)。
+这与刚完成 Docker bootstrap 的自托管 Server enrollment 不同：bootstrap administrator token
+保留在 Server 机器上，由 Server 创建短期 pairing code，再在仓库机器上执行 `webcodex login`。
+自托管见[部署指南](DEPLOYMENT.zh-CN.md)。
 
 Bearer/shared-key 是最简单的路径。客户端要求 OAuth 时，使用 `share --auth oauth` 或
 `connect --auth oauth` 并传入该客户端的精确 callback URL，然后按 CLI 输出配置。managed-user

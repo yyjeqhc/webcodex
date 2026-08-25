@@ -49,16 +49,18 @@ endpoint without `cloudflared`.
 
 ## Existing Server
 
-If you already have a stable WebCodex Server URL, use the long-lived path:
+For an existing hosted Server intentionally configured for shared-key clients,
+use the long-lived shared-key path with the credential supplied by its operator:
 
 ```bash
-webcodex connect https://webcodex.example
+webcodex connect https://webcodex.example --key-file /private/path/shared-key
 ```
 
 `connect` starts/reuses the local Runner and prints the MCP URL and credential
-source after the connection is verified. A generated shared key is fully
-disclosed only on its allowed first output. `status` and log commands do not
-reveal it. Self-hosting is documented in [Deployment](DEPLOYMENT.md).
+source after the connection is verified. This is separate from fresh self-hosted
+Docker enrollment: keep the Docker Server bootstrap administrator token on the
+Server, create a short-lived pairing code there, and use `webcodex login` on the
+repository machine. Self-hosting is documented in [Deployment](DEPLOYMENT.md).
 
 Bearer/shared-key authentication is the simplest path. When a client requires
 OAuth, use `share --auth oauth` or `connect --auth oauth` with that client's exact

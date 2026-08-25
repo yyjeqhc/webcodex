@@ -55,18 +55,19 @@ ChatGPT 套餐、workspace 和管理员设置控制，这些客户端侧权限�
 仅做本地调试时可用 `webcodex share --tunnel none`，不启动 Cloudflare Quick Tunnel，也不
 需要 `cloudflared`。
 
-## 已有 Server：`connect`
+## 已有 shared-key Server：`connect`
 
-只有真实 Server URL 已存在时才走这条路径：
+只有 hosted Server 已明确配置 shared-key client，并且 operator 已提供该 client credential
+（或本机已有受保护 profile）时才走这条路径：
 
 ```bash
 cd /path/to/your/repository
-webcodex connect https://webcodex.example
+webcodex connect https://webcodex.example --key-file /private/path/shared-key
 ```
 
 `connect` 创建/复用 profile、启动 detached Runner、等待同一身份能看到 Runner 与项目，
-然后先输出 MCP 配置，再输出诊断 Details。若自动生成 shared key，完整值只在允许的首次
-disclosure 中显示；重复连接复用受保护 profile，不再次泄露 key。
+然后先输出 MCP 配置，再输出诊断 Details。不要为了得到 shared key，把自托管 Docker Server
+`.env` 中的 bootstrap administrator token 复制到 client。
 
 逆操作：
 
@@ -77,20 +78,25 @@ webcodex disconnect
 它只注销 canonical 路径精确匹配的仓库；不要删除 checkout、`.git`、profile credential 或
 同 profile 的其他项目注册。
 
-## OAuth 与 managed identity 是按需复杂度
+## 自托管 enrollment 与可选 OAuth
 
-只有 MCP client 要求 OAuth 且精确 callback URL 已知时，才使用 `share --auth oauth` 或
-`connect --auth oauth`。不要把 OAuth client secret、shared key、Project Credential、PAT
-或 Runner token 合并成一个概念。
-
-用户明确需要 user identity、revocation、device authorization、audit 或组织管理时才走：
+对于刚完成 bootstrap 的自托管 Server，managed pairing 是仓库机器的正常 enrollment 路径，
+不是把 Server admin token 复用到 client。先在 Server 创建短期 pairing code，再以实际执行项目
+命令的普通用户兑换并显式安装 Runner：
 
 ```bash
 webcodex login https://webcodex.example --code <wc_pair_...> \
   --allowed-root "$HOME/git"
+webcodex agent install --scope user \
+  --config <login-reported-agent-config>
 ```
 
-managed 路径故意把 user/API authority 与 Runner transport authority 分开。reference 见
+只有 MCP client 要求 OAuth 且精确 callback URL 已知时，才使用 `share --auth oauth` 或
+`connect --auth oauth`。不要把 OAuth client secret、shared key、Project Credential、PAT、
+Runner token 或 bootstrap administrator token 合并成一个概念。
+
+同一 managed flow 也能在需要时提供 user/device identity、revocation、audit 或组织管理。
+它故意把 user/API authority 与 Runner transport authority 分开。reference 见
 [认证模型](AUTH_MODEL.zh-CN.md)和 [MCP](MCP.zh-CN.md)。
 
 ## AI 可以检查什么

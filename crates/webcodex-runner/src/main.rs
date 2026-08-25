@@ -2790,6 +2790,7 @@ struct RunnerJobDelta {
     duration_ms: Option<u64>,
     error: Option<String>,
     command_execution_state: Option<ShellCommandExecutionState>,
+    stream_limit_bytes: Option<usize>,
     validation_progress: Option<ShellJobValidationProgress>,
     finished: bool,
 }
@@ -3379,6 +3380,11 @@ impl JobManager {
             let now = chrono::Utc::now().timestamp();
             append_runner_stream(&mut job.snapshot.stdout, delta.stdout_chunk.as_deref());
             append_runner_stream(&mut job.snapshot.stderr, delta.stderr_chunk.as_deref());
+            if let Some(max_bytes) = delta.stream_limit_bytes {
+                let max_bytes = max_bytes.min(JOB_SNAPSHOT_STREAM_MAX_BYTES);
+                trim_runner_stream_to(&mut job.snapshot.stdout, max_bytes);
+                trim_runner_stream_to(&mut job.snapshot.stderr, max_bytes);
+            }
             job.snapshot.update_seq = job.snapshot.update_seq.saturating_add(1);
             if !delta.status.trim().is_empty() {
                 let incoming_status = delta.status.trim();
@@ -5102,6 +5108,7 @@ impl JobManager {
                     duration_ms: Some(start.elapsed().as_millis() as u64),
                     error: final_status.2,
                     command_execution_state,
+                    stream_limit_bytes: None,
                     validation_progress: final_progress,
                     finished: true,
                 },
@@ -5110,9 +5117,9 @@ impl JobManager {
         });
     }
 
-    /// Start one remote SSH command as a normal runner job. The transport is
-    /// established before this child is spawned, so a preparation failure is
-    /// unambiguously a command-not-started error. Once `ssh` is running, we
+    /// Start one remote SSH command as a normal runner job. Resource/session
+    /// validation and local command preparation happen before spawn, so those
+    /// failures are unambiguously command-not-started. Once `ssh` is running,
     /// never retry because remote delivery may already have happened.
     fn start_ssh_shell_job(
         &self,
@@ -5173,7 +5180,7 @@ impl JobManager {
                 return;
             }
         };
-        let connection_key = prepared.key.clone();
+        let transport = prepared.transport.clone();
         let mut command = prepared.command;
         command
             .stdin(Stdio::null())
@@ -5240,6 +5247,7 @@ impl JobManager {
         );
         let manager = self.clone_for_worker();
         let ssh_pool = self.ssh_pool.clone();
+        let output_limit_bytes = policy.max_output_bytes;
         let worker_guard = self.workers.enter();
         std::thread::spawn(move || {
             let _worker_guard = worker_guard;
@@ -5284,6 +5292,7 @@ impl JobManager {
                             status: "running".to_string(),
                             stdout_chunk: (!out.is_empty()).then_some(out),
                             stderr_chunk: (!err.is_empty()).then_some(err),
+                            stream_limit_bytes: Some(output_limit_bytes),
                             ..Default::default()
                         },
                     );
@@ -5341,6 +5350,7 @@ impl JobManager {
             // background child holding either pipe cannot delay the terminal
             // update indefinitely.
             cleanup_managed_tree(&child);
+            let tree_cleanup_uncertain = managed_tree_running(&child);
             join_reader_threads_until(readers, Instant::now() + Duration::from_secs(1));
             let mut final_out = String::new();
             let mut final_err = String::new();
@@ -5353,13 +5363,29 @@ impl JobManager {
             if !final_err.is_empty() {
                 append_bounded_tail(&mut transport_stderr, &final_err, 16 * 1024);
             }
-            if is_transport_failure(exit_code, Some(&transport_stderr)) {
-                ssh_pool.invalidate_after_transport_failure(&connection_key);
+            let mut command_execution_state = raw_shell_job_terminal_lifecycle(&status, exit_code);
+            if tree_cleanup_uncertain {
+                status = "failed".to_string();
+                error = Some(
+                    "ssh_command_cleanup_failed: local SSH process tree exit could not be proven; command may have started and was not retried"
+                        .to_string(),
+                );
+                command_execution_state = ShellCommandExecutionState::OutcomeUnknown;
+            }
+            if matches!(status.as_str(), "completed" | "failed")
+                && matches!(
+                    command_execution_state,
+                    ShellCommandExecutionState::Completed
+                )
+                && is_transport_failure(&transport, exit_code, Some(&transport_stderr))
+            {
+                ssh_pool.invalidate_after_transport_failure(&transport);
                 status = "failed".to_string();
                 error = Some(
                     "ssh_transport_failed: command may have started and was not retried"
                         .to_string(),
                 );
+                command_execution_state = ShellCommandExecutionState::OutcomeUnknown;
                 if !final_err.is_empty() && !final_err.ends_with('\n') {
                     final_err.push('\n');
                 }
@@ -5376,6 +5402,8 @@ impl JobManager {
                     exit_code,
                     duration_ms: Some(start.elapsed().as_millis() as u64),
                     error,
+                    command_execution_state: Some(command_execution_state),
+                    stream_limit_bytes: Some(output_limit_bytes),
                     finished: true,
                     ..Default::default()
                 },

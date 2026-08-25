@@ -183,6 +183,11 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     assert!(caps.async_jobs);
     assert!(caps.async_shell_jobs);
     assert_eq!(
+        caps.ssh_shell,
+        SshConnectionPool::is_available(),
+        "one-shot/background SSH capability must match the platform backend and local OpenSSH availability"
+    );
+    assert_eq!(
         caps.persistent_shell,
         webcodex_persistent_shell::local_shell_supported(),
         "local persistent-shell capability must match the platform transport compiled into this Runner"

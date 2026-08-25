@@ -244,11 +244,11 @@ real `sh`/`bash` process; on Windows the local path keeps the configured
 `powershell.exe`/`pwsh.exe`-compatible process and reuses the same profile/env
 selection. Windows PowerShell shell/profile args must retain their normal final
 `-Command` flag in configuration; the persistent transport replaces that
-one-shot payload mode internally with its private bootstrap. Windows Stage 2
-also supports a named SSH persistent shell through the installed `ssh.exe`, with
-the remote side remaining `sh`/`bash`. That path requires `persistent_shell` +
-`ssh_persistent_shell`; the separate `ssh_shell` capability remains the
-one-shot/background SSH path. PTY/ConPTY terminal emulation is not included.
+one-shot payload mode internally with its private bootstrap. Named SSH resources
+support `run_shell`/`run_job` on Unix and Windows through the separate `ssh_shell`
+capability. Persistent SSH requires `persistent_shell` + `ssh_persistent_shell`:
+Unix may reuse a Runner-local OpenSSH mux, while Windows owns one direct long-lived
+`ssh.exe` channel. PTY/ConPTY terminal emulation is not implied.
 
 Security notes for profiles:
 
@@ -474,11 +474,15 @@ a separate distribution identity without sharing the local development grant.
 
 ## SSH session resources (advanced)
 
-A Runner that can invoke the local OpenSSH client advertises the `ssh_shell`
+A Runner with an available local OpenSSH client advertises the `ssh_shell`
 capability. A Workflow Session may select a named SSH resource so `run_shell`
-and `run_job` execute on a remote host through the Runner's own OpenSSH client.
-On Unix, a Runner that also advertises `ssh_persistent_shell` can use the same
-resource for `open_session_shell`:
+and `run_job` execute on a remote host through the Runner's own OpenSSH client
+on both Unix and Windows. Unix may reuse a Runner-local ControlMaster transport;
+Windows starts one direct `ssh.exe` process per one-shot/background execution and
+does not use `ControlMaster`, `ControlPersist`, or `-S`. The separate
+`ssh_persistent_shell` capability allows the same resource to be used by
+`open_session_shell`: Unix may reuse its mux, while Windows owns one direct
+long-lived `ssh.exe` channel.
 
 ```toml
 [ssh.resources.tmp]
@@ -492,7 +496,9 @@ that machine. Do not put credentials, private keys, or complete SSH
 configuration into session data, Server storage, or tool input. A Session's
 `execution_context.resource` routes `run_shell`, `run_job`, and supported
 `open_session_shell` calls through that resource; file, Git, and LSP tools
-remain local.
+remain local. Configuration reloads bind future commands to the current resource
+generation; already-started SSH commands keep their own bounded lifecycle and
+are never redirected, replayed, or blindly retried.
 
 ## LSP navigation (read-only)
 

@@ -16,6 +16,8 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
+#[cfg(windows)]
+use webcodex_process::ManagedChild;
 
 const SSH_CONNECT_TIMEOUT_SECS: u64 = 10;
 const SSH_CONTROL_PERSIST_SECS: u64 = 300;
@@ -48,22 +50,34 @@ struct SshPoolState {
     entries: HashMap<SshConnectionKey, SshConnection>,
     next_control_id: u64,
     test_config_path: Option<PathBuf>,
+    #[cfg(all(test, windows))]
+    test_executable: Option<PathBuf>,
 }
 
 /// Runner-local OpenSSH resource preparation state.
 ///
-/// Unix one-shot and persistent SSH paths reuse a process-local multiplex
-/// transport. Windows persistent SSH resolves the same named resources but owns
-/// one direct long-lived ssh.exe channel instead; no mux state is created there.
+/// Unix one-shot/background and persistent SSH paths may reuse a process-local
+/// multiplex transport. Windows resolves the same named resources without mux
+/// state: one-shot/background calls own one direct ssh.exe process, while a
+/// persistent shell owns one direct long-lived ssh.exe channel.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SshConnectionPool {
     state: Arc<Mutex<SshPoolState>>,
 }
 
-/// A ready-to-spawn SSH command paired with the pool entry it used.
+/// Local transport used by one prepared SSH command. Unix keeps its existing
+/// Runner-local mux identity; Windows owns one direct ssh.exe process and has no
+/// reusable transport to invalidate.
+#[derive(Debug, Clone)]
+pub(crate) enum PreparedSshTransport {
+    Mux(SshConnectionKey),
+    Direct,
+}
+
+/// A ready-to-spawn SSH command paired with its transport semantics.
 pub(crate) struct PreparedSshCommand {
     pub(crate) command: Command,
-    pub(crate) key: SshConnectionKey,
+    pub(crate) transport: PreparedSshTransport,
 }
 
 /// A ready-to-spawn long-lived SSH shell command with the resource's default
@@ -79,7 +93,7 @@ impl SshConnectionPool {
     /// Whether this Runner can advertise SSH-shell support. A missing OpenSSH
     /// executable is a capability absence, not a later silent local fallback.
     pub(crate) fn is_available() -> bool {
-        if !cfg!(unix) {
+        if !cfg!(any(unix, windows)) {
             return false;
         }
         Command::new(ssh_executable())
@@ -87,12 +101,12 @@ impl SshConnectionPool {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .is_ok()
+            .is_ok_and(|status| status.success())
     }
 
-    /// Whether this host can open a named SSH persistent shell. Unlike the
-    /// existing one-shot SSH path, Windows does not require Unix ControlMaster
-    /// sockets: one long-lived ssh.exe process is itself the persistent channel.
+    /// Whether this host can open a named SSH persistent shell. This is separate
+    /// from one-shot/background `ssh_shell`; Windows uses one direct long-lived
+    /// ssh.exe process rather than a Unix ControlMaster socket.
     pub(crate) fn persistent_shell_available() -> bool {
         if !cfg!(any(unix, windows)) {
             return false;
@@ -105,8 +119,9 @@ impl SshConnectionPool {
             .is_ok_and(|status| status.success())
     }
 
-    /// Resolve a named resource, establish/reuse its control transport, and
-    /// build a direct SSH command that owns its local process group itself.
+    /// Resolve a named resource and prepare the platform transport for one raw
+    /// remote shell command. Unix may reuse its mux; Windows prepares direct
+    /// ssh.exe without creating pool state.
     pub(crate) fn prepare_command(
         &self,
         generation: u64,
@@ -127,8 +142,8 @@ impl SshConnectionPool {
         )
     }
 
-    /// Build an SSH command whose process tree is owned by JobManager's
-    /// ManagedChild rather than the legacy setsid hook.
+    /// Build an SSH command for the existing JobManager ManagedChild lifecycle.
+    /// Unix still uses its mux transport; Windows returns one direct ssh.exe.
     pub(crate) fn prepare_job_command(
         &self,
         generation: u64,
@@ -159,9 +174,6 @@ impl SshConnectionPool {
         command: &str,
         configure_process_group: bool,
     ) -> Result<PreparedSshCommand, String> {
-        if !cfg!(unix) {
-            return Err("ssh_shell_unavailable: this Runner host does not support SSH resources; command was not started".to_string());
-        }
         if !is_safe_resource_name(resource_name) {
             return Err(
                 "ssh_resource_invalid: resource name is invalid; command was not started"
@@ -187,37 +199,71 @@ impl SshConnectionPool {
             }
         };
         let requested_cwd = normalize_remote_cwd(cwd)?;
-        let connection = self.connection_for(
-            generation,
-            resource_name,
-            session_id,
-            &resource.host,
-            resource.default_cwd.as_deref(),
-        )?;
-        let effective_cwd = requested_cwd.or(connection.default_cwd.clone());
-        let remote_script = remote_script(effective_cwd.as_deref(), command);
-        let mut ssh = ssh_command(&connection);
-        ssh.arg("-o")
-            .arg("BatchMode=yes")
-            .arg("-o")
-            .arg("LogLevel=ERROR")
-            .arg("-S")
-            .arg(&connection.control_path)
-            .arg(&connection.host)
-            .arg(remote_script);
-        if configure_process_group {
-            configure_private_process_group(&mut ssh);
+
+        #[cfg(unix)]
+        {
+            let connection = self.connection_for(
+                generation,
+                resource_name,
+                session_id,
+                &resource.host,
+                resource.default_cwd.as_deref(),
+            )?;
+            let effective_cwd = requested_cwd.or(connection.default_cwd.clone());
+            let remote_script = remote_script(effective_cwd.as_deref(), command);
+            let mut ssh = ssh_command(&connection);
+            ssh.arg("-o")
+                .arg("BatchMode=yes")
+                .arg("-o")
+                .arg("LogLevel=ERROR")
+                .arg("-S")
+                .arg(&connection.control_path)
+                .arg(&connection.host)
+                .arg(remote_script);
+            if configure_process_group {
+                configure_private_process_group(&mut ssh);
+            }
+            return Ok(PreparedSshCommand {
+                command: ssh,
+                transport: PreparedSshTransport::Mux(connection.key),
+            });
         }
-        Ok(PreparedSshCommand {
-            command: ssh,
-            key: connection.key,
-        })
+
+        #[cfg(windows)]
+        {
+            let _ = generation;
+            let _ = configure_process_group;
+            let effective_cwd = requested_cwd.or_else(|| resource.default_cwd.clone());
+            let remote_script = remote_script(effective_cwd.as_deref(), command);
+            let mut ssh = self.direct_ssh_command();
+            ssh.arg("-o")
+                .arg("BatchMode=yes")
+                .arg("-o")
+                .arg("LogLevel=ERROR")
+                .arg(&resource.host)
+                .arg(remote_script);
+            return Ok(PreparedSshCommand {
+                command: ssh,
+                transport: PreparedSshTransport::Direct,
+            });
+        }
+
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = generation;
+            let _ = configure_process_group;
+            Err("ssh_shell_unavailable: this Runner host does not support SSH resources; command was not started".to_string())
+        }
     }
 
     /// A transport error after spawning has uncertain remote delivery. Forget
     /// the entry so the *next* command establishes a fresh transport; never
-    /// retry the just-submitted command automatically.
-    pub(crate) fn invalidate_after_transport_failure(&self, key: &SshConnectionKey) {
+    /// retry the just-submitted command automatically. Direct Windows commands
+    /// have no reusable transport state to invalidate.
+    pub(crate) fn invalidate_after_transport_failure(&self, transport: &PreparedSshTransport) {
+        let PreparedSshTransport::Mux(key) = transport else {
+            return;
+        };
         let mut state = lock_unpoison(&self.state);
         if let Some(connection) = state.entries.remove(key) {
             close_control_socket(&connection);
@@ -327,7 +373,7 @@ impl SshConnectionPool {
         }
     }
 
-    #[cfg(all(test, unix))]
+    #[cfg(test)]
     pub(crate) fn connection_count(&self) -> usize {
         lock_unpoison(&self.state).entries.len()
     }
@@ -354,6 +400,25 @@ impl SshConnectionPool {
                 session_id: session_id.to_string(),
             })
             .map(|connection| connection.control_path.clone())
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn with_test_executable(executable: PathBuf) -> Self {
+        let pool = Self::default();
+        lock_unpoison(&pool.state).test_executable = Some(executable);
+        pool
+    }
+
+    #[cfg(windows)]
+    fn direct_ssh_command(&self) -> Command {
+        #[cfg(test)]
+        {
+            let test_executable = lock_unpoison(&self.state).test_executable.clone();
+            if let Some(executable) = test_executable {
+                return Command::new(executable);
+            }
+        }
+        Command::new(ssh_executable())
     }
 
     fn connection_for(
@@ -442,7 +507,7 @@ impl Drop for SshConnectionPool {
 }
 
 /// Execute a short remote shell command through a Session-bound SSH resource.
-#[cfg(all(test, unix))]
+#[cfg(test)]
 pub(crate) fn run_ssh_shell(
     pool: &SshConnectionPool,
     generation: u64,
@@ -507,7 +572,7 @@ pub(crate) fn run_ssh_shell_with_execution_state(
             Ok(prepared) => prepared,
             Err(error) => return ShellCommandResult::not_started(command_error(start, error)),
         };
-    let key = prepared.key.clone();
+    let transport = prepared.transport.clone();
     let mut result = run_piped_ssh_command(
         prepared.command,
         policy.max_output_bytes,
@@ -516,31 +581,54 @@ pub(crate) fn run_ssh_shell_with_execution_state(
         stop_requested,
         start,
     );
-    if is_transport_failure(result.result.exit_code, result.result.stderr.as_deref()) {
-        pool.invalidate_after_transport_failure(&key);
-        if let Some(stderr) = result.result.stderr.as_mut() {
-            if !stderr.is_empty() && !stderr.ends_with('\n') {
-                stderr.push('\n');
-            }
-            stderr.push_str(
-                "webcodex: SSH transport ended after dispatch; the command may have started and was not retried",
-            );
-        }
-        if result.result.error.is_none() {
-            result.result.error = Some(
-                "ssh_transport_failed: command may have started and was not retried".to_string(),
-            );
-        }
-        result.execution_state = crate::shell_protocol::ShellCommandExecutionState::OutcomeUnknown;
-    }
+    apply_transport_failure_policy(pool, &transport, &mut result);
     result
+}
+
+fn apply_transport_failure_policy(
+    pool: &SshConnectionPool,
+    transport: &PreparedSshTransport,
+    result: &mut ShellCommandResult,
+) {
+    if !matches!(
+        result.execution_state,
+        crate::shell_protocol::ShellCommandExecutionState::Completed
+    ) || !is_transport_failure(
+        transport,
+        result.result.exit_code,
+        result.result.stderr.as_deref(),
+    ) {
+        return;
+    }
+    pool.invalidate_after_transport_failure(transport);
+    if let Some(stderr) = result.result.stderr.as_mut() {
+        append_line(
+            stderr,
+            "webcodex: SSH transport ended after dispatch; the command may have started and was not retried",
+        );
+    }
+    if result.result.error.is_none() {
+        result.result.error =
+            Some("ssh_transport_failed: command may have started and was not retried".to_string());
+    }
+    result.execution_state = crate::shell_protocol::ShellCommandExecutionState::OutcomeUnknown;
 }
 
 /// Used by async job handling to apply the same conservative invalidation
 /// decision after its SSH child exits.
-pub(crate) fn is_transport_failure(exit_code: Option<i32>, stderr: Option<&str>) -> bool {
+pub(crate) fn is_transport_failure(
+    transport: &PreparedSshTransport,
+    exit_code: Option<i32>,
+    stderr: Option<&str>,
+) -> bool {
     if exit_code != Some(255) {
         return false;
+    }
+    if matches!(transport, PreparedSshTransport::Direct) {
+        // Direct OpenSSH cannot distinguish a local transport/auth/connect 255
+        // from a remote command that deliberately exits 255. Once ssh.exe was
+        // spawned, preserve at-most-once semantics and report uncertainty.
+        return true;
     }
     let stderr = stderr.unwrap_or_default().to_ascii_lowercase();
     [
@@ -826,6 +914,44 @@ fn configure_private_process_group(command: &mut Command) {
     }
 }
 
+#[cfg(unix)]
+type PipedSshChild = Child;
+#[cfg(windows)]
+type PipedSshChild = ManagedChild;
+
+fn spawn_piped_ssh_child(command: &mut Command) -> std::io::Result<PipedSshChild> {
+    #[cfg(unix)]
+    {
+        command.spawn()
+    }
+    #[cfg(windows)]
+    {
+        ManagedChild::spawn(command)
+    }
+}
+
+fn piped_ssh_process_mut(child: &mut PipedSshChild) -> &mut Child {
+    #[cfg(unix)]
+    {
+        child
+    }
+    #[cfg(windows)]
+    {
+        child.child_mut()
+    }
+}
+
+fn try_wait_piped_ssh_child(child: &mut PipedSshChild) -> std::io::Result<Option<ExitStatus>> {
+    #[cfg(unix)]
+    {
+        child.try_wait()
+    }
+    #[cfg(windows)]
+    {
+        child.try_wait()
+    }
+}
+
 fn run_piped_ssh_command(
     mut command: Command,
     max_output_bytes: usize,
@@ -838,7 +964,7 @@ fn run_piped_ssh_command(
     if stdin.is_some() {
         command.stdin(Stdio::piped());
     }
-    let mut child = match command.spawn() {
+    let mut child = match spawn_piped_ssh_child(&mut command) {
         Ok(child) => child,
         Err(_) => {
             return ShellCommandResult::not_started(command_error(
@@ -848,16 +974,14 @@ fn run_piped_ssh_command(
         }
     };
     if let Some(input) = stdin {
-        if let Some(mut child_stdin) = child.stdin.take() {
-            if let Err(error) = child_stdin.write_all(input.as_bytes()) {
-                if error.kind() != std::io::ErrorKind::BrokenPipe {
-                    let _ = terminate_ssh_child(&mut child);
-                    return ShellCommandResult::outcome_unknown(command_error(
-                        start,
-                        "ssh_command_stdin_failed: command may have started and was not retried"
-                            .to_string(),
-                    ));
-                }
+        if let Some(mut child_stdin) = piped_ssh_process_mut(&mut child).stdin.take() {
+            if child_stdin.write_all(input.as_bytes()).is_err() {
+                let _ = terminate_ssh_child(&mut child);
+                return ShellCommandResult::outcome_unknown(command_error(
+                    start,
+                    "ssh_command_stdin_failed: command may have started and was not retried"
+                        .to_string(),
+                ));
             }
         } else {
             let _ = terminate_ssh_child(&mut child);
@@ -868,8 +992,10 @@ fn run_piped_ssh_command(
             ));
         }
     }
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
+    let (stdout, stderr) = {
+        let process = piped_ssh_process_mut(&mut child);
+        (process.stdout.take(), process.stderr.take())
+    };
     let (stdout_tx, stdout_rx) = mpsc::sync_channel(1);
     let (stderr_tx, stderr_rx) = mpsc::sync_channel(1);
     if let Some(stdout) = stdout {
@@ -890,7 +1016,7 @@ fn run_piped_ssh_command(
     let mut stopped = false;
     let mut timed_out = false;
     let status = loop {
-        match child.try_wait() {
+        match try_wait_piped_ssh_child(&mut child) {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {
                 if stop_requested.is_some_and(|stop| stop.load(Ordering::SeqCst)) {
@@ -914,6 +1040,8 @@ fn run_piped_ssh_command(
         }
     };
     let deadline = Instant::now() + Duration::from_secs(SSH_PIPE_DRAIN_TIMEOUT_SECS);
+    let tree_cleanup_uncertain =
+        !stopped && !timed_out && ensure_piped_ssh_tree_exit(&mut child).is_err();
     let stdout = stdout_rx
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .ok()
@@ -958,6 +1086,17 @@ fn run_piped_ssh_command(
             ShellCommandResult::outcome_unknown(result)
         };
     }
+    if tree_cleanup_uncertain {
+        return ShellCommandResult::outcome_unknown(CommandResult {
+            exit_code: status.and_then(|status| status.code()).or(Some(-1)),
+            stdout: Some(String::from_utf8_lossy(&stdout).into_owned()),
+            stderr: Some(stderr),
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some(
+                "ssh_command_cleanup_failed: local SSH process tree exit could not be proven; command may have started and was not retried".to_string(),
+            ),
+        });
+    }
     ShellCommandResult::completed(CommandResult {
         exit_code: status.and_then(|status| status.code()).or(Some(-1)),
         stdout: Some(String::from_utf8_lossy(&stdout).into_owned()),
@@ -967,7 +1106,7 @@ fn run_piped_ssh_command(
     })
 }
 
-fn terminate_ssh_child(child: &mut Child) -> Result<ExitStatus, String> {
+fn terminate_ssh_child(child: &mut PipedSshChild) -> Result<ExitStatus, String> {
     #[cfg(unix)]
     {
         let pid = child.id();
@@ -979,15 +1118,49 @@ fn terminate_ssh_child(child: &mut Child) -> Result<ExitStatus, String> {
             }
         }
     }
-    #[cfg(not(unix))]
-    let _ = child.kill();
+    #[cfg(windows)]
+    {
+        child.terminate_tree().map_err(|error| error.to_string())?;
+        if !child
+            .wait_tree_exit(Duration::from_secs(1))
+            .map_err(|error| error.to_string())?
+        {
+            return Err("SSH process tree did not exit after termination".to_string());
+        }
+    }
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
-        match child.try_wait() {
+        match try_wait_piped_ssh_child(child) {
             Ok(Some(status)) => return Ok(status),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
             Ok(None) => return Err("SSH child did not exit after termination".to_string()),
             Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
+fn ensure_piped_ssh_tree_exit(child: &mut PipedSshChild) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let _ = child;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        if child
+            .wait_tree_exit(Duration::from_millis(100))
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(());
+        }
+        child.terminate_tree().map_err(|error| error.to_string())?;
+        if child
+            .wait_tree_exit(Duration::from_secs(1))
+            .map_err(|error| error.to_string())?
+        {
+            Ok(())
+        } else {
+            Err("SSH process tree remained live after direct child exit".to_string())
         }
     }
 }
@@ -1028,7 +1201,10 @@ fn command_error(start: Instant, error: String) -> CommandResult {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{remote_script, run_ssh_shell, shell_quote, SshConnectionPool};
+    use super::{
+        is_transport_failure, remote_script, run_ssh_shell, shell_quote, PreparedSshTransport,
+        SshConnectionKey, SshConnectionPool,
+    };
     use crate::webcodex_runner::config::{AgentPolicy, SshConfig, SshResourceConfig};
     use std::collections::BTreeMap;
     #[cfg(target_os = "linux")]
@@ -1516,6 +1692,11 @@ mod tests {
         let completed = wait_for_job_update(&mut rx, "ssh-job-complete", |update| update.finished);
         assert_eq!(completed.status, "completed", "{completed:?}");
         assert_eq!(completed.exit_code, Some(0), "{completed:?}");
+        assert_eq!(
+            completed.command_execution_state,
+            Some(crate::shell_protocol::ShellCommandExecutionState::Completed),
+            "{completed:?}"
+        );
         assert!(
             completed
                 .log_snapshot
@@ -1542,6 +1723,11 @@ mod tests {
         let stopped = wait_for_job_update(&mut rx, "ssh-job-stop", |update| update.finished);
         assert_eq!(stopped.status, "stopped", "{stopped:?}");
         assert_eq!(stopped.exit_code, Some(-1), "{stopped:?}");
+        assert_eq!(
+            stopped.command_execution_state,
+            Some(crate::shell_protocol::ShellCommandExecutionState::Completed),
+            "{stopped:?}"
+        );
 
         manager.enqueue(
             sink,
@@ -1556,6 +1742,11 @@ mod tests {
         );
         let missing = wait_for_job_update(&mut rx, "ssh-job-missing", |update| update.finished);
         assert_eq!(missing.status, "failed", "{missing:?}");
+        assert_eq!(
+            missing.command_execution_state,
+            Some(crate::shell_protocol::ShellCommandExecutionState::NotStarted),
+            "{missing:?}"
+        );
         assert!(
             missing
                 .error
@@ -1570,6 +1761,30 @@ mod tests {
                 .is_some_and(|error| error.contains("command was not started")),
             "{missing:?}"
         );
+    }
+
+    #[test]
+    fn unix_mux_exit_255_classification_remains_transport_evidence_based() {
+        let transport = PreparedSshTransport::Mux(SshConnectionKey {
+            session_id: "wc_sess_mux_classifier".to_string(),
+            resource_name: "tmp".to_string(),
+            generation: 7,
+        });
+        assert!(!is_transport_failure(
+            &transport,
+            Some(7),
+            Some("mux_client")
+        ));
+        assert!(!is_transport_failure(
+            &transport,
+            Some(255),
+            Some("remote command deliberately exited 255")
+        ));
+        assert!(is_transport_failure(
+            &transport,
+            Some(255),
+            Some("mux_client: master is dead")
+        ));
     }
 
     fn ssh_job_request(
@@ -2404,33 +2619,813 @@ mod tests {
 }
 
 #[cfg(all(test, windows))]
-mod windows_persistent_tests {
+mod windows_tests {
     use super::*;
-    use crate::webcodex_runner::config::SshResourceConfig;
+    use crate::shell_protocol::ShellCommandExecutionState;
+    use crate::webcodex_runner::config::{AgentPolicy, SshResourceConfig};
     use std::collections::BTreeMap;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+    use std::sync::{Arc, OnceLock};
+    use std::time::{Duration, Instant};
 
-    #[test]
-    fn windows_persistent_shell_prepares_direct_literal_ssh_exe_argv() {
+    struct FakeSsh {
+        _temp: tempfile::TempDir,
+        path: PathBuf,
+    }
+
+    static FAKE_SSH: OnceLock<Arc<FakeSsh>> = OnceLock::new();
+
+    fn fake_ssh() -> Arc<FakeSsh> {
+        FAKE_SSH
+            .get_or_init(|| {
+                let temp = tempfile::tempdir().expect("create fake SSH tempdir");
+                let source = temp.path().join("fake_ssh.rs");
+                let output = temp
+                    .path()
+                    .join(format!("fake-ssh{}", std::env::consts::EXE_SUFFIX));
+                std::fs::write(
+                    &source,
+                    r#"
+use std::env;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
+
+fn suffix<'a>(script: &'a str, marker: &str) -> Option<&'a str> {
+    script.rfind(marker).map(|index| script[index + marker.len()..].trim())
+}
+
+fn append_start(path: &str) {
+    let mut file = OpenOptions::new().create(true).append(true).open(path).unwrap();
+    writeln!(file, "start").unwrap();
+}
+
+fn main() {
+    let args = env::args().collect::<Vec<_>>();
+    if args.get(1).map(String::as_str) == Some("--grandchild") {
+        let marker = args.get(2).expect("grandchild marker");
+        thread::sleep(Duration::from_secs(3));
+        fs::write(marker, format!("{}", std::process::id())).unwrap();
+        thread::sleep(Duration::from_secs(60));
+        return;
+    }
+
+    let script = args.last().map(String::as_str).unwrap_or_default();
+    if let Some(path) = suffix(script, "WC_FAKE_EXIT_255::") {
+        append_start(path);
+        eprintln!("ambiguous direct ssh exit");
+        std::process::exit(255);
+    }
+    if script.contains("WC_FAKE_EXIT_7") {
+        eprintln!("remote-like command failure");
+        std::process::exit(7);
+    }
+    if script.contains("WC_FAKE_STDIN_FAILURE") {
+        thread::sleep(Duration::from_millis(100));
+        return;
+    }
+    if script.contains("WC_FAKE_OUTPUT") {
+        io::stdout().write_all(&vec![b'o'; 32 * 1024]).unwrap();
+        io::stdout().flush().unwrap();
+        io::stderr().write_all(&vec![b'e'; 32 * 1024]).unwrap();
+        io::stderr().flush().unwrap();
+        return;
+    }
+    if let Some(marker) = suffix(script, "WC_FAKE_TREE::") {
+        let child = Command::new(env::current_exe().unwrap())
+            .arg("--grandchild")
+            .arg(marker)
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        println!("GRANDCHILD_PID={}", child.id());
+        io::stdout().flush().unwrap();
+        thread::sleep(Duration::from_secs(60));
+        return;
+    }
+    if script.contains("WC_FAKE_SLEEP") {
+        thread::sleep(Duration::from_secs(60));
+        return;
+    }
+    print!("fake-ssh-ok");
+    io::stdout().flush().unwrap();
+}
+"#,
+                )
+                .expect("write fake SSH source");
+                let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| OsString::from("rustc"));
+                let result = Command::new(rustc)
+                    .arg("--edition=2021")
+                    .arg("--crate-name=webcodex_fake_ssh")
+                    .arg(&source)
+                    .arg("-o")
+                    .arg(&output)
+                    .output()
+                    .expect("run rustc for fake SSH");
+                assert!(
+                    result.status.success(),
+                    "fake SSH compilation failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                Arc::new(FakeSsh {
+                    _temp: temp,
+                    path: output,
+                })
+            })
+            .clone()
+    }
+
+    fn ssh_config(host: &str, default_cwd: Option<&str>) -> SshConfig {
         let mut resources = BTreeMap::new();
         resources.insert(
             "spe".to_string(),
             SshResourceConfig {
-                host: "spe".to_string(),
-                default_cwd: Some("/srv/webcodex".to_string()),
+                host: host.to_string(),
+                default_cwd: default_cwd.map(str::to_string),
             },
         );
-        let config = SshConfig { resources };
+        SshConfig { resources }
+    }
+
+    fn command_args(command: &Command) -> Vec<String> {
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn assert_direct_args(args: &[String], host: &str) {
+        assert_eq!(
+            &args[..5],
+            ["-o", "BatchMode=yes", "-o", "LogLevel=ERROR", host]
+        );
+        assert!(!args.iter().any(|arg| arg == "-S"), "{args:?}");
+        assert!(
+            !args.iter().any(|arg| arg.contains("ControlMaster")),
+            "{args:?}"
+        );
+        assert!(
+            !args.iter().any(|arg| arg.contains("ControlPersist")),
+            "{args:?}"
+        );
+    }
+
+    fn fake_pool() -> SshConnectionPool {
+        SshConnectionPool::with_test_executable(fake_ssh().path.clone())
+    }
+
+    fn grandchild_pid(text: &str) -> u32 {
+        text.lines()
+            .find_map(|line| line.trim().strip_prefix("GRANDCHILD_PID="))
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or_else(|| panic!("missing GRANDCHILD_PID in {text:?}"))
+    }
+
+    fn wait_for_process_exit(pid: u32) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if !crate::job_manager_tests::process_running(pid) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        !crate::job_manager_tests::process_running(pid)
+    }
+
+    fn ssh_job_request(
+        job_id: &str,
+        command: &str,
+        timeout_secs: u64,
+    ) -> crate::shell_protocol::ShellAgentShellRequest {
+        serde_json::from_value(serde_json::json!({
+            "request_id": format!("request-{job_id}"),
+            "client_id": "ssh-agent",
+            "kind": "start_job",
+            "job_id": job_id,
+            "command": command,
+            "timeout_secs": timeout_secs,
+            "requested_by": "test",
+            "created_at": 1,
+            "job_context": {
+                "runtime_project_id": "agent:ssh-agent:remote-project",
+                "workflow_session_id": "wc_sess_windows_ssh_job",
+                "ssh_resource": "spe",
+                "project_cwd": ".",
+                "purpose": "other",
+                "shell": "remote",
+                "command_preview": "remote test command",
+                "validation_steps": []
+            }
+        }))
+        .expect("build Windows SSH job request")
+    }
+
+    fn wait_for_job_update(
+        rx: &mut tokio::sync::mpsc::Receiver<crate::shell_protocol::AgentEnvelope>,
+        job_id: &str,
+        predicate: impl Fn(&crate::shell_protocol::ShellAgentJobUpdateRequest) -> bool,
+    ) -> crate::shell_protocol::ShellAgentJobUpdateRequest {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
+            match rx.try_recv() {
+                Ok(crate::shell_protocol::AgentEnvelope::JobUpdate { payload })
+                    if payload.job_id == job_id && predicate(&payload) =>
+                {
+                    return payload;
+                }
+                Ok(_) | Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    panic!("Windows SSH job update channel closed")
+                }
+            }
+        }
+        panic!("timed out waiting for Windows SSH job {job_id}");
+    }
+
+    fn enqueue_job(
+        manager: &crate::JobManager,
+        sink: crate::webcodex_runner::AgentSink,
+        config: SshConfig,
+        policy: AgentPolicy,
+        job_id: &str,
+        command: &str,
+        timeout_secs: u64,
+    ) {
+        manager.enqueue(
+            sink,
+            crate::PendingJobStart {
+                generation: 11,
+                policy,
+                shell: crate::webcodex_runner::ShellConfig::default(),
+                ssh: config,
+                projects_dir: PathBuf::new(),
+                request: ssh_job_request(job_id, command, timeout_secs),
+            },
+        );
+    }
+
+    #[test]
+    fn windows_ssh_capabilities_track_ssh_exe_discovery() {
+        let executable_available = Command::new("ssh.exe")
+            .arg("-V")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        assert_eq!(SshConnectionPool::is_available(), executable_available);
+        assert_eq!(
+            SshConnectionPool::persistent_shell_available(),
+            executable_available
+        );
+    }
+
+    #[test]
+    fn windows_one_shot_and_job_prepare_direct_literal_ssh_exe_without_mux_state() {
+        let config = ssh_config("spe", Some("/srv/webcodex"));
+        let pool = SshConnectionPool::default();
+        let prepared = pool
+            .prepare_command(
+                7,
+                &config,
+                "spe",
+                "wc_sess_windows_ssh",
+                Some("/srv/override"),
+                "printf test",
+            )
+            .expect("prepare Windows one-shot SSH command");
+        assert_eq!(prepared.command.get_program(), "ssh.exe");
+        assert!(matches!(prepared.transport, PreparedSshTransport::Direct));
+        let args = command_args(&prepared.command);
+        assert_direct_args(&args, "spe");
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("if ! cd '/srv/override'; then printf >&2 '%s\\n' 'webcodex: remote cwd is unavailable'; exit 125; fi\nprintf test")
+        );
+        assert_eq!(pool.connection_count(), 0);
+
+        let job = pool
+            .prepare_job_command(7, &config, "spe", "wc_sess_windows_ssh", None, "printf job")
+            .expect("prepare Windows background SSH command");
+        assert_eq!(job.command.get_program(), "ssh.exe");
+        assert!(matches!(job.transport, PreparedSshTransport::Direct));
+        let job_args = command_args(&job.command);
+        assert_direct_args(&job_args, "spe");
+        assert_eq!(
+            job_args.last().map(String::as_str),
+            Some("if ! cd '/srv/webcodex'; then printf >&2 '%s\\n' 'webcodex: remote cwd is unavailable'; exit 125; fi\nprintf job")
+        );
+        assert_eq!(pool.connection_count(), 0);
+    }
+
+    #[test]
+    fn windows_direct_preparation_uses_current_generation_resource_mapping() {
+        let pool = SshConnectionPool::default();
+        let generation_7 = ssh_config("host-a", None);
+        let old = pool
+            .prepare_command(
+                7,
+                &generation_7,
+                "spe",
+                "wc_sess_windows_generation",
+                None,
+                "printf old",
+            )
+            .unwrap();
+        assert_direct_args(&command_args(&old.command), "host-a");
+
+        let generation_8 = ssh_config("host-b", None);
+        let current = pool
+            .prepare_command(
+                8,
+                &generation_8,
+                "spe",
+                "wc_sess_windows_generation",
+                None,
+                "printf current",
+            )
+            .unwrap();
+        assert_direct_args(&command_args(&current.command), "host-b");
+        assert_eq!(
+            pool.connection_count(),
+            0,
+            "Windows direct SSH must not create mux state"
+        );
+    }
+
+    #[test]
+    fn windows_direct_transport_classifies_only_exit_255_as_unknown() {
+        let transport = PreparedSshTransport::Direct;
+        assert!(!is_transport_failure(&transport, Some(0), None));
+        assert!(!is_transport_failure(&transport, Some(7), Some("anything")));
+        assert!(is_transport_failure(
+            &transport,
+            Some(255),
+            Some("remote command deliberately exited 255")
+        ));
+    }
+
+    #[test]
+    fn windows_one_shot_direct_ssh_preserves_execution_state_and_no_retry() {
+        let config = ssh_config("spe", None);
+        let policy = AgentPolicy::default();
+        let pool = fake_pool();
+
+        let ok = run_ssh_shell_with_execution_state(
+            &pool,
+            7,
+            &config,
+            &policy,
+            "spe",
+            "wc_sess_windows_one_shot",
+            None,
+            "WC_FAKE_EXIT_0",
+            None,
+            5,
+            None,
+            None,
+        );
+        assert_eq!(
+            ok.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{ok:?}"
+        );
+        assert_eq!(ok.result.exit_code, Some(0), "{ok:?}");
+
+        let failed = run_ssh_shell_with_execution_state(
+            &pool,
+            7,
+            &config,
+            &policy,
+            "spe",
+            "wc_sess_windows_one_shot",
+            None,
+            "WC_FAKE_EXIT_7",
+            None,
+            5,
+            None,
+            None,
+        );
+        assert_eq!(
+            failed.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{failed:?}"
+        );
+        assert_eq!(failed.result.exit_code, Some(7), "{failed:?}");
+
+        let large_stdin = "x".repeat(1024 * 1024);
+        let stdin_unknown = run_ssh_shell_with_execution_state(
+            &pool,
+            7,
+            &config,
+            &policy,
+            "spe",
+            "wc_sess_windows_one_shot",
+            None,
+            "WC_FAKE_STDIN_FAILURE",
+            Some(&large_stdin),
+            5,
+            None,
+            None,
+        );
+        assert_eq!(
+            stdin_unknown.execution_state,
+            ShellCommandExecutionState::OutcomeUnknown,
+            "{stdin_unknown:?}"
+        );
+        assert!(
+            stdin_unknown
+                .result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_command_stdin_failed")),
+            "{stdin_unknown:?}"
+        );
+
+        let temp = tempfile::tempdir().unwrap();
+        let starts = temp.path().join("exit255.starts");
+        let unknown = run_ssh_shell_with_execution_state(
+            &pool,
+            7,
+            &config,
+            &policy,
+            "spe",
+            "wc_sess_windows_one_shot",
+            None,
+            &format!("WC_FAKE_EXIT_255::{}", starts.display()),
+            None,
+            5,
+            None,
+            None,
+        );
+        assert_eq!(
+            unknown.execution_state,
+            ShellCommandExecutionState::OutcomeUnknown,
+            "{unknown:?}"
+        );
+        assert_eq!(unknown.result.exit_code, Some(255), "{unknown:?}");
+        assert!(
+            unknown
+                .result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_transport_failed")),
+            "{unknown:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&starts).unwrap().lines().count(),
+            1,
+            "direct exit 255 was retried"
+        );
+    }
+
+    #[test]
+    fn windows_one_shot_spawn_failure_is_not_started() {
+        let temp = tempfile::tempdir().unwrap();
+        let pool = SshConnectionPool::with_test_executable(temp.path().join("missing-ssh.exe"));
+        let result = run_ssh_shell_with_execution_state(
+            &pool,
+            7,
+            &ssh_config("spe", None),
+            &AgentPolicy::default(),
+            "spe",
+            "wc_sess_windows_spawn_failure",
+            None,
+            "printf never",
+            None,
+            5,
+            None,
+            None,
+        );
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::NotStarted,
+            "{result:?}"
+        );
+        assert!(
+            result
+                .result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_command_spawn_failed")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn windows_background_ssh_spawn_failure_is_not_started() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut manager = crate::JobManager::new(1);
+        manager.ssh_pool =
+            SshConnectionPool::with_test_executable(temp.path().join("missing-ssh.exe"));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let sink = crate::webcodex_runner::AgentSink::WebSocket {
+            tx,
+            client_id: "ssh-agent".to_string(),
+            agent_instance_id: "ssh-instance".to_string(),
+        };
+        enqueue_job(
+            &manager,
+            sink,
+            ssh_config("spe", None),
+            AgentPolicy::default(),
+            "win-ssh-spawn-failure",
+            "printf never",
+            5,
+        );
+        let failed =
+            wait_for_job_update(&mut rx, "win-ssh-spawn-failure", |update| update.finished);
+        assert_eq!(failed.status, "failed", "{failed:?}");
+        assert_eq!(
+            failed.command_execution_state,
+            Some(ShellCommandExecutionState::NotStarted),
+            "{failed:?}"
+        );
+        assert!(
+            failed
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_command_spawn_failed")),
+            "{failed:?}"
+        );
+    }
+
+    #[test]
+    fn windows_one_shot_timeout_reaps_the_managed_ssh_tree() {
+        let temp = tempfile::tempdir().unwrap();
+        let delayed_marker = temp.path().join("one-shot-grandchild.marker");
+        let result = run_ssh_shell_with_execution_state(
+            &fake_pool(),
+            7,
+            &ssh_config("spe", None),
+            &AgentPolicy::default(),
+            "spe",
+            "wc_sess_windows_tree",
+            None,
+            &format!("WC_FAKE_TREE::{}", delayed_marker.display()),
+            None,
+            1,
+            None,
+            None,
+        );
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::TimedOut,
+            "{result:?}"
+        );
+        let pid = grandchild_pid(result.result.stdout.as_deref().unwrap_or_default());
+        assert!(
+            wait_for_process_exit(pid),
+            "one-shot SSH grandchild survived timeout cleanup: {pid}"
+        );
+        assert!(
+            !delayed_marker.exists(),
+            "terminated grandchild reached its delayed marker"
+        );
+    }
+
+    #[test]
+    fn windows_background_ssh_reuses_job_manager_lifecycle_and_bounds_output() {
+        let config = ssh_config("spe", None);
+        let mut manager = crate::JobManager::new(1);
+        manager.ssh_pool = fake_pool();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let sink = crate::webcodex_runner::AgentSink::WebSocket {
+            tx,
+            client_id: "ssh-agent".to_string(),
+            agent_instance_id: "ssh-instance".to_string(),
+        };
+
+        enqueue_job(
+            &manager,
+            sink.clone(),
+            config.clone(),
+            AgentPolicy::default(),
+            "win-ssh-0",
+            "WC_FAKE_EXIT_0",
+            5,
+        );
+        let ok = wait_for_job_update(&mut rx, "win-ssh-0", |update| update.finished);
+        assert_eq!(ok.status, "completed", "{ok:?}");
+        assert_eq!(ok.exit_code, Some(0), "{ok:?}");
+        assert_eq!(
+            ok.command_execution_state,
+            Some(ShellCommandExecutionState::Completed),
+            "{ok:?}"
+        );
+
+        enqueue_job(
+            &manager,
+            sink.clone(),
+            config.clone(),
+            AgentPolicy::default(),
+            "win-ssh-7",
+            "WC_FAKE_EXIT_7",
+            5,
+        );
+        let failed = wait_for_job_update(&mut rx, "win-ssh-7", |update| update.finished);
+        assert_eq!(failed.status, "failed", "{failed:?}");
+        assert_eq!(failed.exit_code, Some(7), "{failed:?}");
+        assert_eq!(
+            failed.command_execution_state,
+            Some(ShellCommandExecutionState::Completed),
+            "{failed:?}"
+        );
+
+        let starts_dir = tempfile::tempdir().unwrap();
+        let starts = starts_dir.path().join("job-255.starts");
+        enqueue_job(
+            &manager,
+            sink.clone(),
+            config.clone(),
+            AgentPolicy::default(),
+            "win-ssh-255",
+            &format!("WC_FAKE_EXIT_255::{}", starts.display()),
+            5,
+        );
+        let unknown = wait_for_job_update(&mut rx, "win-ssh-255", |update| update.finished);
+        assert_eq!(unknown.status, "failed", "{unknown:?}");
+        assert_eq!(unknown.exit_code, Some(255), "{unknown:?}");
+        assert_eq!(
+            unknown.command_execution_state,
+            Some(ShellCommandExecutionState::OutcomeUnknown),
+            "{unknown:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&starts).unwrap().lines().count(),
+            1,
+            "background direct exit 255 was retried"
+        );
+
+        let bounded_policy = AgentPolicy {
+            max_output_bytes: 4 * 1024,
+            ..AgentPolicy::default()
+        };
+        enqueue_job(
+            &manager,
+            sink.clone(),
+            config.clone(),
+            bounded_policy,
+            "win-ssh-output",
+            "WC_FAKE_OUTPUT",
+            5,
+        );
+        let output = wait_for_job_update(&mut rx, "win-ssh-output", |update| update.finished);
+        let snapshot = output
+            .log_snapshot
+            .as_ref()
+            .expect("bounded SSH job log snapshot");
+        assert!(snapshot.stdout.tail.len() <= 4 * 1024, "{snapshot:?}");
+        assert!(snapshot.stderr.tail.len() <= 4 * 1024, "{snapshot:?}");
+        assert!(snapshot.stdout.truncated, "{snapshot:?}");
+        assert!(snapshot.stderr.truncated, "{snapshot:?}");
+
+        enqueue_job(
+            &manager,
+            sink,
+            config,
+            AgentPolicy::default(),
+            "win-ssh-slot",
+            "WC_FAKE_EXIT_0",
+            5,
+        );
+        let slot = wait_for_job_update(&mut rx, "win-ssh-slot", |update| update.finished);
+        assert_eq!(
+            slot.status, "completed",
+            "terminal SSH jobs must release the Job slot: {slot:?}"
+        );
+    }
+
+    #[test]
+    fn windows_background_ssh_stop_and_timeout_reap_owned_trees() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = ssh_config("spe", None);
+        let mut manager = crate::JobManager::new(1);
+        manager.ssh_pool = fake_pool();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let sink = crate::webcodex_runner::AgentSink::WebSocket {
+            tx,
+            client_id: "ssh-agent".to_string(),
+            agent_instance_id: "ssh-instance".to_string(),
+        };
+
+        let stop_marker = temp.path().join("stop-grandchild.marker");
+        enqueue_job(
+            &manager,
+            sink.clone(),
+            config.clone(),
+            AgentPolicy::default(),
+            "win-ssh-stop",
+            &format!("WC_FAKE_TREE::{}", stop_marker.display()),
+            30,
+        );
+        let observed = wait_for_job_update(&mut rx, "win-ssh-stop", |update| {
+            update
+                .log_snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.stdout.tail.contains("GRANDCHILD_PID="))
+        });
+        let stop_pid = grandchild_pid(&observed.log_snapshot.as_ref().unwrap().stdout.tail);
+        manager.stop("win-ssh-stop").expect("stop Windows SSH job");
+        let stopped = wait_for_job_update(&mut rx, "win-ssh-stop", |update| update.finished);
+        assert_eq!(stopped.status, "stopped", "{stopped:?}");
+        assert_eq!(
+            stopped.command_execution_state,
+            Some(ShellCommandExecutionState::Completed),
+            "{stopped:?}"
+        );
+        assert!(
+            wait_for_process_exit(stop_pid),
+            "background SSH grandchild survived stop: {stop_pid}"
+        );
+        assert!(!stop_marker.exists());
+
+        let timeout_marker = temp.path().join("timeout-grandchild.marker");
+        enqueue_job(
+            &manager,
+            sink,
+            config,
+            AgentPolicy::default(),
+            "win-ssh-timeout",
+            &format!("WC_FAKE_TREE::{}", timeout_marker.display()),
+            1,
+        );
+        let timed_out = wait_for_job_update(&mut rx, "win-ssh-timeout", |update| update.finished);
+        assert_eq!(timed_out.status, "timeout", "{timed_out:?}");
+        assert_eq!(
+            timed_out.command_execution_state,
+            Some(ShellCommandExecutionState::TimedOut),
+            "{timed_out:?}"
+        );
+        let timeout_pid = grandchild_pid(&timed_out.log_snapshot.as_ref().unwrap().stdout.tail);
+        assert!(
+            wait_for_process_exit(timeout_pid),
+            "background SSH grandchild survived timeout: {timeout_pid}"
+        );
+        assert!(!timeout_marker.exists());
+    }
+
+    #[test]
+    fn windows_background_ssh_shutdown_drain_is_bounded_and_reaps_tree() {
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("shutdown-grandchild.marker");
+        let mut manager = crate::JobManager::new(1);
+        manager.ssh_pool = fake_pool();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        let sink = crate::webcodex_runner::AgentSink::WebSocket {
+            tx,
+            client_id: "ssh-agent".to_string(),
+            agent_instance_id: "ssh-instance".to_string(),
+        };
+        enqueue_job(
+            &manager,
+            sink,
+            ssh_config("spe", None),
+            AgentPolicy::default(),
+            "win-ssh-shutdown",
+            &format!("WC_FAKE_TREE::{}", marker.display()),
+            30,
+        );
+        let observed = wait_for_job_update(&mut rx, "win-ssh-shutdown", |update| {
+            update
+                .log_snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.stdout.tail.contains("GRANDCHILD_PID="))
+        });
+        let pid = grandchild_pid(&observed.log_snapshot.as_ref().unwrap().stdout.tail);
+        let started = Instant::now();
+        manager.stop_accepting_work();
+        let batch = manager.signal_all_for_shutdown();
+        let outcome = manager.drain_shutdown(batch, Instant::now() + Duration::from_secs(2));
+        assert_eq!(outcome.timed_out, 0, "{outcome:?}");
+        assert!(
+            started.elapsed() < Duration::from_millis(2500),
+            "SSH shutdown drain exceeded its bound"
+        );
+        assert!(
+            wait_for_process_exit(pid),
+            "background SSH grandchild survived Runner shutdown: {pid}"
+        );
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn windows_persistent_shell_prepares_direct_literal_ssh_exe_argv() {
+        let config = ssh_config("spe", Some("/srv/webcodex"));
         let pool = SshConnectionPool::default();
         let prepared = pool
             .prepare_persistent_shell_command(7, &config, "spe", "wc_sess_windows_ssh", "bash")
             .expect("prepare Windows persistent SSH command");
 
         assert_eq!(prepared.command.get_program(), "ssh.exe");
-        let args = prepared
-            .command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
+        let args = command_args(&prepared.command);
         assert_eq!(
             args,
             vec!["-o", "BatchMode=yes", "-o", "LogLevel=ERROR", "spe", "bash"]
@@ -2441,20 +3436,104 @@ mod windows_persistent_tests {
     }
 
     #[test]
-    fn windows_persistent_shell_capability_tracks_ssh_exe_discovery() {
-        let executable_available = Command::new("ssh.exe")
-            .arg("-V")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
+    fn windows_real_host_one_shot_and_background_are_opt_in() {
+        let Ok(host) = std::env::var("WEBCODEX_TEST_WINDOWS_SSH_HOST") else {
+            eprintln!("skipping Windows real-host SSH integration: WEBCODEX_TEST_WINDOWS_SSH_HOST is unset");
+            return;
+        };
+        let host = host.trim();
+        if host.is_empty() {
+            eprintln!("skipping Windows real-host SSH integration: WEBCODEX_TEST_WINDOWS_SSH_HOST is empty");
+            return;
+        }
+        let config = ssh_config(host, None);
+        let one_shot = run_ssh_shell_with_execution_state(
+            &SshConnectionPool::default(),
+            7,
+            &config,
+            &AgentPolicy::default(),
+            "spe",
+            "wc_sess_windows_real_ssh",
+            None,
+            "printf wc-windows-one-shot",
+            None,
+            15,
+            None,
+            None,
+        );
         assert_eq!(
-            SshConnectionPool::persistent_shell_available(),
-            executable_available
+            one_shot.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{one_shot:?}"
+        );
+        assert_eq!(one_shot.result.exit_code, Some(0), "{one_shot:?}");
+        assert_eq!(
+            one_shot.result.stdout.as_deref(),
+            Some("wc-windows-one-shot")
+        );
+
+        let manager = crate::JobManager::new(1);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        let sink = crate::webcodex_runner::AgentSink::WebSocket {
+            tx,
+            client_id: "ssh-agent".to_string(),
+            agent_instance_id: "ssh-instance".to_string(),
+        };
+        enqueue_job(
+            &manager,
+            sink,
+            config,
+            AgentPolicy::default(),
+            "win-ssh-real-background",
+            "printf wc-windows-background",
+            15,
+        );
+        let background =
+            wait_for_job_update(&mut rx, "win-ssh-real-background", |update| update.finished);
+        assert_eq!(background.status, "completed", "{background:?}");
+        assert_eq!(background.exit_code, Some(0), "{background:?}");
+        assert_eq!(
+            background.command_execution_state,
+            Some(ShellCommandExecutionState::Completed),
+            "{background:?}"
         );
         assert!(
-            !SshConnectionPool::is_available(),
-            "one-shot SSH remains Unix-only in this focused slice"
+            background
+                .log_snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.stdout.tail.contains("wc-windows-background")),
+            "{background:?}"
+        );
+    }
+
+    #[test]
+    fn windows_remote_cwd_validation_stays_prestart() {
+        let result = run_ssh_shell_with_execution_state(
+            &fake_pool(),
+            7,
+            &ssh_config("spe", None),
+            &AgentPolicy::default(),
+            "spe",
+            "wc_sess_windows_invalid_cwd",
+            Some("/tmp\ninvalid"),
+            "printf never",
+            None,
+            5,
+            None,
+            None,
+        );
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::NotStarted,
+            "{result:?}"
+        );
+        assert!(
+            result
+                .result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_remote_cwd_invalid")),
+            "{result:?}"
         );
     }
 }

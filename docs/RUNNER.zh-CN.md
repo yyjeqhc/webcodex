@@ -326,10 +326,13 @@ macOS release 可以使用独立的 distribution identity，不与本地开发�
 
 ## SSH 会话资源（高级）
 
-能够调用本地 OpenSSH 客户端的 Runner 会声明 `ssh_shell` capability。Workflow
-Session 可以选择命名的 SSH 资源，使 `run_shell` 与 `run_job` 通过 Runner 自己的
-OpenSSH 客户端在远程主机上执行。在 Unix 上，如果 Runner 还声明
-`ssh_persistent_shell`，同一资源也可以用于 `open_session_shell`：
+本地 OpenSSH 客户端可用时，Runner 会声明 `ssh_shell` capability。Workflow
+Session 可以选择命名的 SSH 资源，使 `run_shell` 与 `run_job` 在 Unix 和 Windows
+上都通过 Runner 自己的 OpenSSH 客户端在远程主机执行。Unix 可以复用 Runner 本地
+ControlMaster 传输；Windows 的每次 one-shot/background 执行都会启动一个直接的
+`ssh.exe`，不使用 `ControlMaster`、`ControlPersist` 或 `-S`。独立的
+`ssh_persistent_shell` capability 允许同一资源用于 `open_session_shell`：Unix
+可以复用 mux，Windows 则拥有一个直接的长生命周期 `ssh.exe` channel。 这些 SSH resource 语义不意味着 PTY/ConPTY 或额外的终端控制协议。
 
 ```toml
 [ssh.resources.tmp]
@@ -341,7 +344,9 @@ default_cwd = "/opt/webcodex-edge"
 `ssh-agent`、`ProxyJump` 等配置都留在该机器上。不要把凭据、私钥或完整 SSH 配置
 放进 Session 数据、Server 存储或工具输入。Session 的 `execution_context.resource`
 会让 `run_shell`、`run_job` 以及受支持的 `open_session_shell` 调用通过该资源执行；
-文件、Git、LSP 工具仍在本地。
+文件、Git、LSP 工具仍在本地。配置 reload 后，后续命令绑定当前 resource
+generation；已经启动的 SSH 命令继续自己的有界生命周期，不会被重定向、replay
+或盲目重试。
 
 ## LSP 导航（只读）
 

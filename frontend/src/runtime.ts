@@ -12,6 +12,7 @@ import {
   runtimeDeviceIds,
   runtimeProjectsForDevice,
   filterAndSortRuntimeProjects,
+  runtimeProjectIdentityText,
   preferredRuntimeProjectSelection,
   invalidateRuntimeCredential,
   beginRuntimeCredential,
@@ -133,6 +134,7 @@ function hideDetail(): void {
   show("runtime-session-detail", false);
   show("runtime-session-detail-empty", true);
   show("runtime-jump-latest", false);
+  setText("runtime-session-workspace", "");
   clearNode(el("runtime-collaboration-board"));
 }
 
@@ -296,7 +298,7 @@ async function fetchProjects(request: any, unlocking = false): Promise<boolean> 
       clearSessionSurface();
     }
     renderProjectSelectors(projectRows, projectRowsTruncated);
-    setText("runtime-selected-project", "No project selected");
+    renderSelectedProjectIdentity();
     return true;
   }
   if (selection.device !== currentDevice || selection.project !== currentProject) {
@@ -318,6 +320,20 @@ function effectiveProjects(projects: any[]): any[] {
     const aggregate = aggregates.get(String(project?.id || ""));
     return aggregate ? { ...project, sessions: aggregate.sessions } : project;
   });
+}
+
+function selectedProjectRow(): any | null {
+  const selected = String(state.selectedProject || "");
+  if (!selected) return null;
+  return effectiveProjects(projectRows).find((project) => String(project?.id || "") === selected) || null;
+}
+
+function renderSelectedProjectIdentity(): void {
+  setText("runtime-selected-project", runtimeProjectIdentityText(selectedProjectRow()));
+}
+
+function renderSessionWorkspaceIdentity(): void {
+  setText("runtime-session-workspace", runtimeProjectIdentityText(selectedProjectRow()));
 }
 
 function renderProjectSelectors(projects: any[], truncated: boolean): void {
@@ -356,6 +372,9 @@ function renderProjectSelectors(projects: any[], truncated: boolean): void {
     const id = document.createElement("div"); id.className = "project-row-id"; id.textContent = String(project.id || "");
     const runner = document.createElement("div"); runner.className = "project-row-runner muted small"; runner.textContent = "Runner " + String(project.client_id || "unknown") + " · " + (project.connected ? String(project.agent_status || "online") : "offline");
     main.appendChild(title); main.appendChild(id); main.appendChild(runner);
+    if (project.path) {
+      const path = document.createElement("div"); path.className = "project-row-path workspace-path muted small"; path.textContent = String(project.path); main.appendChild(path);
+    }
     const facts = document.createElement("div"); facts.className = "project-row-facts";
     if (!project.connected) appendChip(facts, "OFFLINE", "tone-fail");
     else if (project.agent_status && project.agent_status !== "online") appendChip(facts, String(project.agent_status).toUpperCase(), "tone-warn");
@@ -385,6 +404,7 @@ function renderProjectSelectors(projects: any[], truncated: boolean): void {
     "runtime-project-status",
     countLabel(filteredProjects.length, "visible Project") + (state.selectedDevice ? " on " + state.selectedDevice : " across fleet") + (truncated ? " · bounded list" : "")
   );
+  renderSelectedProjectIdentity();
 }
 
 function switchProject(device: string, project: string): void {
@@ -395,7 +415,7 @@ function switchProject(device: string, project: string): void {
   renderProjectSelectors(projectRows, projectRowsTruncated);
   renderRunnerFleet(runnerRows);
   renderRecentSessions(recentSessionRows, null);
-  setText("runtime-selected-project", project || "No project selected");
+  renderSelectedProjectIdentity();
   if (request) void fetchSessions(request);
 }
 
@@ -407,7 +427,7 @@ function applyRunnerFilter(device: string): void {
   renderProjectSelectors(projectRows, projectRowsTruncated);
   renderRunnerFleet(runnerRows);
   renderRecentSessions(recentSessionRows, null);
-  setText("runtime-selected-project", "No project selected");
+  renderSelectedProjectIdentity();
 }
 
 function runnerAttentionCount(runner: any): number {
@@ -528,7 +548,7 @@ function selectRecentSession(session: any): void {
   renderProjectSelectors(projectRows, projectRowsTruncated);
   renderRunnerFleet(runnerRows);
   renderRecentSessions(recentSessionRows, null);
-  setText("runtime-selected-project", projectId);
+  renderSelectedProjectIdentity();
   if (location.sessionListRequest) void fetchSessions(location.sessionListRequest);
   if (location.detailRequest) void fetchSessionDetail(location.detailRequest);
   const collaborationRequest = runtimeCollaborationRequest(state);
@@ -687,7 +707,9 @@ function renderDetail(detail: any): void {
   const liveness = workflowSessionLivenessPresentation(detail);
   setText("runtime-session-running", liveness.label);
   const livenessNode = el("runtime-session-running"); if (livenessNode) livenessNode.title = liveness.tooltip;
-  setText("runtime-session-updated", "Updated " + updatedLabel(detail.updated_at)); renderOverview(detail.overview);
+  setText("runtime-session-updated", "Updated " + updatedLabel(detail.updated_at));
+  renderSessionWorkspaceIdentity();
+  renderOverview(detail.overview);
   renderCollaboration();
   const activities = Array.isArray(detail.activity) ? detail.activity : [];
   const node = el("runtime-timeline"); const previousScrollTop = node ? node.scrollTop : 0;

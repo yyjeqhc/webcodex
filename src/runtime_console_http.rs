@@ -21,6 +21,7 @@ const DEFAULT_PROJECT_LIMIT: usize = 50;
 const MAX_PROJECT_LIMIT: usize = 100;
 const MAX_PROJECT_ID_CHARS: usize = 512;
 const MAX_PROJECT_NAME_CHARS: usize = 160;
+const MAX_PROJECT_PATH_BYTES: usize = 4096;
 const MAX_CLIENT_ID_CHARS: usize = 160;
 const MAX_STATUS_CHARS: usize = 64;
 const DEFAULT_RUNNER_PROJECT_LIMIT: usize = 24;
@@ -221,6 +222,8 @@ struct RuntimeConsoleRunnerProject {
     id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
     connected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     agent_status: Option<String>,
@@ -281,6 +284,8 @@ struct RuntimeConsoleProject {
     client_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
     connected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     agent_status: Option<String>,
@@ -347,6 +352,15 @@ fn bounded_client_id(value: &Value) -> Option<String> {
         return None;
     }
     Some(client_id.to_string())
+}
+
+fn bounded_project_path(value: &Value) -> Option<String> {
+    let path = value.as_str()?;
+    if path.is_empty() || path.len() > MAX_PROJECT_PATH_BYTES || path.chars().any(char::is_control)
+    {
+        return None;
+    }
+    Some(path.to_string())
 }
 
 async fn prepared(
@@ -783,6 +797,7 @@ fn project_selector_row(value: &Value) -> Option<RuntimeConsoleProject> {
         name: value
             .get("name")
             .and_then(|value| bounded_text(value, MAX_PROJECT_NAME_CHARS)),
+        path: value.get("path").and_then(bounded_project_path),
         connected: value
             .get("connected")
             .and_then(Value::as_bool)
@@ -1157,6 +1172,7 @@ async fn runner_for_auth(
         project_summaries.push(RuntimeConsoleRunnerProject {
             id: project.id,
             name: project.name,
+            path: project.path,
             connected: project.connected,
             agent_status: project.agent_status,
             sessions: aggregate_console_list(&list),
@@ -1634,12 +1650,32 @@ mod tests {
             "id": "agent:not-the-device:project",
             "client_id": "device-real",
             "name": "Demo",
+            "path": "C:\\Users\\demo\\worktree",
             "connected": true,
             "agent_status": "online"
         }))
         .unwrap();
         assert_eq!(projected.client_id, "device-real");
         assert_ne!(projected.client_id, "not-the-device");
+        assert_eq!(projected.path.as_deref(), Some("C:\\Users\\demo\\worktree"));
+
+        let invalid_path = project_selector_row(&serde_json::json!({
+            "id": "agent:looks-valid:project",
+            "client_id": "device-real",
+            "path": "/private/bad\npath",
+            "connected": true
+        }))
+        .unwrap();
+        assert!(invalid_path.path.is_none());
+        let overlong_path = format!("/{}", "x".repeat(MAX_PROJECT_PATH_BYTES));
+        let invalid_path = project_selector_row(&serde_json::json!({
+            "id": "agent:looks-valid:project",
+            "client_id": "device-real",
+            "path": overlong_path,
+            "connected": true
+        }))
+        .unwrap();
+        assert!(invalid_path.path.is_none());
 
         let overlong = "x".repeat(MAX_CLIENT_ID_CHARS + 1);
         assert!(project_selector_row(&serde_json::json!({
@@ -1717,6 +1753,7 @@ mod tests {
                     id: format!("agent:runner:project-{index}"),
                     client_id: "runner".to_string(),
                     name: Some(format!("Project {index}")),
+                    path: None,
                     connected: true,
                     agent_status: Some("online".to_string()),
                     sessions: None,
@@ -1834,7 +1871,7 @@ mod tests {
         let serialized = serde_json::to_string(&home).unwrap();
         assert!(!serialized.contains("runner-b"));
         assert!(!serialized.contains("agent:runner-b:proj-b"));
-        assert!(!serialized.contains("/private/a"));
+        assert!(serialized.contains("/private/a"));
         assert!(!serialized.contains("/private/b"));
     }
 
@@ -1858,14 +1895,14 @@ mod tests {
         let body: Value = response.take_json().await.unwrap();
         assert_eq!(body["projects"][0]["id"], "agent:special:webcodex");
         assert_eq!(body["projects"][0]["client_id"], "special");
+        assert_eq!(body["projects"][0]["path"], "/root/private/webcodex");
         let selector = body["projects"][0].as_object().unwrap();
         assert!(selector.keys().all(|key| matches!(
             key.as_str(),
-            "id" | "client_id" | "name" | "connected" | "agent_status"
+            "id" | "client_id" | "name" | "path" | "connected" | "agent_status"
         )));
         let serialized = serde_json::to_string(&body).unwrap();
         for private in [
-            "/root/private/webcodex",
             "private-host-special",
             "private-shell-profile",
             "private-hook",
@@ -1938,6 +1975,7 @@ mod tests {
         assert_eq!(projected_ids, direct_ids);
         assert_eq!(projected_ids, vec!["agent:client-a:proj-a"]);
         assert_eq!(projected.projects[0].client_id, "client-a");
+        assert_eq!(projected.projects[0].path.as_deref(), Some("/private/a"));
         assert_eq!(
             projected.projects[0].client_id,
             direct.output["projects"][0]["client_id"].as_str().unwrap()
@@ -2036,7 +2074,7 @@ mod tests {
             serde_json::to_string(&home).unwrap()
         );
         assert!(!serialized.contains("/root/private/source.rs"));
-        assert!(!serialized.contains("/private/a"));
+        assert!(serialized.contains("/private/a"));
         assert!(serialized.contains("[private path]"));
     }
 
@@ -2049,6 +2087,15 @@ mod tests {
         let project_view = projects_for_auth(&runtime, &auth, Some(20)).await.unwrap();
         assert_eq!(project_view.projects.len(), 1);
         assert_eq!(project_view.projects[0].id, "agent:client-a:proj-a");
+        assert_eq!(project_view.projects[0].path.as_deref(), Some("/private/a"));
+        let runtime_only = scoped_oauth(&[SCOPE_RUNTIME_READ]);
+        let runtime_only_view = overview_for_auth(&runtime, &runtime_only).await.unwrap();
+        assert!(!runtime_only_view.projects_available);
+        assert!(runtime_only_view.projects.is_empty());
+        assert!(!serde_json::to_string(&runtime_only_view)
+            .unwrap()
+            .contains("/private/a"));
+
         assert_eq!(
             overview_for_auth(&runtime, &auth).await.unwrap_err(),
             RuntimeConsoleError::Request {
@@ -2087,6 +2134,7 @@ mod tests {
         assert_eq!(runner_view.visible_project_count, 1);
         assert_eq!(runner_view.projects.len(), 1);
         assert_eq!(runner_view.projects[0].id, "agent:client-a:proj-a");
+        assert_eq!(runner_view.projects[0].path.as_deref(), Some("/private/a"));
         assert_eq!(
             runner_for_auth(&runtime, &auth_a, "client-b", Some(20))
                 .await
@@ -2099,8 +2147,8 @@ mod tests {
             serde_json::to_string(&overview_view).unwrap(),
             serde_json::to_string(&runner_view).unwrap()
         );
+        assert!(serialized.contains("/private/a"));
         for private in [
-            "/private/a",
             "/private/b",
             "private-host-client-a",
             "private-host-client-b",

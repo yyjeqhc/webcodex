@@ -6,6 +6,7 @@ import {
   runtimeDeviceIds,
   runtimeProjectsForDevice,
   filterAndSortRuntimeProjects,
+  runtimeProjectIdentityText,
   preferredRuntimeProjectSelection,
   beginRuntimeCredential,
   refreshRuntimeOverview,
@@ -106,8 +107,8 @@ test("runtime refresh preserves an authorized selected device and project", () =
 
 test("Project list supports All Runners, Runner filter/search, and running attention recent ranking", () => {
   const projects = [
-    { id: "agent:r:idle", client_id: "runner", name: "Idle", sessions: { running_sessions: 0, attention: {}, latest_updated_at: 100 } },
-    { id: "agent:r:recent", client_id: "runner", name: "Recent", sessions: { running_sessions: 0, attention: {}, latest_updated_at: 400 } },
+    { id: "agent:r:idle", client_id: "runner", name: "Idle", path: "/root/git/idle", sessions: { running_sessions: 0, attention: {}, latest_updated_at: 100 } },
+    { id: "agent:r:recent", client_id: "runner", name: "Recent", path: "/root/git/webcodex-worktrees/recent", sessions: { running_sessions: 0, attention: {}, latest_updated_at: 400 } },
     { id: "agent:r:attention", client_id: "runner", name: "Needs review", sessions: { running_sessions: 0, attention: { open_guidance: 1 }, latest_updated_at: 50 } },
     { id: "agent:r:working", client_id: "runner", name: "Working", sessions: { running_sessions: 1, attention: {}, latest_updated_at: 10 } },
     { id: "agent:other:x", client_id: "other", name: "External" },
@@ -125,12 +126,31 @@ test("Project list supports All Runners, Runner filter/search, and running atten
     ["agent:r:recent"]
   );
   assert.deepEqual(
+    filterAndSortRuntimeProjects(projects, "runner", "webcodex-worktrees").map((project) => project.id),
+    ["agent:r:recent"]
+  );
+  assert.deepEqual(
     filterAndSortRuntimeProjects(projects, "", "").map((project) => project.id),
     ["agent:r:working", "agent:r:attention", "agent:r:recent", "agent:r:idle", "agent:other:x"]
   );
   assert.deepEqual(
     filterAndSortRuntimeProjects(projects, "", "OTHER").map((project) => project.id),
     ["agent:other:x"]
+  );
+});
+
+test("Runtime Project identity preserves Linux macOS and Windows workspace paths exactly", () => {
+  assert.equal(
+    runtimeProjectIdentityText({ id: "agent:special:webcodex", client_id: "special", path: "/root/git/webcodex" }),
+    "Runner: special · Project: agent:special:webcodex · Workspace: /root/git/webcodex"
+  );
+  assert.equal(
+    runtimeProjectIdentityText({ id: "agent:mini:webcodex", client_id: "mini", path: "/Users/demo/git/webcodex" }),
+    "Runner: mini · Project: agent:mini:webcodex · Workspace: /Users/demo/git/webcodex"
+  );
+  assert.equal(
+    runtimeProjectIdentityText({ id: "agent:msi:webcodex", client_id: "msi", path: "E:\\git\\webcodex" }),
+    "Runner: msi · Project: agent:msi:webcodex · Workspace: E:\\git\\webcodex"
   );
 });
 
@@ -278,6 +298,8 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.equal(html.includes("runtime-project-" + "select"), false);
   assert.match(html, /runtime-project-list/);
   assert.match(html, /runtime-project-search/);
+  assert.match(html, /runtime-session-workspace/);
+  assert.match(html, /workspace path/);
   assert.match(html, /Working &amp; Recently Updated Sessions/);
   assert.match(html, /runtime-recent-session-list/);
   assert.match(html, /Runner Fleet/);
@@ -291,6 +313,9 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.equal(source.includes("innerHTML"), false);
   assert.doesNotMatch(source, /api\("runner"/);
   assert.match(source, /selectRuntimeSessionLocation/);
+  assert.match(source, /path\.textContent = String\(project\.path\)/);
+  assert.match(source, /runtimeProjectIdentityText\(selectedProjectRow\(\)\)/);
+  assert.match(source, /renderSessionWorkspaceIdentity\(\)/);
   const recentStart = source.indexOf("function renderRecentSessions");
   const recentEnd = source.indexOf("function selectRecentSession", recentStart);
   const recentRender = source.slice(recentStart, recentEnd);

@@ -67,7 +67,7 @@ export function filterAndSortRuntimeProjects(projects, clientId, query) {
         .filter((project) => {
         if (!needle)
             return true;
-        return [project?.name, project?.id, project?.client_id]
+        return [project?.name, project?.id, project?.client_id, project?.path]
             .filter((value) => typeof value === "string")
             .some((value) => String(value).toLocaleLowerCase().includes(needle));
     })
@@ -88,6 +88,13 @@ export function filterAndSortRuntimeProjects(projects, clientId, query) {
         const rightName = typeof right?.name === "string" && right.name ? right.name : right.id;
         return compareText(String(leftName || ""), String(rightName || "")) || compareText(String(left?.id || ""), String(right?.id || ""));
     });
+}
+export function runtimeProjectIdentityText(project) {
+    if (!project || typeof project.id !== "string" || !project.id)
+        return "No project selected";
+    const runner = typeof project.client_id === "string" && project.client_id ? project.client_id : "unknown";
+    const path = typeof project.path === "string" && project.path ? project.path : "unavailable";
+    return "Runner: " + runner + " · Project: " + project.id + " · Workspace: " + path;
 }
 export function preferredRuntimeProjectSelection(projects, selectedDevice, selectedProject) {
     const rows = Array.isArray(projects) ? projects : [];

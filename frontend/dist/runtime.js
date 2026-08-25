@@ -315,7 +315,7 @@ function filterAndSortRuntimeProjects(projects, clientId, query) {
         .filter((project) => {
         if (!needle)
             return true;
-        return [project?.name, project?.id, project?.client_id]
+        return [project?.name, project?.id, project?.client_id, project?.path]
             .filter((value) => typeof value === "string")
             .some((value) => String(value).toLocaleLowerCase().includes(needle));
     })
@@ -336,6 +336,13 @@ function filterAndSortRuntimeProjects(projects, clientId, query) {
         const rightName = typeof right?.name === "string" && right.name ? right.name : right.id;
         return compareText(String(leftName || ""), String(rightName || "")) || compareText(String(left?.id || ""), String(right?.id || ""));
     });
+}
+function runtimeProjectIdentityText(project) {
+    if (!project || typeof project.id !== "string" || !project.id)
+        return "No project selected";
+    const runner = typeof project.client_id === "string" && project.client_id ? project.client_id : "unknown";
+    const path = typeof project.path === "string" && project.path ? project.path : "unavailable";
+    return "Runner: " + runner + " · Project: " + project.id + " · Workspace: " + path;
 }
 function preferredRuntimeProjectSelection(projects, selectedDevice, selectedProject) {
     const rows = Array.isArray(projects) ? projects : [];
@@ -633,6 +640,7 @@ function hideDetail() {
     show("runtime-session-detail", false);
     show("runtime-session-detail-empty", true);
     show("runtime-jump-latest", false);
+    setText("runtime-session-workspace", "");
     clearNode(el("runtime-collaboration-board"));
 }
 function clearSessionSurface() {
@@ -796,7 +804,7 @@ async function fetchProjects(request, unlocking = false) {
             clearSessionSurface();
         }
         renderProjectSelectors(projectRows, projectRowsTruncated);
-        setText("runtime-selected-project", "No project selected");
+        renderSelectedProjectIdentity();
         return true;
     }
     if (selection.device !== currentDevice || selection.project !== currentProject) {
@@ -820,6 +828,18 @@ function effectiveProjects(projects) {
         const aggregate = aggregates.get(String(project?.id || ""));
         return aggregate ? { ...project, sessions: aggregate.sessions } : project;
     });
+}
+function selectedProjectRow() {
+    const selected = String(state.selectedProject || "");
+    if (!selected)
+        return null;
+    return effectiveProjects(projectRows).find((project) => String(project?.id || "") === selected) || null;
+}
+function renderSelectedProjectIdentity() {
+    setText("runtime-selected-project", runtimeProjectIdentityText(selectedProjectRow()));
+}
+function renderSessionWorkspaceIdentity() {
+    setText("runtime-session-workspace", runtimeProjectIdentityText(selectedProjectRow()));
 }
 function renderProjectSelectors(projects, truncated) {
     const deviceSelect = el("runtime-device-select");
@@ -863,6 +883,12 @@ function renderProjectSelectors(projects, truncated) {
         main.appendChild(title);
         main.appendChild(id);
         main.appendChild(runner);
+        if (project.path) {
+            const path = document.createElement("div");
+            path.className = "project-row-path workspace-path muted small";
+            path.textContent = String(project.path);
+            main.appendChild(path);
+        }
         const facts = document.createElement("div");
         facts.className = "project-row-facts";
         if (!project.connected)
@@ -901,6 +927,7 @@ function renderProjectSelectors(projects, truncated) {
         ? countLabel(devices.length, "authorized Runner") + (state.selectedDevice ? " · filtered" : " · All Runners") + (truncated ? " · bounded project list" : "")
         : "No authorized Runners");
     setText("runtime-project-status", countLabel(filteredProjects.length, "visible Project") + (state.selectedDevice ? " on " + state.selectedDevice : " across fleet") + (truncated ? " · bounded list" : ""));
+    renderSelectedProjectIdentity();
 }
 function switchProject(device, project) {
     abortProjectWork();
@@ -910,7 +937,7 @@ function switchProject(device, project) {
     renderProjectSelectors(projectRows, projectRowsTruncated);
     renderRunnerFleet(runnerRows);
     renderRecentSessions(recentSessionRows, null);
-    setText("runtime-selected-project", project || "No project selected");
+    renderSelectedProjectIdentity();
     if (request)
         void fetchSessions(request);
 }
@@ -922,7 +949,7 @@ function applyRunnerFilter(device) {
     renderProjectSelectors(projectRows, projectRowsTruncated);
     renderRunnerFleet(runnerRows);
     renderRecentSessions(recentSessionRows, null);
-    setText("runtime-selected-project", "No project selected");
+    renderSelectedProjectIdentity();
 }
 function runnerAttentionCount(runner) {
     const attention = runner?.sessions?.attention;
@@ -1075,7 +1102,7 @@ function selectRecentSession(session) {
     renderProjectSelectors(projectRows, projectRowsTruncated);
     renderRunnerFleet(runnerRows);
     renderRecentSessions(recentSessionRows, null);
-    setText("runtime-selected-project", projectId);
+    renderSelectedProjectIdentity();
     if (location.sessionListRequest)
         void fetchSessions(location.sessionListRequest);
     if (location.detailRequest)
@@ -1301,6 +1328,7 @@ function renderDetail(detail) {
     if (livenessNode)
         livenessNode.title = liveness.tooltip;
     setText("runtime-session-updated", "Updated " + updatedLabel(detail.updated_at));
+    renderSessionWorkspaceIdentity();
     renderOverview(detail.overview);
     renderCollaboration();
     const activities = Array.isArray(detail.activity) ? detail.activity : [];

@@ -38,6 +38,13 @@ import {
   setRuntimeCollaborationPhase,
   runtimeCollaborationNeedsRefreshRecovery,
   runtimeCollaborationObservationAction,
+  runtimeCollaborationMessageCanMutate,
+  setRuntimeCollaborationReplyTarget,
+  setRuntimeCollaborationEditTarget,
+  clearRuntimeCollaborationEditTarget,
+  runtimeCollaborationEditTarget,
+  markRuntimeCollaborationMutationUncertain,
+  takeRuntimeCollaborationMutationNotice,
 } from "./runtime_console_state.js";
 
 const API_BASE = "/api/runtime-console/";
@@ -145,6 +152,7 @@ function clearSessionSurface(): void {
   clearRuntimeWorkflowSession(state);
   abortCollaboration();
   hideDetail();
+  resetCollaborationComposerUi();
 }
 
 function lock(message = ""): void {
@@ -674,6 +682,7 @@ function selectSession(sessionId: string): void {
   abort(detailAbort); detailAbort = null; abortCollaboration(); hideDetail();
   setHumanJoinSendEnabled(false);
   const request = selectRuntimeWorkflowSession(state, sessionId);
+  resetCollaborationComposerUi();
   renderSessionList(sessionRows, { total: sessionRows.length, truncated: false });
   if (request) void fetchSessionDetail(request);
   const collaborationRequest = runtimeCollaborationRequest(state);
@@ -687,7 +696,7 @@ async function fetchSessionDetail(request: any): Promise<void> {
   if (detailAbort === controller) detailAbort = null;
   if (!response || !isCurrentRuntimeWorkflowSessionRequest(state, request)) return;
   if (response.status === 401) return lock("Credential rejected.");
-  if (response.status === 404) { abortCollaboration(); clearRuntimeWorkflowSession(state); hideDetail(); return; }
+  if (response.status === 404) { abortCollaboration(); clearRuntimeWorkflowSession(state); hideDetail(); resetCollaborationComposerUi(); return; }
   if (!response.ok || !response.data) { showError("Could not refresh Workflow Session detail."); return; }
   if (!adoptRuntimeWorkflowSessionDetail(state, request, response.data)) return;
   renderDetail(response.data);
@@ -750,15 +759,88 @@ function collaborationPhaseLabel(): string {
   }
 }
 
+function syncCollaborationComposer(): void {
+  const edit = runtimeCollaborationEditTarget(state);
+  const replyTargetId = String(state.collaboration.replyTargetId || "");
+  const kind = el("runtime-message-kind") as HTMLSelectElement | null;
+  const priority = el("runtime-message-priority") as HTMLSelectElement | null;
+  const checkbox = el("runtime-message-requires-ack") as HTMLInputElement | null;
+  const send = el("runtime-message-send") as HTMLButtonElement | null;
+  show("runtime-message-reply", !!replyTargetId && !edit);
+  setText("runtime-message-reply-text", replyTargetId ? "Reply to " + replyTargetId : "");
+  show("runtime-message-edit", !!edit);
+  setText("runtime-message-edit-text", edit ? "Editing " + String(edit.message_id) : "");
+  if (kind) {
+    kind.disabled = !!edit;
+    if (edit) kind.value = String(edit.kind || "note");
+  }
+  if (priority) {
+    priority.disabled = !!edit;
+    if (edit) priority.value = String(edit.priority || "normal");
+  }
+  if (checkbox && edit) checkbox.checked = !!edit.requires_ack;
+  if (send) send.textContent = edit ? "Replace" : "Send";
+  syncAckComposer();
+}
+
 function setCollaborationReplyTarget(messageId: string): void {
   collaborationReplyTo = messageId;
-  const reply = el("runtime-message-reply");
-  if (reply) reply.hidden = !messageId;
-  setText("runtime-message-reply-text", messageId ? "Reply to " + messageId : "");
+  const wasEditing = !!runtimeCollaborationEditTarget(state);
+  setRuntimeCollaborationReplyTarget(state, messageId);
+  if (wasEditing) {
+    const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+    if (body) body.value = "";
+  }
+  syncCollaborationComposer();
+}
+
+function beginCollaborationEdit(message: any): void {
+  if (!setRuntimeCollaborationEditTarget(state, String(message?.message_id || ""))) return;
+  collaborationReplyTo = "";
+  const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+  if (body) {
+    body.value = String(message?.message || "");
+    body.focus();
+  }
+  setText("runtime-message-send-status", "");
+  syncCollaborationComposer();
+}
+
+function cancelCollaborationEdit(): void {
+  clearRuntimeCollaborationEditTarget(state);
+  const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+  if (body) body.value = "";
+  setText("runtime-message-send-status", "Edit cancelled.");
+  syncCollaborationComposer();
+}
+
+function resetCollaborationComposerUi(): void {
+  const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+  if (body) body.value = "";
+  syncCollaborationComposer();
 }
 
 function renderCollaboration(statusText?: string): void {
+  const mutationNotice = takeRuntimeCollaborationMutationNotice(state);
+  if (mutationNotice) {
+    const editStillActive = !!runtimeCollaborationEditTarget(state);
+    if (
+      mutationNotice.includes("changed while editing")
+      || mutationNotice.includes("Replacement confirmed")
+      || mutationNotice.includes("Withdraw confirmed")
+      || (mutationNotice.includes("Outcome not observed") && !editStillActive)
+    ) {
+      const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+      if (body) body.value = "";
+    }
+    setText("runtime-message-send-status", mutationNotice);
+    statusText = [statusText, mutationNotice].filter(Boolean).join(" · ");
+  }
   const available = state.collaboration.available !== false;
+  if (!available) {
+    const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+    if (body) body.value = "";
+  }
   show("runtime-collaboration-unavailable", !available);
   show("runtime-collaboration-form", available);
   const messages = available && Array.isArray(state.collaboration.messages) ? state.collaboration.messages : [];
@@ -768,6 +850,7 @@ function renderCollaboration(statusText?: string): void {
     : "runtime:read unavailable";
   setText("runtime-collaboration-status", status);
   const node = el("runtime-collaboration-board"); clearNode(node);
+  syncCollaborationComposer();
   if (!node || !available) return;
   const byId = new Map<string, any>();
   const children = new Map<string, any[]>();
@@ -795,6 +878,22 @@ function renderCollaboration(statusText?: string): void {
     meta.textContent = metaParts.join(" · "); card.appendChild(meta);
     if (parentUnavailable) { const unavailable = document.createElement("div"); unavailable.className = "message-links"; unavailable.textContent = "retained reply · parent unavailable"; card.appendChild(unavailable); }
     else if (message?.reply_to) { const reply = document.createElement("div"); reply.className = "message-links"; reply.textContent = "reply to " + String(message.reply_to); card.appendChild(reply); }
+    if (message?.superseded_by_message_id) {
+      const link = document.createElement("div"); link.className = "message-links";
+      const replacementId = String(message.superseded_by_message_id);
+      link.textContent = byId.has(replacementId)
+        ? "superseded by " + replacementId
+        : "superseded by " + replacementId + " · replacement unavailable / retained link only";
+      card.appendChild(link);
+    }
+    if (message?.supersedes_message_id) {
+      const link = document.createElement("div"); link.className = "message-links";
+      const originalId = String(message.supersedes_message_id);
+      link.textContent = byId.has(originalId)
+        ? "replaces " + originalId
+        : "replaces " + originalId + " · retained link only";
+      card.appendChild(link);
+    }
     const body = document.createElement("div"); body.className = "message-body"; body.textContent = String(message?.message || ""); card.appendChild(body);
     if (message?.requires_ack) {
       const ack = document.createElement("div"); ack.className = "message-ack";
@@ -803,15 +902,28 @@ function renderCollaboration(statusText?: string): void {
         : "ACK required";
       card.appendChild(ack);
     }
-    if (message?.resolved_at || message?.resolution || message?.resolved_by_message_id) {
+    if (message?.resolved_at || message?.resolution || message?.resolved_by_message_id || message?.closure_kind) {
       const resolution = document.createElement("div"); resolution.className = "message-resolution";
-      const parts: string[] = []; if (message.resolved_at) parts.push("resolved " + updatedLabel(message.resolved_at)); if (message.resolution) parts.push(String(message.resolution)); if (message.resolved_by_message_id) parts.push("by " + String(message.resolved_by_message_id));
+      const parts: string[] = [];
+      if (message?.closure_kind === "withdrawn") parts.push("withdrawn" + (message.resolved_at ? " " + updatedLabel(message.resolved_at) : ""));
+      else if (message?.closure_kind === "superseded") parts.push("superseded" + (message.resolved_at ? " " + updatedLabel(message.resolved_at) : ""));
+      else if (message.resolved_at) parts.push("resolved " + updatedLabel(message.resolved_at));
+      if (message.resolution) parts.push(String(message.resolution));
+      if (message.resolved_by_message_id) parts.push("by " + String(message.resolved_by_message_id));
       resolution.textContent = parts.join(" · "); card.appendChild(resolution);
     }
     const actions = document.createElement("div"); actions.className = "message-actions";
     const replyButton = document.createElement("button"); replyButton.type = "button"; replyButton.className = "text-button"; replyButton.textContent = "Reply";
     replyButton.addEventListener("click", () => setCollaborationReplyTarget(id));
-    actions.appendChild(replyButton); card.appendChild(actions);
+    actions.appendChild(replyButton);
+    if (runtimeCollaborationMessageCanMutate(message) && state.collaboration.phase === "live" && !state.collaboration.uncertainMutation) {
+      const editButton = document.createElement("button"); editButton.type = "button"; editButton.className = "text-button"; editButton.textContent = "Edit"; editButton.title = "Replace this retained message while preserving its history.";
+      editButton.addEventListener("click", () => beginCollaborationEdit(message));
+      const deleteButton = document.createElement("button"); deleteButton.type = "button"; deleteButton.className = "text-button"; deleteButton.textContent = "Delete"; deleteButton.title = "Withdraw this retained message; history is preserved.";
+      deleteButton.addEventListener("click", () => void withdrawHumanCollaborationMessage(id));
+      actions.appendChild(editButton); actions.appendChild(deleteButton);
+    }
+    card.appendChild(actions);
     node.appendChild(card);
     for (const child of children.get(id) || []) appendMessage(child, depth + 1, false);
   };
@@ -918,12 +1030,55 @@ function syncAckComposer(): void {
   const kind = el("runtime-message-kind") as HTMLSelectElement | null;
   const priority = el("runtime-message-priority") as HTMLSelectElement | null;
   const checkbox = el("runtime-message-requires-ack") as HTMLInputElement | null;
-  const guidance = kind?.value === "guidance";
+  const edit = runtimeCollaborationEditTarget(state);
+  const guidance = edit ? edit.kind === "guidance" : kind?.value === "guidance";
   show("runtime-message-ack-label", guidance);
   if (!checkbox) return;
+  if (edit) {
+    checkbox.disabled = true;
+    checkbox.checked = !!edit.requires_ack;
+    checkbox.title = "Inherited from the original retained message.";
+    return;
+  }
   checkbox.disabled = !guidance || priority?.value !== "high";
   if (checkbox.disabled) checkbox.checked = false;
   checkbox.title = guidance && priority?.value !== "high" ? "ACK requirement is available for High priority guidance." : "";
+}
+
+async function withdrawHumanCollaborationMessage(messageId: string): Promise<void> {
+  const request = runtimeCollaborationRequest(state);
+  if (!request || state.collaboration.available === false) return;
+  setText("runtime-message-send-status", "Withdrawing retained message…");
+  const response = await api("workflow-session-withdraw-message", {
+    project: request.project,
+    session_id: request.sessionId,
+    message_id: messageId,
+  });
+  if (!isCurrentRuntimeCollaborationRequest(state, request)) return;
+  if (response?.status === 0 || response?.status === 503) {
+    markRuntimeCollaborationMutationUncertain(state, request, { kind: "withdraw", messageId });
+    abortCollaboration();
+    setRuntimeCollaborationPhase(state, request, "paused");
+    renderCollaboration("withdraw outcome unknown · refresh before retry");
+    return;
+  }
+  if (response?.status === 401) { lock("Credential rejected."); return; }
+  if (response?.status === 409) {
+    abortCollaboration();
+    setRuntimeCollaborationPhase(state, request, "paused");
+    setText("runtime-message-send-status", "Message changed before Delete. Refresh retained messages before retrying.");
+    renderCollaboration("message changed · refresh retained state");
+    return;
+  }
+  if (!response?.ok || !response.data?.message) { setText("runtime-message-send-status", "Delete failed."); return; }
+  if (String(state.collaboration.editTargetId || "") === messageId) {
+    clearRuntimeCollaborationEditTarget(state);
+    const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+    if (body) body.value = "";
+  }
+  adoptRuntimeCollaborationObservation(state, request, { messages: [response.data.message] });
+  setText("runtime-message-send-status", "Retained message withdrawn.");
+  renderCollaboration();
 }
 
 async function postHumanCollaborationMessage(event: Event): Promise<void> {
@@ -937,6 +1092,52 @@ async function postHumanCollaborationMessage(event: Event): Promise<void> {
   const send = el("runtime-message-send") as HTMLButtonElement | null;
   const message = body?.value.trim() || "";
   if (!message) { setText("runtime-message-send-status", "Enter a message."); return; }
+  const editTarget = runtimeCollaborationEditTarget(state);
+  if (editTarget) {
+    if (send) send.disabled = true;
+    setText("runtime-message-send-status", "Replacing retained message…");
+    const response = await api("workflow-session-replace-message", {
+      project: request.project,
+      session_id: request.sessionId,
+      message_id: editTarget.message_id,
+      message,
+    });
+    if (!isCurrentRuntimeCollaborationRequest(state, request)) return;
+    if (response?.status === 0 || response?.status === 503) {
+      markRuntimeCollaborationMutationUncertain(state, request, {
+        kind: "replace",
+        messageId: String(editTarget.message_id),
+        message,
+      });
+      abortCollaboration();
+      setRuntimeCollaborationPhase(state, request, "paused");
+      renderCollaboration("replace outcome unknown · refresh before retry");
+      return;
+    }
+    if (send) send.disabled = false;
+    if (response?.status === 401) { lock("Credential rejected."); return; }
+    if (response?.status === 409) {
+      clearRuntimeCollaborationEditTarget(state);
+      if (body) body.value = "";
+      abortCollaboration();
+      setRuntimeCollaborationPhase(state, request, "paused");
+      setText("runtime-message-send-status", "Message changed before Replace. Refresh retained messages before retrying.");
+      renderCollaboration("message changed · refresh retained state");
+      return;
+    }
+    if (!response?.ok || !response.data?.original || !response.data?.replacement) {
+      setText("runtime-message-send-status", "Replace failed.");
+      return;
+    }
+    clearRuntimeCollaborationEditTarget(state);
+    adoptRuntimeCollaborationObservation(state, request, {
+      messages: [response.data.original, response.data.replacement],
+    });
+    if (body) body.value = "";
+    setText("runtime-message-send-status", response.data.replayed ? "Replacement already retained." : "Message replaced.");
+    renderCollaboration();
+    return;
+  }
   if (send) send.disabled = true;
   setText("runtime-message-send-status", "Sending…");
   const response = await api("workflow-session-post-message", {
@@ -945,7 +1146,7 @@ async function postHumanCollaborationMessage(event: Event): Promise<void> {
     kind: kind?.value || "note",
     priority: priority?.value || "normal",
     message,
-    reply_to: collaborationReplyTo || null,
+    reply_to: state.collaboration.replyTargetId || null,
     requires_ack: !!checkbox?.checked,
   });
   if (!isCurrentRuntimeCollaborationRequest(state, request)) return;
@@ -1035,6 +1236,7 @@ el("runtime-project-search")?.addEventListener("input", () => {
 el("runtime-message-kind")?.addEventListener("change", syncAckComposer);
 el("runtime-message-priority")?.addEventListener("change", syncAckComposer);
 el("runtime-message-reply-clear")?.addEventListener("click", () => setCollaborationReplyTarget(""));
+el("runtime-message-edit-clear")?.addEventListener("click", cancelCollaborationEdit);
 el("runtime-collaboration-form")?.addEventListener("submit", (event) => void postHumanCollaborationMessage(event));
 el("runtime-refresh")?.addEventListener("click", () => void refreshAll());
 el("runtime-lock")?.addEventListener("click", () => lock());

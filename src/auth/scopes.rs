@@ -252,7 +252,9 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         | ("POST", "/api/runtime-console/runner")
         | ("POST", "/api/runtime-console/workflow-session-messages")
         | ("POST", "/api/runtime-console/workflow-session-observe")
-        | ("POST", "/api/runtime-console/workflow-session-post-message") => {
+        | ("POST", "/api/runtime-console/workflow-session-post-message")
+        | ("POST", "/api/runtime-console/workflow-session-withdraw-message")
+        | ("POST", "/api/runtime-console/workflow-session-replace-message") => {
             OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ)
         }
         ("POST", "/api/runtime-console/projects")
@@ -579,6 +581,16 @@ mod tests {
                 "/api/runtime-console/workflow-session-post-message",
                 SCOPE_RUNTIME_READ,
             ),
+            (
+                "POST",
+                "/api/runtime-console/workflow-session-withdraw-message",
+                SCOPE_RUNTIME_READ,
+            ),
+            (
+                "POST",
+                "/api/runtime-console/workflow-session-replace-message",
+                SCOPE_RUNTIME_READ,
+            ),
             ("POST", "/api/tools/list", SCOPE_RUNTIME_READ),
             ("POST", "/api/connector/task/start", SCOPE_RUNTIME_READ),
             ("POST", "/api/connector/files/read", SCOPE_PROJECT_READ),
@@ -634,6 +646,8 @@ mod tests {
             "/api/runtime-console/workflow-session-messages",
             "/api/runtime-console/workflow-session-observe",
             "/api/runtime-console/workflow-session-post-message",
+            "/api/runtime-console/workflow-session-withdraw-message",
+            "/api/runtime-console/workflow-session-replace-message",
         ] {
             for (label, auth) in [("pat", &pat), ("oauth", &oauth), ("shared", &shared)] {
                 assert!(

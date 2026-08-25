@@ -42,8 +42,9 @@ pub(crate) use events::{
 pub(crate) use model::{
     CodingSessionError, CodingSessionRequest, CompleteSessionMessageInput, CurrentSessionKey,
     ListSessionMessagesFilter, PostSessionMessageInput, RecordedModelFacingToolCall,
-    SessionAckObservation, SessionCloseError, SessionContextRevisionAck, SessionCreateOptions,
-    SessionDiscussionCounts, SessionDiscussionSummary, SessionEvent, SessionExecutionContext,
+    ReplaceSessionMessageInput, SessionAckObservation, SessionCloseError,
+    SessionContextRevisionAck, SessionCreateOptions, SessionDiscussionCounts,
+    SessionDiscussionSummary, SessionEvent, SessionExecutionContext,
     SessionExecutionContextUpdateError, SessionGuardDenial, SessionGuards, SessionLifecycle,
     SessionLifecycleDenial, SessionMessage, SessionMessageError, SessionMessageKind,
     SessionMessageObservationError, SessionMessagePriority, SessionMessageStatus, SessionSummary,

@@ -10,10 +10,62 @@ function emptyCollaborationState() {
         observationToken: "",
         available: true,
         phase: "idle",
+        replyTargetId: "",
+        editTargetId: "",
+        uncertainMutation: null,
+        mutationNotice: "",
     };
 }
 function messageCreatedAt(message) {
     return typeof message?.created_at === "number" ? message.created_at : 0;
+}
+const RUNTIME_COLLABORATION_MUTABLE_KINDS = new Set(["note", "guidance", "question", "todo"]);
+export function runtimeCollaborationMessageCanMutate(message) {
+    return !!message && message.status === "open" && RUNTIME_COLLABORATION_MUTABLE_KINDS.has(String(message.kind || ""));
+}
+function collaborationMessageById(state, messageId) {
+    return (Array.isArray(state?.collaboration?.messages) ? state.collaboration.messages : [])
+        .find((message) => String(message?.message_id || "") === messageId) || null;
+}
+function reconcileRuntimeCollaborationMutationState(state, authoritativeRefresh = false) {
+    const collaboration = state.collaboration;
+    const uncertain = collaboration.uncertainMutation;
+    if (uncertain) {
+        const original = collaborationMessageById(state, String(uncertain.messageId || ""));
+        const confirmedWithdraw = uncertain.kind === "withdraw" && original?.closure_kind === "withdrawn";
+        let confirmedReplace = false;
+        if (uncertain.kind === "replace") {
+            const replacementId = original?.closure_kind === "superseded"
+                ? String(original?.superseded_by_message_id || "")
+                : "";
+            const linkedReplacement = replacementId ? collaborationMessageById(state, replacementId) : null;
+            const retainedReplacement = linkedReplacement || (Array.isArray(collaboration.messages)
+                ? collaboration.messages.find((message) => message?.supersedes_message_id === uncertain.messageId && message?.message === uncertain.message)
+                : null);
+            confirmedReplace = !!retainedReplacement
+                && retainedReplacement?.supersedes_message_id === uncertain.messageId
+                && retainedReplacement?.message === uncertain.message;
+        }
+        if (confirmedWithdraw || confirmedReplace) {
+            collaboration.uncertainMutation = null;
+            collaboration.mutationNotice = confirmedWithdraw
+                ? "Withdraw confirmed after refresh."
+                : "Replacement confirmed after refresh.";
+        }
+        else if (authoritativeRefresh) {
+            collaboration.uncertainMutation = null;
+            collaboration.mutationNotice = "Outcome not observed in retained messages; review before retrying.";
+        }
+    }
+    if (collaboration.editTargetId) {
+        const target = collaborationMessageById(state, collaboration.editTargetId);
+        if (!runtimeCollaborationMessageCanMutate(target)) {
+            collaboration.editTargetId = "";
+            if (!collaboration.mutationNotice) {
+                collaboration.mutationNotice = "Message changed while editing; current retained state was refreshed.";
+            }
+        }
+    }
 }
 export function mergeRuntimeCollaborationMessages(current, updates) {
     const byId = new Map();
@@ -137,6 +189,10 @@ export function invalidateRuntimeCredential(state) {
     state.collaboration.observationToken = "";
     state.collaboration.available = true;
     state.collaboration.phase = "idle";
+    state.collaboration.replyTargetId = "";
+    state.collaboration.editTargetId = "";
+    state.collaboration.uncertainMutation = null;
+    state.collaboration.mutationNotice = "";
 }
 export function beginRuntimeCredential(state) {
     invalidateRuntimeCredential(state);
@@ -190,6 +246,10 @@ export function selectRuntimeProject(state, device, project) {
     state.collaboration.observationToken = "";
     state.collaboration.available = true;
     state.collaboration.phase = "idle";
+    state.collaboration.replyTargetId = "";
+    state.collaboration.editTargetId = "";
+    state.collaboration.uncertainMutation = null;
+    state.collaboration.mutationNotice = "";
     return refreshRuntimeSessionList(state);
 }
 export function refreshRuntimeSessionList(state) {
@@ -226,6 +286,10 @@ export function selectRuntimeWorkflowSession(state, sessionId) {
     state.collaboration.observationToken = "";
     state.collaboration.available = true;
     state.collaboration.phase = "idle";
+    state.collaboration.replyTargetId = "";
+    state.collaboration.editTargetId = "";
+    state.collaboration.uncertainMutation = null;
+    state.collaboration.mutationNotice = "";
     return wrapWorkflowRequest(state, selectWorkflowSession(state.workflow, sessionId));
 }
 export function selectRuntimeSessionLocation(state, device, project, sessionId) {
@@ -242,6 +306,10 @@ export function clearRuntimeWorkflowSession(state) {
     state.collaboration.sessionId = "";
     state.collaboration.messages = [];
     state.collaboration.observationToken = "";
+    state.collaboration.replyTargetId = "";
+    state.collaboration.editTargetId = "";
+    state.collaboration.uncertainMutation = null;
+    state.collaboration.mutationNotice = "";
 }
 export function runtimeCollaborationRequest(state) {
     if (!state.selectedProject || !state.collaboration.sessionId)
@@ -259,10 +327,49 @@ export function isCurrentRuntimeCollaborationRequest(state, request) {
         request.project === state.selectedProject && request.projectGeneration === state.projectGeneration &&
         request.sessionId === state.collaboration.sessionId && request.generation === state.collaboration.generation;
 }
+export function setRuntimeCollaborationReplyTarget(state, messageId) {
+    state.collaboration.replyTargetId = String(messageId || "");
+    if (state.collaboration.replyTargetId)
+        state.collaboration.editTargetId = "";
+}
+export function setRuntimeCollaborationEditTarget(state, messageId) {
+    const id = String(messageId || "");
+    const message = collaborationMessageById(state, id);
+    if (!id || !runtimeCollaborationMessageCanMutate(message))
+        return false;
+    state.collaboration.editTargetId = id;
+    state.collaboration.replyTargetId = "";
+    state.collaboration.mutationNotice = "";
+    return true;
+}
+export function clearRuntimeCollaborationEditTarget(state) {
+    state.collaboration.editTargetId = "";
+}
+export function runtimeCollaborationEditTarget(state) {
+    const id = String(state?.collaboration?.editTargetId || "");
+    return id ? collaborationMessageById(state, id) : null;
+}
+export function markRuntimeCollaborationMutationUncertain(state, request, mutation) {
+    if (!isCurrentRuntimeCollaborationRequest(state, request))
+        return false;
+    state.collaboration.uncertainMutation = {
+        kind: mutation?.kind === "replace" ? "replace" : "withdraw",
+        messageId: String(mutation?.messageId || ""),
+        ...(mutation?.kind === "replace" ? { message: String(mutation?.message || "") } : {}),
+    };
+    state.collaboration.mutationNotice = "Outcome unknown; refresh retained messages before retrying.";
+    return true;
+}
+export function takeRuntimeCollaborationMutationNotice(state) {
+    const notice = String(state?.collaboration?.mutationNotice || "");
+    state.collaboration.mutationNotice = "";
+    return notice;
+}
 export function adoptRuntimeCollaborationList(state, request, messages) {
     if (!isCurrentRuntimeCollaborationRequest(state, request))
         return false;
     state.collaboration.messages = mergeRuntimeCollaborationMessages([], messages);
+    reconcileRuntimeCollaborationMutationState(state, true);
     return true;
 }
 export function adoptRuntimeCollaborationObservation(state, request, payload) {
@@ -271,12 +378,17 @@ export function adoptRuntimeCollaborationObservation(state, request, payload) {
     state.collaboration.messages = mergeRuntimeCollaborationMessages(state.collaboration.messages, Array.isArray(payload?.messages) ? payload.messages : []);
     if (typeof payload?.observation_token === "string")
         state.collaboration.observationToken = payload.observation_token;
+    reconcileRuntimeCollaborationMutationState(state, false);
     return true;
 }
 export function setRuntimeCollaborationAvailable(state, request, available) {
     if (!isCurrentRuntimeCollaborationRequest(state, request))
         return false;
     state.collaboration.available = available;
+    if (!available) {
+        state.collaboration.editTargetId = "";
+        state.collaboration.replyTargetId = "";
+    }
     return true;
 }
 export function setRuntimeCollaborationPhase(state, request, phase) {

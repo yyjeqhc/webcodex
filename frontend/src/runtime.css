@@ -94,7 +94,7 @@ h4 { margin-bottom: 5px; color: var(--muted); font-size: .72rem; text-transform:
 .message-meta, .message-links, .message-resolution { color: var(--muted); font-size: .76rem; overflow-wrap: anywhere; }
 .message-body { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14rem; overflow: auto; }
 .message-ack { margin-top: 5px; color: var(--warn); font-size: .76rem; }
-.message-actions { display: flex; justify-content: flex-end; margin-top: 5px; }
+.message-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 5px; }
 .text-button { appearance: none; border: 0; background: transparent; color: var(--accent); padding: 2px 4px; cursor: pointer; font: inherit; }
 .collaboration-composer { border: 1px solid var(--border); border-radius: 7px; padding: 8px; margin-top: 7px; background: var(--bg); }
 .composer-fields { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
@@ -102,7 +102,8 @@ h4 { margin-bottom: 5px; color: var(--muted); font-size: .72rem; text-transform:
 .composer-fields .ack-field { display: flex; align-items: center; gap: 5px; padding-bottom: 6px; }
 .collaboration-composer textarea { width: 100%; resize: vertical; margin-top: 7px; }
 .composer-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 6px; }
-.reply-target { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-top: 6px; }
+.reply-target, .edit-target { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-top: 6px; }
+.edit-target { border-left: 3px solid var(--warn); padding-left: 7px; }
 .message-thread { margin-left: min(28px, 5vw); }
 .retention-note { margin: 8px 0 0; }
 .timeline-controls { justify-content: space-between; margin: 0 0 6px; }

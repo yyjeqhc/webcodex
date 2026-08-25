@@ -223,6 +223,8 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/runtime-console/workflow-session-messages",
     "/api/runtime-console/workflow-session-observe",
     "/api/runtime-console/workflow-session-post-message",
+    "/api/runtime-console/workflow-session-withdraw-message",
+    "/api/runtime-console/workflow-session-replace-message",
     "/runtime",
     "/runtime/app.js",
     "/runtime/styles.css",

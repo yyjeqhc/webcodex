@@ -33,6 +33,12 @@ import {
   runtimeCollaborationNeedsRefreshRecovery,
   mergeRuntimeCollaborationMessages,
   runtimeCollaborationObservationAction,
+  runtimeCollaborationMessageCanMutate,
+  setRuntimeCollaborationReplyTarget,
+  setRuntimeCollaborationEditTarget,
+  runtimeCollaborationEditTarget,
+  markRuntimeCollaborationMutationUncertain,
+  takeRuntimeCollaborationMutationNotice,
 } from "../dist/runtime_console_state.js";
 
 test("runtime credential and project generations fence stale project responses", () => {
@@ -291,6 +297,132 @@ test("manual Refresh recovery is required only after collaboration is paused", (
   assert.equal(runtimeCollaborationNeedsRefreshRecovery(state), false);
 });
 
+test("collaboration Edit and Reply are mutually exclusive and context switches clear edit state", () => {
+  const state = initialRuntimeConsoleState();
+  beginRuntimeCredential(state);
+  selectRuntimeProject(state, "runner", "agent:runner:project");
+  selectRuntimeWorkflowSession(state, "wc_sess_a");
+  let request = runtimeCollaborationRequest(state);
+  adoptRuntimeCollaborationList(state, request, [
+    { message_id: "wc_msg_edit", kind: "guidance", status: "open", priority: "high", requires_ack: true, first_ack_observed_at: 10, created_at: 1, message: "old" },
+  ]);
+  assert.equal(setRuntimeCollaborationEditTarget(state, "wc_msg_edit"), true);
+  assert.equal(runtimeCollaborationEditTarget(state).message_id, "wc_msg_edit");
+  assert.equal(state.collaboration.replyTargetId, "");
+  setRuntimeCollaborationReplyTarget(state, "wc_msg_edit");
+  assert.equal(runtimeCollaborationEditTarget(state), null);
+  assert.equal(state.collaboration.replyTargetId, "wc_msg_edit");
+  assert.equal(setRuntimeCollaborationEditTarget(state, "wc_msg_edit"), true);
+  assert.equal(state.collaboration.replyTargetId, "");
+
+  selectRuntimeWorkflowSession(state, "wc_sess_b");
+  assert.equal(runtimeCollaborationEditTarget(state), null);
+  assert.equal(state.collaboration.replyTargetId, "");
+  request = runtimeCollaborationRequest(state);
+  adoptRuntimeCollaborationList(state, request, [
+    { message_id: "wc_msg_b", kind: "note", status: "open", created_at: 2, message: "b" },
+  ]);
+  assert.equal(setRuntimeCollaborationEditTarget(state, "wc_msg_b"), true);
+  selectRuntimeProject(state, "other", "agent:other:project");
+  assert.equal(runtimeCollaborationEditTarget(state), null);
+  assert.equal(state.collaboration.replyTargetId, "");
+});
+
+test("incoming authoritative closure cancels edit while preserving refreshed state", () => {
+  const state = initialRuntimeConsoleState();
+  beginRuntimeCredential(state);
+  selectRuntimeProject(state, "runner", "agent:runner:project");
+  selectRuntimeWorkflowSession(state, "wc_sess_a");
+  const request = runtimeCollaborationRequest(state);
+  adoptRuntimeCollaborationList(state, request, [
+    { message_id: "wc_msg_todo", kind: "todo", status: "open", created_at: 1, message: "work" },
+  ]);
+  assert.equal(setRuntimeCollaborationEditTarget(state, "wc_msg_todo"), true);
+  adoptRuntimeCollaborationObservation(state, request, {
+    messages: [{ message_id: "wc_msg_todo", kind: "todo", status: "resolved", resolved_at: 2, created_at: 1, message: "work" }],
+  });
+  assert.equal(runtimeCollaborationEditTarget(state), null);
+  assert.equal(state.collaboration.messages.length, 1);
+  assert.equal(state.collaboration.messages[0].status, "resolved");
+  assert.equal(takeRuntimeCollaborationMutationNotice(state), "Message changed while editing; current retained state was refreshed.");
+});
+
+test("withdraw and replacement responses merge by message id without duplicate history", () => {
+  const state = initialRuntimeConsoleState();
+  beginRuntimeCredential(state);
+  selectRuntimeProject(state, "runner", "agent:runner:project");
+  selectRuntimeWorkflowSession(state, "wc_sess_a");
+  const request = runtimeCollaborationRequest(state);
+  adoptRuntimeCollaborationList(state, request, [
+    { message_id: "wc_msg_old", kind: "note", status: "open", created_at: 1, message: "wrong" },
+  ]);
+  adoptRuntimeCollaborationObservation(state, request, {
+    messages: [
+      { message_id: "wc_msg_old", kind: "note", status: "resolved", closure_kind: "superseded", superseded_by_message_id: "wc_msg_new", created_at: 1, message: "wrong" },
+      { message_id: "wc_msg_new", kind: "note", status: "open", supersedes_message_id: "wc_msg_old", created_at: 2, message: "right" },
+    ],
+  });
+  assert.deepEqual(state.collaboration.messages.map((message) => message.message_id), ["wc_msg_old", "wc_msg_new"]);
+  adoptRuntimeCollaborationObservation(state, request, {
+    messages: [{ message_id: "wc_msg_new", kind: "note", status: "resolved", closure_kind: "withdrawn", created_at: 2, message: "right" }],
+  });
+  assert.equal(state.collaboration.messages.length, 2);
+  assert.equal(state.collaboration.messages[1].closure_kind, "withdrawn");
+});
+
+test("unknown mutation outcome never synthesizes a retry and refresh reconciles retained state", () => {
+  const state = initialRuntimeConsoleState();
+  beginRuntimeCredential(state);
+  selectRuntimeProject(state, "runner", "agent:runner:project");
+  selectRuntimeWorkflowSession(state, "wc_sess_a");
+  const request = runtimeCollaborationRequest(state);
+  adoptRuntimeCollaborationList(state, request, [
+    { message_id: "wc_msg_old", kind: "guidance", status: "open", priority: "high", requires_ack: true, created_at: 1, message: "wrong" },
+  ]);
+  assert.equal(setRuntimeCollaborationEditTarget(state, "wc_msg_old"), true);
+  assert.equal(markRuntimeCollaborationMutationUncertain(state, request, { kind: "replace", messageId: "wc_msg_old", message: "right" }), true);
+  assert.equal(state.collaboration.messages.length, 1);
+  assert.equal(state.collaboration.uncertainMutation.messageId, "wc_msg_old");
+
+  adoptRuntimeCollaborationList(state, request, [
+    { message_id: "wc_msg_old", kind: "guidance", status: "resolved", closure_kind: "superseded", superseded_by_message_id: "wc_msg_new", priority: "high", requires_ack: true, created_at: 1, message: "wrong" },
+    { message_id: "wc_msg_new", kind: "guidance", status: "open", supersedes_message_id: "wc_msg_old", priority: "high", requires_ack: true, created_at: 2, message: "right" },
+  ]);
+  assert.equal(state.collaboration.uncertainMutation, null);
+  assert.equal(runtimeCollaborationEditTarget(state), null);
+  assert.equal(takeRuntimeCollaborationMutationNotice(state), "Replacement confirmed after refresh.");
+  assert.equal(state.collaboration.messages.length, 2);
+});
+
+test("unknown replace outcome reconciles from retained replacement even when source was evicted", () => {
+  const state = initialRuntimeConsoleState();
+  beginRuntimeCredential(state);
+  selectRuntimeProject(state, "runner", "agent:runner:project");
+  selectRuntimeWorkflowSession(state, "wc_sess_a");
+  const request = runtimeCollaborationRequest(state);
+  adoptRuntimeCollaborationList(state, request, [
+    { message_id: "wc_msg_old", kind: "note", status: "open", created_at: 1, message: "wrong" },
+  ]);
+  assert.equal(markRuntimeCollaborationMutationUncertain(state, request, { kind: "replace", messageId: "wc_msg_old", message: "right" }), true);
+  adoptRuntimeCollaborationList(state, request, [
+    { message_id: "wc_msg_new", kind: "note", status: "open", supersedes_message_id: "wc_msg_old", created_at: 2, message: "right" },
+  ]);
+  assert.equal(state.collaboration.uncertainMutation, null);
+  assert.equal(takeRuntimeCollaborationMutationNotice(state), "Replacement confirmed after refresh.");
+});
+
+test("only eligible open Human Join kinds expose mutation actions and ACK is not a lock", () => {
+  for (const kind of ["note", "guidance", "question", "todo"]) {
+    assert.equal(runtimeCollaborationMessageCanMutate({ kind, status: "open" }), true, kind);
+  }
+  assert.equal(runtimeCollaborationMessageCanMutate({ kind: "guidance", status: "open", requires_ack: true, first_ack_observed_at: 100 }), true);
+  for (const kind of ["answer", "progress", "decision", "risk", "proposal"]) {
+    assert.equal(runtimeCollaborationMessageCanMutate({ kind, status: "open" }), false, kind);
+  }
+  assert.equal(runtimeCollaborationMessageCanMutate({ kind: "note", status: "resolved", closure_kind: "withdrawn" }), false);
+  assert.equal(runtimeCollaborationMessageCanMutate({ kind: "todo", status: "resolved", closure_kind: "superseded" }), false);
+});
+
 test("runtime collaboration rendering uses textContent and explicitly reloads on history loss", async () => {
   const source = await readFile(new URL("../src/runtime.ts", import.meta.url), "utf8");
   const html = await readFile(new URL("../src/runtime.html", import.meta.url), "utf8");
@@ -331,6 +463,11 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(source, /action === "drain"/);
   assert.match(source, /abortCollaboration\(\)/);
   assert.match(source, /workflow-session-post-message/);
+  assert.match(source, /workflow-session-withdraw-message/);
+  assert.match(source, /workflow-session-replace-message/);
+  assert.match(source, /state\.collaboration\.phase === "live" && !state\.collaboration\.uncertainMutation/);
+  assert.match(source, /Withdraw this retained message; history is preserved\./);
+  assert.match(source, /Replace this retained message while preserving its history\./);
   assert.match(source, /kind\?\.value === "guidance"/);
   assert.match(source, /priority\?\.value !== "high"/);
   assert.match(source, /First ACK observed/);

@@ -46,6 +46,14 @@ pub(crate) fn routes() -> Router {
         .push(
             Router::with_path("workflow-session-post-message").post(workflow_session_post_message),
         )
+        .push(
+            Router::with_path("workflow-session-withdraw-message")
+                .post(workflow_session_withdraw_message),
+        )
+        .push(
+            Router::with_path("workflow-session-replace-message")
+                .post(workflow_session_replace_message),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -119,6 +127,23 @@ struct WorkflowSessionPostMessageInput {
     reply_to: Option<String>,
     #[serde(default)]
     requires_ack: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkflowSessionWithdrawMessageInput {
+    project: String,
+    session_id: String,
+    message_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkflowSessionReplaceMessageInput {
+    project: String,
+    session_id: String,
+    message_id: String,
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -236,6 +261,19 @@ struct RuntimeConsoleMessages {
 }
 
 #[derive(Debug, Serialize)]
+struct RuntimeConsoleWithdrawMessage {
+    message: RuntimeConsoleMessage,
+    replayed: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeConsoleReplaceMessage {
+    original: RuntimeConsoleMessage,
+    replacement: RuntimeConsoleMessage,
+    replayed: bool,
+}
+
+#[derive(Debug, Serialize)]
 struct RuntimeConsoleObservation {
     session_id: String,
     messages: Vec<RuntimeConsoleMessage>,
@@ -267,6 +305,12 @@ struct RuntimeConsoleMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     resolution: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    closure_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    superseded_by_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supersedes_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     resolved_by_message_id: Option<String>,
 }
 
@@ -296,6 +340,8 @@ struct RuntimeConsoleProject {
 enum RuntimeConsoleError {
     Invalid,
     NotFound,
+    Conflict,
+    PersistenceUncertain,
     Internal,
     Request { status: u16, message: &'static str },
 }
@@ -305,6 +351,8 @@ impl RuntimeConsoleError {
         match self {
             Self::Invalid => StatusCode::BAD_REQUEST,
             Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Conflict => StatusCode::CONFLICT,
+            Self::PersistenceUncertain => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Request { status, .. } => {
                 StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST)
@@ -316,6 +364,10 @@ impl RuntimeConsoleError {
         match self {
             Self::Invalid => "Invalid request",
             Self::NotFound => "Not found",
+            Self::Conflict => "Session message is no longer open or conflicts with retained state",
+            Self::PersistenceUncertain => {
+                "Outcome may have happened; refresh retained messages before retrying"
+            }
             Self::Internal => "Runtime Console unavailable",
             Self::Request { message, .. } => message,
         }
@@ -420,6 +472,36 @@ fn safe_string(value: Option<&Value>, max_chars: usize) -> Option<String> {
     value.and_then(|value| bounded_text(value, max_chars))
 }
 
+fn valid_runtime_message_id(message_id: &str) -> bool {
+    message_id.strip_prefix("wc_msg_").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && suffix
+                .as_bytes()
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+    })
+}
+
+fn session_message_mutation_error(
+    error: crate::tool_runtime::sessions::SessionMessageError,
+) -> RuntimeConsoleError {
+    use crate::tool_runtime::sessions::SessionMessageError;
+    match error {
+        SessionMessageError::UnknownSession | SessionMessageError::UnknownMessage => {
+            RuntimeConsoleError::NotFound
+        }
+        SessionMessageError::MessageNotOpen
+        | SessionMessageError::IdempotencyConflict
+        | SessionMessageError::AlreadyCompleted { .. }
+        | SessionMessageError::InvalidCompletionState
+        | SessionMessageError::InvalidObservationState
+        | SessionMessageError::NotTodo
+        | SessionMessageError::SessionClosed { .. } => RuntimeConsoleError::Conflict,
+        SessionMessageError::PersistenceUncertain => RuntimeConsoleError::PersistenceUncertain,
+        SessionMessageError::InvalidInput(_) => RuntimeConsoleError::Invalid,
+    }
+}
+
 fn message_from_value(value: &Value) -> Option<RuntimeConsoleMessage> {
     let message_id = safe_string(value.get("message_id"), 160)?;
     let kind = safe_string(value.get("kind"), 32)?;
@@ -443,6 +525,9 @@ fn message_from_value(value: &Value) -> Option<RuntimeConsoleMessage> {
             .get("resolution")
             .and_then(Value::as_str)
             .map(str::to_string),
+        closure_kind: safe_string(value.get("closure_kind"), 32),
+        superseded_by_message_id: safe_string(value.get("superseded_by_message_id"), 160),
+        supersedes_message_id: safe_string(value.get("supersedes_message_id"), 160),
         resolved_by_message_id: safe_string(value.get("resolved_by_message_id"), 160),
     })
 }
@@ -1353,6 +1438,72 @@ async fn session_post_message_for_auth(
         .ok_or(RuntimeConsoleError::Internal)
 }
 
+async fn session_withdraw_message_for_auth(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    input: WorkflowSessionWithdrawMessageInput,
+) -> Result<RuntimeConsoleWithdrawMessage, RuntimeConsoleError> {
+    require_runtime_read(auth)?;
+    if !valid_runtime_message_id(&input.message_id) {
+        return Err(RuntimeConsoleError::Invalid);
+    }
+    authorize_runtime_session_project(
+        runtime,
+        auth,
+        &input.project,
+        &input.session_id,
+        "runtime_console_withdraw_session_message",
+    )
+    .await?;
+    let outcome = runtime
+        .sessions
+        .withdraw_message(&input.session_id, &input.message_id)
+        .map_err(session_message_mutation_error)?;
+    let value =
+        serde_json::to_value(&outcome.message).map_err(|_| RuntimeConsoleError::Internal)?;
+    let message = message_from_value(&value).ok_or(RuntimeConsoleError::Internal)?;
+    Ok(RuntimeConsoleWithdrawMessage {
+        message,
+        replayed: outcome.replayed,
+    })
+}
+
+async fn session_replace_message_for_auth(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    input: WorkflowSessionReplaceMessageInput,
+) -> Result<RuntimeConsoleReplaceMessage, RuntimeConsoleError> {
+    require_runtime_read(auth)?;
+    if !valid_runtime_message_id(&input.message_id) {
+        return Err(RuntimeConsoleError::Invalid);
+    }
+    authorize_runtime_session_project(
+        runtime,
+        auth,
+        &input.project,
+        &input.session_id,
+        "runtime_console_replace_session_message",
+    )
+    .await?;
+    let outcome = runtime
+        .sessions
+        .replace_message(crate::tool_runtime::sessions::ReplaceSessionMessageInput {
+            session_id: input.session_id,
+            message_id: input.message_id,
+            message: input.message,
+        })
+        .map_err(session_message_mutation_error)?;
+    let original_value =
+        serde_json::to_value(&outcome.original).map_err(|_| RuntimeConsoleError::Internal)?;
+    let replacement_value =
+        serde_json::to_value(&outcome.replacement).map_err(|_| RuntimeConsoleError::Internal)?;
+    Ok(RuntimeConsoleReplaceMessage {
+        original: message_from_value(&original_value).ok_or(RuntimeConsoleError::Internal)?,
+        replacement: message_from_value(&replacement_value).ok_or(RuntimeConsoleError::Internal)?,
+        replayed: outcome.replayed,
+    })
+}
+
 #[handler]
 async fn overview(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let (runtime, auth) = match prepared(req, depot).await {
@@ -1488,6 +1639,49 @@ async fn workflow_session_post_message(req: &mut Request, depot: &mut Depot, res
     }
 }
 
+#[handler]
+async fn workflow_session_withdraw_message(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    let input = match req
+        .parse_json::<WorkflowSessionWithdrawMessageInput>()
+        .await
+    {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    match session_withdraw_message_for_auth(&runtime, &auth, input).await {
+        Ok(output) => res.render(Json(output)),
+        Err(error) => render_error(res, error),
+    }
+}
+
+#[handler]
+async fn workflow_session_replace_message(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    let input = match req.parse_json::<WorkflowSessionReplaceMessageInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    match session_replace_message_for_auth(&runtime, &auth, input).await {
+        Ok(output) => res.render(Json(output)),
+        Err(error) => render_error(res, error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1571,6 +1765,13 @@ mod tests {
         auth
     }
 
+    fn test_bootstrap_auth() -> AuthContext {
+        let mut auth = AuthContext::new(AuthKind::Bootstrap);
+        auth.role = Some("admin".to_string());
+        auth.is_bootstrap = true;
+        auth
+    }
+
     fn start_authorized_session(
         runtime: &ToolRuntime,
         project: &str,
@@ -1594,6 +1795,27 @@ mod tests {
 
     fn hosted_service(runtime: Arc<ToolRuntime>) -> (tempfile::TempDir, Service) {
         let config = crate::test_support::test_config(None);
+        let (tmp, db) = crate::test_support::test_db();
+        let router = Router::new()
+            .hoop(affix_state::inject(config))
+            .hoop(affix_state::inject(db))
+            .hoop(affix_state::inject(runtime))
+            .hoop(affix_state::inject(
+                crate::connector_runtime::ConnectorRuntimeSlot::default(),
+            ))
+            .push(
+                Router::with_path("api")
+                    .hoop(crate::AuthMiddleware)
+                    .push(routes()),
+            );
+        (tmp, Service::new(router))
+    }
+
+    fn hosted_service_with_shared_key(
+        runtime: Arc<ToolRuntime>,
+        shared_key: &str,
+    ) -> (tempfile::TempDir, Service) {
+        let config = crate::test_support::test_config(Some(shared_key));
         let (tmp, db) = crate::test_support::test_db();
         let router = Router::new()
             .hoop(affix_state::inject(config))
@@ -2452,6 +2674,411 @@ mod tests {
         assert!(openapi["paths"]
             .get("/api/runtime-console/workflow-session-post-message")
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn browser_message_mutation_routes_succeed_and_retain_history() {
+        let runtime = test_runtime();
+        let shared_key = "runtime-console-browser-mutate";
+        let auth = test_bootstrap_auth();
+        let project_id = "agent:client-a:proj-a";
+        register_project(&runtime, "client-a", "proj-a", "/private/a", Some(&auth)).await;
+        let session = start_authorized_session(&runtime, project_id, &auth);
+        let withdraw_target = runtime
+            .sessions
+            .post_message(PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Note,
+                message: "mistyped retained note".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::Normal,
+            })
+            .unwrap();
+        let replace_target = runtime
+            .sessions
+            .post_message(PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Question,
+                message: "wrong retained question".to_string(),
+                tags: Vec::new(),
+                reply_to: Some(withdraw_target.message_id.clone()),
+                priority: SessionMessagePriority::High,
+            })
+            .unwrap();
+        let (_tmp, service) = hosted_service_with_shared_key(runtime.clone(), shared_key);
+
+        let mut withdrawn = TestClient::post(
+            "http://localhost/api/runtime-console/workflow-session-withdraw-message",
+        )
+        .bearer_auth(shared_key)
+        .json(&serde_json::json!({
+            "project": project_id,
+            "session_id": session.session_id,
+            "message_id": withdraw_target.message_id,
+        }))
+        .send(&service)
+        .await;
+        assert_eq!(withdrawn.status_code, Some(StatusCode::OK));
+        let withdrawn_body: Value = withdrawn.take_json().await.unwrap();
+        assert_eq!(
+            withdrawn_body["message"]["message_id"],
+            withdraw_target.message_id
+        );
+        assert_eq!(withdrawn_body["message"]["status"], "resolved");
+        assert_eq!(withdrawn_body["message"]["closure_kind"], "withdrawn");
+        assert_eq!(
+            withdrawn_body["message"]["message"],
+            "mistyped retained note"
+        );
+        assert_eq!(withdrawn_body["replayed"], false);
+
+        let mut replaced = TestClient::post(
+            "http://localhost/api/runtime-console/workflow-session-replace-message",
+        )
+        .bearer_auth(shared_key)
+        .json(&serde_json::json!({
+            "project": project_id,
+            "session_id": session.session_id,
+            "message_id": replace_target.message_id,
+            "message": "correct retained question",
+        }))
+        .send(&service)
+        .await;
+        assert_eq!(replaced.status_code, Some(StatusCode::OK));
+        let replaced_body: Value = replaced.take_json().await.unwrap();
+        assert_eq!(
+            replaced_body["original"]["message_id"],
+            replace_target.message_id
+        );
+        assert_eq!(
+            replaced_body["original"]["message"],
+            "wrong retained question"
+        );
+        assert_eq!(replaced_body["original"]["status"], "resolved");
+        assert_eq!(replaced_body["original"]["closure_kind"], "superseded");
+        assert_eq!(
+            replaced_body["replacement"]["message"],
+            "correct retained question"
+        );
+        assert_eq!(replaced_body["replacement"]["status"], "open");
+        assert_eq!(replaced_body["replacement"]["kind"], "question");
+        assert_eq!(replaced_body["replacement"]["priority"], "high");
+        assert_eq!(
+            replaced_body["replacement"]["reply_to"],
+            withdraw_target.message_id
+        );
+        assert_eq!(
+            replaced_body["original"]["superseded_by_message_id"],
+            replaced_body["replacement"]["message_id"]
+        );
+        assert_eq!(
+            replaced_body["replacement"]["supersedes_message_id"],
+            replace_target.message_id
+        );
+        assert_eq!(replaced_body["replayed"], false);
+    }
+
+    #[tokio::test]
+    async fn browser_message_mutations_fail_closed_on_authority_and_state_conflicts() {
+        let runtime = test_runtime();
+        let auth_a = crate::auth::shared_key_context("runtime-console-mutate-a");
+        let auth_b = crate::auth::shared_key_context("runtime-console-mutate-b");
+        let no_runtime_read = scoped_oauth(&[SCOPE_PROJECT_READ]);
+        let project_id = "agent:client-a:proj-a";
+        register_project(&runtime, "client-a", "proj-a", "/private/a", Some(&auth_a)).await;
+        let session = start_authorized_session(&runtime, project_id, &auth_a);
+        let note = runtime
+            .sessions
+            .post_message(PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Note,
+                message: "authority target".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::Normal,
+            })
+            .unwrap();
+
+        assert_eq!(
+            session_withdraw_message_for_auth(
+                &runtime,
+                &no_runtime_read,
+                WorkflowSessionWithdrawMessageInput {
+                    project: project_id.to_string(),
+                    session_id: session.session_id.clone(),
+                    message_id: note.message_id.clone(),
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::Request {
+                status: 403,
+                message: "Runtime read access required",
+            }
+        );
+        assert_eq!(
+            session_withdraw_message_for_auth(
+                &runtime,
+                &auth_a,
+                WorkflowSessionWithdrawMessageInput {
+                    project: "agent:client-a:wrong".to_string(),
+                    session_id: session.session_id.clone(),
+                    message_id: note.message_id.clone(),
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::NotFound
+        );
+        assert_eq!(
+            session_replace_message_for_auth(
+                &runtime,
+                &auth_b,
+                WorkflowSessionReplaceMessageInput {
+                    project: project_id.to_string(),
+                    session_id: session.session_id.clone(),
+                    message_id: note.message_id.clone(),
+                    message: "foreign edit".to_string(),
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::NotFound
+        );
+        assert_eq!(
+            session_withdraw_message_for_auth(
+                &runtime,
+                &auth_a,
+                WorkflowSessionWithdrawMessageInput {
+                    project: project_id.to_string(),
+                    session_id: "wc_sess_missing".to_string(),
+                    message_id: "wc_msg_missing".to_string(),
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::NotFound
+        );
+        assert_eq!(
+            session_withdraw_message_for_auth(
+                &runtime,
+                &auth_a,
+                WorkflowSessionWithdrawMessageInput {
+                    project: project_id.to_string(),
+                    session_id: session.session_id.clone(),
+                    message_id: "wc_msg_missing".to_string(),
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::NotFound
+        );
+
+        let risk = runtime
+            .sessions
+            .post_message(PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Risk,
+                message: "unsupported operator mutation".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            })
+            .unwrap();
+        assert_eq!(
+            session_replace_message_for_auth(
+                &runtime,
+                &auth_a,
+                WorkflowSessionReplaceMessageInput {
+                    project: project_id.to_string(),
+                    session_id: session.session_id.clone(),
+                    message_id: risk.message_id,
+                    message: "must stay unsupported".to_string(),
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::Invalid
+        );
+
+        let todo = runtime
+            .sessions
+            .post_message(PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Todo,
+                message: "completion wins".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::Normal,
+            })
+            .unwrap();
+        runtime
+            .sessions
+            .complete_message(CompleteSessionMessageInput {
+                session_id: session.session_id.clone(),
+                message_id: todo.message_id.clone(),
+                answer: "done".to_string(),
+                tags: Vec::new(),
+                priority: SessionMessagePriority::Normal,
+                completion_id: "b".repeat(64),
+                author_session_id: None,
+            })
+            .unwrap();
+        assert_eq!(
+            session_replace_message_for_auth(
+                &runtime,
+                &auth_a,
+                WorkflowSessionReplaceMessageInput {
+                    project: project_id.to_string(),
+                    session_id: session.session_id.clone(),
+                    message_id: todo.message_id,
+                    message: "too late".to_string(),
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::Conflict
+        );
+
+        let closed_note = runtime
+            .sessions
+            .post_message(PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Note,
+                message: "closed target".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::Normal,
+            })
+            .unwrap();
+        runtime.sessions.close_session(&session.session_id).unwrap();
+        assert_eq!(
+            session_withdraw_message_for_auth(
+                &runtime,
+                &auth_a,
+                WorkflowSessionWithdrawMessageInput {
+                    project: project_id.to_string(),
+                    session_id: session.session_id,
+                    message_id: closed_note.message_id,
+                },
+            )
+            .await
+            .unwrap_err(),
+            RuntimeConsoleError::Conflict
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_message_mutation_json_and_uncertain_errors_are_distinct() {
+        let (_tmp, service) = hosted_service(test_runtime());
+        let unknown_field = TestClient::post(
+            "http://localhost/api/runtime-console/workflow-session-withdraw-message",
+        )
+        .json(&serde_json::json!({
+            "project": "agent:missing:project",
+            "session_id": "wc_sess_missing",
+            "message_id": "wc_msg_missing",
+            "unexpected": true,
+        }))
+        .send(&service)
+        .await;
+        assert_eq!(unknown_field.status_code, Some(StatusCode::BAD_REQUEST));
+
+        assert_eq!(
+            session_message_mutation_error(
+                crate::tool_runtime::sessions::SessionMessageError::PersistenceUncertain,
+            ),
+            RuntimeConsoleError::PersistenceUncertain
+        );
+        let mut response = Response::new();
+        render_error(&mut response, RuntimeConsoleError::PersistenceUncertain);
+        assert_eq!(response.status_code, Some(StatusCode::SERVICE_UNAVAILABLE));
+        let body = response.take_string().await.unwrap();
+        assert!(body.contains("Outcome may have happened"));
+        assert!(body.contains("refresh retained messages before retrying"));
+
+        let openapi = crate::openapi::build_openapi_spec();
+        for path in [
+            "/api/runtime-console/workflow-session-withdraw-message",
+            "/api/runtime-console/workflow-session-replace-message",
+        ] {
+            assert!(
+                openapi["paths"].get(path).is_none(),
+                "{path} leaked into OpenAPI"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn browser_message_mutation_persistence_uncertain_is_503_and_retains_live_state() {
+        let root = tempfile::tempdir().unwrap();
+        let ledger_dir = root.path().join("session-ledger");
+        std::fs::create_dir_all(&ledger_dir).unwrap();
+        let ledger = ledger_dir.join("sessions.json");
+        let mut runtime = ToolRuntime::new(
+            Arc::new(crate::ShellClientRegistry::default()),
+            Arc::new(RuntimeInfo::default()),
+        );
+        runtime.sessions =
+            crate::tool_runtime::sessions::SessionStore::with_persistence(&ledger, 10, 50);
+        let runtime = Arc::new(runtime);
+        let token = "runtime-console-persistence-uncertain";
+        let auth = test_bootstrap_auth();
+        let project_id = "agent:client-a:proj-a";
+        register_project(&runtime, "client-a", "proj-a", "/private/a", Some(&auth)).await;
+        let session = start_authorized_session(&runtime, project_id, &auth);
+        let message = runtime
+            .sessions
+            .post_message(PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Note,
+                message: "uncertain withdraw".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::Normal,
+            })
+            .unwrap();
+        runtime.sessions.flush_persistence();
+        std::fs::remove_dir_all(&ledger_dir).unwrap();
+        std::fs::write(&ledger_dir, b"block durable ledger recreation").unwrap();
+        let (_tmp, service) = hosted_service_with_shared_key(runtime.clone(), token);
+
+        let mut response = TestClient::post(
+            "http://localhost/api/runtime-console/workflow-session-withdraw-message",
+        )
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "project": project_id,
+            "session_id": session.session_id,
+            "message_id": message.message_id,
+        }))
+        .send(&service)
+        .await;
+        assert_eq!(response.status_code, Some(StatusCode::SERVICE_UNAVAILABLE));
+        let body = response.take_string().await.unwrap();
+        assert!(body.contains("Outcome may have happened"));
+        assert!(body.contains("refresh retained messages before retrying"));
+
+        let retained = runtime
+            .sessions
+            .list_messages(
+                &session.session_id,
+                crate::tool_runtime::sessions::ListSessionMessagesFilter {
+                    message_id: Some(message.message_id),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(retained.len(), 1);
+        assert_eq!(
+            retained[0].status,
+            crate::tool_runtime::sessions::SessionMessageStatus::Resolved
+        );
+        assert_eq!(
+            serde_json::to_value(&retained[0]).unwrap()["closure_kind"],
+            "withdrawn"
+        );
     }
 
     #[tokio::test]

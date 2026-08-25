@@ -3270,6 +3270,73 @@ impl SessionStoreInner {
         Ok((message.clone(), changed))
     }
 
+    pub(super) fn resolve_message_from_wrapper(
+        &mut self,
+        session_id: &str,
+        message_id: &str,
+        resolution: String,
+        current_request_acknowledged: bool,
+    ) -> Result<(SessionMessage, bool), SessionMessageError> {
+        self.touch(session_id);
+        let Some(stored) = self.sessions.get_mut(session_id) else {
+            return Err(SessionMessageError::UnknownSession);
+        };
+        let lifecycle = stored.lifecycle();
+        if !lifecycle.allows_mutation() {
+            return Err(SessionMessageError::SessionClosed { lifecycle });
+        }
+        let resolution = validate_resolution_text(resolution)?;
+        if resolution.is_empty() {
+            return Err(SessionMessageError::InvalidInput(
+                "session_message_resolution.resolution must not be empty".to_string(),
+            ));
+        }
+        let record = stored
+            .hot_mut()
+            .expect("active session message mutation must stay hot");
+        let Some(message_index) = record
+            .messages
+            .iter()
+            .position(|message| message.message_id == message_id)
+        else {
+            return Err(SessionMessageError::UnknownMessage);
+        };
+        let snapshot = record.messages[message_index].as_ref().clone();
+        if snapshot.closure_kind.is_some() {
+            return Err(SessionMessageError::MessageNotOpen);
+        }
+        if snapshot.kind == super::model::SessionMessageKind::Todo {
+            return Err(SessionMessageError::InvalidInput(
+                "todo messages require complete_session_message rather than session_message_resolution"
+                    .to_string(),
+            ));
+        }
+        if snapshot.status == SessionMessageStatus::Resolved {
+            if snapshot.resolution.as_deref() == Some(resolution.as_str()) {
+                return Ok((snapshot, false));
+            }
+            return Err(SessionMessageError::IdempotencyConflict);
+        }
+        if snapshot.requires_ack && !current_request_acknowledged {
+            return Err(SessionMessageError::InvalidInput(
+                "requires_ack guidance must be acknowledged on the same request before wrapper resolution"
+                    .to_string(),
+            ));
+        }
+
+        let revision = Self::next_message_observation_revision(record)?;
+        let now = now_ts();
+        let message = Arc::make_mut(&mut record.messages[message_index]);
+        message.status = SessionMessageStatus::Resolved;
+        message.resolved_at = Some(now);
+        message.resolution = Some(resolution);
+        record.updated_at = now;
+        record
+            .message_observation_revisions
+            .insert(message.message_id.clone(), revision);
+        Ok((message.clone(), true))
+    }
+
     pub(super) fn complete_message(
         &mut self,
         input: CompleteSessionMessageInput,

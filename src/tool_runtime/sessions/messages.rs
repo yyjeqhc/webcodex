@@ -189,6 +189,29 @@ impl SessionStore {
         Ok(message)
     }
 
+    pub(crate) fn resolve_message_from_wrapper(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        resolution: String,
+        current_request_acknowledged: bool,
+    ) -> Result<SessionMessage, SessionMessageError> {
+        let (message, changed) = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            inner.resolve_message_from_wrapper(
+                session_id,
+                message_id,
+                resolution,
+                current_request_acknowledged,
+            )?
+        };
+        self.persist_after_mutation();
+        if changed {
+            self.notify_message_observation();
+        }
+        Ok(message)
+    }
+
     pub(crate) fn complete_message(
         &self,
         input: CompleteSessionMessageInput,

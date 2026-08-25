@@ -59,6 +59,9 @@ pub(crate) const TOOL_CALL_RECORDING_SESSION_ID_FIELD: &str = "recording_session
 pub(crate) const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: &str = "ack_session_message_ids";
 pub(crate) const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: &str =
     "__webcodex_stateless_ack_session_message_ids";
+pub(crate) const TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: &str = "session_message_resolution";
+pub(crate) const TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD: &str =
+    "__webcodex_stateless_session_message_resolution";
 pub(crate) const TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: &str =
     "ack_session_context_revision";
 pub(crate) const TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD: &str =
@@ -787,6 +790,13 @@ pub(crate) struct ToolCallExpectation {
     pub(crate) assertion_name: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ToolCallSessionMessageResolution {
+    pub(crate) message_id: String,
+    pub(crate) resolution: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ToolCallRecorderMetadata {
     /// Explicit generic wrapper recorder provenance. It is internal metadata,
@@ -794,6 +804,7 @@ pub(crate) struct ToolCallRecorderMetadata {
     pub(crate) recording_session_id: Option<String>,
     pub(crate) expectation: ToolCallExpectation,
     pub(crate) ack_session_message_ids: Vec<String>,
+    pub(crate) session_message_resolution: Option<ToolCallSessionMessageResolution>,
     pub(crate) ack_session_context_revision: SessionContextRevisionAck,
 }
 

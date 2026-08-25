@@ -531,6 +531,26 @@ fn add_stateless_workflow_recorder_metadata(payload: &mut Value, model_surface: 
                 "description": "MCP wrapper metadata only. ACK means the current model context still remembers the referenced open Session message. Repeat ACK ids on subsequent calls while remembered. If omitted later, unresolved ACK-required guidance may be returned again. ACK does not resolve the message."
             }),
         );
+        properties.insert(
+            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD.to_string(),
+            json!({
+                "type": "object",
+                "description": "MCP wrapper metadata only. After one non-todo message in recording_session_id is already handled, resolve it and attach bounded resolution text on this same WebCodex call instead of making a separate resolve call. For requires_ack guidance, include the same message_id in ack_session_message_ids on this request. The target is always the exact recording Session and this object is removed before concrete tool parsing. Do not use it to predict whether the current tool call will succeed; todo completion still uses complete_session_message.",
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "pattern": "^wc_msg_[A-Za-z0-9_]+$"
+                    },
+                    "resolution": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": crate::tool_runtime::sessions::MAX_MESSAGE_RESOLUTION_CHARS
+                    }
+                },
+                "required": ["message_id", "resolution"],
+                "additionalProperties": false
+            }),
+        );
         if matches!(model_surface, ModelSurface::FullOperatorRuntime) {
             properties.insert(
                 crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD
@@ -3122,6 +3142,56 @@ async fn handle_mcp_request_with_lifecycle(
             } else {
                 Vec::new()
             };
+            let session_message_resolution = if stateless_2026 {
+                if let Some(arguments) = params.arguments.as_object_mut() {
+                    arguments.remove(
+                        crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD,
+                    );
+                }
+                match strip_stateless_session_message_resolution(&mut params.arguments) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        if let Some(lc) = lifecycle.as_deref() {
+                            lc.dispatch_failed("invalid_arguments");
+                            lc.dispatch_finished(false, Some(false), "invalid_arguments");
+                        }
+                        if let (Some(slot), Some(timer)) = (
+                            model_ergonomics_out.as_deref_mut(),
+                            pre_kernel_model_ergonomics.take(),
+                        ) {
+                            *slot = Some(
+                                timer
+                                    .finish()
+                                    .record_for_pre_result_failure("invalid_arguments"),
+                            );
+                        }
+                        return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+                    }
+                }
+            } else {
+                None
+            };
+            if session_message_resolution.is_some() && session_id.is_none() {
+                let message = format!(
+                    "field '{}' requires '{}' for the exact target Workflow Session",
+                    crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD,
+                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
+                );
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_failed("invalid_arguments");
+                    lc.dispatch_finished(false, Some(false), "invalid_arguments");
+                }
+                return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+            }
+            if let (Some(arguments), Some(resolution)) =
+                (params.arguments.as_object_mut(), session_message_resolution)
+            {
+                arguments.insert(
+                    crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD
+                        .to_string(),
+                    json!(resolution),
+                );
+            }
             if !ack_session_message_ids.is_empty() {
                 if let Some(arguments) = params.arguments.as_object_mut() {
                     arguments.insert(
@@ -3616,6 +3686,67 @@ fn strip_stateless_ack_session_message_ids(arguments: &mut Value) -> Result<Vec<
         }
     }
     Ok(normalized)
+}
+
+fn strip_stateless_session_message_resolution(
+    arguments: &mut Value,
+) -> Result<Option<crate::tool_runtime::sessions::ToolCallSessionMessageResolution>, String> {
+    let Some(object) = arguments.as_object_mut() else {
+        return Ok(None);
+    };
+    let Some(value) =
+        object.remove(crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD)
+    else {
+        return Ok(None);
+    };
+    let Value::Object(mut fields) = value else {
+        return Err(format!(
+            "field '{}' must be an object with message_id and resolution",
+            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD
+        ));
+    };
+    if fields.len() != 2 || !fields.contains_key("message_id") || !fields.contains_key("resolution")
+    {
+        return Err(format!(
+            "field '{}' accepts exactly message_id and resolution",
+            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD
+        ));
+    }
+    let Some(Value::String(message_id)) = fields.remove("message_id") else {
+        return Err("session_message_resolution.message_id must be a wc_msg_* string".to_string());
+    };
+    let message_id = message_id.trim().to_string();
+    let valid_message_id = message_id.strip_prefix("wc_msg_").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && suffix
+                .as_bytes()
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+    });
+    if !valid_message_id {
+        return Err(
+            "session_message_resolution.message_id must be a valid wc_msg_* id".to_string(),
+        );
+    }
+    let Some(Value::String(resolution)) = fields.remove("resolution") else {
+        return Err("session_message_resolution.resolution must be a string".to_string());
+    };
+    let resolution = resolution.trim().to_string();
+    if resolution.is_empty() {
+        return Err("session_message_resolution.resolution must not be empty".to_string());
+    }
+    if resolution.chars().count() > crate::tool_runtime::sessions::MAX_MESSAGE_RESOLUTION_CHARS {
+        return Err(format!(
+            "session_message_resolution.resolution exceeds {} chars",
+            crate::tool_runtime::sessions::MAX_MESSAGE_RESOLUTION_CHARS
+        ));
+    }
+    Ok(Some(
+        crate::tool_runtime::sessions::ToolCallSessionMessageResolution {
+            message_id,
+            resolution,
+        },
+    ))
 }
 
 fn strip_stateless_ack_session_context_revision(arguments: &mut Value) -> Option<Value> {

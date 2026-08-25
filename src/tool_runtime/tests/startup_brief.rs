@@ -120,6 +120,15 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(message_ack_guidance.contains("grant authority"));
     assert!(message_ack_guidance.contains("gate execution"));
     assert!(message_ack_guidance.contains("missing/stale ACK remains nonblocking"));
+    let message_resolution_guidance = workflow["model_protocol"]["session_message_resolution"]
+        .as_str()
+        .expect("Session message resolution guidance");
+    assert!(message_resolution_guidance.contains("session_message_resolution"));
+    assert!(message_resolution_guidance.contains("next ordinary WebCodex call"));
+    assert!(message_resolution_guidance.contains("recording_session_id"));
+    assert!(message_resolution_guidance.contains("ack_session_message_ids"));
+    assert!(message_resolution_guidance.contains("Do not use it to predict"));
+    assert!(message_resolution_guidance.contains("complete_session_message"));
     let closeout_guidance = workflow["model_protocol"]["normal_closeout"]
         .as_str()
         .expect("normal closeout guidance");

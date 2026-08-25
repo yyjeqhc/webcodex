@@ -193,6 +193,8 @@ fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_too
     assert!(!generic_properties
         .contains_key(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD));
     assert!(!generic_properties
+        .contains_key(crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD));
+    assert!(!generic_properties
         .contains_key(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD));
 }
 
@@ -237,6 +239,70 @@ fn stateless_ack_wrapper_normalizes_and_is_removed_before_concrete_tool_parsing(
                 .collect::<Vec<_>>()
     });
     assert!(strip_stateless_ack_session_message_ids(&mut oversized).is_err());
+}
+
+#[test]
+fn stateless_message_resolution_wrapper_is_validated_and_removed_before_concrete_parsing() {
+    let mut arguments = json!({
+        crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
+            "message_id": "wc_msg_beta",
+            "resolution": "  handled in the current model turn  "
+        }
+    });
+    let resolution = strip_stateless_session_message_resolution(&mut arguments)
+        .unwrap()
+        .expect("message resolution wrapper");
+    assert_eq!(resolution.message_id, "wc_msg_beta");
+    assert_eq!(resolution.resolution, "handled in the current model turn");
+    assert!(arguments
+        .get(crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD)
+        .is_none());
+
+    arguments.as_object_mut().unwrap().insert(
+        crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD
+            .to_string(),
+        json!(resolution),
+    );
+    let recorder =
+        crate::tool_runtime::sessions::ToolCallRecorderMetadata::from_arguments(&arguments);
+    assert_eq!(
+        recorder
+            .session_message_resolution
+            .as_ref()
+            .map(|value| value.message_id.as_str()),
+        Some("wc_msg_beta")
+    );
+    let concrete = crate::tool_runtime::sessions::strip_tool_call_expectation_metadata(arguments);
+    assert!(concrete
+        .get(crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD)
+        .is_none());
+    crate::tool_runtime::ToolCall::from_tool_name("list_tools", concrete)
+        .expect("message resolution wrapper metadata must be gone before concrete parsing");
+
+    for malformed in [
+        json!({
+            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
+                "message_id": "not-a-message-id",
+                "resolution": "handled"
+            }
+        }),
+        json!({
+            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
+                "message_id": "wc_msg_beta",
+                "resolution": "   "
+            }
+        }),
+        json!({
+            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
+                "message_id": "wc_msg_beta",
+                "resolution": "handled",
+                "extra": true
+            }
+        }),
+    ] {
+        let mut malformed = malformed;
+        assert!(strip_stateless_session_message_resolution(&mut malformed).is_err());
+    }
 }
 
 #[test]

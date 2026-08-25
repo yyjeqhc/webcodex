@@ -3534,6 +3534,109 @@ fn session_message_create_list_and_resolve_contract() {
 }
 
 #[test]
+fn wrapper_resolution_requires_ack_rejects_todo_and_replays_idempotently() {
+    let store = SessionStore::default();
+    let session = store.start_session(None, None);
+    let guidance = store
+        .post_message_with_ack(
+            PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                message: "apply the reviewed direction".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+
+    let missing_ack = store.resolve_message_from_wrapper(
+        &session.session_id,
+        &guidance.message_id,
+        "handled".to_string(),
+        false,
+    );
+    assert!(matches!(
+        missing_ack,
+        Err(SessionMessageError::InvalidInput(_))
+    ));
+    let still_open = store
+        .list_messages(
+            &session.session_id,
+            ListSessionMessagesFilter {
+                message_id: Some(guidance.message_id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(still_open[0].status, SessionMessageStatus::Open);
+
+    let resolved = store
+        .resolve_message_from_wrapper(
+            &session.session_id,
+            &guidance.message_id,
+            "handled".to_string(),
+            true,
+        )
+        .unwrap();
+    assert_eq!(resolved.status, SessionMessageStatus::Resolved);
+    assert_eq!(resolved.resolution.as_deref(), Some("handled"));
+    let resolved_at = resolved.resolved_at;
+
+    let replay = store
+        .resolve_message_from_wrapper(
+            &session.session_id,
+            &guidance.message_id,
+            "handled".to_string(),
+            false,
+        )
+        .unwrap();
+    assert_eq!(replay.resolved_at, resolved_at);
+    let conflict = store.resolve_message_from_wrapper(
+        &session.session_id,
+        &guidance.message_id,
+        "different completion".to_string(),
+        true,
+    );
+    assert!(matches!(
+        conflict,
+        Err(SessionMessageError::IdempotencyConflict)
+    ));
+
+    let todo = store
+        .post_message(PostSessionMessageInput {
+            session_id: session.session_id.clone(),
+            kind: SessionMessageKind::Todo,
+            message: "finish the delegated task".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::Normal,
+        })
+        .unwrap();
+    let todo_resolution = store.resolve_message_from_wrapper(
+        &session.session_id,
+        &todo.message_id,
+        "done".to_string(),
+        true,
+    );
+    assert!(matches!(
+        todo_resolution,
+        Err(SessionMessageError::InvalidInput(_))
+    ));
+    let retained_todo = store
+        .list_messages(
+            &session.session_id,
+            ListSessionMessagesFilter {
+                message_id: Some(todo.message_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(retained_todo[0].status, SessionMessageStatus::Open);
+}
+
+#[test]
 fn read_only_guards_block_write_and_shell_classifications() {
     let store = SessionStore::default();
     let normal =

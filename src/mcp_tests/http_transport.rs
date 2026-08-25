@@ -897,6 +897,123 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution() 
     );
     assert!(second_stored[0].first_ack_observed_at.is_some());
 
+    let (status, third_post_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        229,
+        "post_session_message",
+        json!({
+            "session_id": session_id,
+            "kind": "guidance",
+            "priority": "high",
+            "requires_ack": true,
+            "message": "Resolve this without a dedicated resolve tool call."
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{third_post_body}");
+    let third_message_id = stateless_tool_output(&third_post_body)["message_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let resolution_text = "handled through ordinary list_tools wrapper metadata";
+
+    let missing_ack_args = with_mcp_recording_session(
+        json!({
+            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
+                "message_id": third_message_id,
+                "resolution": resolution_text
+            }
+        }),
+        &session_id,
+    );
+    let (status, missing_ack_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        230,
+        "list_tools",
+        missing_ack_args,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{missing_ack_body}");
+    assert_eq!(
+        stateless_tool_output(&missing_ack_body)["error_kind"],
+        "invalid_session_message"
+    );
+    let still_open = runtime
+        .sessions
+        .list_messages(
+            &session_id,
+            crate::tool_runtime::sessions::ListSessionMessagesFilter {
+                message_id: Some(third_message_id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        still_open[0].status,
+        crate::tool_runtime::sessions::SessionMessageStatus::Open
+    );
+
+    let mut piggyback_args = with_mcp_recording_session(
+        json!({
+            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
+                "message_id": third_message_id,
+                "resolution": resolution_text
+            }
+        }),
+        &session_id,
+    );
+    piggyback_args.as_object_mut().unwrap().insert(
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD.to_string(),
+        json!([third_message_id]),
+    );
+    let (status, piggyback_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        231,
+        "list_tools",
+        piggyback_args.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{piggyback_body}");
+    assert_eq!(piggyback_body["result"]["isError"], false);
+    let piggyback_output = stateless_tool_output(&piggyback_body);
+    assert_eq!(
+        piggyback_output["session_attention"]["ack"]["accepted_count"],
+        1
+    );
+    assert!(piggyback_output["session_attention"]["messages"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let piggyback_stored = runtime
+        .sessions
+        .list_messages(
+            &session_id,
+            crate::tool_runtime::sessions::ListSessionMessagesFilter {
+                message_id: Some(third_message_id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        piggyback_stored[0].status,
+        crate::tool_runtime::sessions::SessionMessageStatus::Resolved
+    );
+    assert_eq!(
+        piggyback_stored[0].resolution.as_deref(),
+        Some(resolution_text)
+    );
+
+    let (status, replay_body) =
+        stateless_2026_tool_call(&service, "secret", 232, "list_tools", piggyback_args, None).await;
+    assert_eq!(status, StatusCode::OK, "{replay_body}");
+    assert_eq!(replay_body["result"]["isError"], false);
+
     let audit = serde_json::to_string(
         &runtime
             .sessions
@@ -907,6 +1024,8 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution() 
     .unwrap();
     assert!(!audit.contains("ack_session_message_ids"));
     assert!(!audit.contains("__webcodex_stateless_ack_session_message_ids"));
+    assert!(!audit.contains("__webcodex_stateless_session_message_resolution"));
+    assert!(!audit.contains("handled through ordinary list_tools wrapper metadata"));
 }
 
 #[tokio::test]

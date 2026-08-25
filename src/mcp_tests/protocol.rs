@@ -208,6 +208,21 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
             let description = ack["description"].as_str().unwrap();
             assert!(description.contains("current model context still remembers"));
             assert!(description.contains("ACK does not resolve"));
+            let resolution = &read_files["inputSchema"]["properties"]["session_message_resolution"];
+            assert_eq!(resolution["type"], "object");
+            assert_eq!(
+                resolution["properties"]["message_id"]["pattern"],
+                "^wc_msg_[A-Za-z0-9_]+$"
+            );
+            assert_eq!(resolution["properties"]["resolution"]["minLength"], 1);
+            assert_eq!(
+                resolution["properties"]["resolution"]["maxLength"],
+                crate::tool_runtime::sessions::MAX_MESSAGE_RESOLUTION_CHARS
+            );
+            let resolution_description = resolution["description"].as_str().unwrap();
+            assert!(resolution_description.contains("same WebCodex call"));
+            assert!(resolution_description.contains("recording_session_id"));
+            assert!(resolution_description.contains("complete_session_message"));
             let context_ack =
                 &read_files["inputSchema"]["properties"]["ack_session_context_revision"];
             assert_eq!(context_ack["type"], "integer");
@@ -241,6 +256,13 @@ async fn mcp_legacy_tools_list_omits_2026_only_result_fields() {
                 .iter()
                 .all(|tool| tool["inputSchema"]["properties"]
                     .get("ack_session_message_ids")
+                    .is_none()));
+            assert!(value["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|tool| tool["inputSchema"]["properties"]
+                    .get("session_message_resolution")
                     .is_none()));
             assert!(value["result"]["tools"]
                 .as_array()

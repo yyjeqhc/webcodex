@@ -207,6 +207,20 @@ impl ToolRuntime {
                 &recorder_metadata.ack_session_message_ids,
             )
         });
+        let session_message_resolution = (context.transport == ToolTransport::Mcp)
+            .then(|| recorder_metadata.session_message_resolution.clone())
+            .flatten();
+        if session_message_resolution.is_some() && context.session_id.is_none() {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments {
+                    message: "session_message_resolution requires recording_session_id".to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+            };
+        }
         if collaboration_session_tool(&request.tool_name) {
             if let (Some(recorder_session_id), Some(target_session_id)) = (
                 context.session_id,
@@ -602,6 +616,65 @@ impl ToolRuntime {
                 };
             }
         };
+        if let (Some(session_id), Some(message_resolution)) =
+            (context.session_id, session_message_resolution.as_ref())
+        {
+            let current_request_acknowledged = outer_ack_observation
+                .as_ref()
+                .is_some_and(|ack| ack.accepted_ids.contains(&message_resolution.message_id));
+            if let Err(error) = self.sessions.resolve_message_from_wrapper(
+                session_id,
+                &message_resolution.message_id,
+                message_resolution.resolution.clone(),
+                current_request_acknowledged,
+            ) {
+                let mut result = session_context::session_message_error_result(
+                    session_id,
+                    Some(&message_resolution.message_id),
+                    error,
+                );
+                super::dispatch::decorate_structured_execution_prestart_denial(
+                    &request.tool_name,
+                    &mut result,
+                    "session_message_resolution_failed",
+                );
+                let recording = self.sessions.record_model_facing_tool_call_finished(
+                    session_event,
+                    false,
+                    &result.output,
+                    result.error.as_deref(),
+                    Some("session_message_resolution_failed"),
+                );
+                super::add_session_telemetry_hint(
+                    &mut result,
+                    &self.sessions,
+                    session_id,
+                    recording.as_ref().map(|recorded| recorded.event_id.clone()),
+                );
+                if let Some(recorded) = recording.as_ref() {
+                    if session_context::add_session_context_continuity(&mut result, recorded) {
+                        self.add_session_history_recovery(&mut result, recorded, context.auth)
+                            .await;
+                    }
+                }
+                session_context::add_session_attention_projection(
+                    &mut result,
+                    &self.sessions,
+                    session_id,
+                    outer_ack_observation
+                        .as_ref()
+                        .expect("authorized outer recorder must have ACK observation"),
+                    recorder_ack_requested,
+                );
+                return ToolCallOutcome {
+                    success: false,
+                    result: Some(result),
+                    error_status: None,
+                    project: None,
+                    model_ergonomics: None,
+                };
+            }
+        }
         if let ToolCall::ImportConversationFilesToProject {
             trusted_mcp_host_file_import,
             ..

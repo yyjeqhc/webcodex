@@ -278,7 +278,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.equal(html.includes("runtime-project-" + "select"), false);
   assert.match(html, /runtime-project-list/);
   assert.match(html, /runtime-project-search/);
-  assert.match(html, /Active &amp; Recent Sessions/);
+  assert.match(html, /Working &amp; Recently Updated Sessions/);
   assert.match(html, /runtime-recent-session-list/);
   assert.match(html, /Runner Fleet/);
   assert.match(html, /runtime-runner-list/);
@@ -291,6 +291,13 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.equal(source.includes("innerHTML"), false);
   assert.doesNotMatch(source, /api\("runner"/);
   assert.match(source, /selectRuntimeSessionLocation/);
+  const recentStart = source.indexOf("function renderRecentSessions");
+  const recentEnd = source.indexOf("function selectRecentSession", recentStart);
+  const recentRender = source.slice(recentStart, recentEnd);
+  assert.match(recentRender, /workflowSessionLivenessPresentation\(session\)/);
+  assert.match(recentRender, /attentionLabel\(session\.overview\?\.attention\)/);
+  assert.match(recentRender, /updatedLabel\(session\.updated_at\)/);
+  assert.doesNotMatch(recentRender, /workflowSessionListOverviewFacts|summary-facts|validation/);
   assert.match(source, /applyRunnerFilter\(select\.value\)/);
   assert.match(source, /void fetchOverview\(refreshRuntimeOverview\(state\)\)/);
   assert.match(source, /body\.textContent = String\(message\?\.message \|\| ""\)/);

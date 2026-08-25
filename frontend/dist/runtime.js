@@ -1037,25 +1037,16 @@ function renderRecentSessions(sessions, meta) {
         const liveness = workflowSessionLivenessPresentation(session);
         if (liveness.state === "working")
             appendChip(signals, "RUNNING", "tone-runtime");
-        else if (liveness.state === "attention")
-            appendChip(signals, "ATTENTION", "tone-warn");
         const attention = attentionLabel(session.overview?.attention);
         if (!attention.startsWith("No retained"))
             appendChip(signals, attention, "tone-warn");
         const lifecycle = document.createElement("span");
         lifecycle.className = "muted small";
-        lifecycle.textContent = [session.lifecycle, session.mode, "updated " + updatedLabel(session.updated_at)].filter(Boolean).join(" · ");
+        lifecycle.textContent = [session.lifecycle, liveness.label, "updated " + updatedLabel(session.updated_at)].filter(Boolean).join(" · ");
+        lifecycle.title = liveness.tooltip;
         signals.appendChild(lifecycle);
         row.appendChild(main);
         row.appendChild(signals);
-        const summaryFacts = workflowSessionListOverviewFacts(session.overview);
-        if (summaryFacts.length) {
-            const summary = document.createElement("div");
-            summary.className = "summary-facts";
-            for (const fact of summaryFacts)
-                appendChip(summary, fact.text, "tone-" + fact.tone);
-            row.appendChild(summary);
-        }
         appendPreview(row, "Now", session.current_activity);
         appendPreview(row, "Last", session.last_activity);
         const select = () => selectRecentSession(session);

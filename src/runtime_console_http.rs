@@ -553,14 +553,6 @@ fn merge_console_aggregate(
         .saturating_add(aggregate.attention.open_todos);
 }
 
-fn session_has_attention(session: &WorkflowSessionConsoleListItem) -> bool {
-    let attention = &session.overview.attention;
-    attention.open_guidance > 0
-        || attention.open_questions > 0
-        || attention.open_risks > 0
-        || attention.open_todos > 0
-}
-
 fn compare_recent_sessions(
     left: &RuntimeConsoleRecentSession,
     right: &RuntimeConsoleRecentSession,
@@ -569,12 +561,6 @@ fn compare_recent_sessions(
     let right_working = right.session.running_call || right.session.running_jobs > 0;
     right_working
         .cmp(&left_working)
-        .then_with(|| {
-            session_has_attention(&right.session).cmp(&session_has_attention(&left.session))
-        })
-        .then_with(|| {
-            (right.session.lifecycle == "active").cmp(&(left.session.lifecycle == "active"))
-        })
         .then_with(|| right.session.updated_at.cmp(&left.session.updated_at))
         .then_with(|| left.client_id.cmp(&right.client_id))
         .then_with(|| left.project_id.cmp(&right.project_id))
@@ -1671,10 +1657,9 @@ mod tests {
     }
 
     #[test]
-    fn runtime_home_recent_ranking_is_working_attention_active_recent_then_identity() {
+    fn runtime_home_recent_ranking_is_working_then_updated_at_then_identity() {
         let rows = vec![
-            recent_test_row("z", "agent:z:idle", "idle", 400, false, false, false),
-            recent_test_row("b", "agent:b:active", "active", 300, false, false, true),
+            recent_test_row("z", "agent:z:newest", "newest", 400, false, false, false),
             recent_test_row(
                 "a",
                 "agent:a:attention",
@@ -1682,8 +1667,9 @@ mod tests {
                 200,
                 false,
                 true,
-                false,
+                true,
             ),
+            recent_test_row("b", "agent:b:active", "active", 300, false, false, true),
             recent_test_row("c", "agent:c:working", "working", 100, true, false, false),
             recent_test_row("a", "agent:a:tie", "tie-b", 50, false, false, false),
             recent_test_row("a", "agent:a:tie", "tie-a", 50, false, false, false),
@@ -1695,7 +1681,7 @@ mod tests {
                 .iter()
                 .map(|row| row.session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["working", "attention", "active", "idle", "tie-a", "tie-b"]
+            vec!["working", "newest", "active", "attention", "tie-a", "tie-b"]
         );
         assert!(!ranked.truncated);
         assert!(!ranked.scan_truncated);

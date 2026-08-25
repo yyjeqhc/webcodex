@@ -263,7 +263,9 @@ Use the same `--scope` for every lifecycle command. Example files live in
 
 The repository includes a server-only Dockerfile and Compose deployment that
 runs `webcodex-server` plus the admin CLI; it intentionally excludes the
-Runner, project repositories, and toolchains.
+Runner, project repositories, and toolchains. Official releases publish one
+multi-architecture image for `linux/amd64` and `linux/arm64` at
+`ghcr.io/yyjeqhc/webcodex-server`.
 
 ```bash
 git clone https://github.com/yyjeqhc/webcodex.git
@@ -272,9 +274,31 @@ cd webcodex
 docker compose ps
 ```
 
+The default Compose path pulls `ghcr.io/yyjeqhc/webcodex-server:latest`; it no
+longer compiles Rust on the deployment host. To pin a release or the immutable
+digest recorded in that GitHub Release's `webcodex-server-image.json`, set the
+image before bootstrap, for example:
+
+```bash
+WEBCODEX_SERVER_IMAGE=ghcr.io/yyjeqhc/webcodex-server:v0.3.9 \
+  ./deploy/docker/bootstrap.sh https://webcodex.example.com
+```
+
+For development or before the first public GHCR image has been activated, an
+explicit source build remains available:
+
+```bash
+./deploy/docker/bootstrap.sh https://webcodex.example.com --build-from-source
+# Later source rebuilds use the same explicit override:
+docker compose -f compose.yaml -f compose.build.yaml up -d --build
+```
+
 The default binding is `127.0.0.1:8080`. Put an HTTPS reverse proxy in front,
 then create a pairing code and enroll the machines that hold your
-repositories. The Compose file builds the image from the checked-out source.
+repositories. The first ever GHCR publication creates a private package by
+GitHub default; a maintainer must make that package public once before the
+workflow's anonymous-pull gate can succeed. End users do not need registry
+credentials after that one-time activation.
 
 ## Agent configuration
 

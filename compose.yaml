@@ -2,14 +2,8 @@ name: webcodex
 
 services:
   webcodex:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        WEBCODEX_GIT_COMMIT: ${WEBCODEX_GIT_COMMIT:-}
-        WEBCODEX_GIT_DIRTY: ${WEBCODEX_GIT_DIRTY:-}
-        WEBCODEX_BUILT_AT: ${WEBCODEX_BUILT_AT:-}
-    image: webcodex-server-local:${WEBCODEX_IMAGE_TAG:-latest}
+    image: ${WEBCODEX_SERVER_IMAGE:-ghcr.io/yyjeqhc/webcodex-server:latest}
+    pull_policy: always
     restart: unless-stopped
     environment:
       WEBCODEX_TOKEN: ${WEBCODEX_TOKEN:?set WEBCODEX_TOKEN in .env}

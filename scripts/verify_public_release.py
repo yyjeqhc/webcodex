@@ -22,6 +22,9 @@ REPO = "yyjeqhc/webcodex"
 PACKAGE = "@yyjeqhc/webcodex"
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64")
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
+SERVER_IMAGE = "ghcr.io/yyjeqhc/webcodex-server"
+SERVER_IMAGE_METADATA = "webcodex-server-image.json"
+SERVER_IMAGE_PLATFORMS = ("linux/amd64", "linux/arm64")
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_NPM_TARBALL_BYTES = 16 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 128 * 1024 * 1024
@@ -258,6 +261,42 @@ def parse_sha256sums(text: str, version: str) -> dict[str, str]:
     return result
 
 
+def validate_server_image_metadata(value: dict, version: str) -> dict[str, str]:
+    expected_keys = {
+        "schema_version",
+        "image",
+        "tag",
+        "version",
+        "image_tag",
+        "source_sha",
+        "created_at",
+        "digest",
+        "platforms",
+    }
+    if set(value) != expected_keys or value.get("schema_version") != 1:
+        raise VerificationError("server image metadata has an unexpected schema")
+    if value.get("image") != SERVER_IMAGE or value.get("tag") != f"v{version}" or value.get("version") != version:
+        raise VerificationError("server image metadata does not match the release identity")
+    if value.get("image_tag") != f"v{version.replace('+', '_')}":
+        raise VerificationError("server image metadata has an invalid container version tag")
+    source_sha = value.get("source_sha")
+    if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise VerificationError("server image metadata has an invalid source SHA")
+    created_at = value.get("created_at")
+    if not isinstance(created_at, str) or not created_at:
+        raise VerificationError("server image metadata has an invalid creation time")
+    digest = value.get("digest")
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise VerificationError("server image metadata has an invalid manifest digest")
+    platforms = value.get("platforms")
+    if not isinstance(platforms, dict) or set(platforms) != set(SERVER_IMAGE_PLATFORMS):
+        raise VerificationError("server image metadata does not contain the canonical platforms")
+    for platform, child in platforms.items():
+        if not isinstance(child, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", child):
+            raise VerificationError(f"server image metadata has an invalid child digest for {platform}")
+    return {"source_sha": source_sha, "digest": digest}
+
+
 def validate_github_assets(release: dict, version: str) -> dict[str, dict]:
     if (
         release.get("tag_name") != f"v{version}"
@@ -265,8 +304,9 @@ def validate_github_assets(release: dict, version: str) -> dict[str, dict]:
         or release.get("prerelease") is not False
     ):
         raise VerificationError("GitHub Release is missing, draft/prerelease, or attached to the wrong tag")
-    expected = {canonical_archive_name(version, platform) for platform in PLATFORMS}
-    expected.add("SHA256SUMS")
+    required = {canonical_archive_name(version, platform) for platform in PLATFORMS}
+    required.add("SHA256SUMS")
+    allowed = required | {SERVER_IMAGE_METADATA}
     assets = release.get("assets")
     if not isinstance(assets, list):
         raise VerificationError("GitHub Release assets are missing")
@@ -278,7 +318,8 @@ def validate_github_assets(release: dict, version: str) -> dict[str, dict]:
         if name in result:
             raise VerificationError(f"GitHub Release contains duplicate asset: {name}")
         result[name] = asset
-    if set(result) != expected:
+    names = set(result)
+    if not required.issubset(names) or not names.issubset(allowed):
         raise VerificationError(f"GitHub Release asset set mismatch: {sorted(result)}")
     for name, asset in result.items():
         if asset.get("state") != "uploaded" or not asset.get("browser_download_url"):
@@ -563,8 +604,30 @@ def verify_public_release(version: str, timeout: float) -> None:
             raise VerificationError("SHA256SUMS is not ASCII") from exc
         sums = parse_sha256sums(sums_text, version)
 
+        image_identity = None
+        image_asset = assets.get(SERVER_IMAGE_METADATA)
+        if image_asset is not None:
+            image_bytes = fetch_bytes(image_asset["browser_download_url"], MAX_JSON_BYTES, timeout)
+            image_digest = _asset_digest(image_asset)
+            if image_digest is not None and hashlib.sha256(image_bytes).hexdigest() != image_digest:
+                raise VerificationError("GitHub server-image metadata asset digest mismatch")
+            try:
+                image_metadata = json.loads(image_bytes)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise VerificationError("server image metadata asset is not valid JSON") from exc
+            if not isinstance(image_metadata, dict):
+                raise VerificationError("server image metadata asset must be a JSON object")
+            image_identity = validate_server_image_metadata(image_metadata, version)
+
         print(f"npm={PACKAGE}@{version} manifest=ok")
         print(f"github_release=v{version} assets={len(assets)}")
+        if image_identity is not None:
+            print(
+                f"server_image={SERVER_IMAGE}@{image_identity['digest']} "
+                f"source={image_identity['source_sha']} platforms={','.join(SERVER_IMAGE_PLATFORMS)}"
+            )
+        else:
+            print("server_image=not_recorded_historical_release")
         for platform in PLATFORMS:
             name = canonical_archive_name(version, platform)
             asset = assets[name]

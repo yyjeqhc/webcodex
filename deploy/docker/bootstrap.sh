@@ -2,13 +2,20 @@
 set -eu
 
 usage() {
-    echo "Usage: $0 <public-https-url>" >&2
+    echo "Usage: $0 <public-https-url> [--build-from-source]" >&2
     echo "Example: $0 https://webcodex.example.com" >&2
+    echo "Source build: $0 https://webcodex.example.com --build-from-source" >&2
     exit 2
 }
 
-[ "$#" -eq 1 ] || usage
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage
 PUBLIC_URL=${1%/}
+BUILD_FROM_SOURCE=false
+if [ "$#" -eq 2 ]; then
+    [ "$2" = "--build-from-source" ] || usage
+    BUILD_FROM_SOURCE=true
+fi
+SERVER_IMAGE=${WEBCODEX_SERVER_IMAGE:-ghcr.io/yyjeqhc/webcodex-server:latest}
 
 case "$PUBLIC_URL" in
     https://*) ;;
@@ -41,6 +48,23 @@ if ! docker compose version >/dev/null 2>&1; then
     exit 1
 fi
 
+if [ "$BUILD_FROM_SOURCE" = false ]; then
+    case "$SERVER_IMAGE" in
+        ""|*[!A-Za-z0-9._/:@-]*)
+            echo "invalid WEBCODEX_SERVER_IMAGE: expected a Docker image reference" >&2
+            exit 2
+            ;;
+    esac
+    if ! WEBCODEX_TOKEN=0000000000000000000000000000000000000000000000000000000000000000 \
+        WEBCODEX_PUBLIC_URL="$PUBLIC_URL" \
+        WEBCODEX_SERVER_IMAGE="$SERVER_IMAGE" \
+        docker compose pull webcodex; then
+        echo "could not pull the published WebCodex Server image: $SERVER_IMAGE" >&2
+        echo "If the official image is not published/public yet, retry with --build-from-source." >&2
+        exit 1
+    fi
+fi
+
 if command -v openssl >/dev/null 2>&1; then
     TOKEN=$(openssl rand -hex 32)
 else
@@ -56,26 +80,37 @@ WEBCODEX_HOST_PORT=8080
 RUST_LOG=info
 WEBCODEX_MCP_MODEL_SURFACE=local-coding-v1
 EOF_ENV
+if [ "$BUILD_FROM_SOURCE" = false ]; then
+    printf '%s\n' "WEBCODEX_SERVER_IMAGE=$SERVER_IMAGE" >> .env
+fi
 chmod 600 .env
 
-WEBCODEX_GIT_COMMIT=
-WEBCODEX_GIT_DIRTY=
-if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    WEBCODEX_GIT_COMMIT=$(git rev-parse --short=12 HEAD)
-    if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
-        WEBCODEX_GIT_DIRTY=true
-    else
-        WEBCODEX_GIT_DIRTY=false
+if [ "$BUILD_FROM_SOURCE" = true ]; then
+    WEBCODEX_GIT_COMMIT=
+    WEBCODEX_GIT_DIRTY=
+    if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        WEBCODEX_GIT_COMMIT=$(git rev-parse --short=12 HEAD)
+        if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+            WEBCODEX_GIT_DIRTY=true
+        else
+            WEBCODEX_GIT_DIRTY=false
+        fi
     fi
+    WEBCODEX_BUILT_AT=$(date +%s)
+    export WEBCODEX_GIT_COMMIT WEBCODEX_GIT_DIRTY WEBCODEX_BUILT_AT
+    docker compose -f compose.yaml -f compose.build.yaml up -d --build
+    DEPLOYMENT_SOURCE="local source build"
+else
+    # The image was pulled before .env was created, so startup cannot strand a
+    # fresh bootstrap merely because the registry becomes briefly unavailable.
+    docker compose up -d --no-build --pull never
+    DEPLOYMENT_SOURCE="$SERVER_IMAGE"
 fi
-WEBCODEX_BUILT_AT=$(date +%s)
-export WEBCODEX_GIT_COMMIT WEBCODEX_GIT_DIRTY WEBCODEX_BUILT_AT
-
-docker compose up -d --build
 
 cat <<EOF_DONE
 
 WebCodex server container started.
+Deployment source:       $DEPLOYMENT_SOURCE
 
 Reverse-proxy upstream: http://127.0.0.1:8080
 Public URL:            $PUBLIC_URL

@@ -1,0 +1,509 @@
+name: Release server image
+
+run-name: Release server image ${{ github.event.release.tag_name || inputs.tag }}
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing published immutable release tag (v0.3.8)
+        required: true
+        type: string
+
+# Container publication is deliberately separate from release-build.yml. The
+# candidate workflow remains contents:read only and cannot publish packages.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-server-image-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      image_version: ${{ steps.release.outputs.image_version }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
+      source_short: ${{ steps.release.outputs.source_short }}
+      built_at: ${{ steps.release.outputs.built_at }}
+      created_at: ${{ steps.release.outputs.created_at }}
+      image: ${{ steps.release.outputs.image }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      publish_latest: ${{ steps.release.outputs.publish_latest }}
+    steps:
+      - name: Require reviewed workflow source
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Manual server-image publication must be dispatched from main." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          ref: refs/tags/${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Resolve immutable published release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = release ]; then
+            tag="$EVENT_TAG"
+          else
+            tag="$INPUT_TAG"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+
+          release_json="$RUNNER_TEMP/release.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json"
+          python3 - "$release_json" "$tag" <<'PY'
+          import json
+          import sys
+
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          tag = sys.argv[2]
+          if release.get("tag_name") != tag:
+              raise SystemExit("GitHub Release tag does not match requested tag")
+          if release.get("draft") is not False or not release.get("published_at"):
+              raise SystemExit("server images may be published only for a public GitHub Release")
+          PY
+
+          if [ "$(git cat-file -t "$tag")" != tag ]; then
+            echo "$tag must be an annotated tag." >&2
+            exit 1
+          fi
+          source_sha="$(git rev-list -n 1 "$tag")"
+          if [ "$(git rev-parse HEAD)" != "$source_sha" ]; then
+            echo "Checked-out source does not match $tag." >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "Release image checkout is not clean." >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          # Docker tag names do not allow SemVer '+'. Underscore cannot occur in
+          # SemVer itself, so this mapping remains collision-free for valid releases.
+          image_version="${version//+/_}"
+          package_version="$(python3 -c 'import json; print(json.load(open("npm/webcodex/package.json", encoding="utf-8"))["version"])')"
+          if [ "$package_version" != "$version" ]; then
+            echo "Tag/package version mismatch: tag=$version package=$package_version" >&2
+            exit 1
+          fi
+
+          built_at="$(git for-each-ref --format='%(taggerdate:unix)' "refs/tags/$tag")"
+          created_at="$(git for-each-ref --format='%(taggerdate:iso-strict)' "refs/tags/$tag")"
+          if [[ ! "$built_at" =~ ^[0-9]+$ ]] || [ -z "$created_at" ]; then
+            echo "Could not resolve immutable tagger time for $tag." >&2
+            exit 1
+          fi
+
+          prerelease="$(python3 - "$release_json" <<'PY'
+          import json
+          import sys
+          print(str(bool(json.load(open(sys.argv[1], encoding="utf-8")).get("prerelease"))).lower())
+          PY
+          )"
+          publish_latest=false
+          if [ "$prerelease" = false ]; then
+            latest_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
+            if [ "$latest_tag" = "$tag" ]; then
+              publish_latest=true
+            fi
+          fi
+
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="$REGISTRY/$owner/webcodex-server"
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "image_version=$image_version"
+            echo "source_sha=$source_sha"
+            echo "source_short=${source_sha:0:12}"
+            echo "built_at=$built_at"
+            echo "created_at=$created_at"
+            echo "image=$image"
+            echo "prerelease=$prerelease"
+            echo "publish_latest=$publish_latest"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            architecture: amd64
+            slug: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            architecture: arm64
+            slug: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: refs/tags/${{ needs.resolve.outputs.tag }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push native image by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          outputs: type=image,name=${{ needs.resolve.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            WEBCODEX_GIT_COMMIT=${{ needs.resolve.outputs.source_short }}
+            WEBCODEX_GIT_DIRTY=false
+            WEBCODEX_BUILT_AT=${{ needs.resolve.outputs.built_at }}
+          labels: |
+            org.opencontainers.image.title=WebCodex Server
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.resolve.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.resolve.outputs.version }}
+            org.opencontainers.image.created=${{ needs.resolve.outputs.created_at }}
+          cache-from: type=gha,scope=server-image-${{ matrix.slug }}
+          cache-to: type=gha,mode=max,scope=server-image-${{ matrix.slug }}
+          provenance: false
+          sbom: false
+
+      - name: Verify native runtime image
+        shell: bash
+        env:
+          IMAGE: ${{ needs.resolve.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          EXPECTED_ARCH: ${{ matrix.architecture }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          SOURCE_SHORT: ${{ needs.resolve.outputs.source_short }}
+          BUILT_AT: ${{ needs.resolve.outputs.built_at }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Build did not return a canonical image digest." >&2
+            exit 1
+          fi
+          ref="$IMAGE@$DIGEST"
+          docker pull "$ref" >/dev/null
+
+          actual_arch="$(docker image inspect --format '{{.Architecture}}' "$ref")"
+          test "$actual_arch" = "$EXPECTED_ARCH"
+          test "$(docker image inspect --format '{{.Config.User}}' "$ref")" = "webcodex:webcodex"
+          docker run --rm --entrypoint sh "$ref" -ec '
+            test "$(id -u)" = 10001
+            test "$(id -g)" = 10001
+            test ! -e /usr/local/bin/webcodex-runner
+          '
+
+          expected_server="webcodex-server $VERSION (commit $SOURCE_SHORT, dirty=false, built_at=$BUILT_AT)"
+          expected_cli="webcodex $VERSION (commit $SOURCE_SHORT, dirty=false, built_at=$BUILT_AT)"
+          test "$(docker run --rm "$ref" --version)" = "$expected_server"
+          test "$(docker run --rm --entrypoint /usr/local/bin/webcodex "$ref" --version)" = "$expected_cli"
+
+          name="webcodex-image-smoke-${GITHUB_RUN_ID}-${{ matrix.slug }}"
+          cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run -d --name "$name" \
+            -e WEBCODEX_TOKEN=0000000000000000000000000000000000000000000000000000000000000000 \
+            -e WEBCODEX_PUBLIC_URL=https://webcodex.invalid \
+            "$ref" >/dev/null
+          for _ in $(seq 1 40); do
+            health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$name")"
+            if [ "$health" = healthy ]; then
+              break
+            fi
+            if [ "$health" = unhealthy ] || [ "$health" = missing ]; then
+              echo "Container health check failed: $health" >&2
+              docker logs --tail 80 "$name" >&2 || true
+              exit 1
+            fi
+            sleep 2
+          done
+          health="$(docker inspect --format '{{.State.Health.Status}}' "$name")"
+          if [ "$health" != healthy ]; then
+            echo "Container did not become healthy before the smoke deadline." >&2
+            docker logs --tail 80 "$name" >&2 || true
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/server-image-digests"
+          touch "$RUNNER_TEMP/server-image-digests/${DIGEST#sha256:}"
+
+      - name: Upload native digest marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-image-digest-${{ matrix.slug }}
+          path: ${{ runner.temp }}/server-image-digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: server-image-digest-*
+          path: ${{ runner.temp }}/server-image-digests
+          merge-multiple: true
+
+      - name: Publish immutable multi-arch manifest
+        id: publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.resolve.outputs.image }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          IMAGE_VERSION: ${{ needs.resolve.outputs.image_version }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          CREATED_AT: ${{ needs.resolve.outputs.created_at }}
+          PUBLISH_LATEST: ${{ needs.resolve.outputs.publish_latest }}
+        run: |
+          set -euo pipefail
+          version_ref="$IMAGE:v$IMAGE_VERSION"
+          numeric_ref="$IMAGE:$IMAGE_VERSION"
+          metadata_name=webcodex-server-image.json
+          metadata="$RUNNER_TEMP/$metadata_name"
+          manifest_json="$RUNNER_TEMP/manifest.json"
+          existing_metadata="$RUNNER_TEMP/existing-metadata"
+          mkdir -p "$existing_metadata"
+
+          refs=()
+          shopt -s nullglob
+          markers=("$RUNNER_TEMP"/server-image-digests/*)
+          if [ "${#markers[@]}" -ne 2 ]; then
+            echo "Expected exactly two native image digests, found ${#markers[@]}." >&2
+            exit 1
+          fi
+          for marker in "${markers[@]}"; do
+            child="$(basename "$marker")"
+            if [[ ! "$child" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "Invalid native image digest marker: $child" >&2
+              exit 1
+            fi
+            refs+=("$IMAGE@sha256:$child")
+          done
+
+          if docker buildx imagetools inspect "$version_ref" --format '{{json .Manifest}}' > "$manifest_json" 2>/dev/null; then
+            echo "$version_ref already exists; validating the immutable published image before reconciliation."
+          else
+            if docker buildx imagetools inspect "$numeric_ref" >/dev/null 2>&1; then
+              echo "$numeric_ref exists while canonical $version_ref is missing; refusing to create a conflicting immutable tag." >&2
+              exit 1
+            fi
+            docker buildx imagetools create -t "$version_ref" "${refs[@]}"
+            docker buildx imagetools inspect "$version_ref" --format '{{json .Manifest}}' > "$manifest_json"
+          fi
+
+          python3 - "$manifest_json" "$metadata" "$IMAGE" "$TAG" "$VERSION" "$IMAGE_VERSION" "$SOURCE_SHA" "$CREATED_AT" <<'PY'
+          import json
+          import re
+          import sys
+
+          manifest_path, output_path, image, tag, version, image_version, source_sha, created_at = sys.argv[1:]
+          manifest = json.load(open(manifest_path, encoding="utf-8"))
+          digest = manifest.get("digest")
+          if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+              raise SystemExit("multi-arch manifest is missing a canonical digest")
+          entries = manifest.get("manifests")
+          if not isinstance(entries, list):
+              raise SystemExit("published image is not a multi-arch manifest")
+          platforms = {}
+          for entry in entries:
+              platform = entry.get("platform") if isinstance(entry, dict) else None
+              child = entry.get("digest") if isinstance(entry, dict) else None
+              if not isinstance(platform, dict) or not isinstance(child, str):
+                  raise SystemExit("invalid child manifest entry")
+              key = f"{platform.get('os')}/{platform.get('architecture')}"
+              if key in platforms or not re.fullmatch(r"sha256:[0-9a-f]{64}", child):
+                  raise SystemExit("invalid or duplicate child image digest")
+              platforms[key] = child
+          if set(platforms) != {"linux/amd64", "linux/arm64"}:
+              raise SystemExit(f"unexpected server-image platforms: {sorted(platforms)}")
+          value = {
+              "schema_version": 1,
+              "image": image,
+              "tag": tag,
+              "version": version,
+              "image_tag": f"v{image_version}",
+              "source_sha": source_sha,
+              "created_at": created_at,
+              "digest": digest,
+              "platforms": {key: platforms[key] for key in sorted(platforms)},
+          }
+          with open(output_path, "w", encoding="utf-8", newline="\n") as handle:
+              json.dump(value, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          PY
+          digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["digest"])' "$metadata")"
+
+          # A rerun may encounter an already-published canonical tag after a
+          # transient later-step failure. Reconcile it only when every child
+          # image still proves the expected source/version/platform contract.
+          while read -r platform child; do
+            image_json="$RUNNER_TEMP/child-${platform//\//-}.json"
+            docker buildx imagetools inspect "$IMAGE@$child" --format '{{json .Image}}' > "$image_json"
+            python3 - "$image_json" "$platform" "$SOURCE_SHA" "$VERSION" "$GITHUB_REPOSITORY" <<'PY'
+          import json
+          import sys
+
+          path, platform, source_sha, version, repository = sys.argv[1:]
+          image = json.load(open(path, encoding="utf-8"))
+          expected_os, expected_arch = platform.split("/", 1)
+          if image.get("os") != expected_os or image.get("architecture") != expected_arch:
+              raise SystemExit(f"child image platform mismatch for {platform}")
+          config = image.get("config")
+          if not isinstance(config, dict):
+              raise SystemExit(f"child image config is missing for {platform}")
+          if config.get("User") != "webcodex:webcodex":
+              raise SystemExit(f"child image user is not the non-root WebCodex user for {platform}")
+          if config.get("Entrypoint") != ["/usr/local/bin/webcodex-server"]:
+              raise SystemExit(f"child image entrypoint is unexpected for {platform}")
+          labels = config.get("Labels")
+          expected = {
+              "org.opencontainers.image.source": f"https://github.com/{repository}",
+              "org.opencontainers.image.revision": source_sha,
+              "org.opencontainers.image.version": version,
+          }
+          if not isinstance(labels, dict) or any(labels.get(key) != value for key, value in expected.items()):
+              raise SystemExit(f"child image provenance labels do not match the release for {platform}")
+          PY
+          done < <(python3 - "$metadata" <<'PY'
+          import json
+          import sys
+          value = json.load(open(sys.argv[1], encoding="utf-8"))
+          for platform, child in value["platforms"].items():
+              print(platform, child)
+          PY
+          )
+
+          # The numeric version is an immutable alias of vVERSION. Repair a
+          # missing alias, but never retarget one that already points elsewhere.
+          if numeric_json="$(docker buildx imagetools inspect "$numeric_ref" --format '{{json .Manifest}}' 2>/dev/null)"; then
+            numeric_digest="$(printf '%s' "$numeric_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+            if [ "$numeric_digest" != "$digest" ]; then
+              echo "$numeric_ref already points at a different digest; refusing to move it." >&2
+              exit 1
+            fi
+          else
+            docker buildx imagetools create -t "$numeric_ref" "$version_ref"
+          fi
+
+          # latest is intentionally mutable, but only the current latest stable
+          # GitHub Release may update it. Backfilling an older release never rolls
+          # latest backwards.
+          if [ "$PUBLISH_LATEST" = true ]; then
+            docker buildx imagetools create -t "$IMAGE:latest" "$version_ref"
+          fi
+
+          # The GitHub Release is the durable digest record. Missing metadata can
+          # be repaired after the canonical image is independently reconciled;
+          # existing metadata is immutable and must match byte-for-byte.
+          if gh release download "$TAG" --pattern "$metadata_name" --dir "$existing_metadata" >/dev/null 2>&1; then
+            if ! cmp -s "$metadata" "$existing_metadata/$metadata_name"; then
+              echo "$version_ref metadata differs from the immutable GitHub Release record." >&2
+              exit 1
+            fi
+          else
+            gh release upload "$TAG" "$metadata"
+          fi
+
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Published WebCodex Server image"
+            echo "- image: \`$version_ref\`"
+            echo "- digest: \`$digest\`"
+            echo "- platforms: \`linux/amd64\`, \`linux/arm64\`"
+            echo "- release metadata asset: \`$metadata_name\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-public:
+    needs: [resolve, merge]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Require anonymous GHCR availability
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          tmp="$RUNNER_TEMP/server-image-public"
+          mkdir -p "$tmp"
+          gh release download "$TAG" --pattern webcodex-server-image.json --dir "$tmp"
+          readarray -t values < <(python3 - "$tmp/webcodex-server-image.json" <<'PY'
+          import json
+          import sys
+          value = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(value["image"])
+          print(value["digest"])
+          PY
+          )
+          image="${values[0]}"
+          digest="${values[1]}"
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          docker buildx imagetools inspect "$image@$digest" >/dev/null
+          echo "Anonymous GHCR pull metadata is available for $image@$digest"

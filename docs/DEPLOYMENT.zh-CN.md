@@ -232,7 +232,9 @@ sudo webcodex agent status --scope system --profile workstation
 ## Docker（仅 Server）
 
 仓库提供 server-only Dockerfile 与 Compose 部署，运行 `webcodex-server` 与管理
-CLI；有意不包含 Runner、项目仓库与工具链。
+CLI；有意不包含 Runner、项目仓库与工具链。正式 Release 会向
+`ghcr.io/yyjeqhc/webcodex-server` 发布同时支持 `linux/amd64` 与 `linux/arm64`
+的多架构镜像。
 
 ```bash
 git clone https://github.com/yyjeqhc/webcodex.git
@@ -241,8 +243,27 @@ cd webcodex
 docker compose ps
 ```
 
+默认 Compose 路径直接拉取 `ghcr.io/yyjeqhc/webcodex-server:latest`，不再要求部署
+主机现场编译 Rust。需要固定版本或固定到 GitHub Release 中
+`webcodex-server-image.json` 记录的不可变 digest 时，可以在 bootstrap 前指定镜像，例如：
+
+```bash
+WEBCODEX_SERVER_IMAGE=ghcr.io/yyjeqhc/webcodex-server:v0.3.9 \
+  ./deploy/docker/bootstrap.sh https://webcodex.example.com
+```
+
+开发场景，或首个公开 GHCR 镜像尚未完成启用之前，仍可显式选择源码构建：
+
+```bash
+./deploy/docker/bootstrap.sh https://webcodex.example.com --build-from-source
+# 后续源码重建继续显式带上 override：
+docker compose -f compose.yaml -f compose.build.yaml up -d --build
+```
+
 默认绑定 `127.0.0.1:8080`。在前面配置 HTTPS 反向代理，再创建 pairing code 并
-接入持有仓库的机器。Compose 会从 checkout 源码构建镜像。
+接入持有仓库的机器。GitHub 首次创建 GHCR package 时默认将其设为 private；维护者
+需要一次性把 package visibility 改成 Public，之后 workflow 的匿名拉取 gate 才会
+通过，普通用户无需配置 registry 凭据。
 
 ## Agent 配置
 

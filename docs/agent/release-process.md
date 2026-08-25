@@ -132,12 +132,17 @@ CI binaries without Cargo. After draft assets are uploaded, `verify-draft` compa
 GitHub asset SHA-256 digests and sizes against the retained bytes instead of downloading
 the same ~100 MiB again. The privileged actions themselves—creating the immutable tag,
 making the GitHub Release public, and `npm publish`—remain explicit human-authorized
-steps rather than one opaque command. One well-connected Linux host performs the single
-full public-byte verifier after publication. Do not fan release downloads or rebuilds out
-to per-platform development machines merely to prove that a foreign archive is
-downloadable. Native execution/architecture evidence belongs to the reviewed
-release-build matrix; the public verifier checks the published bytes without executing
-foreign binaries.
+steps rather than one opaque command. Publishing the GitHub Release then authorizes the
+reviewed `release-image.yml` adapter to build the server-only `linux/amd64` +
+`linux/arm64` image from that exact immutable tag, publish/reconcile it in GHCR, and
+attach its immutable digest record to the same Release; `release-build.yml` remains a
+read-only candidate producer with no package-write authority. One well-connected Linux
+host performs the single full public-byte verifier for npm and native Release archives
+after publication, while the image workflow independently requires anonymous GHCR
+availability. Do not fan release downloads or rebuilds out to per-platform development
+machines merely to prove that a foreign archive is downloadable. Native
+execution/architecture evidence belongs to the reviewed release-build matrix; the
+public verifier checks the published bytes without executing foreign binaries.
 
 ---
 

@@ -536,6 +536,34 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("^rb_[0-9a-f]{24}$", workflow)
         self.assertIn("default: manual", workflow)
 
+    def test_server_image_publication_is_separate_and_multi_arch(self) -> None:
+        candidate = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
+        image = Path(".github/workflows/release-image.yml").read_text(encoding="utf-8")
+        self.assertIn("permissions:\n  contents: read\n", candidate)
+        self.assertNotIn("packages: write", candidate)
+        self.assertIn("types: [published]", image)
+        self.assertIn("packages: write", image)
+        self.assertIn("platform: linux/amd64", image)
+        self.assertIn("platform: linux/arm64", image)
+        self.assertIn("runner: ubuntu-24.04-arm", image)
+        self.assertIn("push-by-digest=true", image)
+        self.assertIn("webcodex-server-image.json", image)
+        self.assertIn("Require anonymous GHCR availability", image)
+
+    def test_compose_defaults_to_published_image_with_explicit_source_override(self) -> None:
+        compose = Path("compose.yaml").read_text(encoding="utf-8")
+        source = Path("compose.build.yaml").read_text(encoding="utf-8")
+        bootstrap = Path("deploy/docker/bootstrap.sh").read_text(encoding="utf-8")
+        self.assertIn("ghcr.io/yyjeqhc/webcodex-server:latest", compose)
+        self.assertIn("pull_policy: always", compose)
+        self.assertNotIn("build:\n", compose)
+        self.assertIn("webcodex-server-local", source)
+        self.assertIn("pull_policy: build", source)
+        self.assertIn("build:\n", source)
+        self.assertIn("--build-from-source", bootstrap)
+        self.assertIn("docker compose pull webcodex", bootstrap)
+        self.assertIn("compose.build.yaml up -d --build", bootstrap)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -89,6 +89,57 @@ class ManifestTests(unittest.TestCase):
         with self.assertRaises(verifier.VerificationError):
             verifier.validate_public_manifest(manifest, version)
 
+    def test_server_image_metadata_requires_release_identity_and_two_platforms(self) -> None:
+        version = "0.3.8"
+        metadata = {
+            "schema_version": 1,
+            "image": verifier.SERVER_IMAGE,
+            "tag": f"v{version}",
+            "version": version,
+            "image_tag": f"v{version}",
+            "source_sha": "b" * 40,
+            "created_at": "2026-08-25T05:00:00+00:00",
+            "digest": "sha256:" + "c" * 64,
+            "platforms": {
+                "linux/amd64": "sha256:" + "d" * 64,
+                "linux/arm64": "sha256:" + "e" * 64,
+            },
+        }
+        validated = verifier.validate_server_image_metadata(metadata, version)
+        self.assertEqual(validated["source_sha"], "b" * 40)
+        self.assertEqual(validated["digest"], "sha256:" + "c" * 64)
+        del metadata["platforms"]["linux/arm64"]
+        with self.assertRaises(verifier.VerificationError):
+            verifier.validate_server_image_metadata(metadata, version)
+
+    def test_github_assets_allow_image_metadata_without_breaking_historical_releases(self) -> None:
+        version = "0.3.8"
+        names = [verifier.canonical_archive_name(version, platform) for platform in verifier.PLATFORMS]
+        names.append("SHA256SUMS")
+        release = {
+            "tag_name": f"v{version}",
+            "draft": False,
+            "prerelease": False,
+            "assets": [
+                {"name": name, "state": "uploaded", "browser_download_url": f"https://example.invalid/{name}"}
+                for name in names
+            ],
+        }
+        self.assertEqual(set(verifier.validate_github_assets(release, version)), set(names))
+        release["assets"].append(
+            {
+                "name": verifier.SERVER_IMAGE_METADATA,
+                "state": "uploaded",
+                "browser_download_url": "https://example.invalid/server-image.json",
+            }
+        )
+        self.assertIn(verifier.SERVER_IMAGE_METADATA, verifier.validate_github_assets(release, version))
+        release["assets"].append(
+            {"name": "unexpected.bin", "state": "uploaded", "browser_download_url": "https://example.invalid/x"}
+        )
+        with self.assertRaises(verifier.VerificationError):
+            verifier.validate_github_assets(release, version)
+
     def test_sha256sums_requires_exact_unique_set(self) -> None:
         version = "0.3.8"
         text = "\n".join(

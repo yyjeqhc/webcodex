@@ -95,12 +95,14 @@ pub(crate) use server::{
     ServerStatusOptions,
 };
 pub(crate) use service::{
-    control_service, control_service_for_scope, encode_exec_argument, encode_exec_path_argument,
-    encode_exec_program, encode_unit_path_value, ensure_service_file_parent, install_unit,
-    install_unit_for_scope, query_systemd_service_status_for_scope, query_systemd_status,
-    run_internal_binary, run_logs, run_logs_for_scope, service_unit_name, uninstall_unit,
-    uninstall_unit_for_scope, validate_systemd_identity, ServiceControl, AGENT_SERVICE_UNIT,
-    DEFAULT_LOG_LINES, SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
+    control_server_unit_pair, control_service_for_scope, encode_exec_argument,
+    encode_exec_path_argument, encode_exec_program, encode_unit_path_value,
+    ensure_service_file_parent, install_server_unit_pair, install_unit_for_scope,
+    query_systemd_service_status_for_scope, query_systemd_socket_status, query_systemd_status,
+    run_internal_binary, run_logs, run_logs_for_scope, service_unit_name,
+    uninstall_server_unit_pair, uninstall_unit_for_scope, validate_systemd_identity,
+    ServiceControl, AGENT_SERVICE_UNIT, DEFAULT_LOG_LINES, SERVER_SERVICE_FILE,
+    SERVER_SERVICE_UNIT, SERVER_SOCKET_UNIT,
 };
 pub(crate) use setup::run_setup_single_user;
 pub(crate) use system::{

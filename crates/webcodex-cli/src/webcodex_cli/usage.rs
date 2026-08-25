@@ -268,14 +268,14 @@ pub(crate) fn server_usage() -> &'static str {
     "Usage: webcodex server <COMMAND>\n\n\
 Commands:\n\
   init        Initialize or update Server configuration\n\
-  install     Install, enable, and start the systemd service\n\
+  install     Install, enable, and start the systemd socket/service pair\n\
   run         Run webcodex-server directly in the foreground\n\
-  start       Start the installed service\n\
-  stop        Stop the installed service\n\
-  restart     Restart and verify the installed service\n\
-  status      Check systemd, HTTP reachability, and build revisions\n\
-  logs        Read bounded journal logs or explicitly follow them\n\
-  uninstall   Remove only the systemd unit; requires --confirm\n"
+  start       Start the listener socket, then the Server service\n\
+  stop        Stop socket activation and the Server service\n\
+  restart     Restart only the Server service while the socket stays active\n\
+  status      Check socket/service state, HTTP reachability, and build revisions\n\
+  logs        Read bounded Server service journal logs or explicitly follow them\n\
+  uninstall   Remove only the systemd socket/service pair; requires --confirm\n"
 }
 
 pub(crate) fn server_init_usage() -> &'static str {
@@ -297,17 +297,17 @@ pub(crate) fn server_install_service_usage() -> &'static str {
 Options:\n\
   --env-file PATH             EnvironmentFile= path\n\
   --bin PATH                  webcodex-server path; sibling then absolute PATH by default\n\
-  --service-file PATH         Unit path [default: /etc/systemd/system/webcodex.service]\n\
+  --service-file PATH         Service unit path; sibling .socket is derived [default: /etc/systemd/system/webcodex.service]\n\
   --user USER                 Optional systemd User=\n\
   --group GROUP               Optional systemd Group=\n\
   --working-directory PATH    WorkingDirectory=\n\
-  --overwrite                 Replace an existing unit\n\
-  --no-start                  Enable without starting immediately\n\
+  --overwrite                 Replace an existing managed socket/service pair\n\
+  --no-start                  Enable both units without starting immediately\n\
   --dry-run                   Render only; never call systemctl\n\
   --output -                  Render only; never call systemctl\n\
   --json                      Print machine-readable output\n\
   -h, --help                  Print help and exit\n\n\
-Normal execution runs daemon-reload, enable --now (or enable with --no-start), and verifies state. Tokens are never inlined.\n"
+Normal execution installs both units coherently, runs daemon-reload, enables both, then starts the socket before the service unless --no-start is used. Tokens are never inlined.\n"
 }
 
 pub(crate) fn server_status_usage() -> &'static str {

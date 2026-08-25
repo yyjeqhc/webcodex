@@ -2,14 +2,27 @@
 #[cfg(unix)]
 use super::super::support::*;
 
+#[cfg(unix)]
+fn server_env(tmp: &tempfile::TempDir) -> std::path::PathBuf {
+    let path = tmp.path().join("webcodex.env");
+    std::fs::write(
+        &path,
+        "WEBCODEX_ADDR=127.0.0.1:8080\nWEBCODEX_TOKEN=secret-never-inline\n",
+    )
+    .unwrap();
+    path
+}
+
 /// Unix-only: systemd service unit semantics with Unix absolute-path
 /// rules. On Windows the systemd service feature fails closed.
 #[cfg(unix)]
 #[test]
 fn install_service_generates_expected_unit_without_tokens() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = server_env(&tmp);
     let opts = parse_server_install_service(&args(&[
         "--env-file",
-        "/etc/webcodex/webcodex.env",
+        env_file.to_str().unwrap(),
         "--bin",
         "/usr/local/bin/webcodex-server",
         "--working-directory",
@@ -23,13 +36,18 @@ fn install_service_generates_expected_unit_without_tokens() {
     .unwrap();
     let unit = run_server_install_service(opts).unwrap();
     assert!(unit.contains("[Unit]\nDescription=WebCodex Runtime\n"));
-    assert!(unit.contains("EnvironmentFile=/etc/webcodex/webcodex.env\n"));
+    assert!(unit.contains(&format!("EnvironmentFile={}\n", env_file.display())));
+    assert!(unit.contains("ListenStream=127.0.0.1:8080\n"));
+    assert!(unit.contains("FileDescriptorName=webcodex-http\n"));
+    assert!(unit.contains("Service=webcodex.service\n"));
+    assert!(unit.contains("# /etc/systemd/system/webcodex.socket\n"));
     assert!(unit.contains("ExecStart=\"/usr/local/bin/webcodex-server\"\n"));
     assert!(unit.contains("WorkingDirectory=/var/lib/webcodex\n"));
     assert!(unit.contains("User=webcodex\n"));
     assert!(unit.contains("Group=webcodex\n"));
     assert!(unit.contains("WantedBy=multi-user.target\n"));
     assert!(!unit.contains("WEBCODEX_TOKEN"));
+    assert!(!unit.contains("secret-never-inline"));
     assert!(!unit.contains("wc_boot_"));
 }
 
@@ -95,10 +113,13 @@ fn explicitly_allowed_root_runner_is_visibly_marked() {
 fn install_service_refuses_overwrite_unless_requested() {
     let tmp = tempfile::tempdir().unwrap();
     let service_file = tmp.path().join("webcodex.service");
+    let env_file = server_env(&tmp);
     std::fs::write(&service_file, "old").unwrap();
     let opts = parse_server_install_service(&args(&[
         "--bin",
         "/usr/local/bin/webcodex-server",
+        "--env-file",
+        env_file.to_str().unwrap(),
         "--service-file",
         service_file.to_str().unwrap(),
     ]))
@@ -112,9 +133,13 @@ fn install_service_refuses_overwrite_unless_requested() {
 #[cfg(unix)]
 #[test]
 fn install_service_dry_run_and_output_work_without_systemd() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = server_env(&tmp);
     let dry = parse_server_install_service(&args(&[
         "--bin",
         "/usr/local/bin/webcodex-server",
+        "--env-file",
+        env_file.to_str().unwrap(),
         "--dry-run",
     ]))
     .unwrap();
@@ -125,6 +150,8 @@ fn install_service_dry_run_and_output_work_without_systemd() {
     let out = parse_server_install_service(&args(&[
         "--bin",
         "/usr/local/bin/webcodex-server",
+        "--env-file",
+        env_file.to_str().unwrap(),
         "--output",
         "-",
         "--json",
@@ -132,7 +159,105 @@ fn install_service_dry_run_and_output_work_without_systemd() {
     .unwrap();
     let json: Value = serde_json::from_str(&run_server_install_service(out).unwrap()).unwrap();
     assert_eq!(json["dry_run"], true);
-    assert!(json["unit"].as_str().unwrap().contains("[Service]"));
+    assert!(json["units"]["service"]
+        .as_str()
+        .unwrap()
+        .contains("[Service]"));
+    assert!(json["units"]["socket"]
+        .as_str()
+        .unwrap()
+        .contains("[Socket]"));
+    assert_eq!(json["listen"], "127.0.0.1:8080");
+}
+
+#[cfg(unix)]
+#[test]
+fn server_socket_rendering_uses_env_address_custom_sibling_and_no_start_projection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = tmp.path().join("server.env");
+    std::fs::write(
+        &env_file,
+        "WEBCODEX_ADDR=127.0.0.1:9090\nWEBCODEX_TOKEN=hidden\n",
+    )
+    .unwrap();
+    let service_file = tmp.path().join("custom-webcodex.service");
+    let opts = parse_server_install_service(&args(&[
+        "--env-file",
+        env_file.to_str().unwrap(),
+        "--service-file",
+        service_file.to_str().unwrap(),
+        "--bin",
+        "/usr/local/bin/webcodex-server",
+        "--no-start",
+        "--output",
+        "-",
+        "--json",
+    ]))
+    .unwrap();
+    let json: Value = serde_json::from_str(&run_server_install_service(opts).unwrap()).unwrap();
+    assert_eq!(json["no_start"], true);
+    assert_eq!(json["listen"], "127.0.0.1:9090");
+    assert_eq!(
+        json["socket_file"],
+        service_file
+            .with_extension("socket")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(json["service_unit"], "custom-webcodex.service");
+    assert_eq!(json["socket_unit"], "custom-webcodex.socket");
+    assert!(json["units"]["service"]
+        .as_str()
+        .unwrap()
+        .contains("Requires=custom-webcodex.socket\n"));
+    assert!(json["units"]["socket"]
+        .as_str()
+        .unwrap()
+        .contains("Service=custom-webcodex.service\n"));
+    assert!(!json.to_string().contains("hidden"));
+}
+
+#[cfg(unix)]
+#[test]
+fn server_socket_rendering_fails_closed_on_missing_or_malformed_address() {
+    let tmp = tempfile::tempdir().unwrap();
+    let missing = tmp.path().join("missing.env");
+    let opts = parse_server_install_service(&args(&[
+        "--env-file",
+        missing.to_str().unwrap(),
+        "--bin",
+        "/usr/local/bin/webcodex-server",
+        "--dry-run",
+    ]))
+    .unwrap();
+    let error = run_server_install_service(opts).unwrap_err();
+    assert!(error.contains("does not exist"), "{error}");
+
+    let malformed = tmp.path().join("malformed.env");
+    std::fs::write(&malformed, "WEBCODEX_ADDR=localhost:not-a-port\n").unwrap();
+    let opts = parse_server_install_service(&args(&[
+        "--env-file",
+        malformed.to_str().unwrap(),
+        "--bin",
+        "/usr/local/bin/webcodex-server",
+        "--dry-run",
+    ]))
+    .unwrap();
+    let error = run_server_install_service(opts).unwrap_err();
+    assert!(error.contains("systemd ListenStream"), "{error}");
+
+    let absent_key = tmp.path().join("no-address.env");
+    std::fs::write(&absent_key, "WEBCODEX_TOKEN=hidden\n").unwrap();
+    let opts = parse_server_install_service(&args(&[
+        "--env-file",
+        absent_key.to_str().unwrap(),
+        "--bin",
+        "/usr/local/bin/webcodex-server",
+        "--dry-run",
+    ]))
+    .unwrap();
+    let error = run_server_install_service(opts).unwrap_err();
+    assert!(error.contains("does not define WEBCODEX_ADDR"), "{error}");
 }
 
 /// Unix-only: systemd service unit semantics with Unix absolute-path
@@ -259,9 +384,13 @@ fn agent_install_service_dry_run_and_output_work_without_systemd() {
 #[cfg(unix)]
 #[test]
 fn systemd_unit_rendering_quotes_paths_and_rejects_invalid_fields_in_dry_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = tmp.path().join("env files").join("web\"codex\\main.env");
+    std::fs::create_dir_all(env_file.parent().unwrap()).unwrap();
+    std::fs::write(&env_file, "WEBCODEX_ADDR=127.0.0.1:8080\n").unwrap();
     let server = parse_server_install_service(&args(&[
         "--env-file",
-        "/etc/webcodex/env files/web\"codex\\main.env",
+        env_file.to_str().unwrap(),
         "--bin",
         "/opt/web codex/bin/webcodex-server%p",
         "--working-directory",
@@ -274,7 +403,7 @@ fn systemd_unit_rendering_quotes_paths_and_rejects_invalid_fields_in_dry_run() {
     ]))
     .unwrap();
     let unit = run_server_install_service(server).unwrap();
-    assert!(unit.contains("EnvironmentFile=/etc/webcodex/env\\x20files/web\\x22codex\\x5cmain.env"));
+    assert!(unit.contains("env\\x20files/web\\x22codex\\x5cmain.env"));
     assert!(unit.contains("ExecStart=\"/opt/web codex/bin/webcodex-server%%p\""));
     assert!(unit.contains("WorkingDirectory=/var/lib/web\\x20codex\\x5cwork"));
     assert!(unit.contains("User=web_codex-1.service"));
@@ -350,22 +479,30 @@ fn generated_server_and_agent_units_pass_systemd_analyze_verify() {
     let runner_bin = tmp.path().join("webcodex-runner");
     make_executable(&server_bin);
     make_executable(&runner_bin);
+    let env_file = server_env(&tmp);
 
     let server = parse_server_install_service(&args(&[
         "--bin",
         server_bin.to_str().unwrap(),
         "--env-file",
-        "/etc/webcodex/webcodex.env",
+        env_file.to_str().unwrap(),
         "--working-directory",
         "/var/lib/webcodex",
-        "--dry-run",
+        "--output",
+        "-",
+        "--json",
     ]))
     .unwrap();
-    let server_unit = run_server_install_service(server).unwrap();
-    assert!(server_unit.contains("EnvironmentFile=/etc/webcodex/webcodex.env\n"));
-    assert!(server_unit.contains("WorkingDirectory=/var/lib/webcodex\n"));
-    assert!(server_unit.contains("webcodex-server"));
-    verify_systemd_unit(&server_unit, "webcodex-default.service");
+    let server_json: Value =
+        serde_json::from_str(&run_server_install_service(server).unwrap()).unwrap();
+    let service_unit = server_json["units"]["service"].as_str().unwrap();
+    let socket_unit = server_json["units"]["socket"].as_str().unwrap();
+    assert!(service_unit.contains(&format!("EnvironmentFile={}\n", env_file.display())));
+    assert!(service_unit.contains("WorkingDirectory=/var/lib/webcodex\n"));
+    assert!(service_unit.contains("webcodex-server"));
+    assert!(socket_unit.contains("ListenStream=127.0.0.1:8080\n"));
+    verify_systemd_unit(service_unit, "webcodex-default.service");
+    verify_systemd_unit(socket_unit, "webcodex-default.socket");
 
     let config = tmp.path().join("agent.toml");
     std::fs::write(&config, "server_url = \"http://127.0.0.1\"\n").unwrap();
@@ -401,7 +538,7 @@ fn special_supported_paths_pass_systemd_analyze_verify() {
     let working = tmp.path().join("work space\"slash\\percent%p");
     std::fs::create_dir(&working).unwrap();
     let env_file = tmp.path().join("env space\"slash\\percent%p.env");
-    std::fs::write(&env_file, "WEBCODEX_LISTEN=127.0.0.1:0\n").unwrap();
+    std::fs::write(&env_file, "WEBCODEX_ADDR=127.0.0.1:8080\n").unwrap();
     let config = tmp.path().join("config space\"slash\\percent%p.toml");
     std::fs::write(&config, "server_url = \"http://127.0.0.1\"\n").unwrap();
 

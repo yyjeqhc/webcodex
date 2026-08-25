@@ -1,6 +1,9 @@
 use serde_json::{json, Value};
 
-use crate::tool_runtime::sessions::EXPLORATION_TOOL_NAMES;
+use crate::tool_runtime::sessions::{
+    EXPLORATION_TOOL_NAMES, SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION,
+    SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON,
+};
 use crate::tool_runtime::{RECOVERY_KIND_VALUES, RECOVERY_TOOL_VALUES};
 
 pub(crate) fn schema_type(kind: &str, description: &str) -> Value {
@@ -278,6 +281,21 @@ pub(super) fn session_hint_schema() -> Value {
                 "type": "string",
                 "enum": ["low", "normal", "high"],
                 "description": "Highest priority among counted open messages."
+            },
+            "attention_required": {
+                "type": "boolean",
+                "const": true,
+                "description": "Present only when open high-priority guidance requires model-context acknowledgement."
+            },
+            "attention_reason": {
+                "type": "string",
+                "enum": [SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON],
+                "description": "Stable reason for the strong attention signal; omitted for ordinary counts-only hints."
+            },
+            "attention_instruction": {
+                "type": "string",
+                "enum": [SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION],
+                "description": "Short fixed model-facing instruction; never contains Session message body text."
             },
             "suggested_next_tool": {
                 "type": "string",

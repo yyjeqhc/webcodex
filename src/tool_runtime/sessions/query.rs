@@ -4,7 +4,8 @@ use super::model::{
     SessionMessage, SessionMessageCompletionSummary, SessionMessageError, SessionMessageKind,
     SessionMessagePriority, SessionMessageStatus, SessionMessagesSummary, SessionRecord,
     MAX_MESSAGE_CHARS, MAX_MESSAGE_RESOLUTION_CHARS, MAX_MESSAGE_SUMMARY_CHARS, MAX_MESSAGE_TAGS,
-    MAX_MESSAGE_TAG_CHARS, SUMMARY_MESSAGE_GROUP_LIMIT,
+    MAX_MESSAGE_TAG_CHARS, SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION,
+    SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON, SUMMARY_MESSAGE_GROUP_LIMIT,
 };
 use super::util::bound_chars;
 
@@ -117,6 +118,7 @@ pub(super) fn build_discussion_summary(
 pub(super) fn build_inbox_hint(record: &SessionRecord) -> Option<SessionInboxHint> {
     let mut counts = SessionInboxOpenCounts::default();
     let mut highest_priority = None;
+    let mut high_guidance_requires_ack = false;
 
     for message in record
         .messages
@@ -124,7 +126,11 @@ pub(super) fn build_inbox_hint(record: &SessionRecord) -> Option<SessionInboxHin
         .filter(|message| message.status == SessionMessageStatus::Open)
     {
         match message.kind {
-            SessionMessageKind::Guidance => counts.guidance += 1,
+            SessionMessageKind::Guidance => {
+                counts.guidance += 1;
+                high_guidance_requires_ack |=
+                    message.priority == SessionMessagePriority::High && message.requires_ack;
+            }
             SessionMessageKind::Question => counts.question += 1,
             SessionMessageKind::Todo => counts.todo += 1,
             SessionMessageKind::Risk => counts.risk += 1,
@@ -141,6 +147,11 @@ pub(super) fn build_inbox_hint(record: &SessionRecord) -> Option<SessionInboxHin
         has_open_messages: true,
         open_counts: counts,
         highest_priority: priority,
+        attention_required: high_guidance_requires_ack.then_some(true),
+        attention_reason: high_guidance_requires_ack
+            .then_some(SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON),
+        attention_instruction: high_guidance_requires_ack
+            .then_some(SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION),
         suggested_next_tool: "session_discussion_summary",
     })
 }

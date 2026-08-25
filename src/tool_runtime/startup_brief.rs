@@ -39,7 +39,7 @@ const MAX_ACTION_JSON_BYTES: usize = 384;
 const MAX_INSTRUCTION_EXCERPT_JSON_BYTES: usize = 768;
 
 pub(crate) const BUILTIN_CODING_WORKFLOW_CONTRACT: &str = "webcodex.coding_workflow";
-pub(crate) const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 2;
+pub(crate) const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 3;
 pub(crate) const BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS: usize = 8;
 
 /// Stable model-facing coding/review semantics owned by WebCodex itself.
@@ -56,6 +56,8 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
         "role_selection": "Apply a named role only when the task says so; role guidance creates no Session mode or authority.",
         "model_protocol": {
             "session_context_ack": "Schema has ack_session_context_revision: copy latest returned session_context_revision exactly; never increment/derive. No returned revision: keep ACK. If unavailable/unknown, omit. Missing/stale ACK is nonblocking.",
+            "session_recording": "After work_on_project creates or continues an execution Workflow Session, when a later WebCodex schema exposes recording_session_id, keep passing that execution/recording Session as recording_session_id. It is recorder provenance/context only: a concrete business session_id may target a different Session, and recording_session_id grants no business authority.",
+            "session_message_ack": "When session_attention returns open requires_ack guidance still present in the model context, keep echoing those message ids in ack_session_message_ids on later calls. This ACK is request-scoped model-context proof only: it does not resolve messages, grant authority, or gate execution; missing/stale ACK remains nonblocking.",
             "normal_closeout": "Normal success: finish_coding_task(summary_only=true); full closeout only for unresolved validation/evidence or handoff/debug detail."
         },
         "roles": {

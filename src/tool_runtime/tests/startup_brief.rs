@@ -86,7 +86,7 @@ fn instruction_source<'a>(output: &'a Value, path: &str) -> &'a Value {
 fn assert_builtin_workflow(output: &Value) {
     let workflow = &output["workflow"];
     assert_eq!(workflow["contract"], "webcodex.coding_workflow");
-    assert_eq!(workflow["version"], 2);
+    assert_eq!(workflow["version"], 3);
     assert_eq!(workflow["authority"], "model_guidance_only");
     assert!(workflow["role_selection"]
         .as_str()
@@ -101,6 +101,25 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(ack_guidance.contains("unavailable/unknown"));
     assert!(ack_guidance.contains("omit"));
     assert!(ack_guidance.contains("Missing/stale ACK is nonblocking"));
+    let recording_guidance = workflow["model_protocol"]["session_recording"]
+        .as_str()
+        .expect("Session recording guidance");
+    assert!(recording_guidance.contains("work_on_project creates or continues"));
+    assert!(recording_guidance.contains("recording_session_id"));
+    assert!(recording_guidance.contains("recorder provenance/context only"));
+    assert!(recording_guidance.contains("business session_id may target a different Session"));
+    assert!(recording_guidance.contains("grants no business authority"));
+    let message_ack_guidance = workflow["model_protocol"]["session_message_ack"]
+        .as_str()
+        .expect("Session message ACK guidance");
+    assert!(message_ack_guidance.contains("session_attention"));
+    assert!(message_ack_guidance.contains("requires_ack"));
+    assert!(message_ack_guidance.contains("ack_session_message_ids"));
+    assert!(message_ack_guidance.contains("request-scoped model-context proof only"));
+    assert!(message_ack_guidance.contains("does not resolve messages"));
+    assert!(message_ack_guidance.contains("grant authority"));
+    assert!(message_ack_guidance.contains("gate execution"));
+    assert!(message_ack_guidance.contains("missing/stale ACK remains nonblocking"));
     let closeout_guidance = workflow["model_protocol"]["normal_closeout"]
         .as_str()
         .expect("normal closeout guidance");

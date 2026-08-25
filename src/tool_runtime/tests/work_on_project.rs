@@ -937,6 +937,13 @@ async fn work_on_project_creates_a_new_normal_session_without_binding() {
         result.output["workflow"],
         crate::tool_runtime::startup_brief::builtin_coding_workflow_projection()
     );
+    let model_protocol = &result.output["workflow"]["model_protocol"];
+    assert!(model_protocol["session_recording"]
+        .as_str()
+        .is_some_and(|value| value.contains("recording_session_id")));
+    assert!(model_protocol["session_message_ack"]
+        .as_str()
+        .is_some_and(|value| value.contains("ack_session_message_ids")));
     assert!(
         result.output["workflow"]["roles"]["implementation_owner"]["guidance"]
             .as_array()

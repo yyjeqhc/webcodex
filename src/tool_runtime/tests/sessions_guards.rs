@@ -876,6 +876,15 @@ async fn read_only_session_rejects_write_project_file_before_mutation() {
     assert_eq!(result.output["session_hint"]["has_open_messages"], true);
     assert_eq!(result.output["session_hint"]["open_counts"]["risk"], 1);
     assert_eq!(result.output["session_hint"]["highest_priority"], "high");
+    assert!(result.output["session_hint"]
+        .get("attention_required")
+        .is_none());
+    assert!(result.output["session_hint"]
+        .get("attention_reason")
+        .is_none());
+    assert!(result.output["session_hint"]
+        .get("attention_instruction")
+        .is_none());
     let serialized_hint = serde_json::to_string(&result.output["session_hint"]).unwrap();
     assert!(
         !serialized_hint.contains(message_text),
@@ -1339,5 +1348,28 @@ fn project_tool_schemas_include_optional_session_id() {
             session_hint["properties"]["suggested_next_tool"]["enum"],
             json!(["session_discussion_summary"])
         );
+        assert_eq!(
+            session_hint["properties"]["attention_required"]["const"],
+            true
+        );
+        assert_eq!(
+            session_hint["properties"]["attention_reason"]["enum"],
+            json!(["high_priority_guidance_requires_ack"])
+        );
+        assert_eq!(
+            session_hint["properties"]["attention_instruction"]["enum"],
+            json!(["High-priority Session guidance is pending. Read session_discussion_summary before continuing."])
+        );
+        for optional in [
+            "attention_required",
+            "attention_reason",
+            "attention_instruction",
+        ] {
+            assert!(!session_hint["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == optional));
+        }
     }
 }

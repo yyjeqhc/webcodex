@@ -199,6 +199,14 @@ impl ToolRuntime {
                 };
             }
         }
+        let recorder_ack_requested = !recorder_metadata.ack_session_message_ids.is_empty();
+        let outer_ack_observation = context.session_id.map(|recorder_session_id| {
+            session_context::observe_session_attention_acks(
+                &self.sessions,
+                recorder_session_id,
+                &recorder_metadata.ack_session_message_ids,
+            )
+        });
         if collaboration_session_tool(&request.tool_name) {
             if let (Some(recorder_session_id), Some(target_session_id)) = (
                 context.session_id,
@@ -308,11 +316,14 @@ impl ToolRuntime {
                             .await;
                     }
                 }
-                session_context::add_session_attention(
+                session_context::add_session_attention_projection(
                     &mut result,
                     &self.sessions,
                     session_id,
-                    &recorder_metadata.ack_session_message_ids,
+                    outer_ack_observation
+                        .as_ref()
+                        .expect("authorized outer recorder must have ACK observation"),
+                    recorder_ack_requested,
                 );
                 return ToolCallOutcome {
                     success: false,
@@ -360,11 +371,14 @@ impl ToolRuntime {
                             .await;
                     }
                 }
-                session_context::add_session_attention(
+                session_context::add_session_attention_projection(
                     &mut result,
                     &self.sessions,
                     session_id,
-                    &recorder_metadata.ack_session_message_ids,
+                    outer_ack_observation
+                        .as_ref()
+                        .expect("authorized outer recorder must have ACK observation"),
+                    recorder_ack_requested,
                 );
             }
             return ToolCallOutcome {
@@ -427,11 +441,14 @@ impl ToolRuntime {
                             .await;
                     }
                 }
-                session_context::add_session_attention(
+                session_context::add_session_attention_projection(
                     &mut result,
                     &self.sessions,
                     session_id,
-                    &recorder_metadata.ack_session_message_ids,
+                    outer_ack_observation
+                        .as_ref()
+                        .expect("authorized outer recorder must have ACK observation"),
+                    recorder_ack_requested,
                 );
                 return ToolCallOutcome {
                     success: false,
@@ -479,11 +496,14 @@ impl ToolRuntime {
                             .await;
                     }
                 }
-                session_context::add_session_attention(
+                session_context::add_session_attention_projection(
                     &mut result,
                     &self.sessions,
                     session_id,
-                    &recorder_metadata.ack_session_message_ids,
+                    outer_ack_observation
+                        .as_ref()
+                        .expect("authorized outer recorder must have ACK observation"),
+                    recorder_ack_requested,
                 );
                 return ToolCallOutcome {
                     success: false,
@@ -701,11 +721,14 @@ impl ToolRuntime {
                         .await;
                 }
             }
-            session_context::add_session_attention(
+            session_context::add_session_attention_projection(
                 &mut result,
                 &self.sessions,
                 session_id,
-                &recorder_metadata.ack_session_message_ids,
+                outer_ack_observation
+                    .as_ref()
+                    .expect("authorized outer recorder must have ACK observation"),
+                recorder_ack_requested,
             );
         }
         if defer_batch_model_projection {

@@ -824,6 +824,79 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution() 
         .get("session_attention")
         .is_none());
 
+    let (status, second_post_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        227,
+        "post_session_message",
+        json!({
+            "session_id": session_id,
+            "kind": "guidance",
+            "priority": "high",
+            "requires_ack": true,
+            "message": "ACK this fresh guidance on the resolving request."
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second_post_body}");
+    let second_message_id = stateless_tool_output(&second_post_body)["message_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut resolve_with_ack_args = json!({
+        "session_id": session_id,
+        "message_id": second_message_id,
+        "resolution": "handled with same-request ACK"
+    });
+    resolve_with_ack_args.as_object_mut().unwrap().insert(
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD.to_string(),
+        json!([second_message_id]),
+    );
+    // Collaboration session_id is business input, not an inner recorder. Carry
+    // the same Session explicitly as wrapper recorder provenance so ACK is
+    // observed before the concrete resolve mutation without conflating roles.
+    let resolve_with_ack_args = with_mcp_recording_session(resolve_with_ack_args, &session_id);
+    let (status, resolve_with_ack_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        228,
+        "resolve_session_message",
+        resolve_with_ack_args,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resolve_with_ack_body}");
+    let resolved_with_ack = stateless_tool_output(&resolve_with_ack_body);
+    assert_eq!(resolved_with_ack["message"]["status"], "resolved");
+    assert_eq!(
+        resolved_with_ack["session_attention"]["ack"]["accepted_count"], 1,
+        "{resolve_with_ack_body}"
+    );
+    assert_eq!(
+        resolved_with_ack["session_attention"]["ack"]["ignored_count"],
+        0
+    );
+    assert!(resolved_with_ack["session_attention"]["messages"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let second_stored = runtime
+        .sessions
+        .list_messages(
+            &session_id,
+            crate::tool_runtime::sessions::ListSessionMessagesFilter {
+                message_id: Some(second_message_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        second_stored[0].status,
+        crate::tool_runtime::sessions::SessionMessageStatus::Resolved
+    );
+    assert!(second_stored[0].first_ack_observed_at.is_some());
+
     let audit = serde_json::to_string(
         &runtime
             .sessions

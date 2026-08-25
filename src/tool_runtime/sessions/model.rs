@@ -1187,11 +1187,22 @@ pub(crate) struct SessionInboxOpenCounts {
     pub(crate) risk: usize,
 }
 
+pub(crate) const SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON: &str =
+    "high_priority_guidance_requires_ack";
+pub(crate) const SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION: &str =
+    "High-priority Session guidance is pending. Read session_discussion_summary before continuing.";
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SessionInboxHint {
     pub(crate) has_open_messages: bool,
     pub(crate) open_counts: SessionInboxOpenCounts,
     pub(crate) highest_priority: SessionMessagePriority,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) attention_required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) attention_reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) attention_instruction: Option<&'static str>,
     pub(crate) suggested_next_tool: &'static str,
 }
 

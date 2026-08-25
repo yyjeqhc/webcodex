@@ -602,13 +602,21 @@ impl ToolRuntime {
     }
 }
 
-pub(crate) fn add_session_attention(
-    result: &mut ToolResult,
+pub(crate) fn observe_session_attention_acks(
     sessions: &sessions::SessionStore,
     session_id: &str,
     ack_message_ids: &[String],
+) -> sessions::SessionAckObservation {
+    sessions.observe_message_acks(session_id, ack_message_ids)
+}
+
+pub(crate) fn add_session_attention_projection(
+    result: &mut ToolResult,
+    sessions: &sessions::SessionStore,
+    session_id: &str,
+    ack: &sessions::SessionAckObservation,
+    ack_requested: bool,
 ) {
-    let ack = sessions.observe_message_acks(session_id, ack_message_ids);
     let attention = sessions.ack_required_guidance(session_id, &ack.accepted_ids);
     let unsuppressed_count = attention.messages.len();
     let mut remaining_bytes = SESSION_ATTENTION_MAX_BODY_BYTES;
@@ -632,7 +640,7 @@ pub(crate) fn add_session_attention(
             "message_truncated": truncated,
         }));
     }
-    if attention.total_open_requires_ack == 0 && ack_message_ids.is_empty() {
+    if attention.total_open_requires_ack == 0 && !ack_requested {
         return;
     }
     let omitted_count = unsuppressed_count.saturating_sub(messages.len());
@@ -658,6 +666,23 @@ pub(crate) fn add_session_attention(
         }),
     );
     result.output = Value::Object(output);
+}
+
+#[cfg(test)]
+pub(crate) fn add_session_attention(
+    result: &mut ToolResult,
+    sessions: &sessions::SessionStore,
+    session_id: &str,
+    ack_message_ids: &[String],
+) {
+    let ack = observe_session_attention_acks(sessions, session_id, ack_message_ids);
+    add_session_attention_projection(
+        result,
+        sessions,
+        session_id,
+        &ack,
+        !ack_message_ids.is_empty(),
+    );
 }
 
 fn bound_utf8_bytes(value: &str, max_bytes: usize) -> (String, bool) {

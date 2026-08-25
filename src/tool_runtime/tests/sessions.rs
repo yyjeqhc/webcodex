@@ -238,11 +238,81 @@ async fn session_inbox_hint_reports_open_guidance_without_text() {
     assert_eq!(hint["open_counts"]["risk"], 0);
     assert_eq!(hint["highest_priority"], "high");
     assert_eq!(hint["suggested_next_tool"], "session_discussion_summary");
+    assert!(hint.get("attention_required").is_none());
+    assert!(hint.get("attention_reason").is_none());
+    assert!(hint.get("attention_instruction").is_none());
     let serialized_hint = serde_json::to_string(hint).unwrap();
     assert!(
         !serialized_hint.contains(message_text),
         "session_hint leaked message text: {serialized_hint}"
     );
+}
+
+#[tokio::test]
+async fn high_ack_guidance_hint_is_actionable_and_inner_recorder_projects_attention_body() {
+    let client_id = "inbox-ack-guidance";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("ack guidance hint".to_string()));
+    let message_text = "read this high-priority guidance before continuing";
+    let guidance = runtime
+        .sessions
+        .post_message_with_ack(
+            super::super::sessions::PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                message: message_text.to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+
+    // No outer recording_session_id is supplied here. The existing authorized
+    // concrete Session recorder path must still project model-facing attention.
+    let result = read_agent_file_for_session(
+        &runtime,
+        client_id,
+        project,
+        Some(session.session_id.clone()),
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    let hint = &result.output["session_hint"];
+    assert_eq!(hint["attention_required"], true);
+    assert_eq!(
+        hint["attention_reason"],
+        "high_priority_guidance_requires_ack"
+    );
+    assert_eq!(
+        hint["attention_instruction"],
+        "High-priority Session guidance is pending. Read session_discussion_summary before continuing."
+    );
+    assert_eq!(hint["suggested_next_tool"], "session_discussion_summary");
+    let serialized_hint = serde_json::to_string(hint).unwrap();
+    assert!(!serialized_hint.contains(message_text));
+
+    let attention = &result.output["session_attention"];
+    assert_eq!(attention["requires_ack"], true);
+    assert_eq!(attention["messages"][0]["message_id"], guidance.message_id);
+    assert_eq!(attention["messages"][0]["message"], message_text);
+    assert_eq!(attention["ack"]["accepted_count"], 0);
+    assert_eq!(attention["ack"]["ignored_count"], 0);
 }
 
 #[tokio::test]
@@ -313,6 +383,9 @@ async fn session_inbox_hint_counts_question_todo_and_risk() {
     assert_eq!(hint["open_counts"]["risk"], 1);
     assert_eq!(hint["highest_priority"], "normal");
     assert_eq!(hint["suggested_next_tool"], "session_discussion_summary");
+    assert!(hint.get("attention_required").is_none());
+    assert!(hint.get("attention_reason").is_none());
+    assert!(hint.get("attention_instruction").is_none());
 }
 
 #[tokio::test]

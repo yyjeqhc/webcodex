@@ -331,6 +331,124 @@ async fn request_scoped_ack_suppresses_only_current_response_and_records_first_o
     assert!(resolved.output.get("session_attention").is_none());
 }
 
+#[tokio::test]
+async fn outer_recorder_attention_never_projects_cross_session_business_target_attention() {
+    let runtime = test_runtime();
+    let auth = auth_context(None, true);
+    let recorder = start_authorized_unscoped_session(&runtime, "attention recorder", &auth);
+    let target = start_authorized_unscoped_session(&runtime, "business target", &auth);
+    let recorder_guidance = runtime
+        .sessions
+        .post_message_with_ack(
+            PostSessionMessageInput {
+                session_id: recorder.session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                message: "recorder guidance".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+    let target_guidance = runtime
+        .sessions
+        .post_message_with_ack(
+            PostSessionMessageInput {
+                session_id: target.session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                message: "target guidance".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+
+    let result = call_with_recorder(
+        &runtime,
+        "list_session_messages",
+        json!({"session_id": target.session_id}),
+        Some(&recorder.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    let attention_ids: Vec<&str> = result.output["session_attention"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|message| message["message_id"].as_str())
+        .collect();
+    assert_eq!(attention_ids, vec![recorder_guidance.message_id.as_str()]);
+    assert!(!attention_ids.contains(&target_guidance.message_id.as_str()));
+}
+
+#[tokio::test]
+async fn ack_and_resolve_same_outer_request_observes_ack_before_business_mutation() {
+    let runtime = test_runtime();
+    let auth = auth_context(None, true);
+    let session = start_authorized_unscoped_session(&runtime, "ack resolve", &auth);
+    let guidance = runtime
+        .sessions
+        .post_message_with_ack(
+            PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                message: "ack before resolving".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+
+    let result = call_with_recorder(
+        &runtime,
+        "resolve_session_message",
+        json!({
+            "session_id": session.session_id,
+            "message_id": guidance.message_id,
+            "resolution": "handled",
+            sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: [guidance.message_id]
+        }),
+        Some(&session.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["message"]["status"], "resolved");
+    assert_eq!(result.output["session_attention"]["requires_ack"], false);
+    assert_eq!(
+        result.output["session_attention"]["ack"]["accepted_count"],
+        1
+    );
+    assert_eq!(
+        result.output["session_attention"]["ack"]["ignored_count"],
+        0
+    );
+    assert!(result.output["session_attention"]["messages"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let stored = runtime
+        .sessions
+        .list_messages(
+            &session.session_id,
+            sessions::ListSessionMessagesFilter {
+                message_id: Some(guidance.message_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(stored[0].status, sessions::SessionMessageStatus::Resolved);
+    assert!(stored[0].first_ack_observed_at.is_some());
+}
+
 #[test]
 fn urgent_guidance_attention_is_bounded_safe_and_also_decorates_failure_results() {
     let runtime = test_runtime();

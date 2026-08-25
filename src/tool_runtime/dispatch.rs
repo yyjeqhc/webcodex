@@ -727,6 +727,8 @@ impl ToolRuntime {
         error_kind: Option<&str>,
         auth: Option<&AuthContext>,
         model_facing: bool,
+        ack_observation: Option<&sessions::SessionAckObservation>,
+        ack_requested: bool,
     ) {
         let success = result.success;
         let error = result.error.clone();
@@ -751,6 +753,15 @@ impl ToolRuntime {
                     self.add_session_history_recovery(result, recorded, auth)
                         .await;
                 }
+            }
+            if let Some(ack) = ack_observation {
+                session_context::add_session_attention_projection(
+                    result,
+                    &self.sessions,
+                    session_id,
+                    ack,
+                    ack_requested,
+                );
             }
         } else {
             let event_id = self.sessions.record_tool_call_finished(
@@ -856,6 +867,19 @@ impl ToolRuntime {
                 return result;
             }
         }
+        let inner_ack_requested =
+            inner_model_facing_recording && !recorder_metadata.ack_session_message_ids.is_empty();
+        let inner_ack_observation = if inner_model_facing_recording {
+            session_id.as_deref().map(|session_id| {
+                session_context::observe_session_attention_acks(
+                    &self.sessions,
+                    session_id,
+                    &recorder_metadata.ack_session_message_ids,
+                )
+            })
+        } else {
+            None
+        };
         let execution_sandbox = inherited_sandbox.or_else(|| {
             session_id
                 .as_deref()
@@ -908,6 +932,8 @@ impl ToolRuntime {
                     Some(session_context::SESSION_PROJECT_MISMATCH_KIND),
                     auth,
                     inner_model_facing_recording,
+                    inner_ack_observation.as_ref(),
+                    inner_ack_requested,
                 )
                 .await;
                 return result;
@@ -967,6 +993,8 @@ impl ToolRuntime {
                     Some("tool_disabled"),
                     auth,
                     inner_model_facing_recording,
+                    inner_ack_observation.as_ref(),
+                    inner_ack_requested,
                 )
                 .await;
             }
@@ -1004,6 +1032,8 @@ impl ToolRuntime {
                     Some(error_kind.as_str()),
                     auth,
                     inner_model_facing_recording,
+                    inner_ack_observation.as_ref(),
+                    inner_ack_requested,
                 )
                 .await;
                 return result;
@@ -1031,6 +1061,8 @@ impl ToolRuntime {
                     Some("session_guard_denied"),
                     auth,
                     inner_model_facing_recording,
+                    inner_ack_observation.as_ref(),
+                    inner_ack_requested,
                 )
                 .await;
                 return result;
@@ -1071,6 +1103,8 @@ impl ToolRuntime {
                     None,
                     auth,
                     inner_model_facing_recording,
+                    inner_ack_observation.as_ref(),
+                    inner_ack_requested,
                 )
                 .await;
             }
@@ -1112,6 +1146,8 @@ impl ToolRuntime {
                         None,
                         auth,
                         inner_model_facing_recording,
+                        inner_ack_observation.as_ref(),
+                        inner_ack_requested,
                     )
                     .await;
                 }
@@ -1160,6 +1196,8 @@ impl ToolRuntime {
                 None,
                 auth,
                 inner_model_facing_recording,
+                inner_ack_observation.as_ref(),
+                inner_ack_requested,
             )
             .await;
         }

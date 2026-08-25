@@ -37,6 +37,7 @@ mod project_entry;
 mod projects;
 mod runtime_console_http;
 mod runtime_http;
+mod server_listener;
 mod shell_client;
 mod startup;
 mod task_cli;
@@ -144,6 +145,9 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let config = Config::from_env();
+    let (acceptor, listener_mode, listener_addr) = server_listener::server_acceptor(&config.addr)
+        .await
+        .map_err(std::io::Error::other)?;
     let console_asset_source = Arc::new(
         console_web::ConsoleAssetSource::from_env(&config.addr).map_err(std::io::Error::other)?,
     );
@@ -163,7 +167,12 @@ only for local/trusted-network demos."
     );
     tracing::info!("Data directory: {:?}", config.data_dir);
     let addr = config.addr.clone();
-    tracing::info!("Listening on: {}", addr);
+    tracing::info!(
+        "Listening on: {} (actual {}, mode {:?})",
+        addr,
+        listener_addr,
+        listener_mode
+    );
     tracing::info!("Console assets: {}", console_asset_source.mode_label());
     if let Some(directory) = console_asset_source.directory() {
         tracing::info!("Console assets directory: {}", directory.display());
@@ -481,7 +490,6 @@ only for local/trusted-network demos."
             .push(Router::with_path("session").post(audit_http::audit_session))
             .push(Router::with_path("stats").post(audit_http::audit_stats)),
     );
-    let acceptor = TcpListener::new(addr.clone()).bind().await;
     tracing::info!("Server started successfully!");
     let port = addr.split(':').next_back().unwrap_or("8080");
     let base = format!("http://localhost:{}", port);

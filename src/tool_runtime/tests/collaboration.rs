@@ -177,6 +177,12 @@ async fn request_scoped_ack_suppresses_only_current_response_and_records_first_o
         first.output["session_attention"]["messages"][0]["message"],
         "Keep the compatibility fence intact."
     );
+    assert!(first.output["session_hint"]
+        .get("attention_required")
+        .is_none());
+    assert!(first.output["session_hint"]
+        .get("attention_instruction")
+        .is_none());
 
     let acknowledged = call_with_recorder(
         &runtime,
@@ -198,6 +204,12 @@ async fn request_scoped_ack_suppresses_only_current_response_and_records_first_o
         .as_array()
         .unwrap()
         .is_empty());
+    assert!(acknowledged.output["session_hint"]
+        .get("attention_required")
+        .is_none());
+    assert!(acknowledged.output["session_hint"]
+        .get("attention_instruction")
+        .is_none());
     let stored = runtime
         .sessions
         .list_messages(
@@ -475,6 +487,13 @@ fn urgent_guidance_attention_is_bounded_safe_and_also_decorates_failure_results(
         "synthetic failure",
         json!({"error_kind": "synthetic"}),
     );
+    super::super::add_session_telemetry_hint(
+        &mut failed,
+        &runtime.sessions,
+        &session.session_id,
+        Some("evt_attention_bounds".to_string()),
+    );
+    assert_eq!(failed.output["session_hint"]["attention_required"], true);
     super::super::session_context::add_session_attention(
         &mut failed,
         &runtime.sessions,
@@ -488,6 +507,11 @@ fn urgent_guidance_attention_is_bounded_safe_and_also_decorates_failure_results(
     assert_eq!(attention["messages"].as_array().unwrap().len(), 2);
     assert_eq!(attention["omitted_count"], 3);
     assert_eq!(attention["truncated"], true);
+    assert_eq!(failed.output["session_hint"]["attention_required"], true);
+    assert_eq!(
+        failed.output["session_hint"]["attention_reason"],
+        "high_priority_guidance_requires_ack"
+    );
     let body_bytes: usize = attention["messages"]
         .as_array()
         .unwrap()

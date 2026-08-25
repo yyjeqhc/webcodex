@@ -285,17 +285,17 @@ pub(super) fn session_hint_schema() -> Value {
             "attention_required": {
                 "type": "boolean",
                 "const": true,
-                "description": "Present only when open high-priority guidance requires model-context acknowledgement."
+                "description": "Counts-only fallback marker for open high-priority guidance requiring model-context acknowledgement; may be omitted when the same response already fully projects or ACK-suppresses the urgent guidance set."
             },
             "attention_reason": {
                 "type": "string",
                 "enum": [SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON],
-                "description": "Stable reason for the strong attention signal; omitted for ordinary counts-only hints."
+                "description": "Stable reason for the strong counts-only attention fallback; omitted for ordinary hints and when the same response already fully covers the urgent guidance set."
             },
             "attention_instruction": {
                 "type": "string",
                 "enum": [SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION],
-                "description": "Short fixed model-facing instruction; never contains Session message body text."
+                "description": "Short fixed counts-only fallback instruction; never contains Session message body text and may be omitted when session_attention already fully covers the urgent guidance set."
             },
             "suggested_next_tool": {
                 "type": "string",

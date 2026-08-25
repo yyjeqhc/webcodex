@@ -385,6 +385,10 @@ pub(crate) fn add_session_telemetry_hint(
     if let Some(event_id) = event_id {
         output.insert("session_event_id".to_string(), Value::String(event_id));
     }
+    // This decorator is authoritative for `session_id`. A nested business
+    // recorder may already have decorated the result; do not let its inbox hint
+    // survive when an outer model-facing recorder has no current hint of its own.
+    output.remove("session_hint");
     if let Some(hint) = sessions.inbox_hint(session_id) {
         output.insert(
             "session_hint".to_string(),
@@ -621,6 +625,7 @@ pub(crate) fn add_session_attention_projection(
     let unsuppressed_count = attention.messages.len();
     let mut remaining_bytes = SESSION_ATTENTION_MAX_BODY_BYTES;
     let mut messages = Vec::new();
+    let mut body_truncated = false;
     for message in attention
         .messages
         .into_iter()
@@ -630,6 +635,7 @@ pub(crate) fn add_session_attention_projection(
             break;
         }
         let (body, truncated) = bound_utf8_bytes(&message.message, remaining_bytes);
+        body_truncated |= truncated;
         remaining_bytes = remaining_bytes.saturating_sub(body.len());
         messages.push(json!({
             "message_id": message.message_id,
@@ -652,6 +658,20 @@ pub(crate) fn add_session_attention_projection(
             map
         }
     };
+    // Strong hint fields are a counts-only fallback. Once this response has
+    // fully conveyed every unacknowledged urgent body (or the request ACK has
+    // suppressed it), keep only the ordinary inbox counts/tool suggestion.
+    // Preserve the strong fallback when any urgent body is omitted or truncated.
+    if omitted_count == 0 && !body_truncated {
+        if let Some(hint) = output
+            .get_mut("session_hint")
+            .and_then(Value::as_object_mut)
+        {
+            hint.remove("attention_required");
+            hint.remove("attention_reason");
+            hint.remove("attention_instruction");
+        }
+    }
     output.insert(
         "session_attention".to_string(),
         json!({

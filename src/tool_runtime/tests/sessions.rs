@@ -282,6 +282,18 @@ async fn high_ack_guidance_hint_is_actionable_and_inner_recorder_projects_attent
         )
         .unwrap();
 
+    let raw_hint =
+        serde_json::to_value(runtime.sessions.inbox_hint(&session.session_id).unwrap()).unwrap();
+    assert_eq!(raw_hint["attention_required"], true);
+    assert_eq!(
+        raw_hint["attention_reason"],
+        "high_priority_guidance_requires_ack"
+    );
+    assert_eq!(
+        raw_hint["attention_instruction"],
+        "High-priority Session guidance is pending. Read session_discussion_summary before continuing."
+    );
+
     // No outer recording_session_id is supplied here. The existing authorized
     // concrete Session recorder path must still project model-facing attention.
     let result = read_agent_file_for_session(
@@ -294,16 +306,10 @@ async fn high_ack_guidance_hint_is_actionable_and_inner_recorder_projects_attent
 
     assert!(result.success, "{:?}", result.error);
     let hint = &result.output["session_hint"];
-    assert_eq!(hint["attention_required"], true);
-    assert_eq!(
-        hint["attention_reason"],
-        "high_priority_guidance_requires_ack"
-    );
-    assert_eq!(
-        hint["attention_instruction"],
-        "High-priority Session guidance is pending. Read session_discussion_summary before continuing."
-    );
     assert_eq!(hint["suggested_next_tool"], "session_discussion_summary");
+    assert!(hint.get("attention_required").is_none());
+    assert!(hint.get("attention_reason").is_none());
+    assert!(hint.get("attention_instruction").is_none());
     let serialized_hint = serde_json::to_string(hint).unwrap();
     assert!(!serialized_hint.contains(message_text));
 
@@ -313,6 +319,48 @@ async fn high_ack_guidance_hint_is_actionable_and_inner_recorder_projects_attent
     assert_eq!(attention["messages"][0]["message"], message_text);
     assert_eq!(attention["ack"]["accepted_count"], 0);
     assert_eq!(attention["ack"]["ignored_count"], 0);
+}
+
+#[test]
+fn outer_session_telemetry_hint_clears_stale_inner_recorder_hint() {
+    let runtime = test_runtime();
+    let inner = runtime
+        .sessions
+        .start_session(None, Some("inner hint".to_string()));
+    let outer = runtime
+        .sessions
+        .start_session(None, Some("outer recorder".to_string()));
+    runtime
+        .sessions
+        .post_message_with_ack(
+            super::super::sessions::PostSessionMessageInput {
+                session_id: inner.session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                message: "inner urgent guidance".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+
+    let mut result = ToolResult::ok(serde_json::json!({}));
+    super::super::add_session_telemetry_hint(
+        &mut result,
+        &runtime.sessions,
+        &inner.session_id,
+        Some("evt_inner".to_string()),
+    );
+    assert_eq!(result.output["session_hint"]["attention_required"], true);
+
+    super::super::add_session_telemetry_hint(
+        &mut result,
+        &runtime.sessions,
+        &outer.session_id,
+        Some("evt_outer".to_string()),
+    );
+    assert!(result.output.get("session_hint").is_none());
 }
 
 #[tokio::test]

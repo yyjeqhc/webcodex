@@ -1015,6 +1015,27 @@ pub(crate) enum SessionMessageStatus {
     Resolved,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SessionMessageClosureKind {
+    Withdrawn,
+    Superseded,
+}
+
+fn deserialize_optional_session_message_closure_kind<'de, D>(
+    deserializer: D,
+) -> Result<Option<SessionMessageClosureKind>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(match value.as_ref().and_then(Value::as_str) {
+        Some("withdrawn") => Some(SessionMessageClosureKind::Withdrawn),
+        Some("superseded") => Some(SessionMessageClosureKind::Superseded),
+        _ => None,
+    })
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionMessagePriority {
@@ -1043,6 +1064,16 @@ pub(crate) struct SessionMessage {
     pub(crate) author_session_id: Option<String>,
     pub(crate) resolved_at: Option<i64>,
     pub(crate) resolution: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_session_message_closure_kind"
+    )]
+    pub(crate) closure_kind: Option<SessionMessageClosureKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) superseded_by_message_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) supersedes_message_id: Option<String>,
     #[serde(default)]
     pub(crate) resolved_by_message_id: Option<String>,
     #[serde(default)]
@@ -1088,6 +1119,26 @@ pub(crate) struct CompleteSessionMessageInput {
 pub(crate) struct CompleteSessionMessageOutcome {
     pub(crate) todo: SessionMessage,
     pub(crate) answer: SessionMessage,
+    pub(crate) replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct WithdrawSessionMessageOutcome {
+    pub(crate) message: SessionMessage,
+    pub(crate) replayed: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ReplaceSessionMessageInput {
+    pub(crate) session_id: String,
+    pub(crate) message_id: String,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ReplaceSessionMessageOutcome {
+    pub(crate) original: SessionMessage,
+    pub(crate) replacement: SessionMessage,
     pub(crate) replayed: bool,
 }
 
@@ -1210,6 +1261,7 @@ pub(crate) struct SessionInboxHint {
 pub(crate) enum SessionMessageError {
     UnknownSession,
     UnknownMessage,
+    MessageNotOpen,
     NotTodo,
     IdempotencyConflict,
     AlreadyCompleted {

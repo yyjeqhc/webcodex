@@ -668,6 +668,18 @@ pub(super) fn sanitize_persisted_event(
     Some(event)
 }
 
+fn is_valid_persisted_message_id(message_id: &str) -> bool {
+    message_id
+        .strip_prefix(MESSAGE_ID_PREFIX)
+        .is_some_and(|suffix| {
+            !suffix.is_empty()
+                && suffix
+                    .as_bytes()
+                    .iter()
+                    .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        })
+}
+
 pub(super) fn sanitize_persisted_message(
     mut message: SessionMessage,
     session_id: &str,
@@ -688,11 +700,7 @@ pub(super) fn sanitize_persisted_message(
         .filter(|value| *value > 0 && message.requires_ack);
     message.reply_to = message.reply_to.and_then(|reply_to| {
         let reply_to = reply_to.trim().to_string();
-        if reply_to.starts_with(MESSAGE_ID_PREFIX) {
-            Some(reply_to)
-        } else {
-            None
-        }
+        reply_to.starts_with(MESSAGE_ID_PREFIX).then_some(reply_to)
     });
     message.author_session_id = message.author_session_id.and_then(|author_session_id| {
         let author_session_id = author_session_id.trim().to_string();
@@ -704,6 +712,34 @@ pub(super) fn sanitize_persisted_message(
             .starts_with(MESSAGE_ID_PREFIX)
             .then_some(message_id)
     });
+    message.superseded_by_message_id = message.superseded_by_message_id.and_then(|message_id| {
+        let message_id = message_id.trim().to_string();
+        is_valid_persisted_message_id(&message_id).then_some(message_id)
+    });
+    message.supersedes_message_id = message.supersedes_message_id.and_then(|message_id| {
+        let message_id = message_id.trim().to_string();
+        is_valid_persisted_message_id(&message_id).then_some(message_id)
+    });
+    if message.status != super::model::SessionMessageStatus::Resolved {
+        message.closure_kind = None;
+        message.superseded_by_message_id = None;
+    } else {
+        match message.closure_kind {
+            Some(super::model::SessionMessageClosureKind::Withdrawn) => {
+                message.superseded_by_message_id = None;
+            }
+            Some(super::model::SessionMessageClosureKind::Superseded) => {
+                // A missing/malformed link is retained as a fail-closed historical
+                // supersede marker, but can never authorize replacement replay.
+            }
+            None => {
+                // A link without its machine-readable closure kind is not replay
+                // authority. Cross-link targets themselves may legitimately have
+                // been evicted, so no unbounded repair is attempted here.
+                message.superseded_by_message_id = None;
+            }
+        }
+    }
     message.completion_id = message.completion_id.and_then(|completion_id| {
         let completion_id = completion_id.trim().to_ascii_lowercase();
         if is_valid_completion_id(&completion_id) {

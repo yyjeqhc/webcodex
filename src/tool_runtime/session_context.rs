@@ -234,6 +234,16 @@ pub(crate) fn session_message_error_result(
                 "message_id": message_id,
             }),
         ),
+        sessions::SessionMessageError::MessageNotOpen => ToolResult::err_with_output(
+            "session_message_not_open",
+            json!({
+                "error_kind": "session_message_not_open",
+                "session_id": session_id,
+                "message_id": message_id,
+                "state_changed": false,
+            }),
+        )
+        .with_recovery(RecoveryKind::NoAction, None),
         sessions::SessionMessageError::NotTodo => ToolResult::err_with_output(
             "session_message_not_todo",
             json!({

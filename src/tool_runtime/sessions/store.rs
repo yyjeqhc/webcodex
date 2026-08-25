@@ -30,16 +30,18 @@ use super::model::{
     DurableCurrentBinding, PersistedCurrentBinding, PersistedCurrentBindings,
     PersistedSessionLedger, PersistedSessionRecord, PersistedSessionSnapshot,
     PersistentShellEventEvidence, PostSessionMessageInput, RecordedModelFacingToolCall,
-    SessionCloseError, SessionCloseOutcome, SessionContextRevisionAck, SessionCounts,
-    SessionCreateOptions, SessionEvent, SessionExecutionContext,
-    SessionExecutionContextUpdateError, SessionExecutionContextUpdateOutcome, SessionGuardDenial,
-    SessionGuards, SessionLifecycle, SessionLifecycleDenial, SessionMessage, SessionMessageError,
+    ReplaceSessionMessageInput, ReplaceSessionMessageOutcome, SessionCloseError,
+    SessionCloseOutcome, SessionContextRevisionAck, SessionCounts, SessionCreateOptions,
+    SessionEvent, SessionExecutionContext, SessionExecutionContextUpdateError,
+    SessionExecutionContextUpdateOutcome, SessionGuardDenial, SessionGuards, SessionLifecycle,
+    SessionLifecycleDenial, SessionMessage, SessionMessageClosureKind, SessionMessageError,
     SessionMessageStatus, SessionRecord, SessionStoreStatus, SessionSummary, SessionTransport,
     StoredSession, ToolCallRecorderMetadata, ToolCallStart, ToolEffectEventEvidence,
-    CALL_ID_PREFIX, DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION,
-    DEFAULT_MAX_SESSIONS, DEFAULT_SUMMARY_LIMIT, DURABLE_CURRENT_BINDINGS_PER_SESSION,
-    EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_MATERIALIZED_VALIDATION_JOB_IDS,
-    MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
+    WithdrawSessionMessageOutcome, CALL_ID_PREFIX, DEFAULT_MAX_EVENTS_PER_SESSION,
+    DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS, DEFAULT_SUMMARY_LIMIT,
+    DURABLE_CURRENT_BINDINGS_PER_SESSION, EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS,
+    MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX,
+    SESSION_LEDGER_VERSION,
 };
 use super::persistence::{
     cold_session_from_persisted, load_persisted_ledger, materialize_cold_session,
@@ -2923,6 +2925,9 @@ impl SessionStoreInner {
             author_session_id: None,
             resolved_at: None,
             resolution: None,
+            closure_kind: None,
+            superseded_by_message_id: None,
+            supersedes_message_id: None,
             resolved_by_message_id: None,
             completion_id: None,
         };
@@ -2995,6 +3000,217 @@ impl SessionStoreInner {
         outcome
     }
 
+    pub(super) fn withdraw_message(
+        &mut self,
+        session_id: &str,
+        message_id: &str,
+    ) -> Result<WithdrawSessionMessageOutcome, SessionMessageError> {
+        self.touch(session_id);
+        let Some(stored) = self.sessions.get_mut(session_id) else {
+            return Err(SessionMessageError::UnknownSession);
+        };
+        let lifecycle = stored.lifecycle();
+        if !lifecycle.allows_mutation() {
+            return Err(SessionMessageError::SessionClosed { lifecycle });
+        }
+        let record = stored
+            .hot_mut()
+            .expect("active session message mutation must stay hot");
+        let Some(message_index) = record
+            .messages
+            .iter()
+            .position(|message| message.message_id == message_id)
+        else {
+            return Err(SessionMessageError::UnknownMessage);
+        };
+        let snapshot = record.messages[message_index].as_ref().clone();
+        if snapshot.status == SessionMessageStatus::Resolved {
+            if snapshot.closure_kind == Some(SessionMessageClosureKind::Withdrawn) {
+                return Ok(WithdrawSessionMessageOutcome {
+                    message: snapshot,
+                    replayed: true,
+                });
+            }
+            return Err(SessionMessageError::MessageNotOpen);
+        }
+        if !matches!(
+            snapshot.kind,
+            super::model::SessionMessageKind::Note
+                | super::model::SessionMessageKind::Guidance
+                | super::model::SessionMessageKind::Question
+                | super::model::SessionMessageKind::Todo
+        ) {
+            return Err(SessionMessageError::InvalidInput(
+                "message kind cannot be withdrawn by the Runtime Console".to_string(),
+            ));
+        }
+        if snapshot.closure_kind.is_some()
+            || snapshot.superseded_by_message_id.is_some()
+            || snapshot.completion_id.is_some()
+            || snapshot.resolved_by_message_id.is_some()
+        {
+            return Err(SessionMessageError::MessageNotOpen);
+        }
+        let revision = Self::next_message_observation_revision(record)?;
+        let now = now_ts();
+        let message = Arc::make_mut(&mut record.messages[message_index]);
+        message.status = SessionMessageStatus::Resolved;
+        message.resolved_at = Some(now);
+        message.closure_kind = Some(SessionMessageClosureKind::Withdrawn);
+        record
+            .message_observation_revisions
+            .insert(message.message_id.clone(), revision);
+        record.updated_at = now;
+        Ok(WithdrawSessionMessageOutcome {
+            message: message.clone(),
+            replayed: false,
+        })
+    }
+
+    pub(super) fn replace_message(
+        &mut self,
+        input: ReplaceSessionMessageInput,
+    ) -> Result<ReplaceSessionMessageOutcome, SessionMessageError> {
+        self.touch(&input.session_id);
+        let Some(stored) = self.sessions.get_mut(&input.session_id) else {
+            return Err(SessionMessageError::UnknownSession);
+        };
+        let lifecycle = stored.lifecycle();
+        if !lifecycle.allows_mutation() {
+            return Err(SessionMessageError::SessionClosed { lifecycle });
+        }
+        let replacement_text = validate_message_text(input.message)?;
+        let record = stored
+            .hot_mut()
+            .expect("active session message mutation must stay hot");
+        let Some(original_index) = record
+            .messages
+            .iter()
+            .position(|message| message.message_id == input.message_id)
+        else {
+            return Err(SessionMessageError::UnknownMessage);
+        };
+        let original_snapshot = record.messages[original_index].as_ref().clone();
+        if original_snapshot.status == SessionMessageStatus::Resolved {
+            if original_snapshot.closure_kind != Some(SessionMessageClosureKind::Superseded) {
+                return Err(SessionMessageError::MessageNotOpen);
+            }
+            let replacement_id = original_snapshot
+                .superseded_by_message_id
+                .as_deref()
+                .ok_or(SessionMessageError::IdempotencyConflict)?;
+            let replacement = record
+                .messages
+                .iter()
+                .find(|message| message.message_id == replacement_id)
+                .ok_or(SessionMessageError::IdempotencyConflict)?;
+            let relation_is_canonical = replacement.supersedes_message_id.as_deref()
+                == Some(input.message_id.as_str())
+                && replacement.kind == original_snapshot.kind
+                && replacement.priority == original_snapshot.priority
+                && replacement.tags == original_snapshot.tags
+                && replacement.reply_to == original_snapshot.reply_to
+                && replacement.requires_ack == original_snapshot.requires_ack;
+            if !relation_is_canonical || replacement.message != replacement_text {
+                return Err(SessionMessageError::IdempotencyConflict);
+            }
+            return Ok(ReplaceSessionMessageOutcome {
+                original: original_snapshot,
+                replacement: replacement.as_ref().clone(),
+                replayed: true,
+            });
+        }
+        if !matches!(
+            original_snapshot.kind,
+            super::model::SessionMessageKind::Note
+                | super::model::SessionMessageKind::Guidance
+                | super::model::SessionMessageKind::Question
+                | super::model::SessionMessageKind::Todo
+        ) {
+            return Err(SessionMessageError::InvalidInput(
+                "message kind cannot be replaced by the Runtime Console".to_string(),
+            ));
+        }
+        if original_snapshot.closure_kind.is_some()
+            || original_snapshot.superseded_by_message_id.is_some()
+            || original_snapshot.completion_id.is_some()
+            || original_snapshot.resolved_by_message_id.is_some()
+        {
+            return Err(SessionMessageError::MessageNotOpen);
+        }
+
+        let original_revision = record
+            .message_observation_revision
+            .checked_add(1)
+            .ok_or(SessionMessageError::InvalidObservationState)?;
+        let replacement_revision = original_revision
+            .checked_add(1)
+            .ok_or(SessionMessageError::InvalidObservationState)?;
+        record.message_observation_revision = replacement_revision;
+        let now = now_ts();
+        let replacement = SessionMessage {
+            message_id: format!("{MESSAGE_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+            session_id: input.session_id.clone(),
+            created_at: now,
+            kind: original_snapshot.kind,
+            status: SessionMessageStatus::Open,
+            priority: original_snapshot.priority,
+            message: replacement_text,
+            tags: original_snapshot.tags.clone(),
+            reply_to: original_snapshot.reply_to.clone(),
+            requires_ack: original_snapshot.requires_ack,
+            first_ack_observed_at: None,
+            author_session_id: None,
+            resolved_at: None,
+            resolution: None,
+            closure_kind: None,
+            superseded_by_message_id: None,
+            supersedes_message_id: Some(input.message_id.clone()),
+            resolved_by_message_id: None,
+            completion_id: None,
+        };
+        {
+            let original = Arc::make_mut(&mut record.messages[original_index]);
+            original.status = SessionMessageStatus::Resolved;
+            original.resolved_at = Some(now);
+            original.closure_kind = Some(SessionMessageClosureKind::Superseded);
+            original.superseded_by_message_id = Some(replacement.message_id.clone());
+        }
+        record.messages.push_back(Arc::new(replacement.clone()));
+        record
+            .message_observation_revisions
+            .insert(input.message_id.clone(), original_revision);
+        record
+            .message_observation_revisions
+            .insert(replacement.message_id.clone(), replacement_revision);
+        while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
+            let protected_original_id = input.message_id.as_str();
+            let protected_replacement_id = replacement.message_id.as_str();
+            let Some(remove_index) = record.messages.iter().position(|message| {
+                message.message_id != protected_original_id
+                    && message.message_id != protected_replacement_id
+            }) else {
+                return Err(SessionMessageError::InvalidObservationState);
+            };
+            if let Some(evicted) = record.messages.remove(remove_index) {
+                Self::note_evicted_message_observation(record, &evicted.message_id);
+            }
+        }
+        record.updated_at = now;
+        let original = record
+            .messages
+            .iter()
+            .find(|message| message.message_id == input.message_id)
+            .expect("superseded source retained")
+            .as_ref()
+            .clone();
+        Ok(ReplaceSessionMessageOutcome {
+            original,
+            replacement,
+            replayed: false,
+        })
+    }
+
     /// Resolve an open message. Already-resolved messages stay resolved
     /// (status is not reopened); an optional new resolution text may update.
     pub(super) fn resolve_message(
@@ -3021,6 +3237,9 @@ impl SessionStoreInner {
         else {
             return Err(SessionMessageError::UnknownMessage);
         };
+        if record.messages[message_index].closure_kind.is_some() {
+            return Err(SessionMessageError::MessageNotOpen);
+        }
         let resolution = match resolution {
             Some(value) => Some(validate_resolution_text(value)?),
             None => None,
@@ -3163,6 +3382,9 @@ impl SessionStoreInner {
             author_session_id: input.author_session_id,
             resolved_at: None,
             resolution: None,
+            closure_kind: None,
+            superseded_by_message_id: None,
+            supersedes_message_id: None,
             resolved_by_message_id: None,
             completion_id: None,
         };

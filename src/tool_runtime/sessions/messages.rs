@@ -4,11 +4,12 @@
 
 use super::model::{
     CompleteSessionMessageInput, CompleteSessionMessageOutcome, ListSessionMessagesFilter,
-    PostSessionMessageInput, SessionAckObservation, SessionAttentionSnapshot,
-    SessionDiscussionSummary, SessionInboxHint, SessionMessage, SessionMessageError,
-    SessionMessageKind, SessionMessageObservationError, SessionMessageObservationOutcome,
-    SessionMessagePriority, SessionMessageStatus, DEFAULT_MESSAGE_LIST_LIMIT,
-    MAX_MESSAGE_LIST_LIMIT, MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN,
+    PostSessionMessageInput, ReplaceSessionMessageInput, ReplaceSessionMessageOutcome,
+    SessionAckObservation, SessionAttentionSnapshot, SessionDiscussionSummary, SessionInboxHint,
+    SessionMessage, SessionMessageError, SessionMessageKind, SessionMessageObservationError,
+    SessionMessageObservationOutcome, SessionMessagePriority, SessionMessageStatus,
+    WithdrawSessionMessageOutcome, DEFAULT_MESSAGE_LIST_LIMIT, MAX_MESSAGE_LIST_LIMIT,
+    MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN,
 };
 use super::query::{build_discussion_summary, build_inbox_hint};
 use super::store::SessionStore;
@@ -128,6 +129,47 @@ impl SessionStore {
             }
         })
         .unwrap_or_default()
+    }
+
+    pub(crate) fn withdraw_message(
+        &self,
+        session_id: &str,
+        message_id: &str,
+    ) -> Result<WithdrawSessionMessageOutcome, SessionMessageError> {
+        let outcome = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            inner.withdraw_message(session_id, message_id)?
+        };
+        if self.persist_after_mutation_durable().is_err() {
+            if !outcome.replayed {
+                self.notify_message_observation();
+            }
+            return Err(SessionMessageError::PersistenceUncertain);
+        }
+        if !outcome.replayed {
+            self.notify_message_observation();
+        }
+        Ok(outcome)
+    }
+
+    pub(crate) fn replace_message(
+        &self,
+        input: ReplaceSessionMessageInput,
+    ) -> Result<ReplaceSessionMessageOutcome, SessionMessageError> {
+        let outcome = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            inner.replace_message(input)?
+        };
+        if self.persist_after_mutation_durable().is_err() {
+            if !outcome.replayed {
+                self.notify_message_observation();
+            }
+            return Err(SessionMessageError::PersistenceUncertain);
+        }
+        if !outcome.replayed {
+            self.notify_message_observation();
+        }
+        Ok(outcome)
     }
 
     pub(crate) fn resolve_message(

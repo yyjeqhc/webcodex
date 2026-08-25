@@ -21,6 +21,8 @@ mod util;
 #[cfg(test)]
 mod collaboration_tests;
 #[cfg(test)]
+mod message_mutation_tests;
+#[cfg(test)]
 mod tests;
 
 // Re-exports keep `crate::tool_runtime::sessions::{...}` stable for callers.

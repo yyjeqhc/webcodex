@@ -12,7 +12,7 @@ use super::AgentPolicy;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -22,6 +22,13 @@ use webcodex_process::ManagedChild;
 const SSH_CONNECT_TIMEOUT_SECS: u64 = 10;
 const SSH_CONTROL_PERSIST_SECS: u64 = 300;
 const SSH_PIPE_DRAIN_TIMEOUT_SECS: u64 = 2;
+const SSH_REMOTE_CWD_MAX_BYTES: usize = 4096;
+/// The public wire command plus the worst-case POSIX single-quote expansion of
+/// a maximum remote cwd and fixed cwd wrapper fit below this internal ceiling.
+/// It is transport headroom, not a smaller Windows product limit.
+const WINDOWS_DIRECT_PROGRAM_MAX_BYTES: usize =
+    crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES + SSH_REMOTE_CWD_MAX_BYTES * 5 + 512;
+const WINDOWS_DIRECT_BOOTSTRAP_PREFIX: &str = "WEBCODEX_SSH_PROGRAM_BYTES=";
 
 /// In-memory identity for one OpenSSH multiplex transport. The Runner config
 /// generation protects a request after an operator changes a resource host.
@@ -74,10 +81,147 @@ pub(crate) enum PreparedSshTransport {
     Direct,
 }
 
-/// A ready-to-spawn SSH command paired with its transport semantics.
+/// How one prepared SSH invocation receives the remote program.
+///
+/// Unix mux commands keep their historical remote-program argv. Windows Direct
+/// keeps only a fixed bootstrap in CreateProcess argv and sends the exact remote
+/// program over the SSH stdin stream before any caller stdin bytes.
+#[derive(Debug, Clone)]
+pub(crate) enum PreparedSshProgramDelivery {
+    Argv,
+    StdinFramed { program: Vec<u8> },
+}
+
+impl PreparedSshProgramDelivery {
+    pub(crate) fn requires_stdin(&self) -> bool {
+        matches!(self, Self::StdinFramed { .. })
+    }
+
+    pub(crate) fn spawn_writer(
+        self,
+        child_stdin: Option<ChildStdin>,
+        caller_stdin: Option<Vec<u8>>,
+    ) -> Result<Option<SshStdinWriter>, String> {
+        let needs_stdin = self.requires_stdin() || caller_stdin.is_some();
+        if !needs_stdin {
+            return Ok(None);
+        }
+        let mut child_stdin = child_stdin.ok_or_else(|| {
+            "ssh_command_stdin_unavailable: SSH was already started but its stdin pipe is unavailable; remote command outcome is unknown; do not blindly retry".to_string()
+        })?;
+        let (completion_tx, completion_rx) = mpsc::sync_channel(1);
+        let handle = std::thread::spawn(move || {
+            let result = (|| {
+                if let Self::StdinFramed { program } = self {
+                    child_stdin.write_all(&program).map_err(|error| {
+                        format!(
+                            "ssh_program_write_failed: remote program delivery failed after SSH start; remote command outcome is unknown; do not blindly retry: {error}"
+                        )
+                    })?;
+                }
+                if let Some(caller_stdin) = caller_stdin {
+                    child_stdin.write_all(&caller_stdin).map_err(|error| {
+                        format!(
+                            "ssh_command_stdin_failed: caller stdin delivery failed after SSH start; remote command outcome is unknown; do not blindly retry: {error}"
+                        )
+                    })?;
+                }
+                Ok(())
+            })();
+            drop(child_stdin);
+            let _ = completion_tx.send(result);
+        });
+        Ok(Some(SshStdinWriter {
+            completion_rx,
+            handle: Some(handle),
+            result: None,
+        }))
+    }
+}
+
+/// Tracked writer for the single SSH stdin byte stream. It keeps the program
+/// and caller-input regions logically separate while allowing stop/timeout
+/// polling to proceed independently of potentially blocking pipe writes.
+pub(crate) struct SshStdinWriter {
+    completion_rx: mpsc::Receiver<Result<(), String>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    result: Option<Result<(), String>>,
+}
+
+impl SshStdinWriter {
+    fn observe_result(&mut self) -> Option<Result<(), String>> {
+        if self.result.is_none() {
+            match self.completion_rx.try_recv() {
+                Ok(result) => self.result = Some(result),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.result = Some(Err(
+                        "ssh_stdin_writer_failed: stdin writer exited without reporting completion; remote command outcome is unknown; do not blindly retry"
+                            .to_string(),
+                    ));
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        self.result.clone()
+    }
+
+    pub(crate) fn poll_failure(&mut self) -> Option<String> {
+        match self.observe_result() {
+            Some(Err(error)) => Some(error),
+            _ => None,
+        }
+    }
+
+    fn wait_completion_until(&mut self, deadline: Instant) -> Result<Result<(), String>, String> {
+        loop {
+            if let Some(result) = self.observe_result() {
+                if self
+                    .handle
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
+                {
+                    if let Some(handle) = self.handle.take() {
+                        let _ = handle.join();
+                    }
+                    return Ok(result);
+                }
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(
+                    "ssh_stdin_writer_drain_failed: stdin writer did not stop within the bounded drain after SSH tree cleanup; remote command outcome is unknown; do not blindly retry"
+                        .to_string(),
+                );
+            }
+            std::thread::sleep(Duration::from_millis(10).min(remaining));
+        }
+    }
+
+    /// Natural completion must also prove that every program/caller-input byte
+    /// was accepted by the local SSH client.
+    pub(crate) fn finish_bounded(&mut self) -> Result<(), String> {
+        self.wait_completion_until(
+            Instant::now() + Duration::from_secs(SSH_PIPE_DRAIN_TIMEOUT_SECS),
+        )?
+    }
+
+    /// Once stop/timeout/wait failure has already terminated the SSH tree, a
+    /// BrokenPipe-like writer result is expected. Only failure to quiesce the
+    /// writer itself is a new cleanup uncertainty.
+    pub(crate) fn finish_after_tree_cleanup(&mut self) -> Result<(), String> {
+        let _ = self.wait_completion_until(
+            Instant::now() + Duration::from_secs(SSH_PIPE_DRAIN_TIMEOUT_SECS),
+        )?;
+        Ok(())
+    }
+}
+
+/// A ready-to-spawn SSH command paired with its transport semantics and program
+/// delivery contract.
 pub(crate) struct PreparedSshCommand {
     pub(crate) command: Command,
     pub(crate) transport: PreparedSshTransport,
+    pub(crate) program_delivery: PreparedSshProgramDelivery,
 }
 
 /// A ready-to-spawn long-lived SSH shell command with the resource's default
@@ -227,6 +371,7 @@ impl SshConnectionPool {
             return Ok(PreparedSshCommand {
                 command: ssh,
                 transport: PreparedSshTransport::Mux(connection.key),
+                program_delivery: PreparedSshProgramDelivery::Argv,
             });
         }
 
@@ -236,16 +381,25 @@ impl SshConnectionPool {
             let _ = configure_process_group;
             let effective_cwd = requested_cwd.or_else(|| resource.default_cwd.clone());
             let remote_script = remote_script(effective_cwd.as_deref(), command);
+            if remote_script.len() > WINDOWS_DIRECT_PROGRAM_MAX_BYTES {
+                return Err(format!(
+                    "ssh_program_too_long: prepared remote program exceeds internal Windows transport headroom ({WINDOWS_DIRECT_PROGRAM_MAX_BYTES} bytes); command was not started"
+                ));
+            }
+            let bootstrap = windows_direct_program_bootstrap(remote_script.len());
             let mut ssh = self.direct_ssh_command();
             ssh.arg("-o")
                 .arg("BatchMode=yes")
                 .arg("-o")
                 .arg("LogLevel=ERROR")
                 .arg(&resource.host)
-                .arg(remote_script);
+                .arg(bootstrap);
             return Ok(PreparedSshCommand {
                 command: ssh,
                 transport: PreparedSshTransport::Direct,
+                program_delivery: PreparedSshProgramDelivery::StdinFramed {
+                    program: remote_script.into_bytes(),
+                },
             });
         }
 
@@ -576,13 +730,14 @@ pub(crate) fn run_ssh_shell_with_execution_state(
     let transport = prepared.transport.clone();
     let mut result = run_piped_ssh_command(
         prepared.command,
+        prepared.program_delivery,
         policy.max_output_bytes,
         timeout_secs.min(policy.max_timeout_secs).max(1),
         stdin,
         stop_requested,
         start,
     );
-    apply_transport_failure_policy(pool, &transport, &mut result);
+    apply_transport_failure_policy(pool, &transport, &mut result, policy.max_output_bytes);
     result
 }
 
@@ -590,6 +745,7 @@ fn apply_transport_failure_policy(
     pool: &SshConnectionPool,
     transport: &PreparedSshTransport,
     result: &mut ShellCommandResult,
+    max_output_bytes: usize,
 ) {
     if !matches!(
         result.execution_state,
@@ -603,9 +759,10 @@ fn apply_transport_failure_policy(
     }
     pool.invalidate_after_transport_failure(transport);
     if let Some(stderr) = result.result.stderr.as_mut() {
-        append_line(
+        append_bounded_line(
             stderr,
             "webcodex: SSH transport ended after dispatch; the command may have started and was not retried",
+            max_output_bytes,
         );
     }
     if result.result.error.is_none() {
@@ -863,7 +1020,7 @@ fn normalize_remote_cwd(cwd: Option<&str>) -> Result<Option<String>, String> {
     let Some(cwd) = cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) else {
         return Ok(None);
     };
-    if cwd.len() > 4096 || cwd.chars().any(char::is_control) {
+    if cwd.len() > SSH_REMOTE_CWD_MAX_BYTES || cwd.chars().any(char::is_control) {
         return Err(
             "ssh_remote_cwd_invalid: cwd must be a bounded remote path without control characters; command was not started".to_string(),
         );
@@ -884,14 +1041,24 @@ fn remote_script(cwd: Option<&str>, command: &str) -> String {
 
 fn shell_quote(value: &str) -> String {
     let mut escaped = String::from("'");
-    for part in value.split('\'') {
-        if escaped.len() > 1 {
+    for (index, part) in value.split('\'').enumerate() {
+        if index > 0 {
             escaped.push_str("'\"'\"'");
         }
         escaped.push_str(part);
     }
     escaped.push('\'');
     escaped
+}
+
+/// Small fixed remote loader for Windows Direct SSH. The only dynamic argv
+/// material is a bounded decimal byte count. `dd bs=1 count=N` cannot consume
+/// caller stdin past the program region; the explicit `wc -c` check also makes
+/// short/partial uploads fail before the program is evaluated.
+fn windows_direct_program_bootstrap(program_len: usize) -> String {
+    format!(
+        "{WINDOWS_DIRECT_BOOTSTRAP_PREFIX}{program_len}; n=$WEBCODEX_SSH_PROGRAM_BYTES; unset WEBCODEX_SSH_PROGRAM_BYTES; case \"$n\" in ''|*[!0-9]*) printf >&2 '%s\\n' 'webcodex: invalid SSH program length'; exit 126;; esac; [ \"$n\" -gt 0 ] && [ \"$n\" -le {WINDOWS_DIRECT_PROGRAM_MAX_BYTES} ] || {{ printf >&2 '%s\\n' 'webcodex: SSH program length out of range'; exit 126; }}; umask 077; i=0; while :; do d=/tmp/.webcodex-ssh-$$-$i; if mkdir \"$d\" 2>/dev/null; then break; fi; i=$((i+1)); [ \"$i\" -lt 32 ] || {{ printf >&2 '%s\\n' 'webcodex: SSH program temp allocation failed'; exit 126; }}; done; f=$d/program; cleanup(){{ rm -f \"$f\"; rmdir \"$d\" 2>/dev/null || :; }}; trap 'cleanup' 0; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; if ! dd of=\"$f\" bs=1 count=\"$n\" 2>/dev/null; then printf >&2 '%s\\n' 'webcodex: SSH program upload failed'; exit 126; fi; set -- $(wc -c < \"$f\"); actual=${{1-}}; case \"$actual\" in ''|*[!0-9]*) printf >&2 '%s\\n' 'webcodex: SSH program size check failed'; exit 126;; esac; [ \"$actual\" = \"$n\" ] || {{ printf >&2 '%s\\n' 'webcodex: incomplete SSH program upload'; exit 126; }}; \"$0\" -c 'f=$1; shift; p=$(cat \"$f\"; printf x) || exit 126; p=${{p%x}}; eval \"$p\"' \"$0\" \"$f\"; rc=$?; exit \"$rc\""
+    )
 }
 
 fn is_safe_resource_name(value: &str) -> bool {
@@ -971,14 +1138,16 @@ fn try_wait_piped_ssh_child(child: &mut PipedSshChild) -> std::io::Result<Option
 
 fn run_piped_ssh_command(
     mut command: Command,
+    program_delivery: PreparedSshProgramDelivery,
     max_output_bytes: usize,
     timeout_secs: u64,
     stdin: Option<&str>,
     stop_requested: Option<&AtomicBool>,
     start: Instant,
 ) -> ShellCommandResult {
+    let needs_stdin = program_delivery.requires_stdin() || stdin.is_some();
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    if stdin.is_some() {
+    if needs_stdin {
         command.stdin(Stdio::piped());
     }
     let mut child = match spawn_piped_ssh_child(&mut command) {
@@ -990,28 +1159,16 @@ fn run_piped_ssh_command(
             ))
         }
     };
-    if let Some(input) = stdin {
-        if let Some(mut child_stdin) = piped_ssh_process_mut(&mut child).stdin.take() {
-            if child_stdin.write_all(input.as_bytes()).is_err() {
-                let _ = terminate_ssh_child(&mut child);
-                return ShellCommandResult::outcome_unknown(command_error(
-                    start,
-                    "ssh_command_stdin_failed: command may have started and was not retried"
-                        .to_string(),
-                ));
-            }
-        } else {
-            let _ = terminate_ssh_child(&mut child);
-            return ShellCommandResult::outcome_unknown(command_error(
-                start,
-                "ssh_command_stdin_failed: command may have started and was not retried"
-                    .to_string(),
-            ));
-        }
-    }
-    let (stdout, stderr) = {
+
+    // Drain output before starting any potentially blocking stdin write. This
+    // ordering prevents the classic full-stdin/full-output pipe deadlock.
+    let (child_stdin, stdout, stderr) = {
         let process = piped_ssh_process_mut(&mut child);
-        (process.stdout.take(), process.stderr.take())
+        (
+            process.stdin.take(),
+            process.stdout.take(),
+            process.stderr.take(),
+        )
     };
     let (stdout_tx, stdout_rx) = mpsc::sync_channel(1);
     let (stderr_tx, stderr_rx) = mpsc::sync_channel(1);
@@ -1030,9 +1187,29 @@ fn run_piped_ssh_command(
         drop(stderr_tx);
     }
 
+    let mut writer_start_error = None;
+    let mut stdin_writer = match program_delivery
+        .spawn_writer(child_stdin, stdin.map(|input| input.as_bytes().to_vec()))
+    {
+        Ok(writer) => writer,
+        Err(error) => {
+            writer_start_error = Some(error);
+            let _ = terminate_ssh_child(&mut child);
+            None
+        }
+    };
+    let mut writer_error = None;
+    let mut wait_error = None;
     let mut stopped = false;
     let mut timed_out = false;
     let status = loop {
+        if let Some(error) = writer_start_error
+            .take()
+            .or_else(|| stdin_writer.as_mut().and_then(SshStdinWriter::poll_failure))
+        {
+            writer_error = Some(error);
+            break terminate_ssh_child(&mut child).ok();
+        }
         match try_wait_piped_ssh_child(&mut child) {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {
@@ -1046,19 +1223,30 @@ fn run_piped_ssh_command(
                 }
                 std::thread::sleep(Duration::from_millis(25));
             }
-            Err(_) => {
-                let _ = terminate_ssh_child(&mut child);
-                return ShellCommandResult::outcome_unknown(command_error(
-                    start,
-                    "ssh_command_wait_failed: command may have started and was not retried"
-                        .to_string(),
+            Err(error) => {
+                wait_error = Some(format!(
+                    "ssh_command_wait_failed: command may have started and was not retried: {error}"
                 ));
+                break terminate_ssh_child(&mut child).ok();
             }
         }
     };
+
+    // Natural exit and every interruption converge on bounded local cleanup.
+    // Killing the SSH tree closes the pipe read end, which unblocks a writer
+    // stalled in write_all; we observe it rather than joining blindly.
+    let tree_cleanup_uncertain = ensure_piped_ssh_tree_exit(&mut child).is_err();
+    let writer_finish_error = stdin_writer.as_mut().and_then(|writer| {
+        let interrupted = stopped || timed_out || writer_error.is_some() || wait_error.is_some();
+        let result = if interrupted {
+            writer.finish_after_tree_cleanup()
+        } else {
+            writer.finish_bounded()
+        };
+        result.err()
+    });
+
     let deadline = Instant::now() + Duration::from_secs(SSH_PIPE_DRAIN_TIMEOUT_SECS);
-    let tree_cleanup_uncertain =
-        !stopped && !timed_out && ensure_piped_ssh_tree_exit(&mut child).is_err();
     let stdout = stdout_rx
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .ok()
@@ -1069,15 +1257,27 @@ fn run_piped_ssh_command(
         .ok()
         .and_then(Result::ok)
         .unwrap_or_default();
+    let stdout = String::from_utf8_lossy(&stdout).into_owned();
     let mut stderr = String::from_utf8_lossy(&stderr).into_owned();
+
+    if let Some(error) = writer_finish_error {
+        return ShellCommandResult::outcome_unknown(CommandResult {
+            exit_code: None,
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some(error),
+        });
+    }
     if stopped {
-        append_line(
+        append_bounded_line(
             &mut stderr,
             "webcodex: local SSH client was stopped after dispatch; remote command outcome is unknown; do not blindly retry",
+            max_output_bytes,
         );
         return ShellCommandResult::outcome_unknown(CommandResult {
             exit_code: None,
-            stdout: Some(String::from_utf8_lossy(&stdout).into_owned()),
+            stdout: Some(stdout),
             stderr: Some(stderr),
             duration_ms: Some(start.elapsed().as_millis() as u64),
             error: Some(
@@ -1087,27 +1287,37 @@ fn run_piped_ssh_command(
         });
     }
     if timed_out {
-        append_line(
+        append_bounded_line(
             &mut stderr,
             &format!("command timed out after {timeout_secs} seconds"),
+            max_output_bytes,
         );
         let result = CommandResult {
             exit_code: Some(-1),
-            stdout: Some(String::from_utf8_lossy(&stdout).into_owned()),
+            stdout: Some(stdout),
             stderr: Some(stderr),
             duration_ms: Some(start.elapsed().as_millis() as u64),
             error: Some("command timed out".to_string()),
         };
-        return if status.is_some() {
+        return if status.is_some() && !tree_cleanup_uncertain {
             ShellCommandResult::timed_out(result)
         } else {
             ShellCommandResult::outcome_unknown(result)
         };
     }
+    if let Some(error) = writer_error.or(wait_error) {
+        return ShellCommandResult::outcome_unknown(CommandResult {
+            exit_code: None,
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some(error),
+        });
+    }
     if tree_cleanup_uncertain {
         return ShellCommandResult::outcome_unknown(CommandResult {
             exit_code: status.and_then(|status| status.code()).or(Some(-1)),
-            stdout: Some(String::from_utf8_lossy(&stdout).into_owned()),
+            stdout: Some(stdout),
             stderr: Some(stderr),
             duration_ms: Some(start.elapsed().as_millis() as u64),
             error: Some(
@@ -1117,7 +1327,7 @@ fn run_piped_ssh_command(
     }
     ShellCommandResult::completed(CommandResult {
         exit_code: status.and_then(|status| status.code()).or(Some(-1)),
-        stdout: Some(String::from_utf8_lossy(&stdout).into_owned()),
+        stdout: Some(stdout),
         stderr: Some(stderr),
         duration_ms: Some(start.elapsed().as_millis() as u64),
         error: None,
@@ -1200,11 +1410,23 @@ fn read_bounded_pipe_tail(mut pipe: impl Read, max_bytes: usize) -> Result<Vec<u
     }
 }
 
-fn append_line(value: &mut String, suffix: &str) {
+fn append_bounded_line(value: &mut String, suffix: &str, max_bytes: usize) {
     if !value.is_empty() && !value.ends_with('\n') {
         value.push('\n');
     }
     value.push_str(suffix);
+    if value.len() <= max_bytes {
+        return;
+    }
+    if max_bytes == 0 {
+        value.clear();
+        return;
+    }
+    let mut start = value.len().saturating_sub(max_bytes);
+    while start < value.len() && !value.is_char_boundary(start) {
+        start += 1;
+    }
+    value.drain(..start);
 }
 
 fn command_error(start: Instant, error: String) -> CommandResult {
@@ -1221,10 +1443,12 @@ fn command_error(start: Instant, error: String) -> CommandResult {
 mod tests {
     use super::{
         is_transport_failure, remote_script, run_ssh_shell, shell_quote, ssh_shell_probe_available,
-        PreparedSshTransport, SshConnectionKey, SshConnectionPool,
+        windows_direct_program_bootstrap, PreparedSshTransport, SshConnectionKey,
+        SshConnectionPool,
     };
     use crate::webcodex_runner::config::{AgentPolicy, SshConfig, SshResourceConfig};
     use std::collections::BTreeMap;
+    use std::io::Write;
     #[cfg(target_os = "linux")]
     use std::net::{TcpListener, TcpStream};
     use std::os::unix::fs::{symlink, PermissionsExt};
@@ -1446,6 +1670,71 @@ mod tests {
         assert!(script.contains("cd '/tmp/a'\"'\"' b'"), "{script}");
         assert!(script.ends_with("printf ok"), "{script}");
         assert_eq!(shell_quote("plain"), "'plain'");
+
+        for value in ["abc", "a'b", "'a", "''"] {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg(format!("printf '%s' {}", shell_quote(value)))
+                .output()
+                .expect("run shell_quote round-trip probe");
+            assert!(output.status.success(), "{value:?}: {output:?}");
+            assert_eq!(output.stdout, value.as_bytes(), "{value:?}");
+        }
+        let dense = "'".repeat(4096);
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf '%s' {}", shell_quote(&dense)))
+            .output()
+            .expect("run dense shell_quote round-trip probe");
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stdout, dense.as_bytes());
+    }
+
+    #[test]
+    fn windows_direct_bootstrap_preserves_caller_stdin_and_rejects_partial_program() {
+        let program = "IFS= read -r line; printf '<%s>' \"$line\"";
+        let bootstrap = windows_direct_program_bootstrap(program.len());
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(&bootstrap)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn bootstrap framing probe");
+        let mut input = child.stdin.take().expect("bootstrap stdin");
+        input.write_all(program.as_bytes()).unwrap();
+        input.write_all(b"caller-data\n").unwrap();
+        drop(input);
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stdout, b"<caller-data>");
+
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("partial-program-ran");
+        let partial_program = format!(
+            "printf ran > {}",
+            shell_quote(marker.to_string_lossy().as_ref())
+        );
+        let bootstrap = windows_direct_program_bootstrap(partial_program.len() + 9);
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(&bootstrap)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn partial bootstrap probe");
+        let mut input = child.stdin.take().expect("partial bootstrap stdin");
+        input.write_all(partial_program.as_bytes()).unwrap();
+        drop(input);
+        let output = child.wait_with_output().unwrap();
+        assert!(!output.status.success(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("incomplete SSH program upload"),
+            "{output:?}"
+        );
+        assert!(!marker.exists(), "partial remote program was executed");
     }
 
     #[test]
@@ -2686,10 +2975,12 @@ mod windows_tests {
                     r#"
 use std::env;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
+
+const PROGRAM_PREFIX: &str = "WEBCODEX_SSH_PROGRAM_BYTES=";
 
 fn suffix<'a>(script: &'a str, marker: &str) -> Option<&'a str> {
     script.rfind(marker).map(|index| script[index + marker.len()..].trim())
@@ -2698,6 +2989,12 @@ fn suffix<'a>(script: &'a str, marker: &str) -> Option<&'a str> {
 fn append_start(path: &str) {
     let mut file = OpenOptions::new().create(true).append(true).open(path).unwrap();
     writeln!(file, "start").unwrap();
+}
+
+fn direct_program_len(args: &[String]) -> Option<usize> {
+    let bootstrap = args.last()?;
+    let rest = bootstrap.strip_prefix(PROGRAM_PREFIX)?;
+    rest.split(';').next()?.parse().ok()
 }
 
 fn main() {
@@ -2710,7 +3007,53 @@ fn main() {
         return;
     }
 
-    let script = args.last().map(String::as_str).unwrap_or_default();
+    let host = args.get(5).map(String::as_str).unwrap_or_default();
+    if host == "fake-exit-before-program" {
+        std::process::exit(0);
+    }
+    if let Some(marker) = host.strip_prefix("fake-never-read-stop=") {
+        fs::write(marker, format!("{}", std::process::id())).unwrap();
+        println!("FAKE_SSH_PID={}", std::process::id());
+        io::stdout().flush().unwrap();
+        thread::sleep(Duration::from_secs(60));
+        return;
+    }
+    if host == "fake-never-read" || host == "fake-never-read-output" {
+        println!("FAKE_SSH_PID={}", std::process::id());
+        io::stdout().flush().unwrap();
+        if host == "fake-never-read-output" {
+            io::stdout().write_all(&vec![b'o'; 2 * 1024 * 1024]).unwrap();
+            io::stdout().flush().unwrap();
+            io::stderr().write_all(&vec![b'e'; 2 * 1024 * 1024]).unwrap();
+            io::stderr().flush().unwrap();
+        }
+        thread::sleep(Duration::from_secs(60));
+        return;
+    }
+
+    let mut stdin = io::stdin().lock();
+    let mut owned_script = None;
+    if let Some(program_len) = direct_program_len(&args) {
+        let mut program = vec![0_u8; program_len];
+        if stdin.read_exact(&mut program).is_err() {
+            eprintln!("fake ssh: incomplete program frame");
+            std::process::exit(126);
+        }
+        owned_script = Some(String::from_utf8(program).expect("UTF-8 program frame"));
+    }
+    let script = owned_script
+        .as_deref()
+        .unwrap_or_else(|| args.last().map(String::as_str).unwrap_or_default());
+
+    if let Some(base) = suffix(script, "WC_FAKE_CAPTURE_FRAME::") {
+        fs::write(format!("{base}.program"), script.as_bytes()).unwrap();
+        let mut caller_stdin = Vec::new();
+        stdin.read_to_end(&mut caller_stdin).unwrap();
+        fs::write(format!("{base}.stdin"), caller_stdin).unwrap();
+        print!("capture-ok");
+        io::stdout().flush().unwrap();
+        return;
+    }
     if let Some(path) = suffix(script, "WC_FAKE_EXIT_255::") {
         append_start(path);
         eprintln!("ambiguous direct ssh exit");
@@ -2815,6 +3158,31 @@ fn main() {
             !args.iter().any(|arg| arg.contains("ControlPersist")),
             "{args:?}"
         );
+    }
+
+    fn stdin_program(delivery: &PreparedSshProgramDelivery) -> &str {
+        let PreparedSshProgramDelivery::StdinFramed { program } = delivery else {
+            panic!("Windows Direct SSH must use framed stdin program delivery");
+        };
+        std::str::from_utf8(program).expect("prepared remote program is UTF-8")
+    }
+
+    fn conservative_windows_command_line_utf16_bound(command: &Command) -> usize {
+        std::iter::once(command.get_program())
+            .chain(command.get_args())
+            .map(|value| {
+                let units = value.to_string_lossy().encode_utf16().count();
+                // Rust/Windows argv quoting cannot more than double every input
+                // code unit plus a pair of surrounding quotes and a separator.
+                units * 2 + 3
+            })
+            .sum::<usize>()
+            + 1
+    }
+
+    fn explicit_bash_wire_command(authored: &str) -> String {
+        let escaped = authored.replace('\'', "'\\''");
+        format!("exec bash -c '{escaped}'")
     }
 
     fn fake_pool() -> SshConnectionPool {
@@ -2935,7 +3303,7 @@ fn main() {
     }
 
     #[test]
-    fn windows_one_shot_and_job_prepare_direct_literal_ssh_exe_without_mux_state() {
+    fn windows_one_shot_and_job_keep_remote_program_out_of_createprocess_argv() {
         let config = ssh_config("spe", Some("/srv/webcodex"));
         let pool = SshConnectionPool::default();
         let prepared = pool
@@ -2952,9 +3320,23 @@ fn main() {
         assert!(matches!(prepared.transport, PreparedSshTransport::Direct));
         let args = command_args(&prepared.command);
         assert_direct_args(&args, "spe");
+        assert_eq!(args.len(), 6, "{args:?}");
+        assert!(
+            args.last()
+                .is_some_and(|arg| arg.starts_with(WINDOWS_DIRECT_BOOTSTRAP_PREFIX)),
+            "{args:?}"
+        );
+        assert!(
+            !args.iter().any(|arg| arg.contains("printf test")),
+            "{args:?}"
+        );
+        assert!(
+            !args.iter().any(|arg| arg.contains("/srv/override")),
+            "{args:?}"
+        );
         assert_eq!(
-            args.last().map(String::as_str),
-            Some("if ! cd '/srv/override'; then printf >&2 '%s\\n' 'webcodex: remote cwd is unavailable'; exit 125; fi\nprintf test")
+            stdin_program(&prepared.program_delivery),
+            "if ! cd '/srv/override'; then printf >&2 '%s\\n' 'webcodex: remote cwd is unavailable'; exit 125; fi\nprintf test"
         );
         assert_eq!(pool.connection_count(), 0);
 
@@ -2965,11 +3347,136 @@ fn main() {
         assert!(matches!(job.transport, PreparedSshTransport::Direct));
         let job_args = command_args(&job.command);
         assert_direct_args(&job_args, "spe");
+        assert!(
+            !job_args.iter().any(|arg| arg.contains("printf job")),
+            "{job_args:?}"
+        );
+        assert!(
+            !job_args.iter().any(|arg| arg.contains("/srv/webcodex")),
+            "{job_args:?}"
+        );
         assert_eq!(
-            job_args.last().map(String::as_str),
-            Some("if ! cd '/srv/webcodex'; then printf >&2 '%s\\n' 'webcodex: remote cwd is unavailable'; exit 125; fi\nprintf job")
+            stdin_program(&job.program_delivery),
+            "if ! cd '/srv/webcodex'; then printf >&2 '%s\\n' 'webcodex: remote cwd is unavailable'; exit 125; fi\nprintf job"
         );
         assert_eq!(pool.connection_count(), 0);
+    }
+
+    #[test]
+    fn windows_direct_large_program_and_cwd_contract_fit_bounded_argv() {
+        let pool = SshConnectionPool::default();
+        let authored = "'".repeat(crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES);
+        let wrapped = explicit_bash_wire_command(&authored);
+        assert_eq!(wrapped.len(), 64_015);
+        assert!(wrapped.len() <= crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES);
+
+        let max_host = "h".repeat(512);
+        let prepared = pool
+            .prepare_command(
+                7,
+                &ssh_config(&max_host, None),
+                "spe",
+                "wc_sess_windows_long_program",
+                None,
+                &wrapped,
+            )
+            .expect("prepare 16K quote-dense explicit bash command");
+        let args = command_args(&prepared.command);
+        assert_direct_args(&args, &max_host);
+        assert_eq!(stdin_program(&prepared.program_delivery), wrapped);
+        assert!(!args.iter().any(|arg| arg.contains(&authored)));
+        let argv_bound = conservative_windows_command_line_utf16_bound(&prepared.command);
+        assert!(
+            argv_bound < 8 * 1024,
+            "conservative UTF-16 argv bound={argv_bound}"
+        );
+        assert!(
+            argv_bound < 32_767,
+            "CreateProcessW argv bound={argv_bound}"
+        );
+
+        let result = run_ssh_shell_with_execution_state(
+            &fake_pool(),
+            7,
+            &ssh_config("spe", None),
+            &AgentPolicy::default(),
+            "spe",
+            "wc_sess_windows_long_program",
+            None,
+            &wrapped,
+            None,
+            5,
+            None,
+            None,
+        );
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{result:?}"
+        );
+        assert_eq!(result.result.exit_code, Some(0), "{result:?}");
+
+        let max_wire = "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES);
+        crate::shell_protocol::validate_raw_shell_wire_command(&max_wire).unwrap();
+        assert!(
+            crate::shell_protocol::validate_raw_shell_wire_command(&format!("{max_wire}x"))
+                .is_err()
+        );
+        let max_prepared = pool
+            .prepare_command(
+                7,
+                &ssh_config("spe", None),
+                "spe",
+                "wc_sess_windows_max_wire",
+                None,
+                &max_wire,
+            )
+            .expect("prepare exact max wire command");
+        assert_eq!(stdin_program(&max_prepared.program_delivery), max_wire);
+
+        let quote_dense_cwd = "'".repeat(SSH_REMOTE_CWD_MAX_BYTES);
+        let cwd_prepared = pool
+            .prepare_command(
+                7,
+                &ssh_config("spe", None),
+                "spe",
+                "wc_sess_windows_max_cwd",
+                Some(&quote_dense_cwd),
+                "printf cwd",
+            )
+            .expect("prepare max quote-dense cwd");
+        assert_eq!(
+            stdin_program(&cwd_prepared.program_delivery),
+            remote_script(Some(&quote_dense_cwd), "printf cwd")
+        );
+        let cwd_args = command_args(&cwd_prepared.command);
+        assert!(!cwd_args.iter().any(|arg| arg.contains(&quote_dense_cwd)));
+        assert!(conservative_windows_command_line_utf16_bound(&cwd_prepared.command) < 8 * 1024);
+
+        let job = pool
+            .prepare_job_command(
+                7,
+                &ssh_config("spe", None),
+                "spe",
+                "wc_sess_windows_long_job",
+                None,
+                &wrapped,
+            )
+            .expect("prepare long Windows SSH Job payload");
+        assert_eq!(stdin_program(&job.program_delivery), wrapped);
+        assert!(!command_args(&job.command)
+            .iter()
+            .any(|arg| arg.contains(&authored)));
+    }
+
+    #[test]
+    fn windows_shell_quote_handles_leading_and_dense_single_quotes() {
+        assert_eq!(shell_quote("abc"), "'abc'");
+        assert_eq!(shell_quote("a'b"), "'a'\"'\"'b'");
+        assert_eq!(shell_quote("'a"), "''\"'\"'a'");
+        assert_eq!(shell_quote("''"), "''\"'\"''\"'\"''");
+        let dense = "'".repeat(SSH_REMOTE_CWD_MAX_BYTES);
+        assert_eq!(shell_quote(&dense).len(), 2 + dense.len() * 5);
     }
 
     #[test]
@@ -3017,6 +3524,173 @@ fn main() {
             Some(255),
             Some("remote command deliberately exited 255")
         ));
+    }
+
+    #[test]
+    fn windows_direct_framing_keeps_program_and_caller_stdin_exactly_separate() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("frame-capture");
+        let program = format!("WC_FAKE_CAPTURE_FRAME::{}", base.display());
+        let caller_stdin = "caller stdin\nwith 'quotes' and WC_FAKE markers\n";
+        let result = run_ssh_shell_with_execution_state(
+            &fake_pool(),
+            7,
+            &ssh_config("spe", None),
+            &AgentPolicy::default(),
+            "spe",
+            "wc_sess_windows_frame",
+            None,
+            &program,
+            Some(caller_stdin),
+            5,
+            None,
+            None,
+        );
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{result:?}"
+        );
+        assert_eq!(
+            result.result.stdout.as_deref(),
+            Some("capture-ok"),
+            "{result:?}"
+        );
+        assert_eq!(
+            std::fs::read(format!("{}.program", base.display())).unwrap(),
+            program.as_bytes()
+        );
+        assert_eq!(
+            std::fs::read(format!("{}.stdin", base.display())).unwrap(),
+            caller_stdin.as_bytes()
+        );
+    }
+
+    #[test]
+    fn windows_program_writer_failure_after_spawn_is_outcome_unknown() {
+        let command = "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES);
+        let cwd = "'".repeat(SSH_REMOTE_CWD_MAX_BYTES);
+        let result = run_ssh_shell_with_execution_state(
+            &fake_pool(),
+            7,
+            &ssh_config("fake-exit-before-program", None),
+            &AgentPolicy::default(),
+            "spe",
+            "wc_sess_windows_program_writer_failure",
+            Some(&cwd),
+            &command,
+            None,
+            5,
+            None,
+            None,
+        );
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::OutcomeUnknown,
+            "{result:?}"
+        );
+        assert_eq!(result.result.exit_code, None, "{result:?}");
+        assert!(
+            result
+                .result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_program_write_failed")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn windows_blocked_program_writer_timeout_drains_output_and_returns_bounded() {
+        let policy = AgentPolicy {
+            max_output_bytes: 4 * 1024,
+            ..AgentPolicy::default()
+        };
+        let program = "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES);
+        let started = Instant::now();
+        let result = run_ssh_shell_with_execution_state(
+            &fake_pool(),
+            7,
+            &ssh_config("fake-never-read-output", None),
+            &policy,
+            "spe",
+            "wc_sess_windows_blocked_timeout",
+            None,
+            &program,
+            None,
+            1,
+            None,
+            None,
+        );
+        assert!(started.elapsed() < Duration::from_secs(4), "{result:?}");
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::TimedOut,
+            "{result:?}"
+        );
+        assert!(result.result.stdout.as_deref().unwrap_or_default().len() <= 4 * 1024);
+        assert!(result.result.stderr.as_deref().unwrap_or_default().len() <= 4 * 1024);
+    }
+
+    #[test]
+    fn windows_blocked_program_writer_stop_is_outcome_unknown_and_reaps_client() {
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("blocked-writer.pid");
+        let host = format!("fake-never-read-stop={}", marker.display());
+        let stop_requested = Arc::new(AtomicBool::new(false));
+        let stop_signal = Arc::clone(&stop_requested);
+        let marker_for_stop = marker.clone();
+        let stopper = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !marker_for_stop.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                marker_for_stop.exists(),
+                "fake SSH never reached blocked-writer state"
+            );
+            stop_signal.store(true, Ordering::SeqCst);
+        });
+        let program = "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES);
+        let started = Instant::now();
+        let result = run_ssh_shell_with_execution_state(
+            &fake_pool(),
+            7,
+            &ssh_config(&host, None),
+            &AgentPolicy::default(),
+            "spe",
+            "wc_sess_windows_blocked_stop",
+            None,
+            &program,
+            None,
+            30,
+            Some(stop_requested.as_ref()),
+            None,
+        );
+        stopper.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(4), "{result:?}");
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::OutcomeUnknown,
+            "{result:?}"
+        );
+        assert!(
+            result
+                .result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ssh_command_stopped_after_dispatch")),
+            "{result:?}"
+        );
+        let pid = std::fs::read_to_string(&marker)
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap();
+        assert!(
+            wait_for_process_exit(pid),
+            "blocked-writer SSH client survived stop: {pid}"
+        );
     }
 
     #[test]
@@ -3364,7 +4038,7 @@ fn main() {
             None,
             &format!("WC_FAKE_TREE::{}", delayed_marker.display()),
             None,
-            1,
+            2,
             None,
             None,
         );
@@ -3455,6 +4129,26 @@ fn main() {
             std::fs::read_to_string(&starts).unwrap().lines().count(),
             1,
             "background direct exit 255 was retried"
+        );
+
+        let long_authored = "'".repeat(crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES);
+        let long_wire = explicit_bash_wire_command(&long_authored);
+        enqueue_job(
+            &manager,
+            sink.clone(),
+            config.clone(),
+            AgentPolicy::default(),
+            "win-ssh-long-program",
+            &long_wire,
+            5,
+        );
+        let long = wait_for_job_update(&mut rx, "win-ssh-long-program", |update| update.finished);
+        assert_eq!(long.status, "completed", "{long:?}");
+        assert_eq!(long.exit_code, Some(0), "{long:?}");
+        assert_eq!(
+            long.command_execution_state,
+            Some(ShellCommandExecutionState::Completed),
+            "{long:?}"
         );
 
         let bounded_policy = AgentPolicy {
@@ -3663,20 +4357,25 @@ fn main() {
             return;
         }
         let config = ssh_config(host, None);
-        let one_shot = run_ssh_shell_with_execution_state(
-            &SshConnectionPool::default(),
-            7,
-            &config,
-            &AgentPolicy::default(),
-            "spe",
-            "wc_sess_windows_real_ssh",
-            None,
-            "printf wc-windows-one-shot",
-            None,
-            15,
-            None,
-            None,
-        );
+        let pool = SshConnectionPool::default();
+        let run = |cwd: Option<&str>, command: &str| {
+            run_ssh_shell_with_execution_state(
+                &pool,
+                7,
+                &config,
+                &AgentPolicy::default(),
+                "spe",
+                "wc_sess_windows_real_ssh",
+                cwd,
+                command,
+                None,
+                15,
+                None,
+                None,
+            )
+        };
+
+        let one_shot = run(None, "printf wc-windows-one-shot");
         assert_eq!(
             one_shot.execution_state,
             ShellCommandExecutionState::Completed,
@@ -3686,6 +4385,114 @@ fn main() {
         assert_eq!(
             one_shot.result.stdout.as_deref(),
             Some("wc-windows-one-shot")
+        );
+
+        let exit_7 = run(None, "exit 7");
+        assert_eq!(
+            exit_7.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{exit_7:?}"
+        );
+        assert_eq!(exit_7.result.exit_code, Some(7), "{exit_7:?}");
+
+        let exit_255 = run(None, "exit 255");
+        assert_eq!(
+            exit_255.execution_state,
+            ShellCommandExecutionState::OutcomeUnknown,
+            "{exit_255:?}"
+        );
+        assert_eq!(exit_255.result.exit_code, Some(255), "{exit_255:?}");
+
+        let explicit_sh = run(None, "exec sh -c 'printf wc-explicit-sh'");
+        assert_eq!(
+            explicit_sh.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{explicit_sh:?}"
+        );
+        assert_eq!(explicit_sh.result.stdout.as_deref(), Some("wc-explicit-sh"));
+
+        let explicit_bash = run(None, "exec bash -c 'printf wc-explicit-bash'");
+        assert_eq!(
+            explicit_bash.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{explicit_bash:?}"
+        );
+        assert_eq!(
+            explicit_bash.result.stdout.as_deref(),
+            Some("wc-explicit-bash")
+        );
+
+        let cwd_ok = run(Some("/tmp"), "pwd");
+        assert_eq!(
+            cwd_ok.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{cwd_ok:?}"
+        );
+        assert_eq!(cwd_ok.result.exit_code, Some(0), "{cwd_ok:?}");
+
+        let missing_cwd = format!("/tmp/webcodex-missing-{}", uuid::Uuid::new_v4().simple());
+        let cwd_missing = run(Some(&missing_cwd), "printf never");
+        assert_eq!(
+            cwd_missing.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{cwd_missing:?}"
+        );
+        assert_eq!(cwd_missing.result.exit_code, Some(125), "{cwd_missing:?}");
+        assert!(
+            cwd_missing
+                .result
+                .stderr
+                .as_deref()
+                .is_some_and(|stderr| stderr.contains("webcodex: remote cwd is unavailable")),
+            "{cwd_missing:?}"
+        );
+
+        let caller_stdin = "wc-real-caller-stdin\n";
+        let stdin_result = run_ssh_shell_with_execution_state(
+            &pool,
+            7,
+            &config,
+            &AgentPolicy::default(),
+            "spe",
+            "wc_sess_windows_real_ssh",
+            None,
+            "cat",
+            Some(caller_stdin),
+            15,
+            None,
+            None,
+        );
+        assert_eq!(
+            stdin_result.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{stdin_result:?}"
+        );
+        assert_eq!(stdin_result.result.exit_code, Some(0), "{stdin_result:?}");
+        assert_eq!(stdin_result.result.stdout.as_deref(), Some(caller_stdin));
+
+        let prefix = "printf wc-max-wire; #";
+        let max_wire = format!(
+            "{prefix}{}",
+            "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES - prefix.len())
+        );
+        assert_eq!(
+            max_wire.len(),
+            crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES
+        );
+        let max_wire_result = run(None, &max_wire);
+        assert_eq!(
+            max_wire_result.execution_state,
+            ShellCommandExecutionState::Completed,
+            "{max_wire_result:?}"
+        );
+        assert_eq!(
+            max_wire_result.result.exit_code,
+            Some(0),
+            "{max_wire_result:?}"
+        );
+        assert_eq!(
+            max_wire_result.result.stdout.as_deref(),
+            Some("wc-max-wire")
         );
 
         let manager = crate::JobManager::new(1);
@@ -3698,7 +4505,7 @@ fn main() {
         enqueue_job(
             &manager,
             sink,
-            config,
+            config.clone(),
             AgentPolicy::default(),
             "win-ssh-real-background",
             "printf wc-windows-background",

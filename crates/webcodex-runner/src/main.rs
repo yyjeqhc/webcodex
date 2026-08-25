@@ -5206,11 +5206,14 @@ impl JobManager {
             }
         };
         let transport = prepared.transport.clone();
+        let program_delivery = prepared.program_delivery;
         let mut command = prepared.command;
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        if program_delivery.requires_stdin() || request.stdin.is_some() {
+            command.stdin(Stdio::piped());
+        } else {
+            command.stdin(Stdio::null());
+        }
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let stop_requested = {
             let _lifecycle = lock_unpoison(&self.lifecycle);
@@ -5244,6 +5247,7 @@ impl JobManager {
                 return;
             }
         };
+        let mut child_stdin = child.child_mut().stdin.take();
         let mut stdout = child.child_mut().stdout.take();
         let mut stderr = child.child_mut().stderr.take();
         let child = Arc::new(Mutex::new(child));
@@ -5312,9 +5316,26 @@ impl JobManager {
                 ));
             }
             drop(tx);
+            // Readers must already be draining before program/caller stdin can
+            // block. The writer is tracked and polled by this same Job worker.
+            let mut writer_start_error = None;
+            let mut stdin_writer = match program_delivery.spawn_writer(
+                child_stdin.take(),
+                request
+                    .stdin
+                    .as_deref()
+                    .map(|input| input.as_bytes().to_vec()),
+            ) {
+                Ok(writer) => writer,
+                Err(error) => {
+                    writer_start_error = Some(error);
+                    let _ = terminate_managed_tree(&child);
+                    None
+                }
+            };
             let timeout_secs = request.timeout_secs.min(policy.max_timeout_secs).max(1);
             let mut transport_stderr = String::new();
-            let (mut status, exit_code, mut error, interrupted_after_dispatch) = loop {
+            let (mut status, mut exit_code, mut error, interrupted_after_dispatch) = loop {
                 let mut out = String::new();
                 let mut err = String::new();
                 while let Ok(chunk) = rx.try_recv() {
@@ -5337,6 +5358,14 @@ impl JobManager {
                             ..Default::default()
                         },
                     );
+                }
+                if let Some(writer_error) = writer_start_error.take().or_else(|| {
+                    stdin_writer
+                        .as_mut()
+                        .and_then(|writer| writer.poll_failure())
+                }) {
+                    let _ = terminate_managed_tree(&child);
+                    break ("failed".to_string(), None, Some(writer_error), true);
                 }
                 let wait_result = {
                     let mut child = lock_unpoison(&child);
@@ -5402,6 +5431,16 @@ impl JobManager {
             // update indefinitely.
             cleanup_managed_tree(&child);
             let tree_cleanup_uncertain = managed_tree_running(&child);
+            let writer_finish_error = stdin_writer.as_mut().and_then(|writer| {
+                let interrupted =
+                    interrupted_after_dispatch || status == "timeout" || tree_cleanup_uncertain;
+                let result = if interrupted {
+                    writer.finish_after_tree_cleanup()
+                } else {
+                    writer.finish_bounded()
+                };
+                result.err()
+            });
             join_reader_threads_until(readers, Instant::now() + Duration::from_secs(1));
             let mut final_out = String::new();
             let mut final_err = String::new();
@@ -5419,6 +5458,12 @@ impl JobManager {
             } else {
                 raw_shell_job_terminal_lifecycle(&status, exit_code)
             };
+            if let Some(writer_error) = writer_finish_error {
+                status = "failed".to_string();
+                exit_code = None;
+                error = Some(writer_error);
+                command_execution_state = ShellCommandExecutionState::OutcomeUnknown;
+            }
             if tree_cleanup_uncertain {
                 status = "failed".to_string();
                 error = Some(

@@ -424,6 +424,89 @@ pub(crate) fn apply_model_facing_output_budget(
     }
 }
 
+fn final_model_result_len(output: &Value, default_queries: &[bool]) -> usize {
+    let mut projected = ToolResult::ok(output.clone());
+    super::dispatch::sparsify_complete_default_search_batch_success(
+        default_queries,
+        &mut projected,
+    );
+    serde_json::to_vec(&projected)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX)
+}
+
+fn mark_final_hard_cap_truncation(output: &mut Value, next_index: usize) {
+    let Some(root) = output.as_object_mut() else {
+        return;
+    };
+    let (returned_count, succeeded_count) = root
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            (
+                items.len(),
+                items
+                    .iter()
+                    .filter(|item| item["success"].as_bool() == Some(true))
+                    .count(),
+            )
+        })
+        .unwrap_or_default();
+    root.insert("returned_count".to_string(), json!(returned_count));
+    root.insert("succeeded_count".to_string(), json!(succeeded_count));
+    root.insert(
+        "failed_count".to_string(),
+        json!(returned_count.saturating_sub(succeeded_count)),
+    );
+    root.insert("output_truncated".to_string(), json!(true));
+    root.insert("next_index".to_string(), json!(next_index));
+    root.insert("truncation_reason".to_string(), json!("hard_result_cap"));
+}
+
+/// Enforce the repository-wide 256 KiB ceiling against the actual final
+/// serialized ToolResult, including Session/continuity overlays. Search
+/// continuation remains query-granular: whole query items are removed from the
+/// end until the fully decorated result fits, and next_index points at the first
+/// omitted query.
+pub(crate) fn enforce_final_model_facing_hard_cap(
+    result: &mut ToolResult,
+    default_queries: &[bool],
+) {
+    if !result.success
+        || final_model_result_len(&result.output, default_queries) <= MAX_SERIALIZED_OUTPUT_BYTES
+    {
+        return;
+    }
+    let Some(root) = result.output.as_object() else {
+        return;
+    };
+    if root.get("project").and_then(Value::as_str).is_none()
+        || root
+            .get("requested_count")
+            .and_then(Value::as_u64)
+            .is_none()
+        || root.get("items").and_then(Value::as_array).is_none()
+    {
+        return;
+    }
+
+    loop {
+        let removed_index = {
+            let Some(items) = result.output.get_mut("items").and_then(Value::as_array_mut) else {
+                return;
+            };
+            let Some(removed) = items.pop() else {
+                return;
+            };
+            removed["index"].as_u64().unwrap_or(0) as usize
+        };
+        mark_final_hard_cap_truncation(&mut result.output, removed_index);
+        if final_model_result_len(&result.output, default_queries) <= MAX_SERIALIZED_OUTPUT_BYTES {
+            return;
+        }
+    }
+}
+
 impl ToolRuntime {
     pub(crate) async fn search_project_texts(
         &self,

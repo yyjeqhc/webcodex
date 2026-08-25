@@ -13,6 +13,9 @@ pub(crate) const ALLOW_CROSS_PROJECT_SESSION_FIELD: &str = "allow_cross_project_
 const SESSION_ATTENTION_MAX_MESSAGES: usize = 3;
 const SESSION_ATTENTION_MAX_BODY_BYTES: usize = 3072;
 const SESSION_CONTINUITY_RECOVERY_EVENT_LIMIT: usize = 20;
+pub(crate) const SESSION_CONTINUITY_RECOVERY_EVENT_BYTES: usize = 48 * 1024;
+const SESSION_RECOVERY_HANDOFF_CHANGED_PATH_LIMIT: usize = 40;
+const SESSION_RECOVERY_HANDOFF_CHANGED_PATH_BYTES: usize = 512;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionProjectMismatch {
@@ -391,6 +394,42 @@ pub(crate) fn add_session_telemetry_hint(
     result.output = Value::Object(output);
 }
 
+fn model_facing_recovery_event(event: &sessions::SessionEvent) -> Value {
+    json!({
+        "context_revision": event.context_revision,
+        "tool_name": event.tool_name,
+        "status": event.status,
+        "changed_paths": event.changed_paths,
+        "job_id": event.job_id,
+        "error_kind": event.error_kind,
+        "effect_evidence": event.effect_evidence,
+        "context_result": event.context_result_summary,
+        "execution_summary": event.validation_output_summary,
+    })
+}
+
+fn bounded_model_facing_recovery_events(
+    recorded: &sessions::RecordedModelFacingToolCall,
+) -> Vec<Value> {
+    let mut events = Vec::new();
+    for event in recorded
+        .recovery_events
+        .iter()
+        .rev()
+        .take(SESSION_CONTINUITY_RECOVERY_EVENT_LIMIT)
+    {
+        events.insert(0, model_facing_recovery_event(event));
+        let fits = serde_json::to_vec(&events)
+            .map(|bytes| bytes.len() <= SESSION_CONTINUITY_RECOVERY_EVENT_BYTES)
+            .unwrap_or(false);
+        if !fits {
+            events.remove(0);
+            break;
+        }
+    }
+    events
+}
+
 pub(crate) fn add_session_context_continuity(
     result: &mut ToolResult,
     recorded: &sessions::RecordedModelFacingToolCall,
@@ -458,28 +497,7 @@ pub(crate) fn add_session_context_continuity(
         && !recorded.history_lost;
     if needs_recovery && !suppress_fresh_empty_recovery {
         let total_retained = recorded.recovery_events.len();
-        let events = recorded
-            .recovery_events
-            .iter()
-            .rev()
-            .take(SESSION_CONTINUITY_RECOVERY_EVENT_LIMIT)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .map(|event| {
-                json!({
-                    "context_revision": event.context_revision,
-                    "tool_name": event.tool_name,
-                    "status": event.status,
-                    "changed_paths": event.changed_paths,
-                    "job_id": event.job_id,
-                    "error_kind": event.error_kind,
-                    "effect_evidence": event.effect_evidence,
-                    "context_result": event.context_result_summary,
-                    "execution_summary": event.validation_output_summary,
-                })
-            })
-            .collect::<Vec<_>>();
+        let events = bounded_model_facing_recovery_events(recorded);
         let omitted_count = total_retained.saturating_sub(events.len());
         output.insert(
             "session_continuity".to_string(),
@@ -503,6 +521,21 @@ pub(crate) fn add_session_context_continuity(
     }
     result.output = Value::Object(output);
     true
+}
+
+fn bounded_recovery_handoff_changed_paths(value: Option<&Value>) -> Value {
+    let Some(paths) = value.and_then(Value::as_array) else {
+        return value.cloned().unwrap_or(Value::Null);
+    };
+    Value::Array(
+        paths
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|path| path.len() <= SESSION_RECOVERY_HANDOFF_CHANGED_PATH_BYTES)
+            .take(SESSION_RECOVERY_HANDOFF_CHANGED_PATH_LIMIT)
+            .map(|path| Value::String(path.to_string()))
+            .collect(),
+    )
 }
 
 impl ToolRuntime {
@@ -554,7 +587,9 @@ impl ToolRuntime {
             "open_guidance": handoff.output.get("open_guidance"),
             "recent_decisions": handoff.output.get("recent_decisions"),
             "work_performed": handoff.output.get("work_performed"),
-            "changed_paths": handoff.output.get("changed_paths"),
+            "changed_paths": bounded_recovery_handoff_changed_paths(
+                handoff.output.get("changed_paths")
+            ),
             "suggested_next_actions": handoff.output.get("suggested_next_actions"),
         });
         if let Some(recovery) = result

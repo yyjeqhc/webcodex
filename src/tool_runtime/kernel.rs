@@ -600,6 +600,12 @@ impl ToolRuntime {
         }
 
         let project = tool_project(&call);
+        let deferred_search_projection = super::dispatch::SearchModelProjection::capture(&call);
+        let defer_batch_model_projection = context.session_id.is_some()
+            && matches!(
+                &call,
+                ToolCall::ReadFiles { .. } | ToolCall::SearchProjectTexts { .. }
+            );
         // Permission is evaluated once inside dispatch (pre-exec gate). Kernel
         // only reuses the attached decision for the outer recording session —
         // never re-evaluate (no second request id / inconsistent outcome).
@@ -701,6 +707,35 @@ impl ToolRuntime {
                 session_id,
                 &recorder_metadata.ack_session_message_ids,
             );
+        }
+        if defer_batch_model_projection {
+            match request.tool_name.as_str() {
+                "read_files" => {
+                    super::read_files::enforce_final_model_facing_hard_cap(&mut result);
+                }
+                "search_project_texts" => {
+                    let default_queries = match &deferred_search_projection {
+                        super::dispatch::SearchModelProjection::Batch { default_queries } => {
+                            default_queries.as_slice()
+                        }
+                        _ => &[],
+                    };
+                    super::search_project_texts::enforce_final_model_facing_hard_cap(
+                        &mut result,
+                        default_queries,
+                    );
+                }
+                _ => {}
+            }
+            // Dispatch deliberately kept the canonical batch envelope while an
+            // outer recording Session was pending. Only now, after final hard-cap
+            // enforcement has accounted for continuity/recovery/handoff/attention,
+            // project the response to the established sparse model-facing shape.
+            super::dispatch::sparsify_complete_default_search_success(
+                &deferred_search_projection,
+                &mut result,
+            );
+            super::dispatch::sparsify_complete_read_success(&request.tool_name, &mut result);
         }
         ToolCallOutcome {
             success: result.success,

@@ -142,14 +142,14 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
     }
 }
 
-enum SearchModelProjection {
+pub(super) enum SearchModelProjection {
     None,
     SingleDefault,
     Batch { default_queries: Vec<bool> },
 }
 
 impl SearchModelProjection {
-    fn capture(call: &ToolCall) -> Self {
+    pub(super) fn capture(call: &ToolCall) -> Self {
         match call {
             ToolCall::SearchProjectText {
                 result_mode,
@@ -290,7 +290,7 @@ pub(crate) fn sparsify_complete_default_search_output(
     true
 }
 
-fn sparsify_complete_default_search_success(
+pub(super) fn sparsify_complete_default_search_success(
     projection: &SearchModelProjection,
     result: &mut ToolResult,
 ) {
@@ -1196,10 +1196,21 @@ impl ToolRuntime {
                 );
             }
         }
+        let defer_batch_sparsification = !inner_model_facing_recording
+            && !matches!(
+                &batch_budget_projection,
+                BatchResponseBudgetProjection::None
+            );
         match &batch_budget_projection {
             BatchResponseBudgetProjection::None => {}
             BatchResponseBudgetProjection::ReadFiles { max_result_bytes } => {
                 super::read_files::apply_model_facing_output_budget(&mut result, *max_result_bytes);
+                // Direct/business-Session dispatch has already added every
+                // model-facing Session overlay. Enforce the true final ceiling
+                // against that decorated result before sparse projection. Outer
+                // kernel recording defers sparsification and repeats this exact
+                // hard-cap pass after its own overlays are attached.
+                super::read_files::enforce_final_model_facing_hard_cap(&mut result);
             }
             BatchResponseBudgetProjection::SearchProjectTexts { max_result_bytes } => {
                 let default_queries = match &search_projection {
@@ -1211,11 +1222,17 @@ impl ToolRuntime {
                     default_queries,
                     *max_result_bytes,
                 );
+                super::search_project_texts::enforce_final_model_facing_hard_cap(
+                    &mut result,
+                    default_queries,
+                );
             }
         }
         sparsify_terminal_structured_execution_success(tool_name, &mut result);
-        sparsify_complete_default_search_success(&search_projection, &mut result);
-        sparsify_complete_read_success(tool_name, &mut result);
+        if !defer_batch_sparsification {
+            sparsify_complete_default_search_success(&search_projection, &mut result);
+            sparsify_complete_read_success(tool_name, &mut result);
+        }
         result
     }
 

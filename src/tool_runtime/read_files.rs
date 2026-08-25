@@ -124,9 +124,15 @@ fn truncate_read_item(item: &Value, keep_lines: usize) -> Option<Value> {
         json!(start_line.saturating_add(keep_lines)),
     );
     projected_output.insert("budget_truncated".to_string(), json!(true));
+    let existing_budget_next_limit = output
+        .get("budget_next_limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
     projected_output.insert(
         "budget_next_limit".to_string(),
-        json!(returned_lines.saturating_sub(keep_lines)),
+        json!(returned_lines
+            .saturating_sub(keep_lines)
+            .saturating_add(existing_budget_next_limit)),
     );
     Some(projected)
 }
@@ -307,6 +313,134 @@ pub(crate) fn apply_model_facing_output_budget(
     if let Some(budgeted) = budgeted.as_object() {
         for (key, value) in budgeted {
             root.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn final_model_result_len(output: &Value) -> usize {
+    let mut projected = ToolResult::ok(output.clone());
+    super::dispatch::sparsify_complete_read_success("read_files", &mut projected);
+    serde_json::to_vec(&projected)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX)
+}
+
+fn mark_final_hard_cap_truncation(output: &mut Value, next_index: usize) {
+    let Some(root) = output.as_object_mut() else {
+        return;
+    };
+    let (returned_count, succeeded_count) = root
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            (
+                items.len(),
+                items
+                    .iter()
+                    .filter(|item| item["success"].as_bool() == Some(true))
+                    .count(),
+            )
+        })
+        .unwrap_or_default();
+    root.insert("returned_count".to_string(), json!(returned_count));
+    root.insert("succeeded_count".to_string(), json!(succeeded_count));
+    root.insert(
+        "failed_count".to_string(),
+        json!(returned_count.saturating_sub(succeeded_count)),
+    );
+    root.insert("output_truncated".to_string(), json!(true));
+    root.insert("next_index".to_string(), json!(next_index));
+    root.insert("truncation_reason".to_string(), json!("hard_result_cap"));
+}
+
+/// Enforce the repository-wide 256 KiB ceiling against the actual final
+/// serialized ToolResult, including Session/continuity overlays. The primary
+/// batch budget remains independent; this pass only removes/shortens read body
+/// content when the fully decorated response would otherwise violate the hard
+/// cap.
+///
+/// This expects the canonical batch envelope (before complete-success sparse
+/// projection), so project/count/continuation metadata can remain truthful when
+/// final hard-cap pressure turns a previously complete response into a partial
+/// one.
+pub(crate) fn enforce_final_model_facing_hard_cap(result: &mut ToolResult) {
+    if !result.success || final_model_result_len(&result.output) <= MAX_SERIALIZED_OUTPUT_BYTES {
+        return;
+    }
+    let Some(root) = result.output.as_object() else {
+        return;
+    };
+    if root.get("project").and_then(Value::as_str).is_none()
+        || root
+            .get("requested_count")
+            .and_then(Value::as_u64)
+            .is_none()
+        || root.get("items").and_then(Value::as_array).is_none()
+    {
+        return;
+    }
+
+    loop {
+        let Some(items) = result.output.get("items").and_then(Value::as_array) else {
+            return;
+        };
+        let Some(last) = items.last() else {
+            return;
+        };
+        let index = last["index"].as_u64().unwrap_or(0) as usize;
+
+        // Preserve as many whole source lines as possible from the last success
+        // item. Measuring the complete decorated ToolResult makes this exact and
+        // naturally accounts for recovery/handoff/attention bytes.
+        if last["success"].as_bool() == Some(true) {
+            let returned_lines = last
+                .get("output")
+                .and_then(|output| output.get("returned_lines"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            if returned_lines > 1 {
+                let mut low = 1usize;
+                let mut high = returned_lines - 1;
+                let mut best = None;
+                while low <= high {
+                    let keep = low + (high - low) / 2;
+                    let Some(partial) = truncate_read_item(last, keep) else {
+                        break;
+                    };
+                    let mut candidate = result.output.clone();
+                    if let Some(candidate_items) =
+                        candidate.get_mut("items").and_then(Value::as_array_mut)
+                    {
+                        let last_index = candidate_items.len() - 1;
+                        candidate_items[last_index] = partial;
+                    }
+                    mark_final_hard_cap_truncation(&mut candidate, index);
+                    if final_model_result_len(&candidate) <= MAX_SERIALIZED_OUTPUT_BYTES {
+                        best = Some(candidate);
+                        low = keep.saturating_add(1);
+                    } else {
+                        high = keep.saturating_sub(1);
+                    }
+                }
+                if let Some(best) = best {
+                    result.output = best;
+                    return;
+                }
+            }
+        }
+
+        let removed_index = {
+            let Some(items) = result.output.get_mut("items").and_then(Value::as_array_mut) else {
+                return;
+            };
+            items
+                .pop()
+                .and_then(|removed| removed["index"].as_u64())
+                .unwrap_or(index as u64) as usize
+        };
+        mark_final_hard_cap_truncation(&mut result.output, removed_index);
+        if final_model_result_len(&result.output) <= MAX_SERIALIZED_OUTPUT_BYTES {
+            return;
         }
     }
 }
@@ -637,6 +771,28 @@ mod tests {
             continuation["items"][0]["output"]["text"].as_str().unwrap()
         );
         assert_eq!(joined, lines.join("\n"));
+    }
+
+    #[test]
+    fn final_read_trim_preserves_existing_budget_tail_without_gaps() {
+        let first_chunk = (0..60)
+            .map(|index| format!("line-{index:03}"))
+            .collect::<Vec<_>>();
+        let mut item = ranged_item(0, 11, &first_chunk);
+        item["output"]["limit"] = json!(100);
+        item["output"]["total_lines"] = json!(110);
+        item["output"]["has_more"] = json!(true);
+        item["output"]["next_start_line"] = json!(71);
+        item["output"]["budget_truncated"] = json!(true);
+        item["output"]["budget_next_limit"] = json!(40);
+
+        let partial = truncate_read_item(&item, 25).expect("second-stage partial read");
+        let output = &partial["output"];
+        assert_eq!(output["returned_lines"], 25);
+        assert_eq!(output["end_line"], 35);
+        assert_eq!(output["next_start_line"], 36);
+        assert_eq!(output["budget_next_limit"], 75);
+        assert_eq!(output["budget_truncated"], true);
     }
 
     #[test]

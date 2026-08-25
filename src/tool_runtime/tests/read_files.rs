@@ -870,3 +870,354 @@ async fn read_files_records_one_outer_session_event_and_keeps_metadata_outer_onl
     let ledger = serde_json::to_string(&summary.events).unwrap();
     assert!(!ledger.contains("session-private-text"));
 }
+
+#[tokio::test]
+async fn read_files_direct_session_overlay_pressure_keeps_final_response_under_hard_cap() {
+    use crate::tool_runtime::sessions::{
+        SessionContextRevisionAck, SessionTransport, ToolCallRecorderMetadata,
+    };
+    use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
+
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "batch-direct-final-cap";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("direct final cap".to_string()));
+    assert_eq!(
+        seed_model_facing_recovery_events(&runtime, &session.session_id, &project, 20),
+        20
+    );
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth_transport_options_and_metadata(
+                    ToolCall::ReadFiles {
+                        project,
+                        items: vec![item("a.rs", None, None), item("b.rs", None, None)],
+                        session_id: Some(session_id),
+                        with_line_numbers: None,
+                        max_result_bytes: Some(MAX_SERIALIZED_OUTPUT_BYTES),
+                    },
+                    Some(&auth),
+                    SessionTransport::Mcp,
+                    true,
+                    false,
+                    ToolCallRecorderMetadata {
+                        ack_session_context_revision: SessionContextRevisionAck::Revision(0),
+                        ..Default::default()
+                    },
+                )
+                .await
+        }
+    });
+    let content = "x".repeat(122 * 1024);
+    for _ in 0..2 {
+        let request = next_read_request(&runtime, client_id).await;
+        complete_read(&runtime, client_id, &request, &content).await;
+    }
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["session_continuity"]["status"], "behind");
+    assert_eq!(
+        result.output["session_recovery"]["model_facing_events"]
+            .as_array()
+            .unwrap()
+            .len(),
+        20
+    );
+    assert_eq!(result.output["output_truncated"], true);
+    assert_eq!(result.output["truncation_reason"], "hard_result_cap");
+    let serialized_len = serde_json::to_vec(&result).unwrap().len();
+    assert!(
+        serialized_len <= MAX_SERIALIZED_OUTPUT_BYTES,
+        "direct Session overlays pushed read_files final response above the 256 KiB hard cap: {serialized_len} bytes"
+    );
+}
+
+#[tokio::test]
+async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
+    use crate::tool_runtime::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+    };
+    use crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD;
+
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "batch-outer-sparse";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("outer sparse read".to_string()));
+    let auth = auth_context(None, true);
+    let mut arguments = json!({
+        "project": project,
+        "items": [{"path": "a.rs"}]
+    });
+    arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(0);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .call_tool_with_context_protocol_capability(
+                    ToolCallRequest {
+                        tool_name: "read_files".to_string(),
+                        arguments,
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Mcp,
+                        session_id: Some(&session_id),
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: false,
+                        host_file_import_trust: HostFileImportTrust::Untrusted,
+                    },
+                    true,
+                )
+                .await
+        }
+    });
+    let request = next_read_request(&runtime, client_id).await;
+    complete_read(&runtime, client_id, &request, "small\n").await;
+
+    let result = task.await.unwrap().result.expect("model-facing result");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["session_recorded"], true);
+    assert_eq!(result.output["session_context_revision"], 1);
+    assert!(result.output.get("session_continuity").is_none());
+    assert!(result.output.get("session_recovery").is_none());
+    for omitted in [
+        "project",
+        "requested_count",
+        "returned_count",
+        "succeeded_count",
+        "failed_count",
+        "output_truncated",
+        "next_index",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "outer recording changed complete sparse field {omitted}: {}",
+            result.output
+        );
+    }
+    assert_eq!(result.output["items"].as_array().unwrap().len(), 1);
+    assert_eq!(result.output["items"][0]["output"]["text"], "small");
+    assert!(result.output["items"][0]["output"].get("path").is_none());
+}
+
+#[tokio::test]
+async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
+    use crate::tool_runtime::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+    };
+    use crate::tool_runtime::sessions::{
+        PostSessionMessageInput, SessionMessageKind, SessionMessagePriority,
+        TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
+    };
+    use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
+
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "batch-overlay-bound";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("bounded recovery overlays".to_string()),
+    );
+    assert_eq!(
+        seed_model_facing_recovery_events(&runtime, &session.session_id, &project, 50),
+        50
+    );
+    assert_eq!(
+        seed_large_changed_path_recovery_events(&runtime, &session.session_id, &project, 50,),
+        100
+    );
+    for kind in [
+        SessionMessageKind::Guidance,
+        SessionMessageKind::Question,
+        SessionMessageKind::Risk,
+        SessionMessageKind::Todo,
+    ] {
+        for index in 0..5 {
+            runtime
+                .sessions
+                .post_message_with_ack(
+                    PostSessionMessageInput {
+                        session_id: session.session_id.clone(),
+                        kind,
+                        message: format!("overlay-{kind:?}-{index}-{}", "m".repeat(7_900)),
+                        tags: vec!["bounded-overlay".to_string()],
+                        reply_to: None,
+                        priority: SessionMessagePriority::High,
+                    },
+                    kind == SessionMessageKind::Guidance,
+                )
+                .unwrap();
+        }
+    }
+    let auth = auth_context(None, true);
+    let mut arguments = json!({
+        "project": project,
+        "items": [{"path": "a.rs"}]
+    });
+    arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(0);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .call_tool_with_context_protocol_capability(
+                    ToolCallRequest {
+                        tool_name: "read_files".to_string(),
+                        arguments,
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Mcp,
+                        session_id: Some(&session_id),
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: false,
+                        host_file_import_trust: HostFileImportTrust::Untrusted,
+                    },
+                    true,
+                )
+                .await
+        }
+    });
+    let request = next_read_request(&runtime, client_id).await;
+    complete_read(&runtime, client_id, &request, "small\n").await;
+
+    let result = task.await.unwrap().result.expect("model-facing result");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["session_continuity"]["status"], "behind");
+    assert_eq!(result.output["session_recovery"]["truncated"], true);
+    assert!(result.output["session_recovery"]["current_handoff"].is_object());
+    let recovery_events = result.output["session_recovery"]["model_facing_events"]
+        .as_array()
+        .unwrap();
+    assert!(recovery_events.len() < 20);
+    assert!(
+        serde_json::to_vec(recovery_events).unwrap().len()
+            <= crate::tool_runtime::session_context::SESSION_CONTINUITY_RECOVERY_EVENT_BYTES
+    );
+    let recovery_changed_paths = result.output["session_recovery"]["current_handoff"]
+        ["changed_paths"]
+        .as_array()
+        .unwrap();
+    assert_eq!(recovery_changed_paths.len(), 40);
+    assert!(recovery_changed_paths
+        .iter()
+        .filter_map(Value::as_str)
+        .all(|path| path.len() <= 512));
+    assert_eq!(result.output["session_attention"]["requires_ack"], true);
+    let attention_messages = result.output["session_attention"]["messages"]
+        .as_array()
+        .unwrap();
+    assert_eq!(attention_messages.len(), 1);
+    assert_eq!(attention_messages[0]["message_truncated"], true);
+    assert_eq!(result.output["session_attention"]["truncated"], true);
+    assert_eq!(result.output["session_attention"]["omitted_count"], 4);
+    assert!(result.output.get("output_truncated").is_none());
+    assert_eq!(result.output["items"].as_array().unwrap().len(), 1);
+    let serialized_len = serde_json::to_vec(&result).unwrap().len();
+    eprintln!("maximal_bounded_session_overlay_result_bytes={serialized_len}");
+    assert!(
+        serialized_len <= MAX_SERIALIZED_OUTPUT_BYTES,
+        "bounded Session recovery/handoff/attention overlays alone exceeded the 256 KiB hard cap: {serialized_len} bytes"
+    );
+}
+
+#[tokio::test]
+async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap() {
+    use crate::tool_runtime::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+    };
+    use crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD;
+    use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
+
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "batch-final-cap";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("final response cap".to_string()),
+    );
+    assert_eq!(
+        seed_model_facing_recovery_events(&runtime, &session.session_id, &project, 20),
+        20
+    );
+    let auth = auth_context(None, true);
+    let mut arguments = json!({
+        "project": project,
+        "items": [{"path": "a.rs"}, {"path": "b.rs"}],
+        "max_result_bytes": MAX_SERIALIZED_OUTPUT_BYTES
+    });
+    arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(0);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .call_tool_with_context_protocol_capability(
+                    ToolCallRequest {
+                        tool_name: "read_files".to_string(),
+                        arguments,
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Mcp,
+                        session_id: Some(&session_id),
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: false,
+                        host_file_import_trust: HostFileImportTrust::Untrusted,
+                    },
+                    true,
+                )
+                .await
+        }
+    });
+    let content = "x".repeat(122 * 1024);
+    for _ in 0..2 {
+        let request = next_read_request(&runtime, client_id).await;
+        complete_read(&runtime, client_id, &request, &content).await;
+    }
+
+    let outcome = task.await.unwrap();
+    assert!(outcome.success);
+    let result = outcome.result.expect("model-facing result");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["session_continuity"]["status"], "behind");
+    assert_eq!(
+        result.output["session_recovery"]["model_facing_events"]
+            .as_array()
+            .unwrap()
+            .len(),
+        20
+    );
+    assert_eq!(result.output["output_truncated"], true);
+    assert_eq!(result.output["truncation_reason"], "hard_result_cap");
+    assert_eq!(result.output["returned_count"], 1);
+    assert_eq!(result.output["next_index"], 1);
+    let serialized_len = serde_json::to_vec(&result).unwrap().len();
+    assert!(
+        serialized_len <= MAX_SERIALIZED_OUTPUT_BYTES,
+        "outer Session overlays pushed read_files final response above the 256 KiB hard cap: {serialized_len} bytes"
+    );
+}

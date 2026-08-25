@@ -1650,3 +1650,174 @@ async fn search_project_texts_records_one_event_without_patterns_and_aggregates_
     assert!(persisted.contains("src/shared.rs"));
     assert!(persisted.contains("src/b.rs"));
 }
+
+#[tokio::test]
+async fn search_project_texts_outer_recording_session_preserves_complete_sparse_shape() {
+    use crate::tool_runtime::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+    };
+    use crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD;
+
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-outer-sparse";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("outer sparse search".to_string()),
+    );
+    let auth = auth_context(None, true);
+    let mut arguments = json!({
+        "project": project,
+        "queries": [{"pattern": "needle"}]
+    });
+    arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(0);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .call_tool_with_context_protocol_capability(
+                    ToolCallRequest {
+                        tool_name: "search_project_texts".to_string(),
+                        arguments,
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Mcp,
+                        session_id: Some(&session_id),
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: false,
+                        host_file_import_trust: HostFileImportTrust::Untrusted,
+                    },
+                    true,
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
+    complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
+
+    let result = task.await.unwrap().result.expect("model-facing result");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["session_recorded"], true);
+    assert_eq!(result.output["session_context_revision"], 1);
+    assert!(result.output.get("session_continuity").is_none());
+    assert!(result.output.get("session_recovery").is_none());
+    for omitted in [
+        "project",
+        "requested_count",
+        "returned_count",
+        "succeeded_count",
+        "failed_count",
+        "output_truncated",
+        "next_index",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "outer recording changed complete sparse field {omitted}: {}",
+            result.output
+        );
+    }
+    assert_eq!(result.output["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        result.output["items"][0]["output"]["matches"][0]["path"],
+        "src/a.rs"
+    );
+    assert!(result.output["items"][0]["output"].get("backend").is_none());
+}
+
+#[tokio::test]
+async fn search_project_texts_outer_recording_session_keeps_final_response_under_hard_cap() {
+    use crate::tool_runtime::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+    };
+    use crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD;
+    use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
+
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-final-cap";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("search final response cap".to_string()),
+    );
+    assert_eq!(
+        seed_model_facing_recovery_events(&runtime, &session.session_id, &project, 20),
+        20
+    );
+    let auth = auth_context(None, true);
+    let mut arguments = json!({
+        "project": project,
+        "queries": (0..8)
+            .map(|index| json!({"pattern": format!("needle-{index}")}))
+            .collect::<Vec<_>>(),
+        "max_result_bytes": MAX_SERIALIZED_OUTPUT_BYTES
+    });
+    arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(0);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .call_tool_with_context_protocol_capability(
+                    ToolCallRequest {
+                        tool_name: "search_project_texts".to_string(),
+                        arguments,
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Mcp,
+                        session_id: Some(&session_id),
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: false,
+                        host_file_import_trust: HostFileImportTrust::Untrusted,
+                    },
+                    true,
+                )
+                .await
+        }
+    });
+    let preview = "z".repeat(30 * 1024);
+    for _ in 0..8 {
+        let request = wait_for_patch_agent_request(&runtime, client_id).await;
+        let pattern = request_pattern(&request);
+        let index = pattern
+            .strip_prefix("needle-")
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let stdout = search_stdout("matches", &format!("src/{index}.rs"), &preview);
+        complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, &stdout, "")
+            .await;
+    }
+
+    let outcome = task.await.unwrap();
+    assert!(outcome.success);
+    let result = outcome.result.expect("model-facing result");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["session_continuity"]["status"], "behind");
+    assert_eq!(
+        result.output["session_recovery"]["model_facing_events"]
+            .as_array()
+            .unwrap()
+            .len(),
+        20
+    );
+    assert_eq!(result.output["output_truncated"], true);
+    assert_eq!(result.output["truncation_reason"], "hard_result_cap");
+    let returned_count = result.output["returned_count"].as_u64().unwrap();
+    let next_index = result.output["next_index"].as_u64().unwrap();
+    assert!(returned_count < 8);
+    assert_eq!(next_index, returned_count);
+    let serialized_len = serde_json::to_vec(&result).unwrap().len();
+    assert!(
+        serialized_len <= MAX_SERIALIZED_OUTPUT_BYTES,
+        "outer Session overlays pushed search_project_texts final response above the 256 KiB hard cap: {serialized_len} bytes"
+    );
+}

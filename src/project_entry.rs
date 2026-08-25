@@ -8,6 +8,8 @@
 mod client_handoff_service;
 #[path = "project_entry_cloudflared.rs"]
 mod cloudflared_service;
+#[path = "project_entry_openai_tunnel.rs"]
+mod openai_tunnel_service;
 #[path = "project_entry_setup.rs"]
 mod setup_service;
 #[path = "project_entry_share.rs"]
@@ -224,7 +226,7 @@ pub(crate) fn parse_options(
 
 pub(crate) fn usage() -> &'static str {
     "Usage: webcodex share [--root PATH] [--profile NAME] [--state-dir PATH]\n\
-                     [--tunnel cloudflare|none] [--auth bearer|oauth]\n\
+                     [--tunnel cloudflare|openai|none] [--auth bearer|oauth]\n\
                      [--oauth-redirect-uri URL] [--public-url URL] [--no-copy-url]\n\
        webcodex status [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
        webcodex doctor [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
@@ -233,8 +235,10 @@ pub(crate) fn usage() -> &'static str {
                               [--console-assets-dir ABSOLUTE_PATH]\n\n\
 `share` is the first-run path for ChatGPT/remote MCP: it performs project setup,\n\
 starts the local Server + Runner, and exposes a temporary credential. The default\n\
-Cloudflare Quick Tunnel reuses or auto-manages a verified `cloudflared`. Public\n\
-share best-effort copies only the MCP URL; use `--no-copy-url` to disable that.\n\
+Cloudflare Quick Tunnel reuses or auto-manages a verified `cloudflared`. The opt-in\n\
+OpenAI Secure MCP Tunnel provider uses a pinned verified `tunnel-client` and keeps\n\
+the temporary WebCodex Bearer credential local. Public URL sharing best-effort\n\
+copies only the MCP URL; use `--no-copy-url` to disable that.\n\
 `setup`, `doctor`, and `run` remain the local/manual workflow; setup writes private state without\n\
 starting services. `run` is the explicit foreground local runtime step. Its optional\n\
 `--console-assets-dir` enables loopback-only development assets for that run.\n\
@@ -638,6 +642,7 @@ pub(super) struct LocalRuntimeOptions {
     pub(super) public_url: Option<String>,
     pub(super) connector_credential_file: Option<PathBuf>,
     pub(super) project_share_oauth: Option<ProjectShareOAuthRuntimeOptions>,
+    pub(super) child_environment_remove: Vec<&'static str>,
     pub(super) port_conflict_action: &'static str,
 }
 
@@ -647,6 +652,7 @@ impl Default for LocalRuntimeOptions {
             public_url: None,
             connector_credential_file: None,
             project_share_oauth: None,
+            child_environment_remove: Vec::new(),
             port_conflict_action: "Stop the conflicting process, then run webcodex run.",
         }
     }
@@ -753,6 +759,9 @@ pub(super) async fn start_local_runtime(
     let server_error = server_log.try_clone().map_err(io_error)?;
     let mut server_command = Command::new(server_binary);
     remove_npm_wrapper_network_environment(&mut server_command);
+    for name in &runtime_options.child_environment_remove {
+        server_command.env_remove(name);
+    }
     server_command
         .current_dir(&paths.state)
         .env_remove("WEBCODEX_ENV_FILE")
@@ -821,6 +830,9 @@ pub(super) async fn start_local_runtime(
     let agent_error = agent_log.try_clone().map_err(io_error)?;
     let mut agent_command = Command::new(agent_binary);
     remove_npm_wrapper_network_environment(&mut agent_command);
+    for name in &runtime_options.child_environment_remove {
+        agent_command.env_remove(name);
+    }
     agent_command
         .arg("--config")
         .arg(&paths.agent_config)

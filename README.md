@@ -74,6 +74,24 @@ A default `share` URL and credential are temporary and stop working when the
 command exits. `webcodex share --tunnel none` is available for local-only MCP
 debugging and does not require `cloudflared`.
 
+### Optional: OpenAI Secure MCP Tunnel
+
+If the repository should be reachable only from a supported OpenAI product, use
+`webcodex share --tunnel openai`. Create/select a Secure MCP Tunnel in the OpenAI
+Platform first, then export `CONTROL_PLANE_TUNNEL_ID` and a Restricted
+`CONTROL_PLANE_API_KEY` with **Tunnels Read + Use**. WebCodex reuses a matching
+`tunnel-client` from `WEBCODEX_TUNNEL_CLIENT_BIN` or `PATH`, or downloads and
+verifies pinned OpenAI `tunnel-client` v0.0.12 for Linux/macOS amd64/arm64.
+
+This provider keeps the temporary WebCodex Bearer credential in private local
+share state and gives `tunnel-client` a file-backed `Authorization` header for
+the loopback MCP hop. In ChatGPT choose **Connection: Tunnel**, select/paste the
+Tunnel ID, and choose **No authentication**; do not paste the local WebCodex
+credential into ChatGPT. `--tunnel openai` currently supports the default
+`--auth bearer` path only. Ctrl-C stops the local runtime and `tunnel-client` and
+removes the temporary WebCodex credential; the Platform Tunnel identity remains
+operator-managed for later reuse.
+
 ## What happens after the first connection
 
 WebCodex can read/search files, prepare guarded edits, run commands and focused

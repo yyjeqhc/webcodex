@@ -12,8 +12,8 @@ reference，不是 onboarding 前置知识。
 Windows 用户应改用 `webcodex connect <server-url>`，把 Runner 连接到已有的远程
 Linux Server。
 
-默认临时公网路径先安装
-[`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/)，然后执行：
+默认临时公网路径会复用显式指定/`PATH` 中的 `cloudflared`，否则由 WebCodex 自动下载并校验
+固定的 managed 副本，然后执行：
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -41,6 +41,12 @@ WebCodex scope 不会扩大这些客户端侧权限。
 使用同一份输出的 `/mcp` URL 与认证值。Claude 中添加 custom connector 并粘贴 MCP URL；
 其他 MCP client 同样使用 CLI 报告的 endpoint 与认证方式。仅本地 client 可用
 `webcodex share --tunnel none`，不需要 `cloudflared`。
+
+如果只需要 OpenAI 产品的私有 transport，创建/选择 Secure MCP Tunnel，导出
+`CONTROL_PLANE_TUNNEL_ID` 与只授予 Tunnels Read + Use 的 Restricted
+`CONTROL_PLANE_API_KEY`，然后运行 `webcodex share --tunnel openai`。ChatGPT 使用
+Connection: Tunnel + No authentication；临时 WebCodex Bearer 留在本机，由固定且经过校验的
+OpenAI `tunnel-client` 注入。
 
 ## 已有 Server
 

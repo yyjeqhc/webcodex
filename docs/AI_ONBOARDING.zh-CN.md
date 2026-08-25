@@ -28,8 +28,8 @@ Server。不要在 Windows 上推荐 `share`。
 
 ## 第一次 ChatGPT 接入：`share`
 
-先确认 Git 和目标仓库；默认公网 share 还要确认 `cloudflared` 已安装。如果缺少它，告诉用户
-使用 Cloudflare 官方下载，不要静默增加“自动下载第三方 executable”的行为。
+先确认 Git 和目标仓库。默认公网 share 会复用 `WEBCODEX_CLOUDFLARED_BIN` / `PATH`，
+没有时由 WebCodex 自动下载并校验固定的 managed `cloudflared`；不要要求第一次用户先手动安装。
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -54,6 +54,12 @@ ChatGPT 套餐、workspace 和管理员设置控制，这些客户端侧权限�
 
 仅做本地调试时可用 `webcodex share --tunnel none`，不启动 Cloudflare Quick Tunnel，也不
 需要 `cloudflared`。
+
+如果用户明确只需要 OpenAI 产品的私有可达性，并且已经创建 OpenAI Secure MCP Tunnel，
+使用 `webcodex share --tunnel openai`。要求 `CONTROL_PLANE_TUNNEL_ID` 和只授予 Tunnels
+Read + Use 的 Restricted `CONTROL_PLANE_API_KEY`。ChatGPT 侧选择 Connection: Tunnel +
+No authentication；WebCodex 临时 Bearer 留在本机，由 `tunnel-client` 注入，不要让人类把它
+粘贴到 ChatGPT。普通零 Platform 配置的 first-run 默认仍然是 Cloudflare Quick。
 
 ## 已有 shared-key Server：`connect`
 

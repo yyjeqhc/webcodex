@@ -30,6 +30,7 @@ const TUNNEL_LOG_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TunnelProvider {
     CloudflareQuick,
+    OpenAiSecure,
     None,
 }
 
@@ -66,11 +67,12 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
                     .ok_or_else(|| "--tunnel requires a value".to_string())?;
                 tunnel = match value.as_str() {
                     "cloudflare" => TunnelProvider::CloudflareQuick,
+                    "openai" => TunnelProvider::OpenAiSecure,
                     "none" => TunnelProvider::None,
                     _ => {
                         return Err(format!(
-                            "unknown tunnel provider '{value}'; expected cloudflare or none"
-                        ))
+                        "unknown tunnel provider '{value}'; expected cloudflare, openai, or none"
+                    ))
                     }
                 };
             }
@@ -118,8 +120,11 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
         }
         index += 1;
     }
-    if tunnel == TunnelProvider::CloudflareQuick && public_url.is_some() {
-        return Err("--public-url requires --tunnel none; Cloudflare Quick Tunnel supplies its own temporary URL".to_string());
+    if tunnel != TunnelProvider::None && public_url.is_some() {
+        return Err("--public-url requires --tunnel none; managed tunnel providers own their transport endpoint".to_string());
+    }
+    if tunnel == TunnelProvider::OpenAiSecure && auth != ShareAuth::Bearer {
+        return Err("--tunnel openai currently requires --auth bearer; WebCodex keeps that temporary Bearer credential local and tunnel-client injects it into the private MCP hop".to_string());
     }
     match auth {
         ShareAuth::OAuth if oauth_redirect_uri.as_deref().is_none_or(str::is_empty) => {
@@ -195,6 +200,12 @@ impl ShareSession {
             let _ = std::fs::remove_dir_all(&directory);
         }
         result
+    }
+
+    fn write_openai_authorization_file(&self) -> Result<PathBuf, ProductError> {
+        let path = self.directory.join("openai-mcp-authorization");
+        write_new_private(&path, format!("Bearer {}", self.credential).as_bytes())?;
+        Ok(path)
     }
 }
 
@@ -416,13 +427,20 @@ fn tunnel_runtime_error() -> ProductError {
 }
 
 pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductError> {
-    // Resolve or acquire the default public-share dependency before project setup/state creation.
+    // Resolve managed transport dependencies before project setup/state creation.
     let cloudflared_binary = match options.tunnel {
         TunnelProvider::CloudflareQuick => {
             Some(super::cloudflared_service::resolve_cloudflared().await?)
         }
-        TunnelProvider::None => None,
+        TunnelProvider::OpenAiSecure | TunnelProvider::None => None,
     };
+    let openai_prerequisites = match options.tunnel {
+        TunnelProvider::OpenAiSecure => {
+            Some(super::openai_tunnel_service::prepare_openai_tunnel().await?)
+        }
+        TunnelProvider::CloudflareQuick | TunnelProvider::None => None,
+    };
+
     setup(&options.project)?;
     let (config, paths) = configured_project(&options.project)?;
     ensure_local_runtime_port_available(
@@ -458,7 +476,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
         });
 
     let local_url = config.server_url();
-    let (public_url, mut tunnel) = match options.tunnel {
+    let (public_url, mut cloudflare_tunnel) = match options.tunnel {
         TunnelProvider::CloudflareQuick => {
             let binary = cloudflared_binary
                 .as_deref()
@@ -468,6 +486,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
                     .await?;
             (url, Some(tunnel))
         }
+        TunnelProvider::OpenAiSecure => (local_url.clone(), None),
         TunnelProvider::None => (
             options
                 .public_url
@@ -483,34 +502,70 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
             public_url: Some(public_url.clone()),
             connector_credential_file: Some(session.credential_file.clone()),
             project_share_oauth,
+            child_environment_remove: if options.tunnel == TunnelProvider::OpenAiSecure {
+                vec![
+                    "CONTROL_PLANE_API_KEY",
+                    "CONTROL_PLANE_TUNNEL_ID",
+                    "OPENAI_ADMIN_KEY",
+                    "OPENAI_API_KEY",
+                ]
+            } else {
+                Vec::new()
+            },
             port_conflict_action: "Stop the conflicting process, then retry webcodex share.",
         },
     )
     .await?;
 
+    let mut openai_tunnel = if let Some(prerequisites) = openai_prerequisites.as_ref() {
+        let authorization_file = session.write_openai_authorization_file()?;
+        match super::openai_tunnel_service::start_openai_tunnel(
+            prerequisites,
+            &mcp_url(&runtime.local_url),
+            &authorization_file,
+            &session.directory,
+        )
+        .await
+        {
+            Ok(tunnel) => Some(tunnel),
+            Err(error) => {
+                runtime.stop().await;
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+
     let externally_managed = options.tunnel == TunnelProvider::None && options.public_url.is_some();
-    let ready = match oauth_client.as_ref() {
-        Some(oauth) => render_share_oauth_ready(
-            &runtime.project_name,
-            options.tunnel,
-            externally_managed,
-            &runtime.public_url,
-            &session.credential,
-            oauth,
-        ),
-        None => render_share_ready(
-            &runtime.project_name,
-            options.tunnel,
-            externally_managed,
-            &runtime.public_url,
-            &session.credential,
-        ),
+    let ready = if let Some(prerequisites) = openai_prerequisites.as_ref() {
+        render_openai_share_ready(&runtime.project_name, &prerequisites.tunnel_id)
+    } else {
+        match oauth_client.as_ref() {
+            Some(oauth) => render_share_oauth_ready(
+                &runtime.project_name,
+                options.tunnel,
+                externally_managed,
+                &runtime.public_url,
+                &session.credential,
+                oauth,
+            ),
+            None => render_share_ready(
+                &runtime.project_name,
+                options.tunnel,
+                externally_managed,
+                &runtime.public_url,
+                &session.credential,
+            ),
+        }
     };
     println!("{ready}");
 
-    let remote_client_handoff =
+    let copy_remote_mcp_url =
         options.tunnel == TunnelProvider::CloudflareQuick || externally_managed;
-    let clipboard_outcome = if remote_client_handoff {
+    let open_chatgpt_handoff =
+        copy_remote_mcp_url || options.tunnel == TunnelProvider::OpenAiSecure;
+    let clipboard_outcome = if copy_remote_mcp_url {
         copy_mcp_url(&mcp_url(&runtime.public_url), options.copy_url).await
     } else {
         ClipboardCopyOutcome::Disabled
@@ -518,21 +573,26 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
     if let Some(status) = render_clipboard_status(clipboard_outcome) {
         println!("\n{status}");
     }
-    let handoff_task = remote_client_handoff
+    let handoff_task = open_chatgpt_handoff
         .then(maybe_spawn_chatgpt_open_prompt)
         .flatten();
 
-    let outcome = if let Some(tunnel) = tunnel.as_mut() {
-        tokio::select! {
+    let outcome = match (cloudflare_tunnel.as_mut(), openai_tunnel.as_mut()) {
+        (Some(tunnel), None) => tokio::select! {
             _ = tokio::signal::ctrl_c() => Ok(()),
             result = runtime.wait_for_exit() => result,
             result = tunnel.wait_for_exit() => result,
-        }
-    } else {
-        tokio::select! {
+        },
+        (None, Some(tunnel)) => tokio::select! {
             _ = tokio::signal::ctrl_c() => Ok(()),
             result = runtime.wait_for_exit() => result,
-        }
+            result = tunnel.wait_for_exit() => result,
+        },
+        (None, None) => tokio::select! {
+            _ = tokio::signal::ctrl_c() => Ok(()),
+            result = runtime.wait_for_exit() => result,
+        },
+        (Some(_), Some(_)) => unreachable!("one share cannot own two tunnel providers"),
     };
 
     if let Some(task) = handoff_task {
@@ -540,7 +600,10 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
         let _ = task.await;
     }
     runtime.stop().await;
-    if let Some(tunnel) = tunnel.as_mut() {
+    if let Some(tunnel) = cloudflare_tunnel.as_mut() {
+        tunnel.stop().await;
+    }
+    if let Some(tunnel) = openai_tunnel.as_mut() {
         tunnel.stop().await;
     }
     outcome
@@ -556,6 +619,11 @@ fn share_access_labels(
             "temporary",
             "Ready for ChatGPT or another remote MCP client.",
         ),
+        (TunnelProvider::OpenAiSecure, _) => (
+            "OpenAI Secure MCP Tunnel",
+            "private through the selected OpenAI workspace Tunnel",
+            "Ready for ChatGPT through OpenAI Secure MCP Tunnel.",
+        ),
         (TunnelProvider::None, true) => (
             "none (externally managed)",
             "operator managed",
@@ -569,6 +637,12 @@ fn share_access_labels(
     }
 }
 
+fn render_openai_share_ready(project_name: &str, tunnel_id: &str) -> String {
+    format!(
+        "WebCodex ready\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. Connection: Tunnel\n3. Tunnel: {tunnel_id}\n4. Authentication: No authentication\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nReady for ChatGPT through OpenAI Secure MCP Tunnel.\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: OpenAI Secure MCP Tunnel\nPublic access: no public WebCodex endpoint; outbound-only OpenAI Tunnel transport\nWebCodex authentication: the temporary Bearer credential stays local and is injected by tunnel-client into the private MCP hop. Do not paste it into ChatGPT.\nCredential lifetime: temporary; stopping this share removes the local credential and tunnel-client process. The Platform Tunnel identity remains operator managed.\nPress Ctrl-C to stop sharing."
+    )
+}
+
 fn render_share_ready(
     project_name: &str,
     tunnel: TunnelProvider,
@@ -579,19 +653,26 @@ fn render_share_ready(
     let (tunnel_name, public_access, ready_message) =
         share_access_labels(tunnel, externally_managed);
     let base = public_url.trim_end_matches('/');
-    let next_steps = if tunnel == TunnelProvider::CloudflareQuick || externally_managed {
-        format!(
+    let next_steps = match tunnel {
+        TunnelProvider::CloudflareQuick if !externally_managed => format!(
             "What to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {base}/mcp\n3. Authentication: Bearer token\n4. Credential (this share only): {credential}\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\""
-        )
-    } else {
-        format!(
+        ),
+        TunnelProvider::None if externally_managed => format!(
+            "What to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {base}/mcp\n3. Authentication: Bearer token\n4. Credential (this share only): {credential}\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\""
+        ),
+        TunnelProvider::None => format!(
             "What to do next\n1. Add this MCP endpoint to a local MCP client: {base}/mcp\n2. Authentication: Bearer token\n3. Credential (this share only): {credential}\n4. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\""
-        )
+        ),
+        TunnelProvider::OpenAiSecure | TunnelProvider::CloudflareQuick => {
+            "What to do next\nOpenAI Secure MCP Tunnel uses dedicated credential-free ChatGPT handoff output.".to_string()
+        }
     };
-    let lifetime_message = if tunnel == TunnelProvider::CloudflareQuick {
-        "This credential and tunneled URL are temporary."
-    } else {
-        "This credential is temporary."
+    let lifetime_message = match tunnel {
+        TunnelProvider::CloudflareQuick => "This credential and tunneled URL are temporary.",
+        TunnelProvider::OpenAiSecure => {
+            "The temporary credential stays local and is never printed by this output path."
+        }
+        TunnelProvider::None => "This credential is temporary.",
     };
     format!(
         "WebCodex ready\n\n{next_steps}\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nCredential lifetime: {lifetime_message}\nPress Ctrl-C to stop sharing."
@@ -845,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn share_cli_defaults_to_cloudflare_and_accepts_none() {
+    fn share_cli_defaults_to_cloudflare_and_accepts_openai_and_none() {
         let default = parse_share_options(&[]).unwrap();
         assert_eq!(default.tunnel, TunnelProvider::CloudflareQuick);
         assert_eq!(default.auth, ShareAuth::Bearer);
@@ -855,6 +936,25 @@ mod tests {
         let explicit =
             parse_share_options(&["--tunnel".to_string(), "cloudflare".to_string()]).unwrap();
         assert_eq!(explicit.tunnel, TunnelProvider::CloudflareQuick);
+        let openai = parse_share_options(&["--tunnel".to_string(), "openai".to_string()]).unwrap();
+        assert_eq!(openai.tunnel, TunnelProvider::OpenAiSecure);
+        assert_eq!(openai.auth, ShareAuth::Bearer);
+        assert!(parse_share_options(&[
+            "--tunnel".to_string(),
+            "openai".to_string(),
+            "--auth".to_string(),
+            "oauth".to_string(),
+            "--oauth-redirect-uri".to_string(),
+            "https://client.example/callback".to_string(),
+        ])
+        .is_err());
+        assert!(parse_share_options(&[
+            "--tunnel".to_string(),
+            "openai".to_string(),
+            "--public-url".to_string(),
+            "https://share.example".to_string(),
+        ])
+        .is_err());
         let local = parse_share_options(&["--tunnel".to_string(), "none".to_string()]).unwrap();
         assert_eq!(local.tunnel, TunnelProvider::None);
         assert!(parse_share_options(&["--tunnel".to_string(), "unknown".to_string()]).is_err());
@@ -929,6 +1029,18 @@ mod tests {
         assert!(!output.contains("Ready for ChatGPT"));
         assert!(!output.contains("In ChatGPT Developer Mode"));
         assert!(!output.contains("tunneled URL"));
+    }
+
+    #[test]
+    fn openai_share_output_keeps_webcodex_credential_local() {
+        let output = render_openai_share_ready("demo", "tunnel_0123456789abcdef0123456789abcdef");
+        assert!(output.contains("Connection: Tunnel"));
+        assert!(output.contains("Authentication: No authentication"));
+        assert!(output.contains("tunnel_0123456789abcdef0123456789abcdef"));
+        assert!(output.contains("temporary Bearer credential stays local"));
+        assert!(output.contains("Do not paste it into ChatGPT"));
+        assert!(!output.contains("Credential (this share only)"));
+        assert!(!output.contains("MCP URL:"));
     }
 
     #[test]
@@ -1007,6 +1119,11 @@ mod tests {
         let session = ShareSession::create(&state).unwrap();
         assert_ne!(session.credential, persistent_value);
         assert_eq!(fs::read_to_string(&persistent).unwrap(), persistent_before);
+        let authorization_file = session.write_openai_authorization_file().unwrap();
+        assert_eq!(
+            fs::read_to_string(&authorization_file).unwrap(),
+            format!("Bearer {}", session.credential)
+        );
         assert_eq!(
             crate::auth::read_protected_secret(&session.credential_file).unwrap(),
             session.credential
@@ -1038,10 +1155,19 @@ mod tests {
                     & 0o777,
                 0o600
             );
+            assert_eq!(
+                fs::metadata(&authorization_file)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
         }
         let directory = session.directory.clone();
         drop(session);
         assert!(!directory.exists());
+        assert!(!authorization_file.exists());
         assert!(persistent.is_file());
     }
 

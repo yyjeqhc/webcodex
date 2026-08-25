@@ -13,8 +13,8 @@ The self-contained `share` path below requires a local WebCodex Server and is
 supported on Linux/macOS. Windows users should connect the Runner to an existing
 remote Linux Server with `webcodex connect <server-url>` instead.
 
-For the default temporary public path, install
-[`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) and run:
+For the default temporary public path, WebCodex reuses an explicit/PATH
+`cloudflared` or downloads its pinned verified managed copy automatically, then run:
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -46,6 +46,12 @@ custom connector and paste the MCP URL. Other MCP clients should be configured
 with the same endpoint and the authentication mechanism reported by the CLI.
 For local-only clients, `webcodex share --tunnel none` exposes the loopback MCP
 endpoint without `cloudflared`.
+
+For an OpenAI-only private transport, create/select a Secure MCP Tunnel, export
+`CONTROL_PLANE_TUNNEL_ID` plus a Restricted `CONTROL_PLANE_API_KEY` with Tunnels
+Read + Use, and run `webcodex share --tunnel openai`. ChatGPT uses Connection:
+Tunnel + No authentication; the temporary WebCodex Bearer stays local and is
+injected by the pinned verified OpenAI `tunnel-client`.
 
 ## Existing Server
 

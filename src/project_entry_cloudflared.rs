@@ -33,7 +33,7 @@ struct CloudflaredAsset {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct NpmNetworkSettings {
+pub(super) struct NpmNetworkSettings {
     https_proxy: Option<String>,
     proxy: Option<String>,
     noproxy: Option<String>,
@@ -43,7 +43,7 @@ struct NpmNetworkSettings {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct DownloadNetworkConfig {
+pub(super) struct DownloadNetworkConfig {
     proxy: Option<String>,
     no_proxy: Option<String>,
     ca_pem: Option<Vec<u8>>,
@@ -86,7 +86,7 @@ where
     }
 }
 
-async fn effective_npm_network_settings() -> NpmNetworkSettings {
+pub(super) async fn effective_npm_network_settings() -> NpmNetworkSettings {
     let environment = npm_network_settings_from_env_with(|name| std::env::var(name).ok());
     if std::env::var(NPM_WRAPPER_MARKER).ok().as_deref() != Some("1") {
         return environment;
@@ -168,7 +168,7 @@ async fn query_npm_config_value_with(program: &OsStr, key: &str) -> Option<Strin
     normalized_config_value(String::from_utf8(bytes).ok())
 }
 
-fn resolve_download_network_config_with<F>(
+pub(super) fn resolve_download_network_config_with<F>(
     url: &str,
     npm: &NpmNetworkSettings,
     get: F,
@@ -257,7 +257,7 @@ fn read_npm_ca_file(path: &Path) -> Result<Vec<u8>, ProductError> {
     Ok(bytes)
 }
 
-fn build_cloudflared_download_client(
+pub(super) fn build_managed_download_client(
     network: &DownloadNetworkConfig,
 ) -> Result<reqwest::Client, ProductError> {
     let mut builder = reqwest::Client::builder()
@@ -524,7 +524,7 @@ async fn download_cloudflared_asset_with_network(
     destination: &Path,
     network: &DownloadNetworkConfig,
 ) -> Result<(), ProductError> {
-    let client = build_cloudflared_download_client(network)?;
+    let client = build_managed_download_client(network)?;
     let mut response = client
         .get(url)
         .header(

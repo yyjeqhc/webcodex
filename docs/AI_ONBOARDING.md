@@ -30,9 +30,9 @@ Do not invent `https://your-server.example` as a prerequisite for a new user.
 
 ## First-time ChatGPT path: `share`
 
-Verify Git and the target repository, then verify that `cloudflared` is installed
-for the default public share. If it is absent, point the user to Cloudflare's
-official downloads rather than installing third-party executables silently.
+Verify Git and the target repository. For the default public share, WebCodex
+reuses `WEBCODEX_CLOUDFLARED_BIN` / `PATH` or automatically downloads its pinned,
+verified managed `cloudflared`; do not ask a first-time user to install it first.
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -58,6 +58,14 @@ client-side permissions are separate from WebCodex authorization:
 
 For local-only debugging, `webcodex share --tunnel none` avoids the Cloudflare
 Quick Tunnel and does not require `cloudflared`.
+
+When the user explicitly wants OpenAI-only private reachability and already has
+an OpenAI Secure MCP Tunnel, use `webcodex share --tunnel openai`. Require
+`CONTROL_PLANE_TUNNEL_ID` and a Restricted `CONTROL_PLANE_API_KEY` with Tunnels
+Read + Use. In ChatGPT choose Connection: Tunnel and No authentication; WebCodex
+keeps its temporary Bearer local and injects it through `tunnel-client`. Do not
+ask the human to paste that local credential into ChatGPT. Keep Cloudflare Quick
+as the ordinary zero-Platform-setup default.
 
 ## Existing shared-key Server path: `connect`
 

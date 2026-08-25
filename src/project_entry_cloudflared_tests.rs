@@ -246,7 +246,7 @@ fn npm_cafile_is_bounded_and_errors_do_not_expose_paths_or_ca_content() {
         proxy: Some("http://user:proxy-secret@[invalid".to_string()),
         ..DownloadNetworkConfig::default()
     };
-    let error = build_cloudflared_download_client(&invalid_proxy).unwrap_err();
+    let error = build_managed_download_client(&invalid_proxy).unwrap_err();
     assert!(error.message.contains("proxy URL"));
     assert!(!error.message.contains("proxy-secret"));
 
@@ -256,7 +256,7 @@ fn npm_cafile_is_bounded_and_errors_do_not_expose_paths_or_ca_content() {
         ),
         ..DownloadNetworkConfig::default()
     };
-    let error = build_cloudflared_download_client(&invalid_ca).unwrap_err();
+    let error = build_managed_download_client(&invalid_ca).unwrap_err();
     assert!(error.message.contains("CA bundle"));
     assert!(!error.message.contains("private-ca-secret"));
 }

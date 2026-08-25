@@ -246,6 +246,13 @@ mod tests {
                 ..
             })
         ));
+        assert!(matches!(
+            project_cli_action(["share", "--tunnel", "openai"]),
+            ProjectCliAction::Share(project_entry::ShareCommandOptions {
+                tunnel: project_entry::TunnelProvider::OpenAiSecure,
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -62,6 +62,12 @@ Use `webcodex share --no-copy-url` to disable clipboard access.
 
 The default share is temporary and ends when the command exits. For local-only
 MCP debugging, `webcodex share --tunnel none` does not require `cloudflared`.
+For OpenAI-only private reachability, users who already have an OpenAI Secure MCP
+Tunnel can export `CONTROL_PLANE_TUNNEL_ID` plus a Restricted
+`CONTROL_PLANE_API_KEY` with Tunnels Read + Use and run
+`webcodex share --tunnel openai`. WebCodex resolves pinned verified OpenAI
+`tunnel-client` v0.0.12 and keeps the temporary WebCodex Bearer local; ChatGPT
+uses Connection: Tunnel + No authentication.
 ChatGPT Developer Mode, custom MCP apps, and write/modify actions are controlled
 by the ChatGPT plan, workspace, and admin settings; WebCodex cannot widen those
 client-side permissions.
@@ -153,6 +159,12 @@ credential；交互式终端可以按 Enter 打开 ChatGPT App 设置。然后�
 `webcodex share --tunnel none`，此时不需要 `cloudflared`。ChatGPT Developer Mode、custom
 MCP app 与 write/modify action 受 ChatGPT 套餐、workspace 和管理员设置控制；WebCodex
 不能扩大这些客户端侧权限。
+
+如果只需要 OpenAI 产品的私有可达性，已经创建 Secure MCP Tunnel 的用户可以导出
+`CONTROL_PLANE_TUNNEL_ID` 与只授予 Tunnels Read + Use 的 Restricted
+`CONTROL_PLANE_API_KEY`，然后运行 `webcodex share --tunnel openai`。WebCodex 会解析固定且
+经过校验的 OpenAI `tunnel-client` v0.0.12，并把临时 WebCodex Bearer 留在本机；ChatGPT
+使用 Connection: Tunnel + No authentication。
 
 如果你已经运营一个明确支持 shared-key client 的 hosted WebCodex Server，使用 operator
 提供的 client key 走长期路径：

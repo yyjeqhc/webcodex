@@ -85,6 +85,20 @@ terminal, press Enter to open ChatGPT App settings. Then:
 
 Use `webcodex share --no-copy-url` to suppress the clipboard attempt.
 
+For the opt-in OpenAI-only transport, configure an OpenAI Secure MCP Tunnel and
+a Restricted Runtime API key with Tunnels Read + Use, export
+`CONTROL_PLANE_TUNNEL_ID` and `CONTROL_PLANE_API_KEY`, then run:
+
+```bash
+webcodex share --tunnel openai
+```
+
+WebCodex auto-resolves pinned verified OpenAI `tunnel-client` v0.0.12 (or a
+matching `WEBCODEX_TUNNEL_CLIENT_BIN` / `PATH` binary), runs its doctor/readiness
+checks, and keeps the temporary WebCodex Bearer credential local. In ChatGPT use
+**Connection: Tunnel** and **No authentication**. The default Cloudflare Quick
+Tunnel path remains unchanged and client-agnostic.
+
 The Console intentionally does not display that credential. If you later open
 `/console`, get connection credentials from the successful CLI output, not from
 the browser page. ChatGPT Developer Mode, custom MCP apps, and write/modify

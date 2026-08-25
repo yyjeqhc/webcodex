@@ -63,6 +63,22 @@ credential，以 CLI 成功输出为准。
 默认 `share` 的 URL 与 credential 都是临时的，命令退出后失效。仅做本地 MCP 调试时可用
 `webcodex share --tunnel none`，此模式不需要 `cloudflared`。
 
+### 可选：OpenAI Secure MCP Tunnel
+
+如果只希望受支持的 OpenAI 产品访问本机仓库，可以使用
+`webcodex share --tunnel openai`。先在 OpenAI Platform 创建/选择 Secure MCP Tunnel，
+然后导出 `CONTROL_PLANE_TUNNEL_ID` 与只授予 **Tunnels Read + Use** 的 Restricted
+`CONTROL_PLANE_API_KEY`。WebCodex 会依次复用 `WEBCODEX_TUNNEL_CLIENT_BIN`、`PATH`
+中匹配的 `tunnel-client`，否则为 Linux/macOS amd64/arm64 下载并校验固定的 OpenAI
+`tunnel-client` v0.0.12。
+
+这条路径把临时 WebCodex Bearer credential 留在私有本地 share state，只通过 file-backed
+`Authorization` header 交给 `tunnel-client` 访问 loopback MCP。在 ChatGPT 里选择
+**Connection: Tunnel**，选择/粘贴 Tunnel ID，并把认证选择为 **No authentication**；不要把
+本地 WebCodex credential 粘贴到 ChatGPT。`--tunnel openai` 当前只支持默认的
+`--auth bearer`。Ctrl-C 会停止本地 runtime 与 `tunnel-client` 并删除临时 WebCodex
+credential；Platform Tunnel identity 仍由 operator 管理，可以以后继续复用。
+
 ## 第一次连接以后
 
 WebCodex 可以读取/搜索文件、准备受保护的修改、运行命令与聚焦校验、查看 Git，并让长时间

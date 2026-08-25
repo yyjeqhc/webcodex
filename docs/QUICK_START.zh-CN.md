@@ -75,6 +75,19 @@ Enter 打开 ChatGPT App 设置。然后：
 
 如不希望访问剪贴板，使用 `webcodex share --no-copy-url`。
 
+如果只需要 OpenAI 产品访问，可以先创建 OpenAI Secure MCP Tunnel 与仅授予 Tunnels
+Read + Use 的 Restricted Runtime API key，导出 `CONTROL_PLANE_TUNNEL_ID` 和
+`CONTROL_PLANE_API_KEY`，然后运行：
+
+```bash
+webcodex share --tunnel openai
+```
+
+WebCodex 会自动解析固定且经过校验的 OpenAI `tunnel-client` v0.0.12（也可使用匹配的
+`WEBCODEX_TUNNEL_CLIENT_BIN` / `PATH` binary），运行 doctor/readiness，并把临时
+WebCodex Bearer credential 留在本机。ChatGPT 侧使用 **Connection: Tunnel** 与
+**No authentication**。默认 Cloudflare Quick Tunnel 路径保持不变，仍然不绑定特定 MCP client。
+
 Console 故意不显示 credential。以后即使打开 `/console`，认证值也应来自成功的 CLI 首次
 输出，而不是浏览器页面。ChatGPT Developer Mode、custom MCP app 与 write/modify action
 还分别受 ChatGPT 套餐、workspace 和管理员设置控制；客户端 workspace 没有允许的 action，

@@ -28,6 +28,11 @@ const SSH_REMOTE_CWD_MAX_BYTES: usize = 4096;
 /// It is transport headroom, not a smaller Windows product limit.
 const WINDOWS_DIRECT_PROGRAM_MAX_BYTES: usize =
     crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES + SSH_REMOTE_CWD_MAX_BYTES * 5 + 512;
+/// Windows Direct transports a shell-quoted `eval <program>` frame over stdin.
+/// POSIX single-quote encoding expands each input byte by at most 5x; the fixed
+/// `eval ` prefix and surrounding quotes add seven bytes. This is internal
+/// transport headroom only and does not lower the public raw-shell ceilings.
+const WINDOWS_DIRECT_FRAME_MAX_BYTES: usize = WINDOWS_DIRECT_PROGRAM_MAX_BYTES * 5 + 7;
 const WINDOWS_DIRECT_BOOTSTRAP_PREFIX: &str = ": WEBCODEX_SSH_PROGRAM_BYTES=";
 
 /// In-memory identity for one OpenSSH multiplex transport. The Runner config
@@ -84,8 +89,9 @@ pub(crate) enum PreparedSshTransport {
 /// How one prepared SSH invocation receives the remote program.
 ///
 /// Unix mux commands keep their historical remote-program argv. Windows Direct
-/// keeps only a fixed bootstrap in CreateProcess argv and sends the exact remote
-/// program over the SSH stdin stream before any caller stdin bytes.
+/// keeps only a fixed bootstrap in CreateProcess argv and sends a bounded,
+/// shell-quoted transport frame over SSH stdin before any caller stdin bytes.
+/// The frame unwraps to the exact remote program in the same remote shell.
 #[derive(Debug, Clone)]
 pub(crate) enum PreparedSshProgramDelivery {
     Argv,
@@ -386,7 +392,9 @@ impl SshConnectionPool {
                     "ssh_program_too_long: prepared remote program exceeds internal Windows transport headroom ({WINDOWS_DIRECT_PROGRAM_MAX_BYTES} bytes); command was not started"
                 ));
             }
-            let bootstrap = windows_direct_program_bootstrap(remote_script.len());
+            let program_frame = windows_direct_program_frame(&remote_script);
+            debug_assert!(program_frame.len() <= WINDOWS_DIRECT_FRAME_MAX_BYTES);
+            let bootstrap = windows_direct_program_bootstrap(program_frame.len());
             let mut ssh = self.direct_ssh_command();
             ssh.arg("-o")
                 .arg("BatchMode=yes")
@@ -398,7 +406,7 @@ impl SshConnectionPool {
                 command: ssh,
                 transport: PreparedSshTransport::Direct,
                 program_delivery: PreparedSshProgramDelivery::StdinFramed {
-                    program: remote_script.into_bytes(),
+                    program: program_frame.into_bytes(),
                 },
             });
         }
@@ -1051,16 +1059,27 @@ fn shell_quote(value: &str) -> String {
     escaped
 }
 
+/// Encode the exact user program as transport data whose own lexical EOF is
+/// independent from the user's EOF. The outer loader evaluates this complete
+/// wrapper; the inner `eval` builtin then receives exactly `program` as one
+/// argument. The frame always ends in a closing single quote, so command
+/// substitution cannot strip user trailing newlines from the represented data.
+fn windows_direct_program_frame(program: &str) -> String {
+    format!("eval {}", shell_quote(program))
+}
+
 /// Small fixed remote loader for Windows Direct SSH. The only dynamic argv
-/// material is a bounded decimal byte count. OpenSSH's one remote shell runs
-/// the final `eval`; all framing state lives only in a command-substitution
-/// subshell. `dd bs=1 count=N` consumes only the program region, an inner
-/// non-newline sentinel preserves program trailing newlines, and the outer
-/// comment sentinel prevents the final command substitution from trimming them.
-/// The complete frame is byte-counted before any program text reaches `eval`.
-fn windows_direct_program_bootstrap(program_len: usize) -> String {
+/// material is a bounded decimal transport-frame byte count. OpenSSH's one
+/// remote shell runs the outer `eval`; all framing state lives only in a
+/// command-substitution subshell. The stdin frame is already a self-contained
+/// `eval <shell-quoted exact program>` wrapper and always ends in a non-newline
+/// quote, so no parser-visible trailing sentinel is needed. `dd bs=1 count=N`
+/// consumes only the frame region, and the complete frame is byte-counted before
+/// any user program can execute. The wrapper's inner builtin `eval` receives the
+/// exact original program text, with its own lexical EOF.
+fn windows_direct_program_bootstrap(frame_len: usize) -> String {
     format!(
-        r#"{WINDOWS_DIRECT_BOOTSTRAP_PREFIX}{program_len}; eval "$(set +e; WEBCODEX_SSH_N={program_len}; case "$WEBCODEX_SSH_N" in ''|*[!0-9]*) printf >&2 '%s\n' 'webcodex: invalid SSH program length'; printf '%s' 'exit 126'; exit 0;; esac; [ "$WEBCODEX_SSH_N" -gt 0 ] && [ "$WEBCODEX_SSH_N" -le {WINDOWS_DIRECT_PROGRAM_MAX_BYTES} ] || {{ printf >&2 '%s\n' 'webcodex: SSH program length out of range'; printf '%s' 'exit 126'; exit 0; }}; WEBCODEX_SSH_FRAMED=$(dd bs=1 count="$WEBCODEX_SSH_N" 2>/dev/null; WEBCODEX_SSH_DD_STATUS=$?; printf x; exit "$WEBCODEX_SSH_DD_STATUS"); WEBCODEX_SSH_DD_STATUS=$?; [ "$WEBCODEX_SSH_DD_STATUS" -eq 0 ] || {{ printf >&2 '%s\n' 'webcodex: SSH program upload failed'; printf '%s' 'exit 126'; exit 0; }}; WEBCODEX_SSH_PROGRAM=${{WEBCODEX_SSH_FRAMED%x}}; WEBCODEX_SSH_ACTUAL=$(printf '%s' "$WEBCODEX_SSH_PROGRAM" | wc -c); [ "$WEBCODEX_SSH_ACTUAL" -eq "$WEBCODEX_SSH_N" ] 2>/dev/null || {{ printf >&2 '%s\n' 'webcodex: incomplete SSH program upload'; printf '%s' 'exit 126'; exit 0; }}; printf '%s\n#webcodex-ssh-frame' "$WEBCODEX_SSH_PROGRAM")""#
+        r#"{WINDOWS_DIRECT_BOOTSTRAP_PREFIX}{frame_len}; eval "$(set +e; WEBCODEX_SSH_N={frame_len}; case "$WEBCODEX_SSH_N" in ''|*[!0-9]*) printf >&2 '%s\n' 'webcodex: invalid SSH program length'; printf '%s' 'exit 126'; exit 0;; esac; [ "$WEBCODEX_SSH_N" -gt 0 ] && [ "$WEBCODEX_SSH_N" -le {WINDOWS_DIRECT_FRAME_MAX_BYTES} ] || {{ printf >&2 '%s\n' 'webcodex: SSH program length out of range'; printf '%s' 'exit 126'; exit 0; }}; WEBCODEX_SSH_FRAME=$(dd bs=1 count="$WEBCODEX_SSH_N" 2>/dev/null); WEBCODEX_SSH_DD_STATUS=$?; [ "$WEBCODEX_SSH_DD_STATUS" -eq 0 ] || {{ printf >&2 '%s\n' 'webcodex: SSH program upload failed'; printf '%s' 'exit 126'; exit 0; }}; WEBCODEX_SSH_ACTUAL=$(printf '%s' "$WEBCODEX_SSH_FRAME" | wc -c); [ "$WEBCODEX_SSH_ACTUAL" -eq "$WEBCODEX_SSH_N" ] 2>/dev/null || {{ printf >&2 '%s\n' 'webcodex: incomplete SSH program upload'; printf '%s' 'exit 126'; exit 0; }}; printf '%s' "$WEBCODEX_SSH_FRAME")""#
     )
 }
 
@@ -1446,8 +1465,8 @@ fn command_error(start: Instant, error: String) -> CommandResult {
 mod tests {
     use super::{
         is_transport_failure, remote_script, run_ssh_shell, shell_quote, ssh_shell_probe_available,
-        windows_direct_program_bootstrap, PreparedSshTransport, SshConnectionKey,
-        SshConnectionPool,
+        windows_direct_program_bootstrap, windows_direct_program_frame, PreparedSshTransport,
+        SshConnectionKey, SshConnectionPool,
     };
     use crate::webcodex_runner::config::{AgentPolicy, SshConfig, SshResourceConfig};
     use std::collections::BTreeMap;
@@ -1691,6 +1710,30 @@ mod tests {
         assert_eq!(output.stdout, dense.as_bytes());
     }
 
+    fn shell_output(
+        shell: &str,
+        setup: &str,
+        program: &str,
+        env_paths: &[(&str, &Path)],
+    ) -> std::process::Output {
+        let command_text = if setup.is_empty() {
+            program.to_string()
+        } else {
+            format!("{setup}; {program}")
+        };
+        let mut command = Command::new(shell);
+        command
+            .arg("-c")
+            .arg(command_text)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (name, path) in env_paths {
+            command.env(name, path);
+        }
+        command.output().expect("run direct shell control")
+    }
+
     fn bootstrap_output(
         shell: &str,
         setup: &str,
@@ -1698,7 +1741,8 @@ mod tests {
         caller_stdin: &[u8],
         env_paths: &[(&str, &Path)],
     ) -> std::process::Output {
-        let bootstrap = windows_direct_program_bootstrap(program.len());
+        let frame = windows_direct_program_frame(program);
+        let bootstrap = windows_direct_program_bootstrap(frame.len());
         let command_text = if setup.is_empty() {
             bootstrap
         } else {
@@ -1716,10 +1760,145 @@ mod tests {
         }
         let mut child = command.spawn().expect("spawn bootstrap probe");
         let mut input = child.stdin.take().expect("bootstrap stdin");
-        input.write_all(program.as_bytes()).unwrap();
+        input.write_all(frame.as_bytes()).unwrap();
         input.write_all(caller_stdin).unwrap();
         drop(input);
         child.wait_with_output().unwrap()
+    }
+
+    fn assert_bootstrap_matches_direct(shell: &str, program: &str) {
+        let direct = shell_output(shell, "", program, &[]);
+        let candidate = bootstrap_output(shell, "", program, b"", &[]);
+        assert_eq!(
+            candidate.status.code(),
+            direct.status.code(),
+            "{shell} exit mismatch for {program:?}: direct={direct:?} candidate={candidate:?}"
+        );
+        assert_eq!(
+            candidate.stdout, direct.stdout,
+            "{shell} stdout mismatch for {program:?}: direct={direct:?} candidate={candidate:?}"
+        );
+        assert_eq!(
+            candidate.stderr, direct.stderr,
+            "{shell} stderr mismatch for {program:?}: direct={direct:?} candidate={candidate:?}"
+        );
+    }
+
+    fn syntax_error_class(stderr: &[u8]) -> bool {
+        let text = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+        ["syntax", "unexpected", "unterminated", "end of file", "eof"]
+            .iter()
+            .any(|needle| text.contains(needle))
+    }
+
+    #[test]
+    fn windows_direct_bootstrap_matches_direct_shell_at_exact_eof() {
+        let backslash = '\\';
+        let cases = vec![
+            "printf x".to_string(),
+            "printf x\n".to_string(),
+            "printf x\n\n\n".to_string(),
+            "printf x\\\n".to_string(),
+            format!("printf x{backslash}"),
+            format!("printf x{backslash}{backslash}"),
+            format!("printf x{backslash}{backslash}{backslash}"),
+            "printf '%s' 'quoted\\'".to_string(),
+            "printf x # ending comment".to_string(),
+            "printf '%s' '#webcodex-ssh-frame'".to_string(),
+            "printf x;".to_string(),
+            "printf x   \t".to_string(),
+            "printf '%s' '中文🙂'".to_string(),
+        ];
+        for shell in ["sh", "bash"] {
+            for program in &cases {
+                assert_bootstrap_matches_direct(shell, program);
+            }
+        }
+        let frame = windows_direct_program_frame(&format!("printf x{}", '\\'));
+        let bootstrap = windows_direct_program_bootstrap(frame.len());
+        assert!(
+            frame.ends_with('\''),
+            "transport frame must have lexical closure: {frame:?}"
+        );
+        assert!(
+            !bootstrap.contains("#webcodex-ssh-frame"),
+            "transport sentinel must not enter parser input: {bootstrap}"
+        );
+    }
+
+    #[test]
+    fn windows_direct_bootstrap_preserves_lone_trailing_backslash_eof() {
+        let program = format!("printf x{}", '\\');
+        for shell in ["sh", "bash"] {
+            assert_bootstrap_matches_direct(shell, &program);
+        }
+        if Command::new("zsh").arg("--version").output().is_ok() {
+            assert_bootstrap_matches_direct("zsh", &program);
+        }
+    }
+
+    #[test]
+    fn windows_direct_bootstrap_preserves_shell_syntax_error_class() {
+        for shell in ["sh", "bash"] {
+            for program in [
+                "printf \"unterminated",
+                "printf x &&",
+                "if true; then printf x",
+                "(printf x",
+            ] {
+                let direct = shell_output(shell, "", program, &[]);
+                let candidate = bootstrap_output(shell, "", program, b"", &[]);
+                assert_eq!(
+                    candidate.status.code(),
+                    direct.status.code(),
+                    "{shell} syntax exit mismatch for {program:?}: direct={direct:?} candidate={candidate:?}"
+                );
+                assert_eq!(
+                    candidate.stdout, direct.stdout,
+                    "{shell} syntax stdout mismatch for {program:?}: direct={direct:?} candidate={candidate:?}"
+                );
+                assert!(
+                    !direct.status.success()
+                        && syntax_error_class(&direct.stderr)
+                        && syntax_error_class(&candidate.stderr),
+                    "{shell} syntax error class drift for {program:?}: direct={direct:?} candidate={candidate:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn windows_direct_bootstrap_preserves_top_level_eval_scope() {
+        for shell in ["sh", "bash"] {
+            for program in [
+                "return",
+                "return 7",
+                "break",
+                "continue",
+                "false; printf '|%s' \"$?\"",
+            ] {
+                assert_bootstrap_matches_direct(shell, program);
+            }
+        }
+        let setup = "set -- before 'two words'";
+        let program = "printf '%s|%s|%s' \"$#\" \"$1\" \"$2\"";
+        for shell in ["sh", "bash"] {
+            let direct = shell_output(shell, setup, program, &[]);
+            let candidate = bootstrap_output(shell, setup, program, b"", &[]);
+            assert_eq!(
+                candidate.status.code(),
+                direct.status.code(),
+                "{shell}: {direct:?} {candidate:?}"
+            );
+            assert_eq!(
+                candidate.stdout, direct.stdout,
+                "{shell}: {direct:?} {candidate:?}"
+            );
+            assert_eq!(
+                candidate.stderr, direct.stderr,
+                "{shell}: {direct:?} {candidate:?}"
+            );
+        }
     }
 
     #[test]
@@ -1735,7 +1914,8 @@ mod tests {
             "printf ran > {}",
             shell_quote(marker.to_string_lossy().as_ref())
         );
-        let bootstrap = windows_direct_program_bootstrap(partial_program.len() + 9);
+        let partial_frame = windows_direct_program_frame(&partial_program);
+        let bootstrap = windows_direct_program_bootstrap(partial_frame.len() + 9);
         let mut child = Command::new("sh")
             .arg("-c")
             .arg(format!("set -e; {bootstrap}"))
@@ -1745,7 +1925,7 @@ mod tests {
             .spawn()
             .expect("spawn partial bootstrap probe");
         let mut input = child.stdin.take().expect("partial bootstrap stdin");
-        input.write_all(partial_program.as_bytes()).unwrap();
+        input.write_all(partial_frame.as_bytes()).unwrap();
         drop(input);
         let output = child.wait_with_output().unwrap();
         assert!(!output.status.success(), "{output:?}");
@@ -1765,10 +1945,10 @@ mod tests {
             let file = temp.path().join(format!("umask-{mask}.file"));
             let dir = temp.path().join(format!("umask-{mask}.dir"));
             let setup = format!(
-                "umask {mask}; set -- before 'two words'; export WEBCODEX_SSH_PROGRAM_BYTES=original WEBCODEX_SSH_N=OLD_N WEBCODEX_SSH_FRAMED=OLD_FRAME WEBCODEX_SSH_DD_STATUS=OLD_STATUS WEBCODEX_SSH_PROGRAM=OLD_PROGRAM WEBCODEX_SSH_ACTUAL=OLD_ACTUAL n=N i=I d=D f=F actual=A; cleanup() {{ printf cleanup-original; }}"
+                "umask {mask}; set -- before 'two words'; export WEBCODEX_SSH_PROGRAM_BYTES=original WEBCODEX_SSH_N=OLD_N WEBCODEX_SSH_FRAME=OLD_TRANSPORT_FRAME WEBCODEX_SSH_FRAMED=OLD_FRAME WEBCODEX_SSH_DD_STATUS=OLD_STATUS WEBCODEX_SSH_PROGRAM=OLD_PROGRAM WEBCODEX_SSH_ACTUAL=OLD_ACTUAL n=N i=I d=D f=F actual=A; cleanup() {{ printf cleanup-original; }}"
             );
             let program = format!(
-                "printf 'mask=%s|meta=%s|private=%s,%s,%s,%s,%s|generic=%s,%s,%s,%s,%s|args=%s,%s,%s|' \"$(umask)\" \"$WEBCODEX_SSH_PROGRAM_BYTES\" \"$WEBCODEX_SSH_N\" \"$WEBCODEX_SSH_FRAMED\" \"$WEBCODEX_SSH_DD_STATUS\" \"$WEBCODEX_SSH_PROGRAM\" \"$WEBCODEX_SSH_ACTUAL\" \"$n\" \"$i\" \"$d\" \"$f\" \"$actual\" \"$#\" \"$1\" \"$2\"; cleanup; touch {}; mkdir {}",
+                "printf 'mask=%s|meta=%s|private=%s,%s,%s,%s,%s,%s|generic=%s,%s,%s,%s,%s|args=%s,%s,%s|' \"$(umask)\" \"$WEBCODEX_SSH_PROGRAM_BYTES\" \"$WEBCODEX_SSH_N\" \"$WEBCODEX_SSH_FRAME\" \"$WEBCODEX_SSH_FRAMED\" \"$WEBCODEX_SSH_DD_STATUS\" \"$WEBCODEX_SSH_PROGRAM\" \"$WEBCODEX_SSH_ACTUAL\" \"$n\" \"$i\" \"$d\" \"$f\" \"$actual\" \"$#\" \"$1\" \"$2\"; cleanup; touch {}; mkdir {}",
                 shell_quote(file.to_string_lossy().as_ref()),
                 shell_quote(dir.to_string_lossy().as_ref())
             );
@@ -1776,7 +1956,7 @@ mod tests {
             assert!(output.status.success(), "{mask}: {output:?}");
             assert_eq!(
                 String::from_utf8(output.stdout).unwrap(),
-                format!("mask=0{mask}|meta=original|private=OLD_N,OLD_FRAME,OLD_STATUS,OLD_PROGRAM,OLD_ACTUAL|generic=N,I,D,F,A|args=2,before,two words|cleanup-original")
+                format!("mask=0{mask}|meta=original|private=OLD_N,OLD_TRANSPORT_FRAME,OLD_FRAME,OLD_STATUS,OLD_PROGRAM,OLD_ACTUAL|generic=N,I,D,F,A|args=2,before,two words|cleanup-original")
             );
             assert_eq!(
                 std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
@@ -1862,7 +2042,7 @@ mod tests {
             1,
             "BASH_ENV must run only for the one shell OpenSSH would start"
         );
-        let bootstrap = windows_direct_program_bootstrap(1);
+        let bootstrap = windows_direct_program_bootstrap(windows_direct_program_frame("x").len());
         for forbidden in ["\"$0\" -c", "sh -c", "bash -c", "zsh -c"] {
             assert!(!bootstrap.contains(forbidden), "{forbidden}: {bootstrap}");
         }
@@ -3152,6 +3332,14 @@ use std::time::Duration;
 
 const PROGRAM_PREFIX: &str = ": WEBCODEX_SSH_PROGRAM_BYTES=";
 
+fn decode_program_frame(frame: &str) -> Option<String> {
+    let quoted = frame.strip_prefix("eval ")?;
+    if quoted.len() < 2 || !quoted.starts_with('\'') || !quoted.ends_with('\'') {
+        return None;
+    }
+    Some(quoted[1..quoted.len() - 1].replace("'\"'\"'", "'"))
+}
+
 fn suffix<'a>(script: &'a str, marker: &str) -> Option<&'a str> {
     script.rfind(marker).map(|index| script[index + marker.len()..].trim())
 }
@@ -3209,7 +3397,8 @@ fn main() {
             eprintln!("fake ssh: incomplete program frame");
             std::process::exit(126);
         }
-        owned_script = Some(String::from_utf8(program).expect("UTF-8 program frame"));
+        let frame = String::from_utf8(program).expect("UTF-8 program frame");
+        owned_script = Some(decode_program_frame(&frame).expect("valid Windows Direct program frame"));
     }
     let script = owned_script
         .as_deref()
@@ -3314,6 +3503,39 @@ fn main() {
             .collect()
     }
 
+    fn direct_windows_ssh_output(
+        host: &str,
+        program: &str,
+        caller_stdin: Option<&[u8]>,
+    ) -> std::process::Output {
+        let mut command = Command::new("ssh.exe");
+        command
+            .arg("-o")
+            .arg("BatchMode=yes")
+            .arg("-o")
+            .arg("LogLevel=ERROR")
+            .arg(host)
+            .arg(program)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if caller_stdin.is_some() {
+            command.stdin(Stdio::piped());
+        } else {
+            command.stdin(Stdio::null());
+        }
+        let mut child = command.spawn().expect("spawn direct ssh.exe control");
+        if let Some(caller_stdin) = caller_stdin {
+            let mut stdin = child.stdin.take().expect("direct ssh.exe control stdin");
+            stdin
+                .write_all(caller_stdin)
+                .expect("write direct ssh.exe control stdin");
+            drop(stdin);
+        }
+        child
+            .wait_with_output()
+            .expect("wait direct ssh.exe control")
+    }
+
     fn assert_direct_args(args: &[String], host: &str) {
         assert_eq!(
             &args[..5],
@@ -3330,11 +3552,11 @@ fn main() {
         );
     }
 
-    fn stdin_program(delivery: &PreparedSshProgramDelivery) -> &str {
+    fn stdin_frame(delivery: &PreparedSshProgramDelivery) -> &str {
         let PreparedSshProgramDelivery::StdinFramed { program } = delivery else {
             panic!("Windows Direct SSH must use framed stdin program delivery");
         };
-        std::str::from_utf8(program).expect("prepared remote program is UTF-8")
+        std::str::from_utf8(program).expect("prepared transport frame is UTF-8")
     }
 
     fn conservative_windows_command_line_utf16_bound(command: &Command) -> usize {
@@ -3505,8 +3727,8 @@ fn main() {
             "{args:?}"
         );
         assert_eq!(
-            stdin_program(&prepared.program_delivery),
-            "if ! cd '/srv/override'; then printf >&2 '%s\\n' 'webcodex: remote cwd is unavailable'; exit 125; fi\nprintf test"
+            stdin_frame(&prepared.program_delivery),
+            windows_direct_program_frame("if ! cd '/srv/override'; then printf >&2 '%s\\n' 'webcodex: remote cwd is unavailable'; exit 125; fi\nprintf test")
         );
         assert_eq!(pool.connection_count(), 0);
 
@@ -3526,8 +3748,8 @@ fn main() {
             "{job_args:?}"
         );
         assert_eq!(
-            stdin_program(&job.program_delivery),
-            "if ! cd '/srv/webcodex'; then printf >&2 '%s\\n' 'webcodex: remote cwd is unavailable'; exit 125; fi\nprintf job"
+            stdin_frame(&job.program_delivery),
+            windows_direct_program_frame("if ! cd '/srv/webcodex'; then printf >&2 '%s\\n' 'webcodex: remote cwd is unavailable'; exit 125; fi\nprintf job")
         );
         assert_eq!(pool.connection_count(), 0);
     }
@@ -3553,7 +3775,11 @@ fn main() {
             .expect("prepare 16K quote-dense explicit bash command");
         let args = command_args(&prepared.command);
         assert_direct_args(&args, &max_host);
-        assert_eq!(stdin_program(&prepared.program_delivery), wrapped);
+        assert_eq!(
+            stdin_frame(&prepared.program_delivery),
+            windows_direct_program_frame(&wrapped)
+        );
+        assert!(stdin_frame(&prepared.program_delivery).len() <= WINDOWS_DIRECT_FRAME_MAX_BYTES);
         assert!(!args.iter().any(|arg| arg.contains(&authored)));
         let argv_bound = conservative_windows_command_line_utf16_bound(&prepared.command);
         assert!(
@@ -3607,7 +3833,10 @@ fn main() {
                 &max_wire,
             )
             .expect("prepare exact max wire command");
-        assert_eq!(stdin_program(&max_prepared.program_delivery), max_wire);
+        assert_eq!(
+            stdin_frame(&max_prepared.program_delivery),
+            windows_direct_program_frame(&max_wire)
+        );
 
         let quote_dense_cwd = "'".repeat(SSH_REMOTE_CWD_MAX_BYTES);
         let cwd_prepared = pool
@@ -3621,8 +3850,8 @@ fn main() {
             )
             .expect("prepare max quote-dense cwd");
         assert_eq!(
-            stdin_program(&cwd_prepared.program_delivery),
-            remote_script(Some(&quote_dense_cwd), "printf cwd")
+            stdin_frame(&cwd_prepared.program_delivery),
+            windows_direct_program_frame(&remote_script(Some(&quote_dense_cwd), "printf cwd"))
         );
         let cwd_args = command_args(&cwd_prepared.command);
         assert!(!cwd_args.iter().any(|arg| arg.contains(&quote_dense_cwd)));
@@ -3638,7 +3867,10 @@ fn main() {
                 &wrapped,
             )
             .expect("prepare long Windows SSH Job payload");
-        assert_eq!(stdin_program(&job.program_delivery), wrapped);
+        assert_eq!(
+            stdin_frame(&job.program_delivery),
+            windows_direct_program_frame(&wrapped)
+        );
         assert!(!command_args(&job.command)
             .iter()
             .any(|arg| arg.contains(&authored)));
@@ -4549,6 +4781,44 @@ fn main() {
                 None,
             )
         };
+        let assert_direct_equivalent = |program: &str| {
+            let direct = direct_windows_ssh_output(host, program, None);
+            let candidate = run(None, program);
+            assert_eq!(
+                candidate.execution_state,
+                ShellCommandExecutionState::Completed,
+                "real-host EOF candidate was not definite for {program:?}: {candidate:?}"
+            );
+            assert_eq!(
+                candidate.result.exit_code,
+                direct.status.code(),
+                "real-host EOF exit mismatch for {program:?}: direct={direct:?} candidate={candidate:?}"
+            );
+            assert_eq!(
+                candidate.result.stdout.as_deref().unwrap_or_default().as_bytes(),
+                direct.stdout.as_slice(),
+                "real-host EOF stdout mismatch for {program:?}: direct={direct:?} candidate={candidate:?}"
+            );
+            assert_eq!(
+                candidate.result.stderr.as_deref().unwrap_or_default().as_bytes(),
+                direct.stderr.as_slice(),
+                "real-host EOF stderr mismatch for {program:?}: direct={direct:?} candidate={candidate:?}"
+            );
+        };
+
+        let backslash = '\\';
+        for program in [
+            "printf wc-eof-control".to_string(),
+            "printf wc-one-newline\n".to_string(),
+            "printf wc-many-newlines\n\n\n".to_string(),
+            format!("printf x{backslash}"),
+            format!("printf x{backslash}{backslash}"),
+            format!("printf x{backslash}{backslash}{backslash}"),
+            "exit 7".to_string(),
+            "exec printf wc-real-exec-control".to_string(),
+        ] {
+            assert_direct_equivalent(&program);
+        }
 
         let one_shot = run(None, "printf wc-windows-one-shot");
         assert_eq!(
@@ -4667,6 +4937,26 @@ fn main() {
         );
         assert_eq!(stdin_result.result.exit_code, Some(0), "{stdin_result:?}");
         assert_eq!(stdin_result.result.stdout.as_deref(), Some(caller_stdin));
+        let direct_stdin = direct_windows_ssh_output(host, "cat", Some(caller_stdin.as_bytes()));
+        assert_eq!(stdin_result.result.exit_code, direct_stdin.status.code());
+        assert_eq!(
+            stdin_result
+                .result
+                .stdout
+                .as_deref()
+                .unwrap_or_default()
+                .as_bytes(),
+            direct_stdin.stdout.as_slice()
+        );
+        assert_eq!(
+            stdin_result
+                .result
+                .stderr
+                .as_deref()
+                .unwrap_or_default()
+                .as_bytes(),
+            direct_stdin.stderr.as_slice()
+        );
 
         let prefix = "printf wc-max-wire; #";
         let max_wire = format!(
@@ -4702,7 +4992,7 @@ fn main() {
         };
         enqueue_job(
             &manager,
-            sink,
+            sink.clone(),
             config.clone(),
             AgentPolicy::default(),
             "win-ssh-real-background",
@@ -4732,6 +5022,46 @@ fn main() {
         assert!(
             background_snapshot.stdout.tail.contains(observed_umask),
             "background loader changed remote umask: one-shot={observed_umask:?}, background={background:?}"
+        );
+
+        let background_eof_program = format!("printf x{}", '\\');
+        let background_eof_control = direct_windows_ssh_output(host, &background_eof_program, None);
+        enqueue_job(
+            &manager,
+            sink,
+            config,
+            AgentPolicy::default(),
+            "win-ssh-real-background-eof",
+            &background_eof_program,
+            15,
+        );
+        let background_eof =
+            wait_for_job_update(&mut rx, "win-ssh-real-background-eof", |update| {
+                update.finished
+            });
+        assert_eq!(
+            background_eof.exit_code,
+            background_eof_control.status.code(),
+            "background EOF exit mismatch: control={background_eof_control:?} job={background_eof:?}"
+        );
+        assert_eq!(
+            background_eof.command_execution_state,
+            Some(ShellCommandExecutionState::Completed),
+            "{background_eof:?}"
+        );
+        let background_eof_snapshot = background_eof
+            .log_snapshot
+            .as_ref()
+            .expect("background EOF log snapshot");
+        assert_eq!(
+            background_eof_snapshot.stdout.tail.as_bytes(),
+            background_eof_control.stdout.as_slice(),
+            "background EOF stdout mismatch: control={background_eof_control:?} job={background_eof:?}"
+        );
+        assert_eq!(
+            background_eof_snapshot.stderr.tail.as_bytes(),
+            background_eof_control.stderr.as_slice(),
+            "background EOF stderr mismatch: control={background_eof_control:?} job={background_eof:?}"
         );
     }
 

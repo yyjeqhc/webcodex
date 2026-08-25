@@ -269,6 +269,164 @@ jobs:
           git diff --check
           test -z "$(git status --porcelain --untracked-files=all)"
 
+  server-image:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            architecture: amd64
+            slug: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            architecture: arm64
+            slug: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - name: Fence exact reviewed main source
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release readiness must be dispatched from the main workflow definition." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_sha must be exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]; then
+            echo "request_id must match rr_<24 lowercase hex>." >&2
+            exit 1
+          fi
+          if [ "$GITHUB_SHA" != "$INPUT_SOURCE_SHA" ]; then
+            echo "main moved before readiness dispatch: requested=$INPUT_SOURCE_SHA run=$GITHUB_SHA" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Build and verify disposable native Server image
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+          EXPECTED_ARCH: ${{ matrix.architecture }}
+          EXPECTED_PLATFORM: ${{ matrix.platform }}
+          IMAGE_SLUG: ${{ matrix.slug }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INPUT_SOURCE_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          case "$(uname -m):$EXPECTED_ARCH" in
+            x86_64:amd64|aarch64:arm64) ;;
+            *) echo "Unexpected native Server-image architecture: $(uname -m) for $EXPECTED_ARCH" >&2; exit 1 ;;
+          esac
+
+          version="$(python3 -c 'import json; print(json.load(open("npm/webcodex/package.json", encoding="utf-8"))["version"])')"
+          built_at="$(git show -s --format=%ct HEAD)"
+          short_commit="${INPUT_SOURCE_SHA:0:12}"
+          image="webcodex-server-readiness:${INPUT_REQUEST_ID#rr_}-$IMAGE_SLUG"
+          name="webcodex-server-readiness-${GITHUB_RUN_ID}-$IMAGE_SLUG"
+          cleanup() {
+            docker rm -f "$name" >/dev/null 2>&1 || true
+            docker image rm -f "$image" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          DOCKER_BUILDKIT=1 docker build \
+            --build-arg "WEBCODEX_GIT_COMMIT=$short_commit" \
+            --build-arg WEBCODEX_GIT_DIRTY=false \
+            --build-arg "WEBCODEX_BUILT_AT=$built_at" \
+            -t "$image" \
+            -f Dockerfile \
+            .
+
+          test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "$EXPECTED_ARCH"
+          test "$(docker image inspect --format '{{.Os}}' "$image")/$EXPECTED_ARCH" = "$EXPECTED_PLATFORM"
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "webcodex:webcodex"
+          docker run --rm --entrypoint sh "$image" -ec '
+            test "$(id -u)" = 10001
+            test "$(id -g)" = 10001
+            test ! -e /usr/local/bin/webcodex-runner
+          '
+
+          expected_server="webcodex-server $version (commit $short_commit, dirty=false, built_at=$built_at)"
+          expected_cli="webcodex $version (commit $short_commit, dirty=false, built_at=$built_at)"
+          test "$(docker run --rm "$image" --version)" = "$expected_server"
+          test "$(docker run --rm --entrypoint /usr/local/bin/webcodex "$image" --version)" = "$expected_cli"
+
+          docker run -d --name "$name" \
+            -e WEBCODEX_TOKEN=0000000000000000000000000000000000000000000000000000000000000000 \
+            -e WEBCODEX_PUBLIC_URL=https://webcodex.invalid \
+            "$image" >/dev/null
+          for _ in $(seq 1 40); do
+            health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$name")"
+            if [ "$health" = healthy ]; then
+              break
+            fi
+            if [ "$health" = unhealthy ] || [ "$health" = missing ]; then
+              echo "Disposable Server image health check failed: $health" >&2
+              docker logs --tail 80 "$name" >&2 || true
+              exit 1
+            fi
+            sleep 2
+          done
+          if [ "$(docker inspect --format '{{.State.Health.Status}}' "$name")" != healthy ]; then
+            echo "Disposable Server image did not become healthy before the smoke deadline." >&2
+            docker logs --tail 80 "$name" >&2 || true
+            exit 1
+          fi
+
+          # No registry publication is needed to validate deployment-asset generation.
+          # A local image ID has the same canonical sha256 syntax expected by the
+          # digest-pinning renderer, while the resulting asset remains disposable.
+          digest="$(docker image inspect --format '{{.Id}}' "$image")"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Disposable Server image is missing a canonical image ID." >&2
+            exit 1
+          fi
+          deployment_dir="$RUNNER_TEMP/server-deployment-$IMAGE_SLUG"
+          deployment_summary="$RUNNER_TEMP/server-deployment-$IMAGE_SLUG.json"
+          python3 scripts/prepare_server_deployment_assets.py \
+            --compose compose.yaml \
+            --bootstrap deploy/docker/bootstrap.sh \
+            --output-dir "$deployment_dir" \
+            --digest "$digest" \
+            --summary "$deployment_summary" >/dev/null
+          bootstrap="$deployment_dir/webcodex-server-bootstrap.sh"
+          sh -n "$bootstrap"
+          grep -Fq "ghcr.io/yyjeqhc/webcodex-server@$digest" "$bootstrap"
+          if grep -Fq "ghcr.io/yyjeqhc/webcodex-server:latest" "$bootstrap"; then
+            echo "Disposable release bootstrap retained a mutable latest image reference." >&2
+            exit 1
+          fi
+          python3 - "$bootstrap" "$deployment_summary" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          bootstrap = pathlib.Path(sys.argv[1])
+          summary = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+          assets = summary.get("assets")
+          expected = hashlib.sha256(bootstrap.read_bytes()).hexdigest()
+          if assets != {"webcodex-server-bootstrap.sh": expected}:
+              raise SystemExit("disposable Server deployment-asset digest summary is inconsistent")
+          PY
+
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+
   macos-runner:
     runs-on: macos-14
     timeout-minutes: 45
@@ -474,7 +632,7 @@ jobs:
           }
 
   summary:
-    needs: [readiness, native-linux, macos-runner, native-windows]
+    needs: [readiness, native-linux, server-image, macos-runner, native-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Record readiness summary
@@ -488,5 +646,6 @@ jobs:
             echo "- source: \`$INPUT_SOURCE_SHA\`"
             echo "- request: \`$INPUT_REQUEST_ID\`"
             echo "- native release-profile validation: linux-x64, linux-arm64, darwin-arm64, win32-x64, win32-arm64 passed"
+            echo "- disposable Server images: linux/amd64 and linux/arm64 build, runtime, health, and digest-pinned bootstrap generation passed"
             echo "- candidate binaries produced: no (pre-tag validation artifacts are disposable)"
           } >> "$GITHUB_STEP_SUMMARY"

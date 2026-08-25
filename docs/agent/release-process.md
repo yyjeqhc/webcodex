@@ -113,10 +113,13 @@ Before tagging or publishing, follow sections in
 `scripts/release_operator.py readiness-start` for one exact merged `main` SHA and
 observed through the same durable state with `readiness-status`. It runs the canonical
 release check, locked full workspace suite, frontend checks, both zero-config E2E
-transports, the coding-loop compare eval, and parallel disposable release-profile native
-validation for all five published platforms without uploading or producing formal release
-candidates. Linux preserves the release ABI/dependency gates, macOS adds the Runner suite,
-and Windows includes the local npm-install smoke.
+transports, the coding-loop compare eval, parallel disposable release-profile native
+validation for all five published platforms, and native `linux/amd64` + `linux/arm64`
+Server-container build/runtime/health plus digest-pinned bootstrap-generation checks. The
+Server-image readiness jobs use only local disposable images: they do not log in to a
+registry, upload artifacts, push packages, or produce formal release candidates. Linux
+preserves the release ABI/dependency gates, macOS adds the Runner suite, and Windows
+includes the local npm-install smoke.
 Product-documentation consistency and allowed legacy-term matches remain part of the
 release-prep review rather than being guessed by an automated semantic checker.
 

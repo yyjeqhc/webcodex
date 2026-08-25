@@ -170,8 +170,17 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("quay.io/pypa/manylinux2014_x86_64", workflow)
         self.assertIn("quay.io/pypa/manylinux2014_aarch64", workflow)
         self.assertIn("npm_install_windows_smoke.ps1", workflow)
-        self.assertIn("needs: [readiness, native-linux, macos-runner, native-windows]", workflow)
+        self.assertIn("server-image:", workflow)
+        self.assertIn("platform: linux/amd64", workflow)
+        self.assertIn("platform: linux/arm64", workflow)
+        self.assertIn("DOCKER_BUILDKIT=1 docker build", workflow)
+        self.assertIn("scripts/prepare_server_deployment_assets.py", workflow)
+        self.assertIn("ghcr.io/yyjeqhc/webcodex-server@$digest", workflow)
+        self.assertIn("needs: [readiness, native-linux, server-image, macos-runner, native-windows]", workflow)
         self.assertNotIn("actions/upload-artifact", workflow)
+        self.assertNotIn("docker/login-action", workflow)
+        self.assertNotIn("packages: write", workflow)
+        self.assertNotIn("push: true", workflow)
 
 
 if __name__ == "__main__":

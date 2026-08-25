@@ -93,18 +93,36 @@ sudo webcodex server init \
 `server init` creates only the server-side bootstrap/admin token. It does not
 create user API tokens or agent tokens.
 
-Install and start the systemd service:
+Install and start the managed systemd socket/service pair:
 
 ```bash
 sudo webcodex server install \
   --env-file /etc/webcodex/webcodex.env \
   --bin /usr/local/bin/webcodex-server
-sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex
 webcodex server status --env-file /etc/webcodex/webcodex.env
 ```
 
-Use `--overwrite` on `server install` only when replacing an existing unit.
+The managed Linux layout is intentionally split: `webcodex.socket` owns the
+fixed `WEBCODEX_ADDR` listener, while `webcodex.service` owns only the Server
+process. For ordinary binary replacement after this socket-activated layout is
+established, stage the replacement and run:
+
+```bash
+sudo systemctl restart webcodex.service
+```
+
+Do **not** restart `webcodex.socket` during the normal Server replacement path.
+The socket remains bound while the old Server exits and the new process inherits
+the same listener, eliminating the listener/`ECONNREFUSED` gap under normal
+bounded-backlog conditions. Existing HTTP keep-alive, WebSocket, and streaming
+connections may still disconnect and reconnect; graceful in-flight drain is a
+separate L2 capability and is not claimed here.
+
+Use `--overwrite` on `server install` only when replacing an existing managed
+pair. Migrating an already-active legacy direct-bind `webcodex.service` is a
+one-time migration boundary: the installer fails closed rather than competing
+for the live address. Stop the legacy Server first, then rerun the install with
+`--overwrite`. This boundary does not provide a gap-free first migration.
 
 ### Tool invocation tracing
 

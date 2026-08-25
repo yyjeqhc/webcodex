@@ -82,18 +82,32 @@ sudo webcodex server init \
 `server init` 只创建 server 侧 bootstrap/admin token。它不创建 user API token
 或 agent token。
 
-安装并启动 systemd 服务：
+安装并启动受管 systemd socket/service pair：
 
 ```bash
 sudo webcodex server install \
   --env-file /etc/webcodex/webcodex.env \
   --bin /usr/local/bin/webcodex-server
-sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex
 webcodex server status --env-file /etc/webcodex/webcodex.env
 ```
 
-只有替换已有 unit 时才在 `server install` 上使用 `--overwrite`。
+受管 Linux 部署会明确拆分职责：`webcodex.socket` 持有固定的
+`WEBCODEX_ADDR` listener，`webcodex.service` 只持有 Server process。该结构建立后，
+普通二进制替换应先放置新 binary，然后执行：
+
+```bash
+sudo systemctl restart webcodex.service
+```
+
+正常替换路径不要 restart `webcodex.socket`。旧 Server 退出到新 Server 继承 listener
+期间，socket 仍持续绑定，因此在正常有界 backlog 条件下消除 listener gap / `ECONNREFUSED`
+窗口。已有 HTTP keep-alive、WebSocket 与 streaming connection 仍可能断开后重连；本轮
+不宣称 graceful in-flight drain，这属于后续独立 L2 capability。
+
+只有替换已有受管 pair 时才在 `server install` 上使用 `--overwrite`。如果当前仍是
+正在运行的 legacy direct-bind `webcodex.service`，第一次迁移属于单独的一次 migration
+boundary：installer 会 fail closed，避免与旧进程争抢地址。先停止 legacy Server，再用
+`--overwrite` 重新安装；这次首次迁移本身不保证无 gap。
 
 ### Tool invocation trace
 

@@ -258,7 +258,10 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn move_to_isolated_test_fd(fd: i32) -> i32 {
         let isolated = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 1000) };
-        assert!(isolated >= 1000, "failed to duplicate fd for isolated ownership test");
+        assert!(
+            isolated >= 1000,
+            "failed to duplicate fd for isolated ownership test"
+        );
         unsafe { libc::close(fd) };
         isolated
     }

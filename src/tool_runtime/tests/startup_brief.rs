@@ -94,7 +94,11 @@ fn assert_builtin_workflow(output: &Value) {
     let ack_guidance = workflow["model_protocol"]["session_context_ack"]
         .as_str()
         .expect("Session context ACK guidance");
-    assert!(ack_guidance.contains("newest remembered"));
+    assert!(ack_guidance.contains("tool schema exposes ack_session_context_revision"));
+    assert!(ack_guidance.contains("newest returned session_context_revision exactly"));
+    assert!(ack_guidance.contains("never increment, predict, or derive"));
+    assert!(ack_guidance.contains("does not advance the remembered ACK"));
+    assert!(ack_guidance.contains("field is unavailable"));
     assert!(ack_guidance.contains("omit the ACK rather than guessing"));
     assert!(ack_guidance.contains("never blocks the business tool"));
     let closeout_guidance = workflow["model_protocol"]["normal_closeout"]

@@ -211,6 +211,10 @@ only for local/trusted-network demos."
     // stored here — only the resolved user identity.
     let authorize_session_store = Arc::new(oauth_http::AuthorizeSessionStore::new());
     let shell_registry = Arc::new(ShellClientRegistry::default());
+    // Root HTTP admission consults this process-local state before any
+    // side-effecting handler can run. It closes the small race between the
+    // authoritative drain transition and Salvo consuming its stop command.
+    let shutdown_coordinator = Arc::new(server_shutdown::ShutdownCoordinator::default());
     let quic_cfg = config::QuicServerConfig::from_env();
     let connector_context =
         connector_runtime::ConnectorContext::from_env().map_err(std::io::Error::other)?;
@@ -443,6 +447,9 @@ only for local/trusted-network demos."
         .push(Router::with_path("styles.css").get(console_web::admin_styles_css));
 
     let mut router = Router::new()
+        .hoop(server_shutdown::DrainAdmission::new(
+            shutdown_coordinator.clone(),
+        ))
         // Whole-service backstop: no handler may hold an HTTP request open
         // forever. Sized well above every legitimate request — sync agent
         // waits are <= ~122s and MCP dispatch is hard-bounded at 150s — so it
@@ -557,6 +564,7 @@ only for local/trusted-network demos."
     server_shutdown::serve_until_termination(
         Server::new(acceptor),
         router,
+        shutdown_coordinator,
         std::time::Duration::from_secs(SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECS),
     )
     .await?;

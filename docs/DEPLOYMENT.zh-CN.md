@@ -102,10 +102,12 @@ sudo systemctl restart webcodex.service
 正常替换路径不要 restart `webcodex.socket`。旧 Server drain 到新 Server 继承 listener
 期间，socket 仍持续绑定，因此在正常有界 backlog 条件下消除 listener ownership gap /
 `ECONNREFUSED` 窗口。收到 SIGTERM（受管 restart/stop）或 Ctrl-C/SIGINT（前台运行）后，
-WebCodex 会要求 Salvo 停止 accept/admit 新 HTTP work，并给已经 dispatch 的有限生命周期
-request 最多 315 秒完成和写回 response。该值由普通 HTTP hard timeout 300 秒加 15 秒
-response/teardown margin 派生。生成的 systemd service 使用 `TimeoutStopSec=330s`，再留
-15 秒余量，避免 systemd 在应用自己的 bounded shutdown 之前先发 SIGKILL。
+WebCodex 会先让 process-local drain fence 生效，再要求 Salvo 停止 accept 新 connection
+并 graceful close 已有 HTTP connection。fence 生效前已经 admit 的有限生命周期 request
+最多可继续 315 秒完成并写回 response；fence 生效后若 request 仍到达旧进程，则会得到
+可重试的 HTTP 503，且不会进入业务 handler。315 秒由普通 HTTP hard timeout 300 秒加
+15 秒 response/teardown margin 派生。生成的 systemd service 使用 `TimeoutStopSec=330s`，
+再留 15 秒余量，避免 systemd 在应用自己的 bounded shutdown 之前先发 SIGKILL。
 
 这是 availability-preserving graceful restart，不是 overlapping generations。若已有合法
 request 接近最大 deadline，新 TCP connection 可能在 systemd socket backlog 中等待，直到

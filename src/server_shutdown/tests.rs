@@ -27,6 +27,7 @@ async fn start_test_server(
     let server = Server::new(acceptor);
     let (signal_tx, signal_rx) = oneshot::channel();
     let coordinator = Arc::new(ShutdownCoordinator::default());
+    let router = router.hoop(DrainAdmission::new(coordinator.clone()));
     let task_coordinator = coordinator.clone();
     let task = tokio::spawn(async move {
         serve_with_signal(
@@ -202,6 +203,63 @@ async fn counted_handler(depot: &mut Depot) -> &'static str {
         .0
         .fetch_add(1, Ordering::SeqCst);
     "ok"
+}
+
+#[tokio::test]
+async fn drain_admission_fence_closes_salvo_command_channel_accept_race() {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let coordinator = Arc::new(ShutdownCoordinator::default());
+    let router = Router::new()
+        .hoop(DrainAdmission::new(coordinator.clone()))
+        .hoop(affix_state::inject(CountGate(counter.clone())))
+        .get(counted_handler);
+    let acceptor = TcpListener::new("127.0.0.1:0").bind().await;
+    let addr = acceptor.holdings()[0]
+        .local_addr
+        .clone()
+        .into_std()
+        .unwrap();
+    let server = Server::new(acceptor);
+    let force_handle = server.handle();
+    let task_coordinator = coordinator.clone();
+    let server_task = tokio::spawn(async move {
+        serve_with_signal(
+            server,
+            router,
+            task_coordinator,
+            pending::<ShutdownReason>(),
+            Duration::from_secs(1),
+        )
+        .await
+    });
+
+    let first = reqwest::get(format!("http://{addr}/")).await.unwrap();
+    assert_eq!(first.status().as_u16(), 200);
+    assert_eq!(first.text().await.unwrap(), "ok");
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+    // Model the exact production race: the WebCodex drain transition is
+    // authoritative, but Salvo has not consumed a stop command yet. Without
+    // the root admission fence another accepted request could still dispatch.
+    assert!(coordinator.begin_draining());
+    let second = reqwest::get(format!("http://{addr}/")).await.unwrap();
+    assert_eq!(second.status().as_u16(), 503);
+    assert_eq!(second.headers().get("retry-after").unwrap(), "1");
+    let body: serde_json::Value = second.json().await.unwrap();
+    assert_eq!(body["error"], "server_draining");
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "post-drain request reached side-effect handler before Salvo stop command"
+    );
+
+    force_handle.stop_forcible();
+    tokio::time::timeout(Duration::from_secs(1), server_task)
+        .await
+        .expect("forced test cleanup timed out")
+        .unwrap()
+        .unwrap();
+    assert_eq!(coordinator.state(), ShutdownState::Stopped);
 }
 
 async fn read_http_response(stream: &mut tokio::net::TcpStream) -> io::Result<Vec<u8>> {

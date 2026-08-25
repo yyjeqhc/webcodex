@@ -115,12 +115,15 @@ Do **not** restart `webcodex.socket` during the normal Server replacement path.
 The socket remains bound while the old Server drains and the new process later
 inherits the same listener, eliminating the listener/`ECONNREFUSED` ownership
 gap under normal bounded-backlog conditions. On SIGTERM (managed restart/stop)
-or Ctrl-C/SIGINT (foreground), WebCodex asks Salvo to stop accepting/admitting
-new HTTP work and gives already-dispatched finite requests up to 315 seconds to
-complete and flush their response. This is derived from the 300-second ordinary
-HTTP hard timeout plus a 15-second response/teardown margin. The generated
-systemd service uses `TimeoutStopSec=330s`, leaving another 15-second margin so
-systemd does not SIGKILL the process before the application-owned bound.
+or Ctrl-C/SIGINT (foreground), WebCodex first makes a process-local drain fence
+authoritative, then asks Salvo to stop accepting connections and gracefully close
+existing HTTP connections. A request admitted before that fence may run for up to
+315 seconds and flush its response; a request that still reaches the old process
+after the fence receives a retriable HTTP 503 without entering its handler. The
+315-second bound is derived from the 300-second ordinary HTTP hard timeout plus a
+15-second response/teardown margin. The generated systemd service uses
+`TimeoutStopSec=330s`, leaving another 15-second margin so systemd does not
+SIGKILL the process before the application-owned bound.
 
 This is an availability-preserving graceful restart, not overlapping generations.
 During a long drain, new TCP connections can remain queued in the systemd socket

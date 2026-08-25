@@ -1,4 +1,5 @@
 use salvo::conn::Acceptor;
+use salvo::prelude::*;
 use salvo::{Server, Service};
 use std::future::Future;
 use std::io;
@@ -29,7 +30,7 @@ enum ShutdownState {
 }
 
 #[derive(Debug)]
-struct ShutdownCoordinator {
+pub(crate) struct ShutdownCoordinator {
     state: AtomicU8,
 }
 
@@ -63,9 +64,50 @@ impl ShutdownCoordinator {
             .is_ok()
     }
 
+    fn is_running(&self) -> bool {
+        self.state.load(Ordering::Acquire) == ShutdownState::Running as u8
+    }
+
     fn mark_stopped(&self) {
         self.state
             .store(ShutdownState::Stopped as u8, Ordering::Release);
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct DrainAdmission {
+    coordinator: Arc<ShutdownCoordinator>,
+}
+
+impl DrainAdmission {
+    pub(crate) fn new(coordinator: Arc<ShutdownCoordinator>) -> Self {
+        Self { coordinator }
+    }
+}
+
+#[async_trait]
+impl Handler for DrainAdmission {
+    async fn handle(
+        &self,
+        req: &mut Request,
+        depot: &mut Depot,
+        res: &mut Response,
+        ctrl: &mut FlowCtrl,
+    ) {
+        if !self.coordinator.is_running() {
+            res.status_code(StatusCode::SERVICE_UNAVAILABLE);
+            res.headers_mut().insert(
+                salvo::http::header::RETRY_AFTER,
+                salvo::http::HeaderValue::from_static("1"),
+            );
+            res.render(Json(serde_json::json!({
+                "error": "server_draining",
+                "message": "Server is draining; retry the request against the replacement Server"
+            })));
+            ctrl.skip_rest();
+            return;
+        }
+        ctrl.call_next(req, depot, res).await;
     }
 }
 
@@ -120,6 +162,7 @@ impl TerminationSignals {
 pub(crate) async fn serve_until_termination<A, S>(
     server: Server<A>,
     service: S,
+    coordinator: Arc<ShutdownCoordinator>,
     graceful_timeout: Duration,
 ) -> io::Result<()>
 where
@@ -127,7 +170,6 @@ where
     S: Into<Service> + Send,
 {
     let mut signals = TerminationSignals::new()?;
-    let coordinator = Arc::new(ShutdownCoordinator::default());
     serve_with_signal(
         server,
         service,

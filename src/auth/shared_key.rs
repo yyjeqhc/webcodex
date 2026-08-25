@@ -6,7 +6,7 @@ use super::context::{AuthContext, AuthKind};
 use super::scopes::{
     SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL, SCOPE_AGENT_REGISTER, SCOPE_AGENT_RESULT,
     SCOPE_COMPUTER_CONTROL, SCOPE_COMPUTER_READ, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
-    SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
+    SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE,
 };
 
 /// Read the explicit-anonymous (`--open`) flag from the environment. When true,
@@ -49,6 +49,7 @@ pub(crate) fn shared_key_hash_of(token: &str) -> String {
 /// transport scopes or unrelated future OAuth permissions.
 pub(crate) const DIRECT_SHARED_KEY_MODEL_SCOPES: &[&str] = &[
     SCOPE_RUNTIME_READ,
+    SCOPE_SESSION_COLLABORATE,
     SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE,
     SCOPE_JOB_RUN,
@@ -79,6 +80,7 @@ fn shared_key_scopes() -> Vec<String> {
 fn open_anonymous_scopes() -> Vec<String> {
     vec![
         SCOPE_RUNTIME_READ.to_string(),
+        SCOPE_SESSION_COLLABORATE.to_string(),
         SCOPE_PROJECT_READ.to_string(),
         SCOPE_PROJECT_WRITE.to_string(),
         SCOPE_JOB_RUN.to_string(),
@@ -90,6 +92,7 @@ fn open_anonymous_scopes() -> Vec<String> {
 fn project_connector_scopes() -> Vec<String> {
     vec![
         SCOPE_RUNTIME_READ.to_string(),
+        SCOPE_SESSION_COLLABORATE.to_string(),
         SCOPE_PROJECT_READ.to_string(),
         SCOPE_PROJECT_WRITE.to_string(),
         SCOPE_JOB_RUN.to_string(),

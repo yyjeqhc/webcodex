@@ -1133,8 +1133,8 @@ mod tests {
         assert_eq!(
             outcome.error_status,
             Some(ToolCallErrorStatus::InsufficientScope {
-                required_scope: Some(crate::auth::SCOPE_RUNTIME_READ),
-                description: "missing required scope: runtime:read".to_string(),
+                required_scope: Some(crate::auth::SCOPE_SESSION_COLLABORATE),
+                description: "missing required scope: session:collaborate".to_string(),
             })
         );
         assert!(outcome.result.is_none());
@@ -1168,8 +1168,8 @@ mod tests {
         assert_eq!(
             check_session_message_resolution_scope(Some(&project_read_only), true),
             Err(ToolCallErrorStatus::InsufficientScope {
-                required_scope: Some(crate::auth::SCOPE_RUNTIME_READ),
-                description: "missing required scope: runtime:read".to_string(),
+                required_scope: Some(crate::auth::SCOPE_SESSION_COLLABORATE),
+                description: "missing required scope: session:collaborate".to_string(),
             }),
             "piggyback resolution must not inherit the main tool scope"
         );
@@ -1181,6 +1181,15 @@ mod tests {
         let runtime_read = oauth(&["runtime:read"]);
         assert_eq!(
             check_session_message_resolution_scope(Some(&runtime_read), true),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_SESSION_COLLABORATE),
+                description: "missing required scope: session:collaborate".to_string(),
+            }),
+            "runtime observation authority must not resolve Session messages"
+        );
+        let collaborator = oauth(&["session:collaborate"]);
+        assert_eq!(
+            check_session_message_resolution_scope(Some(&collaborator), true),
             Ok(()),
             "piggyback resolution must track the dedicated resolve tool policy"
         );

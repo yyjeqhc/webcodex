@@ -11,6 +11,7 @@ use crate::auth::{
     token_prefix, validate_allowed_client_id, validate_username, AuthContext,
     SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL, SCOPE_AGENT_REGISTER, SCOPE_AGENT_RESULT,
     SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
+    SCOPE_SESSION_COLLABORATE,
 };
 use crate::db::PairingConsumeResult;
 use crate::json_error;
@@ -27,6 +28,7 @@ const MAX_TTL_SECS: i64 = 3600;
 
 const ENROLL_USER_SCOPES: &[&str] = &[
     SCOPE_RUNTIME_READ,
+    SCOPE_SESSION_COLLABORATE,
     SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE,
     SCOPE_JOB_RUN,
@@ -751,6 +753,7 @@ mod tests {
             body["user_token_scopes"],
             json!([
                 SCOPE_RUNTIME_READ,
+                SCOPE_SESSION_COLLABORATE,
                 SCOPE_PROJECT_READ,
                 SCOPE_PROJECT_WRITE,
                 SCOPE_JOB_RUN

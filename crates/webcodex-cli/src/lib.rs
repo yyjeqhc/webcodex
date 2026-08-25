@@ -56,7 +56,13 @@ use webcodex_cli::{
     OpsSmokePreflightOptions, ServerStatusOptions, ServiceControl, StatusOptions,
     AGENT_SERVICE_UNIT, DEFAULT_LOG_LINES, SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
 };
-const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
+const SETUP_GPT_SCOPES: &[&str] = &[
+    "runtime:read",
+    "session:collaborate",
+    "project:read",
+    "project:write",
+    "job:run",
+];
 const SETUP_AGENT_SCOPES: &[&str] = &[
     "agent:register",
     "agent:poll",

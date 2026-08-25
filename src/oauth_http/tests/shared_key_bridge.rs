@@ -39,6 +39,7 @@ fn bridge_computer_scopes_use_explicit_closed_ceiling_without_changing_direct_au
         bridge_oauth_computer_enabled_scopes(),
         &[
             "runtime:read",
+            "session:collaborate",
             "project:read",
             "project:write",
             "job:run",

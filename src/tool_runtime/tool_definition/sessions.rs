@@ -6,8 +6,8 @@ use super::{
     TOOL_CATEGORY_VALIDATION,
 };
 use crate::tool_runtime::metadata::{
-    ToolPathHint::None as NoPath, ToolRisk::ReadOnly, PROJECT_READ, RUNTIME_READ,
-    TOOL_PROVIDER_CONTROL,
+    ToolPathHint::None as NoPath, ToolRisk::ReadOnly, PROJECT_READ, PROJECT_WRITE, RUNTIME_READ,
+    SESSION_COLLABORATE, TOOL_PROVIDER_CONTROL,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
@@ -86,7 +86,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         Some(OwnerOnly),
         TOOL_PROVIDER_CONTROL,
         ReadOnly,
-        Some(PROJECT_READ),
+        Some(PROJECT_WRITE),
         true,
         NoPath,
         false,
@@ -99,7 +99,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         None,
         TOOL_PROVIDER_CONTROL,
         ReadOnly,
-        Some(RUNTIME_READ),
+        Some(SESSION_COLLABORATE),
         false,
         NoPath,
         false,
@@ -125,7 +125,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         None,
         TOOL_PROVIDER_CONTROL,
         ReadOnly,
-        Some(RUNTIME_READ),
+        Some(SESSION_COLLABORATE),
         false,
         NoPath,
         false,
@@ -164,7 +164,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         None,
         TOOL_PROVIDER_CONTROL,
         ReadOnly,
-        Some(RUNTIME_READ),
+        Some(SESSION_COLLABORATE),
         false,
         NoPath,
         false,
@@ -177,7 +177,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         None,
         TOOL_PROVIDER_CONTROL,
         ReadOnly,
-        Some(RUNTIME_READ),
+        Some(SESSION_COLLABORATE),
         false,
         NoPath,
         false,

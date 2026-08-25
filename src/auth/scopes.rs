@@ -17,6 +17,7 @@ use crate::tool_runtime::metadata::lookup_tool_metadata;
 /// treated as having the `admin` scope (full access). Stored space-separated in
 /// the database; parsed into a list on read.
 pub const SCOPE_RUNTIME_READ: &str = "runtime:read";
+pub const SCOPE_SESSION_COLLABORATE: &str = "session:collaborate";
 pub const SCOPE_PROJECT_READ: &str = "project:read";
 pub const SCOPE_PROJECT_WRITE: &str = "project:write";
 pub const SCOPE_JOB_RUN: &str = "job:run";
@@ -61,6 +62,7 @@ pub(crate) const KNOWN_SCOPES: &[&str] = &[
     SCOPE_COMPUTER_CLIPBOARD_READ,
     SCOPE_COMPUTER_CLIPBOARD_WRITE,
     SCOPE_RUNTIME_READ,
+    SCOPE_SESSION_COLLABORATE,
     SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE,
     SCOPE_JOB_RUN,
@@ -251,11 +253,13 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         ("POST", "/api/runtime-console/overview")
         | ("POST", "/api/runtime-console/runner")
         | ("POST", "/api/runtime-console/workflow-session-messages")
-        | ("POST", "/api/runtime-console/workflow-session-observe")
-        | ("POST", "/api/runtime-console/workflow-session-post-message")
+        | ("POST", "/api/runtime-console/workflow-session-observe") => {
+            OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ)
+        }
+        ("POST", "/api/runtime-console/workflow-session-post-message")
         | ("POST", "/api/runtime-console/workflow-session-withdraw-message")
         | ("POST", "/api/runtime-console/workflow-session-replace-message") => {
-            OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ)
+            OAuthRouteScopePolicy::Require(SCOPE_SESSION_COLLABORATE)
         }
         ("POST", "/api/runtime-console/projects")
         | ("POST", "/api/runtime-console/workflow-sessions")
@@ -579,17 +583,17 @@ mod tests {
             (
                 "POST",
                 "/api/runtime-console/workflow-session-post-message",
-                SCOPE_RUNTIME_READ,
+                SCOPE_SESSION_COLLABORATE,
             ),
             (
                 "POST",
                 "/api/runtime-console/workflow-session-withdraw-message",
-                SCOPE_RUNTIME_READ,
+                SCOPE_SESSION_COLLABORATE,
             ),
             (
                 "POST",
                 "/api/runtime-console/workflow-session-replace-message",
-                SCOPE_RUNTIME_READ,
+                SCOPE_SESSION_COLLABORATE,
             ),
             ("POST", "/api/tools/list", SCOPE_RUNTIME_READ),
             ("POST", "/api/connector/task/start", SCOPE_RUNTIME_READ),
@@ -645,9 +649,6 @@ mod tests {
             "/api/runtime-console/runner",
             "/api/runtime-console/workflow-session-messages",
             "/api/runtime-console/workflow-session-observe",
-            "/api/runtime-console/workflow-session-post-message",
-            "/api/runtime-console/workflow-session-withdraw-message",
-            "/api/runtime-console/workflow-session-replace-message",
         ] {
             for (label, auth) in [("pat", &pat), ("oauth", &oauth), ("shared", &shared)] {
                 assert!(
@@ -655,6 +656,26 @@ mod tests {
                     "{label} should honor runtime:read on {path}"
                 );
             }
+        }
+        for path in [
+            "/api/runtime-console/workflow-session-post-message",
+            "/api/runtime-console/workflow-session-withdraw-message",
+            "/api/runtime-console/workflow-session-replace-message",
+        ] {
+            for (label, auth) in [("pat", &pat), ("oauth", &oauth)] {
+                assert_eq!(
+                    enforce_route_scope(auth, "POST", path),
+                    Err((
+                        Some(SCOPE_SESSION_COLLABORATE),
+                        "missing required scope: session:collaborate".to_string()
+                    )),
+                    "{label} runtime:read must not mutate Session collaboration on {path}"
+                );
+            }
+            assert!(
+                enforce_route_scope(&shared, "POST", path).is_ok(),
+                "direct shared key should retain Session collaboration on {path}"
+            );
         }
         for (label, auth) in [("pat", &pat), ("oauth", &oauth)] {
             assert_eq!(
@@ -894,11 +915,15 @@ mod tests {
             ),
             (
                 "update_session_context",
-                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
+            ),
+            (
+                "close_session",
+                OAuthToolScopePolicy::Require(SCOPE_SESSION_COLLABORATE),
             ),
             (
                 "post_session_message",
-                OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
+                OAuthToolScopePolicy::Require(SCOPE_SESSION_COLLABORATE),
             ),
             (
                 "list_session_messages",
@@ -910,7 +935,11 @@ mod tests {
             ),
             (
                 "resolve_session_message",
-                OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
+                OAuthToolScopePolicy::Require(SCOPE_SESSION_COLLABORATE),
+            ),
+            (
+                "complete_session_message",
+                OAuthToolScopePolicy::Require(SCOPE_SESSION_COLLABORATE),
             ),
             (
                 "session_discussion_summary",
@@ -1021,10 +1050,12 @@ mod tests {
             "start_session",
             "session_summary",
             "update_session_context",
+            "close_session",
             "post_session_message",
             "list_session_messages",
             "observe_session_messages",
             "resolve_session_message",
+            "complete_session_message",
             "session_discussion_summary",
             "bind_current_session",
             "current_session",

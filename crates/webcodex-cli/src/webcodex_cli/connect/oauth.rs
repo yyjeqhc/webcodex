@@ -32,6 +32,7 @@ const OAUTH_SECRET_DISCLOSED_FILE_PREFIX: &str = ".oauth-client-secret-disclosed
 // client until this list is explicitly reviewed and changed.
 const HOSTED_CONNECT_OAUTH_SCOPES: &[&str] = &[
     "runtime:read",
+    "session:collaborate",
     "project:read",
     "project:write",
     "job:run",

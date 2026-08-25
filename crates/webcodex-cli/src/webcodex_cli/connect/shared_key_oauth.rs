@@ -15,6 +15,7 @@ const LOCAL_MCP_SCOPE: &str = "mcp:local";
 const CODING_AGENT_SCOPE: &str = "coding_agent:run";
 const BRIDGE_BASELINE_SCOPES: &[&str] = &[
     "runtime:read",
+    "session:collaborate",
     "project:read",
     "project:write",
     "job:run",
@@ -32,6 +33,7 @@ const BRIDGE_OPTIONAL_COMPUTER_SCOPES: &[&str] = &[
 // retain a narrower non-empty baseline subset plus all optional Computer scopes.
 const BRIDGE_COMPUTER_ENABLED_SCOPES: &[&str] = &[
     "runtime:read",
+    "session:collaborate",
     "project:read",
     "project:write",
     "job:run",
@@ -623,6 +625,7 @@ mod tests {
     async fn ordinary_connect_oauth_provisions_then_reuses_same_shared_key_client() {
         let scopes = vec![
             "runtime:read",
+            "session:collaborate",
             "project:read",
             "project:write",
             "job:run",
@@ -648,6 +651,7 @@ mod tests {
                     "redirect_uri": "https://chatgpt.example/callback",
                     "allowed_scopes": [
                         "runtime:read",
+                        "session:collaborate",
                         "project:read",
                         "project:write",
                         "job:run",

@@ -5,13 +5,17 @@
 //! old authorization codes/access tokens/refresh tokens unusable without
 //! changing ownership of existing project tasks.
 
-use super::{SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ};
+use super::{
+    SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
+    SCOPE_SESSION_COLLABORATE,
+};
 
 pub(crate) const PROJECT_SHARE_OAUTH_SUBJECT_KIND: &str = "project_share";
 pub(crate) const PROJECT_SHARE_OAUTH_TOKEN_KIND: &str = "oauth2_project";
 pub(crate) const PROJECT_SHARE_SESSION_PREFIX: &str = "wc_share_";
 pub(crate) const PROJECT_SHARE_OAUTH_SCOPES: &[&str] = &[
     SCOPE_RUNTIME_READ,
+    SCOPE_SESSION_COLLABORATE,
     SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE,
     SCOPE_JOB_RUN,

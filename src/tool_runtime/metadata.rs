@@ -59,6 +59,7 @@ pub(crate) struct ToolMetadata {
 }
 
 pub(crate) const RUNTIME_READ: &str = crate::auth::SCOPE_RUNTIME_READ;
+pub(crate) const SESSION_COLLABORATE: &str = crate::auth::SCOPE_SESSION_COLLABORATE;
 pub(crate) const PROJECT_READ: &str = crate::auth::SCOPE_PROJECT_READ;
 pub(crate) const PROJECT_WRITE: &str = crate::auth::SCOPE_PROJECT_WRITE;
 pub(crate) const JOB_RUN: &str = crate::auth::SCOPE_JOB_RUN;

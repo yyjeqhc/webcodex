@@ -15,7 +15,7 @@ use super::{
 };
 
 pub(crate) const PROJECT_SHARE_OAUTH_INVALID_SCOPE_MESSAGE: &str =
-    "project share tokens are limited to runtime:read, project:read, project:write, job:run";
+    "project share tokens are limited to runtime:read, session:collaborate, project:read, project:write, job:run";
 
 pub(crate) fn normalize_project_share_oauth_scopes(
     requested: Option<&str>,

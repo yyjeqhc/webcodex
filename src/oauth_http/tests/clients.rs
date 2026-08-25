@@ -410,6 +410,7 @@ async fn oauth_client_create_omitted_and_empty_scopes_use_exact_legacy_default()
         .copied()
         .filter(|scope| !LEGACY_DEFAULT_SCOPES.contains(scope))
         .collect::<Vec<_>>();
+    assert!(non_legacy_supported.contains(&"session:collaborate"));
     assert!(non_legacy_supported.contains(&"computer:launch"));
     assert!(non_legacy_supported.contains(&"computer:display_read"));
     assert!(non_legacy_supported.contains(&"computer:pointer_control"));

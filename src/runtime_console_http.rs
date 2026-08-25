@@ -4,7 +4,7 @@
 //! runtime project authorization and the existing Workflow Session console
 //! projection without creating a second store, parser, or observation authority.
 
-use crate::auth::{AuthContext, SCOPE_PROJECT_READ, SCOPE_RUNTIME_READ};
+use crate::auth::{AuthContext, SCOPE_PROJECT_READ, SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE};
 use crate::tool_runtime::sessions::{
     aggregate_console_list, is_valid_session_id, SessionMessageKind, SessionMessagePriority,
     WorkflowSessionConsoleAggregate, WorkflowSessionConsoleAttentionOverview,
@@ -438,6 +438,17 @@ fn require_runtime_read(auth: &AuthContext) -> Result<(), RuntimeConsoleError> {
         Err(RuntimeConsoleError::Request {
             status: 403,
             message: "Runtime read access required",
+        })
+    }
+}
+
+fn require_session_collaborate(auth: &AuthContext) -> Result<(), RuntimeConsoleError> {
+    if auth.has_scope(SCOPE_SESSION_COLLABORATE) {
+        Ok(())
+    } else {
+        Err(RuntimeConsoleError::Request {
+            status: 403,
+            message: "Session collaboration access required",
         })
     }
 }
@@ -1396,7 +1407,7 @@ async fn session_post_message_for_auth(
     auth: &AuthContext,
     input: WorkflowSessionPostMessageInput,
 ) -> Result<RuntimeConsoleMessage, RuntimeConsoleError> {
-    require_runtime_read(auth)?;
+    require_session_collaborate(auth)?;
     if !matches!(
         input.kind,
         SessionMessageKind::Note
@@ -1443,7 +1454,7 @@ async fn session_withdraw_message_for_auth(
     auth: &AuthContext,
     input: WorkflowSessionWithdrawMessageInput,
 ) -> Result<RuntimeConsoleWithdrawMessage, RuntimeConsoleError> {
-    require_runtime_read(auth)?;
+    require_session_collaborate(auth)?;
     if !valid_runtime_message_id(&input.message_id) {
         return Err(RuntimeConsoleError::Invalid);
     }
@@ -1473,7 +1484,7 @@ async fn session_replace_message_for_auth(
     auth: &AuthContext,
     input: WorkflowSessionReplaceMessageInput,
 ) -> Result<RuntimeConsoleReplaceMessage, RuntimeConsoleError> {
-    require_runtime_read(auth)?;
+    require_session_collaborate(auth)?;
     if !valid_runtime_message_id(&input.message_id) {
         return Err(RuntimeConsoleError::Invalid);
     }
@@ -2468,6 +2479,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn collaboration_mutations_require_session_collaborate_before_session_lookup() {
+        let runtime = test_runtime();
+        let runtime_read_only = scoped_oauth(&[SCOPE_RUNTIME_READ, SCOPE_PROJECT_READ]);
+        let error = session_post_message_for_auth(
+            &runtime,
+            &runtime_read_only,
+            WorkflowSessionPostMessageInput {
+                project: "agent:missing:project".to_string(),
+                session_id: "wc_sess_missing".to_string(),
+                kind: SessionMessageKind::Guidance,
+                priority: SessionMessagePriority::High,
+                message: "must not be injected by runtime:read".to_string(),
+                reply_to: None,
+                requires_ack: true,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error,
+            RuntimeConsoleError::Request {
+                status: 403,
+                message: "Session collaboration access required",
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn collaboration_message_projection_reuses_authority_fence_and_hides_completion_identity()
     {
         let runtime = test_runtime();
@@ -2784,7 +2823,7 @@ mod tests {
         let runtime = test_runtime();
         let auth_a = crate::auth::shared_key_context("runtime-console-mutate-a");
         let auth_b = crate::auth::shared_key_context("runtime-console-mutate-b");
-        let no_runtime_read = scoped_oauth(&[SCOPE_PROJECT_READ]);
+        let runtime_read_only = scoped_oauth(&[SCOPE_RUNTIME_READ, SCOPE_PROJECT_READ]);
         let project_id = "agent:client-a:proj-a";
         register_project(&runtime, "client-a", "proj-a", "/private/a", Some(&auth_a)).await;
         let session = start_authorized_session(&runtime, project_id, &auth_a);
@@ -2803,7 +2842,7 @@ mod tests {
         assert_eq!(
             session_withdraw_message_for_auth(
                 &runtime,
-                &no_runtime_read,
+                &runtime_read_only,
                 WorkflowSessionWithdrawMessageInput {
                     project: project_id.to_string(),
                     session_id: session.session_id.clone(),
@@ -2814,7 +2853,7 @@ mod tests {
             .unwrap_err(),
             RuntimeConsoleError::Request {
                 status: 403,
-                message: "Runtime read access required",
+                message: "Session collaboration access required",
             }
         );
         assert_eq!(

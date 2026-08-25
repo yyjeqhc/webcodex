@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn project_share_scope_ceiling_is_connector_only() {
-    let allowed = "runtime:read project:read project:write job:run";
+    let allowed = "runtime:read session:collaborate project:read project:write job:run";
     let normalized = normalize_project_share_oauth_scopes(Some(allowed), allowed).unwrap();
     assert_eq!(normalized, allowed);
 
@@ -15,7 +15,7 @@ fn project_share_scope_ceiling_is_connector_only() {
     }
 
     let globally_supported_but_outside_connector =
-        "runtime:read project:read project:write job:run computer:read";
+        "runtime:read session:collaborate project:read project:write job:run computer:read";
     if normalize_oauth_scopes(
         Some(globally_supported_but_outside_connector),
         globally_supported_but_outside_connector,

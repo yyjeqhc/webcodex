@@ -107,7 +107,9 @@ agent 连接 token。
 
 用 `--token-file <path>` 提供给 CLI 命令，而不是 `--token`，以免进入 shell 历史。
 按工作流限制 PAT scope。例如，一个要检查和编辑项目的 GPT Action 可能需要
-`runtime:read`、`project:read`、`project:write`、`job:run`。
+`runtime:read`、`project:read`、`project:write`、`job:run`；只有需要 post、resolve、
+complete、replace、withdraw 或 close Workflow Session 协作状态时才额外授予
+`session:collaborate`。仅有 `runtime:read` 对这类协作状态保持只读观察能力。
 
 ## `wc_agent_xxx`（Runner 令牌）
 
@@ -146,13 +148,13 @@ Server 支持 authorization-code grant、token 撤销与 OAuth metadata。动态
 [部署指南](DEPLOYMENT.zh-CN.md#oauth2)。
 
 OAuth client 的 `allowed_scopes` 是 client 注册时确定的委派权限上限；WebCodex 后续
-增加 `computer:control` 之类的新权限时，不会自动给历史 client 扩权。first-party
+增加 `session:collaborate`、`computer:control` 之类的新权限时，不会自动给历史 client 扩权。first-party
 operator 可以通过 `POST /api/oauth/clients/update_scopes` 显式替换 active client 的
 完整 allowlist。allowlist 真正变化时，Server 会在同一事务里撤销该 client 现有的
 access token、refresh token 与尚存 authorization code，因此 client 必须重新完成
 OAuth 授权，才能使用新的 scope 集合。
 
-`webcodex connect <server> --auth oauth` 是普通 hosted shared-key OAuth bridge。OAuth client 归属于 direct shared key 的 SHA-256 group hash，authorization code、access token、refresh token 都保留同一个 `shared_key_hash` subject binding。direct shared-key bearer authority 始终保持显式 baseline：`runtime:read`、`project:read`、`project:write`、`job:run`、`computer:read`、`computer:control`。fresh ordinary OAuth client 从完整 baseline 开始；已有受保护 client 则可以合法持有该 baseline 的任意 non-empty、unique subset。只有 connect 显式传 `--oauth-computer-permissions`，OAuth client ceiling 才在**现有 baseline subset**上追加固定 closed set：`computer:launch`、`computer:display_read`、`computer:pointer_control`、`computer:clipboard_read`、`computer:clipboard_write`；绝不会恢复此前缺失的 baseline scope。Computer-enabled ceiling 只有在完整包含这五个 optional scopes、至少保留一个 baseline scope，且不存在两个显式 closed universe 之外的 scope 时才合法。该集合绝不从全局 OAuth registry 自动派生，也永远不包含 `account:manage`、`admin`、`job:detach`、任何 `agent:*` transport scope 或未来新增 scope。client ceiling 不是实际 grant：WebCodex authorize 页面五项 optional Computer permission 默认全部未勾选，authorization code 只包含本次 request 中实际授予的 baseline scope、用户明确选择后由固定 bundle 映射的 optional scope，以及本次协议需要的 `offline_access`。access token 与 refresh rotation 逐字保留该实际 grant，不重新扩到 client ceiling。Launch selection 要求本次 request 同时包含 `computer:read` 与 `computer:launch`，但 launch permission bundle 自身仍只新增 `computer:launch`；其他 optional permission 同样要求其完整 runtime request prerequisite，Server 不会替 client 偷偷补 request 未包含的 scope。普通 reconnect 不会扩已有 baseline client；revoked/missing client replacement 会按 `previous_allowed_scopes` 保留受保护 baseline subset。只有显式 opt-in 真正改变 shared-key-owned client ceiling 时，才原子撤销其 access/refresh token 与未使用 authorization code，要求重新完成浏览器授权。Runner 继续使用 direct shared key，OAuth access token 永远不能用于 Agent transport；`--auth managed-oauth` 仍是独立 managed-user 流程。
+`webcodex connect <server> --auth oauth` 是普通 hosted shared-key OAuth bridge。OAuth client 归属于 direct shared key 的 SHA-256 group hash，authorization code、access token、refresh token 都保留同一个 `shared_key_hash` subject binding。direct shared-key bearer authority 始终保持显式 baseline：`runtime:read`、`session:collaborate`、`project:read`、`project:write`、`job:run`、`computer:read`、`computer:control`。fresh ordinary OAuth client 从完整 baseline 开始；已有受保护 client 则可以合法持有该 baseline 的任意 non-empty、unique subset。只有 connect 显式传 `--oauth-computer-permissions`，OAuth client ceiling 才在**现有 baseline subset**上追加固定 closed set：`computer:launch`、`computer:display_read`、`computer:pointer_control`、`computer:clipboard_read`、`computer:clipboard_write`；绝不会恢复此前缺失的 baseline scope。Computer-enabled ceiling 只有在完整包含这五个 optional scopes、至少保留一个 baseline scope，且不存在两个显式 closed universe 之外的 scope 时才合法。该集合绝不从全局 OAuth registry 自动派生，也永远不包含 `account:manage`、`admin`、`job:detach`、任何 `agent:*` transport scope 或未来新增 scope。client ceiling 不是实际 grant：WebCodex authorize 页面五项 optional Computer permission 默认全部未勾选，authorization code 只包含本次 request 中实际授予的 baseline scope、用户明确选择后由固定 bundle 映射的 optional scope，以及本次协议需要的 `offline_access`。access token 与 refresh rotation 逐字保留该实际 grant，不重新扩到 client ceiling。Launch selection 要求本次 request 同时包含 `computer:read` 与 `computer:launch`，但 launch permission bundle 自身仍只新增 `computer:launch`；其他 optional permission 同样要求其完整 runtime request prerequisite，Server 不会替 client 偷偷补 request 未包含的 scope。普通 reconnect 不会扩已有 baseline client；revoked/missing client replacement 会按 `previous_allowed_scopes` 保留受保护 baseline subset。只有显式 opt-in 真正改变 shared-key-owned client ceiling 时，才原子撤销其 access/refresh token 与未使用 authorization code，要求重新完成浏览器授权。Runner 继续使用 direct shared key，OAuth access token 永远不能用于 Agent transport；`--auth managed-oauth` 仍是独立 managed-user 流程。
 
 shared-key authorize 页面只对 exact shared-key-owned client 做 optional Computer picker，并要求 `owner_shared_key_hash` 与提交的 shared key 精确匹配、对应 Runner group 在线。每个 permission 只有在**同一个在线 Runner**同时满足完整 capability requirement 时才显示 available，绝不把多个 Runner 的 capability 做 union；POST 会重新计算，因此 GET 后 capability 消失会 fail closed 且不创建 code。这里的 capability 只代表 WebCodex backend 当前支持，不代表 OS/native permission 或操作一定成功；authorize 过程中不会执行隐藏 display observation、pointer/clipboard effect、launch 或 OS-permission probe，runtime tool call 仍负责最新 native/OS preflight。
 

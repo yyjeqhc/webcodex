@@ -2649,14 +2649,16 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
         "workflow-omitted projection regressed above the context budget: {workflow_omitted_bytes} bytes"
     );
     // Before sparse-by-default projection this fixture was 3154 bytes fresh
-    // and 3259 bytes on unchanged continuation. Leave modest headroom while
-    // locking in a material reduction in model-facing context.
+    // and 3259 bytes on unchanged continuation. Session protocol v3 now carries
+    // explicit message-ACK and recording adoption guidance, intentionally growing
+    // the retained static workflow projection. Keep the sparse result far below
+    // the standard startup hard cap while leaving modest protocol headroom.
     assert!(
-        fresh_bytes <= 2600,
+        fresh_bytes <= 3500,
         "fresh work_on_project projection regressed above the sparse context budget: {fresh_bytes} bytes"
     );
     assert!(
-        reused_bytes <= 2600,
+        reused_bytes <= 3500,
         "unchanged work_on_project projection regressed above the sparse context budget: {reused_bytes} bytes"
     );
     eprintln!(

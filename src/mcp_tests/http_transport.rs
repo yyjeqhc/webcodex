@@ -1331,8 +1331,32 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
         .is_none());
 }
 
-#[tokio::test]
-async fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contract() {
+#[test]
+fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contract() {
+    // This end-to-end fixture intentionally keeps many independent HTTP response
+    // values alive across awaits. On the default ~2 MiB libtest thread stack it
+    // can sit close enough to the limit to overflow only under the full workspace
+    // suite. Give this one large integration fixture an explicit bounded stack
+    // rather than weakening or serializing the workspace release gate.
+    std::thread::Builder::new()
+        .name("mcp-observe-session-messages".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build stateless observation test runtime")
+                .block_on(
+                    http_mcp_2026_observe_session_messages_preserves_stateless_delta_contract_body(
+                    ),
+                );
+        })
+        .expect("spawn stateless observation test thread")
+        .join()
+        .expect("stateless observation test thread panicked");
+}
+
+async fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contract_body() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let ledger_dir = tempfile::tempdir().unwrap();

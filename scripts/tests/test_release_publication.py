@@ -554,6 +554,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("webcodex-server-bootstrap.sh", image)
         self.assertIn("webcodex-server-compose.yaml", image)
         self.assertIn("Require anonymous GHCR availability", image)
+        self.assertIn('gh release download "$TAG" --repo "$GITHUB_REPOSITORY"', image)
 
     def test_compose_defaults_to_published_image_with_explicit_source_override(self) -> None:
         compose = Path("compose.yaml").read_text(encoding="utf-8")

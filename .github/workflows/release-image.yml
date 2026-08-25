@@ -549,7 +549,7 @@ jobs:
           tmp="$RUNNER_TEMP/server-image-public"
           mkdir -p "$tmp"
           for name in webcodex-server-image.json webcodex-server-bootstrap.sh; do
-            gh release download "$TAG" --pattern "$name" --dir "$tmp"
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$tmp"
           done
           readarray -t values < <(python3 - "$tmp" <<'PY'
           import hashlib

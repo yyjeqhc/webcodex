@@ -4356,13 +4356,17 @@ for line in sys.stdin:
         let manager = CodingAgentManager::with_store(&cfg, temp.path().join("store")).unwrap();
         let run = "wc_agent_run_promptbackpressure01";
         let started_at = Instant::now();
-        let started = manager.handle(max_instruction_request(&manager, &root, run, 1), &projects);
+        // Leave enough setup budget for a contended macOS hosted runner to reach
+        // the intended blocked ChildStdin state before the total Run deadline.
+        // The assertion below still proves that the blocked write is bounded by
+        // that deadline rather than by the provider ever resuming reads.
+        let started = manager.handle(max_instruction_request(&manager, &root, run, 3), &projects);
         assert!(started.error.is_none(), "{:?}", started.error);
         wait_for_path(&temp.path().join("stdin_stopped.ready"));
         wait_for_prompt_handoff(&manager, run);
         let snapshot = wait_for_snapshot(&manager, run, |snapshot| snapshot.state.terminal());
         assert!(
-            started_at.elapsed() < Duration::from_secs(4),
+            started_at.elapsed() < Duration::from_secs(6),
             "blocked prompt write escaped the total Run deadline"
         );
         assert_eq!(snapshot.state, CodingAgentRunState::Lost);

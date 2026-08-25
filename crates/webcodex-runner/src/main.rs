@@ -2824,6 +2824,34 @@ fn post_spawn_interruption_lifecycle_for_kind(kind: &str) -> Option<ShellCommand
     (kind == "start_job").then_some(ShellCommandExecutionState::OutcomeUnknown)
 }
 
+fn post_spawn_interruption_reason(
+    shutting_down: bool,
+    stop_requested: bool,
+    job_record_present: bool,
+) -> Option<&'static str> {
+    if shutting_down {
+        Some("runner began shutdown after command start")
+    } else if stop_requested {
+        Some("job stop requested after command start")
+    } else if !job_record_present {
+        Some("runner lost the Job record after command start")
+    } else {
+        None
+    }
+}
+
+fn post_spawn_interruption_delta(kind: &str, duration_ms: u64, error: &str) -> RunnerJobDelta {
+    RunnerJobDelta {
+        status: "failed".to_string(),
+        exit_code: None,
+        duration_ms: Some(duration_ms),
+        error: Some(error.to_string()),
+        command_execution_state: post_spawn_interruption_lifecycle_for_kind(kind),
+        finished: true,
+        ..Default::default()
+    }
+}
+
 fn raw_shell_job_terminal_lifecycle(
     status: &str,
     exit_code: Option<i32>,
@@ -4781,16 +4809,19 @@ impl JobManager {
         let mut child = Arc::new(Mutex::new(child));
         let post_spawn_rejection = {
             let _lifecycle = lock_unpoison(&self.lifecycle);
-            if self.shutting_down.load(Ordering::SeqCst) {
-                Some("runner began shutdown after command start")
-            } else if stop_requested.load(Ordering::SeqCst) {
-                Some("job stop requested after command start")
-            } else if let Some(job) = lock_unpoison(&self.jobs).get_mut(&job_id) {
-                job.child = Some(child.clone());
-                None
-            } else {
-                Some("runner lost the Job record after command start")
+            let mut jobs = lock_unpoison(&self.jobs);
+            let mut job = jobs.get_mut(&job_id);
+            let rejection = post_spawn_interruption_reason(
+                self.shutting_down.load(Ordering::SeqCst),
+                stop_requested.load(Ordering::SeqCst),
+                job.is_some(),
+            );
+            if rejection.is_none() {
+                if let Some(job) = job.as_mut() {
+                    job.child = Some(child.clone());
+                }
             }
+            rejection
         };
         if let Some(error) = post_spawn_rejection {
             let _ = terminate_managed_tree(&child);
@@ -4802,17 +4833,11 @@ impl JobManager {
             // spawn boundary.
             self.update_and_send(
                 &job_id,
-                RunnerJobDelta {
-                    status: "failed".to_string(),
-                    exit_code: None,
-                    duration_ms: Some(start.elapsed().as_millis() as u64),
-                    error: Some(error.to_string()),
-                    command_execution_state: post_spawn_interruption_lifecycle_for_kind(
-                        request.kind.as_str(),
-                    ),
-                    finished: true,
-                    ..Default::default()
-                },
+                post_spawn_interruption_delta(
+                    request.kind.as_str(),
+                    start.elapsed().as_millis() as u64,
+                    error,
+                ),
             );
             self.start_available_queued();
             return;
@@ -5222,20 +5247,36 @@ impl JobManager {
         let mut stdout = child.child_mut().stdout.take();
         let mut stderr = child.child_mut().stderr.take();
         let child = Arc::new(Mutex::new(child));
-        let reject_for_shutdown = {
+        let post_spawn_rejection = {
             let _lifecycle = lock_unpoison(&self.lifecycle);
-            if self.shutting_down.load(Ordering::SeqCst) || stop_requested.load(Ordering::SeqCst) {
-                true
-            } else if let Some(job) = lock_unpoison(&self.jobs).get_mut(&job_id) {
-                job.child = Some(Arc::clone(&child));
-                false
-            } else {
-                true
+            let mut jobs = lock_unpoison(&self.jobs);
+            let mut job = jobs.get_mut(&job_id);
+            let rejection = post_spawn_interruption_reason(
+                self.shutting_down.load(Ordering::SeqCst),
+                stop_requested.load(Ordering::SeqCst),
+                job.is_some(),
+            );
+            if rejection.is_none() {
+                if let Some(job) = job.as_mut() {
+                    job.child = Some(Arc::clone(&child));
+                }
             }
+            rejection
         };
-        if reject_for_shutdown {
+        if let Some(error) = post_spawn_rejection {
             let _ = terminate_managed_tree(&child);
-            self.shutdown_rejection(&request);
+            // ManagedChild::spawn has already resumed ssh.exe. A successful
+            // local tree termination cannot prove that the remote command was
+            // never dispatched, so do not recycle pre-start NotStarted here.
+            self.update_and_send(
+                &job_id,
+                post_spawn_interruption_delta(
+                    request.kind.as_str(),
+                    start.elapsed().as_millis() as u64,
+                    error,
+                ),
+            );
+            self.start_available_queued();
             return;
         }
         self.update_and_send(

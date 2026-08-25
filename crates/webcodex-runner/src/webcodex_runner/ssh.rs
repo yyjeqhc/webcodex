@@ -96,12 +96,13 @@ impl SshConnectionPool {
         if !cfg!(any(unix, windows)) {
             return false;
         }
-        Command::new(ssh_executable())
-            .arg("-V")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
+        ssh_shell_probe_available(
+            Command::new(ssh_executable())
+                .arg("-V")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status(),
+        )
     }
 
     /// Whether this host can open a named SSH persistent shell. This is separate
@@ -842,6 +843,22 @@ fn ssh_executable() -> &'static str {
     }
 }
 
+fn ssh_shell_probe_available(status: std::io::Result<ExitStatus>) -> bool {
+    #[cfg(unix)]
+    {
+        status.is_ok()
+    }
+    #[cfg(windows)]
+    {
+        status.is_ok_and(|status| status.success())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = status;
+        false
+    }
+}
+
 fn normalize_remote_cwd(cwd: Option<&str>) -> Result<Option<String>, String> {
     let Some(cwd) = cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) else {
         return Ok(None);
@@ -1202,8 +1219,8 @@ fn command_error(start: Instant, error: String) -> CommandResult {
 #[cfg(all(test, unix))]
 mod tests {
     use super::{
-        is_transport_failure, remote_script, run_ssh_shell, shell_quote, PreparedSshTransport,
-        SshConnectionKey, SshConnectionPool,
+        is_transport_failure, remote_script, run_ssh_shell, shell_quote, ssh_shell_probe_available,
+        PreparedSshTransport, SshConnectionKey, SshConnectionPool,
     };
     use crate::webcodex_runner::config::{AgentPolicy, SshConfig, SshResourceConfig};
     use std::collections::BTreeMap;
@@ -1409,6 +1426,17 @@ mod tests {
             None,
             None,
         )
+    }
+
+    #[test]
+    fn unix_ssh_shell_capability_preserves_launch_only_probe_semantics() {
+        let nonzero = Command::new("sh")
+            .arg("-c")
+            .arg("exit 7")
+            .status()
+            .expect("start Unix capability probe fixture");
+        assert!(!nonzero.success());
+        assert!(ssh_shell_probe_available(Ok(nonzero)));
     }
 
     #[test]
@@ -2881,6 +2909,12 @@ fn main() {
             .status()
             .is_ok_and(|status| status.success());
         assert_eq!(SshConnectionPool::is_available(), executable_available);
+        let nonzero = Command::new("cmd.exe")
+            .args(["/d", "/c", "exit /b 7"])
+            .status()
+            .expect("start Windows capability probe fixture");
+        assert!(!nonzero.success());
+        assert!(!ssh_shell_probe_available(Ok(nonzero)));
         assert_eq!(
             SshConnectionPool::persistent_shell_available(),
             executable_available
@@ -3155,6 +3189,93 @@ fn main() {
                 .is_some_and(|error| error.contains("ssh_command_spawn_failed")),
             "{failed:?}"
         );
+    }
+
+    #[test]
+    fn windows_background_ssh_post_spawn_rejections_are_outcome_unknown() {
+        for (shutting_down, stop_requested, job_record_present, expected_error) in [
+            (
+                true,
+                false,
+                true,
+                "runner began shutdown after command start",
+            ),
+            (false, true, true, "job stop requested after command start"),
+            (
+                false,
+                false,
+                false,
+                "runner lost the Job record after command start",
+            ),
+        ] {
+            let error = crate::post_spawn_interruption_reason(
+                shutting_down,
+                stop_requested,
+                job_record_present,
+            )
+            .expect("post-spawn interruption is rejected");
+            assert_eq!(error, expected_error);
+            let delta = crate::post_spawn_interruption_delta("start_job", 7, error);
+            assert_eq!(delta.status, "failed");
+            assert_eq!(delta.exit_code, None);
+            assert_eq!(delta.duration_ms, Some(7));
+            assert_eq!(
+                delta.command_execution_state,
+                Some(ShellCommandExecutionState::OutcomeUnknown)
+            );
+            assert!(delta.finished);
+        }
+        assert!(crate::post_spawn_interruption_reason(false, false, true).is_none());
+    }
+
+    #[test]
+    fn windows_background_ssh_post_spawn_rejection_reaps_owned_tree() {
+        use std::io::{BufRead, BufReader};
+
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("post-spawn-grandchild.marker");
+        let fake = fake_ssh();
+        let mut command = Command::new(&fake.path);
+        command
+            .arg("-o")
+            .arg("BatchMode=yes")
+            .arg("-o")
+            .arg("LogLevel=ERROR")
+            .arg("spe")
+            .arg(format!("WC_FAKE_TREE::{}", marker.display()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = ManagedChild::spawn(&mut command).expect("spawn owned fake SSH tree");
+        let stdout = child
+            .child_mut()
+            .stdout
+            .take()
+            .expect("fake SSH stdout pipe");
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .expect("read fake SSH grandchild pid");
+        let pid = grandchild_pid(&line);
+        let child = Arc::new(Mutex::new(child));
+
+        let error = crate::post_spawn_interruption_reason(true, false, true)
+            .expect("shutdown after spawn is rejected");
+        crate::terminate_managed_tree(&child).expect("terminate owned SSH tree");
+        assert!(
+            wait_for_process_exit(pid),
+            "post-spawn SSH grandchild survived owned-tree termination: {pid}"
+        );
+        assert!(!marker.exists(), "terminated grandchild reached marker");
+
+        let delta = crate::post_spawn_interruption_delta("start_job", 0, error);
+        assert_eq!(
+            delta.command_execution_state,
+            Some(ShellCommandExecutionState::OutcomeUnknown)
+        );
+        assert_eq!(delta.status, "failed");
+        assert_eq!(delta.exit_code, None);
     }
 
     #[test]

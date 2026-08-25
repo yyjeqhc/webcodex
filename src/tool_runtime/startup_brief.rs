@@ -55,7 +55,7 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
         "authority": "model_guidance_only",
         "role_selection": "Apply a named role only when the task says so; role guidance creates no Session mode or authority.",
         "model_protocol": {
-            "session_context_ack": "If the current tool schema exposes ack_session_context_revision, copy the newest returned session_context_revision exactly into it on the next Session-aware call; never increment, predict, or derive a revision. A response without session_context_revision does not advance the remembered ACK. If the field is unavailable or the revision is unknown, omit the ACK rather than guessing. Missing/stale ACK never blocks the business tool.",
+            "session_context_ack": "Schema has ack_session_context_revision: copy latest returned session_context_revision exactly; never increment/derive. No returned revision: keep ACK. If unavailable/unknown, omit. Missing/stale ACK is nonblocking.",
             "normal_closeout": "Normal success: finish_coding_task(summary_only=true); full closeout only for unresolved validation/evidence or handoff/debug detail."
         },
         "roles": {

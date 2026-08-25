@@ -52,6 +52,9 @@ const ACP_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
 const ACP_CANCEL_GRACE: Duration = Duration::from_secs(5);
 const ACP_POLL: Duration = Duration::from_millis(25);
 const ACP_IO_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+const CODING_AGENT_TERMINAL_PERSISTENCE_UNCERTAIN: &str =
+    "coding_agent_terminal_persistence_uncertain";
+const TERMINAL_PERSISTENCE_UNCERTAIN_MESSAGE: &str = "ACP terminal transition was observed in memory, but its durable commit was not confirmed; reconcile or reobserve instead of treating the original terminal outcome as durable truth";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -99,12 +102,75 @@ impl DurableRunRecord {
     }
 }
 
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct TerminalWriteGateState {
+    reached: bool,
+    released: bool,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct TerminalWriteGate {
+    state: Mutex<TerminalWriteGateState>,
+    changed: Condvar,
+}
+
+#[cfg(test)]
+impl TerminalWriteGate {
+    fn block_writer(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.reached = true;
+        self.changed.notify_all();
+        while !state.released {
+            state = self.changed.wait(state).unwrap();
+        }
+    }
+
+    fn wait_until_reached(&self) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut state = self.state.lock().unwrap();
+        while !state.reached {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "terminal durable write gate was never reached"
+            );
+            let (next, _) = self.changed.wait_timeout(state, remaining).unwrap();
+            state = next;
+        }
+    }
+
+    fn release(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.released = true;
+        self.changed.notify_all();
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct DurableRunStoreTestControl {
+    fail_next_terminal_writes: std::sync::atomic::AtomicUsize,
+    terminal_write_gate: Mutex<Option<Arc<TerminalWriteGate>>>,
+}
+
 #[derive(Debug, Clone)]
 struct DurableRunStore {
     root: PathBuf,
+    #[cfg(test)]
+    test_control: Arc<DurableRunStoreTestControl>,
 }
 
 impl DurableRunStore {
+    fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            #[cfg(test)]
+            test_control: Arc::new(DurableRunStoreTestControl::default()),
+        }
+    }
+
     fn default_root(client_id: &str, server_url: &str) -> Result<PathBuf, String> {
         let server_url = server_url.trim().trim_end_matches('/');
         if client_id.trim().is_empty() || server_url.is_empty() {
@@ -177,6 +243,28 @@ impl DurableRunStore {
             serde_json::to_vec(record).map_err(|_| "failed to encode ACP Run state".to_string())?;
         if bytes.len() > STORE_MAX_BYTES {
             return Err("ACP Run state exceeds durable bound".to_string());
+        }
+        #[cfg(test)]
+        if record.dispatch_phase == DurableDispatchPhase::Terminal {
+            if let Some(gate) = self
+                .test_control
+                .terminal_write_gate
+                .lock()
+                .unwrap()
+                .clone()
+            {
+                gate.block_writer();
+            }
+            if self
+                .test_control
+                .fail_next_terminal_writes
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                    (remaining > 0).then(|| remaining - 1)
+                })
+                .is_ok()
+            {
+                return Err("injected ACP terminal durable write failure".to_string());
+            }
         }
         let dir = self.run_dir(&record.run_id);
         fs::create_dir_all(&dir)
@@ -259,6 +347,18 @@ impl DurableRunStore {
 
     fn remove(&self, run_id: &str) {
         let _ = fs::remove_dir_all(self.run_dir(run_id));
+    }
+
+    #[cfg(test)]
+    fn fail_next_terminal_writes(&self, count: usize) {
+        self.test_control
+            .fail_next_terminal_writes
+            .store(count, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    fn set_terminal_write_gate(&self, gate: Option<Arc<TerminalWriteGate>>) {
+        *self.test_control.terminal_write_gate.lock().unwrap() = gate;
     }
 }
 
@@ -394,6 +494,20 @@ impl RunEntry {
         self.changed.notify_all();
     }
 
+    fn publish_terminal(&self, mut snapshot: CodingAgentRunSnapshot, mut event: CodingAgentEvent) {
+        let mut state = self.state.lock().unwrap();
+        snapshot.observation_revision = state.snapshot.observation_revision.saturating_add(2);
+        state.snapshot = snapshot;
+        event.sequence = state.next_sequence;
+        state.next_sequence = state.next_sequence.saturating_add(1);
+        state.events.push_back(event);
+        while state.events.len() > CODING_AGENT_MAX_RETAINED_EVENTS {
+            state.events.pop_front();
+            state.first_retained_sequence = state.first_retained_sequence.saturating_add(1);
+        }
+        self.changed.notify_all();
+    }
+
     fn push_event(&self, mut event: CodingAgentEvent) {
         let mut state = self.state.lock().unwrap();
         event.sequence = state.next_sequence;
@@ -521,9 +635,7 @@ impl CodingAgentManager {
             providers,
             max_concurrent_runs: config.max_concurrent_runs,
             permission_timeout: Duration::from_secs(config.permission_timeout_secs),
-            store: DurableRunStore {
-                root: DurableRunStore::default_root(client_id, server_url)?,
-            },
+            store: DurableRunStore::new(DurableRunStore::default_root(client_id, server_url)?),
             admission: Mutex::new(()),
             runs: Mutex::new(HashMap::new()),
             accepting: AtomicBool::new(true),
@@ -563,7 +675,7 @@ impl CodingAgentManager {
             providers,
             max_concurrent_runs: config.max_concurrent_runs,
             permission_timeout: Duration::from_secs(config.permission_timeout_secs),
-            store: DurableRunStore { root },
+            store: DurableRunStore::new(root),
             admission: Mutex::new(()),
             runs: Mutex::new(HashMap::new()),
             accepting: AtomicBool::new(true),
@@ -727,31 +839,28 @@ impl CodingAgentManager {
     }
 
     fn finish_pre_prompt_cancelled(&self, run_id: &str, entry: &Arc<RunEntry>) {
-        let Some(_terminal_transition) = entry.begin_terminal_transition() else {
-            return;
-        };
         let terminal = CodingAgentTerminal {
             stop_reason: None,
             error_code: None,
             message: Some("ACP prompt was not dispatched; CodingAgentRun was cancelled before prompt dispatch".to_string()),
             completed_at: now(),
         };
-        let _ = self.persist_phase(
-            run_id,
-            entry,
-            DurableDispatchPhase::Terminal,
-            CodingAgentRunState::Cancelled,
-            CodingAgentExecutionState::NotStarted,
-            Some(terminal.clone()),
-        );
-        entry.push_event(CodingAgentEvent {
+        let event = CodingAgentEvent {
             sequence: 0,
             kind: CodingAgentEventKind::Terminal,
             text: terminal.message.clone(),
             label: None,
             status: Some("cancelled".to_string()),
             usage: None,
-        });
+        };
+        self.commit_terminal_transition(
+            run_id,
+            entry,
+            CodingAgentRunState::Cancelled,
+            CodingAgentExecutionState::NotStarted,
+            terminal,
+            event,
+        );
     }
 
     fn pre_prompt_interrupted(&self, run_id: &str, entry: &Arc<RunEntry>) -> bool {
@@ -2031,59 +2140,53 @@ impl CodingAgentManager {
     }
 
     fn setup_failure(&self, run_id: &str, entry: &Arc<RunEntry>, code: &str, message: &str) {
-        let Some(_terminal_transition) = entry.begin_terminal_transition() else {
-            return;
-        };
         let terminal = CodingAgentTerminal {
             stop_reason: None,
             error_code: Some(code.to_string()),
             message: Some(bounded_text(message)),
             completed_at: now(),
         };
-        let _ = self.persist_phase(
-            run_id,
-            entry,
-            DurableDispatchPhase::Terminal,
-            CodingAgentRunState::Failed,
-            CodingAgentExecutionState::NotStarted,
-            Some(terminal.clone()),
-        );
-        entry.push_event(CodingAgentEvent {
+        let event = CodingAgentEvent {
             sequence: 0,
             kind: CodingAgentEventKind::Terminal,
             text: terminal.message.clone(),
             label: terminal.error_code.clone(),
             status: Some("failed".to_string()),
             usage: None,
-        });
+        };
+        self.commit_terminal_transition(
+            run_id,
+            entry,
+            CodingAgentRunState::Failed,
+            CodingAgentExecutionState::NotStarted,
+            terminal,
+            event,
+        );
     }
 
     fn finish_failed(&self, run_id: &str, entry: &Arc<RunEntry>, code: &str, message: String) {
-        let Some(_terminal_transition) = entry.begin_terminal_transition() else {
-            return;
-        };
         let terminal = CodingAgentTerminal {
             stop_reason: None,
             error_code: Some(code.to_string()),
             message: Some(bounded_text(&message)),
             completed_at: now(),
         };
-        let _ = self.persist_phase(
-            run_id,
-            entry,
-            DurableDispatchPhase::Terminal,
-            CodingAgentRunState::Failed,
-            CodingAgentExecutionState::Completed,
-            Some(terminal.clone()),
-        );
-        entry.push_event(CodingAgentEvent {
+        let event = CodingAgentEvent {
             sequence: 0,
             kind: CodingAgentEventKind::Terminal,
             text: terminal.message.clone(),
             label: terminal.error_code.clone(),
             status: Some("failed".to_string()),
             usage: None,
-        });
+        };
+        self.commit_terminal_transition(
+            run_id,
+            entry,
+            CodingAgentRunState::Failed,
+            CodingAgentExecutionState::Completed,
+            terminal,
+            event,
+        );
     }
 
     fn finish_terminal(
@@ -2094,9 +2197,6 @@ impl CodingAgentManager {
         stop_reason: &str,
         message: Option<&str>,
     ) {
-        let Some(_terminal_transition) = entry.begin_terminal_transition() else {
-            return;
-        };
         let terminal = CodingAgentTerminal {
             stop_reason: Some(stop_reason.to_string()),
             error_code: if state == CodingAgentRunState::Failed {
@@ -2107,28 +2207,25 @@ impl CodingAgentManager {
             message: message.map(bounded_text),
             completed_at: now(),
         };
-        let _ = self.persist_phase(
-            run_id,
-            entry,
-            DurableDispatchPhase::Terminal,
-            state.clone(),
-            CodingAgentExecutionState::Completed,
-            Some(terminal.clone()),
-        );
-        entry.push_event(CodingAgentEvent {
+        let event = CodingAgentEvent {
             sequence: 0,
             kind: CodingAgentEventKind::Terminal,
             text: message.map(bounded_text),
             label: Some(stop_reason.to_string()),
-            status: Some(format!("{:?}", state).to_ascii_lowercase()),
+            status: Some(format!("{state:?}").to_ascii_lowercase()),
             usage: None,
-        });
+        };
+        self.commit_terminal_transition(
+            run_id,
+            entry,
+            state,
+            CodingAgentExecutionState::Completed,
+            terminal,
+            event,
+        );
     }
 
     fn mark_lost(&self, run_id: &str, entry: &Arc<RunEntry>, code: &str) {
-        let Some(_terminal_transition) = entry.begin_terminal_transition() else {
-            return;
-        };
         let terminal = CodingAgentTerminal {
             stop_reason: None,
             error_code: Some(code.to_string()),
@@ -2137,22 +2234,90 @@ impl CodingAgentManager {
             ),
             completed_at: now(),
         };
-        let _ = self.persist_phase(
-            run_id,
-            entry,
-            DurableDispatchPhase::Terminal,
-            CodingAgentRunState::Lost,
-            CodingAgentExecutionState::OutcomeUnknown,
-            Some(terminal.clone()),
-        );
-        entry.push_event(CodingAgentEvent {
+        let event = CodingAgentEvent {
             sequence: 0,
             kind: CodingAgentEventKind::Terminal,
             text: terminal.message.clone(),
             label: terminal.error_code.clone(),
             status: Some("lost".to_string()),
             usage: None,
-        });
+        };
+        self.commit_terminal_transition(
+            run_id,
+            entry,
+            CodingAgentRunState::Lost,
+            CodingAgentExecutionState::OutcomeUnknown,
+            terminal,
+            event,
+        );
+    }
+
+    fn commit_terminal_transition(
+        &self,
+        run_id: &str,
+        entry: &Arc<RunEntry>,
+        desired_state: CodingAgentRunState,
+        desired_execution_state: CodingAgentExecutionState,
+        desired_terminal: CodingAgentTerminal,
+        desired_event: CodingAgentEvent,
+    ) {
+        let Some(_terminal_transition) = entry.begin_terminal_transition() else {
+            return;
+        };
+        let current = entry.snapshot();
+        let mut candidate = current.clone();
+        candidate.state = desired_state.clone();
+        candidate.execution_state = desired_execution_state;
+        candidate.updated_at = desired_terminal.completed_at;
+        candidate.terminal = Some(desired_terminal);
+        let durable =
+            durable_record_from_snapshot(run_id, &candidate, DurableDispatchPhase::Terminal)
+                .and_then(|record| self.store.write(&record));
+        match durable {
+            Ok(()) => entry.publish_terminal(candidate, desired_event),
+            Err(error) => {
+                let pre_prompt = desired_execution_state == CodingAgentExecutionState::NotStarted;
+                let completed_at = now();
+                let terminal = CodingAgentTerminal {
+                    stop_reason: None,
+                    error_code: Some(CODING_AGENT_TERMINAL_PERSISTENCE_UNCERTAIN.to_string()),
+                    message: Some(TERMINAL_PERSISTENCE_UNCERTAIN_MESSAGE.to_string()),
+                    completed_at,
+                };
+                let mut uncertain = current;
+                uncertain.state = if pre_prompt {
+                    CodingAgentRunState::Failed
+                } else {
+                    CodingAgentRunState::Lost
+                };
+                uncertain.execution_state = if pre_prompt {
+                    CodingAgentExecutionState::NotStarted
+                } else {
+                    CodingAgentExecutionState::OutcomeUnknown
+                };
+                uncertain.updated_at = completed_at;
+                uncertain.terminal = Some(terminal.clone());
+                let status = if pre_prompt { "failed" } else { "lost" };
+                tracing::error!(
+                    run_id = %run_id,
+                    desired_state = ?desired_state,
+                    desired_execution_state = ?desired_execution_state,
+                    error = %error,
+                    "ACP terminal durable commit failed; publishing conservative persistence uncertainty"
+                );
+                entry.publish_terminal(
+                    uncertain,
+                    CodingAgentEvent {
+                        sequence: 0,
+                        kind: CodingAgentEventKind::Terminal,
+                        text: terminal.message.clone(),
+                        label: terminal.error_code.clone(),
+                        status: Some(status.to_string()),
+                        usage: None,
+                    },
+                );
+            }
+        }
     }
 
     fn persist_phase(
@@ -2179,26 +2344,34 @@ impl CodingAgentManager {
         phase: DurableDispatchPhase,
     ) -> Result<(), String> {
         let snapshot = entry.snapshot();
-        let record = DurableRunRecord {
-            schema_version: STORE_SCHEMA_VERSION,
-            run_id: snapshot.run_id,
-            intent_fingerprint: snapshot.intent_fingerprint,
-            authority_fingerprint: snapshot.authority_fingerprint,
-            runtime_project_id: snapshot.runtime_project_id,
-            provider_id: snapshot.provider_id,
-            provider_instance_id: snapshot.provider_instance_id,
-            state: snapshot.state,
-            execution_state: snapshot.execution_state,
-            dispatch_phase: phase,
-            created_at: snapshot.created_at,
-            updated_at: snapshot.updated_at,
-            terminal: snapshot.terminal,
-        };
-        if record.run_id != run_id {
-            return Err("ACP Run identity changed unexpectedly".to_string());
-        }
+        let record = durable_record_from_snapshot(run_id, &snapshot, phase)?;
         self.store.write(&record)
     }
+}
+
+fn durable_record_from_snapshot(
+    run_id: &str,
+    snapshot: &CodingAgentRunSnapshot,
+    phase: DurableDispatchPhase,
+) -> Result<DurableRunRecord, String> {
+    if snapshot.run_id != run_id {
+        return Err("ACP Run identity changed unexpectedly".to_string());
+    }
+    Ok(DurableRunRecord {
+        schema_version: STORE_SCHEMA_VERSION,
+        run_id: snapshot.run_id.clone(),
+        intent_fingerprint: snapshot.intent_fingerprint.clone(),
+        authority_fingerprint: snapshot.authority_fingerprint.clone(),
+        runtime_project_id: snapshot.runtime_project_id.clone(),
+        provider_id: snapshot.provider_id.clone(),
+        provider_instance_id: snapshot.provider_instance_id.clone(),
+        state: snapshot.state.clone(),
+        execution_state: snapshot.execution_state,
+        dispatch_phase: phase,
+        created_at: snapshot.created_at,
+        updated_at: snapshot.updated_at,
+        terminal: snapshot.terminal.clone(),
+    })
 }
 
 fn manager_finish_setup_failure(
@@ -3097,6 +3270,381 @@ for line in sys.stdin:
             Some(CodingAgentResponsePayload::Start { run }) => Some(run.run_id.clone()),
             _ => None,
         }
+    }
+
+    fn seed_terminal_test_run(
+        manager: &CodingAgentManager,
+        run: &str,
+        phase: DurableDispatchPhase,
+        state: CodingAgentRunState,
+        execution_state: CodingAgentExecutionState,
+    ) -> Arc<RunEntry> {
+        let provider = manager.providers().remove(0);
+        let timestamp = now();
+        let record = DurableRunRecord {
+            schema_version: STORE_SCHEMA_VERSION,
+            run_id: run.to_string(),
+            intent_fingerprint: "fingerprint".to_string(),
+            authority_fingerprint: "auth_test".to_string(),
+            runtime_project_id: "agent:test:demo".to_string(),
+            provider_id: "codex".to_string(),
+            provider_instance_id: provider.provider_instance_id,
+            state,
+            execution_state,
+            dispatch_phase: phase,
+            created_at: timestamp,
+            updated_at: timestamp,
+            terminal: None,
+        };
+        manager.store.write(&record).unwrap();
+        let entry = Arc::new(RunEntry::new(record.snapshot(0)));
+        manager
+            .runs
+            .lock()
+            .unwrap()
+            .insert(run.to_string(), Arc::clone(&entry));
+        entry
+    }
+
+    fn assert_terminal_persistence_uncertain(
+        entry: &RunEntry,
+        expected_state: CodingAgentRunState,
+        expected_execution_state: CodingAgentExecutionState,
+    ) {
+        let snapshot = entry.snapshot();
+        assert_eq!(snapshot.state, expected_state);
+        assert_eq!(snapshot.execution_state, expected_execution_state);
+        let terminal = snapshot.terminal.as_ref().expect("uncertain terminal");
+        assert_eq!(terminal.stop_reason, None);
+        assert_eq!(
+            terminal.error_code.as_deref(),
+            Some(CODING_AGENT_TERMINAL_PERSISTENCE_UNCERTAIN)
+        );
+        assert_eq!(
+            terminal.message.as_deref(),
+            Some(TERMINAL_PERSISTENCE_UNCERTAIN_MESSAGE)
+        );
+        let observation = entry.observe(None, 64, 0).unwrap();
+        let terminal_events = observation
+            .events
+            .iter()
+            .filter(|event| event.kind == CodingAgentEventKind::Terminal)
+            .collect::<Vec<_>>();
+        assert_eq!(terminal_events.len(), 1);
+        assert_eq!(
+            terminal_events[0].label.as_deref(),
+            Some(CODING_AGENT_TERMINAL_PERSISTENCE_UNCERTAIN)
+        );
+        let expected_status = if expected_state == CodingAgentRunState::Failed {
+            "failed"
+        } else {
+            "lost"
+        };
+        assert_eq!(terminal_events[0].status.as_deref(), Some(expected_status));
+    }
+
+    #[cfg(unix)]
+    fn prompt_count(temp: &TempDir) -> usize {
+        received_methods(&wire_log(temp))
+            .iter()
+            .filter(|method| method.as_str() == "session/prompt")
+            .count()
+    }
+
+    #[test]
+    fn post_prompt_failed_persistence_failure_is_lost_without_original_error_truth() {
+        let temp = TempDir::new().unwrap();
+        let cfg = fake_config("unused-provider".to_string(), Vec::new());
+        let manager = CodingAgentManager::with_store(&cfg, temp.path().join("store")).unwrap();
+        let run = "wc_agent_run_persistfailed01";
+        let entry = seed_terminal_test_run(
+            &manager,
+            run,
+            DurableDispatchPhase::PromptDispatchMayHaveOccurred,
+            CodingAgentRunState::Running,
+            CodingAgentExecutionState::Started,
+        );
+        manager.store.fail_next_terminal_writes(1);
+
+        manager.finish_failed(
+            run,
+            &entry,
+            "prompt_error",
+            "provider prompt failed".to_string(),
+        );
+
+        assert_terminal_persistence_uncertain(
+            &entry,
+            CodingAgentRunState::Lost,
+            CodingAgentExecutionState::OutcomeUnknown,
+        );
+        assert_ne!(
+            entry
+                .snapshot()
+                .terminal
+                .as_ref()
+                .and_then(|terminal| terminal.error_code.as_deref()),
+            Some("prompt_error")
+        );
+        let durable = manager.store.read(run).unwrap().unwrap();
+        assert_eq!(
+            durable.dispatch_phase,
+            DurableDispatchPhase::PromptDispatchMayHaveOccurred
+        );
+        assert_eq!(durable.terminal, None);
+    }
+
+    #[test]
+    fn setup_timeout_persistence_failure_is_failed_not_started() {
+        let temp = TempDir::new().unwrap();
+        let cfg = fake_config("unused-provider".to_string(), Vec::new());
+        let manager = CodingAgentManager::with_store(&cfg, temp.path().join("store")).unwrap();
+        let run = "wc_agent_run_persisttimeout01";
+        let entry = seed_terminal_test_run(
+            &manager,
+            run,
+            DurableDispatchPhase::BeforePromptBarrier,
+            CodingAgentRunState::Starting,
+            CodingAgentExecutionState::NotStarted,
+        );
+        manager.store.fail_next_terminal_writes(1);
+
+        manager.setup_timeout(run, &entry);
+
+        assert_terminal_persistence_uncertain(
+            &entry,
+            CodingAgentRunState::Failed,
+            CodingAgentExecutionState::NotStarted,
+        );
+        let durable = manager.store.read(run).unwrap().unwrap();
+        assert_eq!(
+            durable.dispatch_phase,
+            DurableDispatchPhase::BeforePromptBarrier
+        );
+        assert_eq!(durable.terminal, None);
+    }
+
+    #[test]
+    fn mark_lost_persistence_failure_replaces_specific_lost_reason() {
+        let temp = TempDir::new().unwrap();
+        let cfg = fake_config("unused-provider".to_string(), Vec::new());
+        let manager = CodingAgentManager::with_store(&cfg, temp.path().join("store")).unwrap();
+        let run = "wc_agent_run_persistlost001";
+        let entry = seed_terminal_test_run(
+            &manager,
+            run,
+            DurableDispatchPhase::PromptDispatchMayHaveOccurred,
+            CodingAgentRunState::Running,
+            CodingAgentExecutionState::Started,
+        );
+        manager.store.fail_next_terminal_writes(1);
+
+        manager.mark_lost(run, &entry, "coding_agent_transport_lost");
+
+        assert_terminal_persistence_uncertain(
+            &entry,
+            CodingAgentRunState::Lost,
+            CodingAgentExecutionState::OutcomeUnknown,
+        );
+        assert_ne!(
+            entry
+                .snapshot()
+                .terminal
+                .as_ref()
+                .and_then(|terminal| terminal.error_code.as_deref()),
+            Some("coding_agent_transport_lost")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn completed_terminal_is_persisted_before_live_publication_and_restart() {
+        let temp = TempDir::new().unwrap();
+        let (exe, args) = fake_agent(&temp, "end");
+        let cfg = fake_config(exe, args);
+        let projects = project_fixture(&temp);
+        let root = temp.path().join("repo");
+        let store_root = temp.path().join("store");
+        let manager = CodingAgentManager::with_store(&cfg, store_root.clone()).unwrap();
+        let run = "wc_agent_run_persistorder001";
+        let request = start_request(&manager, &root, run, BTreeMap::new());
+        let gate = Arc::new(TerminalWriteGate::default());
+        manager
+            .store
+            .set_terminal_write_gate(Some(Arc::clone(&gate)));
+
+        assert!(manager.handle(request.clone(), &projects).error.is_none());
+        gate.wait_until_reached();
+        let entry = manager.runs.lock().unwrap().get(run).cloned().unwrap();
+        let before = entry.observe(None, 64, 0).unwrap();
+        assert!(!before.run.state.terminal());
+        assert_ne!(before.run.state, CodingAgentRunState::Completed);
+        assert!(before
+            .events
+            .iter()
+            .all(|event| event.kind != CodingAgentEventKind::Terminal));
+        let durable_before = manager.store.read(run).unwrap().unwrap();
+        assert_eq!(
+            durable_before.dispatch_phase,
+            DurableDispatchPhase::PromptDispatchMayHaveOccurred
+        );
+        assert_ne!(durable_before.state, CodingAgentRunState::Completed);
+
+        gate.release();
+        manager.store.set_terminal_write_gate(None);
+        let observation = wait_for_terminal_observation(&manager, run);
+        assert_eq!(observation.run.state, CodingAgentRunState::Completed);
+        assert_eq!(
+            observation.run.execution_state,
+            CodingAgentExecutionState::Completed
+        );
+        assert_eq!(
+            observation
+                .run
+                .terminal
+                .as_ref()
+                .and_then(|terminal| terminal.stop_reason.as_deref()),
+            Some(CODING_AGENT_STOP_REASON_END_TURN)
+        );
+        let durable = manager.store.read(run).unwrap().unwrap();
+        assert_eq!(durable.dispatch_phase, DurableDispatchPhase::Terminal);
+        assert_eq!(durable.state, CodingAgentRunState::Completed);
+        assert_eq!(
+            durable.execution_state,
+            CodingAgentExecutionState::Completed
+        );
+        assert_eq!(durable.terminal, observation.run.terminal);
+        assert_eq!(durable.updated_at, observation.run.updated_at);
+        assert_eq!(prompt_count(&temp), 1);
+        let drain = manager.drain_workers_until(Instant::now() + Duration::from_secs(3));
+        assert_eq!(drain.timed_out, 0);
+
+        let restarted = CodingAgentManager::with_store(&cfg, store_root).unwrap();
+        let restored = restarted.runs.lock().unwrap().get(run).unwrap().snapshot();
+        assert_eq!(restored.state, CodingAgentRunState::Completed);
+        assert_eq!(
+            restored.execution_state,
+            CodingAgentExecutionState::Completed
+        );
+        assert!(restarted.handle(request, &projects).error.is_none());
+        assert_eq!(prompt_count(&temp), 1);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn completion_persistence_failure_publishes_only_lost_and_never_redispatches() {
+        let temp = TempDir::new().unwrap();
+        let (exe, args) = fake_agent(&temp, "end");
+        let cfg = fake_config(exe, args);
+        let projects = project_fixture(&temp);
+        let root = temp.path().join("repo");
+        let store_root = temp.path().join("store");
+        let manager = CodingAgentManager::with_store(&cfg, store_root.clone()).unwrap();
+        let run = "wc_agent_run_persistendfail1";
+        let request = start_request(&manager, &root, run, BTreeMap::new());
+        let gate = Arc::new(TerminalWriteGate::default());
+        manager.store.fail_next_terminal_writes(1);
+        manager
+            .store
+            .set_terminal_write_gate(Some(Arc::clone(&gate)));
+
+        assert!(manager.handle(request.clone(), &projects).error.is_none());
+        gate.wait_until_reached();
+        let entry = manager.runs.lock().unwrap().get(run).cloned().unwrap();
+        let before = entry.observe(None, 64, 0).unwrap();
+        assert!(!before.run.state.terminal());
+        assert_ne!(before.run.state, CodingAgentRunState::Completed);
+        assert!(before
+            .events
+            .iter()
+            .all(|event| event.kind != CodingAgentEventKind::Terminal));
+        gate.release();
+        manager.store.set_terminal_write_gate(None);
+
+        let observation = wait_for_terminal_observation(&manager, run);
+        assert_terminal_persistence_uncertain(
+            &entry,
+            CodingAgentRunState::Lost,
+            CodingAgentExecutionState::OutcomeUnknown,
+        );
+        assert!(observation.events.iter().all(|event| {
+            event.kind != CodingAgentEventKind::Terminal
+                || event.label.as_deref() != Some(CODING_AGENT_STOP_REASON_END_TURN)
+        }));
+        let durable = manager.store.read(run).unwrap().unwrap();
+        assert_eq!(
+            durable.dispatch_phase,
+            DurableDispatchPhase::PromptDispatchMayHaveOccurred
+        );
+        assert_ne!(durable.state, CodingAgentRunState::Completed);
+        assert_eq!(prompt_count(&temp), 1);
+        assert!(manager.handle(request.clone(), &projects).error.is_none());
+        assert_eq!(prompt_count(&temp), 1);
+        let drain = manager.drain_workers_until(Instant::now() + Duration::from_secs(3));
+        assert_eq!(drain.timed_out, 0);
+
+        let restarted = CodingAgentManager::with_store(&cfg, store_root).unwrap();
+        let restored = restarted.runs.lock().unwrap().get(run).unwrap().snapshot();
+        assert_eq!(restored.state, CodingAgentRunState::Lost);
+        assert_eq!(
+            restored.execution_state,
+            CodingAgentExecutionState::OutcomeUnknown
+        );
+        assert!(restarted.handle(request, &projects).error.is_none());
+        assert_eq!(prompt_count(&temp), 1);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn pre_prompt_cancel_persistence_failure_is_failed_and_restart_never_prompts() {
+        let temp = TempDir::new().unwrap();
+        let (exe, args) = fake_agent(&temp, "block_initialize");
+        let cfg = fake_config(exe, args);
+        let projects = project_fixture(&temp);
+        let root = temp.path().join("repo");
+        let store_root = temp.path().join("store");
+        let manager = CodingAgentManager::with_store(&cfg, store_root.clone()).unwrap();
+        let run = "wc_agent_run_persistcancel01";
+        let request = start_request(&manager, &root, run, BTreeMap::new());
+        manager.store.fail_next_terminal_writes(1);
+
+        assert!(manager.handle(request.clone(), &projects).error.is_none());
+        wait_for_path(&temp.path().join("initialize.ready"));
+        let cancelled = manager.handle(
+            CodingAgentRequest::Cancel(CodingAgentCancelRequest {
+                run_id: run.to_string(),
+            }),
+            &projects,
+        );
+        assert!(cancelled.error.is_none());
+        let entry = manager.runs.lock().unwrap().get(run).cloned().unwrap();
+        assert_terminal_persistence_uncertain(
+            &entry,
+            CodingAgentRunState::Failed,
+            CodingAgentExecutionState::NotStarted,
+        );
+        assert_eq!(prompt_count(&temp), 0);
+        let durable = manager.store.read(run).unwrap().unwrap();
+        assert_eq!(
+            durable.dispatch_phase,
+            DurableDispatchPhase::BeforePromptBarrier
+        );
+        assert_eq!(durable.terminal, None);
+        assert!(manager.handle(request.clone(), &projects).error.is_none());
+        assert_eq!(prompt_count(&temp), 0);
+
+        fs::write(temp.path().join("initialize.release"), b"release").unwrap();
+        let drain = manager.drain_workers_until(Instant::now() + Duration::from_secs(3));
+        assert_eq!(drain.timed_out, 0);
+        let restarted = CodingAgentManager::with_store(&cfg, store_root).unwrap();
+        let restored = restarted.runs.lock().unwrap().get(run).unwrap().snapshot();
+        assert_eq!(restored.state, CodingAgentRunState::Failed);
+        assert_eq!(
+            restored.execution_state,
+            CodingAgentExecutionState::NotStarted
+        );
+        assert!(restarted.handle(request, &projects).error.is_none());
+        assert_eq!(prompt_count(&temp), 0);
     }
 
     #[test]
@@ -4456,9 +5004,7 @@ for line in sys.stdin:
     #[test]
     fn durable_store_replaces_existing_state_cross_platform() {
         let temp = TempDir::new().unwrap();
-        let store = DurableRunStore {
-            root: temp.path().join("store"),
-        };
+        let store = DurableRunStore::new(temp.path().join("store"));
         let timestamp = now();
         let mut record = DurableRunRecord {
             schema_version: STORE_SCHEMA_VERSION,
@@ -4721,25 +5267,23 @@ for line in sys.stdin:
         let provider = initial.providers().remove(0);
         drop(initial);
         let timestamp = now();
-        DurableRunStore {
-            root: store_root.clone(),
-        }
-        .write(&DurableRunRecord {
-            schema_version: STORE_SCHEMA_VERSION,
-            run_id: "wc_agent_run_prebarrier01".to_string(),
-            intent_fingerprint: "fingerprint".to_string(),
-            authority_fingerprint: "auth_test".to_string(),
-            runtime_project_id: "agent:test:demo".to_string(),
-            provider_id: "codex".to_string(),
-            provider_instance_id: provider.provider_instance_id,
-            state: CodingAgentRunState::Starting,
-            execution_state: CodingAgentExecutionState::NotStarted,
-            dispatch_phase: DurableDispatchPhase::BeforePromptBarrier,
-            created_at: timestamp,
-            updated_at: timestamp,
-            terminal: None,
-        })
-        .unwrap();
+        DurableRunStore::new(store_root.clone())
+            .write(&DurableRunRecord {
+                schema_version: STORE_SCHEMA_VERSION,
+                run_id: "wc_agent_run_prebarrier01".to_string(),
+                intent_fingerprint: "fingerprint".to_string(),
+                authority_fingerprint: "auth_test".to_string(),
+                runtime_project_id: "agent:test:demo".to_string(),
+                provider_id: "codex".to_string(),
+                provider_instance_id: provider.provider_instance_id,
+                state: CodingAgentRunState::Starting,
+                execution_state: CodingAgentExecutionState::NotStarted,
+                dispatch_phase: DurableDispatchPhase::BeforePromptBarrier,
+                created_at: timestamp,
+                updated_at: timestamp,
+                terminal: None,
+            })
+            .unwrap();
         let restarted = CodingAgentManager::with_store(&cfg, store_root).unwrap();
         let recovered = restarted
             .runs
@@ -4913,8 +5457,16 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn fake_acp_normalizes_activity_and_terminal_matrix() {
-        let (_, _, obs) = run_scenario("end", BTreeMap::new());
+        let (manager, run, obs) = run_scenario("end", BTreeMap::new());
         assert_eq!(obs.run.state, CodingAgentRunState::Completed);
+        let durable = manager.store.read(&run).unwrap().unwrap();
+        assert_eq!(durable.dispatch_phase, DurableDispatchPhase::Terminal);
+        assert_eq!(durable.state, CodingAgentRunState::Completed);
+        assert_eq!(
+            durable.execution_state,
+            CodingAgentExecutionState::Completed
+        );
+        assert_eq!(durable.terminal, obs.run.terminal);
         assert!(obs
             .events
             .iter()
@@ -4934,12 +5486,25 @@ for line in sys.stdin:
             "refusal",
             "unknown",
         ] {
-            let (_, _, obs) = run_scenario(scenario, BTreeMap::new());
-            if scenario == "cancelled" {
-                assert_eq!(obs.run.state, CodingAgentRunState::Cancelled);
+            let (manager, run, obs) = run_scenario(scenario, BTreeMap::new());
+            let expected = if scenario == "cancelled" {
+                CodingAgentRunState::Cancelled
             } else {
-                assert_eq!(obs.run.state, CodingAgentRunState::Failed);
-            }
+                CodingAgentRunState::Failed
+            };
+            assert_eq!(obs.run.state, expected);
+            assert_eq!(
+                obs.run.execution_state,
+                CodingAgentExecutionState::Completed
+            );
+            let durable = manager.store.read(&run).unwrap().unwrap();
+            assert_eq!(durable.dispatch_phase, DurableDispatchPhase::Terminal);
+            assert_eq!(durable.state, expected);
+            assert_eq!(
+                durable.execution_state,
+                CodingAgentExecutionState::Completed
+            );
+            assert_eq!(durable.terminal, obs.run.terminal);
         }
     }
 

@@ -537,6 +537,10 @@ fn file_apply_text_edits_structured_multiple_match_recovery_is_bounded() {
     assert_eq!(recovery["candidate_ranges"][0]["start_line"], 2);
     assert_eq!(recovery["candidate_ranges"][7]["occurrence"], 8);
     assert_eq!(recovery["candidates_truncated"], true);
+    let error = out["error"].as_str().unwrap();
+    assert!(error.contains("choose an advertised occurrence"));
+    assert!(error.contains("reuse the same expected_sha256"));
+    assert!(!error.contains("read this file again"));
     let serialized = serde_json::to_string(&out).unwrap();
     assert!(!serialized.contains("x\\n"));
     assert_eq!(
@@ -665,6 +669,10 @@ fn file_apply_text_edits_occurrence_out_of_range_is_actionable_and_atomic() {
     );
     assert_eq!(out["conflict_recovery"]["match_count"], 2);
     assert_eq!(out["conflict_recovery"]["requested_occurrence"], 3);
+    assert!(out["error"]
+        .as_str()
+        .unwrap()
+        .contains("choose a valid advertised occurrence"));
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "dup\ndup\n");
 }
 

@@ -456,7 +456,7 @@ async fn apply_text_edits_conflict_then_same_sha_occurrence_retry_needs_no_hidde
                 "candidates_truncated": false,
                 "recovery_action": "select_occurrence_or_refine_match"
             },
-            "error": "Rejected transactional file batch: exact match is ambiguous. No files were modified."
+            "error": "Rejected transactional file batch: exact match is ambiguous. No files were modified. Retry guidance: choose an advertised occurrence or refine the exact match; reuse the same expected_sha256 unless you reread or observe a changed file."
         }).to_string()),
         stderr: Some(String::new()),
         duration_ms: Some(1),
@@ -465,6 +465,15 @@ async fn apply_text_edits_conflict_then_same_sha_occurrence_retry_needs_no_hidde
     let conflict = first.await.unwrap();
     assert!(!conflict.success);
     assert_eq!(conflict.output["conflict_recovery"]["match_count"], 2);
+    let conflict_error = conflict
+        .error
+        .as_deref()
+        .expect("model-facing conflict error");
+    assert!(conflict_error.contains("choose an advertised occurrence"));
+    assert!(conflict_error.contains("refine the exact match"));
+    assert!(conflict_error.contains("same expected_sha256"));
+    assert!(!conflict_error.contains("read the file again"));
+    assert!(!conflict_error.contains("read this file again"));
     let output_schema = crate::tool_runtime::registry::output_schema_for_tool("apply_text_edits");
     let serialized_conflict = serde_json::to_value(&conflict).unwrap();
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(

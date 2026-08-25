@@ -258,6 +258,8 @@ fn apply_text_edits_agent_stdout_result(stdout: &str) -> ToolResult {
             format!(
                 "Edit outcome is uncertain: {error}. Inspect the affected files before issuing another write."
             )
+        } else if obj.get("conflict_recovery").is_some_and(Value::is_object) {
+            error.to_string()
         } else {
             recoverable_write_rejection(error)
         };

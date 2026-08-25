@@ -553,6 +553,27 @@ fn edit_conflict_recovery(error: &EditPlanError) -> Option<serde_json::Value> {
     }
 }
 
+fn edit_conflict_retry_guidance(recovery: Option<&serde_json::Value>) -> &'static str {
+    match recovery
+        .and_then(|value| value.get("recovery_action"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("select_occurrence_or_refine_match") => {
+            "choose an advertised occurrence or refine the exact match; reuse the same expected_sha256 unless you reread or observe a changed file."
+        }
+        Some("choose_valid_occurrence_or_refine_match") => {
+            "choose a valid advertised occurrence or refine the exact match; reuse the same expected_sha256 unless you reread or observe a changed file."
+        }
+        Some("reread_or_refine_match") => {
+            "reread this file or refine the exact match; if you reread, retry with the newly observed expected_sha256."
+        }
+        Some("refine_edit_batch") => {
+            "refine the edit batch so exact edit ranges no longer overlap; reuse the same expected_sha256 unless you reread or observe a changed file."
+        }
+        _ => "read this file again and use an exact unique anchor.",
+    }
+}
+
 fn sha256_conflict_recovery() -> serde_json::Value {
     serde_json::json!({
         "schema_version": 1,
@@ -1100,6 +1121,13 @@ pub(crate) fn handle_apply_text_edits_file_request(
                         let (replacement, summaries) = match edit_plan(&original, &change.edits) {
                             Ok(plan) => plan,
                             Err(error) => {
+                                let recovery = if payload.recovery_metadata_version == Some(1) {
+                                    edit_conflict_recovery(&error)
+                                } else {
+                                    None
+                                };
+                                let retry_guidance =
+                                    edit_conflict_retry_guidance(recovery.as_ref());
                                 let mut result = serde_json::json!({
                                     "changed": false,
                                     "error_kind": "edit_conflict",
@@ -1109,14 +1137,12 @@ pub(crate) fn handle_apply_text_edits_file_request(
                                     "kind": error.edit_kind,
                                     "path": change.path,
                                     "error": format!(
-                                        "Rejected transactional file batch: {}. No files were modified. Retry guidance: read this file again and use an exact unique anchor.",
+                                        "Rejected transactional file batch: {}. No files were modified. Retry guidance: {retry_guidance}",
                                         error.message
                                     ),
                                 });
-                                if payload.recovery_metadata_version == Some(1) {
-                                    if let Some(recovery) = edit_conflict_recovery(&error) {
-                                        result["conflict_recovery"] = recovery;
-                                    }
+                                if let Some(recovery) = recovery {
+                                    result["conflict_recovery"] = recovery;
                                 }
                                 return line_edit_stdout(result, start);
                             }

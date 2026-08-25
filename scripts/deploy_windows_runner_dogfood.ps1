@@ -28,7 +28,9 @@ param(
     [int]$StartTimeoutSecs = 20,
 
     [ValidateRange(1, 300)]
-    [int]$ReadinessTimeoutSecs = 30
+    [int]$ReadinessTimeoutSecs = 30,
+
+    [switch]$AllowVersionMismatch
 )
 
 $ErrorActionPreference = "Stop"
@@ -106,7 +108,8 @@ $preObservation = Get-RunnerControlPlaneObservation `
 $null = Assert-PreReplacementRunnerObservation `
     -Observation $preObservation `
     -ExpectedClientId $operatorProfile.ClientId `
-    -ExpectedBuild $previousBuild
+    -ExpectedBuild $previousBuild `
+    -AllowVersionMismatch:$AllowVersionMismatch
 $oldAgentInstanceId = [string]$preObservation.agent_instance_id
 
 # Copy first so the source may be a build directory, network path, or even the
@@ -199,7 +202,8 @@ try {
         -ExpectedBuild $candidateBuild `
         -DeadlineUtc ([DateTime]::UtcNow.AddSeconds($ReadinessTimeoutSecs)) `
         -DisallowedAgentInstanceIds @($oldAgentInstanceId) `
-        -FailOnBuildMismatch
+        -FailOnBuildMismatch `
+        -AllowVersionMismatch:$AllowVersionMismatch
     $candidateReadyObservation = $candidateReady.Observation
     $null = Assert-CapturedPrimaryRunnerIdentity -Identity $newPrimary
     if ((Get-PrimaryRunnerProcesses -ExactPath $RunnerPath).Count -ne 1) {
@@ -215,6 +219,7 @@ try {
     Write-Output "  client_id:             $($operatorProfile.ClientId)"
     Write-Output "  old_agent_instance_id: $oldAgentInstanceId"
     Write-Output "  new_agent_instance_id: $($candidateReadyObservation.agent_instance_id)"
+    Write-Output "  readiness_reason:      $($candidateReady.Decision.Reason)"
     Write-Output "  expected_build:        commit=$($candidateBuild.GitCommit) dirty=$($candidateBuild.GitDirty)"
     Write-Output "  observed_build:        commit=$($candidateReadyObservation.build.git_commit) dirty=$($candidateReadyObservation.build.git_dirty)"
     Write-Output "  candidate:             $candidateIdentity"
@@ -319,7 +324,8 @@ try {
             -ExpectedClientId $operatorProfile.ClientId `
             -ExpectedBuild $previousBuild `
             -DeadlineUtc ([DateTime]::UtcNow.AddSeconds($ReadinessTimeoutSecs)) `
-            -DisallowedAgentInstanceIds $rollbackDisallowedIds
+            -DisallowedAgentInstanceIds $rollbackDisallowedIds `
+            -AllowVersionMismatch:$AllowVersionMismatch
         $rollbackReadyObservation = $rollbackReady.Observation
         $null = Assert-CapturedPrimaryRunnerIdentity -Identity $rollbackPrimary
     } catch {
@@ -330,7 +336,7 @@ try {
     if ($rollbackFailure) {
         throw "Deployment failed: $($deploymentError.Exception.Message). Rollback outcome uncertain / rollback readiness failed: $rollbackFailure"
     }
-    Write-Warning "Deployment failed, but rollback readiness was proven for agent_instance_id=$($rollbackReadyObservation.agent_instance_id) commit=$($rollbackReadyObservation.build.git_commit) dirty=$($rollbackReadyObservation.build.git_dirty)"
+    Write-Warning "Deployment failed, but rollback readiness was proven for agent_instance_id=$($rollbackReadyObservation.agent_instance_id) commit=$($rollbackReadyObservation.build.git_commit) dirty=$($rollbackReadyObservation.build.git_dirty) reason=$($rollbackReady.Decision.Reason)"
     throw $deploymentError
 } finally {
     if (Test-Path -LiteralPath $stagedPath) {

@@ -426,6 +426,14 @@ resolution is explicit `-CandidatePath` (legacy `-Candidate` remains an alias),
 then `target\\dogfood\\webcodex-runner.exe`; the helper never runs Cargo itself.
 Replacement success and rollback still use the existing exact process identity and
 bounded fresh control-plane readiness proofs.
+Readiness is package/protocol strict by default: `compatible` is accepted,
+`version_mismatch` is rejected as `runner_version_mismatch`, and missing/unknown
+compatibility facts fail closed. Intentional rolling upgrades must opt in with
+`-AllowVersionMismatch`; that switch can accept only `version_mismatch` and reports
+`version_mismatch_allowed_for_rolling_upgrade` rather than normal
+`exact_fresh_build_ready`. It never overrides capability mismatch, exact candidate
+or rollback commit/dirty identity, fresh `agent_instance_id`, or connected-state
+requirements. `source_alignment.status=different` remains diagnostic-only.
 
 ## macOS local dogfood signing
 

@@ -104,7 +104,8 @@ function Get-RunnerReadinessDecision {
         [Parameter(Mandatory = $true)]$Observation,
         [Parameter(Mandatory = $true)][string]$ExpectedClientId,
         [Parameter(Mandatory = $true)]$ExpectedBuild,
-        [string[]]$DisallowedAgentInstanceIds = @()
+        [string[]]$DisallowedAgentInstanceIds = @(),
+        [switch]$AllowVersionMismatch
     )
 
     if (-not $Observation -or $Observation.client_id -ne $ExpectedClientId) {
@@ -135,17 +136,35 @@ function Get-RunnerReadinessDecision {
             ExpectedDirty = [bool]$ExpectedBuild.GitDirty; ObservedDirty = [bool]$Observation.build.git_dirty
         }
     }
-    if ([string]$Observation.compatibility_status -eq 'capability_mismatch') {
-        return [pscustomobject]@{ State = 'mismatch'; Reason = 'runner_protocol_incompatible'; AgentInstanceId = $instanceId }
+    $compatibilityStatus = [string]$Observation.compatibility_status
+    if ([string]::IsNullOrWhiteSpace($compatibilityStatus)) {
+        return [pscustomobject]@{ State = 'mismatch'; Reason = 'runner_compatibility_status_unavailable'; AgentInstanceId = $instanceId }
     }
-    return [pscustomobject]@{ State = 'ready'; Reason = 'exact_fresh_build_ready'; AgentInstanceId = $instanceId }
+    switch ($compatibilityStatus) {
+        'compatible' {
+            return [pscustomobject]@{ State = 'ready'; Reason = 'exact_fresh_build_ready'; AgentInstanceId = $instanceId }
+        }
+        'version_mismatch' {
+            if ($AllowVersionMismatch) {
+                return [pscustomobject]@{ State = 'ready'; Reason = 'version_mismatch_allowed_for_rolling_upgrade'; AgentInstanceId = $instanceId }
+            }
+            return [pscustomobject]@{ State = 'mismatch'; Reason = 'runner_version_mismatch'; AgentInstanceId = $instanceId }
+        }
+        'capability_mismatch' {
+            return [pscustomobject]@{ State = 'mismatch'; Reason = 'runner_protocol_incompatible'; AgentInstanceId = $instanceId }
+        }
+        default {
+            return [pscustomobject]@{ State = 'mismatch'; Reason = 'runner_compatibility_status_unknown'; AgentInstanceId = $instanceId }
+        }
+    }
 }
 
 function Assert-PreReplacementRunnerObservation {
     param(
         [Parameter(Mandatory = $true)]$Observation,
         [Parameter(Mandatory = $true)][string]$ExpectedClientId,
-        [Parameter(Mandatory = $true)]$ExpectedBuild
+        [Parameter(Mandatory = $true)]$ExpectedBuild,
+        [switch]$AllowVersionMismatch
     )
 
     if (-not $Observation -or $Observation.client_id -ne $ExpectedClientId) {
@@ -157,7 +176,7 @@ function Assert-PreReplacementRunnerObservation {
     if ([string]::IsNullOrWhiteSpace([string]$Observation.agent_instance_id)) {
         throw "Pre-replacement Runner agent_instance_id is unavailable"
     }
-    $decision = Get-RunnerReadinessDecision -Observation $Observation -ExpectedClientId $ExpectedClientId -ExpectedBuild $ExpectedBuild
+    $decision = Get-RunnerReadinessDecision -Observation $Observation -ExpectedClientId $ExpectedClientId -ExpectedBuild $ExpectedBuild -AllowVersionMismatch:$AllowVersionMismatch
     if ($decision.State -ne 'ready') {
         $details = "reason=$($decision.Reason) expected_commit=$($ExpectedBuild.GitCommit) observed_commit=$($Observation.build.git_commit) expected_dirty=$($ExpectedBuild.GitDirty) observed_dirty=$($Observation.build.git_dirty)"
         throw "Pre-replacement Runner build identity does not match the installed rollback source: $details"
@@ -199,6 +218,7 @@ function Wait-RunnerControlPlaneReadiness {
         [string[]]$DisallowedAgentInstanceIds = @(),
         [ValidateRange(1, 5000)][int]$PollIntervalMilliseconds = 250,
         [switch]$FailOnBuildMismatch,
+        [switch]$AllowVersionMismatch,
         [scriptblock]$UtcNow = { [DateTime]::UtcNow },
         [scriptblock]$Sleep = { param([int]$Milliseconds) Start-Sleep -Milliseconds $Milliseconds }
     )
@@ -212,7 +232,7 @@ function Wait-RunnerControlPlaneReadiness {
         $requestTimeoutMs = [Math]::Min(5000, $remainingMs)
         try {
             $lastObservation = & $Observe $requestTimeoutMs
-            $decision = Get-RunnerReadinessDecision -Observation $lastObservation -ExpectedClientId $ExpectedClientId -ExpectedBuild $ExpectedBuild -DisallowedAgentInstanceIds $DisallowedAgentInstanceIds
+            $decision = Get-RunnerReadinessDecision -Observation $lastObservation -ExpectedClientId $ExpectedClientId -ExpectedBuild $ExpectedBuild -DisallowedAgentInstanceIds $DisallowedAgentInstanceIds -AllowVersionMismatch:$AllowVersionMismatch
             $lastReason = [string]$decision.Reason
             if ($decision.State -eq 'ready') {
                 return [pscustomobject]@{ Observation = $lastObservation; Decision = $decision }

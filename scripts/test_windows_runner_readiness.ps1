@@ -204,6 +204,10 @@ $deployTokens = $null
 $deployParseErrors = $null
 $deployAst = [System.Management.Automation.Language.Parser]::ParseFile($deployPath, [ref]$deployTokens, [ref]$deployParseErrors)
 Assert-Equal 0 @($deployParseErrors).Count "deployment helper parser errors"
+# Windows PowerShell 5.1 unwraps a one-item pipeline result to a scalar.
+# The final local exactly-one-primary proof must therefore force array semantics;
+# otherwise the healthy one-primary case observes `$null` for `.Count` and rolls back.
+Assert-True ($deployAst.Extent.Text -match 'if\s*\(\s*@\(Get-PrimaryRunnerProcesses\s+-ExactPath\s+\$RunnerPath\)\.Count\s+-ne\s+1\s*\)') "deployment helper exactly-one primary recheck is not array-wrapped"
 $allowVersionParameters = @($deployAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'AllowVersionMismatch' })
 Assert-Equal 1 $allowVersionParameters.Count "deployment helper does not expose exactly one AllowVersionMismatch opt-in"
 $deployReadinessCalls = @($deployAst.FindAll({

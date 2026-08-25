@@ -206,7 +206,10 @@ try {
         -AllowVersionMismatch:$AllowVersionMismatch
     $candidateReadyObservation = $candidateReady.Observation
     $null = Assert-CapturedPrimaryRunnerIdentity -Identity $newPrimary
-    if ((Get-PrimaryRunnerProcesses -ExactPath $RunnerPath).Count -ne 1) {
+    # Windows PowerShell 5.1 unwraps a single pipeline object, so a bare
+    # `(Get-PrimaryRunnerProcesses ...).Count` is `$null` for the healthy
+    # exactly-one case. Force array semantics before checking cardinality.
+    if (@(Get-PrimaryRunnerProcesses -ExactPath $RunnerPath).Count -ne 1) {
         throw "New Runner did not remain the exactly-one primary Runner after readiness"
     }
 

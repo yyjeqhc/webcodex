@@ -50,20 +50,18 @@
         <p id="runtime-overview-unavailable" class="muted small" hidden>Runtime-wide overview is unavailable to this credential; project-scoped Console access remains available.</p>
       </section>
 
+      <section class="panel recent-panel">
+        <div class="panel-head"><h2>Active &amp; Recent Sessions</h2><span id="runtime-recent-status" class="muted small">—</span></div>
+        <div id="runtime-recent-session-list" class="recent-session-list" role="listbox" aria-label="Active and recent Workflow Sessions"></div>
+        <p id="runtime-recent-empty" class="muted small" hidden>No recent Workflow Sessions are visible.</p>
+        <p id="runtime-recent-unavailable" class="muted small" hidden>Fleet-wide recent Sessions require runtime:read. Project-scoped Session access remains available.</p>
+      </section>
+
       <section class="panel runner-panel">
-        <div class="panel-head"><h2>Runner machine</h2><span id="runtime-runner-access" class="muted small">—</span></div>
-        <div class="runner-head">
-          <label for="runtime-device-select">Runner</label>
-          <select id="runtime-device-select"></select>
-          <span id="runtime-device-status" class="muted small">—</span>
-        </div>
-        <div id="runtime-runner-summary" class="metric-grid compact-grid">
-          <div class="metric"><span class="metric-label">Identity</span><strong id="runtime-runner-id">—</strong><span id="runtime-runner-health" class="muted small">—</span></div>
-          <div class="metric"><span class="metric-label">Build</span><strong id="runtime-runner-version">—</strong><span id="runtime-runner-build">—</span></div>
-          <div class="metric"><span class="metric-label">Jobs</span><strong id="runtime-runner-jobs">—</strong><span id="runtime-runner-concurrency" class="muted small">—</span></div>
-          <div class="metric"><span class="metric-label">Source alignment</span><strong id="runtime-runner-alignment">—</strong><span id="runtime-runner-project-count" class="muted small">—</span></div>
-        </div>
-        <p id="runtime-runner-unavailable" class="muted small" hidden>Runtime-wide Runner facts are unavailable to this credential.</p>
+        <div class="panel-head"><h2>Runner Fleet <span id="runtime-runner-count" class="muted small">0</span></h2><span id="runtime-runner-access" class="muted small">—</span></div>
+        <div id="runtime-runner-list" class="fleet-list" role="listbox" aria-label="Runner Fleet"></div>
+        <p id="runtime-runners-empty" class="muted small" hidden>No caller-visible Runners.</p>
+        <p id="runtime-runner-unavailable" class="muted small" hidden>Runtime-wide Runner facts require runtime:read.</p>
       </section>
 
       <section class="panel projects-panel">
@@ -71,9 +69,13 @@
           <h2>Projects</h2>
           <span id="runtime-project-status" class="muted small">—</span>
         </div>
+        <div class="project-filter-row">
+          <label class="filter-field" for="runtime-device-select"><span>Runner filter</span><select id="runtime-device-select"><option value="">All Runners</option></select></label>
+          <span id="runtime-device-status" class="muted small">—</span>
+        </div>
         <div class="project-search-row">
-          <input id="runtime-project-search" type="search" placeholder="Filter by Project name or id" autocomplete="off" spellcheck="false" />
-          <span id="runtime-selected-project" class="project-id small">—</span>
+          <input id="runtime-project-search" type="search" placeholder="Filter by Project name, id, or Runner" autocomplete="off" spellcheck="false" />
+          <span id="runtime-selected-project" class="project-id small">No project selected</span>
         </div>
         <div id="runtime-project-list" class="project-list" role="listbox" aria-label="Projects"></div>
         <p id="runtime-projects-empty" class="muted small" hidden>No Projects match this filter.</p>

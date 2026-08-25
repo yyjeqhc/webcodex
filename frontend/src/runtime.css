@@ -19,7 +19,7 @@ h2 { font-size: 1rem; }
 h4 { margin-bottom: 5px; color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; }
 .muted { color: var(--muted); }
 .small { font-size: .8rem; }
-.topbar-controls, .field-row, .chips, .summary-facts, .timeline-controls, .section-head, .runner-head { display: flex; gap: 7px; align-items: center; }
+.topbar-controls, .field-row, .chips, .summary-facts, .timeline-controls, .section-head { display: flex; gap: 7px; align-items: center; }
 .btn { border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); padding: 6px 10px; cursor: pointer; }
 .btn:disabled { cursor: wait; opacity: .62; }
 .btn.primary { border-color: var(--accent); background: var(--accent); color: white; }
@@ -33,10 +33,20 @@ h4 { margin-bottom: 5px; color: var(--muted); font-size: .72rem; text-transform:
 .metric { min-width: 0; background: var(--bg); border-left: 3px solid var(--border); padding: 9px 10px; display: grid; gap: 3px; }
 .metric strong, .metric span { overflow-wrap: anywhere; }
 .metric-label { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; }
-.runner-head { margin-bottom: 10px; }
-.runner-head label { font-weight: 700; }
-.runner-head select, .project-search-row input, .collaboration-composer select, .collaboration-composer textarea { min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; background: var(--bg); color: var(--text); }
-.runner-head select { min-width: 220px; }
+.recent-session-list, .fleet-list { display: grid; gap: 6px; }
+.recent-session-row, .fleet-row { min-width: 0; border: 1px solid var(--border); border-radius: 7px; padding: 9px 10px; background: var(--bg); cursor: pointer; }
+.recent-session-row { display: grid; grid-template-columns: minmax(220px, 1.5fr) minmax(220px, 1fr); gap: 7px 12px; align-items: start; }
+.recent-session-main, .fleet-row-main, .fleet-row-signals, .fleet-row-facts { min-width: 0; }
+.recent-session-location, .fleet-row-meta, .fleet-row-facts { overflow-wrap: anywhere; }
+.recent-session-signals, .fleet-row-signals { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
+.recent-session-row .summary-facts, .recent-session-row .activity-preview { grid-column: 1 / -1; }
+.recent-session-row.selected, .fleet-row.selected { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.fleet-row { display: grid; grid-template-columns: minmax(220px, 1.25fr) minmax(180px, .9fr) minmax(260px, 1.35fr); gap: 8px 12px; align-items: center; }
+.fleet-row-title { font-weight: 700; overflow-wrap: anywhere; }
+.project-filter-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.filter-field { display: flex; gap: 7px; align-items: center; font-weight: 650; }
+.filter-field select, .project-search-row input, .collaboration-composer select, .collaboration-composer textarea { min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; background: var(--bg); color: var(--text); }
+.filter-field select { min-width: 220px; }
 .project-search-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: 8px; align-items: center; margin-bottom: 8px; }
 .project-id { overflow-wrap: anywhere; color: var(--muted); text-align: right; }
 .project-list { display: grid; gap: 5px; max-height: 360px; overflow: auto; }
@@ -106,10 +116,11 @@ h4 { margin-bottom: 5px; color: var(--muted); font-size: .72rem; text-transform:
 @media (max-width: 760px) {
   #runtime-page { width: min(100% - 20px, 1240px); padding-top: 14px; }
   .topbar { align-items: flex-start; }
-  .session-grid, .overview, .metric-grid { grid-template-columns: 1fr; }
+  .session-grid, .overview, .metric-grid, .recent-session-row, .fleet-row { grid-template-columns: 1fr; }
   .project-search-row, .project-row { grid-template-columns: 1fr; }
   .project-id { text-align: left; }
-  .project-row-facts { justify-content: flex-start; }
-  .runner-head { align-items: stretch; flex-direction: column; }
-  .runner-head select { width: 100%; min-width: 0; }
+  .project-row-facts, .recent-session-signals, .fleet-row-signals { justify-content: flex-start; }
+  .project-filter-row { align-items: stretch; flex-direction: column; }
+  .filter-field { align-items: stretch; flex-direction: column; }
+  .filter-field select { width: 100%; min-width: 0; }
 }

@@ -48,7 +48,7 @@ export function runtimeDeviceIds(projects) {
 }
 export function runtimeProjectsForDevice(projects, clientId) {
     return (Array.isArray(projects) ? projects : [])
-        .filter((project) => project && project.client_id === clientId && typeof project.id === "string" && project.id)
+        .filter((project) => project && (!clientId || project.client_id === clientId) && typeof project.id === "string" && project.id)
         .slice()
         .sort((left, right) => {
         const leftName = typeof left.name === "string" && left.name ? left.name : left.id;
@@ -67,7 +67,7 @@ export function filterAndSortRuntimeProjects(projects, clientId, query) {
         .filter((project) => {
         if (!needle)
             return true;
-        return [project?.name, project?.id]
+        return [project?.name, project?.id, project?.client_id]
             .filter((value) => typeof value === "string")
             .some((value) => String(value).toLocaleLowerCase().includes(needle));
     })
@@ -97,9 +97,8 @@ export function preferredRuntimeProjectSelection(projects, selectedDevice, selec
             return { device: retained.client_id, project: retained.id };
     }
     const devices = runtimeDeviceIds(rows);
-    const device = devices.includes(selectedDevice) ? selectedDevice : devices[0] || "";
-    const project = runtimeProjectsForDevice(rows, device)[0];
-    return { device, project: project ? project.id : "" };
+    const device = devices.includes(selectedDevice) ? selectedDevice : "";
+    return { device, project: "" };
 }
 export function initialRuntimeConsoleState() {
     return {
@@ -167,6 +166,9 @@ export function isCurrentRuntimeRunnerRequest(state, request) {
     return !!request && request.credentialGeneration === state.credentialGeneration &&
         request.device === state.selectedDevice && request.generation === state.runnerGeneration;
 }
+export function selectRuntimeRunnerFilter(state, device) {
+    selectRuntimeProject(state, device, "");
+}
 export function selectRuntimeProject(state, device, project) {
     if (state.selectedDevice !== device)
         state.runnerGeneration += 1;
@@ -218,6 +220,11 @@ export function selectRuntimeWorkflowSession(state, sessionId) {
     state.collaboration.available = true;
     state.collaboration.phase = "idle";
     return wrapWorkflowRequest(state, selectWorkflowSession(state.workflow, sessionId));
+}
+export function selectRuntimeSessionLocation(state, device, project, sessionId) {
+    const sessionListRequest = selectRuntimeProject(state, device, project);
+    const detailRequest = selectRuntimeWorkflowSession(state, sessionId);
+    return { sessionListRequest, detailRequest };
 }
 export function refreshRuntimeWorkflowSession(state) {
     return wrapWorkflowRequest(state, refreshWorkflowSessionDetail(state.workflow));

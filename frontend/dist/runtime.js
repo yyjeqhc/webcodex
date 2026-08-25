@@ -296,7 +296,7 @@ function runtimeDeviceIds(projects) {
 }
 function runtimeProjectsForDevice(projects, clientId) {
     return (Array.isArray(projects) ? projects : [])
-        .filter((project) => project && project.client_id === clientId && typeof project.id === "string" && project.id)
+        .filter((project) => project && (!clientId || project.client_id === clientId) && typeof project.id === "string" && project.id)
         .slice()
         .sort((left, right) => {
         const leftName = typeof left.name === "string" && left.name ? left.name : left.id;
@@ -315,7 +315,7 @@ function filterAndSortRuntimeProjects(projects, clientId, query) {
         .filter((project) => {
         if (!needle)
             return true;
-        return [project?.name, project?.id]
+        return [project?.name, project?.id, project?.client_id]
             .filter((value) => typeof value === "string")
             .some((value) => String(value).toLocaleLowerCase().includes(needle));
     })
@@ -345,9 +345,8 @@ function preferredRuntimeProjectSelection(projects, selectedDevice, selectedProj
             return { device: retained.client_id, project: retained.id };
     }
     const devices = runtimeDeviceIds(rows);
-    const device = devices.includes(selectedDevice) ? selectedDevice : devices[0] || "";
-    const project = runtimeProjectsForDevice(rows, device)[0];
-    return { device, project: project ? project.id : "" };
+    const device = devices.includes(selectedDevice) ? selectedDevice : "";
+    return { device, project: "" };
 }
 function initialRuntimeConsoleState() {
     return {
@@ -415,6 +414,9 @@ function isCurrentRuntimeRunnerRequest(state, request) {
     return !!request && request.credentialGeneration === state.credentialGeneration &&
         request.device === state.selectedDevice && request.generation === state.runnerGeneration;
 }
+function selectRuntimeRunnerFilter(state, device) {
+    selectRuntimeProject(state, device, "");
+}
 function selectRuntimeProject(state, device, project) {
     if (state.selectedDevice !== device)
         state.runnerGeneration += 1;
@@ -466,6 +468,11 @@ function selectRuntimeWorkflowSession(state, sessionId) {
     state.collaboration.available = true;
     state.collaboration.phase = "idle";
     return wrapWorkflowRequest(state, selectWorkflowSession(state.workflow, sessionId));
+}
+function selectRuntimeSessionLocation(state, device, project, sessionId) {
+    const sessionListRequest = selectRuntimeProject(state, device, project);
+    const detailRequest = selectRuntimeWorkflowSession(state, sessionId);
+    return { sessionListRequest, detailRequest };
 }
 function refreshRuntimeWorkflowSession(state) {
     return wrapWorkflowRequest(state, refreshWorkflowSessionDetail(state.workflow));
@@ -540,12 +547,13 @@ let token = "";
 let timer = 0;
 let overviewAbort = null;
 let projectsAbort = null;
-let runnerAbort = null;
 let sessionsAbort = null;
 let detailAbort = null;
 let collaborationAbort = null;
 let projectRows = [];
-let runnerProjectRows = [];
+let homeProjectRows = [];
+let runnerRows = [];
+let recentSessionRows = [];
 let projectSearch = "";
 let collaborationReplyTo = "";
 let refreshInFlight = false;
@@ -594,10 +602,8 @@ function abortProjectWork() {
 function abortAll() {
     abort(overviewAbort);
     abort(projectsAbort);
-    abort(runnerAbort);
     overviewAbort = null;
     projectsAbort = null;
-    runnerAbort = null;
     abortProjectWork();
 }
 async function api(path, payload, signal) {
@@ -642,12 +648,16 @@ function lock(message = "") {
     abortAll();
     invalidateRuntimeCredential(state);
     projectRows = [];
-    runnerProjectRows = [];
+    homeProjectRows = [];
+    runnerRows = [];
+    recentSessionRows = [];
     projectRowsTruncated = false;
     projectSearch = "";
     collaborationReplyTo = "";
     clearSessionSurface();
     clearNode(el("runtime-project-list"));
+    clearNode(el("runtime-recent-session-list"));
+    clearNode(el("runtime-runner-list"));
     show("runtime-token-gate", true);
     show("runtime-console", false);
     show("runtime-topbar-controls", false);
@@ -698,25 +708,50 @@ async function fetchOverview(request) {
         return false;
     }
     if (response.status === 403) {
+        homeProjectRows = [];
+        runnerRows = [];
+        recentSessionRows = [];
         show("runtime-overview-unavailable", true);
+        show("runtime-runner-unavailable", true);
+        show("runtime-recent-unavailable", true);
         setText("runtime-overview-access", "runtime:read unavailable");
+        setText("runtime-runner-access", "runtime:read unavailable");
+        setText("runtime-recent-status", "runtime:read unavailable");
+        renderRunnerFleet([]);
+        renderRecentSessions([], null);
+        renderProjectSelectors(projectRows, projectRowsTruncated);
         return true;
     }
     if (!response.ok || !response.data) {
         setText("runtime-overview-access", "refresh unavailable");
+        setText("runtime-runner-access", "refresh unavailable");
+        setText("runtime-recent-status", "refresh unavailable");
         return false;
     }
     show("runtime-overview-unavailable", false);
+    show("runtime-runner-unavailable", false);
+    show("runtime-recent-unavailable", false);
     setText("runtime-overview-access", "runtime:read");
+    setText("runtime-runner-access", "runtime:read");
     const data = response.data;
+    homeProjectRows = Array.isArray(data.projects) ? data.projects : [];
+    runnerRows = Array.isArray(data.runners) ? data.runners : [];
+    recentSessionRows = Array.isArray(data.recent_sessions?.sessions) ? data.recent_sessions.sessions : [];
     setText("runtime-server-identity", [data.service, data.version].filter(Boolean).join(" · "));
     setText("runtime-server-build", data.build_git_commit ? "build " + data.build_git_commit + (data.build_git_dirty ? " · dirty" : "") : "build unavailable");
     setText("runtime-server-runners", countLabel(data.runner_count, "Runner"));
     setText("runtime-server-alignment", countLabel(data.runners_online, "online") + " · " + countLabel(data.runners_stale, "stale") + " · " + countLabel(data.runners_unavailable, "unavailable"));
-    setText("runtime-server-projects", data.projects_available ? countLabel(data.visible_projects, "visible Project") + (data.projects_truncated ? " +" : "") : "project:read unavailable");
+    setText("runtime-server-projects", data.projects_available ? countLabel(data.visible_projects, "visible Project") + (data.projects_truncated ? " · partial" : "") : "project:read unavailable");
     setText("runtime-server-jobs", countLabel(data.active_jobs, "active Job") + (data.mixed_builds_present ? " · mixed builds" : ""));
     setText("runtime-server-attention", attentionLabel(data.workflow_sessions));
-    setText("runtime-server-sessions", countLabel(data.workflow_sessions?.active, "active Session") + " · " + countLabel(data.workflow_sessions?.running, "running call") + (data.workflow_sessions?.truncated ? " · bounded aggregate" : ""));
+    setText("runtime-server-sessions", countLabel(data.workflow_sessions?.active, "active Session") + " · " + countLabel(data.workflow_sessions?.running, "running Session") + (data.workflow_sessions?.truncated ? " · bounded aggregate" : ""));
+    const recentMeta = data.recent_sessions || {};
+    setText("runtime-recent-status", countLabel(recentMeta.returned, "Session") +
+        (recentMeta.truncated ? " · top " + String(recentMeta.returned || 0) : "") +
+        (recentMeta.scan_truncated ? " · partial scan" : ""));
+    renderRecentSessions(recentSessionRows, recentMeta);
+    renderRunnerFleet(runnerRows);
+    renderProjectSelectors(projectRows, projectRowsTruncated || !!data.projects_truncated);
     return true;
 }
 function projectLabel(project) {
@@ -754,16 +789,14 @@ async function fetchProjects(request, unlocking = false) {
     const currentProject = String(state.selectedProject || "");
     const selection = preferredRuntimeProjectSelection(projectRows, currentDevice, currentProject);
     if (!selection.project) {
-        if (currentDevice || currentProject) {
+        if (currentProject || selection.device !== currentDevice) {
             abortProjectWork();
-            selectRuntimeProject(state, selection.device || "", "");
+            selectRuntimeRunnerFilter(state, selection.device || "");
+            collaborationReplyTo = "";
+            clearSessionSurface();
         }
         renderProjectSelectors(projectRows, projectRowsTruncated);
-        clearSessionSurface();
         setText("runtime-selected-project", "No project selected");
-        const runnerRequest = refreshRuntimeRunner(state);
-        if (runnerRequest)
-            void fetchRunner(runnerRequest);
         return true;
     }
     if (selection.device !== currentDevice || selection.project !== currentProject) {
@@ -771,9 +804,6 @@ async function fetchProjects(request, unlocking = false) {
     }
     else {
         renderProjectSelectors(projectRows, projectRowsTruncated);
-        const runnerRequest = refreshRuntimeRunner(state);
-        if (runnerRequest)
-            void fetchRunner(runnerRequest);
         const listRequest = refreshRuntimeSessionList(state);
         if (listRequest)
             void fetchSessions(listRequest);
@@ -782,7 +812,7 @@ async function fetchProjects(request, unlocking = false) {
 }
 function effectiveProjects(projects) {
     const aggregates = new Map();
-    for (const row of runnerProjectRows) {
+    for (const row of homeProjectRows) {
         if (row && typeof row.id === "string")
             aggregates.set(row.id, row);
     }
@@ -798,17 +828,21 @@ function renderProjectSelectors(projects, truncated) {
         return;
     const devices = runtimeDeviceIds(projects);
     clearNode(deviceSelect);
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "All Runners";
+    deviceSelect.appendChild(all);
     for (const clientId of devices) {
         const option = document.createElement("option");
         option.value = clientId;
         option.textContent = clientId;
         deviceSelect.appendChild(option);
     }
-    if (state.selectedDevice)
-        deviceSelect.value = state.selectedDevice;
-    const rows = filterAndSortRuntimeProjects(effectiveProjects(projects), String(state.selectedDevice || ""), projectSearch);
+    deviceSelect.value = String(state.selectedDevice || "");
+    const effective = effectiveProjects(projects);
+    const rows = filterAndSortRuntimeProjects(effective, String(state.selectedDevice || ""), projectSearch);
     clearNode(projectList);
-    show("runtime-projects-empty", !!state.selectedDevice && rows.length === 0);
+    show("runtime-projects-empty", rows.length === 0);
     for (const project of rows) {
         const row = document.createElement("div");
         row.className = "project-row" + (project.id === state.selectedProject ? " selected" : "");
@@ -823,24 +857,38 @@ function renderProjectSelectors(projects, truncated) {
         const id = document.createElement("div");
         id.className = "project-row-id";
         id.textContent = String(project.id || "");
+        const runner = document.createElement("div");
+        runner.className = "project-row-runner muted small";
+        runner.textContent = "Runner " + String(project.client_id || "unknown") + " · " + (project.connected ? String(project.agent_status || "online") : "offline");
         main.appendChild(title);
         main.appendChild(id);
+        main.appendChild(runner);
         const facts = document.createElement("div");
         facts.className = "project-row-facts";
-        appendChip(facts, project.connected ? String(project.agent_status || "online") : "offline");
+        if (!project.connected)
+            appendChip(facts, "OFFLINE", "tone-fail");
+        else if (project.agent_status && project.agent_status !== "online")
+            appendChip(facts, String(project.agent_status).toUpperCase(), "tone-warn");
         if (project.sessions) {
-            appendChip(facts, countLabel(project.sessions.retained_sessions, "retained Session"));
             if (project.sessions.running_sessions)
-                appendChip(facts, countLabel(project.sessions.running_sessions, "working"), "tone-runtime");
+                appendChip(facts, countLabel(project.sessions.running_sessions, "RUNNING"), "tone-runtime");
             const attention = attentionLabel(project.sessions.attention);
             if (!attention.startsWith("No retained"))
                 appendChip(facts, attention, "tone-warn");
-            if (typeof project.sessions.latest_updated_at === "number")
-                appendChip(facts, "updated " + updatedLabel(project.sessions.latest_updated_at));
+            const retained = document.createElement("span");
+            retained.className = "muted small";
+            retained.textContent = countLabel(project.sessions.retained_sessions, "retained Session");
+            facts.appendChild(retained);
+            if (typeof project.sessions.latest_updated_at === "number") {
+                const updated = document.createElement("span");
+                updated.className = "muted small";
+                updated.textContent = "updated " + updatedLabel(project.sessions.latest_updated_at);
+                facts.appendChild(updated);
+            }
         }
         row.appendChild(main);
         row.appendChild(facts);
-        const select = () => switchProject(String(state.selectedDevice || ""), String(project.id || ""));
+        const select = () => switchProject(String(project.client_id || ""), String(project.id || ""));
         row.addEventListener("click", select);
         row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
@@ -848,66 +896,202 @@ function renderProjectSelectors(projects, truncated) {
         } });
         projectList.appendChild(row);
     }
-    const deviceProjects = runtimeProjectsForDevice(projects, String(state.selectedDevice || ""));
-    setText("runtime-device-status", devices.length ? countLabel(devices.length, "authorized Runner") + (truncated ? " · bounded project list" : "") : "No authorized Runners");
-    setText("runtime-project-status", state.selectedDevice ? countLabel(deviceProjects.length, "authorized Project") + " on this Runner" + (truncated ? " · bounded list" : "") : "No authorized Projects");
+    const filteredProjects = runtimeProjectsForDevice(effective, String(state.selectedDevice || ""));
+    setText("runtime-device-status", devices.length
+        ? countLabel(devices.length, "authorized Runner") + (state.selectedDevice ? " · filtered" : " · All Runners") + (truncated ? " · bounded project list" : "")
+        : "No authorized Runners");
+    setText("runtime-project-status", countLabel(filteredProjects.length, "visible Project") + (state.selectedDevice ? " on " + state.selectedDevice : " across fleet") + (truncated ? " · bounded list" : ""));
 }
 function switchProject(device, project) {
     abortProjectWork();
-    if (state.selectedDevice !== device) {
-        abort(runnerAbort);
-        runnerAbort = null;
-        runnerProjectRows = [];
-    }
     collaborationReplyTo = "";
     clearSessionSurface();
     const request = selectRuntimeProject(state, device, project);
     renderProjectSelectors(projectRows, projectRowsTruncated);
+    renderRunnerFleet(runnerRows);
+    renderRecentSessions(recentSessionRows, null);
     setText("runtime-selected-project", project || "No project selected");
-    const runnerRequest = refreshRuntimeRunner(state);
-    if (runnerRequest)
-        void fetchRunner(runnerRequest);
     if (request)
         void fetchSessions(request);
 }
-async function fetchRunner(request) {
-    abort(runnerAbort);
-    const controller = new AbortController();
-    runnerAbort = controller;
-    const response = await api("runner", { client_id: request.device, project_limit: 24 }, controller.signal);
-    if (runnerAbort === controller)
-        runnerAbort = null;
-    if (!response || !isCurrentRuntimeRunnerRequest(state, request))
-        return;
-    if (response.status === 401)
-        return lock("Credential rejected.");
-    if (response.status === 403) {
-        show("runtime-runner-unavailable", true);
-        setText("runtime-runner-access", "runtime:read unavailable");
-        runnerProjectRows = [];
-        renderProjectSelectors(projectRows, projectRowsTruncated);
-        return;
-    }
-    if (!response.ok || !response.data) {
-        show("runtime-runner-unavailable", true);
-        setText("runtime-runner-access", "Runner view unavailable");
-        return;
-    }
-    show("runtime-runner-unavailable", false);
-    setText("runtime-runner-access", response.data.projects_truncated ? "bounded Project aggregate" : "runtime:read");
-    runnerProjectRows = Array.isArray(response.data.projects) ? response.data.projects : [];
-    renderRunner(response.data);
+function applyRunnerFilter(device) {
+    abortProjectWork();
+    collaborationReplyTo = "";
+    clearSessionSurface();
+    selectRuntimeRunnerFilter(state, device);
     renderProjectSelectors(projectRows, projectRowsTruncated);
+    renderRunnerFleet(runnerRows);
+    renderRecentSessions(recentSessionRows, null);
+    setText("runtime-selected-project", "No project selected");
 }
-function renderRunner(data) {
-    setText("runtime-runner-id", data.client_id);
-    setText("runtime-runner-health", (data.connected ? "connected" : "disconnected") + " · " + String(data.status || "unknown"));
-    setText("runtime-runner-version", data.version ? "v" + data.version : "version unavailable");
-    setText("runtime-runner-build", data.build_git_commit ? String(data.build_git_commit) + (data.build_git_dirty ? " · dirty" : "") : "build unavailable");
-    setText("runtime-runner-jobs", countLabel(data.active_jobs, "active Job"));
-    setText("runtime-runner-concurrency", countLabel(data.jobs_running, "running") + " · " + countLabel(data.jobs_queued, "queued") + (typeof data.job_concurrency_limit === "number" ? " · limit " + data.job_concurrency_limit : ""));
-    setText("runtime-runner-alignment", data.source_alignment || "unknown");
-    setText("runtime-runner-project-count", data.projects_available ? countLabel(data.visible_project_count, "visible Project") : "project:read unavailable");
+function runnerAttentionCount(runner) {
+    const attention = runner?.sessions?.attention;
+    return ["open_guidance", "open_questions", "open_risks", "open_todos"]
+        .reduce((total, key) => total + (typeof attention?.[key] === "number" ? Math.max(0, attention[key]) : 0), 0);
+}
+function renderRunnerFleet(runners) {
+    const node = el("runtime-runner-list");
+    if (!node)
+        return;
+    clearNode(node);
+    show("runtime-runners-empty", runners.length === 0 && !!el("runtime-runner-unavailable")?.hidden);
+    for (const runner of runners) {
+        const clientId = String(runner?.client_id || "");
+        if (!clientId)
+            continue;
+        const row = document.createElement("div");
+        row.className = "fleet-row" + (clientId === state.selectedDevice ? " selected" : "");
+        row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", clientId === state.selectedDevice ? "true" : "false");
+        row.tabIndex = 0;
+        const main = document.createElement("div");
+        main.className = "fleet-row-main";
+        const title = document.createElement("div");
+        title.className = "fleet-row-title";
+        title.textContent = clientId;
+        const meta = document.createElement("div");
+        meta.className = "muted small fleet-row-meta";
+        const metaParts = [
+            runner.connected ? String(runner.status || "online") : "offline",
+            runner.version ? "v" + String(runner.version) : "version unavailable",
+            runner.transport ? String(runner.transport) : "transport unavailable",
+            runner.source_alignment ? "source " + String(runner.source_alignment) : "source alignment unavailable",
+            typeof runner.last_seen_age_secs === "number" ? "seen " + String(runner.last_seen_age_secs) + "s ago" : "last seen unavailable",
+        ];
+        if (runner.build_git_commit)
+            metaParts.push("build " + String(runner.build_git_commit));
+        meta.textContent = metaParts.join(" · ");
+        main.appendChild(title);
+        main.appendChild(meta);
+        const signals = document.createElement("div");
+        signals.className = "fleet-row-signals";
+        const working = Math.max(Number(runner.jobs_running || 0), Number(runner.sessions?.running_sessions || 0));
+        const attention = runnerAttentionCount(runner);
+        if (working > 0)
+            appendChip(signals, "RUNNING", "tone-runtime");
+        if (attention > 0)
+            appendChip(signals, "ATTENTION " + attention, "tone-warn");
+        if (!runner.connected)
+            appendChip(signals, "OFFLINE", "tone-fail");
+        else if (String(runner.status || "") === "stale")
+            appendChip(signals, "STALE", "tone-warn");
+        if (runner.source_alignment === "different")
+            appendChip(signals, "SOURCE DIFFERENT", "tone-fail");
+        if (runner.version_matches_server === false)
+            appendChip(signals, "BUILD DIFFERENT", "tone-warn");
+        if (runner.build_git_dirty === true)
+            appendChip(signals, "DIRTY", "tone-warn");
+        const facts = document.createElement("div");
+        facts.className = "muted small fleet-row-facts";
+        facts.textContent = [
+            countLabel(runner.active_jobs, "active Job"),
+            countLabel(runner.jobs_running, "running Job"),
+            countLabel(runner.jobs_queued, "queued Job"),
+            typeof runner.job_concurrency_limit === "number" ? "limit " + runner.job_concurrency_limit : "limit unavailable",
+            countLabel(runner.visible_project_count, "visible Project"),
+            countLabel(runner.sessions?.active_sessions, "active Session"),
+        ].join(" · ") + (runner.projects_truncated ? " · project scan partial" : "");
+        row.appendChild(main);
+        row.appendChild(signals);
+        row.appendChild(facts);
+        const select = () => applyRunnerFilter(clientId);
+        row.addEventListener("click", select);
+        row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            select();
+        } });
+        node.appendChild(row);
+    }
+    setText("runtime-runner-count", countLabel(runners.length, "Runner"));
+}
+function renderRecentSessions(sessions, meta) {
+    const node = el("runtime-recent-session-list");
+    if (!node)
+        return;
+    clearNode(node);
+    show("runtime-recent-empty", sessions.length === 0 && !!el("runtime-recent-unavailable")?.hidden);
+    for (const session of sessions) {
+        const sessionId = String(session?.session_id || "");
+        const projectId = String(session?.project_id || "");
+        const clientId = String(session?.client_id || "");
+        if (!sessionId || !projectId || !clientId)
+            continue;
+        const selected = projectId === state.selectedProject && sessionId === state.workflow.selectedSessionId;
+        const row = document.createElement("div");
+        row.className = "recent-session-row" + (selected ? " selected" : "");
+        row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", selected ? "true" : "false");
+        row.tabIndex = 0;
+        const main = document.createElement("div");
+        main.className = "recent-session-main";
+        const title = document.createElement("div");
+        title.className = "session-title";
+        title.textContent = session.title ? String(session.title) : sessionId;
+        const location = document.createElement("div");
+        location.className = "muted small recent-session-location";
+        location.textContent = clientId + " · " + String(session.project_name || projectId) + (session.project_name && session.project_name !== projectId ? " · " + projectId : "");
+        main.appendChild(title);
+        main.appendChild(location);
+        const signals = document.createElement("div");
+        signals.className = "recent-session-signals";
+        const liveness = workflowSessionLivenessPresentation(session);
+        if (liveness.state === "working")
+            appendChip(signals, "RUNNING", "tone-runtime");
+        else if (liveness.state === "attention")
+            appendChip(signals, "ATTENTION", "tone-warn");
+        const attention = attentionLabel(session.overview?.attention);
+        if (!attention.startsWith("No retained"))
+            appendChip(signals, attention, "tone-warn");
+        const lifecycle = document.createElement("span");
+        lifecycle.className = "muted small";
+        lifecycle.textContent = [session.lifecycle, session.mode, "updated " + updatedLabel(session.updated_at)].filter(Boolean).join(" · ");
+        signals.appendChild(lifecycle);
+        row.appendChild(main);
+        row.appendChild(signals);
+        const summaryFacts = workflowSessionListOverviewFacts(session.overview);
+        if (summaryFacts.length) {
+            const summary = document.createElement("div");
+            summary.className = "summary-facts";
+            for (const fact of summaryFacts)
+                appendChip(summary, fact.text, "tone-" + fact.tone);
+            row.appendChild(summary);
+        }
+        appendPreview(row, "Now", session.current_activity);
+        appendPreview(row, "Last", session.last_activity);
+        const select = () => selectRecentSession(session);
+        row.addEventListener("click", select);
+        row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            select();
+        } });
+        node.appendChild(row);
+    }
+    if (meta) {
+        setText("runtime-recent-status", countLabel(meta.returned, "Session") + (meta.truncated ? " · top " + String(meta.returned || 0) : "") + (meta.scan_truncated ? " · partial scan" : ""));
+    }
+}
+function selectRecentSession(session) {
+    const clientId = String(session?.client_id || "");
+    const projectId = String(session?.project_id || "");
+    const sessionId = String(session?.session_id || "");
+    if (!clientId || !projectId || !sessionId)
+        return;
+    abortProjectWork();
+    collaborationReplyTo = "";
+    clearSessionSurface();
+    setHumanJoinSendEnabled(false);
+    const location = selectRuntimeSessionLocation(state, clientId, projectId, sessionId);
+    renderProjectSelectors(projectRows, projectRowsTruncated);
+    renderRunnerFleet(runnerRows);
+    renderRecentSessions(recentSessionRows, null);
+    setText("runtime-selected-project", projectId);
+    if (location.sessionListRequest)
+        void fetchSessions(location.sessionListRequest);
+    if (location.detailRequest)
+        void fetchSessionDetail(location.detailRequest);
+    const collaborationRequest = runtimeCollaborationRequest(state);
+    if (collaborationRequest)
+        void startCollaboration(collaborationRequest);
 }
 async function fetchSessions(request) {
     abort(sessionsAbort);
@@ -1022,6 +1206,9 @@ function renderSessionList(sessions, payload) {
             continue;
         const item = document.createElement("li");
         item.className = "session-card" + (id === selected ? " selected" : "");
+        item.setAttribute("role", "option");
+        item.setAttribute("aria-selected", id === selected ? "true" : "false");
+        item.tabIndex = 0;
         const title = document.createElement("div");
         title.className = "session-title";
         title.textContent = session.title ? String(session.title) : id;
@@ -1044,7 +1231,12 @@ function renderSessionList(sessions, payload) {
         }
         appendPreview(item, "Now", session.current_activity);
         appendPreview(item, "Last", session.last_activity);
-        item.addEventListener("click", () => selectSession(id));
+        const select = () => selectSession(id);
+        item.addEventListener("click", select);
+        item.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            select();
+        } });
         node.appendChild(item);
     }
 }
@@ -1550,6 +1742,9 @@ async function refreshAll() {
 function startAuto() {
     stopAuto();
     timer = window.setInterval(() => {
+        if (!token)
+            return;
+        void fetchOverview(refreshRuntimeOverview(state));
         const request = refreshRuntimeSessionList(state);
         if (request)
             void fetchSessions(request);
@@ -1576,8 +1771,7 @@ el("runtime-device-select")?.addEventListener("change", () => {
     const select = el("runtime-device-select");
     if (!select)
         return;
-    const projects = filterAndSortRuntimeProjects(effectiveProjects(projectRows), select.value, "");
-    switchProject(select.value, projects.length ? String(projects[0].id) : "");
+    applyRunnerFilter(select.value);
 });
 el("runtime-project-search")?.addEventListener("input", () => {
     const input = el("runtime-project-search");

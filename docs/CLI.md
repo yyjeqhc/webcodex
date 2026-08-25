@@ -115,6 +115,11 @@ keep their detached-process behavior when `--scope` is omitted.
 | `webcodex server logs` | Read the Server service journal |
 | `webcodex server uninstall` | Stop, disable, and remove the managed socket/service pair |
 
+`webcodex server install --service-file /path/name.service` derives the sibling
+`/path/name.socket`. Use the same `--service-file` on `start`, `stop`, `restart`,
+`status`, `logs`, and `uninstall` to manage or inspect that custom pair; omitting
+it targets the default `webcodex.service` / `webcodex.socket` pair.
+
 ### Operations (read-only operator checks)
 
 | Command | Purpose |

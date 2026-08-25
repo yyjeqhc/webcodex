@@ -113,6 +113,30 @@ fn validate_listening_tcp_fd(fd: i32) -> Result<(), String> {
         ));
     }
 
+    let mut socket_addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut socket_addr_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    let addr_result = unsafe {
+        libc::getsockname(
+            fd,
+            (&mut socket_addr as *mut libc::sockaddr_storage).cast(),
+            &mut socket_addr_len,
+        )
+    };
+    if addr_result != 0 {
+        return Err(format!(
+            "invalid systemd socket activation: failed to inspect inherited fd {fd} address family: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    if !matches!(
+        socket_addr.ss_family as libc::c_int,
+        libc::AF_INET | libc::AF_INET6
+    ) {
+        return Err(format!(
+            "invalid systemd socket activation: inherited fd {fd} is not an IPv4/IPv6 TCP listening socket"
+        ));
+    }
+
     let mut accepting: libc::c_int = 0;
     let mut accepting_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
     let accept_result = unsafe {
@@ -296,6 +320,24 @@ mod tests {
         let raw_fd = stream.into_raw_fd();
         let error = take_inherited_listener(raw_fd, "127.0.0.1:1").unwrap_err();
         assert!(error.contains("not in listening state"), "{error}");
+        assert_ne!(unsafe { libc::fcntl(raw_fd, libc::F_GETFD) }, -1);
+        unsafe { libc::close(raw_fd) };
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn inherited_fd_rejects_non_tcp_listening_stream_without_taking_ownership() {
+        use std::os::fd::IntoRawFd;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let listener =
+            std::os::unix::net::UnixListener::bind(tmp.path().join("listener.sock")).unwrap();
+        let raw_fd = listener.into_raw_fd();
+        let error = take_inherited_listener(raw_fd, "127.0.0.1:1").unwrap_err();
+        assert!(
+            error.contains("not an IPv4/IPv6 TCP listening socket"),
+            "{error}"
+        );
         assert_ne!(unsafe { libc::fcntl(raw_fd, libc::F_GETFD) }, -1);
         unsafe { libc::close(raw_fd) };
     }

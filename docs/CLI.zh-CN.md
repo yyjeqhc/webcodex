@@ -106,6 +106,11 @@ detached-process 行为。
 | `webcodex server logs` | 读取 Server service journal |
 | `webcodex server uninstall` | stop/disable/remove 受管 socket/service pair |
 
+使用 `webcodex server install --service-file /path/name.service` 时，会派生同目录的
+`/path/name.socket`。后续 `start`、`stop`、`restart`、`status`、`logs` 和 `uninstall`
+应传入相同的 `--service-file` 来管理或检查该自定义 pair；省略时仍操作默认的
+`webcodex.service` / `webcodex.socket` pair。
+
 ### 运维（只读操作检查）
 
 | 命令 | 用途 |

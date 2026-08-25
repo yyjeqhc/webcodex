@@ -93,6 +93,19 @@ fn server_status_handles_missing_remote_build_metadata() {
     assert!(detail.contains("server may be older than build metadata support"));
 }
 
+#[test]
+fn server_status_accepts_custom_service_file() {
+    let opts = parse_server_status(&args(&[
+        "--service-file",
+        "/etc/systemd/system/webcodex-canary.service",
+    ]))
+    .unwrap();
+    assert_eq!(
+        opts.service_file,
+        std::path::PathBuf::from("/etc/systemd/system/webcodex-canary.service")
+    );
+}
+
 #[tokio::test]
 async fn server_status_parses_env_token_posts_and_does_not_print_token() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

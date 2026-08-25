@@ -10,7 +10,7 @@ use crate::{
 use super::{
     compare_build_commits, control_server_unit_pair, encode_exec_program, encode_unit_path_value,
     fetch_runtime_status, generate_bootstrap_token, install_server_unit_pair,
-    local_cli_build_metadata, query_systemd_socket_status, query_systemd_status,
+    local_cli_build_metadata, query_systemd_service_status, query_systemd_socket_status,
     read_env_file_value, render_build_metadata_block, render_server_env, run_logs,
     runtime_build_metadata, server_status_revision_check, service_unit_name, token_prefix,
     uninstall_server_unit_pair, validate_systemd_identity, SERVER_SERVICE_UNIT, SERVER_SOCKET_UNIT,
@@ -23,6 +23,7 @@ pub(crate) struct ServerStatusOptions {
     pub(crate) env_file: Option<PathBuf>,
     pub(crate) env_file_explicit: bool,
     pub(crate) token_file: Option<PathBuf>,
+    pub(crate) service_file: PathBuf,
     pub(crate) json: bool,
 }
 
@@ -315,8 +316,11 @@ fn resolve_status_token(opts: &ServerStatusOptions) -> Result<Option<String>, St
 }
 
 pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> {
-    let systemd = query_systemd_status();
-    let socket = query_systemd_socket_status(SERVER_SOCKET_UNIT);
+    let service_unit = service_unit_name(&opts.service_file, SERVER_SERVICE_UNIT);
+    let socket_file = server_socket_file(&opts.service_file)?;
+    let socket_unit = service_unit_name(&socket_file, SERVER_SOCKET_UNIT);
+    let systemd = query_systemd_service_status(&service_unit);
+    let socket = query_systemd_socket_status(&socket_unit);
     let token = resolve_status_token(&opts)?;
     let http = fetch_runtime_status(&opts.url, &opts.server_http, token.as_deref()).await?;
     let output = http.output.as_ref();
@@ -344,11 +348,13 @@ pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<Strin
             "http_content_type": http.content_type,
             "http_error": http.error,
             "service": {
+                "unit": service_unit,
                 "loaded": systemd.loaded,
                 "active": systemd.active,
                 "enabled": systemd.enabled,
             },
             "socket": {
+                "unit": socket_unit,
                 "loaded": socket.loaded,
                 "active": socket.active,
                 "enabled": socket.enabled,
@@ -394,9 +400,11 @@ pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<Strin
             out.push_str(&format!("  HTTP error:            {}\n", error));
         }
     }
+    out.push_str(&format!("  service unit:          {}\n", service_unit));
     out.push_str(&format!("  service loaded:        {}\n", systemd.loaded));
     out.push_str(&format!("  service active:        {}\n", systemd.active));
     out.push_str(&format!("  service enabled:       {}\n", systemd.enabled));
+    out.push_str(&format!("  socket unit:           {}\n", socket_unit));
     out.push_str(&format!("  socket loaded:         {}\n", socket.loaded));
     out.push_str(&format!("  socket active:         {}\n", socket.active));
     out.push_str(&format!("  socket enabled:        {}\n", socket.enabled));

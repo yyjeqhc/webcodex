@@ -49,12 +49,12 @@ use webcodex_cli::{
     run_login, run_logout, run_ops_command, run_pairing_create, run_server_init,
     run_server_install_service, run_server_service, run_server_status, run_setup_single_user,
     run_status, run_token_create_local, server_init_usage, server_install_service_usage,
-    server_status_usage, server_usage, status_usage, system_user_home, system_user_is_root, usage,
-    validate_client_profile, validate_service_file_scope, write_connect_result, write_secret_file,
-    write_text_file, ConnectAuth, ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions,
-    OpsCommand, OpsCommonOptions, OpsRunnerOptions, OpsSmokePreflightOptions, ServerStatusOptions,
-    ServiceControl, StatusOptions, AGENT_SERVICE_UNIT, DEFAULT_LOG_LINES, SERVER_SERVICE_FILE,
-    SERVER_SERVICE_UNIT,
+    server_status_usage, server_usage, service_unit_name, status_usage, system_user_home,
+    system_user_is_root, usage, validate_client_profile, validate_service_file_scope,
+    write_connect_result, write_secret_file, write_text_file, ConnectAuth, ConnectOptions,
+    DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand, OpsCommonOptions, OpsRunnerOptions,
+    OpsSmokePreflightOptions, ServerStatusOptions, ServiceControl, StatusOptions,
+    AGENT_SERVICE_UNIT, DEFAULT_LOG_LINES, SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
 };
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
 const SETUP_AGENT_SCOPES: &[&str] = &[
@@ -1604,11 +1604,24 @@ fn parse_server_service_action(
     command: &str,
     args: &[String],
 ) -> Result<ServiceActionOptions, String> {
+    let mut service_file = PathBuf::from(SERVER_SERVICE_FILE);
+    let mut remaining = Vec::new();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--service-file" => service_file = PathBuf::from(next_value(&mut iter, arg)?),
+            _ => remaining.push(arg.clone()),
+        }
+    }
+    if service_file.as_os_str().is_empty() {
+        return Err("--service-file cannot be empty".to_string());
+    }
+    let unit = service_unit_name(&service_file, SERVER_SERVICE_UNIT);
     Ok(ServiceActionOptions {
         scope: ServiceScope::System,
-        service_file: PathBuf::from(SERVER_SERVICE_FILE),
-        unit: SERVER_SERVICE_UNIT.to_string(),
-        kind: parse_service_kind(command, args)?,
+        service_file,
+        unit,
+        kind: parse_service_kind(command, &remaining)?,
         local_profile: None,
     })
 }
@@ -2058,6 +2071,7 @@ fn parse_server_status(args: &[String]) -> Result<ServerStatusOptions, String> {
         env_file: Some(default_server_paths()?.env_file),
         env_file_explicit: false,
         token_file: None,
+        service_file: PathBuf::from(SERVER_SERVICE_FILE),
         json: false,
     };
     let mut iter = args.iter();
@@ -2071,6 +2085,7 @@ fn parse_server_status(args: &[String]) -> Result<ServerStatusOptions, String> {
                 opts.env_file_explicit = true;
             }
             "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--service-file" => opts.service_file = PathBuf::from(next_value(&mut iter, arg)?),
             "--json" => opts.json = true,
             _ => return Err(format!("unknown server status flag: {}", arg)),
         }
@@ -2078,6 +2093,9 @@ fn parse_server_status(args: &[String]) -> Result<ServerStatusOptions, String> {
     opts.server_http.validate()?;
     if opts.url.trim().is_empty() {
         return Err("--url cannot be empty".to_string());
+    }
+    if opts.service_file.as_os_str().is_empty() {
+        return Err("--service-file cannot be empty".to_string());
     }
     Ok(opts)
 }

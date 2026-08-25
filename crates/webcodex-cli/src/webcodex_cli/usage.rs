@@ -275,7 +275,8 @@ Commands:\n\
   restart     Restart only the Server service while the socket stays active\n\
   status      Check socket/service state, HTTP reachability, and build revisions\n\
   logs        Read bounded Server service journal logs or explicitly follow them\n\
-  uninstall   Remove only the systemd socket/service pair; requires --confirm\n"
+  uninstall   Remove only the systemd socket/service pair; requires --confirm\n\n\
+For start/stop/restart/logs/uninstall, --service-file PATH targets a custom managed service unit and derives its sibling .socket.\n"
 }
 
 pub(crate) fn server_init_usage() -> &'static str {
@@ -318,6 +319,7 @@ pub(crate) fn server_status_usage() -> &'static str {
        --no-system-proxy      Ignore proxy environment and connect directly\n\
        --env-file PATH        Read WEBCODEX_TOKEN from env file [default: root /etc/webcodex/webcodex.env; user ~/.config/webcodex/webcodex.env]\n\
        --token-file PATH      Read bearer token from file\n\
+       --service-file PATH    Managed service unit path; sibling .socket is derived [default: /etc/systemd/system/webcodex.service]\n\
        --json                 Print a machine-readable summary\n\
        -h, --help             Print help and exit\n\n\
      Token priority: --token-file, WEBCODEX_TOKEN from --env-file, process\n\

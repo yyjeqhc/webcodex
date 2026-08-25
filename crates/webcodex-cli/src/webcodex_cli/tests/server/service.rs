@@ -219,6 +219,23 @@ fn server_socket_rendering_uses_env_address_custom_sibling_and_no_start_projecti
 
 #[cfg(unix)]
 #[test]
+fn server_service_actions_target_custom_service_and_sibling_socket() {
+    let custom = "/etc/systemd/system/webcodex-canary.service";
+    for command in ["start", "stop", "restart", "logs"] {
+        let opts =
+            parse_server_service_action(command, &args(&["--service-file", custom])).unwrap();
+        assert_eq!(opts.service_file, std::path::PathBuf::from(custom));
+        assert_eq!(opts.unit, "webcodex-canary.service");
+    }
+    let uninstall =
+        parse_server_service_action("uninstall", &args(&["--service-file", custom, "--confirm"]))
+            .unwrap();
+    assert_eq!(uninstall.service_file, std::path::PathBuf::from(custom));
+    assert_eq!(uninstall.unit, "webcodex-canary.service");
+}
+
+#[cfg(unix)]
+#[test]
 fn server_socket_rendering_fails_closed_on_missing_or_malformed_address() {
     let tmp = tempfile::tempdir().unwrap();
     let missing = tmp.path().join("missing.env");
@@ -549,15 +566,21 @@ fn special_supported_paths_pass_systemd_analyze_verify() {
         env_file.to_str().unwrap(),
         "--working-directory",
         working.to_str().unwrap(),
-        "--dry-run",
+        "--output",
+        "-",
+        "--json",
     ]))
     .unwrap();
-    let server_unit = run_server_install_service(server).unwrap();
+    let server_json: Value =
+        serde_json::from_str(&run_server_install_service(server).unwrap()).unwrap();
+    let server_unit = server_json["units"]["service"].as_str().unwrap();
+    let socket_unit = server_json["units"]["socket"].as_str().unwrap();
     assert!(server_unit.contains("\\x20"));
     assert!(server_unit.contains("\\x22"));
     assert!(server_unit.contains("\\x5c"));
     assert!(server_unit.contains("%%p"));
-    verify_systemd_unit(&server_unit, "webcodex-special.service");
+    verify_systemd_unit(server_unit, "webcodex-special.service");
+    verify_systemd_unit(socket_unit, "webcodex-special.socket");
 
     let agent = parse_agent_install_service(&args(&[
         "--scope",

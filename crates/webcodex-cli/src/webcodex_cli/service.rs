@@ -1243,6 +1243,17 @@ pub(crate) fn control_server_unit_pair_with_executor<E: ProcessExecutor>(
     socket_unit: &str,
     control: ServiceControl,
 ) -> Result<(), String> {
+    if control == ServiceControl::Stop {
+        execute_allow_missing(
+            executor,
+            &rollback_invocation(systemctl, "stop", socket_unit),
+        )?;
+        execute_required(
+            executor,
+            &rollback_invocation(systemctl, "stop", service_unit),
+        )?;
+        return Ok(());
+    }
     let plan = match control {
         ServiceControl::Start => vec![
             rollback_invocation(systemctl, "start", socket_unit),
@@ -1268,11 +1279,8 @@ pub(crate) fn control_server_unit_pair_with_executor<E: ProcessExecutor>(
                 Some(service_unit),
             ),
         ],
-        ServiceControl::Stop => vec![
-            rollback_invocation(systemctl, "stop", socket_unit),
-            rollback_invocation(systemctl, "stop", service_unit),
-        ],
         ServiceControl::Restart => plan_control(systemctl, service_unit, ServiceControl::Restart),
+        ServiceControl::Stop => unreachable!("stop is handled above"),
     };
     execute_plan(executor, &plan)
 }
@@ -1677,10 +1685,6 @@ pub(crate) fn query_systemd_service_status_for_scope(
     }
 }
 
-pub(crate) fn query_systemd_status() -> SystemdStatus {
-    query_systemd_service_status(SERVER_SERVICE_UNIT)
-}
-
 pub(crate) fn query_systemd_socket_status(socket_unit: &str) -> SystemdStatus {
     query_systemd_service_status(socket_unit)
 }
@@ -1740,6 +1744,21 @@ mod tests {
         .unwrap();
         assert_eq!(
             stop.calls,
+            [["stop", SERVER_SOCKET_UNIT], ["stop", SERVER_SERVICE_UNIT]]
+        );
+
+        let mut legacy_stop =
+            FakeExecutor::with_outputs(vec![failed("Unit webcodex.socket not found."), ok()]);
+        control_server_unit_pair_with_executor(
+            &mut legacy_stop,
+            systemctl,
+            SERVER_SERVICE_UNIT,
+            SERVER_SOCKET_UNIT,
+            ServiceControl::Stop,
+        )
+        .unwrap();
+        assert_eq!(
+            legacy_stop.calls,
             [["stop", SERVER_SOCKET_UNIT], ["stop", SERVER_SERVICE_UNIT]]
         );
 

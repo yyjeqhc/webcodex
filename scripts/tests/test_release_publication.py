@@ -508,7 +508,7 @@ class DraftVerificationTests(unittest.TestCase):
                     timeout=5,
                 )
             self.assertTrue(summary["draft"])
-            self.assertEqual(len(summary["assets"]), 6)
+            self.assertEqual(len(summary["assets"]), len(collector.PLATFORMS) + 1)
 
             release["assets"][0]["digest"] = "sha256:" + "0" * 64
             with mock.patch.object(publication.collector, "resolve_github_token", return_value="fake"), mock.patch.object(
@@ -535,6 +535,9 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("run-name: Release build ${{ inputs.tag }} ${{ inputs.request_id }}", workflow)
         self.assertIn("^rb_[0-9a-f]{24}$", workflow)
         self.assertIn("default: manual", workflow)
+        self.assertIn("platform: darwin-x64", workflow)
+        self.assertIn("runner: macos-15-intel", workflow)
+        self.assertIn("rust_host: x86_64-apple-darwin", workflow)
 
     def test_server_image_publication_is_separate_and_multi_arch(self) -> None:
         candidate = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")

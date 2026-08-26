@@ -316,9 +316,23 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-  macos-arm64:
+  macos:
     needs: prepare
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-14
+            host_arch: arm64
+            rust_host: aarch64-apple-darwin
+            file_arch: arm64
+          - platform: darwin-x64
+            runner: macos-15-intel
+            host_arch: x86_64
+            rust_host: x86_64-apple-darwin
+            file_arch: x86_64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -327,7 +341,10 @@ jobs:
       WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
-      WEBCODEX_RELEASE_PLATFORM: darwin-arm64
+      WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
+      EXPECTED_HOST_ARCH: ${{ matrix.host_arch }}
+      EXPECTED_RUST_HOST: ${{ matrix.rust_host }}
+      EXPECTED_FILE_ARCH: ${{ matrix.file_arch }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -338,14 +355,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-darwin-arm64
+          shared-key: release-${{ matrix.platform }}
 
-      - name: Build and verify native macOS ARM64 candidate
+      - name: Build and verify native macOS candidate
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$(uname -m)" != "arm64" ]; then
-            echo "Expected a native macOS ARM64 runner, got $(uname -m)." >&2
+          if [ "$(uname -m)" != "$EXPECTED_HOST_ARCH" ]; then
+            echo "Expected native macOS host $EXPECTED_HOST_ARCH, got $(uname -m)." >&2
+            exit 1
+          fi
+          if ! rustc -vV | grep -Fxq "host: $EXPECTED_RUST_HOST"; then
+            echo "Expected native Rust host $EXPECTED_RUST_HOST." >&2
+            rustc -vV >&2
             exit 1
           fi
           if [ "$(git rev-parse HEAD)" != "$SOURCE_SHA" ]; then
@@ -368,7 +390,7 @@ jobs:
               echo "Unexpected $name release identity: $output" >&2
               exit 1
             fi
-            if ! file "$binary" | grep -Fq "arm64"; then
+            if ! file "$binary" | grep -Fq "$EXPECTED_FILE_ARCH"; then
               echo "Unexpected Mach-O architecture for $binary" >&2
               file "$binary" >&2
               exit 1
@@ -377,21 +399,21 @@ jobs:
 
           mkdir -p dist
           scripts/package_release_artifact.sh dist
-          canonical_archive="dist/webcodex-v$VERSION-darwin-arm64.tar.gz"
-          archive="dist/$ARCHIVE_STEM-darwin-arm64.tar.gz"
+          canonical_archive="dist/webcodex-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
+          archive="dist/$ARCHIVE_STEM-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
           if [ "$canonical_archive" != "$archive" ]; then
             mv "$canonical_archive" "$archive"
           fi
           digest="$(shasum -a 256 "$archive" | awk '{print $1}')"
           printf '%s  %s\n' "$digest" "$(basename "$archive")" > "$archive.sha256"
 
-      - name: Upload macOS ARM64 candidate
+      - name: Upload macOS candidate
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ needs.prepare.outputs.archive_stem }}-darwin-arm64
+          name: ${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}
           path: |
-            dist/${{ needs.prepare.outputs.archive_stem }}-darwin-arm64.tar.gz
-            dist/${{ needs.prepare.outputs.archive_stem }}-darwin-arm64.tar.gz.sha256
+            dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz
+            dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz.sha256
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -533,7 +555,7 @@ jobs:
           compression-level: 0
 
   assemble:
-    needs: [prepare, linux, macos-arm64, windows]
+    needs: [prepare, linux, macos, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -569,6 +591,8 @@ jobs:
             "$ARCHIVE_STEM-linux-arm64.tar.gz"
             "$ARCHIVE_STEM-linux-arm64.tar.gz.sha256"
             "linux-arm64-elf.txt"
+            "$ARCHIVE_STEM-darwin-x64.tar.gz"
+            "$ARCHIVE_STEM-darwin-x64.tar.gz.sha256"
             "$ARCHIVE_STEM-darwin-arm64.tar.gz"
             "$ARCHIVE_STEM-darwin-arm64.tar.gz.sha256"
             "$ARCHIVE_STEM-win32-x64.tar.gz"
@@ -588,7 +612,7 @@ jobs:
             exit 1
           fi
 
-          platforms=(linux-x64 linux-arm64 darwin-arm64 win32-x64 win32-arm64)
+          platforms=(linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64)
           for platform in "${platforms[@]}"; do
             (cd candidate-input && sha256sum -c "$ARCHIVE_STEM-$platform.tar.gz.sha256")
           done
@@ -617,7 +641,7 @@ jobs:
           import os
           from pathlib import Path
 
-          platforms = ("linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64")
+          platforms = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
           stem = os.environ["ARCHIVE_STEM"]
           source = Path("candidate-input")
           artifacts = {}

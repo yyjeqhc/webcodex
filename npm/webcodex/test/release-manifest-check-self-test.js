@@ -43,9 +43,9 @@ function main() {
   assert.strictEqual(validateReleaseManifest(linuxOnly), true);
   assert.strictEqual(validateReleaseManifest(validFixture()), true);
 
-  // Both Windows architectures are native release platforms: their URL shapes
-  // and placeholder-free checksums must validate like any other platform.
-  for (const platform of ["win32-x64", "win32-arm64"]) {
+  // Both macOS and Windows architectures are native release platforms: their
+  // URL shapes and placeholder-free checksums must validate like any other platform.
+  for (const platform of ["darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"]) {
     assert.strictEqual(
       expectedArtifactUrl(packageJson.version, platform),
       `https://github.com/yyjeqhc/webcodex/releases/download/v${packageJson.version}/webcodex-v${packageJson.version}-${platform}.tar.gz`

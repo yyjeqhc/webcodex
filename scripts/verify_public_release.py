@@ -20,7 +20,7 @@ from typing import BinaryIO
 
 REPO = "yyjeqhc/webcodex"
 PACKAGE = "@yyjeqhc/webcodex"
-PLATFORMS = ("linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64")
+PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
 SERVER_IMAGE = "ghcr.io/yyjeqhc/webcodex-server"
 SERVER_IMAGE_METADATA = "webcodex-server-image.json"
@@ -241,7 +241,7 @@ def validate_public_manifest(manifest: dict, version: str) -> dict[str, dict[str
         raise VerificationError("npm release manifest binaries are not canonical")
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict) or set(artifacts) != set(PLATFORMS):
-        raise VerificationError("npm release manifest must contain exactly the five release platforms")
+        raise VerificationError("npm release manifest must contain exactly the six release platforms")
     result: dict[str, dict[str, str]] = {}
     for platform in PLATFORMS:
         artifact = artifacts.get(platform)
@@ -272,7 +272,7 @@ def parse_sha256sums(text: str, version: str) -> dict[str, str]:
         result[name] = digest
     if set(result) != expected_names:
         raise VerificationError(
-            f"SHA256SUMS must contain exactly the five release archives: {sorted(result)}"
+            f"SHA256SUMS must contain exactly the six release archives: {sorted(result)}"
         )
     return result
 
@@ -432,13 +432,14 @@ def inspect_binary_architecture(path: Path, platform: str) -> None:
         if machine != expected:
             raise VerificationError(f"unexpected ELF machine for {platform}: {machine}")
         return
-    if platform == "darwin-arm64":
+    if platform in {"darwin-x64", "darwin-arm64"}:
         with path.open("rb") as handle:
             data = handle.read(8)
         if len(data) < 8 or data[:4] != b"\xcf\xfa\xed\xfe":
             raise VerificationError(f"expected thin little-endian Mach-O 64 binary: {path.name}")
-        if struct.unpack_from("<I", data, 4)[0] != 0x0100000C:
-            raise VerificationError(f"unexpected Mach-O CPU type: {path.name}")
+        expected = {"darwin-x64": 0x01000007, "darwin-arm64": 0x0100000C}[platform]
+        if struct.unpack_from("<I", data, 4)[0] != expected:
+            raise VerificationError(f"unexpected Mach-O CPU type for {platform}: {path.name}")
         return
     if platform.startswith("win32-"):
         size = path.stat().st_size

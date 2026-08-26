@@ -24,8 +24,8 @@ The documented distribution path is the npm thin installer/wrapper:
 npm install -g @yyjeqhc/webcodex
 ```
 
-Supported package platforms are Linux x64, Linux arm64, macOS arm64, Windows
-x64, and Windows arm64. Windows x64/arm64 support the CLI + Runner workflow
+Supported package platforms are Linux x64, Linux arm64, macOS x64, macOS arm64,
+Windows x64, and Windows arm64. Windows x64/arm64 support the CLI + Runner workflow
 against a remote Linux Server; a long-running Windows Server is not supported.
 The npm wrapper
 requires Node.js 18 or newer. Starting with v0.3.5, the native Linux x64

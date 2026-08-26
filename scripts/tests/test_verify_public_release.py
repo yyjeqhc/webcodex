@@ -216,7 +216,7 @@ class ManifestTests(unittest.TestCase):
             f"{'a' * 64}  {verifier.canonical_archive_name(version, platform)}"
             for platform in verifier.PLATFORMS
         ) + "\n"
-        self.assertEqual(len(verifier.parse_sha256sums(text, version)), 5)
+        self.assertEqual(len(verifier.parse_sha256sums(text, version)), len(verifier.PLATFORMS))
         with self.assertRaises(verifier.VerificationError):
             verifier.parse_sha256sums(text + text.splitlines()[0] + "\n", version)
 
@@ -236,9 +236,13 @@ class BinaryInspectionTests(unittest.TestCase):
             verifier.inspect_binary_architecture(
                 self._write(root, "linux-arm64", synthetic_elf(183)), "linux-arm64"
             )
-            macho = b"\xcf\xfa\xed\xfe" + struct.pack("<I", 0x0100000C) + b"\0" * 16
+            macho_x64 = b"\xcf\xfa\xed\xfe" + struct.pack("<I", 0x01000007) + b"\0" * 16
             verifier.inspect_binary_architecture(
-                self._write(root, "darwin-arm64", macho), "darwin-arm64"
+                self._write(root, "darwin-x64", macho_x64), "darwin-x64"
+            )
+            macho_arm64 = b"\xcf\xfa\xed\xfe" + struct.pack("<I", 0x0100000C) + b"\0" * 16
+            verifier.inspect_binary_architecture(
+                self._write(root, "darwin-arm64", macho_arm64), "darwin-arm64"
             )
             verifier.inspect_binary_architecture(
                 self._write(root, "win32-x64.exe", synthetic_pe(0x8664)), "win32-x64"

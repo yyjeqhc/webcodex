@@ -11,7 +11,7 @@ import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PLATFORMS = ("linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64")
+PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
 
 

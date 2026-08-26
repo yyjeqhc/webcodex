@@ -116,14 +116,14 @@ two-stage. Stage 1 runs the canonical release check, complete locked Rust worksp
 (package-sharded without test-name filters), frontend checks, both zero-config E2E transports,
 and the coding-loop compare eval in parallel. No native release-profile or Server-image build
 may start until every Stage-1 test gate succeeds. Stage 2 then fans out disposable
-release-profile native validation for all five published platforms plus native `linux/amd64`
+release-profile native validation for all six published platforms plus native `linux/amd64`
 and `linux/arm64` Server-container build/runtime/health and digest-pinned bootstrap-generation
 checks. These independent Stage-2 build lanes run in parallel so release wall time is governed
 by the slowest required lane rather than their sum. The Server-image
 readiness jobs use only local disposable images: they do not log in to a registry, upload
 artifacts, push packages, or produce formal release candidates. Linux preserves the release
-ABI/dependency gates, macOS adds the Runner suite, and Windows includes the local npm-install
-smoke.
+ABI/dependency gates, macOS x64/arm64 build on matching native runners and add the Runner suite,
+and Windows includes the local npm-install smoke.
 Product-documentation consistency and allowed legacy-term matches remain part of the
 release-prep review rather than being guessed by an automated semantic checker.
 

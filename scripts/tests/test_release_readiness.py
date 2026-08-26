@@ -164,8 +164,10 @@ class DispatchClassificationTests(unittest.TestCase):
 class WorkflowContractTests(unittest.TestCase):
     def test_pre_tag_gate_covers_every_release_platform_without_uploads(self) -> None:
         workflow = Path(".github/workflows/release-readiness.yml").read_text(encoding="utf-8")
-        for platform in ("linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64"):
+        for platform in ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"):
             self.assertIn(platform, workflow)
+        self.assertIn("runner: macos-15-intel", workflow)
+        self.assertIn("rust_host: x86_64-apple-darwin", workflow)
         self.assertGreaterEqual(workflow.count("cargo build --locked --release"), 3)
         self.assertIn("quay.io/pypa/manylinux2014_x86_64", workflow)
         self.assertIn("quay.io/pypa/manylinux2014_aarch64", workflow)
@@ -238,6 +240,11 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_rust)
         self.assertNotIn("pull_request.user.login", linux_tooling)
         self.assertNotIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_tooling)
+        macos = job_block("test-macos", "test-windows-core")
+        self.assertIn("platform: darwin-x64", macos)
+        self.assertIn("runner: macos-15-intel", macos)
+        self.assertIn("rust_host: x86_64-apple-darwin", macos)
+        self.assertIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", macos)
         self.assertIn("if: always()", aggregate)
 
 

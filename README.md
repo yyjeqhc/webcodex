@@ -77,7 +77,7 @@ For the internal Server/Runner architecture, protocol surfaces, and authority bo
 ## Platforms
 
 - **Linux x64/arm64** — local `share`, Server, and Runner workflows.
-- **macOS arm64** — local `share` and Runner workflows.
+- **macOS x64/arm64** — local `share` and Runner workflows.
 - **Windows x64/arm64** — CLI + Runner against a remote Linux Server. Local `webcodex share` is not supported on Windows in this release.
 
 Windows and long-lived deployments are covered in [Deployment](docs/DEPLOYMENT.md) and [MCP](docs/MCP.md).

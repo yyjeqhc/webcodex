@@ -31,7 +31,7 @@ set -euo pipefail
 #   - WebSocket + polling zero-config E2E
 #   - EVAL_MODE=compare bash scripts/eval_coding_loop.sh with prebuilt debug fixtures
 #   Stage 2 (parallel fanout only after every Stage-1 test gate succeeds):
-#   - five native release-profile surfaces + two disposable Server-image architectures
+#   - six native release-profile surfaces + two disposable Server-image architectures
 #
 # Usage:
 #   bash scripts/release_check.sh

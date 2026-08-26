@@ -166,16 +166,35 @@ jobs:
       github.event_name == 'push' ||
       github.event.pull_request.user.login != github.repository_owner ||
       contains(github.event.pull_request.labels.*.name, 'run-ci')
-    # Native macOS gate for the release production surfaces plus the Runner's
-    # detached ownership/restart suites. Keep this ahead of immutable tagging.
-    runs-on: macos-14
+    # Native macOS gates for both published architectures plus the Runner's
+    # detached ownership/restart suites. Keep these ahead of immutable tagging.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-14
+            host_arch: arm64
+            rust_host: aarch64-apple-darwin
+          - platform: darwin-x64
+            runner: macos-15-intel
+            host_arch: x86_64
+            rust_host: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: macos-ci
+          shared-key: macos-ci-${{ matrix.platform }}
+      - name: Verify native macOS host
+        env:
+          EXPECTED_HOST_ARCH: ${{ matrix.host_arch }}
+          EXPECTED_RUST_HOST: ${{ matrix.rust_host }}
+        run: |
+          test "$(uname -m)" = "$EXPECTED_HOST_ARCH"
+          rustc -vV | grep -Fxq "host: $EXPECTED_RUST_HOST"
       - name: Check macOS release production surfaces
         run: cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
       - name: Run native macOS Runner tests

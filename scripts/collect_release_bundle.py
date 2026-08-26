@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 DEFAULT_REPO = "yyjeqhc/webcodex"
-PLATFORMS = ("linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64")
+PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
 RELEASE_WORKFLOW_PATH = ".github/workflows/release-build.yml"
 API_VERSION = "2022-11-28"
@@ -461,7 +461,7 @@ def _parse_sha256sums(text: str, expected_names: set[str]) -> dict[str, str]:
             raise CollectionError(f"duplicate SHA256SUMS entry: {name}")
         values[name] = digest
     if set(values) != expected_names:
-        raise CollectionError("SHA256SUMS does not describe exactly the five assembled archives")
+        raise CollectionError("SHA256SUMS does not describe exactly the six assembled archives")
     return values
 
 
@@ -478,7 +478,7 @@ def _validate_release_manifest(
         raise CollectionError("release manifest version/binary list mismatch")
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict) or set(artifacts) != set(PLATFORMS):
-        raise CollectionError("release manifest does not contain exactly the five platforms")
+        raise CollectionError("release manifest does not contain exactly the six platforms")
     for platform in PLATFORMS:
         item = artifacts.get(platform)
         if not isinstance(item, dict) or set(item) != {"url", "sha256"}:
@@ -548,7 +548,7 @@ def verify_bundle_directory(
 
     artifacts = release_build.get("artifacts")
     if not isinstance(artifacts, dict) or set(artifacts) != set(PLATFORMS):
-        raise CollectionError("release-build.json must contain exactly the five platforms")
+        raise CollectionError("release-build.json must contain exactly the six platforms")
     artifact_files: dict[str, str] = {}
     artifact_hashes: dict[str, str] = {}
     for platform in PLATFORMS:

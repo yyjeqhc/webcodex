@@ -14,6 +14,9 @@ are included.
 ## Before you start
 
 - Check the latest `main` and existing issues before starting substantial work.
+- Small documentation fixes and focused corrections can be submitted directly.
+  For larger features or architectural changes, opening an issue first helps
+  avoid duplicated or misaligned work.
 - For bugs and client interoperability problems, opening an issue first is
   usually the best way to confirm the problem and share reproduction details.
 - For security-sensitive reports, follow [SECURITY.md](SECURITY.md) instead of

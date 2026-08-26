@@ -9,6 +9,8 @@
 ## 开始之前
 
 - 开始较大改动前，先检查最新 `main` 和已有 issues。
+- 小型文档修正和 focused fix 可以直接提交；较大的功能或架构改动建议先创建 issue，
+  避免重复工作或方向不一致。
 - 对于 bug 和客户端兼容性问题，通常建议先创建 issue，确认问题并共享复现信息。
 - 安全相关问题请按照 [SECURITY.md](SECURITY.md) 处理，不要创建公开 issue。
 - 保持改动 focused，不要在同一个 pull request 中混入无关重构或无关的生成内容。

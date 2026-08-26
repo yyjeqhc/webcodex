@@ -172,6 +172,68 @@ async fn shell_client_view_preserves_legacy_capability_wire_projection() {
     assert!(serialized.get("feature_classification").is_none());
 }
 
+#[tokio::test]
+async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_replacement() {
+    let registry = ShellClientRegistry::default();
+
+    let mut first_capabilities = wire_capabilities_with_only(None);
+    first_capabilities.file_read = true;
+    first_capabilities.structured_process_argv = true;
+    first_capabilities.lsp_read_only_navigation = true;
+    first_capabilities.computer_observe = true;
+    let mut first = runner_registration("semantic-snapshot", "inst-a", Vec::new());
+    first.capabilities = Some(first_capabilities);
+    registry.register(first).await.unwrap();
+
+    let first_snapshot = registry
+        .get_client_semantic_view("semantic-snapshot")
+        .await
+        .unwrap();
+    assert_eq!(first_snapshot.view.agent_instance_id, "inst-a");
+    assert!(first_snapshot.view.connected);
+    assert!(first_snapshot.supports(RunnerFeature::FileRead));
+    assert!(first_snapshot.supports(RunnerFeature::StructuredProcessArgv));
+    assert!(first_snapshot.supports(RunnerFeature::LspReadOnlyNavigation));
+    assert!(first_snapshot.supports(RunnerFeature::ComputerObserve));
+    assert!(!first_snapshot.supports(RunnerFeature::FileWrite));
+    assert!(!first_snapshot.supports(RunnerFeature::ComputerTextInput));
+
+    registry
+        .set_last_seen_for_test(
+            "semantic-snapshot",
+            now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1,
+        )
+        .await;
+    let mut replacement_capabilities = wire_capabilities_with_only(None);
+    replacement_capabilities.file_write = true;
+    replacement_capabilities.structured_script_payload = true;
+    replacement_capabilities.lsp_call_hierarchy = true;
+    replacement_capabilities.computer_text_input = true;
+    let mut replacement = runner_registration("semantic-snapshot", "inst-b", Vec::new());
+    replacement.capabilities = Some(replacement_capabilities);
+    registry.register(replacement).await.unwrap();
+
+    let replacement_snapshot = registry
+        .get_client_semantic_view("semantic-snapshot")
+        .await
+        .unwrap();
+    assert_eq!(replacement_snapshot.view.agent_instance_id, "inst-b");
+    assert!(replacement_snapshot.view.connected);
+    assert!(!replacement_snapshot.supports(RunnerFeature::FileRead));
+    assert!(replacement_snapshot.supports(RunnerFeature::FileWrite));
+    assert!(replacement_snapshot.supports(RunnerFeature::StructuredScriptPayload));
+    assert!(replacement_snapshot.supports(RunnerFeature::LspCallHierarchy));
+    assert!(replacement_snapshot.supports(RunnerFeature::ComputerTextInput));
+
+    // The prior immutable observation remains internally coherent rather than
+    // being paired with feature truth from the replacement process.
+    assert_eq!(first_snapshot.view.agent_instance_id, "inst-a");
+    assert!(first_snapshot.supports(RunnerFeature::FileRead));
+    assert!(!first_snapshot.supports(RunnerFeature::FileWrite));
+    assert!(first_snapshot.supports(RunnerFeature::ComputerObserve));
+    assert!(!first_snapshot.supports(RunnerFeature::ComputerTextInput));
+}
+
 async fn register_structured_delete_state(
     registry: &ShellClientRegistry,
     client_id: &str,

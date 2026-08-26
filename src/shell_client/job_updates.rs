@@ -12,7 +12,7 @@ use super::requests::{
 use super::state::{DetachedIdempotencyIntent, ShellJobRecord, ShellJobVisibility};
 use super::validation::{validate_agent_instance_id, validate_id, validate_run_request};
 use super::{
-    now_ts, ShellClientRegistry, DETACHED_IDEMPOTENCY_CONFLICT,
+    now_ts, RunnerFeature, ShellClientRegistry, DETACHED_IDEMPOTENCY_CONFLICT,
     DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
 };
 use crate::shell_protocol::{
@@ -859,19 +859,29 @@ impl ShellClientRegistry {
         if auth.is_some() {
             assert_shell_client_access(auth, client)?;
         }
-        if !(client.capabilities.async_jobs || client.capabilities.async_shell_jobs) {
+        if !(client.runner_features.supports(RunnerFeature::AsyncJobs)
+            || client
+                .runner_features
+                .supports(RunnerFeature::AsyncShellJobs))
+        {
             return Err(format!(
                 "agent client {} does not support async shell jobs",
                 client_id
             ));
         }
-        if structured_metadata.is_some() && !client.capabilities.structured_execution_jobs {
+        if structured_metadata.is_some()
+            && !client
+                .runner_features
+                .supports(RunnerFeature::StructuredExecutionJobs)
+        {
             return Err(format!(
                 "capability_unavailable: agent client {client_id} does not support structured_execution_jobs"
             ));
         }
         if request.kind == "start_detached_process_job"
-            && !client.capabilities.detached_process_jobs
+            && !client
+                .runner_features
+                .supports(RunnerFeature::DetachedProcessJobs)
         {
             return Err(format!(
                 "capability_unavailable: agent client {client_id} does not support detached_process_jobs"
@@ -883,7 +893,9 @@ impl ShellClientRegistry {
                     .to_string(),
             );
         }
-        if metadata.ssh_resource.is_some() && !client.capabilities.ssh_shell {
+        if metadata.ssh_resource.is_some()
+            && !client.runner_features.supports(RunnerFeature::SshShell)
+        {
             return Err(format!(
                 "agent_capability_unavailable: agent client {} does not support ssh_shell",
                 client_id
@@ -893,7 +905,10 @@ impl ShellClientRegistry {
             if mode != crate::command_sandbox::INSPECT_SANDBOX_MODE {
                 return Err(format!("unknown sandbox mode '{mode}'"));
             }
-            if !client.capabilities.sandbox_inspect_commands {
+            if !client
+                .runner_features
+                .supports(RunnerFeature::SandboxInspectCommands)
+            {
                 return Err(format!(
                     "{}: agent client {} cannot enforce the inspect sandbox",
                     crate::shell_protocol::SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
@@ -901,7 +916,11 @@ impl ShellClientRegistry {
                 ));
             }
         }
-        if !validation_steps.is_empty() && !client.capabilities.structured_validation_argv {
+        if !validation_steps.is_empty()
+            && !client
+                .runner_features
+                .supports(RunnerFeature::StructuredValidationArgv)
+        {
             return Err(format!(
                 "structured_validation_unavailable: agent client {} does not support structured argv validation jobs",
                 client_id
@@ -911,7 +930,9 @@ impl ShellClientRegistry {
             .as_ref()
             .and_then(|metadata| metadata.minimum_tests)
             .is_some()
-            && !client.capabilities.structured_cargo_test_count_assertion
+            && !client
+                .runner_features
+                .supports(RunnerFeature::StructuredCargoTestCountAssertion)
         {
             return Err(format!(
                 "structured_cargo_test_count_assertion_unavailable: agent client {} does not support durable Cargo test-count assertions",
@@ -921,7 +942,9 @@ impl ShellClientRegistry {
         if validation_steps
             .iter()
             .any(crate::shell_protocol::ShellJobValidationStep::is_structured_go_test_json)
-            && !client.capabilities.structured_go_test_json
+            && !client
+                .runner_features
+                .supports(RunnerFeature::StructuredGoTestJson)
         {
             return Err(format!(
                 "structured_go_test_json_unavailable: agent client {} does not support machine-readable Go test validation",
@@ -930,7 +953,9 @@ impl ShellClientRegistry {
         }
         if validation_steps.iter().any(|step| {
             step.is_structured_go_test_json() && step.args.as_slice() != ["test", "-json", "./..."]
-        }) && !client.capabilities.structured_go_test_packages
+        }) && !client
+            .runner_features
+            .supports(RunnerFeature::StructuredGoTestPackages)
         {
             return Err(format!(
                 "structured_go_test_packages_unavailable: agent client {} does not support focused Go package validation argv",
@@ -940,7 +965,9 @@ impl ShellClientRegistry {
         if validation
             .as_ref()
             .is_some_and(|metadata| metadata.tool == "go_test")
-            && !client.capabilities.structured_go_test_tool
+            && !client
+                .runner_features
+                .supports(RunnerFeature::StructuredGoTestTool)
         {
             return Err(format!(
                 "structured_go_test_tool_unavailable: agent client {} does not support the first-class go_test validation contract",
@@ -1867,10 +1894,11 @@ impl ShellClientRegistry {
         // Reject job updates from a stale/replaced instance before refreshing
         // liveness or mutating job state.
         assert_active_instance_locked(&inner, &body.client_id, &body.agent_instance_id)?;
-        let sequenced = inner
-            .clients
-            .get(&body.client_id)
-            .is_some_and(|client| client.capabilities.job_state_reconciliation);
+        let sequenced = inner.clients.get(&body.client_id).is_some_and(|client| {
+            client
+                .runner_features
+                .supports(RunnerFeature::JobStateReconciliation)
+        });
         let incoming_seq = if sequenced {
             Some(
                 body.update_seq

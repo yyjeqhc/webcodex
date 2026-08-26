@@ -9,7 +9,7 @@ use crate::auth::{
     SCOPE_SESSION_COLLABORATE,
 };
 use crate::models::OAuthAuthorizationCodeRecord;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::shell_client::{RunnerFeature, RunnerFeatureSet};
 
 use super::{
     apply_oauth_no_store_headers, authorize_bridge_html, decoded_authorize_param, form_field,
@@ -309,15 +309,19 @@ impl BridgeAuthorizeValidated {
     }
 }
 
-fn bridge_permission_capable(permission_id: &str, capabilities: &ShellClientCapabilities) -> bool {
+fn bridge_permission_capable(permission_id: &str, features: &RunnerFeatureSet) -> bool {
     match permission_id {
         "launch" => {
-            capabilities.computer_application_discovery && capabilities.computer_application_launch
+            features.supports(RunnerFeature::ComputerApplicationDiscovery)
+                && features.supports(RunnerFeature::ComputerApplicationLaunch)
         }
-        "display" => capabilities.computer_display_observe,
-        "pointer" => capabilities.computer_display_observe && capabilities.computer_pointer_control,
-        "clipboard_read" => capabilities.computer_clipboard_read,
-        "clipboard_write" => capabilities.computer_clipboard_write,
+        "display" => features.supports(RunnerFeature::ComputerDisplayObserve),
+        "pointer" => {
+            features.supports(RunnerFeature::ComputerDisplayObserve)
+                && features.supports(RunnerFeature::ComputerPointerControl)
+        }
+        "clipboard_read" => features.supports(RunnerFeature::ComputerClipboardRead),
+        "clipboard_write" => features.supports(RunnerFeature::ComputerClipboardWrite),
         _ => false,
     }
 }
@@ -333,7 +337,7 @@ async fn bridge_permission_views(
     let capabilities = match (registry, validated.client.owner_shared_key_hash.as_deref()) {
         (Some(registry), Some(owner_hash)) => {
             registry
-                .connected_shared_key_group_capabilities(owner_hash)
+                .connected_shared_key_group_feature_sets(owner_hash)
                 .await
         }
         _ => Vec::new(),

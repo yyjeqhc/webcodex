@@ -67,6 +67,7 @@ use crate::project_context::{
     capture_project_context, compare_project_context, ContextRefreshSummary,
     ProjectContextFingerprint,
 };
+use crate::shell_client::RunnerFeature;
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
@@ -301,32 +302,32 @@ impl ConnectorRuntime {
         let Some(agent) = self
             .tools
             .shell_clients
-            .get_client_view_for_auth(client_id, Some(auth))
+            .get_client_semantic_view_for_auth(client_id, Some(auth))
             .await
         else {
             return Some(self.observed_readiness(RemoteProbe::AgentOffline));
         };
-        if agent.status != "online" || !agent.connected {
+        if agent.view.status != "online" || !agent.view.connected {
             return Some(self.observed_readiness(RemoteProbe::AgentOffline));
         }
         if !agent
+            .view
             .projects
             .iter()
             .any(|project| project.id == project_id && !project.disabled)
         {
             return Some(self.observed_readiness(RemoteProbe::ProjectMissing));
         }
-        let capabilities = &agent.capabilities;
-        if !(capabilities.shell
-            && capabilities.file_read
-            && capabilities.file_write
-            && capabilities.jobs
-            && capabilities.async_jobs
-            && capabilities.async_shell_jobs)
+        if !(agent.supports(RunnerFeature::Shell)
+            && agent.supports(RunnerFeature::FileRead)
+            && agent.supports(RunnerFeature::FileWrite)
+            && agent.supports(RunnerFeature::Jobs)
+            && agent.supports(RunnerFeature::AsyncJobs)
+            && agent.supports(RunnerFeature::AsyncShellJobs))
         {
             return Some(self.observed_readiness(RemoteProbe::RequiredCapabilityMissing));
         }
-        if !capabilities.structured_validation_argv {
+        if !agent.supports(RunnerFeature::StructuredValidationArgv) {
             return Some(self.observed_readiness(RemoteProbe::StructuredValidationMissing));
         }
         Some(self.observed_readiness(RemoteProbe::Ready))

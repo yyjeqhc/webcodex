@@ -1,5 +1,8 @@
 use super::state::{ShellClientRegistryInner, ShellJobLogState, ShellJobRecord};
-use super::{now_ts, CLIENT_ONLINE_WINDOW_SECS, MAX_OUTPUT_BYTES, MAX_QUEUED_REQUESTS_PER_CLIENT};
+use super::{
+    now_ts, RunnerFeature, CLIENT_ONLINE_WINDOW_SECS, MAX_OUTPUT_BYTES,
+    MAX_QUEUED_REQUESTS_PER_CLIENT,
+};
 use crate::shell_protocol::{
     ShellAgentJobResult, ShellAgentShellJobResult, ShellAgentShellRequest,
     ShellCommandExecutionState, ShellJobInfo, ShellJobStreamSnapshot,
@@ -716,10 +719,11 @@ pub(super) fn refresh_job_status_locked(inner: &mut ShellClientRegistryInner, jo
     if client_is_connected_locked(inner, &client_id) {
         return;
     }
-    let recoverable = inner
-        .clients
-        .get(&client_id)
-        .is_some_and(|client| client.capabilities.job_state_reconciliation);
+    let recoverable = inner.clients.get(&client_id).is_some_and(|client| {
+        client
+            .runner_features
+            .supports(RunnerFeature::JobStateReconciliation)
+    });
     if let Some(job) = inner.jobs_by_id.get_mut(job_id) {
         if recoverable {
             begin_job_recovery(job, now_ts(), "runner_transport_stale");

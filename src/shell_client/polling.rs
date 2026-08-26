@@ -5,7 +5,7 @@ use super::jobs::{
 use super::project_inventory::apply_legacy_refresh;
 use super::requests::{remove_pending_request_locked, take_pending_request_locked};
 use super::validation::{validate_agent_instance_id, validate_id};
-use super::{now_ts, ShellClientRegistry};
+use super::{now_ts, RunnerFeature, ShellClientRegistry};
 use crate::mcp_gateway::{
     validate_response as validate_mcp_gateway_response, McpGatewayDispatchState, McpGatewayResponse,
 };
@@ -253,10 +253,14 @@ impl ShellClientRegistry {
                         Some(client) if client.owner != pending.expected_client_owner => Some(
                             "stale_authority: target Runner owner changed before dispatch".to_string(),
                         ),
-                        Some(client) if !client.capabilities.file_write => Some(
+                        Some(client)
+                            if !client.runner_features.supports(RunnerFeature::FileWrite) =>
+                        {
+                            Some(
                             "stale_authority: target Runner no longer advertises file_write before dispatch"
                                 .to_string(),
-                        ),
+                            )
+                        }
                         Some(client)
                             if client.projects.iter().any(|project| {
                                 !project.disabled

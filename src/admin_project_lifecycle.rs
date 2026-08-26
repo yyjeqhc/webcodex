@@ -1,6 +1,6 @@
 use crate::auth::AuthContext;
 use crate::db::AdminProjectAudit;
-use crate::shell_client::ShellClientRegistry;
+use crate::shell_client::{RunnerFeature, ShellClientRegistry};
 use crate::shell_protocol::ShellAgentProjectSummary;
 use crate::tool_runtime::{ToolResult, ToolRuntime};
 use crate::Database;
@@ -264,16 +264,16 @@ impl AdminProjectLifecycleService {
         }
         let client = runtime
             .shell_clients
-            .get_client_view_for_auth(&client_id, auth)
+            .get_client_semantic_view_for_auth(&client_id, auth)
             .await
             .ok_or_else(|| api_error(503, "agent_unavailable"))?;
-        if !client.connected || client.status != "online" {
+        if !client.view.connected || client.view.status != "online" {
             return Err(api_error(503, "agent_unavailable"));
         }
-        if !client.capabilities.project_lifecycle {
+        if !client.supports(RunnerFeature::ProjectLifecycle) {
             return Err(api_error(409, "unsupported_runner_version"));
         }
-        let project = client.projects.iter().find(|p| p.id == project_id);
+        let project = client.view.projects.iter().find(|p| p.id == project_id);
         if action != "unregister" && project.is_none() {
             return Err(api_error(404, "project_not_found"));
         }
@@ -348,7 +348,7 @@ impl AdminProjectLifecycleService {
                 .shell_clients
                 .remove_client_project_for_instance(
                     &client_id,
-                    &client.agent_instance_id,
+                    &client.view.agent_instance_id,
                     &project_id,
                 )
                 .await
@@ -374,7 +374,11 @@ impl AdminProjectLifecycleService {
             };
             if runtime
                 .shell_clients
-                .upsert_client_project_for_instance(&client_id, &client.agent_instance_id, summary)
+                .upsert_client_project_for_instance(
+                    &client_id,
+                    &client.view.agent_instance_id,
+                    summary,
+                )
                 .await
                 .is_err()
             {
@@ -866,6 +870,67 @@ mod tests {
             limit: None,
             codex: None,
         }
+    }
+
+    #[tokio::test]
+    async fn project_lifecycle_capability_gate_uses_canonical_runner_semantics() {
+        let registry = Arc::new(ShellClientRegistry::default());
+        let revision = format!("sha256:{}", "b".repeat(64));
+        let target = "agent:lifecycle-legacy:demo";
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "lifecycle-legacy".to_string(),
+                agent_instance_id: "instance-lifecycle-legacy".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                host_context: None,
+                capabilities: Some(ShellClientCapabilities {
+                    project_lifecycle: false,
+                    ..Default::default()
+                }),
+                projects: Some(vec![ShellAgentProjectSummary {
+                    id: "demo".to_string(),
+                    name: Some("demo".to_string()),
+                    path: "/tmp/demo".to_string(),
+                    allow_patch: true,
+                    kind: None,
+                    description: None,
+                    hooks: Vec::new(),
+                    disabled: false,
+                    revision: Some(revision.clone()),
+                    git_branch: None,
+                    git_head: None,
+                    git_dirty: None,
+                    updated_at: 1,
+                    shell_profile: None,
+                }]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+            })
+            .await
+            .unwrap();
+
+        let runtime = ToolRuntime::new_for_tests_with_shell_clients(registry);
+        let error = AdminProjectLifecycleService::mutate_authorized_core(
+            &runtime,
+            Some(&user_auth("alice")),
+            "disable",
+            target,
+            &revision,
+            "c3b_test",
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.status, 409);
+        assert_eq!(error.body["error"]["code"], "unsupported_runner_version");
     }
 
     #[tokio::test]

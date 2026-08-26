@@ -414,6 +414,40 @@ async fn register_agent_projects_for_auth(
 }
 
 #[tokio::test]
+async fn coding_agent_start_uses_canonical_runner_capability_gate() {
+    let runtime = test_runtime();
+    register_agent_with_projects(
+        &runtime,
+        "coding-capability-gate",
+        None,
+        ShellClientCapabilities::default(),
+        vec![registered_project("demo", "/tmp/coding-capability-gate")],
+    )
+    .await;
+    let project = agent_project_runtime_id("coding-capability-gate", "demo");
+
+    let result = runtime
+        .coding_agent_start(
+            project,
+            "codex".to_string(),
+            "c3b-canonical-capability-gate".to_string(),
+            "prove capability admission".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "coding_agent_unsupported");
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("does not advertise CodingAgentRun")));
+}
+
+#[tokio::test]
 async fn list_projects_returns_agent_registered_projects_without_server_config() {
     let runtime = test_runtime();
     register_agent_with_projects(

@@ -3,8 +3,8 @@ use super::project_inventory::reconcile_dynamic_projection;
 #[cfg(test)]
 use super::validation::validate_id;
 use super::validation::validate_project_summary;
-use super::ShellClientRegistry;
-use crate::shell_protocol::{ShellAgentProjectSummary, ShellClientCapabilities};
+use super::{RunnerFeatureSet, ShellClientRegistry};
+use crate::shell_protocol::ShellAgentProjectSummary;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,12 +38,13 @@ fn upsert_project_summary(
 }
 
 impl ShellClientRegistry {
-    /// Return the capabilities advertised by a registered agent client.
-    /// Returns a typed lookup error when the client is not registered.
-    pub(crate) async fn get_client_capabilities(
+    /// Return an immutable clone of the canonical feature truth for one
+    /// registered Runner. This is an internal semantic query, never a wire
+    /// projection.
+    pub(crate) async fn get_client_feature_set(
         &self,
         client_id: &str,
-    ) -> Result<ShellClientCapabilities, ShellClientLookupError> {
+    ) -> Result<RunnerFeatureSet, ShellClientLookupError> {
         self.prune_expired_shared_key_clients().await;
         let inner = self.inner.lock().await;
         let client =
@@ -53,7 +54,7 @@ impl ShellClientRegistry {
                 .ok_or_else(|| ShellClientLookupError::UnknownClient {
                     client_id: client_id.to_string(),
                 })?;
-        Ok(client.capabilities.clone())
+        Ok(client.runner_features.clone())
     }
 
     /// Check whether a registered agent client supports a named capability.

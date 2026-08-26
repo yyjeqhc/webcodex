@@ -4,19 +4,8 @@ use super::tool_call::ComputerSnapshotRegion;
 use super::{RecoveryKind, RecoveryTool, ToolCall, ToolResult, ToolRuntime};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
-use crate::shell_protocol::{
-    ShellCommandExecutionState, ShellFileOpRequest,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
-};
+use crate::shell_client::RunnerFeature;
+use crate::shell_protocol::{ShellCommandExecutionState, ShellFileOpRequest};
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -1011,19 +1000,26 @@ impl ToolRuntime {
     }
 
     async fn computer_list_targets(&self, auth: Option<&AuthContext>) -> ToolResult {
-        let clients = self.shell_clients.list_clients_for_auth(auth).await;
+        let clients = self
+            .shell_clients
+            .list_client_semantic_views_for_auth(auth)
+            .await;
         let mut total_count = 0usize;
         let mut targets = Vec::new();
         for client in clients {
-            let computer_observe = client.capabilities.computer_observe;
-            let computer_application_discovery = client.capabilities.computer_application_discovery;
-            let computer_application_launch = client.capabilities.computer_application_launch;
-            let computer_display_observe = client.capabilities.computer_display_observe;
-            let computer_pointer_control = client.capabilities.computer_pointer_control;
-            let computer_clipboard_read = client.capabilities.computer_clipboard_read;
-            let computer_clipboard_write = client.capabilities.computer_clipboard_write;
-            let computer_snapshot_region = client.capabilities.computer_snapshot_region;
-            let computer_accessibility_observe = client.capabilities.computer_accessibility_observe;
+            let computer_observe = client.supports(RunnerFeature::ComputerObserve);
+            let computer_application_discovery =
+                client.supports(RunnerFeature::ComputerApplicationDiscovery);
+            let computer_application_launch =
+                client.supports(RunnerFeature::ComputerApplicationLaunch);
+            let computer_display_observe = client.supports(RunnerFeature::ComputerDisplayObserve);
+            let computer_pointer_control = client.supports(RunnerFeature::ComputerPointerControl);
+            let computer_clipboard_read = client.supports(RunnerFeature::ComputerClipboardRead);
+            let computer_clipboard_write = client.supports(RunnerFeature::ComputerClipboardWrite);
+            let computer_snapshot_region = client.supports(RunnerFeature::ComputerSnapshotRegion);
+            let computer_accessibility_observe =
+                client.supports(RunnerFeature::ComputerAccessibilityObserve);
+            let view = client.view;
             if !computer_observe
                 && !computer_accessibility_observe
                 && !computer_application_discovery
@@ -1040,9 +1036,9 @@ impl ToolRuntime {
                 continue;
             }
             targets.push(json!({
-                "client_id": client.client_id,
-                "display_name": client.display_name,
-                "connected": client.connected,
+                "client_id": view.client_id,
+                "display_name": view.display_name,
+                "connected": view.connected,
                 "capabilities": {
                     "computer_observe": computer_observe,
                     "computer_application_discovery": computer_application_discovery,
@@ -1131,96 +1127,94 @@ impl ToolRuntime {
             }
             return computer_error("invalid_client", "client_id is invalid");
         }
-        let required_capabilities: &[&str] = match kind {
-            "computer_list_applications" => {
-                &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY]
-            }
-            "computer_launch_application" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH],
+        let required_features: &[RunnerFeature] = match kind {
+            "computer_list_applications" => &[RunnerFeature::ComputerApplicationDiscovery],
+            "computer_launch_application" => &[RunnerFeature::ComputerApplicationLaunch],
             "computer_list_displays" | "computer_snapshot_display" => {
-                &[SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE]
+                &[RunnerFeature::ComputerDisplayObserve]
             }
-            "computer_read_clipboard" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ],
-            "computer_write_clipboard" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE],
+            "computer_read_clipboard" => &[RunnerFeature::ComputerClipboardRead],
+            "computer_write_clipboard" => &[RunnerFeature::ComputerClipboardWrite],
             "computer_pointer_move" | "computer_pointer_click" => {
-                &[SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL]
+                &[RunnerFeature::ComputerPointerControl]
             }
-            "computer_list_windows" | "computer_snapshot" => {
-                &[SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE]
-            }
+            "computer_list_windows" | "computer_snapshot" => &[RunnerFeature::ComputerObserve],
             "computer_snapshot_region" => &[
-                SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
-                SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
+                RunnerFeature::ComputerObserve,
+                RunnerFeature::ComputerSnapshotRegion,
             ],
             "computer_accessibility_status" | "computer_accessibility_tree" => {
-                &[crate::shell_protocol::SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE]
+                &[RunnerFeature::ComputerAccessibilityObserve]
             }
-            "computer_element_state" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE],
-            "computer_control" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL],
-            "computer_scroll_to_element" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT],
-            "computer_key_input" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT],
-            "computer_activate_window" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE],
-            "computer_input_text" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT],
+            "computer_element_state" => &[RunnerFeature::ComputerElementState],
+            "computer_control" => &[RunnerFeature::ComputerControl],
+            "computer_scroll_to_element" => &[RunnerFeature::ComputerScrollToElement],
+            "computer_key_input" => &[RunnerFeature::ComputerKeyInput],
+            "computer_activate_window" => &[RunnerFeature::ComputerWindowActivate],
+            "computer_input_text" => &[RunnerFeature::ComputerTextInput],
             _ => return computer_error("invalid_request", "unsupported computer request kind"),
         };
-        for required_capability in required_capabilities {
-            match self
-                .shell_clients
-                .client_supports_for_auth(client_id, required_capability, auth)
-                .await
-            {
-                Ok(true) => {}
-                Ok(false) => {
-                    if is_application_launch {
-                        return computer_application_effect_not_started(
-                            "capability_unavailable",
-                            &format!("target Runner does not support {required_capability}"),
-                            expected_application_id.as_deref().unwrap_or_default(),
-                        );
-                    }
-                    if let Some(context) = pointer_context.as_ref() {
-                        return computer_pointer_effect_not_started(
-                            "capability_unavailable",
-                            &format!("target Runner does not support {required_capability}"),
-                            context,
-                        );
-                    }
-                    if let Some(context) = clipboard_write_context.as_ref() {
-                        return computer_clipboard_write_not_started(
-                            "capability_unavailable",
-                            &format!("target Runner does not support {required_capability}"),
-                            context,
-                        );
-                    }
-                    return computer_error(
-                        "capability_unavailable",
-                        &format!("target Runner does not support {required_capability}"),
-                    );
-                }
-                Err(_error) if is_application_launch => {
-                    return computer_application_effect_not_started(
-                        "client_access_denied",
-                        "caller cannot access the target Runner for application launch",
-                        expected_application_id.as_deref().unwrap_or_default(),
-                    );
-                }
-                Err(_error) if is_pointer => {
-                    return computer_pointer_effect_not_started(
-                        "client_access_denied",
-                        "caller cannot access the target Runner for pointer control",
-                        pointer_context.as_ref().expect("pointer context"),
-                    );
-                }
-                Err(_error) if is_clipboard_write => {
-                    return computer_clipboard_write_not_started(
-                        "client_access_denied",
-                        "caller cannot access the target Runner for clipboard write",
-                        clipboard_write_context
-                            .as_ref()
-                            .expect("clipboard write context"),
-                    );
-                }
-                Err(error) => return computer_error("client_access_denied", &error),
+        let client = match self
+            .shell_clients
+            .get_client_semantic_view_checked_for_auth(client_id, auth)
+            .await
+        {
+            Ok(client) => client,
+            Err(_error) if is_application_launch => {
+                return computer_application_effect_not_started(
+                    "client_access_denied",
+                    "caller cannot access the target Runner for application launch",
+                    expected_application_id.as_deref().unwrap_or_default(),
+                );
             }
+            Err(_error) if is_pointer => {
+                return computer_pointer_effect_not_started(
+                    "client_access_denied",
+                    "caller cannot access the target Runner for pointer control",
+                    pointer_context.as_ref().expect("pointer context"),
+                );
+            }
+            Err(_error) if is_clipboard_write => {
+                return computer_clipboard_write_not_started(
+                    "client_access_denied",
+                    "caller cannot access the target Runner for clipboard write",
+                    clipboard_write_context
+                        .as_ref()
+                        .expect("clipboard write context"),
+                );
+            }
+            Err(error) => return computer_error("client_access_denied", &error),
+        };
+        for required_feature in required_features {
+            if client.supports(*required_feature) {
+                continue;
+            }
+            let required_capability = required_feature.as_wire_name();
+            if is_application_launch {
+                return computer_application_effect_not_started(
+                    "capability_unavailable",
+                    &format!("target Runner does not support {required_capability}"),
+                    expected_application_id.as_deref().unwrap_or_default(),
+                );
+            }
+            if let Some(context) = pointer_context.as_ref() {
+                return computer_pointer_effect_not_started(
+                    "capability_unavailable",
+                    &format!("target Runner does not support {required_capability}"),
+                    context,
+                );
+            }
+            if let Some(context) = clipboard_write_context.as_ref() {
+                return computer_clipboard_write_not_started(
+                    "capability_unavailable",
+                    &format!("target Runner does not support {required_capability}"),
+                    context,
+                );
+            }
+            return computer_error(
+                "capability_unavailable",
+                &format!("target Runner does not support {required_capability}"),
+            );
         }
         let expected_element_id = payload
             .get("element_id")

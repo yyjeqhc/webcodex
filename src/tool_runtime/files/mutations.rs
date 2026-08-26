@@ -517,9 +517,11 @@ impl ToolRuntime {
             // the legacy shell path instead of receiving an unknown file op.
             let supports_structured_delete = self
                 .shell_clients
-                .get_client_capabilities(&client_id)
+                .get_client_feature_set(&client_id)
                 .await
-                .map(|caps| caps.structured_file_delete)
+                .map(|features| {
+                    features.supports(crate::shell_client::RunnerFeature::StructuredFileDelete)
+                })
                 .unwrap_or(false);
             if supports_structured_delete {
                 return self

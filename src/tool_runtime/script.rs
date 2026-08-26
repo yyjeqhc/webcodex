@@ -19,7 +19,8 @@ use super::tool_audit::run_script_validation_identity;
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_client::{
-    script_preview, ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution,
+    script_preview, RunnerFeature, ShellJobStartMetadata, ShellJobVisibility,
+    StructuredJobExecution,
 };
 use crate::shell_protocol::{
     validate_script_request, ShellCommandExecutionState, ShellJobOpRequest, ShellScriptLanguage,
@@ -151,8 +152,8 @@ impl ToolRuntime {
             };
             let resolved_cwd = project_relative_agent_cwd(&proj, &effective_cwd)
                 .unwrap_or_else(|_| ".".to_string());
-            let capabilities = match self.shell_clients.get_client_capabilities(&client_id).await {
-                Ok(capabilities) => capabilities,
+            let features = match self.shell_clients.get_client_feature_set(&client_id).await {
+                Ok(features) => features,
                 Err(error) => {
                     let mut result = process_tool_failure_result(
                         command_rejected_message(
@@ -179,8 +180,9 @@ impl ToolRuntime {
                     return result;
                 }
             };
-            let async_handoff_available = capabilities.structured_execution_jobs
-                && (capabilities.async_jobs || capabilities.async_shell_jobs);
+            let async_handoff_available = features.supports(RunnerFeature::StructuredExecutionJobs)
+                && (features.supports(RunnerFeature::AsyncJobs)
+                    || features.supports(RunnerFeature::AsyncShellJobs));
             if !async_handoff_available
                 && timeout > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS
             {

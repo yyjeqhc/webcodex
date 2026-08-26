@@ -17,7 +17,9 @@ use super::structured_execution::{
 use super::tool_result::ToolResult;
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::shell_client::{command_preview, ShellJobStartMetadata, ShellJobVisibility};
+use crate::shell_client::{
+    command_preview, RunnerFeature, ShellJobStartMetadata, ShellJobVisibility,
+};
 use crate::shell_protocol::{
     ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest, ShellRunRequest, ShellRunResponse,
 };
@@ -660,11 +662,12 @@ impl ToolRuntime {
             let async_handoff_available =
                 if timeout > DEFAULT_RUN_SHELL_TIMEOUT_SECS && ssh_resource.is_none() {
                     self.shell_clients
-                        .get_client_capabilities(&client_id)
+                        .get_client_feature_set(&client_id)
                         .await
-                        .is_ok_and(|capabilities| {
-                            capabilities.shell
-                                && (capabilities.async_jobs || capabilities.async_shell_jobs)
+                        .is_ok_and(|features| {
+                            features.supports(RunnerFeature::Shell)
+                                && (features.supports(RunnerFeature::AsyncJobs)
+                                    || features.supports(RunnerFeature::AsyncShellJobs))
                         })
                 } else {
                     false

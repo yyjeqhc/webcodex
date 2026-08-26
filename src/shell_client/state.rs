@@ -1,10 +1,10 @@
 use super::auth::ShellClientAuthGroup;
-use super::{AgentTransport, RunnerFeatureSet};
+use super::{AgentTransport, RunnerFeature, RunnerFeatureSet};
 use crate::mcp_gateway::McpGatewayResponse;
 use crate::shell_protocol::{
     AgentBuildInfo, AgentHostContext, AgentPolicySummary, AgentProtocolSemantics,
     PersistentShellResult, ShellAgentProjectSummary, ShellAgentShellRequest,
-    ShellClientCapabilities, ShellCommandExecutionState, ShellJobCodexMetadata,
+    ShellClientCapabilities, ShellClientView, ShellCommandExecutionState, ShellJobCodexMetadata,
     ShellJobStructuredExecutionMetadata, ShellJobValidationProgress, ShellProcessArgv,
     ShellProjectInventoryStatus, ShellRunResponse, JOB_INVENTORY_MAX_TERMINAL_JOBS,
     JOB_TERMINAL_RETENTION_SECS,
@@ -55,8 +55,9 @@ pub(super) struct ShellClientRecord {
     /// Bounded Runner-configured planning metadata. This is not policy or live
     /// state and is replaced by each successful registration.
     pub(super) host_context: Option<AgentHostContext>,
-    /// Accepted legacy wire snapshot retained for compatibility projection and
-    /// C3b's explicitly inventoried downstream consumers.
+    /// Accepted legacy wire snapshot retained only for wire-compatible public
+    /// projection and diagnostics. Server capability authority lives in
+    /// `runner_features` below.
     pub(super) capabilities: ShellClientCapabilities,
     /// Canonical Server capability truth normalized once from `capabilities`
     /// during registration. This set has no independent mutation path.
@@ -112,6 +113,32 @@ pub(super) struct ShellClientRecord {
     /// the same runner instance.
     pub(super) projected_structured_terminal_suppressions:
         VecDeque<ProjectedStructuredTerminalSuppression>,
+}
+
+/// Internal-only atomic observation of one active Runner record.
+///
+/// `view` preserves the existing compatibility/diagnostic projection while
+/// feature decisions use the canonical set cloned from the same registry lock.
+/// This type is never serialized or exposed through the wire protocol.
+#[derive(Debug, Clone)]
+pub(crate) struct ShellClientSemanticView {
+    pub(crate) view: ShellClientView,
+    pub(super) runner_features: RunnerFeatureSet,
+}
+
+impl ShellClientSemanticView {
+    pub(crate) fn supports(&self, feature: RunnerFeature) -> bool {
+        self.runner_features.supports(feature)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_public_view_for_test(view: ShellClientView) -> Self {
+        let runner_features = RunnerFeatureSet::from_wire(&view.capabilities);
+        Self {
+            view,
+            runner_features,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

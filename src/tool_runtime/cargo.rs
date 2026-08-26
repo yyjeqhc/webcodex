@@ -18,7 +18,7 @@ use super::validation_profile::{
 };
 use super::{ExecutionPurpose, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::shell_client::ShellJobStartMetadata;
+use crate::shell_client::{RunnerFeature, ShellJobStartMetadata};
 use crate::shell_protocol::{
     ShellCommandExecutionState, ShellJobOpRequest, ShellJobValidationMetadata,
     ShellJobValidationStep,
@@ -801,8 +801,8 @@ impl ToolRuntime {
                     ));
                 }
             };
-            let capabilities = match self.shell_clients.get_client_capabilities(client_id).await {
-                Ok(capabilities) => capabilities,
+            let features = match self.shell_clients.get_client_feature_set(client_id).await {
+                Ok(features) => features,
                 Err(error) => {
                     return ToolResult::err(command_rejected_message(
                         error.to_string(),
@@ -810,14 +810,14 @@ impl ToolRuntime {
                     ));
                 }
             };
-            let async_handoff_available = (capabilities.async_jobs
-                || capabilities.async_shell_jobs)
-                && capabilities.structured_validation_argv;
+            let async_handoff_available = (features.supports(RunnerFeature::AsyncJobs)
+                || features.supports(RunnerFeature::AsyncShellJobs))
+                && features.supports(RunnerFeature::StructuredValidationArgv);
             if tool_name == "cargo_test"
                 && request.minimum_tests.is_some()
                 && timeout_secs > SYNC_VALIDATION_WAIT_SECS
                 && async_handoff_available
-                && !capabilities.structured_cargo_test_count_assertion
+                && !features.supports(RunnerFeature::StructuredCargoTestCountAssertion)
             {
                 return ToolResult::err_with_output(
                     command_rejected_message(
@@ -836,7 +836,7 @@ impl ToolRuntime {
                     }),
                 );
             }
-            if tool_name == "go_test" && !capabilities.structured_go_test_json {
+            if tool_name == "go_test" && !features.supports(RunnerFeature::StructuredGoTestJson) {
                 return ToolResult::err_with_output(
                     command_rejected_message(
                         "capability_unavailable: this Runner does not advertise structured_go_test_json",
@@ -852,7 +852,7 @@ impl ToolRuntime {
                     }),
                 );
             }
-            if tool_name == "go_test" && !capabilities.structured_go_test_tool {
+            if tool_name == "go_test" && !features.supports(RunnerFeature::StructuredGoTestTool) {
                 return ToolResult::err_with_output(
                     command_rejected_message(
                         "capability_unavailable: this Runner does not advertise structured_go_test_tool",
@@ -870,7 +870,7 @@ impl ToolRuntime {
             }
             if tool_name == "go_test"
                 && options.go_packages.is_some()
-                && !capabilities.structured_go_test_packages
+                && !features.supports(RunnerFeature::StructuredGoTestPackages)
             {
                 return ToolResult::err_with_output(
                     command_rejected_message(

@@ -420,7 +420,7 @@ async fn client_supports_reflects_registered_capabilities() {
             client_id: "ghost".to_string()
         }
     );
-    let err = registry.get_client_capabilities("ghost").await.unwrap_err();
+    let err = registry.get_client_feature_set("ghost").await.unwrap_err();
     assert_eq!(
         err,
         ShellClientLookupError::UnknownClient {

@@ -9,7 +9,7 @@ use super::validation::{
     validate_file_request, validate_id, validate_process_request, validate_run_request,
     validate_script_enqueue_request,
 };
-use super::{now_ts, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS};
+use super::{now_ts, RunnerFeature, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS};
 use crate::lsp_bridge::{AgentLspPayload, AgentLspRequest, AGENT_LSP_REQUEST_KIND};
 use crate::mcp_gateway::{
     validate_request as validate_mcp_gateway_request, McpGatewayDispatchState, McpGatewayRequest,
@@ -21,20 +21,8 @@ use crate::shell_protocol::{
     ShellRunResponse, ShellScriptPayload, RAW_SHELL_COMMAND_MAX_BYTES,
     SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
-    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE, SHELL_CLIENT_CAPABILITY_FILE_READ,
+    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA, SHELL_CLIENT_CAPABILITY_FILE_READ,
     SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT,
-    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
     SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
     SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
@@ -402,7 +390,10 @@ impl ShellClientRegistry {
         let Some(client) = inner.clients.get(&body.client_id) else {
             return Err(format!("unknown shell client: {}", body.client_id));
         };
-        if !client.capabilities.apply_text_edit_occurrence {
+        if !client
+            .runner_features
+            .supports(RunnerFeature::ApplyTextEditOccurrence)
+        {
             return Err(format!(
                 "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE}",
                 body.client_id
@@ -485,7 +476,7 @@ impl ShellClientRegistry {
             .get(&body.client_id)
             .ok_or_else(|| format!("unknown shell client: {}", body.client_id))?;
         assert_shell_client_access(auth, current)?;
-        if !current.capabilities.file_write {
+        if !current.runner_features.supports(RunnerFeature::FileWrite) {
             return Err(format!(
                 "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_FILE_WRITE}",
                 body.client_id
@@ -573,19 +564,25 @@ impl ShellClientRegistry {
             return Err(format!("unknown shell client: {}", body.client_id));
         };
         assert_shell_client_access(auth, client)?;
-        if !client.capabilities.file_read {
+        if !client.runner_features.supports(RunnerFeature::FileRead) {
             return Err(format!(
                 "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_FILE_READ}",
                 body.client_id
             ));
         }
-        if !client.capabilities.artifact_export_chunk_read {
+        if !client
+            .runner_features
+            .supports(RunnerFeature::ArtifactExportChunkRead)
+        {
             return Err(format!(
                 "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ}",
                 body.client_id
             ));
         }
-        if !client.capabilities.artifact_export_streaming_metadata {
+        if !client
+            .runner_features
+            .supports(RunnerFeature::ArtifactExportStreamingMetadata)
+        {
             return Err(format!(
                 "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA}",
                 body.client_id
@@ -656,13 +653,16 @@ impl ShellClientRegistry {
             return Err(format!("unknown shell client: {}", body.client_id));
         };
         assert_shell_client_access(auth, client)?;
-        if !client.capabilities.file_read {
+        if !client.runner_features.supports(RunnerFeature::FileRead) {
             return Err(format!(
                 "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_FILE_READ}",
                 body.client_id
             ));
         }
-        if !client.capabilities.artifact_export_chunk_read {
+        if !client
+            .runner_features
+            .supports(RunnerFeature::ArtifactExportChunkRead)
+        {
             return Err(format!(
                 "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ}",
                 body.client_id
@@ -740,7 +740,10 @@ impl ShellClientRegistry {
         let Some(client) = inner.clients.get(&body.client_id) else {
             return Err(format!("unknown shell client: {}", body.client_id));
         };
-        if !client.capabilities.structured_file_delete {
+        if !client
+            .runner_features
+            .supports(RunnerFeature::StructuredFileDelete)
+        {
             return Err(format!(
                 "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE}",
                 body.client_id
@@ -823,7 +826,10 @@ impl ShellClientRegistry {
         let Some(client) = inner.clients.get(&client_id) else {
             return Err(format!("unknown shell client: {client_id}"));
         };
-        if !client.capabilities.structured_process_argv {
+        if !client
+            .runner_features
+            .supports(RunnerFeature::StructuredProcessArgv)
+        {
             return Err(format!(
                 "capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV}"
             ));
@@ -832,7 +838,10 @@ impl ShellClientRegistry {
             if mode != crate::command_sandbox::INSPECT_SANDBOX_MODE {
                 return Err(format!("unknown sandbox mode '{mode}'"));
             }
-            if !client.capabilities.sandbox_inspect_commands {
+            if !client
+                .runner_features
+                .supports(RunnerFeature::SandboxInspectCommands)
+            {
                 return Err(format!(
                     "{}: agent client {} cannot enforce the inspect sandbox",
                     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, client_id
@@ -907,7 +916,10 @@ impl ShellClientRegistry {
         let Some(client) = inner.clients.get(&client_id) else {
             return Err(format!("unknown shell client: {client_id}"));
         };
-        if !client.capabilities.structured_script_payload {
+        if !client
+            .runner_features
+            .supports(RunnerFeature::StructuredScriptPayload)
+        {
             return Err(format!(
                 "capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD}"
             ));
@@ -916,7 +928,10 @@ impl ShellClientRegistry {
             if mode != crate::command_sandbox::INSPECT_SANDBOX_MODE {
                 return Err(format!("unknown sandbox mode '{mode}'"));
             }
-            if !client.capabilities.sandbox_inspect_commands {
+            if !client
+                .runner_features
+                .supports(RunnerFeature::SandboxInspectCommands)
+            {
                 return Err(format!(
                     "{}: agent client {} cannot enforce the inspect sandbox",
                     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, client_id
@@ -1000,7 +1015,10 @@ impl ShellClientRegistry {
         let Some(client) = inner.clients.get(&client_id) else {
             return Err(format!("unknown shell client: {client_id}"));
         };
-        if !client.capabilities.internal_posix_script {
+        if !client
+            .runner_features
+            .supports(RunnerFeature::InternalPosixScript)
+        {
             return Err(format!(
                 "capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT}"
             ));
@@ -1009,7 +1027,10 @@ impl ShellClientRegistry {
             if mode != crate::command_sandbox::INSPECT_SANDBOX_MODE {
                 return Err(format!("unknown sandbox mode '{mode}'"));
             }
-            if !client.capabilities.sandbox_inspect_commands {
+            if !client
+                .runner_features
+                .supports(RunnerFeature::SandboxInspectCommands)
+            {
                 return Err(format!(
                     "{}: agent client {} cannot enforce the inspect sandbox",
                     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, client_id
@@ -1113,7 +1134,7 @@ impl ShellClientRegistry {
             let Some(client) = inner.clients.get(&body.client_id) else {
                 return Err(format!("unknown shell client: {}", body.client_id));
             };
-            if !client.capabilities.ssh_shell {
+            if !client.runner_features.supports(RunnerFeature::SshShell) {
                 return Err(format!(
                     "agent_capability_unavailable: agent client {} does not support ssh_shell",
                     body.client_id
@@ -1127,7 +1148,10 @@ impl ShellClientRegistry {
             let Some(client) = inner.clients.get(&body.client_id) else {
                 return Err(format!("unknown shell client: {}", body.client_id));
             };
-            if !client.capabilities.sandbox_inspect_commands {
+            if !client
+                .runner_features
+                .supports(RunnerFeature::SandboxInspectCommands)
+            {
                 return Err(format!(
                     "{}: agent client {} cannot enforce the inspect sandbox",
                     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, body.client_id
@@ -1361,7 +1385,10 @@ impl ShellClientRegistry {
             .ok_or_else(|| "exact Runner is unavailable".to_string())?;
         assert_shell_client_access(auth, client)
             .map_err(|_| "exact Runner is unavailable".to_string())?;
-        if !client.capabilities.coding_agent_runs {
+        if !client
+            .runner_features
+            .supports(RunnerFeature::CodingAgentRuns)
+        {
             return Err("exact Runner does not support CodingAgentRun".to_string());
         }
         if client.agent_instance_id != expected_agent_instance_id {
@@ -1481,7 +1508,10 @@ impl ShellClientRegistry {
         let Some(client) = inner.clients.get(&client_id) else {
             return Err(format!("unknown shell client: {client_id}"));
         };
-        if !client.capabilities.persistent_shell {
+        if !client
+            .runner_features
+            .supports(RunnerFeature::PersistentShell)
+        {
             return Err(format!(
                 "agent_capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL}"
             ));
@@ -1492,7 +1522,9 @@ impl ShellClientRegistry {
         if job_context
             .as_ref()
             .is_some_and(|ctx| ctx.ssh_resource.is_some())
-            && !client.capabilities.ssh_persistent_shell
+            && !client
+                .runner_features
+                .supports(RunnerFeature::SshPersistentShell)
         {
             return Err(format!(
                 "agent_capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL}"
@@ -1598,35 +1630,31 @@ impl ShellClientRegistry {
         timeout_secs: u64,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_id(&client_id, "client_id")?;
-        let required_capabilities: &[&str] = match kind {
-            "computer_list_applications" => {
-                &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY]
-            }
-            "computer_launch_application" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH],
+        let required_features: &[RunnerFeature] = match kind {
+            "computer_list_applications" => &[RunnerFeature::ComputerApplicationDiscovery],
+            "computer_launch_application" => &[RunnerFeature::ComputerApplicationLaunch],
             "computer_list_displays" | "computer_snapshot_display" => {
-                &[SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE]
+                &[RunnerFeature::ComputerDisplayObserve]
             }
-            "computer_read_clipboard" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ],
-            "computer_write_clipboard" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE],
-            "computer_list_windows" | "computer_snapshot" => {
-                &[SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE]
-            }
+            "computer_read_clipboard" => &[RunnerFeature::ComputerClipboardRead],
+            "computer_write_clipboard" => &[RunnerFeature::ComputerClipboardWrite],
+            "computer_list_windows" | "computer_snapshot" => &[RunnerFeature::ComputerObserve],
             "computer_snapshot_region" => &[
-                SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
-                SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
+                RunnerFeature::ComputerObserve,
+                RunnerFeature::ComputerSnapshotRegion,
             ],
             "computer_accessibility_status" | "computer_accessibility_tree" => {
-                &[SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE]
+                &[RunnerFeature::ComputerAccessibilityObserve]
             }
-            "computer_element_state" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE],
-            "computer_control" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL],
-            "computer_scroll_to_element" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT],
-            "computer_key_input" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT],
+            "computer_element_state" => &[RunnerFeature::ComputerElementState],
+            "computer_control" => &[RunnerFeature::ComputerControl],
+            "computer_scroll_to_element" => &[RunnerFeature::ComputerScrollToElement],
+            "computer_key_input" => &[RunnerFeature::ComputerKeyInput],
             "computer_pointer_move" | "computer_pointer_click" => {
-                &[SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL]
+                &[RunnerFeature::ComputerPointerControl]
             }
-            "computer_activate_window" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE],
-            "computer_input_text" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT],
+            "computer_activate_window" => &[RunnerFeature::ComputerWindowActivate],
+            "computer_input_text" => &[RunnerFeature::ComputerTextInput],
             _ => return Err("invalid computer request kind".to_string()),
         };
         if payload.len() > shell_computer_request_payload_max_bytes(kind) || payload.contains('\0')
@@ -1671,13 +1699,14 @@ impl ShellClientRegistry {
             .get(&client_id)
             .ok_or_else(|| format!("unknown shell client: {client_id}"))?;
         assert_shell_client_access(auth, current)?;
-        if let Some(required_capability) = required_capabilities
+        if let Some(required_feature) = required_features
             .iter()
             .copied()
-            .find(|capability| !current.runner_features.supports_wire_name(capability))
+            .find(|feature| !current.runner_features.supports(*feature))
         {
             return Err(format!(
-                "agent client {client_id} does not support {required_capability}"
+                "agent client {client_id} does not support {}",
+                required_feature.as_wire_name()
             ));
         }
         enqueue_pending_request_locked(
@@ -1707,12 +1736,12 @@ impl ShellClientRegistry {
             .map_err(|message| EnqueueLspError::InvalidRequest { message })?;
         // Capability gate before enqueue so old agents never receive unknown
         // LSP kinds that could fall into shell fallback.
-        let required_capability =
-            if matches!(&payload.request, AgentLspRequest::CallHierarchy { .. }) {
-                SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY
-            } else {
-                SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION
-            };
+        let required_feature = if matches!(&payload.request, AgentLspRequest::CallHierarchy { .. })
+        {
+            RunnerFeature::LspCallHierarchy
+        } else {
+            RunnerFeature::LspReadOnlyNavigation
+        };
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let request = ShellAgentShellRequest {
@@ -1755,13 +1784,10 @@ impl ShellClientRegistry {
                 .ok_or_else(|| EnqueueLspError::UnknownClient {
                     client_id: client_id.clone(),
                 })?;
-        if !current
-            .runner_features
-            .supports_wire_name(required_capability)
-        {
+        if !current.runner_features.supports(required_feature) {
             return Err(EnqueueLspError::UnsupportedCapability {
                 client_id,
-                capability: required_capability,
+                capability: required_feature.as_wire_name(),
             });
         }
         enqueue_pending_request_locked(

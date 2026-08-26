@@ -17,8 +17,8 @@ use super::tool_audit::run_process_validation_identity;
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_client::{
-    process_preview, ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution,
-    DETACHED_IDEMPOTENCY_CONFLICT, DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
+    process_preview, RunnerFeature, ShellJobStartMetadata, ShellJobVisibility,
+    StructuredJobExecution, DETACHED_IDEMPOTENCY_CONFLICT, DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
 };
 use crate::shell_protocol::{
     validate_process_argv, ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest,
@@ -465,8 +465,8 @@ impl ToolRuntime {
         };
         let resolved_cwd =
             project_relative_agent_cwd(&proj, &effective_cwd).unwrap_or_else(|_| ".".to_string());
-        let capabilities = match self.shell_clients.get_client_capabilities(&client_id).await {
-            Ok(capabilities) => capabilities,
+        let features = match self.shell_clients.get_client_feature_set(&client_id).await {
+            Ok(features) => features,
             Err(error) => {
                 return process_tool_failure_result(
                     command_rejected_message(
@@ -478,10 +478,11 @@ impl ToolRuntime {
                 )
             }
         };
-        if !capabilities.detached_process_jobs
-            || !capabilities.structured_process_argv
-            || !capabilities.structured_execution_jobs
-            || !(capabilities.async_jobs || capabilities.async_shell_jobs)
+        if !features.supports(RunnerFeature::DetachedProcessJobs)
+            || !features.supports(RunnerFeature::StructuredProcessArgv)
+            || !features.supports(RunnerFeature::StructuredExecutionJobs)
+            || !(features.supports(RunnerFeature::AsyncJobs)
+                || features.supports(RunnerFeature::AsyncShellJobs))
         {
             return process_tool_failure_result(
                 command_rejected_message(
@@ -711,8 +712,8 @@ impl ToolRuntime {
             };
             let resolved_cwd = project_relative_agent_cwd(&proj, &effective_cwd)
                 .unwrap_or_else(|_| ".".to_string());
-            let capabilities = match self.shell_clients.get_client_capabilities(&client_id).await {
-                Ok(capabilities) => capabilities,
+            let features = match self.shell_clients.get_client_feature_set(&client_id).await {
+                Ok(features) => features,
                 Err(error) => {
                     let mut result = process_tool_failure_result(
                         command_rejected_message(
@@ -739,8 +740,9 @@ impl ToolRuntime {
                 }
             };
             let async_handoff_available = allow_async_handoff
-                && capabilities.structured_execution_jobs
-                && (capabilities.async_jobs || capabilities.async_shell_jobs);
+                && features.supports(RunnerFeature::StructuredExecutionJobs)
+                && (features.supports(RunnerFeature::AsyncJobs)
+                    || features.supports(RunnerFeature::AsyncShellJobs));
             if !async_handoff_available
                 && timeout > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS
             {

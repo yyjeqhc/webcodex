@@ -9,7 +9,9 @@ use super::reconciliation::{
     validate_job_inventory, validate_job_inventory_without_project_membership,
 };
 use super::requests::resolve_disconnected_sync_requests_locked;
-use super::state::{NotifierEntry, ShellClientRecord, ShellClientRegistryInner};
+use super::state::{
+    NotifierEntry, ShellClientRecord, ShellClientRegistryInner, ShellClientSemanticView,
+};
 use super::validation::{
     normalize_project_summaries, normalize_required_agent_protocol_version,
     normalize_tool_providers, trim_string, validate_agent_instance_id, validate_id,
@@ -21,8 +23,8 @@ use super::{
 };
 use crate::mcp_gateway::validate_providers;
 use crate::shell_protocol::{
-    normalize_agent_protocol_semantics, AgentProjectInventoryStrategy, ShellClientCapabilities,
-    ShellClientRegisterRequest, ShellClientView, JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    normalize_agent_protocol_semantics, AgentProjectInventoryStrategy, ShellClientRegisterRequest,
+    ShellClientView, JOB_INVENTORY_MAX_ACTIVE_JOBS,
 };
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -1043,10 +1045,11 @@ impl ShellClientRegistry {
             inner.notifiers.remove(client_id);
         }
         let now = now_ts();
-        let recoverable = inner
-            .clients
-            .get(client_id)
-            .is_some_and(|client| client.capabilities.job_state_reconciliation);
+        let recoverable = inner.clients.get(client_id).is_some_and(|client| {
+            client
+                .runner_features
+                .supports(RunnerFeature::JobStateReconciliation)
+        });
         if let Some(client) = inner.clients.get_mut(client_id) {
             client.last_seen = offline_last_seen(now);
             client.disconnected_at = Some(now);
@@ -1178,14 +1181,14 @@ impl ShellClientRegistry {
         })
     }
 
-    /// Return capability snapshots for the currently-online Runners in one exact
-    /// shared-key authorization group. Callers must evaluate each snapshot as a
-    /// whole; combining capabilities across different Runners would overstate
+    /// Return canonical feature snapshots for currently-online Runners in one
+    /// exact shared-key authorization group. Callers must evaluate each set as
+    /// a whole; combining features across different Runners would overstate
     /// executable authority.
-    pub(crate) async fn connected_shared_key_group_capabilities(
+    pub(crate) async fn connected_shared_key_group_feature_sets(
         &self,
         shared_key_hash: &str,
-    ) -> Vec<ShellClientCapabilities> {
+    ) -> Vec<RunnerFeatureSet> {
         let now = now_ts();
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_clients_locked(&mut inner, now);
@@ -1198,7 +1201,31 @@ impl ShellClientRegistry {
                     Some(ShellClientAuthGroup::SharedKey(group)) if group == shared_key_hash
                 ) && now.saturating_sub(client.last_seen) <= CLIENT_ONLINE_WINDOW_SECS
             })
-            .map(|client| client.capabilities.clone())
+            .map(|client| client.runner_features.clone())
+            .collect()
+    }
+
+    pub(crate) async fn list_client_semantic_views_for_auth(
+        &self,
+        auth: Option<&crate::auth::AuthContext>,
+    ) -> Vec<ShellClientSemanticView> {
+        let now = now_ts();
+        let mut inner = self.inner.lock().await;
+        self.prune_expired_shared_key_clients_locked(&mut inner, now);
+        for client in inner.clients.values_mut() {
+            expire_staging(client, now);
+        }
+        let mut ids = inner.clients.keys().cloned().collect::<Vec<_>>();
+        ids.sort();
+        ids.into_iter()
+            .filter(|id| {
+                inner
+                    .clients
+                    .get(id)
+                    .map(|client| shell_client_visible_to_auth(auth, client))
+                    .unwrap_or(false)
+            })
+            .filter_map(|id| Self::client_semantic_view_locked(&inner, &id))
             .collect()
     }
 
@@ -1242,6 +1269,49 @@ impl ShellClientRegistry {
             return None;
         }
         Self::client_view_locked(&inner, client_id)
+    }
+
+    pub(crate) async fn get_client_semantic_view(
+        &self,
+        client_id: &str,
+    ) -> Option<ShellClientSemanticView> {
+        let now = now_ts();
+        let mut inner = self.inner.lock().await;
+        self.prune_expired_shared_key_clients_locked(&mut inner, now);
+        if let Some(client) = inner.clients.get_mut(client_id) {
+            expire_staging(client, now);
+        }
+        Self::client_semantic_view_locked(&inner, client_id)
+    }
+
+    pub(crate) async fn get_client_semantic_view_for_auth(
+        &self,
+        client_id: &str,
+        auth: Option<&crate::auth::AuthContext>,
+    ) -> Option<ShellClientSemanticView> {
+        let mut inner = self.inner.lock().await;
+        self.prune_expired_shared_key_clients_locked(&mut inner, now_ts());
+        let client = inner.clients.get(client_id)?;
+        if !shell_client_visible_to_auth(auth, client) {
+            return None;
+        }
+        Self::client_semantic_view_locked(&inner, client_id)
+    }
+
+    pub(crate) async fn get_client_semantic_view_checked_for_auth(
+        &self,
+        client_id: &str,
+        auth: Option<&crate::auth::AuthContext>,
+    ) -> Result<ShellClientSemanticView, String> {
+        let mut inner = self.inner.lock().await;
+        self.prune_expired_shared_key_clients_locked(&mut inner, now_ts());
+        let client = inner
+            .clients
+            .get(client_id)
+            .ok_or_else(|| format!("unknown shell client: {client_id}"))?;
+        assert_shell_client_access(auth, client)?;
+        Self::client_semantic_view_locked(&inner, client_id)
+            .ok_or_else(|| format!("unknown shell client: {client_id}"))
     }
 
     pub(crate) async fn coding_agent_run_for_client_for_auth(
@@ -1317,6 +1387,18 @@ impl ShellClientRegistry {
             .get(client_id)
             .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
         assert_shell_client_access(auth, client)
+    }
+
+    fn client_semantic_view_locked(
+        inner: &ShellClientRegistryInner,
+        client_id: &str,
+    ) -> Option<ShellClientSemanticView> {
+        let runner_features = inner.clients.get(client_id)?.runner_features.clone();
+        let view = Self::client_view_locked(inner, client_id)?;
+        Some(ShellClientSemanticView {
+            view,
+            runner_features,
+        })
     }
 
     fn client_view_locked(

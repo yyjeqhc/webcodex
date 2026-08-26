@@ -1,5 +1,6 @@
 use super::{RecoveryKind, ToolResult, ToolRuntime};
 use crate::auth::{AuthContext, AuthKind};
+use crate::shell_client::RunnerFeature;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
 use serde_json::{json, Value};
@@ -263,10 +264,10 @@ impl ToolRuntime {
         };
         let client = match self
             .shell_clients
-            .get_client_view_for_auth(&client_id, auth)
+            .get_client_semantic_view_for_auth(&client_id, auth)
             .await
         {
-            Some(client) if client.connected => client,
+            Some(client) if client.view.connected => client,
             _ => {
                 return coding_agent_error(
                     "coding_agent_runner_unavailable",
@@ -277,7 +278,7 @@ impl ToolRuntime {
                 )
             }
         };
-        if !client.capabilities.coding_agent_runs {
+        if !client.supports(RunnerFeature::CodingAgentRuns) {
             return coding_agent_error(
                 "coding_agent_unsupported",
                 "exact Project Runner does not advertise CodingAgentRun",
@@ -286,6 +287,7 @@ impl ToolRuntime {
                 Some(&run_id),
             );
         }
+        let client = client.view;
         let providers = client.coding_agent_providers.as_deref().unwrap_or(&[]);
         let provider = match providers
             .iter()

@@ -10,7 +10,7 @@ use crate::lsp_bridge::{
     LspStatusResult, WorkspaceSymbolsResult, MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE,
     MAX_CALL_HIERARCHY_ROOTS,
 };
-use crate::shell_client::EnqueueLspError;
+use crate::shell_client::{EnqueueLspError, RunnerFeature};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -205,26 +205,30 @@ impl ToolRuntime {
             Ok(id) => id.to_string(),
             Err(e) => return ToolResult::err(e),
         };
-        let Some(client) = self.shell_clients.get_client_view(&client_id).await else {
+        let Some(client) = self
+            .shell_clients
+            .get_client_semantic_view(&client_id)
+            .await
+        else {
             return ToolResult::err(format!(
                 "{}: agent is not connected",
                 error_codes::AGENT_CAPABILITY_UNAVAILABLE
             ));
         };
-        if !client.connected {
+        if !client.view.connected {
             return ToolResult::err(format!(
                 "{}: agent is not connected",
                 error_codes::AGENT_CAPABILITY_UNAVAILABLE
             ));
         }
         let call_hierarchy = matches!(&request, AgentLspRequest::CallHierarchy { .. });
-        if call_hierarchy && !client.capabilities.lsp_call_hierarchy {
+        if call_hierarchy && !client.supports(RunnerFeature::LspCallHierarchy) {
             return ToolResult::err(format!(
                 "{}: agent does not support lsp_call_hierarchy",
                 error_codes::AGENT_CAPABILITY_UNAVAILABLE
             ));
         }
-        if !call_hierarchy && !client.capabilities.lsp_read_only_navigation {
+        if !call_hierarchy && !client.supports(RunnerFeature::LspReadOnlyNavigation) {
             return ToolResult::err(format!(
                 "{}: agent does not support lsp_read_only_navigation",
                 error_codes::AGENT_CAPABILITY_UNAVAILABLE

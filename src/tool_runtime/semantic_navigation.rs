@@ -11,7 +11,7 @@ use crate::lsp_bridge::{
     parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest, LspAvailabilityStatus,
     LspStatusResult,
 };
-use crate::shell_client::EnqueueLspError;
+use crate::shell_client::{EnqueueLspError, RunnerFeature};
 use serde::Serialize;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -306,19 +306,23 @@ impl ToolRuntime {
                 )
             }
         };
-        let Some(client) = self.shell_clients.get_client_view(&client_id).await else {
+        let Some(client) = self
+            .shell_clients
+            .get_client_semantic_view(&client_id)
+            .await
+        else {
             return SemanticNavigationStartupSummary::unsupported(
                 SemanticNavigationStartupStatus::AgentUnavailable,
                 SemanticNavigationReasonCode::AgentNotConnected,
             );
         };
-        if !client.connected {
+        if !client.view.connected {
             return SemanticNavigationStartupSummary::unsupported(
                 SemanticNavigationStartupStatus::AgentUnavailable,
                 SemanticNavigationReasonCode::AgentNotConnected,
             );
         }
-        if !client.capabilities.lsp_read_only_navigation {
+        if !client.supports(RunnerFeature::LspReadOnlyNavigation) {
             return SemanticNavigationStartupSummary::unsupported(
                 SemanticNavigationStartupStatus::AgentCapabilityUnavailable,
                 SemanticNavigationReasonCode::LspCapabilityNotAdvertised,

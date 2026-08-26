@@ -20,8 +20,9 @@ use std::time::Duration;
 use super::tool_result::{RecoveryKind, ToolResult};
 use super::{agent_project_runtime_id, ToolRuntime};
 use crate::auth::AuthContext;
+use crate::shell_client::{RunnerFeature, ShellClientSemanticView};
 use crate::shell_protocol::{
-    ShellAgentProjectSummary, ShellClientView, SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
+    ShellAgentProjectSummary, SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
 };
 
 /// Maximum time the runtime waits for an agent project-op response. Project
@@ -104,21 +105,22 @@ fn validate_list_projects_options(
 }
 
 fn project_candidates(
-    clients: &[ShellClientView],
+    clients: &[ShellClientSemanticView],
     options: &ListProjectsOptions,
     query: Option<&str>,
 ) -> Vec<ProjectCandidate> {
     let mut candidates = Vec::new();
     for (client_index, client) in clients.iter().enumerate() {
+        let view = &client.view;
         if options
             .client_id
             .as_deref()
-            .is_some_and(|expected| client.client_id != expected)
+            .is_some_and(|expected| view.client_id != expected)
         {
             continue;
         }
-        for (project_index, project) in client.projects.iter().enumerate() {
-            let runtime_id = agent_project_runtime_id(&client.client_id, &project.id);
+        for (project_index, project) in view.projects.iter().enumerate() {
+            let runtime_id = agent_project_runtime_id(&view.client_id, &project.id);
             if options
                 .project
                 .as_deref()
@@ -155,8 +157,11 @@ impl ToolRuntime {
             Ok(validated) => validated,
             Err(result) => return result,
         };
-        let clients = self.shell_clients.list_clients_for_auth(auth).await;
-        self.list_projects_from_visible_clients(auth, &options, query.as_deref(), limit, &clients)
+        let clients = self
+            .shell_clients
+            .list_client_semantic_views_for_auth(auth)
+            .await;
+        self.list_projects_from_semantic_clients(auth, &options, query.as_deref(), limit, &clients)
             .await
     }
 
@@ -165,23 +170,34 @@ impl ToolRuntime {
         &self,
         auth: Option<&AuthContext>,
         options: ListProjectsOptions,
-        clients: &[ShellClientView],
+        clients: &[crate::shell_protocol::ShellClientView],
     ) -> ToolResult {
         let (query, limit) = match validate_list_projects_options(&options) {
             Ok(validated) => validated,
             Err(result) => return result,
         };
-        self.list_projects_from_visible_clients(auth, &options, query.as_deref(), limit, clients)
-            .await
+        let semantic_clients = clients
+            .iter()
+            .cloned()
+            .map(ShellClientSemanticView::from_public_view_for_test)
+            .collect::<Vec<_>>();
+        self.list_projects_from_semantic_clients(
+            auth,
+            &options,
+            query.as_deref(),
+            limit,
+            &semantic_clients,
+        )
+        .await
     }
 
-    async fn list_projects_from_visible_clients(
+    async fn list_projects_from_semantic_clients(
         &self,
         auth: Option<&AuthContext>,
         options: &ListProjectsOptions,
         query: Option<&str>,
         limit: Option<usize>,
-        clients: &[ShellClientView],
+        clients: &[ShellClientSemanticView],
     ) -> ToolResult {
         let mut candidates = project_candidates(clients, options, query);
         let matched_count = candidates.len();
@@ -212,18 +228,19 @@ impl ToolRuntime {
                 capabilities,
             ) = {
                 let client = &clients[client_index];
-                let project = &client.projects[project_index];
-                let shell_profiles = client
+                let view = &client.view;
+                let project = &view.projects[project_index];
+                let shell_profiles = view
                     .policy
                     .as_ref()
                     .and_then(|policy| policy.shell_profiles.as_ref());
                 let (resolved_shell_profile, shell_profile_status) =
                     resolve_project_shell_profile(project.shell_profile.as_deref(), shell_profiles);
                 (
-                    client.client_id.clone(),
-                    client.status.clone(),
-                    client.connected,
-                    client.last_seen,
+                    view.client_id.clone(),
+                    view.status.clone(),
+                    view.connected,
+                    view.last_seen,
                     project.clone(),
                     resolved_shell_profile,
                     shell_profile_status,
@@ -452,7 +469,7 @@ impl ToolRuntime {
         }
         if let Some(client) = self
             .shell_clients
-            .get_client_view_for_auth(&client_id, auth)
+            .get_client_semantic_view_for_auth(&client_id, auth)
             .await
         {
             if let Err(error) = self
@@ -462,7 +479,7 @@ impl ToolRuntime {
             {
                 return ToolResult::err(error);
             }
-            if !client.capabilities.project_path_registration {
+            if !client.supports(RunnerFeature::ProjectPathRegistration) {
                 return ToolResult::err_with_output(
                     "agent_capability_unavailable: the selected Runner does not support project path registration; upgrade the Runner or use an existing registered project id",
                     json!({
@@ -759,13 +776,14 @@ fn smoke_marker_present(project: &crate::shell_protocol::ShellAgentProjectSummar
 }
 
 fn smoke_project_capabilities(
-    client: &crate::shell_protocol::ShellClientView,
+    client: &ShellClientSemanticView,
     project: &crate::shell_protocol::ShellAgentProjectSummary,
 ) -> Value {
-    let git_available = project_git_available(client, project);
+    let git_available = project_git_available(&client.view, project);
     let safe_smoke_project =
-        project.allow_patch && client.connected && smoke_marker_present(project);
-    let supports_artifact_smoke = client.capabilities.file_read && client.capabilities.file_write;
+        project.allow_patch && client.view.connected && smoke_marker_present(project);
+    let supports_artifact_smoke =
+        client.supports(RunnerFeature::FileRead) && client.supports(RunnerFeature::FileWrite);
     let supports_cleanup_verification =
         supports_artifact_smoke || git_available.is_some_and(|available| available);
     let recommended_for_smoke = safe_smoke_project

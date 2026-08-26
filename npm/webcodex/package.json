@@ -1,7 +1,19 @@
 {
   "name": "@yyjeqhc/webcodex",
   "version": "0.3.8",
-  "description": "Thin npm installer/wrapper for WebCodex native binaries.",
+  "description": "Connect ChatGPT, Claude, and other AI agents to repositories and developer tools on your own machines.",
+  "keywords": [
+    "ai",
+    "agent",
+    "coding-agent",
+    "chatgpt",
+    "claude",
+    "mcp",
+    "developer-tools",
+    "self-hosted",
+    "code",
+    "automation"
+  ],
   "license": "Apache-2.0",
   "publishConfig": {
     "access": "public",

@@ -2,201 +2,79 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-本指南用尽可能少的概念，把一个本地 Git 仓库通过 MCP 接入 ChatGPT。在 Linux/macOS
-的交互式 Git checkout 中，裸 `webcodex` 是最短 first-run 入口，并会进入正常的
-`webcodex share` 工作流。Windows 不支持 `share` 所需的本地
-Server runtime；Windows 用户需要已有的远程 Linux Server，并改用
-`webcodex connect <server-url>`。如果还没有 Server，请先看[部署指南](DEPLOYMENT.zh-CN.md)。
+这个页面只做一件事：让一个本地代码仓库尽快完成第一次 AI 开发请求。开始之前不需要理解 WebCodex 的内部架构。
 
 ## 前置条件
 
-- npm installer 需要 Node.js 18+。
-- `PATH` 中有 Git，并准备一个可以安全查看/编辑的 Git 仓库。
-- Linux/macOS 默认临时公网 HTTPS 分享不再要求单独安装 `cloudflared`。WebCodex 会优先
-  复用显式指定或 `PATH` 中的 binary；没有时自动下载固定版本并校验后使用。
-  通过 npm wrapper 启动时，managed 下载还会继承 npm proxy、`noproxy`、CA 与
-  `strict-ssl` 配置；没有 npm-specific 配置时继续使用标准 proxy/系统信任路径。
+- Node.js 18 或更新版本。
+- Git，以及一个可以让 AI 安全查看的代码仓库。
+- 一键本机 `share` 流程需要 Linux 或 macOS。
 
-不全局安装也可以直接试用：
+Windows 需要连接远程 Linux WebCodex Server，不在本机运行 `share`；请从 [MCP 接入](MCP.zh-CN.md)或[部署指南](DEPLOYMENT.zh-CN.md)开始。
+
+## 1. 运行 WebCodex
+
+进入希望 AI 使用的仓库：
 
 ```bash
 cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex
 ```
 
-也可以先全局安装一次：
+第一次使用不需要提前运行 `setup`、`doctor` 或 `run`。WebCodex 会自动准备本次临时连接。
+
+## 2. 等待 `WebCodex ready`
+
+看到 **WebCodex ready** 后保持终端运行。WebCodex 会打印 MCP 客户端需要的配置，通常也会把 MCP URL 复制到剪贴板。
+
+## 3. 在 ChatGPT 中添加 WebCodex
+
+1. 在 ChatGPT 中开启 **Developer Mode**。
+2. 进入 **Settings -> Apps -> Create**。
+3. 粘贴输出的 **MCP URL**。
+4. 默认分享方式选择 **Access token / API key** 或等价的 Bearer 令牌选项。
+5. 填入输出的临时 **Credential**。
+6. 点击 **Scan Tools**。
+
+不同账号或工作区看到的 ChatGPT 文案可能略有区别，具体 URL 和认证值以 WebCodex 终端输出为准。
+
+### 如果找不到 Bearer/访问令牌选项
+
+如果 ChatGPT 自动尝试 OAuth 并出现 **does not implement OAuth**，或者当前客户端根本没有 Bearer 令牌输入框，先结束当前分享，再运行：
 
 ```bash
-npm install -g @yyjeqhc/webcodex
+npx --yes @yyjeqhc/webcodex share --auth query-token
 ```
 
-npm wrapper 在第一次执行时可以 lazy bootstrap 经过校验的 native binary，因此 npx 路径
-不依赖 npm 是否保留 postinstall 产生的文件。在 Linux/macOS 上只做本地 MCP 调试时，
-`webcodex share --tunnel none` 不需要
-`cloudflared`。
+把输出的完整 `/mcp?token=...` 地址粘贴进去，认证选择 **No authentication**，然后再次点击 **Scan Tools**。完整地址包含本次临时密钥，不要公开或写入日志。如果已经全局安装 WebCodex，等价命令是 `webcodex share --auth query-token`。
 
-## 1. 分享当前仓库
-
-前面的 `npx --yes @yyjeqhc/webcodex` 已经会直接进入这条 first-run 路径。如果选择了
-全局安装，再运行：
-
-```bash
-cd /path/to/your/repository
-webcodex
-# 显式/脚本友好的等价入口：
-# webcodex share
-```
-
-裸 `webcodex` 只会在 Linux/macOS + 交互式终端 + Git checkout 中这样自动分发；脚本、
-非交互调用和 repo 外目录仍显示普通 CLI help。需要确定性行为时继续显式使用 `share`。
-
-这一条 first-run 路径会完成项目设置、启动本地 Server + Runner、创建临时 Connector
-credential、打开 Cloudflare Quick Tunnel，并等待 MCP endpoint 可用。除非你明确需要后文的手动/本地
-工作流，否则不要先跑 `setup`、`doctor` 或 `run`。
-
-默认 share 是临时的。保持终端运行；Ctrl-C 会停止本地 runtime 与 tunnel，同时使 URL 和
-临时 credential 失效。
-
-如果缺少 `cloudflared`，WebCodex 会在创建项目 setup/state 之前把固定版本下载到私有用户
-状态目录，校验 artifact 与最终 binary 后继续。可用 `WEBCODEX_CLOUDFLARED_BIN` 强制指定
-可信 binary；仅本地调试时也可以使用 `--tunnel none`。
-
-## 2. 在 ChatGPT 中添加 WebCodex
-
-终端出现 **WebCodex ready** 后，终端中打印的值仍然是 source of truth。公网 share 会
-best-effort 把 MCP URL 复制到剪贴板，但 credential 永远不会自动复制；交互式终端可按
-Enter 打开 ChatGPT App 设置。然后：
-
-1. 在 ChatGPT 开启 **Developer Mode**，进入 **Settings -> Apps -> Create**。
-2. 粘贴已复制的 **MCP URL**；复制失败时使用输出的 `https://.../mcp`。
-3. 默认 share 的认证选择 **Access token / API key**（Bearer token）。
-4. 粘贴输出的 **Credential (this share only)**。
-5. 点击 **Scan Tools**。
-
-如不希望访问剪贴板，使用 `webcodex share --no-copy-url`。
-
-如果只需要 OpenAI 产品访问，可以先创建 OpenAI Secure MCP Tunnel 与仅授予 Tunnels
-Read + Use 的 Restricted Runtime API key，导出 `CONTROL_PLANE_TUNNEL_ID` 和
-`CONTROL_PLANE_API_KEY`，然后运行：
-
-```bash
-webcodex share --tunnel openai
-```
-
-WebCodex 会自动解析固定且经过校验的 OpenAI `tunnel-client` v0.0.12（也可使用匹配的
-`WEBCODEX_TUNNEL_CLIENT_BIN` / `PATH` binary），运行 doctor/readiness，并把临时
-WebCodex Bearer credential 留在本机。ChatGPT 侧使用 **Connection: Tunnel** 与
-**No authentication**。默认 Cloudflare Quick Tunnel 路径保持不变，仍然不绑定特定 MCP client。
-
-Console 故意不显示 credential。以后即使打开 `/console`，认证值也应来自成功的 CLI 首次
-输出，而不是浏览器页面。ChatGPT Developer Mode、custom MCP app 与 write/modify action
-还分别受 ChatGPT 套餐、workspace 和管理员设置控制；客户端 workspace 没有允许的 action，
-WebCodex 不能自行把它开启。
-
-## 3. 发送第一条安全请求
-
-先确认客户端连接的是正确仓库，并且不产生修改：
+## 4. 先试一个只读请求
 
 ```text
 检查这个仓库并总结它的结构。先不要做任何修改。
 ```
 
-确认成功后，再让它完成一个小且可回退的改动。project-bound coding surface 会在内部处理
-项目身份；普通用户不需要在 prompt 中提供 runtime project id 或 operation id。
+能正常得到回答，就说明 ChatGPT 已经能够通过 WebCodex 访问目标仓库。
 
-## 4. 审查结果
+## 5. 再做一个小修改
 
-浏览器 `/console` 可以查看 readiness、工作队列、task guidance、审批与 review action。
-稳定结果准备好后，人类可以在 Console 或 CLI 中 Accept/Reject：
+确认只读请求正常后，可以尝试一个容易审查的小任务：
 
-```bash
-webcodex task list
-webcodex task show <task-id>
-webcodex task accept <task-id>
-# 或：webcodex task reject <task-id>
+```text
+修复这个仓库里的一个小问题，并运行相关测试。告诉我具体改了什么。
 ```
 
-在线模型不能接受自己的结果。
+接受结果之前，用 Git 或 WebCodex 的审查界面检查实际改动。
 
-## 已有 Server：长期连接
+## 完成
 
-如果已有 hosted Server 明确配置为 shared-key 接入，使用 operator 提供的 shared key，
-用 `connect` 替代临时 `share`：
+第一次连接已经成功。使用这次临时分享时保持 WebCodex 终端运行；按 Ctrl-C 会结束本次连接。
 
-```bash
-cd /path/to/your/repository
-webcodex connect https://webcodex.example --key-file /private/path/shared-key
-```
+接下来按需要阅读：
 
-`connect` 创建/复用本地 profile、启动 detached Runner、等待 Server 看见 Runner 与项目，
-然后输出 MCP URL、认证类型、credential 来源、ChatGPT 提示和诊断 Details。这里的 shared
-key 是 hosted client credential，不是自托管 Server 的 bootstrap administrator token。
-
-以后只注销当前仓库：
-
-```bash
-webcodex disconnect
-```
-
-如果还需要先准备 Server，推荐的 Docker Server 路径无需 clone 仓库，只需三条 shell 命令；
-见[部署指南](DEPLOYMENT.zh-CN.md#docker仅-server)。bootstrap 完成后，在 Server 侧创建短期
-pairing code，在仓库机器上执行 `webcodex login`，再显式安装它报告的 Runner config。Server
-`.env` 和 bootstrap administrator token 始终留在 Server 机器上。
-
-## 可选 OAuth
-
-Bearer 是最简单的试用路径。如果 MCP client 要求 OAuth，请提供它的精确 callback URL。
-
-临时 project-bound share：
-
-```bash
-webcodex share --auth oauth \
-  --oauth-redirect-uri https://client.example/callback
-```
-
-已有 hosted Server：
-
-```bash
-webcodex connect https://webcodex.example --auth oauth \
-  --oauth-redirect-uri https://client.example/callback
-```
-
-CLI 会明确哪些值填进 MCP client，哪个临时 project credential 只能填在 WebCodex 授权页。
-高级 OAuth scope ceiling、optional Computer permission、managed-user OAuth 与协议 contract
-见 [MCP](MCP.zh-CN.md) 和[认证模型](AUTH_MODEL.zh-CN.md)。
-
-## 仅本地 / 手动工作流
-
-这些命令仍适合开发与诊断，但不是 hosted ChatGPT 接入的前置条件：
-
-```bash
-cd /path/to/your/repository
-webcodex setup     # 只配置私有项目状态
-webcodex doctor    # 只读本地 readiness 诊断
-webcodex run       # 前台 loopback Server + Runner
-# 另一个终端：
-webcodex status
-```
-
-`doctor` 描述的是本地/手动 runtime；loopback runtime 停止时，它仍可能推荐
-`webcodex run`。Hosted client 无法访问 loopback，因此普通 ChatGPT onboarding 从
-`share` 开始，而不是从 `doctor` 开始。
-
-## 故障排查
-
-优先看 `share` 或 `connect` 返回的精确错误。已有本地状态时也可运行：
-
-```bash
-webcodex status
-webcodex doctor
-```
-
-| 现象 | 下一步 |
-| --- | --- |
-| WebCodex-managed `cloudflared` 获取失败 | 检查网络/代理后重试；也可用 `WEBCODEX_CLOUDFLARED_BIN` 指定可信 binary，或仅本地调试时用 `share --tunnel none` |
-| loopback 端口已被占用 | 停掉冲突进程后重试 |
-| 本地/手动 runtime 未运行 | `webcodex run` |
-| 已有 hosted profile 的 Runner 不可用 | 重跑 `connect` 或检查 `webcodex agent status --profile <profile>` |
-| workspace 不可用 | 恢复 Git 仓库/路径 |
-
-完整检查清单见[故障排查](TROUBLESHOOTING.zh-CN.md)。
+- [ChatGPT、Claude 与认证方式](MCP.zh-CN.md)
+- [Windows 与长期/自托管部署](DEPLOYMENT.zh-CN.md)
+- [CLI 参考](CLI.zh-CN.md)
+- [故障排查](TROUBLESHOOTING.zh-CN.md)
+- [安全说明](../SECURITY.md)
+- [完整文档索引](INDEX.zh-CN.md)

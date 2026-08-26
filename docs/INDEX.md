@@ -2,46 +2,50 @@
 
 [English](INDEX.md) | [简体中文](INDEX.zh-CN.md)
 
-## Getting started
+Start with the goal that matches what you are trying to do.
 
-- [README](../README.md) — what WebCodex is and the `webcodex share` first-run path
-- [Quick Start](QUICK_START.md) — shortest path from a local repository to ChatGPT MCP
-- [MCP](MCP.md) — ChatGPT Developer Mode and other MCP client setup
-- [AI-assisted setup](AI_ONBOARDING.md) — have an AI agent configure WebCodex for you
+## I want to try WebCodex
 
-## Common operation
+- [README](../README.md) — what WebCodex does and the one-command first-run path
+- [Quick Start](QUICK_START.md) — zero to the first successful AI-assisted development request
+- [MCP](MCP.md) — ChatGPT, Claude, authentication choices, and other MCP clients
+- [AI-assisted setup](AI_ONBOARDING.md) — have an AI agent help configure WebCodex
 
-- [CLI](CLI.md) — command map, compatibility terminology, and credentials
-- [Coding Workflow](CODING_WORKFLOW.md) — canonical task bootstrap, behavioral guidance, validation, and closeout
-- [Runner](RUNNER.md) — operating the Runner on repository machines
+## I need Windows or a permanent deployment
 
-## Advanced deployment and integration
+- [Deployment](DEPLOYMENT.md) — self-hosting, Linux Server setup, Windows/Runner enrollment, and long-lived operation
+- [Runner](RUNNER.md) — operate the component that works beside your repositories
+- [CLI](CLI.md) — commands, profiles, credentials, and operator reference
 
-- [Deployment](DEPLOYMENT.md) — self-hosting, Server bootstrap, and long-lived Runner enrollment
-- [Authentication](AUTH_MODEL.md) — detailed credential and token boundaries
+## I need authentication or network options
+
+- [MCP](MCP.md) — Bearer, query-token fallback, OAuth, private tunnel, and MCP protocol reference
+- [Authentication](AUTH_MODEL.md) — detailed credential and authority boundaries
+- [Deployment](DEPLOYMENT.md) — stable HTTPS origins, self-hosting, and production networking
 - [GPT Actions](GPT_ACTIONS.md) — optional OpenAPI-based Custom GPT integration
 
-## Understanding WebCodex
+## I need help
 
-- [Architecture](ARCHITECTURE.md) — how the pieces fit together
+- [Troubleshooting](TROUBLESHOOTING.md) — installation, connection, runtime, and Runner problems
+- [Security](../SECURITY.md) — safe operating guidance and security model
+
+## I want to understand or extend WebCodex
+
+- [Architecture](ARCHITECTURE.md) — how the major components fit together
+- [Coding Workflow](CODING_WORKFLOW.md) — task bootstrap, guidance, validation, and closeout
 - [Computer Use roadmap](COMPUTER_USE.md) — semantic-first desktop automation direction and dogfood priorities
-- [Security](../SECURITY.md) — security model and policy
 
-## Help
-
-- [Troubleshooting](TROUBLESHOOTING.md)
-
-## Contributing
+## I want to contribute or release WebCodex
 
 - [AGENTS.md](../AGENTS.md) — repository instructions for coding/AI agents
-- [Maintenance](MAINTENANCE.md) — canonical maintenance queue, dependency cadence, PR/CI expectations, and bilingual-doc policy
+- [Maintenance](MAINTENANCE.md) — maintenance queue, dependency cadence, PR/CI expectations, and bilingual-doc policy
 - [Testing](TESTING.md) — testing strategy
 - [Release checklist](RELEASE_CHECKLIST.md) — release readiness
 - [Architecture decisions](agent/architecture-decisions.md)
-- [Runtime host context](agent/runtime-host-context.md) — bounded Runner-configured planning context and exact-source runtime diagnostics
-- [Job reliability and Runner concurrency](agent/job-reliability-and-concurrency.md) — Control restart recovery, observation semantics, shared Job capacity, and tool-description requirements
+- [Runtime host context](agent/runtime-host-context.md) — Runner-configured planning context and runtime diagnostics
+- [Job reliability and Runner concurrency](agent/job-reliability-and-concurrency.md) — restart recovery, observation semantics, shared Job capacity, and tool-description requirements
 - [Authority model](agent/permission-model.md)
 - [Session model](agent/session-model.md)
-- [Manual multi-window collaboration](agent/manual-window-collaboration.md) — coordinator/worker handoff through existing Workflow Session message primitives
+- [Manual multi-window collaboration](agent/manual-window-collaboration.md)
 - [OpenAPI guidelines](agent/openapi-guidelines.md)
 - [Release process](agent/release-process.md)

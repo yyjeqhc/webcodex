@@ -4,211 +4,121 @@
 
 ## English
 
-WebCodex connects ChatGPT, Claude, and other MCP clients to repositories and
-development tools on your own machines. This npm package installs the native
-`webcodex`, `webcodex-server`, and `webcodex-runner` binaries for supported
-platforms.
+**Connect ChatGPT, Claude, and other AI agents to repositories and developer tools on your own machines.**
+
+WebCodex lets an AI inspect and edit code, run tests and commands, use Git, and work with the development environment that already exists beside your repository.
 
 ### Fastest first connection
 
-Supported platforms are Linux x64/arm64, macOS arm64, Windows x64, and native
-Windows arm64. The installer wrapper requires Node.js 18 or newer. Windows is a
-CLI + Runner client platform in this release: local Server runtime and
-`webcodex share` are unsupported there, so use `webcodex connect <server-url>`
-against a remote Linux Server. The `share` steps below apply to Linux/macOS.
-For the default public flow, WebCodex reuses `WEBCODEX_CLOUDFLARED_BIN` or a
-`cloudflared` on `PATH`, and otherwise downloads a pinned, verified managed copy.
-The managed download reuses npm proxy/`noproxy`/CA/`strict-ssl` configuration when
-launched through this npm wrapper, while standard proxy/system trust remains the
-fallback when npm-specific settings are absent.
-
-Try it without a global install:
+Requires Node.js 18+ and Git. On Linux or macOS:
 
 ```bash
 cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex
 ```
 
-Or install it once and use the same bare first-run entry:
+When it reports **WebCodex ready**, keep the terminal open and add it to ChatGPT:
+
+1. Enable **Developer Mode** and open **Settings -> Apps -> Create**.
+2. Paste the printed **MCP URL**.
+3. Choose **Access token / API key** (Bearer token) and paste the printed **Credential**.
+4. Run **Scan Tools**.
+
+Try:
+
+```text
+Inspect this repository and summarize its structure. Do not make changes.
+```
+
+If ChatGPT does not show a Bearer/access-token option, or reports **does not implement OAuth**, run:
+
+```bash
+npx --yes @yyjeqhc/webcodex share --auth query-token
+```
+
+Paste the complete `/mcp?token=...` URL and choose **No authentication**. Treat the complete URL as a temporary secret. If the package is installed globally, `webcodex share --auth query-token` is equivalent.
+
+### Platforms
+
+- Linux x64/arm64: local one-command `share`, Server, and Runner workflows.
+- macOS arm64: local one-command `share` and Runner workflows.
+- Windows x64/arm64: CLI + Runner against a remote Linux Server; local `share` is not supported in this release.
+
+For Windows, permanent/self-hosted setup, OAuth, private tunnels, proxy settings, and troubleshooting, use the [WebCodex documentation](https://github.com/yyjeqhc/webcodex/tree/main/docs). The [Quick Start](https://github.com/yyjeqhc/webcodex/blob/main/docs/QUICK_START.md) stays focused on the first successful connection.
+
+### Install globally
 
 ```bash
 npm install -g @yyjeqhc/webcodex
-cd /path/to/your/repository
-webcodex
 ```
 
-If npm/npx did not retain postinstall output, the wrapper lazily runs the same
-verified native installer before launching. Bare `webcodex` auto-dispatches to
-`share` only in an interactive Linux/macOS Git checkout; use explicit
-`webcodex share` for scripts or deterministic dispatch.
+The package exposes the `webcodex` command. WebCodex downloads and verifies the matching native release artifacts for supported platforms and replaces the installed binary set atomically; a failed download, extraction, checksum, or identity check does not replace the previous complete installation.
 
-You do not need to run `setup`, `doctor`, or `run` first. `share` prepares the
-tunnel dependency when needed, configures the project, starts a local Server +
-Runner, opens a temporary Cloudflare Quick Tunnel, and prints the MCP URL and
-temporary credential.
+### Security
 
-When it says **WebCodex ready**, public share best-effort copies the MCP URL but
-never the credential. In an interactive terminal, press Enter to open ChatGPT
-App settings. Then:
-
-1. Enable Developer Mode and go to Settings -> Apps -> Create.
-2. Paste the copied MCP URL, or copy the printed fallback URL.
-3. Choose Access token / API key (Bearer token).
-4. Paste the printed Credential.
-5. Scan Tools.
-6. Try: `Inspect this repository and summarize its structure. Do not make changes.`
-
-Use `webcodex share --no-copy-url` to disable clipboard access.
-
-For MCP clients that cannot set a Bearer header, `webcodex share --auth query-token`
-is an explicit opt-in that prints and copies one sensitive `/mcp?token=...` URL;
-choose No authentication in the client. The token is temporary and share-only,
-but the complete URL must be treated as a secret because query strings may be logged.
-
-The default share is temporary and ends when the command exits. For local-only
-MCP debugging, `webcodex share --tunnel none` does not require `cloudflared`.
-For OpenAI-only private reachability, users who already have an OpenAI Secure MCP
-Tunnel can export `CONTROL_PLANE_TUNNEL_ID` plus a Restricted
-`CONTROL_PLANE_API_KEY` with Tunnels Read + Use and run
-`webcodex share --tunnel openai`. WebCodex resolves pinned verified OpenAI
-`tunnel-client` v0.0.12 and keeps the temporary WebCodex Bearer local; ChatGPT
-uses Connection: Tunnel + No authentication.
-ChatGPT Developer Mode, custom MCP apps, and write/modify actions are controlled
-by the ChatGPT plan, workspace, and admin settings; WebCodex cannot widen those
-client-side permissions.
-
-If you already operate a hosted WebCodex Server configured for shared-key
-clients, use the operator-provided client key with the long-lived path:
-
-```bash
-webcodex connect https://webcodex.example --key-file /private/path/shared-key
-```
-
-`connect` creates a reusable profile and prints the corresponding MCP setup
-values. For a freshly self-hosted Docker Server, keep the bootstrap admin token
-on the Server and enroll repository machines with pairing + `webcodex login`.
-
-### Package integrity
-
-The package exposes one public command, `webcodex`. During installation it
-downloads the matching release artifact, verifies its SHA-256 checksum, checks
-that all three binaries share one version/build identity, and atomically
-replaces the previous complete binary set. A failed download, extraction,
-checksum, or identity check leaves the previous installation intact.
-The artifact download honors npm lifecycle proxy, `noproxy`, `cafile`/`ca`, and
-`strict-ssl` settings, so installations behind the same corporate proxy or CA
-configuration used by npm do not need a separate WebCodex network setup.
-
-`webcodex-server` and `webcodex-runner` are package-local binaries rather than
-separate npm `bin` entries. The public CLI discovers them for `webcodex server`
-and the compatibility `webcodex agent` Runner-management namespace.
-
-### Disclaimer
-
-WebCodex can read and modify files and execute commands inside configured
-project boundaries. Use version control and recoverable backups.
+WebCodex can read and modify files and execute commands inside configured project boundaries. Use version control and keep credentials out of prompts, logs, and Git. See the repository [security guidance](https://github.com/yyjeqhc/webcodex/blob/main/SECURITY.md).
 
 ## 简体中文
 
-WebCodex 把 ChatGPT、Claude 和其他 MCP client 连接到你自己机器上的仓库与开发工具。
-npm package 会为支持的平台安装原生 `webcodex`、`webcodex-server`、
-`webcodex-runner` binaries。
+**把 ChatGPT、Claude 和其他 AI Agent 连接到你自己机器上的代码仓库和开发工具。**
 
-### 最快的第一次接入
+WebCodex 可以让 AI 理解和修改代码、运行测试与命令、检查 Git，并直接使用仓库旁边已经存在的真实开发环境。
 
-支持 Linux x64/arm64、macOS arm64、Windows x64 与原生 Windows arm64；installer
-wrapper 需要 Node.js 18 或更新版本。本版本的 Windows 是 CLI + Runner 客户端平台，
-不支持本地 Server runtime 或 `webcodex share`；Windows 请使用
-`webcodex connect <server-url>` 连接远程 Linux Server。下面的 `share` 步骤适用于
-Linux/macOS。默认公网流程会优先复用 `WEBCODEX_CLOUDFLARED_BIN` 或 `PATH` 中已有的
-`cloudflared`，否则自动下载固定版本、校验后由 WebCodex 管理。
-通过 npm wrapper 启动时，这次 managed 下载会复用 npm proxy、`noproxy`、CA 与
-`strict-ssl` 配置；没有 npm-specific 配置时继续使用标准 proxy/系统信任路径。
+### 最快的第一次连接
 
-无需全局安装即可试用：
+需要 Node.js 18+ 和 Git。Linux 或 macOS 上进入仓库：
 
 ```bash
 cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex
 ```
 
-也可以全局安装后使用同样的裸 first-run 入口：
+看到 **WebCodex ready** 后保持终端运行，然后在 ChatGPT 中：
+
+1. 开启 **Developer Mode**，进入 **Settings -> Apps -> Create**。
+2. 粘贴输出的 **MCP URL**。
+3. 认证选择 **Access token / API key**（Bearer 令牌），并填入输出的临时 **Credential**。
+4. 点击 **Scan Tools**。
+
+第一条可以先只读检查：
+
+```text
+检查这个仓库并总结它的结构。先不要做任何修改。
+```
+
+如果 ChatGPT 没有 Bearer/访问令牌选项，或者出现 **does not implement OAuth**，运行：
+
+```bash
+npx --yes @yyjeqhc/webcodex share --auth query-token
+```
+
+粘贴完整的 `/mcp?token=...` 地址并选择 **No authentication**。完整地址包含本次临时密钥，请按敏感信息处理。如果已经全局安装，也可以使用 `webcodex share --auth query-token`。
+
+### 平台支持
+
+- Linux x64/arm64：支持本机一键 `share`、Server 和 Runner 工作流。
+- macOS arm64：支持本机一键 `share` 和 Runner 工作流。
+- Windows x64/arm64：支持 CLI 和 Runner，连接远程 Linux Server；本版本不支持 Windows 本机 `share`。
+
+Windows、长期/自托管部署、OAuth、私有隧道、代理配置和故障排查见 [WebCodex 文档](https://github.com/yyjeqhc/webcodex/tree/main/docs)。[快速开始](https://github.com/yyjeqhc/webcodex/blob/main/docs/QUICK_START.zh-CN.md)只保留第一次成功连接所需的步骤。
+
+### 全局安装
 
 ```bash
 npm install -g @yyjeqhc/webcodex
-cd /path/to/your/repository
-webcodex
 ```
 
-如果 npm/npx 没有保留 postinstall 输出，wrapper 会在启动前 lazy 执行同一套经过校验的
-native installer。裸 `webcodex` 只在 Linux/macOS 的交互式 Git checkout 中自动进入
-`share`；脚本或需要确定性分发时继续显式使用 `webcodex share`。
+npm 包对外提供 `webcodex` 命令。安装时会下载并校验当前平台对应的原生发布产物，再原子替换完整的程序文件；下载、解压、校验或版本一致性检查失败时，不会破坏上一份完整安装。
 
-第一次不需要先执行 `setup`、`doctor` 或 `run`。`share` 会在需要时先准备 tunnel 依赖，
-然后配置项目、启动本地 Server + Runner、打开临时 Cloudflare Quick Tunnel，并输出 MCP URL
-与临时 credential。
+### 安全
 
-出现 **WebCodex ready** 后，公网 share 会 best-effort 复制 MCP URL，但绝不会自动复制
-credential；交互式终端可以按 Enter 打开 ChatGPT App 设置。然后：
-
-1. 开启 Developer Mode，进入 Settings -> Apps -> Create。
-2. 粘贴已复制的 MCP URL；失败时使用终端打印的 fallback URL。
-3. 认证选择 Access token / API key（Bearer token）。
-4. 填入输出的 Credential。
-5. Scan Tools。
-6. 第一条可先说：`检查这个仓库并总结它的结构。先不要做任何修改。`
-
-使用 `webcodex share --no-copy-url` 可以关闭剪贴板访问。
-
-如果 MCP client 无法设置 Bearer header，可显式使用 `webcodex share --auth query-token`。
-它会输出并复制一条敏感的 `/mcp?token=...` URL，此时 client 选择 No authentication。
-token 只属于本次临时 share，但整条 URL 都必须当作 secret，因为 query string 可能进入日志。
-
-默认 share 会在命令退出时结束。仅做本地 MCP 调试可用
-`webcodex share --tunnel none`，此时不需要 `cloudflared`。ChatGPT Developer Mode、custom
-MCP app 与 write/modify action 受 ChatGPT 套餐、workspace 和管理员设置控制；WebCodex
-不能扩大这些客户端侧权限。
-
-如果只需要 OpenAI 产品的私有可达性，已经创建 Secure MCP Tunnel 的用户可以导出
-`CONTROL_PLANE_TUNNEL_ID` 与只授予 Tunnels Read + Use 的 Restricted
-`CONTROL_PLANE_API_KEY`，然后运行 `webcodex share --tunnel openai`。WebCodex 会解析固定且
-经过校验的 OpenAI `tunnel-client` v0.0.12，并把临时 WebCodex Bearer 留在本机；ChatGPT
-使用 Connection: Tunnel + No authentication。
-
-如果你已经运营一个明确支持 shared-key client 的 hosted WebCodex Server，使用 operator
-提供的 client key 走长期路径：
-
-```bash
-webcodex connect https://webcodex.example --key-file /private/path/shared-key
-```
-
-`connect` 会创建可复用 profile 并输出对应 MCP 配置。对于刚完成 Docker bootstrap 的自托管
-Server，把 bootstrap admin token 留在 Server，仓库机器通过 pairing + `webcodex login` 接入。
-
-### Package 完整性
-
-package 只暴露一个公共命令 `webcodex`。安装时会下载匹配的 release artifact、校验
-SHA-256、确认三个 binary 版本/build identity 一致，再原子替换旧 binary set。下载、
-解压、checksum 或 identity 校验失败时，旧安装保持不变。
-artifact 下载会继承 npm lifecycle 中的 proxy、`noproxy`、`cafile`/`ca` 与
-`strict-ssl` 配置，因此使用企业代理或私有 CA 时不需要再单独配置 WebCodex 网络层。
-
-`webcodex-server` 与 `webcodex-runner` 是 package-local binaries，不单独作为 npm `bin`
-暴露。公共 CLI 会通过 `webcodex server` 和兼容保留的 `webcodex agent` Runner 管理
-命名空间发现它们。
-
-### 免责声明
-
-WebCodex 能够在配置的项目边界内读取、修改文件并执行命令，请使用版本控制和可恢复备份。
+WebCodex 能在配置的项目范围内读取和修改文件、执行命令。建议使用版本控制，不要把凭据写进提示词、日志或 Git。完整说明见仓库的[安全文档](https://github.com/yyjeqhc/webcodex/blob/main/SECURITY.md)。
 
 ## Development verification / 开发验证
 
 ```bash
 npm --prefix npm/webcodex test
 ```
-
-Release smoke uses the release-control-host-staged package and exact extracted
-binary candidate; see the repository release documentation for the full command.
 
 ## License
 

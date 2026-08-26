@@ -2,192 +2,110 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-WebCodex lets ChatGPT, Claude, and other MCP clients work with repositories and
-development tools on your own machines. The Runner executes file, Git, command,
-and test operations where the repository lives; WebCodex exposes those
-capabilities to the chat client without requiring the repository itself to move.
+**WebCodex lets ChatGPT, Claude, and other AI agents work directly with code and developer tools on your own machines.**
 
-## Try it with one repository
+Ask your assistant to inspect a repository, modify code, run tests, use Git, or investigate a failure. Your repository stays on the machine where it already lives; you do not need to move the project into a hosted workspace just to use an AI coding agent.
 
-Platform note: `webcodex share` starts a local WebCodex Server and is supported on
-Linux and macOS. Windows builds support the CLI + Runner against a remote Linux
-Server; on Windows use `webcodex connect <server-url>`. If you do not already
-have a Server, deploy one on Linux first.
+## Quick start
 
-For the fastest Linux/macOS trial, no global install is required:
+On Linux or macOS, with Node.js 18+ and Git installed:
 
 ```bash
 cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex
 ```
 
-The npm wrapper lazily bootstraps the verified native binary set if lifecycle
-installation did not leave it behind. If you prefer a persistent CLI, install it
-once and then use bare `webcodex` inside a Git repository:
+Keep the terminal open after it reports **WebCodex ready**. Then in ChatGPT:
 
-```bash
-npm install -g @yyjeqhc/webcodex
-cd /path/to/your/repository
-webcodex
-```
+1. Enable **Developer Mode** and open **Settings -> Apps -> Create**.
+2. Paste the **MCP URL** printed by WebCodex.
+3. Choose **Access token / API key** (or the equivalent Bearer-token option) and paste the printed **Credential**.
+4. Run **Scan Tools**.
 
-In an interactive Linux/macOS Git repository, bare `webcodex` is a convenience
-alias for the normal `webcodex share` first-run path. Scripts, non-interactive
-calls, Windows, and directories outside a Git checkout do not auto-start a
-runtime; use explicit `webcodex share` when deterministic dispatch matters.
-
-For the default temporary public share, WebCodex reuses `cloudflared` from
-`WEBCODEX_CLOUDFLARED_BIN` or `PATH` when available. Otherwise it downloads and
-verifies a WebCodex-managed copy automatically. When launched through the npm
-wrapper, that managed download also reuses npm's proxy, `noproxy`, CA, and
-`strict-ssl` settings; otherwise standard proxy/system trust behavior remains
-available. `share` is self-contained: it prepares the tunnel dependency when
-needed, configures the current Git project,
-starts a local WebCodex Server + Runner,
-creates a temporary Connector credential, and opens a Cloudflare Quick Tunnel.
-You do **not** need to run `setup`, `doctor`, or `run` first.
-
-When the command reports **WebCodex ready**, keep that terminal open. For the
-default public share, WebCodex best-effort copies the **MCP URL** to the clipboard;
-the credential is not copied automatically. In an interactive terminal, press
-Enter to open ChatGPT App settings, then:
-
-1. In ChatGPT, enable **Developer Mode** and go to **Settings -> Apps -> Create**.
-2. Paste the copied **MCP URL** (or copy the printed fallback URL).
-3. Choose **Access token / API key** or the equivalent Bearer-token option.
-4. Paste the printed temporary **Credential**.
-5. Run **Scan Tools**.
-6. Start with a read-only prompt such as:
+Try a read-only first request:
 
 ```text
 Inspect this repository and summarize its structure. Do not make changes.
 ```
 
-ChatGPT UI labels can vary by workspace and rollout. Developer Mode, custom MCP
-apps, and write/modify actions are controlled by the ChatGPT plan, workspace, and
-admin settings; WebCodex cannot widen client-side app permissions. The CLI output
-is the source of truth for the WebCodex URL, authentication type, and credential
-for that run.
-Use `webcodex share --no-copy-url` when clipboard access is undesirable.
-
-If a client cannot configure a Bearer header and OAuth setup is undesirable, use
-`webcodex share --auth query-token`. This explicit opt-in prints (and, for a public
-share, copies) one MCP URL whose `?token=` query contains only that run's temporary
-share credential; choose **No authentication** in the MCP client. Treat the entire
-URL as a secret because query strings can appear in client, proxy, clipboard, or
-access logs. The default remains the safer separate Bearer header + credential flow.
-
-A default `share` URL and credential are temporary and stop working when the
-command exits. `webcodex share --tunnel none` is available for local-only MCP
-debugging and does not require `cloudflared`.
-
-### Optional: OpenAI Secure MCP Tunnel
-
-If the repository should be reachable only from a supported OpenAI product, use
-`webcodex share --tunnel openai`. Create/select a Secure MCP Tunnel in the OpenAI
-Platform first, then export `CONTROL_PLANE_TUNNEL_ID` and a Restricted
-`CONTROL_PLANE_API_KEY` with **Tunnels Read + Use**. WebCodex reuses a matching
-`tunnel-client` from `WEBCODEX_TUNNEL_CLIENT_BIN` or `PATH`, or downloads and
-verifies pinned OpenAI `tunnel-client` v0.0.12 for Linux/macOS amd64/arm64.
-
-This provider keeps the temporary WebCodex Bearer credential in private local
-share state and gives `tunnel-client` a file-backed `Authorization` header for
-the loopback MCP hop. In ChatGPT choose **Connection: Tunnel**, select/paste the
-Tunnel ID, and choose **No authentication**; do not paste the local WebCodex
-credential into ChatGPT. `--tunnel openai` currently supports the default
-`--auth bearer` path only. Ctrl-C stops the local runtime and `tunnel-client` and
-removes the temporary WebCodex credential; the Platform Tunnel identity remains
-operator-managed for later reuse.
-
-## What happens after the first connection
-
-WebCodex can read/search files, prepare guarded edits, run commands and focused
-validation, inspect Git, and keep long-running Jobs observable. Coding results
-remain subject to the product's existing authority boundaries. Open `/console`
-to inspect project readiness and the work queue; the Console can guide, cancel,
-Accept, or Reject work where those actions are available. It deliberately does
-not reveal credentials.
-
-## Existing Server and long-lived deployments
-
-For a hosted Server whose operator intentionally gave you a shared key, connect
-the current repository with that shared-key identity:
+If ChatGPT does not show a Bearer/access-token option, or tries OAuth discovery and reports **does not implement OAuth**, use:
 
 ```bash
-cd /path/to/your/repository
-webcodex connect https://webcodex.example --key-file /private/path/shared-key
+npx --yes @yyjeqhc/webcodex share --auth query-token
 ```
 
-`connect` creates a reusable local profile, starts the Runner, waits for the
-project to become visible through that Server, and prints the MCP setup values.
-This is the hosted shared-key path; it is not the enrollment path for a freshly
-self-hosted Docker Server.
+Paste the complete `/mcp?token=...` URL and choose **No authentication**. That URL contains a temporary secret, so do not publish or log it. If WebCodex is installed globally, the equivalent command is `webcodex share --auth query-token`. See the [Quick Start](docs/QUICK_START.md) and [MCP setup guide](docs/MCP.md) for details and other clients.
 
-For a fresh self-hosted Server, keep its bootstrap administrator token on the
-Server. Create a short-lived pairing code there, then use `webcodex login` with
-that `wc_pair_...` code on the repository machine and explicitly install the
-reported Runner config as a user service. Managed OAuth remains an advanced
-identity option. See [Deployment](docs/DEPLOYMENT.md) for the complete flow.
+WebCodex automatically prepares the temporary connection it needs. Advanced networking, OAuth, private tunnels, and self-hosting options are documented separately.
+
+## What can it do?
+
+- **Understand and edit code** — read, search, inspect, and make guarded changes inside configured projects.
+- **Use the real toolchain** — run commands, tests, formatters, compilers, and project-specific tooling on the machine that owns the repository.
+- **Work with Git** — inspect status and diffs while keeping repository operations visible and reviewable.
+- **Handle long-running work** — keep jobs observable instead of requiring one model turn to stay open indefinitely.
+- **Support human review** — use the Runtime Console and task workflow to guide, cancel, accept, or reject work where those actions are available.
+
+## Why WebCodex?
+
+- **Your code stays on your machine.** The repository does not need to be copied into the chat service.
+- **The agent gets a real development environment.** It can use the same files, Git checkout, compilers, tests, and tools you already use.
+- **Work survives beyond a single request.** Long-running execution and evidence remain observable through WebCodex.
+- **Start temporary or run it long-term.** Use one-command sharing for a quick session, or connect machines to a self-hosted Server for a durable setup.
 
 ## How it works
 
 ```text
-ChatGPT / Claude / MCP client
-            |
-            | MCP / HTTPS
-            v
-      WebCodex Server
-            |
-            | authenticated Runner connection
-            v
-     webcodex-runner
-            |
-      repository / Git / toolchains
+AI client
+   |
+   | MCP / HTTPS
+   v
+WebCodex
+   |
+   v
+your machine
+   |
+   +-- repository
+   +-- Git
+   +-- compilers / tests / developer tools
 ```
 
-The Server authenticates callers and routes requests. The Runner performs the
-actual work on the machine that owns the repository. Only requested tool inputs
-and results cross the connection.
+For the internal Server/Runner architecture, protocol surfaces, and authority boundaries, see [Architecture](docs/ARCHITECTURE.md), [MCP](docs/MCP.md), and [Authentication](docs/AUTH_MODEL.md).
 
-## CLI
+## Platforms
 
-The common commands are intentionally small:
+- **Linux x64/arm64** — local `share`, Server, and Runner workflows.
+- **macOS arm64** — local `share` and Runner workflows.
+- **Windows x64/arm64** — CLI + Runner against a remote Linux Server. Local `webcodex share` is not supported on Windows in this release.
+
+Windows and long-lived deployments are covered in [Deployment](docs/DEPLOYMENT.md) and [MCP](docs/MCP.md).
+
+## Long-lived and advanced setup
+
+If you want to keep the CLI installed:
 
 ```bash
-webcodex share                     # fastest temporary ChatGPT/MCP connection
-webcodex connect <server-url>      # connect to an existing Server
-webcodex status                    # concise project readiness
-webcodex doctor                    # deeper local diagnostics
-webcodex setup                     # manual/local project setup
-webcodex run                       # manual local Server + Runner runtime
-webcodex task list                 # review local tasks
+npm install -g @yyjeqhc/webcodex
 ```
 
-The Runner is the execution component. For compatibility, Runner service
-management still uses the historical `webcodex agent ...` CLI namespace. See
-[CLI](docs/CLI.md) for operator commands and credential reference.
+If you already have a hosted WebCodex Server, `webcodex connect <server-url>` connects the current repository using the authentication configured by that Server.
+
+For production/self-hosted deployment, Windows enrollment, OAuth, private tunnels, proxy/CA configuration, and other operator workflows, use the documentation below rather than the first-run path.
 
 ## Documentation
 
-- [Quick Start](docs/QUICK_START.md) — first ChatGPT/MCP connection
-- [MCP](docs/MCP.md) — ChatGPT, Claude, authentication, then protocol reference
-- [AI-assisted setup](docs/AI_ONBOARDING.md) — instructions for an AI helping a user configure WebCodex
-- [CLI](docs/CLI.md) — commands, compatibility notes, and credentials
-- [Deployment](docs/DEPLOYMENT.md) — self-hosting and production operations
-- [Authentication](docs/AUTH_MODEL.md) — credential and authority model
-- [Runner](docs/RUNNER.md) — Runner operation
-- [Coding Workflow](docs/CODING_WORKFLOW.md) — task workflow, validation, and closeout
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Documentation index](docs/INDEX.md)
-- [Security](SECURITY.md)
+- [Quick Start](docs/QUICK_START.md) — from zero to the first successful AI connection
+- [MCP](docs/MCP.md) — ChatGPT, Claude, authentication choices, and MCP reference
+- [Deployment](docs/DEPLOYMENT.md) — self-hosting, permanent Servers, and machine enrollment
+- [Troubleshooting](docs/TROUBLESHOOTING.md) — connection and runtime problems
+- [CLI](docs/CLI.md) — command and credential reference
+- [AI-assisted setup](docs/AI_ONBOARDING.md) — have an AI agent help configure WebCodex
+- [Security](SECURITY.md) — security model and operational guidance
+- [Documentation index](docs/INDEX.md) — all user and contributor documentation
 
 ## Security
 
-WebCodex can modify files and execute commands. Register only project roots the
-assistant should access, keep credentials out of prompts/logs/Git, and prefer an
-ordinary OS user for the Runner. The simplified onboarding does not collapse
-the underlying credential or authority boundaries. Read [SECURITY.md](SECURITY.md)
-for the complete model.
+WebCodex can read and modify files and execute commands inside configured project boundaries. Use version control, keep credentials out of prompts/logs/Git, and register only project roots the assistant should access. Read [SECURITY.md](SECURITY.md) for the complete model.
 
 ## Build from source
 
@@ -198,14 +116,11 @@ export PATH="$PWD/target/release:$PATH"
 
 ## Contributing
 
-Contributions are welcome, including contributions created with WebCodex itself
-or other coding agents. For bug reports, development workflow, and pull request
-guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome, including contributions created with WebCodex itself or other coding agents. For bug reports, development workflow, and pull request guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Acknowledgements
 
-Thanks to the [LINUX DO](https://linux.do/) community for its welcoming space
-for technical discussion and support for open-source sharing.
+Thanks to the [LINUX DO](https://linux.do/) community for its welcoming space for technical discussion and support for open-source sharing.
 
 ## License
 

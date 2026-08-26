@@ -2,168 +2,110 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-WebCodex 让 ChatGPT、Claude 和其他 MCP 客户端直接使用你自己机器上的仓库与开发工具。
-Runner 在仓库所在机器上执行文件、Git、命令与测试操作；仓库本身不需要搬到聊天服务端。
+**WebCodex 让 ChatGPT、Claude 和其他 AI Agent 直接使用你自己机器上的代码仓库和开发工具。**
 
-## 用一个仓库快速试起来
+你可以直接让 AI 理解项目、修改代码、运行测试、检查 Git 或排查问题。仓库仍然留在原来的机器上，不需要为了使用 WebCodex 把整个项目搬到托管环境里。
 
-平台说明：`webcodex share` 会启动本地 WebCodex Server，目前只支持 Linux 和 macOS。
-Windows 版本支持 CLI + Runner 连接远程 Linux Server；Windows 上请使用
-`webcodex connect <server-url>`。如果还没有 Server，需要先在 Linux 上部署一个。
+## 快速开始
 
-Linux/macOS 最快的试用路径不需要全局安装：
+Linux 或 macOS 上准备好 Node.js 18+ 和 Git，然后进入一个仓库：
 
 ```bash
 cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex
 ```
 
-如果 npm lifecycle 没有留下 native binary，wrapper 会在第一次执行时用同一套校验与原子安装
-逻辑 lazy bootstrap。希望长期保留 CLI 时再全局安装：
+看到 **WebCodex ready** 后保持终端运行。接着在 ChatGPT 中：
 
-```bash
-npm install -g @yyjeqhc/webcodex
-cd /path/to/your/repository
-webcodex
-```
+1. 开启 **Developer Mode**，进入 **Settings -> Apps -> Create**。
+2. 粘贴 WebCodex 输出的 **MCP URL**。
+3. 认证选择 **Access token / API key**（或等价的 Bearer 令牌选项），再填入输出的临时 **Credential**。
+4. 点击 **Scan Tools**。
 
-在 Linux/macOS 的交互式 Git 仓库中，裸 `webcodex` 等价于普通 first-run 的
-`webcodex share`。脚本/非交互调用、Windows、以及 Git checkout 之外不会自动启动 runtime；
-需要确定性分发时继续显式使用 `webcodex share`。
-
-默认临时公网分享会优先复用 `WEBCODEX_CLOUDFLARED_BIN` 或 `PATH` 中已有的
-`cloudflared`；如果没有，WebCodex 会自动下载并校验自己管理的副本。如果通过 npm wrapper
-启动，这次 managed 下载也会复用 npm 的 proxy、`noproxy`、CA 与 `strict-ssl` 配置；否则
-继续保留标准 proxy/系统信任配置路径。`share` 是完整入口：需要时它会先准备 tunnel 依赖，
-然后配置当前 Git 项目、启动本地
-WebCodex Server + Runner、创建临时 Connector credential，并打开 Cloudflare Quick Tunnel。
-第一次使用**不需要**先运行 `setup`、`doctor` 或 `run`。
-
-命令显示 **WebCodex ready** 后保持终端运行。默认公网 share 会 best-effort 把 **MCP URL**
-复制到剪贴板；credential 不会自动复制。交互式终端还可以直接按 Enter 打开 ChatGPT
-App 设置。然后：
-
-1. 在 ChatGPT 启用 **Developer Mode**，进入 **Settings -> Apps -> Create**。
-2. 粘贴已复制的 **MCP URL**；复制失败时使用终端中照常打印的 URL。
-3. 认证选择 **Access token / API key** 或等价的 Bearer token 选项。
-4. 填入输出的临时 **Credential**。
-5. 点击 **Scan Tools**。
-6. 第一条消息先用只读、安全的请求，例如：
+第一条消息可以先只读检查：
 
 ```text
 检查这个仓库并总结它的结构。先不要做任何修改。
 ```
 
-ChatGPT 的 UI 文案可能随 workspace 与 rollout 改变。Developer Mode、custom MCP app 以及
-write/modify action 是否可用，由 ChatGPT 套餐、workspace 与管理员设置控制；WebCodex
-不能扩大客户端侧 app 权限。当前这次运行到底该填哪个 WebCodex URL、认证类型和
-credential，以 CLI 成功输出为准。
-不希望访问剪贴板时可使用 `webcodex share --no-copy-url`。
-
-如果 MCP client 无法配置 Bearer header，又不想搭 OAuth，可显式使用
-`webcodex share --auth query-token`。这个 opt-in 会输出一个 `?token=` 中携带**本次临时
-share credential** 的 MCP URL；公网 share 也会复制这条敏感 URL，此时 client 选择
-**No authentication**。必须把整条 URL 当作 secret，因为 query string 可能进入 client、
-proxy、剪贴板或 access log。默认行为仍保持更安全的“Bearer header + 单独 credential”。
-
-默认 `share` 的 URL 与 credential 都是临时的，命令退出后失效。仅做本地 MCP 调试时可用
-`webcodex share --tunnel none`，此模式不需要 `cloudflared`。
-
-### 可选：OpenAI Secure MCP Tunnel
-
-如果只希望受支持的 OpenAI 产品访问本机仓库，可以使用
-`webcodex share --tunnel openai`。先在 OpenAI Platform 创建/选择 Secure MCP Tunnel，
-然后导出 `CONTROL_PLANE_TUNNEL_ID` 与只授予 **Tunnels Read + Use** 的 Restricted
-`CONTROL_PLANE_API_KEY`。WebCodex 会依次复用 `WEBCODEX_TUNNEL_CLIENT_BIN`、`PATH`
-中匹配的 `tunnel-client`，否则为 Linux/macOS amd64/arm64 下载并校验固定的 OpenAI
-`tunnel-client` v0.0.12。
-
-这条路径把临时 WebCodex Bearer credential 留在私有本地 share state，只通过 file-backed
-`Authorization` header 交给 `tunnel-client` 访问 loopback MCP。在 ChatGPT 里选择
-**Connection: Tunnel**，选择/粘贴 Tunnel ID，并把认证选择为 **No authentication**；不要把
-本地 WebCodex credential 粘贴到 ChatGPT。`--tunnel openai` 当前只支持默认的
-`--auth bearer`。Ctrl-C 会停止本地 runtime 与 `tunnel-client` 并删除临时 WebCodex
-credential；Platform Tunnel identity 仍由 operator 管理，可以以后继续复用。
-
-## 第一次连接以后
-
-WebCodex 可以读取/搜索文件、准备受保护的修改、运行命令与聚焦校验、查看 Git，并让长时间
-Job 保持可观察。底层权限边界不会因为 onboarding 简化而改变。打开 `/console` 可以查看
-项目就绪状态与工作队列；Console 在相应状态下可以 Guide、Cancel、Accept 或 Reject，
-但不会显示 credential。
-
-## 已有 Server 与长期部署
-
-如果 hosted Server 的 operator 明确给了 shared key，用这个 shared-key identity 连接当前仓库：
+如果 ChatGPT 没有显示 Bearer/访问令牌选项，或者自动尝试 OAuth 后出现 **does not implement OAuth**，直接运行：
 
 ```bash
-cd /path/to/your/repository
-webcodex connect https://webcodex.example --key-file /private/path/shared-key
+npx --yes @yyjeqhc/webcodex share --auth query-token
 ```
 
-`connect` 会创建可复用的本地 profile、启动 Runner、等待项目在该 Server 上可见，并输出
-MCP 配置值。它是 hosted shared-key 路径，不是刚完成 Docker bootstrap 的自托管 Server
-的 enrollment 路径。
+把输出的完整 `/mcp?token=...` 地址粘贴到 ChatGPT，并选择 **No authentication**。这条地址包含本次临时密钥，不要公开、转发或记录到日志中。如果已经全局安装 WebCodex，也可以使用等价命令 `webcodex share --auth query-token`。更多客户端配置见[快速开始](docs/QUICK_START.zh-CN.md)和 [MCP 接入指南](docs/MCP.zh-CN.md)。
 
-对于新的自托管 Server，把 bootstrap administrator token 留在 Server。Server 侧创建短期
-pairing code 后，在仓库机器上用 `webcodex login` 兑换，再显式把 CLI 报告的 Runner config
-安装成 user service。managed OAuth 仍是高级 identity 选项。完整流程见[部署指南](docs/DEPLOYMENT.zh-CN.md)。
+WebCodex 会自动准备临时连接所需的组件。代理网络、OAuth、私有隧道、自托管等高级配置都放在单独的文档中，不是第一次使用的前置条件。
+
+## 能做什么？
+
+- **理解和修改代码** —— 读取、搜索、分析项目，并在配置好的项目范围内进行受保护的修改。
+- **使用真实开发环境** —— 在仓库所在机器上运行命令、测试、格式化、编译器和项目自己的工具。
+- **检查 Git** —— 查看状态和差异，让代码变化保持可见、可审查。
+- **处理长时间任务** —— 任务可以持续运行并保持可观察，不需要一次模型回复一直等待到底。
+- **保留人工审查** —— 可以通过运行时控制台和任务流程进行指导、取消、接受或拒绝。
+
+## 为什么用 WebCodex？
+
+- **代码留在自己的机器上。** 不需要把整个仓库上传到聊天服务。
+- **AI 使用的是真实开发环境。** 文件、Git、编译器、测试和已有工具链都可以直接复用。
+- **工作不局限于一次请求。** 长时间执行、测试结果和相关证据可以继续观察。
+- **既能临时使用，也能长期部署。** 可以一条命令快速分享，也可以连接到自托管服务长期使用。
 
 ## 工作方式
 
 ```text
-ChatGPT / Claude / MCP client
-            |
-            | MCP / HTTPS
-            v
-      WebCodex Server
-            |
-            | 已认证 Runner 连接
-            v
-     webcodex-runner
-            |
-      仓库 / Git / 工具链
+AI 客户端
+   |
+   | MCP / HTTPS
+   v
+WebCodex
+   |
+   v
+你的机器
+   |
+   +-- 代码仓库
+   +-- Git
+   +-- 编译器 / 测试 / 开发工具
 ```
 
-Server 负责认证与路由；真正的工作由仓库所在机器上的 Runner 执行。连接中只传输当前工具
-调用需要的输入与结果。
+如果需要了解内部的 Server/Runner 架构、协议接口和权限边界，再阅读[架构说明](docs/ARCHITECTURE.md)、[MCP](docs/MCP.zh-CN.md)和[认证模型](docs/AUTH_MODEL.zh-CN.md)。
 
-## CLI
+## 平台支持
 
-普通用户优先需要这些命令：
+- **Linux x64/arm64** —— 支持本机 `share`、Server 和 Runner 工作流。
+- **macOS arm64** —— 支持本机 `share` 和 Runner 工作流。
+- **Windows x64/arm64** —— 支持 CLI 和 Runner，连接远程 Linux Server；本版本不在 Windows 本机运行 `webcodex share`。
+
+Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP](docs/MCP.zh-CN.md)。
+
+## 长期使用与高级配置
+
+希望长期保留命令行工具时可以全局安装：
 
 ```bash
-webcodex share                     # 最快的临时 ChatGPT/MCP 接入
-webcodex connect <server-url>      # 接入已有 Server
-webcodex status                    # 简洁项目就绪状态
-webcodex doctor                    # 更完整的本地诊断
-webcodex setup                     # 手动/本地项目设置
-webcodex run                       # 手动启动本地 Server + Runner
-webcodex task list                 # 审查本地任务
+npm install -g @yyjeqhc/webcodex
 ```
 
-Runner 是执行组件。为了兼容现有 CLI，Runner 服务管理仍使用历史命名空间
-`webcodex agent ...`。operator 命令与 credential reference 见 [CLI](docs/CLI.zh-CN.md)。
+如果已经有 WebCodex Server，使用 `webcodex connect <server-url>` 把当前仓库接入该服务，并按照服务端配置的认证方式连接。
+
+生产环境、自托管、Windows 接入、OAuth、私有隧道、代理/私有 CA 等运维配置请直接查看下面的专题文档，不需要在第一次体验前理解这些概念。
 
 ## 文档
 
-- [快速开始](docs/QUICK_START.zh-CN.md) —— 第一次 ChatGPT/MCP 接入
-- [MCP](docs/MCP.zh-CN.md) —— 先讲 ChatGPT/Claude 与认证，再进入协议参考
-- [AI 接入指南](docs/AI_ONBOARDING.zh-CN.md) —— 供 AI 帮用户配置 WebCodex
-- [CLI](docs/CLI.zh-CN.md) —— 命令、兼容说明与凭据
-- [部署指南](docs/DEPLOYMENT.zh-CN.md) —— 自托管与生产运维
-- [认证模型](docs/AUTH_MODEL.zh-CN.md) —— credential 与 authority 模型
-- [Runner](docs/RUNNER.zh-CN.md) —— Runner 运维
-- [Coding 工作流](docs/CODING_WORKFLOW.zh-CN.md)
-- [故障排查](docs/TROUBLESHOOTING.zh-CN.md)
-- [文档索引](docs/INDEX.zh-CN.md)
-- [安全](SECURITY.md)
+- [快速开始](docs/QUICK_START.zh-CN.md) —— 从零到第一次成功连接 AI
+- [MCP](docs/MCP.zh-CN.md) —— ChatGPT、Claude、认证方式和 MCP 参考
+- [部署指南](docs/DEPLOYMENT.zh-CN.md) —— 自托管、长期 Server 和机器接入
+- [故障排查](docs/TROUBLESHOOTING.zh-CN.md) —— 连接和运行问题
+- [CLI](docs/CLI.zh-CN.md) —— 命令与凭据参考
+- [AI 辅助接入](docs/AI_ONBOARDING.zh-CN.md) —— 让 AI 帮你配置 WebCodex
+- [安全说明](SECURITY.md) —— 安全模型与使用建议
+- [文档索引](docs/INDEX.zh-CN.md) —— 全部用户和贡献者文档
 
 ## 安全
 
-WebCodex 可以修改文件并执行命令。只注册允许助手访问的项目根目录，不要把 credential 写进
-prompt、日志或 Git，并优先让 Runner 使用普通 OS 用户。onboarding 的简化不会合并底层真实
-不同的 credential/authority。完整模型见 [SECURITY.md](SECURITY.md)。
+WebCodex 能在配置的项目范围内读取和修改文件、执行命令。建议使用版本控制，不要把凭据写进提示词、日志或 Git，只注册确实希望 AI 访问的项目目录。完整安全模型见 [SECURITY.md](SECURITY.md)。
 
 ## 从源码构建
 
@@ -174,14 +116,12 @@ export PATH="$PWD/target/release:$PATH"
 
 ## 参与贡献
 
-欢迎参与 WebCodex 开发，也欢迎直接使用 WebCodex 本身或其他 coding agent 来完成贡献。
-Bug 报告、开发流程和 pull request 说明见
-[CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。
+欢迎提交贡献，也欢迎使用 WebCodex 或其他 coding agent 辅助开发。Bug 报告、开发流程与 PR 说明见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## 鸣谢
+## 致谢
 
-感谢 [LINUX DO](https://linux.do/) 社区提供的交流氛围与开源推广支持。
+感谢 [LINUX DO](https://linux.do/) 社区提供友好的技术交流与开源分享环境。
 
-## License
+## 许可证
 
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+使用 Apache License 2.0，见 [LICENSE](LICENSE)。

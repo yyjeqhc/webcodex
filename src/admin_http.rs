@@ -11,27 +11,19 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub(crate) const ADMIN_ROUTES: &[&str] = &[
-    "/api/admin/dashboard",
-    "/api/admin/projects/register",
-    "/api/admin/projects/create",
-    "/api/admin/projects/enable",
-    "/api/admin/projects/disable",
-    "/api/admin/projects/unregister",
-];
 const ACTIVITY_LIMIT: usize = 50;
 const ADMIN_BODY_MAX_BYTES: usize = 16 * 1024;
 
 pub(crate) fn routes() -> Router {
-    Router::with_path("admin")
-        .push(Router::with_path("dashboard").post(dashboard))
+    use crate::route_metadata::{api_path, RouteId};
+    Router::new()
+        .push(Router::with_path(api_path(RouteId::AdminDashboard)).post(dashboard))
+        .push(Router::with_path(api_path(RouteId::AdminProjectsRegister)).post(register_project))
+        .push(Router::with_path(api_path(RouteId::AdminProjectsCreate)).post(create_project))
+        .push(Router::with_path(api_path(RouteId::AdminProjectsEnable)).post(enable_project))
+        .push(Router::with_path(api_path(RouteId::AdminProjectsDisable)).post(disable_project))
         .push(
-            Router::with_path("projects")
-                .push(Router::with_path("register").post(register_project))
-                .push(Router::with_path("create").post(create_project))
-                .push(Router::with_path("enable").post(enable_project))
-                .push(Router::with_path("disable").post(disable_project))
-                .push(Router::with_path("unregister").post(unregister_project)),
+            Router::with_path(api_path(RouteId::AdminProjectsUnregister)).post(unregister_project),
         )
 }
 
@@ -709,11 +701,15 @@ mod tests {
 
     #[test]
     fn admin_routes_are_separate_from_console_routes() {
-        assert!(ADMIN_ROUTES
+        let mut admin = crate::route_metadata::routes()
             .iter()
-            .all(|route| route.starts_with("/api/admin/")));
-        assert!(ADMIN_ROUTES
-            .iter()
-            .all(|route| !crate::host_console_http::CONSOLE_ROUTES.contains(route)));
+            .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::Admin);
+        assert!(admin
+            .clone()
+            .all(|spec| spec.path.starts_with("/api/admin/")));
+        assert!(admin.all(|spec| !crate::route_metadata::path_has_surface(
+            spec.path,
+            crate::route_metadata::RouteSurface::HostConsole,
+        )));
     }
 }

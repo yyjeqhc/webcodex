@@ -197,6 +197,37 @@ fn openapi_does_not_expose_any_legacy_or_non_gpt_action_paths() {
 }
 
 #[test]
+fn openapi_route_visibility_matches_canonical_metadata() {
+    use std::collections::BTreeSet;
+
+    let spec = build_openapi_spec();
+    let actual = spec["paths"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let expected = crate::route_metadata::routes()
+        .iter()
+        .filter(|route| {
+            route.openapi_visibility == crate::route_metadata::OpenApiVisibility::PublicActions
+        })
+        .map(|route| route.path.to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(actual, expected);
+
+    for route in crate::route_metadata::routes().iter().filter(|route| {
+        route.openapi_visibility == crate::route_metadata::OpenApiVisibility::Hidden
+    }) {
+        assert!(
+            !actual.contains(route.path),
+            "hidden route leaked: {}",
+            route.path
+        );
+    }
+}
+
+#[test]
 fn openapi_phase3_exposes_validate_patch_as_dedicated_action() {
     // Phase 3: validate_patch is now promoted to a dedicated GPT Action
     // (validateProjectPatch) so a custom GPT can dry-run patches without

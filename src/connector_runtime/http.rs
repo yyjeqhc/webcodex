@@ -7,22 +7,23 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub(crate) fn routes() -> Router {
-    Router::with_path("connector")
-        .push(Router::with_path("readiness").post(readiness))
-        .push(Router::with_path("task/start").post(task_start))
-        .push(Router::with_path("task/list").post(task_list))
-        .push(Router::with_path("task/resume").post(task_resume))
-        .push(Router::with_path("files/list").post(files_list))
-        .push(Router::with_path("files/read").post(files_read))
-        .push(Router::with_path("files/search").post(files_search))
-        .push(Router::with_path("code/navigate").post(code_navigate))
-        .push(Router::with_path("code/impact").post(code_impact))
-        .push(Router::with_path("edits/apply").post(edits_apply))
-        .push(Router::with_path("checks/run").post(checks_run))
-        .push(Router::with_path("commands/run").post(commands_run))
-        .push(Router::with_path("task/review").post(task_review))
-        .push(Router::with_path("task/cancel").post(task_cancel))
-        .push(Router::with_path("task/finish").post(task_finish))
+    use crate::route_metadata::{api_path, RouteId};
+    Router::new()
+        .push(Router::with_path(api_path(RouteId::ConnectorReadiness)).post(readiness))
+        .push(Router::with_path(api_path(RouteId::ConnectorTaskStart)).post(task_start))
+        .push(Router::with_path(api_path(RouteId::ConnectorTaskList)).post(task_list))
+        .push(Router::with_path(api_path(RouteId::ConnectorTaskResume)).post(task_resume))
+        .push(Router::with_path(api_path(RouteId::ConnectorFilesList)).post(files_list))
+        .push(Router::with_path(api_path(RouteId::ConnectorFilesRead)).post(files_read))
+        .push(Router::with_path(api_path(RouteId::ConnectorFilesSearch)).post(files_search))
+        .push(Router::with_path(api_path(RouteId::ConnectorCodeNavigate)).post(code_navigate))
+        .push(Router::with_path(api_path(RouteId::ConnectorCodeImpact)).post(code_impact))
+        .push(Router::with_path(api_path(RouteId::ConnectorEditsApply)).post(edits_apply))
+        .push(Router::with_path(api_path(RouteId::ConnectorChecksRun)).post(checks_run))
+        .push(Router::with_path(api_path(RouteId::ConnectorCommandsRun)).post(commands_run))
+        .push(Router::with_path(api_path(RouteId::ConnectorTaskReview)).post(task_review))
+        .push(Router::with_path(api_path(RouteId::ConnectorTaskCancel)).post(task_cancel))
+        .push(Router::with_path(api_path(RouteId::ConnectorTaskFinish)).post(task_finish))
 }
 
 #[handler]

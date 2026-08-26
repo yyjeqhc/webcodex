@@ -35,24 +35,42 @@ const MAX_MESSAGE_LIMIT: usize = 100;
 const MAX_OBSERVATION_TOKEN_CHARS: usize = 192;
 
 pub(crate) fn routes() -> Router {
-    Router::with_path("runtime-console")
-        .push(Router::with_path("overview").post(overview))
-        .push(Router::with_path("runner").post(runner))
-        .push(Router::with_path("projects").post(projects))
-        .push(Router::with_path("workflow-sessions").post(workflow_sessions))
-        .push(Router::with_path("workflow-session").post(workflow_session))
-        .push(Router::with_path("workflow-session-messages").post(workflow_session_messages))
-        .push(Router::with_path("workflow-session-observe").post(workflow_session_observe))
+    use crate::route_metadata::{api_path, RouteId};
+    Router::new()
+        .push(Router::with_path(api_path(RouteId::RuntimeConsoleOverview)).post(overview))
+        .push(Router::with_path(api_path(RouteId::RuntimeConsoleRunner)).post(runner))
+        .push(Router::with_path(api_path(RouteId::RuntimeConsoleProjects)).post(projects))
         .push(
-            Router::with_path("workflow-session-post-message").post(workflow_session_post_message),
+            Router::with_path(api_path(RouteId::RuntimeConsoleWorkflowSessions))
+                .post(workflow_sessions),
         )
         .push(
-            Router::with_path("workflow-session-withdraw-message")
-                .post(workflow_session_withdraw_message),
+            Router::with_path(api_path(RouteId::RuntimeConsoleWorkflowSession))
+                .post(workflow_session),
         )
         .push(
-            Router::with_path("workflow-session-replace-message")
-                .post(workflow_session_replace_message),
+            Router::with_path(api_path(RouteId::RuntimeConsoleWorkflowSessionMessages))
+                .post(workflow_session_messages),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleWorkflowSessionObserve))
+                .post(workflow_session_observe),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleWorkflowSessionPostMessage))
+                .post(workflow_session_post_message),
+        )
+        .push(
+            Router::with_path(api_path(
+                RouteId::RuntimeConsoleWorkflowSessionWithdrawMessage,
+            ))
+            .post(workflow_session_withdraw_message),
+        )
+        .push(
+            Router::with_path(api_path(
+                RouteId::RuntimeConsoleWorkflowSessionReplaceMessage,
+            ))
+            .post(workflow_session_replace_message),
         )
 }
 
@@ -3038,10 +3056,11 @@ mod tests {
         assert!(body.contains("refresh retained messages before retrying"));
 
         let openapi = crate::openapi::build_openapi_spec();
-        for path in [
-            "/api/runtime-console/workflow-session-withdraw-message",
-            "/api/runtime-console/workflow-session-replace-message",
+        for id in [
+            crate::route_metadata::RouteId::RuntimeConsoleWorkflowSessionWithdrawMessage,
+            crate::route_metadata::RouteId::RuntimeConsoleWorkflowSessionReplaceMessage,
         ] {
+            let path = crate::route_metadata::path(id);
             assert!(
                 openapi["paths"].get(path).is_none(),
                 "{path} leaked into OpenAPI"

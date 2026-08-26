@@ -10,39 +10,28 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
-pub(crate) const CONSOLE_ROUTES: &[&str] = &[
-    "/api/console/readiness",
-    "/api/console/tasks",
-    "/api/console/activity",
-    "/api/console/workflow-sessions",
-    "/api/console/workflow-session",
-    "/api/console/task/review",
-    "/api/console/task/cancel",
-    "/api/console/task/guide",
-    "/api/console/approvals",
-    "/api/console/approval/decide",
-    "/api/console/devices",
-    "/api/console/result/accept",
-    "/api/console/result/reject",
-    "/api/console/connect",
-];
-
 pub(crate) fn routes() -> Router {
-    Router::with_path("console")
-        .push(Router::with_path("readiness").post(readiness))
-        .push(Router::with_path("tasks").post(tasks))
-        .push(Router::with_path("activity").post(activity))
-        .push(Router::with_path("workflow-sessions").post(workflow_sessions))
-        .push(Router::with_path("workflow-session").post(workflow_session))
-        .push(Router::with_path("task/review").post(task_review))
-        .push(Router::with_path("task/cancel").post(task_cancel))
-        .push(Router::with_path("task/guide").post(task_guide))
-        .push(Router::with_path("approvals").post(approvals))
-        .push(Router::with_path("approval/decide").post(approval_decide))
-        .push(Router::with_path("devices").post(devices))
-        .push(Router::with_path("result/accept").post(result_accept))
-        .push(Router::with_path("result/reject").post(result_reject))
-        .push(Router::with_path("connect").post(connect))
+    use crate::route_metadata::{api_path, RouteId};
+    Router::new()
+        .push(Router::with_path(api_path(RouteId::HostConsoleReadiness)).post(readiness))
+        .push(Router::with_path(api_path(RouteId::HostConsoleTasks)).post(tasks))
+        .push(Router::with_path(api_path(RouteId::HostConsoleActivity)).post(activity))
+        .push(
+            Router::with_path(api_path(RouteId::HostConsoleWorkflowSessions))
+                .post(workflow_sessions),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::HostConsoleWorkflowSession)).post(workflow_session),
+        )
+        .push(Router::with_path(api_path(RouteId::HostConsoleTaskReview)).post(task_review))
+        .push(Router::with_path(api_path(RouteId::HostConsoleTaskCancel)).post(task_cancel))
+        .push(Router::with_path(api_path(RouteId::HostConsoleTaskGuide)).post(task_guide))
+        .push(Router::with_path(api_path(RouteId::HostConsoleApprovals)).post(approvals))
+        .push(Router::with_path(api_path(RouteId::HostConsoleApprovalDecide)).post(approval_decide))
+        .push(Router::with_path(api_path(RouteId::HostConsoleDevices)).post(devices))
+        .push(Router::with_path(api_path(RouteId::HostConsoleResultAccept)).post(result_accept))
+        .push(Router::with_path(api_path(RouteId::HostConsoleResultReject)).post(result_reject))
+        .push(Router::with_path(api_path(RouteId::HostConsoleConnect)).post(connect))
 }
 
 fn failure(status: u16, code: &str, message: impl Into<String>) -> ConnectorCallOutcome {

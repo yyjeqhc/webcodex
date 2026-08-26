@@ -5,9 +5,9 @@
 //! on agent transport endpoints (`/api/shell/agent/*`, `/api/agents/ws`). They
 //! are intentionally **not** exposed in `/openapi.json` (GPT Actions) because
 //! token creation is sensitive and should be driven by an admin CLI/HTTP
-//! client, not a GPT. The paths are listed in `LEGACY_FORBIDDEN_PATHS` so
-//! tests catch accidental OpenAPI inclusion. All endpoints sit behind the
-//! shared `AuthMiddleware` (Bearer auth) and resolve the caller's
+//! client, not a GPT. Their canonical `RouteSpec` entries are `Hidden`, and
+//! OpenAPI tests derive the exclusion invariant from that metadata. All endpoints
+//! sit behind the shared `AuthMiddleware` (Bearer auth) and resolve the caller's
 //! [`AuthContext`] to enforce the admin/bootstrap-or-self boundary.
 //!
 //! Security properties:

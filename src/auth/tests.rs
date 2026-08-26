@@ -1139,7 +1139,11 @@ async fn oauth2_verifier_accepts_current_project_share_and_preserves_project_ide
         Some(PROJECT_SHARE_OAUTH_TOKEN_KIND)
     );
     assert!(enforce_project_connector_surface(true, &ctx, "/mcp").is_ok());
-    for path in AGENT_TRANSPORT_PATHS {
+    for path in crate::route_metadata::routes()
+        .iter()
+        .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::AgentTransport)
+        .map(|spec| spec.path)
+    {
         assert!(enforce_token_surface(&ctx, path).is_err());
     }
 }
@@ -1215,9 +1219,18 @@ fn enforce_token_surface_matrix() {
         "/api/projects/list",
         "/mcp",
     ];
-    let lightweight_account_rejected: Vec<&str> = ACCOUNT_CONTROL_PATHS.to_vec();
+    let lightweight_account_rejected: Vec<&str> = crate::route_metadata::routes()
+        .iter()
+        .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::AccountControl)
+        .map(|spec| spec.path)
+        .collect();
     let mut open_rejected = lightweight_account_rejected.clone();
-    open_rejected.extend(AGENT_TRANSPORT_PATHS);
+    open_rejected.extend(
+        crate::route_metadata::routes()
+            .iter()
+            .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::AgentTransport)
+            .map(|spec| spec.path),
+    );
 
     // Rows: (label, ctx, allowed paths, rejected paths, rejection message
     // substring; "" skips the message check). Every rejection must be
@@ -2242,7 +2255,11 @@ async fn auth_middleware_lightweight_empty_and_open_paths() {
 
     let (status, body) = gate_send(&service, "/api/runtime/status", Some("my-key")).await;
     assert_eq!(status, StatusCode::OK, "body: {:?}", body);
-    for path in AGENT_TRANSPORT_PATHS {
+    for path in crate::route_metadata::routes()
+        .iter()
+        .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::AgentTransport)
+        .map(|spec| spec.path)
+    {
         let (status, body) = gate_send(&service, path, Some("my-key")).await;
         assert_eq!(
             status,

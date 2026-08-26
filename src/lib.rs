@@ -1,5 +1,6 @@
 #![recursion_limit = "512"]
 
+use crate::route_metadata::RouteId;
 use salvo::cors::Cors;
 use salvo::prelude::*;
 #[cfg(test)]
@@ -35,6 +36,7 @@ mod openapi;
 mod pairing_http;
 mod project_entry;
 mod projects;
+mod route_metadata;
 mod runtime_console_http;
 mod runtime_http;
 mod server_listener;
@@ -330,121 +332,256 @@ only for local/trusted-network demos."
         }
     }
 
-    let _admin_route_allowlist = admin_http::ADMIN_ROUTES;
     let authed_api_router = Router::new()
         .hoop(AuthMiddleware)
         .push(connector_runtime::http::routes())
         .push(host_console_http::routes())
         .push(runtime_console_http::routes())
         .push(admin_http::routes())
-        .push(Router::with_path("tools/list").post(runtime_http::tools_list))
-        .push(Router::with_path("tools/call").post(runtime_http::tools_call))
         .push(
-            Router::with_path("artifacts/import")
+            Router::with_path(route_metadata::api_path(RouteId::ToolsList))
+                .post(runtime_http::tools_list),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ToolsCall))
+                .post(runtime_http::tools_call),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ArtifactsImport))
                 .post(runtime_http::import_conversation_files_to_project),
         )
-        .push(Router::with_path("jobs/status").post(runtime_http::job_status))
-        .push(Router::with_path("jobs/log").post(runtime_http::job_log))
-        .push(Router::with_path("jobs/stop").post(runtime_http::job_stop))
-        .push(Router::with_path("jobs/list").post(runtime_http::jobs_list))
-        .push(Router::with_path("jobs/tail").post(runtime_http::job_tail))
-        .push(Router::with_path("projects/list").post(runtime_http::projects_list))
-        .push(Router::with_path("projects/register").post(runtime_http::projects_register))
-        .push(Router::with_path("projects/create").post(runtime_http::projects_create))
-        .push(Router::with_path("projects/unregister").post(runtime_http::projects_unregister))
-        .push(Router::with_path("projects/read_file").post(runtime_http::projects_read_file))
-        .push(Router::with_path("projects/git_status").post(runtime_http::projects_git_status))
-        .push(Router::with_path("projects/git_diff").post(runtime_http::projects_git_diff))
         .push(
-            Router::with_path("projects/git_diff_summary")
+            Router::with_path(route_metadata::api_path(RouteId::JobsStatus))
+                .post(runtime_http::job_status),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::JobsLog))
+                .post(runtime_http::job_log),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::JobsStop))
+                .post(runtime_http::job_stop),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::JobsList))
+                .post(runtime_http::jobs_list),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::JobsTail))
+                .post(runtime_http::job_tail),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsList))
+                .post(runtime_http::projects_list),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsRegister))
+                .post(runtime_http::projects_register),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsCreate))
+                .post(runtime_http::projects_create),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsUnregister))
+                .post(runtime_http::projects_unregister),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsReadFile))
+                .post(runtime_http::projects_read_file),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsGitStatus))
+                .post(runtime_http::projects_git_status),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsGitDiff))
+                .post(runtime_http::projects_git_diff),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsGitDiffSummary))
                 .post(runtime_http::projects_git_diff_summary),
         )
-        .push(Router::with_path("projects/list_files").post(runtime_http::projects_list_files))
-        .push(Router::with_path("projects/search_text").post(runtime_http::projects_search_text))
-        .push(Router::with_path("projects/apply_patch").post(runtime_http::projects_apply_patch))
         .push(
-            Router::with_path("projects/validate_patch")
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsListFiles))
+                .post(runtime_http::projects_list_files),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsSearchText))
+                .post(runtime_http::projects_search_text),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsApplyPatch))
+                .post(runtime_http::projects_apply_patch),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsValidatePatch))
                 .post(runtime_http::projects_validate_patch),
         )
-        .push(Router::with_path("projects/run_shell").post(runtime_http::projects_run_shell))
         .push(
-            Router::with_path("projects/apply_patch_checked")
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsRunShell))
+                .post(runtime_http::projects_run_shell),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsApplyPatchChecked))
                 .post(runtime_http::projects_apply_patch_checked),
         )
-        .push(Router::with_path("projects/delete_files").post(runtime_http::projects_delete_files))
         .push(
-            Router::with_path("projects/git_restore_paths")
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsDeleteFiles))
+                .post(runtime_http::projects_delete_files),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsGitRestorePaths))
                 .post(runtime_http::projects_git_restore_paths),
         )
         .push(
-            Router::with_path("projects/discard_untracked")
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsDiscardUntracked))
                 .post(runtime_http::projects_discard_untracked),
         )
-        .push(Router::with_path("projects/run_job").post(runtime_http::projects_run_job))
-        .push(Router::with_path("runtime/status").post(runtime_http::runtime_status))
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsRunJob))
+                .post(runtime_http::projects_run_job),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::RuntimeStatus))
+                .post(runtime_http::runtime_status),
+        )
         // Phase 2e-3: first-party OAuth client management API. Behind
         // AuthMiddleware; route policy is FirstPartyOnly so OAuth2 access
         // tokens are rejected even with account:manage.
-        .push(Router::with_path("oauth/clients/create").post(oauth_http::oauth_clients_create))
-        .push(Router::with_path("oauth/clients/list").post(oauth_http::oauth_clients_list))
         .push(
-            Router::with_path("oauth/clients/update_scopes")
+            Router::with_path(route_metadata::api_path(RouteId::OAuthClientsCreate))
+                .post(oauth_http::oauth_clients_create),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::OAuthClientsList))
+                .post(oauth_http::oauth_clients_list),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::OAuthClientsUpdateScopes))
                 .post(oauth_http::oauth_clients_update_scopes),
         )
-        .push(Router::with_path("oauth/clients/revoke").post(oauth_http::oauth_clients_revoke))
         .push(
-            Router::with_path("oauth/shared-key-client/provision")
-                .post(oauth_http::oauth_shared_key_client_provision),
+            Router::with_path(route_metadata::api_path(RouteId::OAuthClientsRevoke))
+                .post(oauth_http::oauth_clients_revoke),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(
+                RouteId::OAuthSharedKeyClientProvision,
+            ))
+            .post(oauth_http::oauth_shared_key_client_provision),
         )
         // Phase 2 multi-user auth: user + personal API token management.
         // REST-only admin/self-management surface; intentionally NOT
         // exposed in /openapi.json (GPT Actions) because token creation is
         // sensitive. All behind the shared AuthMiddleware Bearer auth.
-        .push(Router::with_path("users/create").post(users_http::users_create))
-        .push(Router::with_path("users/list").post(users_http::users_list))
-        .push(Router::with_path("users/me").post(users_http::users_me))
-        .push(Router::with_path("tokens/create").post(users_http::tokens_create))
-        .push(Router::with_path("tokens/register_hash").post(users_http::tokens_register_hash))
-        .push(Router::with_path("tokens/list").post(users_http::tokens_list))
-        .push(Router::with_path("tokens/revoke").post(users_http::tokens_revoke))
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::UsersCreate))
+                .post(users_http::users_create),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::UsersList))
+                .post(users_http::users_list),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::UsersMe))
+                .post(users_http::users_me),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::TokensCreate))
+                .post(users_http::tokens_create),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::TokensRegisterHash))
+                .post(users_http::tokens_register_hash),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::TokensList))
+                .post(users_http::tokens_list),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::TokensRevoke))
+                .post(users_http::tokens_revoke),
+        )
         // Phase 3 agent token management: REST-only admin/self-management
         // surface for agent tokens bound to an owner + allowed_client_id.
         // Intentionally NOT exposed in /openapi.json (GPT Actions) because
         // token creation is sensitive. All behind the shared AuthMiddleware
         // Bearer auth. Agent tokens themselves are rejected from these
         // endpoints so a leaked agent token cannot mint more tokens.
-        .push(Router::with_path("agent-tokens/create").post(agent_tokens_http::agent_tokens_create))
         .push(
-            Router::with_path("agent-tokens/register_hash")
+            Router::with_path(route_metadata::api_path(RouteId::AgentTokensCreate))
+                .post(agent_tokens_http::agent_tokens_create),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::AgentTokensRegisterHash))
                 .post(agent_tokens_http::agent_tokens_register_hash),
         )
-        .push(Router::with_path("agent-tokens/list").post(agent_tokens_http::agent_tokens_list))
-        .push(Router::with_path("agent-tokens/revoke").post(agent_tokens_http::agent_tokens_revoke))
-        .push(Router::with_path("shell/run").post(shell_run))
-        .push(Router::with_path("shell/file").post(shell_file_op))
-        .push(Router::with_path("shell/job").post(shell_job))
-        .push(Router::with_path("shell/jobs/status").post(shell_job_status))
-        .push(Router::with_path("shell/jobs/log").post(shell_job_log))
-        .push(Router::with_path("shell/jobs/stop").post(shell_job_stop))
-        .push(Router::with_path("shell/jobs/list").post(shell_jobs_list))
-        .push(Router::with_path("shell/agent/register").post(shell_agent_register))
-        .push(Router::with_path("shell/agent/poll").post(shell_agent_poll))
-        .push(Router::with_path("shell/agent/result").post(shell_agent_result))
         .push(
-            Router::with_path("shell/agent/persistent_shell_result")
-                .post(shell_agent_persistent_shell_result),
+            Router::with_path(route_metadata::api_path(RouteId::AgentTokensList))
+                .post(agent_tokens_http::agent_tokens_list),
         )
-        .push(Router::with_path("shell/agent/job_update").post(shell_agent_job_update))
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::AgentTokensRevoke))
+                .post(agent_tokens_http::agent_tokens_revoke),
+        )
+        .push(Router::with_path(route_metadata::api_path(RouteId::ShellRun)).post(shell_run))
+        .push(Router::with_path(route_metadata::api_path(RouteId::ShellFile)).post(shell_file_op))
+        .push(Router::with_path(route_metadata::api_path(RouteId::ShellJob)).post(shell_job))
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ShellJobsStatus))
+                .post(shell_job_status),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ShellJobsLog)).post(shell_job_log),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ShellJobsStop))
+                .post(shell_job_stop),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ShellJobsList))
+                .post(shell_jobs_list),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ShellAgentRegister))
+                .post(shell_agent_register),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ShellAgentPoll))
+                .post(shell_agent_poll),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ShellAgentResult))
+                .post(shell_agent_result),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(
+                RouteId::ShellAgentPersistentShellResult,
+            ))
+            .post(shell_agent_persistent_shell_result),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::ShellAgentJobUpdate))
+                .post(shell_agent_job_update),
+        )
         // WebSocket agent transport (preferred long-lived connection).
         // Polling endpoints above remain as fallback. Bearer auth is
         // enforced by the shared AuthMiddleware hoop.
-        .push(Router::with_path("agents/ws").get(agent_ws::agent_ws));
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::AgentsWs)).get(agent_ws::agent_ws),
+        );
 
     let api_router = Router::with_path("api")
-        .push(Router::with_path("pairing/enroll").post(pairing_http::pairing_enroll))
         .push(
-            authed_api_router
-                .push(Router::with_path("pairing/create").post(pairing_http::pairing_create)),
+            Router::with_path(route_metadata::api_path(RouteId::PairingEnroll))
+                .post(pairing_http::pairing_enroll),
+        )
+        .push(
+            authed_api_router.push(
+                Router::with_path(route_metadata::api_path(RouteId::PairingCreate))
+                    .post(pairing_http::pairing_create),
+            ),
         );
 
     let openapi_router = Router::with_path("openapi.json").get(openapi_json);
@@ -498,44 +635,81 @@ only for local/trusted-network demos."
         // OAuth2 token, revocation, and discovery endpoints — public, no
         // AuthMiddleware. Token/revoke clients authenticate via
         // client_id + client_secret in the form body.
-        .push(Router::with_path("oauth/token").post(oauth_http::oauth_token))
-        .push(Router::with_path("oauth/revoke").post(oauth_http::oauth_revoke))
+        .push(
+            Router::with_path(route_metadata::root_path(RouteId::OAuthToken))
+                .post(oauth_http::oauth_token),
+        )
+        .push(
+            Router::with_path(route_metadata::root_path(RouteId::OAuthRevoke))
+                .post(oauth_http::oauth_revoke),
+        )
         // /oauth/authorize is NOT behind AuthMiddleware: the handler accepts
         // either a first-party Bearer token (Bootstrap / PAT, backward
         // compatible direct code issuance) or a short-lived authorize
         // session cookie set by the login form. login/consent do their own
         // token/session validation.
         .push(
-            Router::with_path("oauth/authorize")
-                .get(oauth_http::oauth_authorize)
-                .push(Router::with_path("login").post(oauth_http::oauth_authorize_login))
-                .push(Router::with_path("consent").post(oauth_http::oauth_authorize_consent))
-                .push(Router::with_path("bridge").post(oauth_http::oauth_authorize_bridge))
-                .push(Router::with_path("project").post(oauth_http::oauth_authorize_project)),
+            Router::new()
+                .push(
+                    Router::with_path(route_metadata::root_path(RouteId::OAuthAuthorize))
+                        .get(oauth_http::oauth_authorize),
+                )
+                .push(
+                    Router::with_path(route_metadata::root_path(RouteId::OAuthAuthorizeLogin))
+                        .post(oauth_http::oauth_authorize_login),
+                )
+                .push(
+                    Router::with_path(route_metadata::root_path(RouteId::OAuthAuthorizeConsent))
+                        .post(oauth_http::oauth_authorize_consent),
+                )
+                .push(
+                    Router::with_path(route_metadata::root_path(RouteId::OAuthAuthorizeBridge))
+                        .post(oauth_http::oauth_authorize_bridge),
+                )
+                .push(
+                    Router::with_path(route_metadata::root_path(RouteId::OAuthAuthorizeProject))
+                        .post(oauth_http::oauth_authorize_project),
+                ),
         )
         .push(
-            Router::with_path(".well-known/oauth-protected-resource")
-                .get(oauth_http::oauth_metadata),
+            Router::with_path(route_metadata::root_path(
+                RouteId::WellKnownProtectedResource,
+            ))
+            .get(oauth_http::oauth_metadata),
         )
         .push(
-            Router::with_path(".well-known/oauth-authorization-server")
-                .get(oauth_http::oauth_authorization_server_metadata),
+            Router::with_path(route_metadata::root_path(
+                RouteId::WellKnownAuthorizationServer,
+            ))
+            .get(oauth_http::oauth_authorization_server_metadata),
         )
         .push(
-            Router::with_path("mcp")
-                .hoop(AuthMiddleware)
-                .get(mcp::mcp_info)
-                .post(mcp::mcp_post),
+            Router::with_path(route_metadata::shared_root_path(
+                RouteId::McpGet,
+                RouteId::McpPost,
+            ))
+            .hoop(AuthMiddleware)
+            .get(mcp::mcp_info)
+            .post(mcp::mcp_post),
         );
 
     // Read-only audit query API. Admin/debug surface only: NOT part of the
     // GPT Actions OpenAPI schema. All endpoints are POST + Bearer auth.
     router = router.push(
-        Router::with_path("api/audit")
+        Router::new()
             .hoop(AuthMiddleware)
-            .push(Router::with_path("sessions").post(audit_http::audit_sessions))
-            .push(Router::with_path("session").post(audit_http::audit_session))
-            .push(Router::with_path("stats").post(audit_http::audit_stats)),
+            .push(
+                Router::with_path(route_metadata::root_path(RouteId::AuditSessions))
+                    .post(audit_http::audit_sessions),
+            )
+            .push(
+                Router::with_path(route_metadata::root_path(RouteId::AuditSession))
+                    .post(audit_http::audit_session),
+            )
+            .push(
+                Router::with_path(route_metadata::root_path(RouteId::AuditStats))
+                    .post(audit_http::audit_stats),
+            ),
     );
     tracing::info!("Server started successfully!");
     let port = addr.split(':').next_back().unwrap_or("8080");

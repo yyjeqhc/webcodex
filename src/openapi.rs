@@ -145,10 +145,9 @@ const GPT_ACTION_OPS: &[&str] = &[
     "callRuntimeTool",
 ];
 
-/// Legacy and non-GPT-Actions paths that must never appear in
-/// `/openapi.json`. The GPT Actions surface is intentionally small and
-/// POST-only; removed legacy `/api/codex/*` paths must stay absent from the
-/// GPT-importable schema.
+/// Removed or non-route resources that must never appear in `/openapi.json`.
+/// Current HTTP-route visibility is owned by `route_metadata`; this list keeps
+/// only historical endpoints and browser/static resources with no RouteSpec.
 #[cfg(test)]
 const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/messages",
@@ -167,64 +166,8 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/codex/report",
     "/api/codex/projects",
     "/api/codex/run",
-    "/api/shell/run",
-    "/api/shell/job",
-    "/api/shell/file",
-    "/api/shell/jobs/status",
-    "/api/shell/jobs/log",
-    "/api/shell/jobs/stop",
-    "/api/jobs/stop",
-    "/api/shell/jobs/list",
-    "/api/shell/agent/register",
-    "/api/shell/agent/poll",
-    "/api/shell/agent/result",
-    "/api/shell/agent/persistent_shell_result",
-    "/api/shell/agent/job_update",
-    // Retained whole-file write tool stays runtime-only through
-    // callRuntimeTool / MCP tools/call; it must not be promoted to a
-    // dedicated GPT Action. The legacy single-purpose edit tools
-    // (replace_in_file, replace_exact_block, insert_before_pattern,
-    // insert_after_pattern, replace_line_range, insert_at_line,
-    // delete_line_range) were removed entirely, so they have no paths.
     "/api/projects/write_file",
-    "/api/audit/sessions",
-    "/api/audit/session",
-    "/api/audit/stats",
-    // Phase 2 multi-user auth: user/token management is REST-only admin/self
-    // surface. Token creation is sensitive and must not be GPT-importable, so
-    // these paths are deliberately excluded from /openapi.json.
-    "/api/users/create",
-    "/api/users/list",
-    "/api/users/me",
-    "/api/tokens/create",
-    "/api/tokens/register_hash",
-    "/api/tokens/list",
-    "/api/tokens/revoke",
-    // Phase 3 agent token management: same REST-only admin/self surface, also
-    // excluded from GPT Actions. Agent tokens are bound to an owner and an
-    // allowed_client_id and are only used by the webcodex-runner transport.
-    "/api/agent-tokens/create",
-    "/api/agent-tokens/register_hash",
-    "/api/agent-tokens/list",
-    "/api/agent-tokens/revoke",
-    // Pairing/enrollment creates temporary credentials and enrollment tokens.
-    // It is REST-only for CLI/admin flows and must not be GPT-importable.
-    "/api/pairing/create",
-    "/api/pairing/enroll",
-    "/mcp",
     "/openapi.json",
-    // Browser console shells and their browser-only Runtime Console API are
-    // intentionally NOT GPT Actions and must never appear in /openapi.json.
-    "/api/runtime-console/overview",
-    "/api/runtime-console/runner",
-    "/api/runtime-console/projects",
-    "/api/runtime-console/workflow-sessions",
-    "/api/runtime-console/workflow-session",
-    "/api/runtime-console/workflow-session-messages",
-    "/api/runtime-console/workflow-session-observe",
-    "/api/runtime-console/workflow-session-post-message",
-    "/api/runtime-console/workflow-session-withdraw-message",
-    "/api/runtime-console/workflow-session-replace-message",
     "/runtime",
     "/runtime/app.js",
     "/runtime/styles.css",
@@ -243,7 +186,7 @@ pub async fn openapi_json(depot: &mut Depot, res: &mut Response) {
 }
 
 pub(crate) fn build_openapi_spec() -> Value {
-    json!({
+    let mut spec = json!({
         "openapi": "3.1.0",
         "info": {
             "title": "WebCodex Runtime API",
@@ -907,7 +850,16 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "bearerAuth": []
             }
         ]
-    })
+    });
+    spec["paths"]
+        .as_object_mut()
+        .expect("OpenAPI paths object")
+        .retain(|path, _| {
+            crate::route_metadata::lookup("POST", path).is_some_and(|route| {
+                route.openapi_visibility == crate::route_metadata::OpenApiVisibility::PublicActions
+            })
+        });
+    spec
 }
 
 fn operation(

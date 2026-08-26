@@ -213,31 +213,20 @@ pub(crate) fn bearer_or_allowed_query_token(req: &Request) -> Option<String> {
 /// The paths are compared exactly (no prefix match) so a path like
 /// `/api/agent-tokens/create` is correctly rejected for agent tokens even
 /// though it starts with `/api/agent`.
-pub(crate) const AGENT_TRANSPORT_PATHS: &[&str] = &[
-    "/api/shell/agent/register",
-    "/api/shell/agent/poll",
-    "/api/shell/agent/result",
-    "/api/shell/agent/persistent_shell_result",
-    "/api/shell/agent/job_update",
-    "/api/agents/ws",
-];
-
 /// True when `path` is one of the exact agent transport endpoints an agent
 /// token may call. Used by [`AuthMiddleware`] to gate agent tokens centrally.
 pub(crate) fn is_agent_transport_path(path: &str) -> bool {
-    AGENT_TRANSPORT_PATHS.contains(&path)
+    crate::route_metadata::path_has_surface(
+        path,
+        crate::route_metadata::RouteSurface::AgentTransport,
+    )
 }
 
-pub(crate) const ACCOUNT_CONTROL_PATHS: &[&str] = &[
-    "/api/users/me",
-    "/api/tokens/list",
-    "/api/tokens/register_hash",
-    "/api/tokens/revoke",
-    "/api/agent-tokens/register_hash",
-];
-
 pub(crate) fn is_account_control_path(path: &str) -> bool {
-    ACCOUNT_CONTROL_PATHS.contains(&path)
+    crate::route_metadata::path_has_surface(
+        path,
+        crate::route_metadata::RouteSurface::AccountControl,
+    )
 }
 
 /// Enforce that the token kind is permitted on the requested HTTP path.
@@ -325,14 +314,11 @@ pub(crate) fn enforce_project_connector_surface(
 }
 
 fn is_project_console_path(path: &str) -> bool {
-    crate::host_console_http::CONSOLE_ROUTES.contains(&path)
+    crate::route_metadata::path_has_surface(path, crate::route_metadata::RouteSurface::HostConsole)
 }
 
 fn is_project_connector_path(path: &str) -> bool {
-    path == "/api/connector/readiness"
-        || crate::connector_runtime::surface::CAPABILITY_NAMES
-            .iter()
-            .any(|name| crate::connector_runtime::surface::route_for(name) == Some(path))
+    crate::route_metadata::path_has_surface(path, crate::route_metadata::RouteSurface::Connector)
 }
 
 fn project_connector_runtime(

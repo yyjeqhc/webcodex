@@ -156,6 +156,10 @@ pub(crate) fn scopes_to_string(scopes: &[String]) -> String {
 pub(crate) enum OAuthRouteScopePolicy {
     Public,
     FirstPartyOnly,
+    /// Explicit representation of the historical fail-closed behavior for an
+    /// authenticated route that only bootstrap could traverse because no
+    /// delegated route policy existed.
+    BootstrapOnly,
     AgentSurface,
     Require(&'static str),
     BodyAware(OAuthBodyAwarePolicy),
@@ -183,136 +187,9 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
     method: &str,
     path: &str,
 ) -> OAuthRouteScopePolicy {
-    let method = method.trim().to_ascii_uppercase();
-    let path = normalize_route_path(path);
-
-    match (method.as_str(), path.as_str()) {
-        (_, "/.well-known/oauth-protected-resource")
-        | (_, "/.well-known/oauth-authorization-server")
-        | (_, "/oauth/token")
-        | (_, "/oauth/revoke")
-        | ("POST", "/oauth/authorize/login")
-        | ("POST", "/oauth/authorize/consent")
-        | ("POST", "/oauth/authorize/bridge") => OAuthRouteScopePolicy::Public,
-        // `/oauth/authorize` is NOT mounted behind `AuthMiddleware` (the
-        // handler does its own Bearer PAT / session cookie validation), so
-        // this `FirstPartyOnly` entry is audit/documentation only — it
-        // records the intended identity boundary but is never enforced by the
-        // middleware for this route.
-        (_, "/oauth/authorize") => OAuthRouteScopePolicy::FirstPartyOnly,
-
-        // First-party OAuth client management API. Only Bootstrap / ApiToken
-        // may call these; OAuth2 access tokens are blocked even with
-        // `account:manage`.
-        ("POST", "/api/oauth/clients/create")
-        | ("POST", "/api/oauth/clients/list")
-        | ("POST", "/api/oauth/clients/update_scopes")
-        | ("POST", "/api/oauth/clients/revoke") => OAuthRouteScopePolicy::FirstPartyOnly,
-        // Narrow hosted-connect bridge provisioning. The route-level scope is
-        // only the ordinary runtime entry gate; the handler additionally
-        // requires AuthKind::SharedKey and the matching connected Runner group.
-        ("POST", "/api/oauth/shared-key-client/provision") => {
-            OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ)
-        }
-
-        ("GET", "/mcp") => OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ),
-        ("POST", "/mcp") => OAuthRouteScopePolicy::BodyAware(OAuthBodyAwarePolicy::McpToolCall),
-        ("POST", "/api/runtime/status") | ("POST", "/api/tools/list") => {
-            OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ)
-        }
-        ("POST", "/api/connector/task/start") => OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ),
-        ("POST", "/api/connector/files/read")
-        | ("POST", "/api/connector/files/search")
-        | ("POST", "/api/connector/code/navigate")
-        | ("POST", "/api/connector/code/impact")
-        | ("POST", "/api/connector/task/review") => {
-            OAuthRouteScopePolicy::Require(SCOPE_PROJECT_READ)
-        }
-        ("POST", "/api/connector/edits/apply") | ("POST", "/api/connector/task/finish") => {
-            OAuthRouteScopePolicy::Require(SCOPE_PROJECT_WRITE)
-        }
-        ("POST", "/api/connector/checks/run")
-        | ("POST", "/api/connector/commands/run")
-        | ("POST", "/api/connector/task/cancel") => OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN),
-        ("POST", "/api/tools/call") => {
-            OAuthRouteScopePolicy::BodyAware(OAuthBodyAwarePolicy::RuntimeToolCall)
-        }
-        ("POST", "/api/artifacts/import") => OAuthRouteScopePolicy::Require(SCOPE_PROJECT_WRITE),
-
-        ("POST", "/api/jobs/status")
-        | ("POST", "/api/jobs/log")
-        | ("POST", "/api/jobs/list")
-        | ("POST", "/api/jobs/tail")
-        | ("POST", "/api/shell/jobs/status")
-        | ("POST", "/api/shell/jobs/log")
-        | ("POST", "/api/shell/jobs/list") => OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ),
-        ("POST", "/api/jobs/stop") | ("POST", "/api/shell/jobs/stop") => {
-            OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN)
-        }
-
-        ("POST", "/api/runtime-console/overview")
-        | ("POST", "/api/runtime-console/runner")
-        | ("POST", "/api/runtime-console/workflow-session-messages")
-        | ("POST", "/api/runtime-console/workflow-session-observe") => {
-            OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ)
-        }
-        ("POST", "/api/runtime-console/workflow-session-post-message")
-        | ("POST", "/api/runtime-console/workflow-session-withdraw-message")
-        | ("POST", "/api/runtime-console/workflow-session-replace-message") => {
-            OAuthRouteScopePolicy::Require(SCOPE_SESSION_COLLABORATE)
-        }
-        ("POST", "/api/runtime-console/projects")
-        | ("POST", "/api/runtime-console/workflow-sessions")
-        | ("POST", "/api/runtime-console/workflow-session")
-        | ("POST", "/api/projects/list")
-        | ("POST", "/api/projects/read_file")
-        | ("POST", "/api/projects/git_status")
-        | ("POST", "/api/projects/git_diff")
-        | ("POST", "/api/projects/git_diff_summary")
-        | ("POST", "/api/projects/list_files")
-        | ("POST", "/api/projects/search_text")
-        | ("POST", "/api/projects/validate_patch") => {
-            OAuthRouteScopePolicy::Require(SCOPE_PROJECT_READ)
-        }
-        ("POST", "/api/projects/register")
-        | ("POST", "/api/projects/create")
-        | ("POST", "/api/projects/unregister")
-        | ("POST", "/api/projects/apply_patch")
-        | ("POST", "/api/projects/apply_patch_checked")
-        | ("POST", "/api/projects/delete_files")
-        | ("POST", "/api/projects/git_restore_paths")
-        | ("POST", "/api/projects/discard_untracked")
-        | ("POST", "/api/shell/file") => OAuthRouteScopePolicy::Require(SCOPE_PROJECT_WRITE),
-        ("POST", "/api/projects/run_shell")
-        | ("POST", "/api/projects/run_job")
-        | ("POST", "/api/shell/run")
-        | ("POST", "/api/shell/job") => OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN),
-
-        ("POST", "/api/users/create")
-        | ("POST", "/api/users/list")
-        | ("POST", "/api/users/me")
-        | ("POST", "/api/tokens/create")
-        | ("POST", "/api/tokens/register_hash")
-        | ("POST", "/api/tokens/list")
-        | ("POST", "/api/tokens/revoke")
-        | ("POST", "/api/agent-tokens/create")
-        | ("POST", "/api/agent-tokens/register_hash")
-        | ("POST", "/api/agent-tokens/list")
-        | ("POST", "/api/agent-tokens/revoke")
-        | ("POST", "/api/pairing/create")
-        | ("POST", "/api/audit/sessions")
-        | ("POST", "/api/audit/session")
-        | ("POST", "/api/audit/stats") => OAuthRouteScopePolicy::Require(SCOPE_ACCOUNT_MANAGE),
-
-        ("POST", "/api/pairing/enroll")
-        | ("POST", "/api/shell/agent/register")
-        | ("POST", "/api/shell/agent/poll")
-        | ("POST", "/api/shell/agent/result")
-        | ("POST", "/api/shell/agent/persistent_shell_result")
-        | ("POST", "/api/shell/agent/job_update")
-        | ("GET", "/api/agents/ws") => OAuthRouteScopePolicy::AgentSurface,
-        _ => OAuthRouteScopePolicy::Unknown,
-    }
+    crate::route_metadata::lookup(method, path)
+        .map(|spec| spec.scope_policy)
+        .unwrap_or(OAuthRouteScopePolicy::Unknown)
 }
 
 pub(crate) fn oauth_scope_policy_for_runtime_tool(tool_name: &str) -> OAuthToolScopePolicy {
@@ -375,21 +252,7 @@ pub(crate) fn required_oauth_scope_for_path_method(
 }
 
 fn pat_account_manage_compatibility_route(method: &str, path: &str) -> bool {
-    matches!(
-        (method, path),
-        ("POST", "/api/users/create")
-            | ("POST", "/api/users/list")
-            | ("POST", "/api/users/me")
-            | ("POST", "/api/tokens/create")
-            | ("POST", "/api/tokens/register_hash")
-            | ("POST", "/api/tokens/list")
-            | ("POST", "/api/tokens/revoke")
-            | ("POST", "/api/agent-tokens/create")
-            | ("POST", "/api/agent-tokens/register_hash")
-            | ("POST", "/api/agent-tokens/list")
-            | ("POST", "/api/agent-tokens/revoke")
-            | ("POST", "/api/pairing/create")
-    )
+    crate::route_metadata::lookup(method, path).is_some_and(|spec| spec.pat_account_manage_compat)
 }
 
 pub(crate) fn enforce_route_scope(
@@ -412,6 +275,13 @@ pub(crate) fn enforce_route_scope(
                 Ok(())
             } else {
                 Err((Some(scope), format!("missing required scope: {}", scope)))
+            }
+        }
+        OAuthRouteScopePolicy::BootstrapOnly => {
+            if ctx.is_bootstrap() {
+                Ok(())
+            } else {
+                Err((None, "route requires bootstrap authority".to_string()))
             }
         }
         OAuthRouteScopePolicy::FirstPartyOnly => {
@@ -441,22 +311,6 @@ pub(crate) fn enforce_route_scope(
                 ))
             }
         }
-    }
-}
-
-fn normalize_route_path(path: &str) -> String {
-    let path = path.trim();
-    let path = path.split('?').next().unwrap_or(path);
-    let path = if path.is_empty() { "/" } else { path };
-    let with_slash = if path.starts_with('/') {
-        path.to_string()
-    } else {
-        format!("/{path}")
-    };
-    if with_slash.len() > 1 {
-        with_slash.trim_end_matches('/').to_string()
-    } else {
-        with_slash
     }
 }
 
@@ -812,88 +666,22 @@ mod tests {
 
     #[test]
     fn oauth_route_policy_authenticated_route_audit() {
-        for (method, path) in [
-            ("POST", "/api/connector/task/start"),
-            ("POST", "/api/connector/files/read"),
-            ("POST", "/api/connector/files/search"),
-            ("POST", "/api/connector/code/navigate"),
-            ("POST", "/api/connector/code/impact"),
-            ("POST", "/api/connector/edits/apply"),
-            ("POST", "/api/connector/checks/run"),
-            ("POST", "/api/connector/commands/run"),
-            ("POST", "/api/connector/task/review"),
-            ("POST", "/api/connector/task/cancel"),
-            ("POST", "/api/connector/task/finish"),
-            ("POST", "/api/tools/list"),
-            ("POST", "/api/tools/call"),
-            ("POST", "/api/artifacts/import"),
-            ("POST", "/api/jobs/status"),
-            ("POST", "/api/jobs/log"),
-            ("POST", "/api/jobs/stop"),
-            ("POST", "/api/jobs/list"),
-            ("POST", "/api/jobs/tail"),
-            ("POST", "/api/projects/list"),
-            ("POST", "/api/projects/register"),
-            ("POST", "/api/projects/create"),
-            ("POST", "/api/projects/read_file"),
-            ("POST", "/api/projects/git_status"),
-            ("POST", "/api/projects/git_diff"),
-            ("POST", "/api/projects/git_diff_summary"),
-            ("POST", "/api/projects/list_files"),
-            ("POST", "/api/projects/search_text"),
-            ("POST", "/api/projects/apply_patch"),
-            ("POST", "/api/projects/validate_patch"),
-            ("POST", "/api/projects/run_shell"),
-            ("POST", "/api/projects/apply_patch_checked"),
-            ("POST", "/api/projects/delete_files"),
-            ("POST", "/api/projects/git_restore_paths"),
-            ("POST", "/api/projects/discard_untracked"),
-            ("POST", "/api/projects/run_job"),
-            ("POST", "/api/runtime/status"),
-            ("POST", "/api/users/create"),
-            ("POST", "/api/users/list"),
-            ("POST", "/api/users/me"),
-            ("POST", "/api/tokens/create"),
-            ("POST", "/api/tokens/register_hash"),
-            ("POST", "/api/tokens/list"),
-            ("POST", "/api/tokens/revoke"),
-            ("POST", "/api/agent-tokens/create"),
-            ("POST", "/api/agent-tokens/register_hash"),
-            ("POST", "/api/agent-tokens/list"),
-            ("POST", "/api/agent-tokens/revoke"),
-            ("POST", "/api/shell/run"),
-            ("POST", "/api/shell/file"),
-            ("POST", "/api/shell/job"),
-            ("POST", "/api/shell/jobs/status"),
-            ("POST", "/api/shell/jobs/log"),
-            ("POST", "/api/shell/jobs/stop"),
-            ("POST", "/api/shell/jobs/list"),
-            ("POST", "/api/shell/agent/register"),
-            ("POST", "/api/shell/agent/poll"),
-            ("POST", "/api/shell/agent/result"),
-            ("POST", "/api/shell/agent/persistent_shell_result"),
-            ("POST", "/api/shell/agent/job_update"),
-            ("GET", "/api/agents/ws"),
-            ("POST", "/api/pairing/enroll"),
-            ("POST", "/api/pairing/create"),
-            ("POST", "/api/audit/sessions"),
-            ("POST", "/api/audit/session"),
-            ("POST", "/api/audit/stats"),
-            ("GET", "/mcp"),
-            ("POST", "/mcp"),
-            ("GET", "/oauth/authorize"),
-            ("POST", "/oauth/authorize/login"),
-            ("POST", "/oauth/authorize/consent"),
-            ("POST", "/api/oauth/clients/create"),
-            ("POST", "/api/oauth/clients/list"),
-            ("POST", "/api/oauth/clients/update_scopes"),
-            ("POST", "/api/oauth/clients/revoke"),
-            ("POST", "/api/oauth/shared-key-client/provision"),
-        ] {
+        for spec in crate::route_metadata::routes()
+            .iter()
+            .filter(|spec| spec.auth == crate::route_metadata::RouteAuth::AuthMiddleware)
+        {
             assert_ne!(
-                oauth_route_scope_policy_for_path_method(method, path),
+                oauth_route_scope_policy_for_path_method(
+                    match spec.method {
+                        crate::route_metadata::RouteMethod::Get => "GET",
+                        crate::route_metadata::RouteMethod::Post => "POST",
+                    },
+                    spec.path,
+                ),
                 OAuthRouteScopePolicy::Unknown,
-                "{method} {path}"
+                "{:?} {}",
+                spec.method,
+                spec.path
             );
         }
     }

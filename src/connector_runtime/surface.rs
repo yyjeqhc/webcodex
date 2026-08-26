@@ -429,23 +429,25 @@ pub(crate) fn capability_spec(name: &str) -> Option<ToolSpec> {
 }
 
 pub(crate) fn route_for(name: &str) -> Option<&'static str> {
-    match name {
-        "task_start" => Some("/api/connector/task/start"),
-        "task_list" => Some("/api/connector/task/list"),
-        "task_resume" => Some("/api/connector/task/resume"),
-        "files_list" => Some("/api/connector/files/list"),
-        "files_read" => Some("/api/connector/files/read"),
-        "files_search" => Some("/api/connector/files/search"),
-        "code_navigate" => Some("/api/connector/code/navigate"),
-        "edits_apply" => Some("/api/connector/edits/apply"),
-        "checks_run" => Some("/api/connector/checks/run"),
-        "commands_run" => Some("/api/connector/commands/run"),
-        "task_review" => Some("/api/connector/task/review"),
-        "task_cancel" => Some("/api/connector/task/cancel"),
-        "task_finish" => Some("/api/connector/task/finish"),
-        "code_impact" => Some("/api/connector/code/impact"),
-        _ => None,
-    }
+    use crate::route_metadata::RouteId;
+    let id = match name {
+        "task_start" => RouteId::ConnectorTaskStart,
+        "task_list" => RouteId::ConnectorTaskList,
+        "task_resume" => RouteId::ConnectorTaskResume,
+        "files_list" => RouteId::ConnectorFilesList,
+        "files_read" => RouteId::ConnectorFilesRead,
+        "files_search" => RouteId::ConnectorFilesSearch,
+        "code_navigate" => RouteId::ConnectorCodeNavigate,
+        "edits_apply" => RouteId::ConnectorEditsApply,
+        "checks_run" => RouteId::ConnectorChecksRun,
+        "commands_run" => RouteId::ConnectorCommandsRun,
+        "task_review" => RouteId::ConnectorTaskReview,
+        "task_cancel" => RouteId::ConnectorTaskCancel,
+        "task_finish" => RouteId::ConnectorTaskFinish,
+        "code_impact" => RouteId::ConnectorCodeImpact,
+        _ => return None,
+    };
+    Some(crate::route_metadata::path(id))
 }
 
 pub(crate) fn build_openapi_spec(public_url: String) -> Value {
@@ -626,6 +628,21 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(operations, expected);
         assert_eq!(spec["paths"].as_object().unwrap().len(), 14);
+        let expected_paths = crate::route_metadata::routes()
+            .iter()
+            .filter(|route| {
+                route.openapi_visibility
+                    == crate::route_metadata::OpenApiVisibility::ConnectorActions
+            })
+            .map(|route| route.path.to_string())
+            .collect::<BTreeSet<_>>();
+        let actual_paths = spec["paths"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual_paths, expected_paths);
         let start = &spec["paths"]["/api/connector/task/start"]["post"]["requestBody"]["content"]
             ["application/json"]["schema"];
         assert_eq!(start["properties"]["target_path"]["type"], "string");

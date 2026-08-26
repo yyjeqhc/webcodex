@@ -514,32 +514,23 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
                 job_ids.insert(id.to_string());
             }
         }
-        match event.endpoint.as_str() {
-            "/api/projects/apply_patch"
-            | "/api/projects/apply_patch_checked"
-            | "/api/projects/write_file" => edit_count += 1,
-            "/api/projects/list"
-            | "/api/projects/read_file"
-            | "/api/projects/list_files"
-            | "/api/projects/search_text" => context_count += 1,
-            "/api/projects/run_job" | "/api/jobs/status" | "/api/jobs/log" | "/api/jobs/tail" => {
-                job_count += 1
-            }
-            "/api/tools/call" => command_count += 1,
-            "/api/runtime/status" => report_count += 1,
-            "/api/artifacts/import"
-            | "/api/projects/delete_files"
-            | "/api/projects/git_restore_paths"
-            | "/api/projects/discard_untracked" => artifact_count += 1,
-            "/api/projects/git_status"
-            | "/api/projects/git_diff"
-            | "/api/projects/git_diff_summary" => git_count += 1,
-            "/api/projects/run_shell"
-            | "/api/shell/clients"
-            | "/api/shell/run"
-            | "/api/shell/file"
-            | "/api/shell/job" => shell_count += 1,
-            _ => {}
+        use crate::route_metadata::AuditClass;
+        match crate::route_metadata::audit_class_for_path(&event.endpoint) {
+            Some(AuditClass::Edit) => edit_count += 1,
+            Some(AuditClass::Context) => context_count += 1,
+            Some(AuditClass::Job) => job_count += 1,
+            Some(AuditClass::Command) => command_count += 1,
+            Some(AuditClass::Report) => report_count += 1,
+            Some(AuditClass::Artifact) => artifact_count += 1,
+            Some(AuditClass::Git) => git_count += 1,
+            Some(AuditClass::Shell) => shell_count += 1,
+            Some(AuditClass::Other) => {}
+            // Historical records can contain endpoints removed before the
+            // canonical route registry existed. Keep only those compatibility
+            // classifications here; current mounted routes must use RouteSpec.
+            None if event.endpoint == "/api/projects/write_file" => edit_count += 1,
+            None if event.endpoint == "/api/shell/clients" => shell_count += 1,
+            None => {}
         }
     }
     ActionSessionStats {

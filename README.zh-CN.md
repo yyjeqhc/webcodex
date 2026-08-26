@@ -166,6 +166,12 @@ cargo build --release --workspace --bins
 export PATH="$PWD/target/release:$PATH"
 ```
 
+## 参与贡献
+
+欢迎参与 WebCodex 开发，也欢迎直接使用 WebCodex 本身或其他 coding agent 来完成贡献。
+Bug 报告、开发流程和 pull request 说明见
+[CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。
+
 ## 鸣谢
 
 感谢 [LINUX DO](https://linux.do/) 社区提供的交流氛围与开源推广支持。

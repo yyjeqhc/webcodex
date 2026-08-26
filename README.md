@@ -189,6 +189,12 @@ cargo build --release --workspace --bins
 export PATH="$PWD/target/release:$PATH"
 ```
 
+## Contributing
+
+Contributions are welcome, including contributions created with WebCodex itself
+or other coding agents. For bug reports, development workflow, and pull request
+guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Acknowledgements
 
 Thanks to the [LINUX DO](https://linux.do/) community for its welcoming space

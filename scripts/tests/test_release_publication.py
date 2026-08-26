@@ -417,14 +417,28 @@ class BuildDispatchTests(unittest.TestCase):
             publication._post_build_dispatch(client, TAG, REQUEST)
 
 
-class _FakeGitHubClient:
-    def __init__(self, release: dict):
-        self.release = release
+class DraftReleaseLookupTests(unittest.TestCase):
+    def test_authenticated_lookup_uses_release_listing_not_tag_endpoint(self) -> None:
+        release = {"id": 99, "tag_name": TAG, "draft": True, "prerelease": False}
+        client = mock.sentinel.github_client
+        with mock.patch.object(publication, "_github_json_array", return_value=[release]) as fetch:
+            found = publication._find_authenticated_release_by_tag(client, TAG)
+        self.assertIs(found, release)
+        suffix = fetch.call_args.args[1]
+        self.assertTrue(suffix.startswith("/releases?"))
+        self.assertNotIn("/releases/tags/", suffix)
 
-    def fetch_json(self, suffix: str):
-        if suffix.startswith("/releases/tags/"):
-            return self.release
-        raise AssertionError(suffix)
+    def test_authenticated_lookup_fails_closed_on_missing_or_duplicate_tag(self) -> None:
+        client = mock.sentinel.github_client
+        other = {"id": 1, "tag_name": "v0.3.7", "draft": True, "prerelease": False}
+        with mock.patch.object(publication, "_github_json_array", return_value=[other]):
+            with self.assertRaisesRegex(publication.PublicationError, "was not found"):
+                publication._find_authenticated_release_by_tag(client, TAG)
+
+        release = {"id": 99, "tag_name": TAG, "draft": True, "prerelease": False}
+        with mock.patch.object(publication, "_github_json_array", return_value=[release, dict(release)]):
+            with self.assertRaisesRegex(publication.PublicationError, "duplicate tag"):
+                publication._find_authenticated_release_by_tag(client, TAG)
 
 
 class NpmStagingTests(unittest.TestCase):
@@ -500,8 +514,8 @@ class DraftVerificationTests(unittest.TestCase):
                 "assets": assets,
             }
             with mock.patch.object(publication.collector, "resolve_github_token", return_value="fake"), mock.patch.object(
-                publication.collector, "GitHubClient", return_value=_FakeGitHubClient(release)
-            ):
+                publication.collector, "GitHubClient", return_value=mock.sentinel.github_client
+            ), mock.patch.object(publication, "_find_authenticated_release_by_tag", return_value=release):
                 summary = publication.verify_draft_assets(
                     repo=collector.DEFAULT_REPO,
                     bundle_dir=root,
@@ -512,8 +526,8 @@ class DraftVerificationTests(unittest.TestCase):
 
             release["assets"][0]["digest"] = "sha256:" + "0" * 64
             with mock.patch.object(publication.collector, "resolve_github_token", return_value="fake"), mock.patch.object(
-                publication.collector, "GitHubClient", return_value=_FakeGitHubClient(release)
-            ):
+                publication.collector, "GitHubClient", return_value=mock.sentinel.github_client
+            ), mock.patch.object(publication, "_find_authenticated_release_by_tag", return_value=release):
                 with self.assertRaises(publication.PublicationError):
                     publication.verify_draft_assets(
                         repo=collector.DEFAULT_REPO,

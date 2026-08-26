@@ -39,6 +39,8 @@ MAX_RELEASE_BUILD_BYTES = 256 * 1024
 MAX_STAGE_BINARY_BYTES = collector.MAX_MEMBER_BYTES
 MAX_RECLAIM_BUILD_RUNS_PER_PAGE = 100
 MAX_RECLAIM_BUILD_PAGES = 10
+MAX_DRAFT_RELEASES_PER_PAGE = 100
+MAX_DRAFT_RELEASE_PAGES = 10
 
 
 class PublicationError(RuntimeError):
@@ -134,6 +136,47 @@ def _github_optional_json(client: collector.GitHubClient, suffix: str) -> dict |
     if not isinstance(value, dict):
         raise PublicationError("GitHub API returned a non-object")
     return value
+
+
+def _github_json_array(client: collector.GitHubClient, suffix: str) -> list[dict]:
+    url = client.api_url(suffix)
+    try:
+        with client.opener.open(client._request(url), timeout=client.timeout) as response:
+            raw = response.read(collector.MAX_JSON_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        raise PublicationError(f"GitHub API request failed with HTTP {exc.code}: {url}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise PublicationError(f"GitHub API request failed: {url}") from exc
+    if len(raw) > collector.MAX_JSON_BYTES:
+        raise PublicationError("GitHub JSON response exceeds its bound")
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PublicationError("GitHub API returned invalid JSON") from exc
+    if not isinstance(value, list) or len(value) > MAX_DRAFT_RELEASES_PER_PAGE:
+        raise PublicationError("GitHub API returned a malformed release listing")
+    if any(not isinstance(item, dict) for item in value):
+        raise PublicationError("GitHub API returned a malformed release entry")
+    return value
+
+
+def _find_authenticated_release_by_tag(client: collector.GitHubClient, tag: str) -> dict:
+    matches: list[dict] = []
+    reached_end = False
+    for page in range(1, MAX_DRAFT_RELEASE_PAGES + 1):
+        query = urllib.parse.urlencode({"per_page": MAX_DRAFT_RELEASES_PER_PAGE, "page": page})
+        releases = _github_json_array(client, f"/releases?{query}")
+        matches.extend(release for release in releases if release.get("tag_name") == tag)
+        if len(matches) > 1:
+            raise PublicationError(f"GitHub release listing contains duplicate tag: {tag}")
+        if len(releases) < MAX_DRAFT_RELEASES_PER_PAGE:
+            reached_end = True
+            break
+    if not reached_end:
+        raise PublicationError("GitHub release listing exceeds the bounded draft lookup")
+    if len(matches) != 1:
+        raise PublicationError(f"GitHub draft Release was not found for tag: {tag}")
+    return matches[0]
 
 
 def _fetch_public_json_optional(url: str, timeout: float) -> dict | None:
@@ -931,7 +974,7 @@ def verify_draft_assets(*, repo: str, bundle_dir: Path, timeout: float) -> dict:
         raise PublicationError("draft verification requires a real release bundle")
     tag = str(summary["tag"])
     client = collector.GitHubClient(repo, collector.resolve_github_token(), timeout)
-    release = client.fetch_json(f"/releases/tags/{urllib.parse.quote(tag, safe='')}")
+    release = _find_authenticated_release_by_tag(client, tag)
     if release.get("tag_name") != tag or release.get("draft") is not True or release.get("prerelease") is not False:
         raise PublicationError("GitHub Release must be the expected draft, non-prerelease release")
     release_id = release.get("id")

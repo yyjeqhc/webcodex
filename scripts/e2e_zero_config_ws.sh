@@ -1027,7 +1027,10 @@ tool_desc = (
     .get("tool", {})
     .get("description", "")
 )
-for runtime_tool in ["start_coding_task", "finish_coding_task"]:
+# The generic GPT Action advertises only model-facing runtime tools. The hidden
+# start_coding_task bootstrap remains callable by the operator runtime but is not
+# part of this description contract.
+for runtime_tool in ["finish_coding_task"]:
     if runtime_tool not in tool_desc:
         errors.append(f"ToolCallRequest.tool description missing {runtime_tool}")
 
@@ -1270,14 +1273,13 @@ if not isinstance(count, int):
 elif isinstance(tools, list) and count != len(tools):
     errors.append(f"count {count} does not match tools length {len(tools)}")
 if isinstance(names, list):
-    # /api/tools/list reflects the full registered operator surface, so the
-    # deterministic workflow tools are always present regardless of the MCP
-    # model surface. git_diff_summary is the canonical summary tool.
+    # /api/tools/list exposes the current operator-visible surface. Hidden
+    # bootstrap helpers such as start_coding_task are intentionally omitted;
+    # git_diff_summary remains the canonical summary tool.
     missing = sorted({
         "finish_coding_task",
         "git_diff_summary",
         "list_tools",
-        "start_coding_task",
     } - set(names))
     if missing:
         errors.append(f"names missing {missing}")

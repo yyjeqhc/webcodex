@@ -13,6 +13,8 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
 CARGO_BIN="${CARGO_BIN:-cargo}"
+SERVER_BIN="${EVAL_SERVER_BIN:-}"
+RUNNER_BIN="${EVAL_RUNNER_BIN:-}"
 TOKEN="${EVAL_TOKEN:-eval-coding-loop-token}"
 CLIENT_ID="${EVAL_CLIENT_ID:-eval-agent}"
 PROJECT_ID="${EVAL_PROJECT_ID:-coding-loop-eval}"
@@ -1095,13 +1097,18 @@ max_output_bytes = 262144
 EOF
 
     log "starting server"
+    if [ -n "$SERVER_BIN" ]; then
+        server_command=("$SERVER_BIN")
+    else
+        server_command=("$CARGO_BIN" run --quiet -p webcodex --bin webcodex-server)
+    fi
     WEBCODEX_ADDR="127.0.0.1:${PORT}" \
     WEBCODEX_DATA="$DATA_DIR" \
     WEBCODEX_TOKEN="$TOKEN" \
     CODEX_DEFAULT_TIMEOUT_SECS="30" \
     CODEX_APPROVAL_MODE="full-auto" \
     RUST_LOG="info" \
-    "$CARGO_BIN" run --quiet -p webcodex --bin webcodex-server >"$SERVER_LOG" 2>&1 &
+    "${server_command[@]}" >"$SERVER_LOG" 2>&1 &
     SERVER_PID=$!
 
     if ! wait_for_port "$PORT" 90; then
@@ -1112,7 +1119,12 @@ EOF
     log "server listening on $PORT"
 
     log "starting agent (transport=${TRANSPORT})"
-    "$CARGO_BIN" run --quiet -p webcodex-runner --bin webcodex-runner -- --config "$AGENT_TOML" >"$AGENT_LOG" 2>&1 &
+    if [ -n "$RUNNER_BIN" ]; then
+        runner_command=("$RUNNER_BIN" --config "$AGENT_TOML")
+    else
+        runner_command=("$CARGO_BIN" run --quiet -p webcodex-runner --bin webcodex-runner -- --config "$AGENT_TOML")
+    fi
+    "${runner_command[@]}" >"$AGENT_LOG" 2>&1 &
     AGENT_PID=$!
 
     log "waiting for agent registration"

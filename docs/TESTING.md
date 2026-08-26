@@ -61,10 +61,10 @@ The lanes above define test semantics; workflows decide when to run them.
   account/auth configuration; Windows still owns its native library, CLI and
   serialized Runner suites, npm tests, and artifact-to-install smoke.
 - Exact-source release acceptance is a separate trust boundary from ordinary CI.
-  Its Stage 1 runs the canonical release contract and the complete locked Rust
-  workspace suite as package shards without test-name filters; Stage 2 is blocked
-  until both succeed, then fans out frontend, E2E, eval, native release-profile,
-  and Server-image evidence in parallel. Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)
+  Its Stage 1 runs the canonical release contract, the complete locked Rust
+  workspace suite as package shards without test-name filters, frontend, E2E, and
+  eval in parallel. Stage 2 is blocked until every test-gate job succeeds, then
+  fans out only native release-profile and Server-image evidence in parallel. Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)
   and `.github/workflows/release-readiness.yml`; sharding changes scheduling, not
   semantic Rust test coverage or `scripts/release_check.sh`.
 - Slow/manual and real-process lanes remain explicit targeted evidence unless

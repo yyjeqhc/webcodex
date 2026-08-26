@@ -186,10 +186,9 @@ jobs:
           git diff --check
           test -z "$(git status --porcelain --untracked-files=all)"
 
-  # Stage 2 starts only after both Stage-1 correctness gates pass. These jobs are
-  # independent release evidence and intentionally fan out in parallel.
+  # Stage 1 is the complete test gate. Correctness, frontend, E2E, and eval jobs
+  # intentionally start together; release-profile/image builds wait for all of them.
   frontend:
-    needs: [release-contract, core-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -229,7 +228,6 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   e2e:
-    needs: [release-contract, core-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -292,7 +290,6 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   eval:
-    needs: [release-contract, core-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -327,9 +324,18 @@ jobs:
             sudo apt-get install --no-install-recommends -y ripgrep
           fi
 
+      - name: Build eval runtime fixtures
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          cargo build --locked -p webcodex --bin webcodex-server
+          cargo build --locked -p webcodex-runner --bin webcodex-runner
+
       - name: Run coding-loop eval compare
         env:
           EVAL_MODE: compare
+          EVAL_SERVER_BIN: ${{ github.workspace }}/target/debug/webcodex-server
+          EVAL_RUNNER_BIN: ${{ github.workspace }}/target/debug/webcodex-runner
         run: bash scripts/eval_coding_loop.sh
 
       - name: Require final eval source cleanliness
@@ -340,7 +346,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   native-linux:
-    needs: [release-contract, core-tests]
+    needs: [release-contract, core-tests, frontend, e2e, eval]
     strategy:
       fail-fast: false
       matrix:
@@ -476,7 +482,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   server-image:
-    needs: [release-contract, core-tests]
+    needs: [release-contract, core-tests, frontend, e2e, eval]
     strategy:
       fail-fast: false
       matrix:
@@ -635,7 +641,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   macos-runner:
-    needs: [release-contract, core-tests]
+    needs: [release-contract, core-tests, frontend, e2e, eval]
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -728,7 +734,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   native-windows:
-    needs: [release-contract, core-tests]
+    needs: [release-contract, core-tests, frontend, e2e, eval]
     strategy:
       fail-fast: false
       matrix:
@@ -854,8 +860,8 @@ jobs:
             echo "### Release readiness passed"
             echo "- source: \`$INPUT_SOURCE_SHA\`"
             echo "- request: \`$INPUT_REQUEST_ID\`"
-            echo "- fail-fast correctness: canonical release contract + complete package-sharded locked Rust suite passed before expensive fanout"
-            echo "- parallel Stage 2: frontend, E2E, eval, native release surfaces, and disposable Server images passed"
+            echo "- fail-fast test gate: canonical release contract, complete package-sharded locked Rust suite, frontend, E2E, and eval all passed before release builds"
+            echo "- parallel build gate: native release surfaces and disposable Server images passed"
             echo "- native release-profile validation: linux-x64, linux-arm64, darwin-arm64, win32-x64, win32-arm64 passed"
             echo "- disposable Server images: linux/amd64 and linux/arm64 build, runtime, health, and digest-pinned bootstrap generation passed"
             echo "- candidate binaries produced: no (pre-tag validation artifacts are disposable)"

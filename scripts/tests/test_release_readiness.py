@@ -205,9 +205,15 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertNotIn("cargo test --locked --workspace -- --nocapture", workflow)
 
-        stage_two_dependency = "    needs: [release-contract, core-tests]\n"
-        # frontend, E2E, eval, Linux native, Server image, macOS, Windows native.
-        self.assertEqual(workflow.count(stage_two_dependency), 7)
+        build_gate_dependency = "    needs: [release-contract, core-tests, frontend, e2e, eval]\n"
+        # Linux native, Server image, macOS, and Windows builds all wait for the
+        # complete test gate, while frontend/E2E/eval have no upstream build gate.
+        self.assertEqual(workflow.count(build_gate_dependency), 4)
+        for test_job in ("frontend", "e2e", "eval"):
+            start = workflow.index(f"  {test_job}:\n")
+            end = workflow.find("\n  ", start + 1)
+            block = workflow[start:] if end == -1 else workflow[start:end]
+            self.assertNotIn("    needs:", block)
         self.assertIn(
             "needs: [release-contract, core-tests, frontend, e2e, eval, native-linux, server-image, macos-runner, native-windows]",
             workflow,

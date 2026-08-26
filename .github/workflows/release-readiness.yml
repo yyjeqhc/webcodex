@@ -30,7 +30,8 @@ env:
 
 jobs:
   # Stage 1 is deliberately fail-fast and release-artifact-free: prove the exact
-  # source's Linux correctness before spending native/image build minutes.
+  # source's correctness, including native macOS Runner behavior, before spending
+  # any native/image release-build minutes.
   release-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -345,8 +346,84 @@ jobs:
           git diff --check
           test -z "$(git status --porcelain --untracked-files=all)"
 
+  # Native macOS Runner behavior is a correctness gate, not a release-build
+  # side effect. Run both architectures before any expensive release-profile or
+  # disposable image validation starts so a platform-specific test failure stays
+  # cheap and actionable.
+  macos-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-14
+            host_arch: arm64
+            rust_host: aarch64-apple-darwin
+          - platform: darwin-x64
+            runner: macos-15-intel
+            host_arch: x86_64
+            rust_host: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Fence exact reviewed main source
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]
+          test "$GITHUB_SHA" = "$INPUT_SOURCE_SHA"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Verify exact clean checkout
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INPUT_SOURCE_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-ci-${{ matrix.platform }}
+
+      - name: Verify native macOS test host
+        shell: bash
+        env:
+          EXPECTED_HOST_ARCH: ${{ matrix.host_arch }}
+          EXPECTED_RUST_HOST: ${{ matrix.rust_host }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$EXPECTED_HOST_ARCH"
+          rust_host="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$rust_host" = "$EXPECTED_RUST_HOST"
+
+      - name: Run native macOS Runner tests before release builds
+        run: cargo test --locked -p webcodex-runner -- --nocapture
+
+      - name: Require final macOS test source cleanliness
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+
   native-linux:
-    needs: [release-contract, core-tests, frontend, e2e, eval]
+    needs: [release-contract, core-tests, frontend, e2e, eval, macos-tests]
     strategy:
       fail-fast: false
       matrix:
@@ -482,7 +559,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   server-image:
-    needs: [release-contract, core-tests, frontend, e2e, eval]
+    needs: [release-contract, core-tests, frontend, e2e, eval, macos-tests]
     strategy:
       fail-fast: false
       matrix:
@@ -640,8 +717,8 @@ jobs:
           git diff --check
           test -z "$(git status --porcelain --untracked-files=all)"
 
-  macos-runner:
-    needs: [release-contract, core-tests, frontend, e2e, eval]
+  native-macos:
+    needs: [release-contract, core-tests, frontend, e2e, eval, macos-tests]
     strategy:
       fail-fast: false
       matrix:
@@ -747,9 +824,6 @@ jobs:
           scripts/package_release_artifact.sh "$dist" >/dev/null
           test -s "$dist/webcodex-v$version-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
 
-      - name: Run native macOS Runner tests
-        run: cargo test --locked -p webcodex-runner -- --nocapture
-
       - name: Require final macOS source cleanliness
         shell: bash
         run: |
@@ -758,7 +832,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   native-windows:
-    needs: [release-contract, core-tests, frontend, e2e, eval]
+    needs: [release-contract, core-tests, frontend, e2e, eval, macos-tests]
     strategy:
       fail-fast: false
       matrix:
@@ -871,7 +945,7 @@ jobs:
           }
 
   summary:
-    needs: [release-contract, core-tests, frontend, e2e, eval, native-linux, server-image, macos-runner, native-windows]
+    needs: [release-contract, core-tests, frontend, e2e, eval, macos-tests, native-linux, server-image, native-macos, native-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Record readiness summary
@@ -884,7 +958,7 @@ jobs:
             echo "### Release readiness passed"
             echo "- source: \`$INPUT_SOURCE_SHA\`"
             echo "- request: \`$INPUT_REQUEST_ID\`"
-            echo "- fail-fast test gate: canonical release contract, complete package-sharded locked Rust suite, frontend, E2E, and eval all passed before release builds"
+            echo "- fail-fast test gate: canonical release contract, complete package-sharded locked Rust suite, frontend, E2E, eval, and native macOS Runner suites all passed before release builds"
             echo "- parallel build gate: native release surfaces and disposable Server images passed"
             echo "- native release-profile validation: linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64, win32-arm64 passed"
             echo "- disposable Server images: linux/amd64 and linux/arm64 build, runtime, health, and digest-pinned bootstrap generation passed"

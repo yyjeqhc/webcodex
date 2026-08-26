@@ -209,23 +209,36 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertNotIn("cargo test --locked --workspace -- --nocapture", workflow)
 
-        build_gate_dependency = "    needs: [release-contract, core-tests, frontend, e2e, eval]\n"
-        # Linux native, Server image, macOS, and Windows builds all wait for the
-        # complete test gate, while frontend/E2E/eval have no upstream build gate.
+        build_gate_dependency = (
+            "    needs: [release-contract, core-tests, frontend, e2e, eval, macos-tests]\n"
+        )
+        # Every expensive native/image build waits for the complete test gate,
+        # including both native macOS Runner suites. Test jobs themselves have
+        # no upstream build gate and therefore fan out immediately.
         self.assertEqual(workflow.count(build_gate_dependency), 4)
-        for test_job in ("frontend", "e2e", "eval"):
+        for test_job in ("frontend", "e2e", "eval", "macos-tests"):
             start = workflow.index(f"  {test_job}:\n")
             end = workflow.find("\n  ", start + 1)
             block = workflow[start:] if end == -1 else workflow[start:end]
             self.assertNotIn("    needs:", block)
+        macos_tests_start = workflow.index("  macos-tests:\n")
+        macos_tests_end = workflow.index("  native-linux:\n", macos_tests_start)
+        macos_tests = workflow[macos_tests_start:macos_tests_end]
+        native_macos_start = workflow.index("  native-macos:\n")
         self.assertIn(
-            "needs: [release-contract, core-tests, frontend, e2e, eval, native-linux, server-image, macos-runner, native-windows]",
+            "run: cargo test --locked -p webcodex-runner -- --nocapture",
+            macos_tests,
+        )
+        self.assertNotIn("cargo build --locked --release", macos_tests)
+        native_macos_end = workflow.index("  native-windows:\n", native_macos_start)
+        native_macos = workflow[native_macos_start:native_macos_end]
+        self.assertIn("cargo build --locked --release", native_macos)
+        self.assertNotIn("cargo test --locked -p webcodex-runner", native_macos)
+        self.assertIn(
+            "needs: [release-contract, core-tests, frontend, e2e, eval, macos-tests, native-linux, server-image, native-macos, native-windows]",
             workflow,
         )
-        self.assertNotIn(
-            "needs: [readiness, native-linux, server-image, macos-runner, native-windows]",
-            workflow,
-        )
+        self.assertNotIn("macos-runner", workflow)
 
     def test_owner_prs_run_complete_linux_ci_before_merge(self) -> None:
         workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")

@@ -3180,12 +3180,12 @@ for line in sys.stdin:
     }
 
     #[cfg(unix)]
-    fn wait_for_snapshot(
+    fn wait_for_snapshot_until(
         manager: &CodingAgentManager,
         run: &str,
+        deadline: Instant,
         predicate: impl Fn(&CodingAgentRunSnapshot) -> bool,
     ) -> CodingAgentRunSnapshot {
-        let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let snapshot = manager.runs.lock().unwrap().get(run).unwrap().snapshot();
             if predicate(&snapshot) {
@@ -3197,6 +3197,20 @@ for line in sys.stdin:
             );
             thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    #[cfg(unix)]
+    fn wait_for_snapshot(
+        manager: &CodingAgentManager,
+        run: &str,
+        predicate: impl Fn(&CodingAgentRunSnapshot) -> bool,
+    ) -> CodingAgentRunSnapshot {
+        wait_for_snapshot_until(
+            manager,
+            run,
+            Instant::now() + Duration::from_secs(5),
+            predicate,
+        )
     }
 
     #[cfg(unix)]
@@ -4356,17 +4370,23 @@ for line in sys.stdin:
         let manager = CodingAgentManager::with_store(&cfg, temp.path().join("store")).unwrap();
         let run = "wc_agent_run_promptbackpressure01";
         let started_at = Instant::now();
-        // Leave enough setup budget for a contended macOS hosted runner to reach
-        // the intended blocked ChildStdin state before the total Run deadline.
-        // The assertion below still proves that the blocked write is bounded by
-        // that deadline rather than by the provider ever resuming reads.
-        let started = manager.handle(max_instruction_request(&manager, &root, run, 3), &projects);
+        // Process startup and ACP negotiation are setup for this assertion, not
+        // the behavior under test. Hosted macOS VMs have already demonstrated
+        // that a three-second total budget can expire before the fake provider
+        // reaches the intended blocked ChildStdin state. Use the same bounded
+        // ten-second Run budget as the adjacent blocked-write lifecycle tests;
+        // the assertions below still require the permanently blocked write to
+        // terminate at the total Run deadline and preserve uncertainty/reaping.
+        let started = manager.handle(max_instruction_request(&manager, &root, run, 10), &projects);
         assert!(started.error.is_none(), "{:?}", started.error);
         wait_for_path(&temp.path().join("stdin_stopped.ready"));
         wait_for_prompt_handoff(&manager, run);
-        let snapshot = wait_for_snapshot(&manager, run, |snapshot| snapshot.state.terminal());
+        let observation_deadline = started_at + Duration::from_secs(13);
+        let snapshot = wait_for_snapshot_until(&manager, run, observation_deadline, |snapshot| {
+            snapshot.state.terminal()
+        });
         assert!(
-            started_at.elapsed() < Duration::from_secs(6),
+            Instant::now() < observation_deadline,
             "blocked prompt write escaped the total Run deadline"
         );
         assert_eq!(snapshot.state, CodingAgentRunState::Lost);

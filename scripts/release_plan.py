@@ -448,8 +448,39 @@ def resume_plan(*, state_file: Path, timeout: float, wait_secs: int) -> tuple[di
         raise AssertionError(f"unhandled release plan phase: {phase}")
 
 
+def _status_projection(state: dict) -> tuple[str, str | None]:
+    last_action = state["last_action"]
+    phase = state["phase"]
+    if last_action in {"readiness_failed", "build_failed"}:
+        target = "readiness" if last_action == "readiness_failed" else "release-build"
+        return "failed", f"diagnose the bound {target} run; do not redispatch"
+    if last_action == "stage_requires_reconciliation":
+        return (
+            "needs_reconciliation",
+            "the npm stage path exists but success was not durably recorded; inspect it before deleting or retrying",
+        )
+    if phase == PHASE_AWAIT_TAG:
+        return (
+            "needs_authorization",
+            f"after explicit approval, create and push annotated {state['tag']} at {state['source_sha']}; then resume",
+        )
+    if phase == PHASE_AWAIT_DRAFT:
+        return (
+            "needs_authorization",
+            "after explicit approval, create the draft GitHub Release from the retained bundle; then resume",
+        )
+    if phase == PHASE_AWAIT_PUBLICATION:
+        return (
+            "needs_authorization",
+            "publish the verified GitHub draft and staged npm package only after explicit approval; public verification remains a separate final gate",
+        )
+    if phase in {PHASE_READINESS, PHASE_BUILD}:
+        return "waiting", "resume the same release plan"
+    return "ready", None
+
+
 def status_plan(*, state_file: Path) -> dict:
     state_path = state_file.absolute()
     state = _load_state(state_path)
-    status = "needs_authorization" if state["phase"] in {PHASE_AWAIT_TAG, PHASE_AWAIT_DRAFT, PHASE_AWAIT_PUBLICATION} else "ready"
-    return _summary(state, status=status, state_file=state_path)
+    status, next_action = _status_projection(state)
+    return _summary(state, status=status, state_file=state_path, next_action=next_action)

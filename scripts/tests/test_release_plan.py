@@ -79,6 +79,32 @@ class ReleasePlanStateTests(unittest.TestCase):
             self.assertEqual(summary["status"], "ready")
 
 
+class ReleasePlanStatusTests(unittest.TestCase):
+    def test_status_preserves_durable_wait_failure_reconciliation_and_authorization(self) -> None:
+        cases = (
+            (plan.PHASE_READINESS, "readiness_waiting", "waiting"),
+            (plan.PHASE_READINESS, "readiness_failed", "failed"),
+            (plan.PHASE_BUILD, "build_failed", "failed"),
+            (plan.PHASE_BUNDLE, "stage_requires_reconciliation", "needs_reconciliation"),
+            (plan.PHASE_AWAIT_TAG, "awaiting_tag_authorization", "needs_authorization"),
+            (plan.PHASE_PREFLIGHT, "preflight_passed", "ready"),
+        )
+        for phase, last_action, expected_status in cases:
+            with self.subTest(phase=phase, last_action=last_action):
+                with tempfile.TemporaryDirectory() as temp:
+                    root = Path(temp)
+                    state = _state(root, phase=phase)
+                    state["last_action"] = last_action
+                    state_path = root / "state.json"
+                    plan._write_state(state_path, state)
+                    summary = plan.status_plan(state_file=state_path)
+                    self.assertEqual(summary["status"], expected_status)
+                    if expected_status == "ready":
+                        self.assertNotIn("next_action", summary)
+                    else:
+                        self.assertIn("next_action", summary)
+
+
 class ReleasePlanResumeTests(unittest.TestCase):
     def _write(self, root: Path, phase: str) -> Path:
         path = root / "state.json"

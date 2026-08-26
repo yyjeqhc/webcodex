@@ -1,13 +1,12 @@
 use super::auth::ShellClientAuthGroup;
-use super::{AgentTransport, RunnerFeature, RunnerFeatureSet};
+use super::{AcceptedRunnerProtocol, AgentTransport, RunnerFeature, RunnerFeatureSet};
 use crate::mcp_gateway::McpGatewayResponse;
 use crate::shell_protocol::{
-    AgentBuildInfo, AgentHostContext, AgentPolicySummary, AgentProtocolSemantics,
-    PersistentShellResult, ShellAgentProjectSummary, ShellAgentShellRequest,
-    ShellClientCapabilities, ShellClientView, ShellCommandExecutionState, ShellJobCodexMetadata,
-    ShellJobStructuredExecutionMetadata, ShellJobValidationProgress, ShellProcessArgv,
-    ShellProjectInventoryStatus, ShellRunResponse, JOB_INVENTORY_MAX_TERMINAL_JOBS,
-    JOB_TERMINAL_RETENTION_SECS,
+    AgentBuildInfo, AgentHostContext, AgentPolicySummary, PersistentShellResult,
+    ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientCapabilities, ShellClientView,
+    ShellCommandExecutionState, ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata,
+    ShellJobValidationProgress, ShellProcessArgv, ShellProjectInventoryStatus, ShellRunResponse,
+    JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_TERMINAL_RETENTION_SECS,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicU64;
@@ -68,9 +67,10 @@ pub(super) struct ShellClientRecord {
     pub(super) project_inventory: ProjectInventoryState,
     pub(super) last_seen: i64,
     pub(super) agent_protocol_version: String,
-    /// Canonical semantics normalized once from the announced compatibility
-    /// label. Runtime/business logic must not reinterpret the raw string above.
-    pub(super) agent_protocol_semantics: AgentProtocolSemantics,
+    /// Supported generation + project-inventory semantics accepted once at
+    /// registration ingress. Unsupported raw generation/label states cannot be
+    /// represented in a successful record.
+    pub(super) accepted_protocol: AcceptedRunnerProtocol,
     /// Authoritative transport from the concrete ingress path. External
     /// projections serialize this typed state as `polling`, `websocket`, or `quic`.
     pub(super) transport: AgentTransport,
@@ -133,7 +133,7 @@ impl ShellClientSemanticView {
 
     #[cfg(test)]
     pub(crate) fn from_public_view_for_test(view: ShellClientView) -> Self {
-        let runner_features = RunnerFeatureSet::from_wire(&view.capabilities);
+        let runner_features = RunnerFeatureSet::from_legacy_wire_for_test(&view.capabilities);
         Self {
             view,
             runner_features,

@@ -132,6 +132,30 @@ pub const AGENT_PROTOCOL_VERSION_QUIC_V1: &str = "quic-v1";
 /// compatibility metadata rather than a distinct canonical protocol generation.
 pub const AGENT_PROTOCOL_VERSION_QUIC_V2: &str = "quic-v2";
 
+/// Raw additive protocol-generation advertisement carried by Runner registration.
+///
+/// This wire type deliberately permits future/unsupported numeric values so a new
+/// peer can be rejected explicitly at Server ingress instead of being truncated or
+/// guessed into a supported generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AgentProtocolGenerationNumber(u16);
+
+impl AgentProtocolGenerationNumber {
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+pub const AGENT_PROTOCOL_GENERATION_LEGACY_V1: AgentProtocolGenerationNumber =
+    AgentProtocolGenerationNumber::new(1);
+pub const AGENT_PROTOCOL_GENERATION_V2: AgentProtocolGenerationNumber =
+    AgentProtocolGenerationNumber::new(2);
+
 /// Canonical compatibility identity for the agent request/response grammar.
 ///
 /// All six historical transport x `v1`/`v2` labels below describe the same
@@ -376,6 +400,35 @@ pub fn shell_computer_request_payload_max_bytes(kind: &str) -> usize {
 }
 pub const SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION: &str = "job_state_reconciliation";
 pub const SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS: &str = "coding_agent_runs";
+/// Capabilities guaranteed by every Runner that explicitly advertises protocol
+/// generation 2. These are protocol facts shared with the Runner so its legacy
+/// bool projection remains compatible with older Servers. Server authority still
+/// uses its typed RunnerFeature classification and verifies this list cannot drift.
+pub const AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES: &[&str] = &[
+    SHELL_CLIENT_CAPABILITY_FILE_READ,
+    SHELL_CLIENT_CAPABILITY_FILE_WRITE,
+    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
+    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
+    SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
+    SHELL_CLIENT_CAPABILITY_JOBS,
+    SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
+    SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+    SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
+    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
+    SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
+    SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
+];
+
 pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_SHELL,
     SHELL_CLIENT_CAPABILITY_FILE_READ,
@@ -641,6 +694,15 @@ pub struct ShellClientCapabilities {
     /// Missing on older Runners is false and is never inferred from shell/MCP.
     #[serde(default, skip_serializing_if = "is_false")]
     pub coding_agent_runs: bool,
+    /// Registration-only compatibility envelope for explicit protocol generation.
+    ///
+    /// This is deliberately nested under the historically additive capabilities
+    /// object because stable v0.3.8 rejects unknown *top-level* registration
+    /// fields but ignores unknown nested capability fields. It is not a
+    /// RunnerFeature and Server ingress removes it before retaining the legacy
+    /// capability projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_protocol_generation: Option<AgentProtocolGenerationNumber>,
 }
 
 /// Bounded, non-secret status for the agent's active configuration generation.
@@ -716,6 +778,7 @@ impl Default for ShellClientCapabilities {
             computer_text_input: false,
             job_state_reconciliation: false,
             coding_agent_runs: false,
+            agent_protocol_generation: None,
         }
     }
 }
@@ -3276,6 +3339,7 @@ mod envelope_tests {
                 computer_text_input: false,
                 job_state_reconciliation: false,
                 coding_agent_runs: false,
+                agent_protocol_generation: None,
             }),
             projects: None,
             agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1.to_string()),
@@ -3335,25 +3399,63 @@ mod envelope_tests {
     }
 
     #[test]
-    fn current_websocket_register_remains_latest_stable_v038_envelope_readable() {
+    fn additive_protocol_generation_is_ignored_by_frozen_pre_c4_envelope_shape() {
+        #[allow(dead_code)]
+        #[derive(Deserialize)]
+        struct LatestPreC4RegisterRequest {
+            client_id: String,
+            agent_instance_id: String,
+            #[serde(default)]
+            display_name: Option<String>,
+            #[serde(default)]
+            owner: Option<String>,
+            #[serde(default)]
+            hostname: Option<String>,
+            #[serde(default)]
+            capabilities: Option<serde_json::Value>,
+            #[serde(default)]
+            host_context: Option<AgentHostContext>,
+            #[serde(default)]
+            projects: Option<Vec<ShellAgentProjectSummary>>,
+            #[serde(default)]
+            agent_protocol_version: Option<String>,
+            #[serde(default)]
+            policy: Option<AgentPolicySummary>,
+            #[serde(default)]
+            process_started_at: Option<i64>,
+            #[serde(default)]
+            build: Option<AgentBuildInfo>,
+            #[serde(default)]
+            job_concurrency_limit: Option<usize>,
+            #[serde(default)]
+            job_inventory: Option<ShellJobInventory>,
+            #[serde(default)]
+            coding_agent_providers: Option<Vec<crate::coding_agent::CodingAgentProvider>>,
+            #[serde(default)]
+            coding_agent_inventory: Option<crate::coding_agent::CodingAgentRunInventory>,
+        }
+
         #[derive(Deserialize)]
         #[serde(tag = "type", rename_all = "snake_case")]
-        enum LatestStableV038Envelope {
+        enum LatestPreC4Envelope {
             Register {
                 #[serde(flatten)]
-                payload: ShellClientRegisterRequest,
+                payload: LatestPreC4RegisterRequest,
                 #[serde(default)]
                 auth_token: Option<String>,
             },
         }
 
-        let json = AgentEnvelope::Register {
-            payload: sample_register(),
-        }
-        .to_json()
-        .unwrap();
-        match serde_json::from_str::<LatestStableV038Envelope>(&json).unwrap() {
-            LatestStableV038Envelope::Register {
+        let mut payload = sample_register();
+        payload
+            .capabilities
+            .as_mut()
+            .unwrap()
+            .agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
+        let json = AgentEnvelope::Register { payload }.to_json().unwrap();
+        assert!(json.contains(r#""agent_protocol_generation":2"#));
+        match serde_json::from_str::<LatestPreC4Envelope>(&json).unwrap() {
+            LatestPreC4Envelope::Register {
                 payload,
                 auth_token,
             } => {
@@ -3362,9 +3464,31 @@ mod envelope_tests {
                     payload.agent_protocol_version.as_deref(),
                     Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1)
                 );
+                assert_eq!(payload.capabilities.unwrap()["file_read"], true);
                 assert!(auth_token.is_none());
             }
         }
+    }
+
+    #[test]
+    fn raw_protocol_generation_number_preserves_future_wire_values_for_ingress_rejection() {
+        let mut payload = sample_register();
+        payload
+            .capabilities
+            .as_mut()
+            .unwrap()
+            .agent_protocol_generation = Some(AgentProtocolGenerationNumber::new(u16::MAX));
+        let json = serde_json::to_string(&payload).unwrap();
+        let decoded: ShellClientRegisterRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            decoded
+                .capabilities
+                .unwrap()
+                .agent_protocol_generation
+                .unwrap()
+                .get(),
+            u16::MAX
+        );
     }
 
     #[test]

@@ -31,10 +31,10 @@ use shell_protocol::{
     ShellClientRegisterResponse, ShellCommandExecutionState, ShellJobContext, ShellJobInventory,
     ShellJobLogSnapshot, ShellJobSnapshot, ShellJobStreamSnapshot, ShellJobValidationProgress,
     ShellJobValidationStep, ShellProfileSummaryEntry, ShellProfilesSummary,
-    ShellProjectInventoryPage, ShellProjectInventoryStatus, AGENT_PROTOCOL_VERSION_POLLING_V1,
-    AGENT_PROTOCOL_VERSION_POLLING_V2, JOB_INVENTORY_MAX_ACTIVE_JOBS,
-    JOB_INVENTORY_MAX_SERIALIZED_BYTES, JOB_INVENTORY_MAX_TERMINAL_JOBS,
-    JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
+    ShellProjectInventoryPage, ShellProjectInventoryStatus, AGENT_PROTOCOL_GENERATION_V2,
+    AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_POLLING_V2,
+    JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES,
+    JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
     PROJECT_INVENTORY_INLINE_MAX_SUMMARIES, PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
     VALIDATION_STEP_SPAWN_FAILED_CODE, VALIDATION_STEP_WAIT_FAILED_CODE,
     VALIDATION_TOOL_UNAVAILABLE_CODE,
@@ -44,7 +44,8 @@ use shell_protocol::{
 use agent_init::{TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET};
 #[cfg(test)]
 use shell_protocol::{
-    AgentEnvelope, AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+    AgentEnvelope, AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
+    AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
 #[cfg(test)]
 use std::collections::BTreeMap;
@@ -2139,6 +2140,7 @@ fn build_register_request_with_provider_status(
 ) {
     let hot = runtime.snapshot();
     let mut capabilities = agent_register_capabilities(cfg);
+    capabilities.agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
     let coding_agent_providers = runtime
         .coding_agents()
         .map(|manager| manager.providers())

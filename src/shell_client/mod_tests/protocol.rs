@@ -1,6 +1,267 @@
 use super::*;
 
 #[test]
+fn protocol_generation_inventory_matrix_keeps_three_dimensions_orthogonal() {
+    let labels = [
+        (
+            AGENT_PROTOCOL_VERSION_POLLING_V1,
+            crate::shell_protocol::AgentProjectInventoryStrategy::Inline,
+        ),
+        (
+            AGENT_PROTOCOL_VERSION_POLLING_V2,
+            crate::shell_protocol::AgentProjectInventoryStrategy::Paged,
+        ),
+        (
+            AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+            crate::shell_protocol::AgentProjectInventoryStrategy::Inline,
+        ),
+        (
+            AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
+            crate::shell_protocol::AgentProjectInventoryStrategy::Paged,
+        ),
+        (
+            AGENT_PROTOCOL_VERSION_QUIC_V1,
+            crate::shell_protocol::AgentProjectInventoryStrategy::Inline,
+        ),
+        (
+            AGENT_PROTOCOL_VERSION_QUIC_V2,
+            crate::shell_protocol::AgentProjectInventoryStrategy::Paged,
+        ),
+    ];
+
+    for (label, inventory) in labels {
+        for (wire_generation, generation) in [
+            (None, RunnerProtocolGeneration::LegacyV1),
+            (
+                Some(AGENT_PROTOCOL_GENERATION_LEGACY_V1),
+                RunnerProtocolGeneration::LegacyV1,
+            ),
+            (
+                Some(AGENT_PROTOCOL_GENERATION_V2),
+                RunnerProtocolGeneration::V2,
+            ),
+        ] {
+            let accepted =
+                AcceptedRunnerProtocol::try_from_registration(label, wire_generation).unwrap();
+            assert_eq!(accepted.generation(), generation, "{label}");
+            assert_eq!(accepted.project_inventory(), inventory, "{label}");
+        }
+    }
+
+    let legacy_paged =
+        AcceptedRunnerProtocol::try_from_registration(AGENT_PROTOCOL_VERSION_WEBSOCKET_V2, None)
+            .unwrap();
+    assert_eq!(
+        legacy_paged.generation(),
+        RunnerProtocolGeneration::LegacyV1
+    );
+    assert_eq!(
+        legacy_paged.project_inventory(),
+        crate::shell_protocol::AgentProjectInventoryStrategy::Paged
+    );
+
+    let v2_inline = AcceptedRunnerProtocol::try_from_registration(
+        AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+        Some(AGENT_PROTOCOL_GENERATION_V2),
+    )
+    .unwrap();
+    assert_eq!(v2_inline.generation(), RunnerProtocolGeneration::V2);
+    assert_eq!(
+        v2_inline.project_inventory(),
+        crate::shell_protocol::AgentProjectInventoryStrategy::Inline
+    );
+}
+
+#[test]
+fn unsupported_protocol_generation_and_unknown_legacy_label_fail_closed() {
+    for raw in [0, 3, u16::MAX] {
+        let error = AcceptedRunnerProtocol::try_from_registration(
+            AGENT_PROTOCOL_VERSION_POLLING_V1,
+            Some(AgentProtocolGenerationNumber::new(raw)),
+        )
+        .unwrap_err();
+        assert_eq!(error, "agent_protocol_generation is unsupported");
+    }
+
+    let error = AcceptedRunnerProtocol::try_from_registration(
+        "future-v2",
+        Some(AGENT_PROTOCOL_GENERATION_V2),
+    )
+    .unwrap_err();
+    assert_eq!(error, "agent_protocol_version is unsupported");
+}
+
+fn generation_registration(
+    client_id: &str,
+    instance_id: &str,
+    generation: Option<AgentProtocolGenerationNumber>,
+) -> ShellClientRegisterRequest {
+    let mut registration = runner_registration(client_id, instance_id, Vec::new());
+    let mut capabilities = v2_baseline_capabilities();
+    capabilities.agent_protocol_generation = generation;
+    registration.capabilities = Some(capabilities);
+    registration
+}
+
+#[tokio::test]
+async fn registration_rejects_unknown_generation_before_creating_a_record() {
+    let registry = ShellClientRegistry::default();
+    let error = registry
+        .register(generation_registration(
+            "unknown-generation",
+            "inst-a",
+            Some(AgentProtocolGenerationNumber::new(3)),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error, "agent_protocol_generation is unsupported");
+    assert!(registry
+        .get_client_view("unknown-generation")
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn registration_rejects_v2_baseline_contradiction_before_creating_a_record() {
+    let registry = ShellClientRegistry::default();
+    let mut registration = generation_registration(
+        "v2-contradiction",
+        "inst-a",
+        Some(AGENT_PROTOCOL_GENERATION_V2),
+    );
+    registration
+        .capabilities
+        .as_mut()
+        .unwrap()
+        .structured_process_argv = false;
+
+    let error = registry.register(registration).await.unwrap_err();
+    assert_eq!(
+        error,
+        "runner generation baseline capability mismatch: structured_process_argv"
+    );
+    assert!(registry.get_client_view("v2-contradiction").await.is_none());
+}
+
+#[tokio::test]
+async fn same_instance_protocol_generation_is_stable_but_same_generation_reconnects_remain_valid() {
+    let legacy = ShellClientRegistry::default();
+    legacy
+        .register(generation_registration("legacy-stable", "inst-a", None))
+        .await
+        .unwrap();
+    legacy
+        .register(generation_registration(
+            "legacy-stable",
+            "inst-a",
+            Some(AGENT_PROTOCOL_GENERATION_LEGACY_V1),
+        ))
+        .await
+        .unwrap();
+
+    let v2 = ShellClientRegistry::default();
+    v2.register(generation_registration(
+        "v2-stable",
+        "inst-a",
+        Some(AGENT_PROTOCOL_GENERATION_V2),
+    ))
+    .await
+    .unwrap();
+    v2.register(generation_registration(
+        "v2-stable",
+        "inst-a",
+        Some(AGENT_PROTOCOL_GENERATION_V2),
+    ))
+    .await
+    .unwrap();
+
+    for (client_id, from, to) in [
+        ("legacy-to-v2", None, Some(AGENT_PROTOCOL_GENERATION_V2)),
+        ("v2-to-legacy", Some(AGENT_PROTOCOL_GENERATION_V2), None),
+    ] {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(generation_registration(client_id, "inst-a", from))
+            .await
+            .unwrap();
+        let error = registry
+            .register(generation_registration(client_id, "inst-a", to))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "same runner instance cannot change protocol generation"
+        );
+    }
+}
+
+#[tokio::test]
+async fn same_instance_inventory_strategy_change_does_not_trip_generation_fence() {
+    let registry = ShellClientRegistry::default();
+    let mut inline = generation_registration(
+        "inventory-change",
+        "inst-a",
+        Some(AGENT_PROTOCOL_GENERATION_V2),
+    );
+    inline.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string());
+    registry.register(inline).await.unwrap();
+
+    let mut paged = generation_registration(
+        "inventory-change",
+        "inst-a",
+        Some(AGENT_PROTOCOL_GENERATION_V2),
+    );
+    paged.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_POLLING_V2.to_string());
+    registry.register(paged).await.unwrap();
+
+    let inner = registry.inner.lock().await;
+    let record = inner.clients.get("inventory-change").unwrap();
+    assert_eq!(
+        record.accepted_protocol.generation(),
+        RunnerProtocolGeneration::V2
+    );
+    assert_eq!(
+        record.accepted_protocol.project_inventory(),
+        crate::shell_protocol::AgentProjectInventoryStrategy::Paged
+    );
+}
+
+#[tokio::test]
+async fn different_process_replacement_may_change_protocol_generation_in_either_direction() {
+    for (client_id, from, to, expected) in [
+        (
+            "replace-legacy-v2",
+            None,
+            Some(AGENT_PROTOCOL_GENERATION_V2),
+            RunnerProtocolGeneration::V2,
+        ),
+        (
+            "replace-v2-legacy",
+            Some(AGENT_PROTOCOL_GENERATION_V2),
+            None,
+            RunnerProtocolGeneration::LegacyV1,
+        ),
+    ] {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(generation_registration(client_id, "inst-a", from))
+            .await
+            .unwrap();
+        registry
+            .set_last_seen_for_test(client_id, now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1)
+            .await;
+        registry
+            .register(generation_registration(client_id, "inst-b", to))
+            .await
+            .unwrap();
+        let inner = registry.inner.lock().await;
+        let record = inner.clients.get(client_id).unwrap();
+        assert_eq!(record.agent_instance_id, "inst-b");
+        assert_eq!(record.accepted_protocol.generation(), expected);
+    }
+}
+
+#[test]
 fn protocol_async_capability_defaults_false() {
     let capabilities = ShellClientCapabilities::default();
     assert!(!capabilities.async_jobs);
@@ -105,6 +366,7 @@ async fn latest_stable_v038_registration_fixtures_are_accepted() {
         );
         let registration: ShellClientRegisterRequest = serde_json::from_str(&fixture).unwrap();
         let caps = registration.capabilities.as_ref().unwrap();
+        assert!(caps.agent_protocol_generation.is_none());
         assert!(caps.shell);
         assert!(caps.file_read);
         assert!(!caps.computer_text_input);
@@ -129,6 +391,53 @@ async fn latest_stable_v038_registration_fixtures_are_accepted() {
         assert_eq!(view.agent_protocol_version, protocol);
         assert_eq!(view.transport, transport_label);
     }
+}
+
+#[tokio::test]
+async fn latest_stable_v039_missing_generation_remains_legacy_even_with_v2_inventory_suffix() {
+    let fixture = r#"{
+        "client_id":"compat-v039",
+        "agent_instance_id":"inst-v039",
+        "capabilities":{"shell":true,"file_read":true,"structured_process_argv":false},
+        "projects":[],
+        "agent_protocol_version":"websocket-v2",
+        "build":{"version":"0.3.9","git_dirty":false}
+    }"#;
+    let registration: ShellClientRegisterRequest = serde_json::from_str(fixture).unwrap();
+    assert!(registration
+        .capabilities
+        .as_ref()
+        .is_some_and(|caps| caps.agent_protocol_generation.is_none()));
+
+    let registry = ShellClientRegistry::default();
+    registry
+        .register_streaming_session(
+            registration,
+            None,
+            "connection-v039",
+            AgentTransport::WebSocket,
+            Arc::new(Notify::new()),
+        )
+        .await
+        .unwrap();
+    let view = registry.get_client_view("compat-v039").await.unwrap();
+    assert_eq!(view.transport, TRANSPORT_WEBSOCKET);
+    assert_eq!(
+        view.agent_protocol_semantics.project_inventory,
+        crate::shell_protocol::AgentProjectInventoryStrategy::Paged
+    );
+    assert!(!registry
+        .client_supports(
+            "compat-v039",
+            crate::shell_protocol::SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV
+        )
+        .await
+        .unwrap());
+    let inner = registry.inner.lock().await;
+    assert_eq!(
+        inner.clients["compat-v039"].accepted_protocol.generation(),
+        RunnerProtocolGeneration::LegacyV1
+    );
 }
 
 #[tokio::test]
@@ -475,6 +784,7 @@ async fn coding_agent_run_lookup_is_exact_when_bound_and_ambiguous_when_unbound(
                 host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     coding_agent_runs: true,
+                    agent_protocol_generation: None,
                     ..Default::default()
                 }),
                 projects: None,
@@ -655,6 +965,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 computer_text_input: true,
                 job_state_reconciliation: true,
                 coding_agent_runs: true,
+                agent_protocol_generation: None,
             }),
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),

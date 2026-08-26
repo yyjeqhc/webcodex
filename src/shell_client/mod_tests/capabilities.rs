@@ -15,6 +15,19 @@ fn wire_capabilities_with_only(feature: Option<RunnerFeature>) -> ShellClientCap
     serde_json::from_value(serde_json::Value::Object(value)).unwrap()
 }
 
+fn with_wire_feature(
+    capabilities: &ShellClientCapabilities,
+    feature: RunnerFeature,
+    enabled: bool,
+) -> ShellClientCapabilities {
+    let mut value = serde_json::to_value(capabilities).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .insert(feature.as_wire_name().to_string(), enabled.into());
+    serde_json::from_value(value).unwrap()
+}
+
 #[test]
 fn canonical_runner_feature_inventory_matches_wire_names_exactly() {
     let wire_names = SHELL_CLIENT_CAPABILITY_NAMES
@@ -46,14 +59,15 @@ fn canonical_runner_feature_wire_names_round_trip() {
 
 #[test]
 fn canonical_runner_feature_set_tracks_each_individual_wire_bool() {
-    let all_false = RunnerFeatureSet::from_wire(&wire_capabilities_with_only(None));
+    let all_false = RunnerFeatureSet::from_legacy_wire_for_test(&wire_capabilities_with_only(None));
     for feature in RunnerFeature::all() {
         assert!(!all_false.supports(*feature), "{}", feature.as_wire_name());
     }
 
     for advertised in RunnerFeature::all() {
-        let semantics =
-            RunnerFeatureSet::from_wire(&wire_capabilities_with_only(Some(*advertised)));
+        let semantics = RunnerFeatureSet::from_legacy_wire_for_test(&wire_capabilities_with_only(
+            Some(*advertised),
+        ));
         for observed in RunnerFeature::all() {
             assert_eq!(
                 semantics.supports(*observed),
@@ -106,9 +120,145 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
 }
 
 #[test]
+fn v2_baseline_exactly_matches_generation_eligible_classification() {
+    let baseline = AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let generation_eligible = RunnerFeature::all()
+        .iter()
+        .copied()
+        .filter(|feature| feature.inference() == RunnerFeatureInference::GenerationEligible)
+        .map(RunnerFeature::as_wire_name)
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(baseline.len(), 22);
+    assert_eq!(
+        baseline.len(),
+        AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES.len()
+    );
+    assert_eq!(baseline, generation_eligible);
+    for feature in RunnerFeature::all() {
+        if feature.inference() == RunnerFeatureInference::RegistrationRequired {
+            assert!(
+                !baseline.contains(feature.as_wire_name()),
+                "{}",
+                feature.as_wire_name()
+            );
+        }
+    }
+}
+
+#[test]
+fn legacy_v1_generation_baseline_is_empty_and_preserves_wire_truth() {
+    for generation in [None, Some(AGENT_PROTOCOL_GENERATION_LEGACY_V1)] {
+        let protocol = AcceptedRunnerProtocol::try_from_registration(
+            AGENT_PROTOCOL_VERSION_POLLING_V1,
+            generation,
+        )
+        .unwrap();
+        assert_eq!(protocol.generation(), RunnerProtocolGeneration::LegacyV1);
+
+        let none =
+            RunnerFeatureSet::try_from_registration(protocol, &wire_capabilities_with_only(None))
+                .unwrap();
+        for feature in RunnerFeature::all()
+            .iter()
+            .copied()
+            .filter(|feature| feature.inference() == RunnerFeatureInference::GenerationEligible)
+        {
+            assert!(!none.supports(feature), "{}", feature.as_wire_name());
+            let advertised = RunnerFeatureSet::try_from_registration(
+                protocol,
+                &wire_capabilities_with_only(Some(feature)),
+            )
+            .unwrap();
+            assert!(advertised.supports(feature), "{}", feature.as_wire_name());
+        }
+    }
+}
+
+#[test]
+fn v2_generation_baseline_requires_legacy_projection_without_silent_or() {
+    let protocol = AcceptedRunnerProtocol::try_from_registration(
+        AGENT_PROTOCOL_VERSION_POLLING_V1,
+        Some(AGENT_PROTOCOL_GENERATION_V2),
+    )
+    .unwrap();
+    let baseline = v2_baseline_capabilities();
+    let accepted = RunnerFeatureSet::try_from_registration(protocol, &baseline).unwrap();
+
+    let missing = wire_capabilities_with_only(None);
+    assert_eq!(
+        RunnerFeatureSet::try_from_registration(protocol, &missing).unwrap_err(),
+        "runner generation baseline capability mismatch: file_read"
+    );
+
+    for feature in RunnerFeature::all()
+        .iter()
+        .copied()
+        .filter(|feature| feature.inference() == RunnerFeatureInference::GenerationEligible)
+    {
+        assert!(accepted.supports(feature), "{}", feature.as_wire_name());
+        let contradictory = with_wire_feature(&baseline, feature, false);
+        let error = RunnerFeatureSet::try_from_registration(protocol, &contradictory).unwrap_err();
+        assert_eq!(
+            error,
+            format!(
+                "runner generation baseline capability mismatch: {}",
+                feature.as_wire_name()
+            )
+        );
+    }
+}
+
+#[test]
+fn v2_registration_required_features_are_never_inferred_from_generation() {
+    let protocol = AcceptedRunnerProtocol::try_from_registration(
+        AGENT_PROTOCOL_VERSION_POLLING_V1,
+        Some(AGENT_PROTOCOL_GENERATION_V2),
+    )
+    .unwrap();
+    let baseline = v2_baseline_capabilities();
+    let baseline_only = RunnerFeatureSet::try_from_registration(protocol, &baseline).unwrap();
+
+    for feature in RunnerFeature::all()
+        .iter()
+        .copied()
+        .filter(|feature| feature.inference() == RunnerFeatureInference::RegistrationRequired)
+    {
+        assert!(
+            !baseline_only.supports(feature),
+            "{}",
+            feature.as_wire_name()
+        );
+        let explicitly_advertised = with_wire_feature(&baseline, feature, true);
+        let accepted =
+            RunnerFeatureSet::try_from_registration(protocol, &explicitly_advertised).unwrap();
+        assert!(accepted.supports(feature), "{}", feature.as_wire_name());
+    }
+
+    for feature in [
+        RunnerFeature::SshShell,
+        RunnerFeature::SandboxInspectCommands,
+        RunnerFeature::ComputerObserve,
+        RunnerFeature::ComputerControl,
+        RunnerFeature::ComputerTextInput,
+        RunnerFeature::JobStateReconciliation,
+        RunnerFeature::CodingAgentRuns,
+    ] {
+        assert_eq!(
+            feature.inference(),
+            RunnerFeatureInference::RegistrationRequired
+        );
+        assert!(!baseline_only.supports(feature));
+    }
+}
+
+#[test]
 fn missing_additive_wire_fields_remain_false_in_canonical_semantics() {
     let legacy: ShellClientCapabilities = serde_json::from_str(r#"{}"#).unwrap();
-    let semantics = RunnerFeatureSet::from_wire(&legacy);
+    let semantics = RunnerFeatureSet::from_legacy_wire_for_test(&legacy);
 
     assert!(semantics.supports(RunnerFeature::Shell));
     for feature in RunnerFeature::all() {
@@ -124,7 +274,9 @@ async fn current_protocol_generation_never_infers_registration_required_host_fea
     let registry = ShellClientRegistry::default();
     let mut registration = runner_registration("no-inference", "inst-a", Vec::new());
     registration.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string());
-    registration.capabilities = Some(wire_capabilities_with_only(None));
+    let mut capabilities = v2_baseline_capabilities();
+    capabilities.agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
+    registration.capabilities = Some(capabilities);
     registry.register(registration).await.unwrap();
 
     for feature in [
@@ -170,6 +322,24 @@ async fn shell_client_view_preserves_legacy_capability_wire_projection() {
     assert_eq!(serialized["computer_control"], true);
     assert!(serialized.get("features").is_none());
     assert!(serialized.get("feature_classification").is_none());
+}
+
+#[tokio::test]
+async fn v2_generation_advertisement_never_enters_public_capability_projection() {
+    let registry = ShellClientRegistry::default();
+    let mut capabilities = v2_baseline_capabilities();
+    capabilities.agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
+    capabilities.computer_control = true;
+
+    let mut registration = runner_registration("v2-projection", "inst-v2", Vec::new());
+    registration.capabilities = Some(capabilities);
+    let view = registry.register(registration).await.unwrap();
+
+    assert!(view.capabilities.agent_protocol_generation.is_none());
+    assert!(view.capabilities.computer_control);
+    let serialized = serde_json::to_value(&view.capabilities).unwrap();
+    assert!(serialized.get("agent_protocol_generation").is_none());
+    assert_eq!(serialized["computer_control"], true);
 }
 
 #[tokio::test]

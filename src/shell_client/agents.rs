@@ -18,13 +18,13 @@ use super::validation::{
     validate_optional_field, validate_project_summary_batch,
 };
 use super::{
-    now_ts, AgentTransport, RunnerFeature, RunnerFeatureSet, ShellClientRegistry,
-    CLIENT_ONLINE_WINDOW_SECS, MAX_RETIRED_INSTANCES_PER_CLIENT,
+    now_ts, AcceptedRunnerProtocol, AgentTransport, RunnerFeature, RunnerFeatureSet,
+    ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS, MAX_RETIRED_INSTANCES_PER_CLIENT,
 };
 use crate::mcp_gateway::validate_providers;
 use crate::shell_protocol::{
-    normalize_agent_protocol_semantics, AgentProjectInventoryStrategy, ShellClientRegisterRequest,
-    ShellClientView, JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    AgentProjectInventoryStrategy, ShellClientRegisterRequest, ShellClientView,
+    JOB_INVENTORY_MAX_ACTIVE_JOBS,
 };
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -249,8 +249,16 @@ impl ShellClientRegistry {
 
         let client_id = body.client_id.trim().to_string();
         let agent_instance_id = body.agent_instance_id.trim().to_string();
-        let capabilities = body.capabilities.clone().unwrap_or_default();
-        let runner_features = RunnerFeatureSet::from_wire(&capabilities);
+        let agent_protocol_version =
+            normalize_required_agent_protocol_version(body.agent_protocol_version.as_deref())?;
+        let mut capabilities = body.capabilities.clone().unwrap_or_default();
+        let announced_generation = capabilities.agent_protocol_generation.take();
+        let accepted_protocol = AcceptedRunnerProtocol::try_from_registration(
+            &agent_protocol_version,
+            announced_generation,
+        )?;
+        let runner_features =
+            RunnerFeatureSet::try_from_registration(accepted_protocol, &capabilities)?;
         let job_inventory = body.job_inventory.clone();
         let coding_agent_providers = body.coding_agent_providers.clone();
         let coding_agent_inventory = body.coding_agent_inventory.clone();
@@ -262,14 +270,8 @@ impl ShellClientRegistry {
         )?;
         let coding_agent_providers = coding_agent_providers.unwrap_or_default();
         let coding_agent_inventory = coding_agent_inventory.unwrap_or_default();
-        let agent_protocol_version =
-            normalize_required_agent_protocol_version(body.agent_protocol_version.as_deref())?;
-        let agent_protocol_semantics = normalize_agent_protocol_semantics(&agent_protocol_version);
-        if !agent_protocol_semantics.compatibility.is_supported() {
-            return Err("agent_protocol_version is unsupported".to_string());
-        }
         let paged_project_inventory = matches!(
-            agent_protocol_semantics.project_inventory,
+            accepted_protocol.project_inventory(),
             AgentProjectInventoryStrategy::Paged
         );
         let host_context = body
@@ -324,7 +326,7 @@ impl ShellClientRegistry {
                 .as_ref()
                 .map(|session| session.transport)
                 .unwrap_or(AgentTransport::Polling),
-            agent_protocol_semantics,
+            accepted_protocol,
             policy,
             auth_group: auth.and_then(ShellClientAuthGroup::from_auth),
             registered_at: now,
@@ -425,6 +427,12 @@ impl ShellClientRegistry {
                 "agent client {} instance was replaced and cannot reclaim the lease",
                 client_id
             ));
+        }
+        if inner.clients.get(&client_id).is_some_and(|existing| {
+            existing.agent_instance_id == agent_instance_id
+                && existing.accepted_protocol.generation() != accepted_protocol.generation()
+        }) {
+            return Err("same runner instance cannot change protocol generation".to_string());
         }
         reject_same_instance_feature_downgrade(
             inner.clients.get(&client_id),
@@ -1431,7 +1439,7 @@ impl ShellClientRegistry {
             project_inventory: Some(client.project_inventory.status.clone()),
             agent_protocol_version: client.agent_protocol_version.clone(),
             transport: client.transport.as_str().to_string(),
-            agent_protocol_semantics: client.agent_protocol_semantics,
+            agent_protocol_semantics: client.accepted_protocol.compatibility_semantics(),
             policy: client.policy.clone(),
             registered_at: client.registered_at,
             connected_at: client.connected_at,

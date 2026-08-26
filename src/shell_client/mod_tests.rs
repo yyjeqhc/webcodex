@@ -1,8 +1,11 @@
 use super::*;
 use crate::shell_protocol::{
-    ShellCommandExecutionState, AGENT_PROTOCOL_VERSION_POLLING_V1,
-    AGENT_PROTOCOL_VERSION_POLLING_V2, AGENT_PROTOCOL_VERSION_QUIC_V1,
-    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
+    AgentProtocolGenerationNumber, ShellCommandExecutionState, AGENT_PROTOCOL_GENERATION_LEGACY_V1,
+    AGENT_PROTOCOL_GENERATION_V2, AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
+    AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_POLLING_V2,
+    AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_QUIC_V2,
+    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
 };
 
@@ -119,6 +122,17 @@ fn runner_registration(
         agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string()),
         policy: None,
     }
+}
+
+fn v2_baseline_capabilities() -> ShellClientCapabilities {
+    let mut value = serde_json::Map::new();
+    // Shell is historical true-by-default but remains RegistrationRequired in
+    // every generation, so pin it false in the baseline-only fixture.
+    value.insert("shell".to_string(), serde_json::Value::Bool(false));
+    for capability in AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
+        value.insert((*capability).to_string(), serde_json::Value::Bool(true));
+    }
+    serde_json::from_value(serde_json::Value::Object(value)).unwrap()
 }
 
 fn async_job_capabilities() -> ShellClientCapabilities {

@@ -112,6 +112,7 @@ async fn register_agent_with_lsp_capabilities(
                     computer_text_input: false,
                     job_state_reconciliation: false,
                     coding_agent_runs: false,
+                    agent_protocol_generation: None,
                 }),
                 projects: Some(vec![ShellAgentProjectSummary {
                     id: project_id.to_string(),

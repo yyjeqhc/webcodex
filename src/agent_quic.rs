@@ -626,6 +626,7 @@ mod tests {
                     computer_text_input: false,
                     job_state_reconciliation: false,
                     coding_agent_runs: false,
+                    agent_protocol_generation: None,
                 }),
                 projects: None,
                 agent_protocol_version: Some(protocol.to_string()),

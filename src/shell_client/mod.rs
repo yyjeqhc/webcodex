@@ -32,6 +32,7 @@ mod jobs;
 mod polling;
 mod project_inventory;
 mod projects;
+mod protocol;
 mod reconciliation;
 #[cfg(test)]
 mod reconciliation_tests;
@@ -62,6 +63,9 @@ pub(crate) use jobs::{
 };
 #[cfg(test)]
 pub(crate) use projects::ShellClientLookupError;
+pub(crate) use protocol::AcceptedRunnerProtocol;
+#[cfg(test)]
+pub(crate) use protocol::RunnerProtocolGeneration;
 pub(crate) use reconciliation::recovery_timeout_sweep;
 pub(crate) use requests::EnqueueLspError;
 use state::ShellClientRegistryInner;

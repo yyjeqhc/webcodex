@@ -1,3 +1,4 @@
+use super::protocol::{AcceptedRunnerProtocol, RunnerProtocolGeneration};
 use crate::shell_protocol::{self as wire, ShellClientCapabilities};
 use std::collections::BTreeSet;
 
@@ -109,11 +110,10 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 46] = [
 /// Whether a feature could ever become a frozen protocol-generation baseline,
 /// or must permanently depend on accepted Runner registration semantics.
 ///
-/// `GenerationEligible` is classification only. C3a defines no generation
-/// baseline and grants no feature merely because a Runner uses a supported
-/// protocol generation.
+/// C4 freezes `GenerationEligible` as the protocol-generation-2 baseline.
+/// `RegistrationRequired` features remain governed only by accepted Runner
+/// registration semantics for every generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum RunnerFeatureInference {
     GenerationEligible,
     RegistrationRequired,
@@ -279,9 +279,6 @@ impl RunnerFeature {
         })
     }
 
-    /// Classification only; this method is deliberately not consulted by
-    /// [`RunnerFeatureSet::from_wire`].
-    #[allow(dead_code)]
     pub(crate) const fn inference(self) -> RunnerFeatureInference {
         match self {
             Self::FileRead
@@ -401,7 +398,50 @@ pub(crate) struct RunnerFeatureSet {
 }
 
 impl RunnerFeatureSet {
-    pub(crate) fn from_wire(capabilities: &ShellClientCapabilities) -> Self {
+    /// Normalize one already-supported registration into canonical feature truth.
+    ///
+    /// LegacyV1 has no generation baseline and therefore preserves historical
+    /// effective wire semantics exactly. Generation 2 requires every frozen
+    /// baseline capability to remain true in the legacy bool projection during
+    /// the rolling-compatibility window; contradictions reject registration
+    /// instead of being silently ORed with the baseline. RegistrationRequired
+    /// features are never inferred from generation.
+    pub(crate) fn try_from_registration(
+        protocol: AcceptedRunnerProtocol,
+        capabilities: &ShellClientCapabilities,
+    ) -> Result<Self, String> {
+        let mut effective_features = BTreeSet::new();
+        for feature in RunnerFeature::all().iter().copied() {
+            let advertised = feature.advertised_by(capabilities);
+            match protocol.generation() {
+                RunnerProtocolGeneration::LegacyV1 => {
+                    if advertised {
+                        effective_features.insert(feature);
+                    }
+                }
+                RunnerProtocolGeneration::V2 => match feature.inference() {
+                    RunnerFeatureInference::GenerationEligible => {
+                        if !advertised {
+                            return Err(format!(
+                                "runner generation baseline capability mismatch: {}",
+                                feature.as_wire_name()
+                            ));
+                        }
+                        effective_features.insert(feature);
+                    }
+                    RunnerFeatureInference::RegistrationRequired => {
+                        if advertised {
+                            effective_features.insert(feature);
+                        }
+                    }
+                },
+            }
+        }
+        Ok(Self { effective_features })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_legacy_wire_for_test(capabilities: &ShellClientCapabilities) -> Self {
         let effective_features = RunnerFeature::all()
             .iter()
             .copied()

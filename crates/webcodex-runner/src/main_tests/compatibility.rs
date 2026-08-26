@@ -10,6 +10,14 @@ use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 /// capability/policy content remains opaque because v0.3.8 serde accepts those
 /// additions and current capability semantics are independently fail-closed.
 #[derive(Deserialize)]
+struct LatestStableV038Capabilities {
+    #[serde(default)]
+    file_read: bool,
+    #[serde(default)]
+    structured_process_argv: bool,
+}
+
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LatestStableV038RegisterRequest {
     client_id: String,
@@ -21,7 +29,7 @@ struct LatestStableV038RegisterRequest {
     #[serde(default, rename = "hostname")]
     _hostname: Option<Value>,
     #[serde(default)]
-    capabilities: Option<Value>,
+    capabilities: Option<LatestStableV038Capabilities>,
     #[serde(default, rename = "host_context")]
     _host_context: Option<Value>,
     #[serde(default)]
@@ -50,12 +58,17 @@ fn current_runner_registration_is_readable_by_latest_stable_v038_top_level_parse
         AGENT_PROTOCOL_VERSION_QUIC_V1,
     ] {
         let current = build_register_request(&cfg, Vec::new(), protocol, "inst-current", 0);
+        let json_value = serde_json::to_value(&current).unwrap();
+        assert_eq!(json_value["capabilities"]["agent_protocol_generation"], 2);
+        assert!(json_value.get("agent_protocol_generation").is_none());
         let json = serde_json::to_vec(&current).unwrap();
         let stable: LatestStableV038RegisterRequest = serde_json::from_slice(&json).unwrap();
         assert_eq!(stable.client_id, cfg.client_id);
         assert_eq!(stable.agent_instance_id, "inst-current");
         assert_eq!(stable.agent_protocol_version.as_deref(), Some(protocol));
-        assert!(stable.capabilities.is_some());
+        let capabilities = stable.capabilities.expect("stable nested capabilities");
+        assert!(capabilities.file_read);
+        assert!(capabilities.structured_process_argv);
         assert!(stable.projects.is_some());
     }
 }

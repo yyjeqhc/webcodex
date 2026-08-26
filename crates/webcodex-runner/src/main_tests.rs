@@ -1207,6 +1207,13 @@ fn generated_agent_instance_id_is_non_empty_uuid_like() {
         Some(AGENT_PROTOCOL_VERSION_POLLING_V1),
         "first-party registration builders must always declare protocol identity"
     );
+    assert_eq!(
+        body.capabilities
+            .as_ref()
+            .and_then(|capabilities| capabilities.agent_protocol_generation),
+        Some(AGENT_PROTOCOL_GENERATION_V2),
+        "current Runner registration must explicitly declare protocol generation 2"
+    );
 }
 
 fn ws_sink(client_id: &str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {

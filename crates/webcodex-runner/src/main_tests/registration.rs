@@ -122,6 +122,102 @@ fn mcp_gateway_register_request_projects_bounded_provider_inventory_without_loca
 }
 
 #[test]
+fn current_runner_registration_advertises_v2_and_complete_generation_baseline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let body = build_register_request(
+        &cfg,
+        Vec::new(),
+        AGENT_PROTOCOL_VERSION_POLLING_V1,
+        "baseline-instance",
+        0,
+    );
+    assert_eq!(
+        body.capabilities
+            .as_ref()
+            .and_then(|capabilities| capabilities.agent_protocol_generation),
+        Some(AGENT_PROTOCOL_GENERATION_V2)
+    );
+
+    let capabilities = serde_json::to_value(body.capabilities.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES.len(),
+        22
+    );
+    for capability in AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
+        assert_eq!(
+            capabilities
+                .get(*capability)
+                .and_then(serde_json::Value::as_bool),
+            Some(true),
+            "current Runner must advertise V2 baseline capability {capability}"
+        );
+    }
+}
+
+#[test]
+fn current_v2_registration_is_additive_for_latest_pre_c4_server_shape() {
+    #[allow(dead_code)]
+    #[derive(serde::Deserialize)]
+    struct LatestPreC4RegisterRequest {
+        client_id: String,
+        agent_instance_id: String,
+        #[serde(default)]
+        display_name: Option<String>,
+        #[serde(default)]
+        owner: Option<String>,
+        #[serde(default)]
+        hostname: Option<String>,
+        #[serde(default)]
+        capabilities: Option<serde_json::Value>,
+        #[serde(default)]
+        host_context: Option<shell_protocol::AgentHostContext>,
+        #[serde(default)]
+        projects: Option<Vec<ShellAgentProjectSummary>>,
+        #[serde(default)]
+        agent_protocol_version: Option<String>,
+        #[serde(default)]
+        policy: Option<AgentPolicySummary>,
+        #[serde(default)]
+        process_started_at: Option<i64>,
+        #[serde(default)]
+        build: Option<shell_protocol::AgentBuildInfo>,
+        #[serde(default)]
+        job_concurrency_limit: Option<usize>,
+        #[serde(default)]
+        job_inventory: Option<ShellJobInventory>,
+        #[serde(default)]
+        coding_agent_providers: Option<Vec<webcodex_core::coding_agent::CodingAgentProvider>>,
+        #[serde(default)]
+        coding_agent_inventory: Option<webcodex_core::coding_agent::CodingAgentRunInventory>,
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let body = build_register_request(
+        &cfg,
+        Vec::new(),
+        AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+        "pre-c4-compat-instance",
+        0,
+    );
+    let json = serde_json::to_value(&body).unwrap();
+    assert!(json.get("agent_protocol_generation").is_none());
+    assert_eq!(json["capabilities"]["agent_protocol_generation"], 2);
+
+    let old: LatestPreC4RegisterRequest = serde_json::from_value(json).unwrap();
+    assert_eq!(old.client_id, cfg.client_id);
+    assert_eq!(old.agent_instance_id, "pre-c4-compat-instance");
+    assert_eq!(
+        old.agent_protocol_version.as_deref(),
+        Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1)
+    );
+    let capabilities = old.capabilities.expect("legacy bool capability projection");
+    assert_eq!(capabilities["file_read"], true);
+    assert_eq!(capabilities["structured_process_argv"], true);
+}
+
+#[test]
 fn computer_register_request_announces_platform_capability_and_protocol_version() {
     let tmp = tempfile::tempdir().unwrap();
     let mut cfg = test_config(tmp.path().join("config/projects.d"));
@@ -163,6 +259,12 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
             "version mismatch for {expected_str}"
         );
         assert_eq!(body.agent_protocol_version.as_deref(), Some(expected_str));
+        assert_eq!(
+            body.capabilities
+                .as_ref()
+                .and_then(|capabilities| capabilities.agent_protocol_generation),
+            Some(AGENT_PROTOCOL_GENERATION_V2)
+        );
     }
     // Also verify capabilities are advertised (check once for polling).
     let body = build_register_request(

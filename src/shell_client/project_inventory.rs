@@ -356,7 +356,7 @@ impl ShellClientRegistry {
         client.last_seen = now;
         expire_staging(client, now);
         if !matches!(
-            client.agent_protocol_semantics.project_inventory,
+            client.accepted_protocol.project_inventory(),
             AgentProjectInventoryStrategy::Paged
         ) {
             note_nonfatal_error(client, "project_inventory_paging_not_negotiated");

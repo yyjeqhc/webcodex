@@ -399,6 +399,7 @@ async fn register_agent_projects_for_auth(
                     computer_text_input: false,
                     job_state_reconciliation: false,
                     coding_agent_runs: false,
+                    agent_protocol_generation: None,
                 }),
                 projects: Some(vec![registered_project(
                     project_id,

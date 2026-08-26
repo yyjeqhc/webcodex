@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 ///
 /// These identities never infer support from protocol generation, transport,
 /// host OS, or any other Server-side observation. A feature enters
-/// [`RunnerFeatureSet`] only when the accepted registration explicitly
-/// advertises its corresponding legacy wire boolean.
+/// [`RunnerFeatureSet`] only through the accepted registration's effective wire
+/// semantics, including the historical `shell` missing-field default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum RunnerFeature {
     Shell,
@@ -107,7 +107,7 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 46] = [
 ];
 
 /// Whether a feature could ever become a frozen protocol-generation baseline,
-/// or must permanently depend on explicit Runner advertisement.
+/// or must permanently depend on accepted Runner registration semantics.
 ///
 /// `GenerationEligible` is classification only. C3a defines no generation
 /// baseline and grants no feature merely because a Runner uses a supported
@@ -116,7 +116,7 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 46] = [
 #[allow(dead_code)]
 pub(crate) enum RunnerFeatureInference {
     GenerationEligible,
-    ExplicitOnly,
+    RegistrationRequired,
 }
 
 impl RunnerFeature {
@@ -329,7 +329,7 @@ impl RunnerFeature {
             | Self::ComputerScrollToElement
             | Self::ComputerKeyInput
             | Self::ComputerWindowActivate
-            | Self::ComputerTextInput => RunnerFeatureInference::ExplicitOnly,
+            | Self::ComputerTextInput => RunnerFeatureInference::RegistrationRequired,
         }
     }
 
@@ -393,24 +393,25 @@ impl RunnerFeature {
 ///
 /// There is intentionally no public mutation API. Every set is rebuilt from the
 /// corresponding immutable wire snapshot at registration ingress, so canonical
-/// semantics cannot acquire features independently from Runner advertisement.
+/// semantics cannot acquire features independently from accepted registration
+/// semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunnerFeatureSet {
-    explicit_features: BTreeSet<RunnerFeature>,
+    effective_features: BTreeSet<RunnerFeature>,
 }
 
 impl RunnerFeatureSet {
     pub(crate) fn from_wire(capabilities: &ShellClientCapabilities) -> Self {
-        let explicit_features = RunnerFeature::all()
+        let effective_features = RunnerFeature::all()
             .iter()
             .copied()
             .filter(|feature| feature.advertised_by(capabilities))
             .collect();
-        Self { explicit_features }
+        Self { effective_features }
     }
 
     pub(crate) fn supports(&self, feature: RunnerFeature) -> bool {
-        self.explicit_features.contains(&feature)
+        self.effective_features.contains(&feature)
     }
 
     pub(crate) fn supports_wire_name(&self, capability: &str) -> bool {

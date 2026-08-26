@@ -67,7 +67,7 @@ fn canonical_runner_feature_set_tracks_each_individual_wire_bool() {
 }
 
 #[test]
-fn capability_classification_keeps_environment_dependent_features_explicit_only() {
+fn capability_classification_keeps_environment_dependent_features_registration_required() {
     for feature in [
         RunnerFeature::Shell,
         RunnerFeature::Git,
@@ -84,7 +84,7 @@ fn capability_classification_keeps_environment_dependent_features_explicit_only(
     ] {
         assert_eq!(
             feature.inference(),
-            RunnerFeatureInference::ExplicitOnly,
+            RunnerFeatureInference::RegistrationRequired,
             "{}",
             feature.as_wire_name()
         );
@@ -120,7 +120,7 @@ fn missing_additive_wire_fields_remain_false_in_canonical_semantics() {
 }
 
 #[tokio::test]
-async fn current_protocol_generation_never_infers_explicit_only_host_features() {
+async fn current_protocol_generation_never_infers_registration_required_host_features() {
     let registry = ShellClientRegistry::default();
     let mut registration = runner_registration("no-inference", "inst-a", Vec::new());
     registration.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string());

@@ -47,9 +47,9 @@ starts a local WebCodex Server + Runner,
 creates a temporary Connector credential, and opens a Cloudflare Quick Tunnel.
 You do **not** need to run `setup`, `doctor`, or `run` first.
 
-When the command reports **WebCodex ready**, keep that terminal open. For a
-public share, WebCodex best-effort copies the **MCP URL** to the clipboard; the
-credential is never copied automatically. In an interactive terminal, press
+When the command reports **WebCodex ready**, keep that terminal open. For the
+default public share, WebCodex best-effort copies the **MCP URL** to the clipboard;
+the credential is not copied automatically. In an interactive terminal, press
 Enter to open ChatGPT App settings, then:
 
 1. In ChatGPT, enable **Developer Mode** and go to **Settings -> Apps -> Create**.
@@ -69,6 +69,13 @@ admin settings; WebCodex cannot widen client-side app permissions. The CLI outpu
 is the source of truth for the WebCodex URL, authentication type, and credential
 for that run.
 Use `webcodex share --no-copy-url` when clipboard access is undesirable.
+
+If a client cannot configure a Bearer header and OAuth setup is undesirable, use
+`webcodex share --auth query-token`. This explicit opt-in prints (and, for a public
+share, copies) one MCP URL whose `?token=` query contains only that run's temporary
+share credential; choose **No authentication** in the MCP client. Treat the entire
+URL as a secret because query strings can appear in client, proxy, clipboard, or
+access logs. The default remains the safer separate Bearer header + credential flow.
 
 A default `share` URL and credential are temporary and stop working when the
 command exits. `webcodex share --tunnel none` is available for local-only MCP

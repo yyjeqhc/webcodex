@@ -42,6 +42,11 @@ WebCodex scope 不会扩大这些客户端侧权限。
 其他 MCP client 同样使用 CLI 报告的 endpoint 与认证方式。仅本地 client 可用
 `webcodex share --tunnel none`，不需要 `cloudflared`。
 
+如果 client 无法设置 Bearer header，可显式使用 `webcodex share --auth query-token`：
+粘贴输出的敏感 `/mcp?token=...` URL，并选择 No authentication。这个 query 只接受当前
+share 的 Project Credential，并不是 PAT/OAuth/shared-key 的通用 query auth。整条 URL
+都必须当作 secret，因为 URL query 可能进入日志。
+
 如果只需要 OpenAI 产品的私有 transport，创建/选择 Secure MCP Tunnel，导出
 `CONTROL_PLANE_TUNNEL_ID` 与只授予 Tunnels Read + Use 的 Restricted
 `CONTROL_PLANE_API_KEY`，然后运行 `webcodex share --tunnel openai`。ChatGPT 使用

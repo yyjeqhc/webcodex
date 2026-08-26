@@ -60,6 +60,11 @@ App settings. Then:
 
 Use `webcodex share --no-copy-url` to disable clipboard access.
 
+For MCP clients that cannot set a Bearer header, `webcodex share --auth query-token`
+is an explicit opt-in that prints and copies one sensitive `/mcp?token=...` URL;
+choose No authentication in the client. The token is temporary and share-only,
+but the complete URL must be treated as a secret because query strings may be logged.
+
 The default share is temporary and ends when the command exits. For local-only
 MCP debugging, `webcodex share --tunnel none` does not require `cloudflared`.
 For OpenAI-only private reachability, users who already have an OpenAI Secure MCP
@@ -154,6 +159,10 @@ credential；交互式终端可以按 Enter 打开 ChatGPT App 设置。然后�
 6. 第一条可先说：`检查这个仓库并总结它的结构。先不要做任何修改。`
 
 使用 `webcodex share --no-copy-url` 可以关闭剪贴板访问。
+
+如果 MCP client 无法设置 Bearer header，可显式使用 `webcodex share --auth query-token`。
+它会输出并复制一条敏感的 `/mcp?token=...` URL，此时 client 选择 No authentication。
+token 只属于本次临时 share，但整条 URL 都必须当作 secret，因为 query string 可能进入日志。
 
 默认 share 会在命令退出时结束。仅做本地 MCP 调试可用
 `webcodex share --tunnel none`，此时不需要 `cloudflared`。ChatGPT Developer Mode、custom

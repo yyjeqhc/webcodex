@@ -44,6 +44,11 @@ WebCodex scopes.
 Use the same printed `/mcp` URL and authentication values. In Claude, add a
 custom connector and paste the MCP URL. Other MCP clients should be configured
 with the same endpoint and the authentication mechanism reported by the CLI.
+When a client cannot set a Bearer header, `webcodex share --auth query-token`
+provides an explicit temporary-share fallback: paste the printed sensitive
+`/mcp?token=...` URL and choose No authentication. The query accepts only the
+current share Project Credential; it is not a general PAT/OAuth/shared-key query
+auth mechanism. Treat the full URL as a secret because URL queries may be logged.
 For local-only clients, `webcodex share --tunnel none` exposes the loopback MCP
 endpoint without `cloudflared`.
 

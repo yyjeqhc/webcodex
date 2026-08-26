@@ -39,8 +39,8 @@ webcodex
 WebCodex Server + Runner、创建临时 Connector credential，并打开 Cloudflare Quick Tunnel。
 第一次使用**不需要**先运行 `setup`、`doctor` 或 `run`。
 
-命令显示 **WebCodex ready** 后保持终端运行。公网 share 会 best-effort 把 **MCP URL**
-复制到剪贴板；credential 永远不会自动复制。交互式终端还可以直接按 Enter 打开 ChatGPT
+命令显示 **WebCodex ready** 后保持终端运行。默认公网 share 会 best-effort 把 **MCP URL**
+复制到剪贴板；credential 不会自动复制。交互式终端还可以直接按 Enter 打开 ChatGPT
 App 设置。然后：
 
 1. 在 ChatGPT 启用 **Developer Mode**，进入 **Settings -> Apps -> Create**。
@@ -59,6 +59,12 @@ write/modify action 是否可用，由 ChatGPT 套餐、workspace 与管理员�
 不能扩大客户端侧 app 权限。当前这次运行到底该填哪个 WebCodex URL、认证类型和
 credential，以 CLI 成功输出为准。
 不希望访问剪贴板时可使用 `webcodex share --no-copy-url`。
+
+如果 MCP client 无法配置 Bearer header，又不想搭 OAuth，可显式使用
+`webcodex share --auth query-token`。这个 opt-in 会输出一个 `?token=` 中携带**本次临时
+share credential** 的 MCP URL；公网 share 也会复制这条敏感 URL，此时 client 选择
+**No authentication**。必须把整条 URL 当作 secret，因为 query string 可能进入 client、
+proxy、剪贴板或 access log。默认行为仍保持更安全的“Bearer header + 单独 credential”。
 
 默认 `share` 的 URL 与 credential 都是临时的，命令退出后失效。仅做本地 MCP 调试时可用
 `webcodex share --tunnel none`，此模式不需要 `cloudflared`。

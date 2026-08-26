@@ -46,6 +46,28 @@ pub(crate) fn allow_query_token_for_path(path: &str) -> bool {
     path == "/api/agents/ws"
 }
 
+const PROJECT_SHARE_MCP_QUERY_TOKEN_ENV: &str = "WEBCODEX_PROJECT_SHARE_MCP_QUERY_TOKEN_ENABLED";
+
+fn allow_project_share_mcp_query_token(path: &str, project_mode: bool, enabled: bool) -> bool {
+    project_mode && enabled && path == "/mcp"
+}
+
+fn project_share_mcp_query_token(req: &Request, project_mode: bool) -> Option<String> {
+    // The query-token convenience is intentionally narrower than generic auth:
+    // only an explicitly opted-in project-share Server may accept it, and an
+    // Authorization header always remains authoritative when present.
+    if req.headers().contains_key("authorization")
+        || !allow_project_share_mcp_query_token(
+            req.uri().path(),
+            project_mode,
+            crate::config::env_flag(PROJECT_SHARE_MCP_QUERY_TOKEN_ENV).unwrap_or(false),
+        )
+    {
+        return None;
+    }
+    req.query::<String>("token")
+}
+
 fn claim_ws_query_token_deprecation_warning(flag: &AtomicBool) -> bool {
     !flag.swap(true, Ordering::Relaxed)
 }
@@ -62,13 +84,32 @@ fn warn_deprecated_ws_query_token_once() {
 
 #[cfg(test)]
 mod query_token_deprecation_tests {
-    use super::{claim_ws_query_token_deprecation_warning, AtomicBool};
+    use super::{
+        allow_project_share_mcp_query_token, claim_ws_query_token_deprecation_warning, AtomicBool,
+    };
 
     #[test]
     fn query_token_deprecation_warning_claim_is_process_bounded() {
         let flag = AtomicBool::new(false);
         assert!(claim_ws_query_token_deprecation_warning(&flag));
         assert!(!claim_ws_query_token_deprecation_warning(&flag));
+    }
+
+    #[test]
+    fn project_share_query_token_is_exact_opt_in_mcp_only() {
+        assert!(allow_project_share_mcp_query_token("/mcp", true, true));
+        assert!(!allow_project_share_mcp_query_token("/mcp", false, true));
+        assert!(!allow_project_share_mcp_query_token("/mcp", true, false));
+        assert!(!allow_project_share_mcp_query_token(
+            "/mcp/extra",
+            true,
+            true
+        ));
+        assert!(!allow_project_share_mcp_query_token(
+            "/api/agents/ws",
+            true,
+            true
+        ));
     }
 }
 
@@ -345,7 +386,10 @@ impl Handler for AuthMiddleware {
         };
 
         let db = get_db(depot);
-        let token = bearer_or_allowed_query_token(req);
+        let project_mode = project_connector_enabled(depot);
+        let project_share_query_token = project_share_mcp_query_token(req, project_mode);
+        let project_share_query_token_used = project_share_query_token.is_some();
+        let token = project_share_query_token.or_else(|| bearer_or_allowed_query_token(req));
 
         // When no token is present and auth is enabled, reject immediately
         // unless the server was explicitly started with `--open`
@@ -412,6 +456,18 @@ impl Handler for AuthMiddleware {
                 // the project Connector instead of the ordinary route registry.
                 depot.inject(ctx);
                 ctrl.call_next(req, depot, res).await;
+                return;
+            }
+            if project_share_query_token_used {
+                // Query auth is a share-only transport convenience for the
+                // exact temporary Connector credential. It must never fall
+                // through to project Agent tokens, PATs, OAuth, or shared keys.
+                reject(
+                    res,
+                    ctrl,
+                    StatusCode::UNAUTHORIZED,
+                    "invalid project share query credential",
+                );
                 return;
             }
             if let Some(ctx) = runtime.authenticate_project_agent_token(&token) {

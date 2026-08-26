@@ -226,7 +226,7 @@ pub(crate) fn parse_options(
 
 pub(crate) fn usage() -> &'static str {
     "Usage: webcodex share [--root PATH] [--profile NAME] [--state-dir PATH]\n\
-                     [--tunnel cloudflare|openai|none] [--auth bearer|oauth]\n\
+                     [--tunnel cloudflare|openai|none] [--auth bearer|query-token|oauth]\n\
                      [--oauth-redirect-uri URL] [--public-url URL] [--no-copy-url]\n\
        webcodex status [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
        webcodex doctor [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
@@ -238,11 +238,14 @@ starts the local Server + Runner, and exposes a temporary credential. The defaul
 Cloudflare Quick Tunnel reuses or auto-manages a verified `cloudflared`. The opt-in\n\
 OpenAI Secure MCP Tunnel provider uses a pinned verified `tunnel-client` and keeps\n\
 the temporary WebCodex Bearer credential local. Public URL sharing best-effort\n\
-copies only the MCP URL; use `--no-copy-url` to disable that.\n\
+copies only the MCP URL by default; `--auth query-token` explicitly opts into a\n\
+single sensitive URL carrying the temporary share credential. Use `--no-copy-url`\n\
+to disable clipboard access.\n\
 `setup`, `doctor`, and `run` remain the local/manual workflow; setup writes private state without\n\
 starting services. `run` is the explicit foreground local runtime step. Its optional\n\
 `--console-assets-dir` enables loopback-only development assets for that run.\n\
-`--auth oauth` adds project-bound OAuth while preserving that project grant.\n\
+`--auth query-token` is a temporary share-only convenience for MCP clients that\n\
+cannot configure a Bearer header; `--auth oauth` adds project-bound OAuth.\n\
 On Windows, local Server/share runtime is unsupported; use `webcodex connect <server-url>` with a remote Linux Server.\n"
 }
 
@@ -641,6 +644,7 @@ pub(super) struct ProjectShareOAuthRuntimeOptions {
 pub(super) struct LocalRuntimeOptions {
     pub(super) public_url: Option<String>,
     pub(super) connector_credential_file: Option<PathBuf>,
+    pub(super) mcp_query_token_auth: bool,
     pub(super) project_share_oauth: Option<ProjectShareOAuthRuntimeOptions>,
     pub(super) child_environment_remove: Vec<&'static str>,
     pub(super) port_conflict_action: &'static str,
@@ -651,6 +655,7 @@ impl Default for LocalRuntimeOptions {
         Self {
             public_url: None,
             connector_credential_file: None,
+            mcp_query_token_auth: false,
             project_share_oauth: None,
             child_environment_remove: Vec::new(),
             port_conflict_action: "Stop the conflicting process, then run webcodex run.",
@@ -730,6 +735,7 @@ pub(super) async fn start_local_runtime(
     let (config, paths) = configured_project(options)?;
     ensure_local_runtime_port_available(config.port, runtime_options.port_conflict_action)?;
     let project_share_oauth = runtime_options.project_share_oauth.clone();
+    let mcp_query_token_auth = runtime_options.mcp_query_token_auth;
     let agent_binary = locate_agent_binary().ok_or_else(|| {
         ProductError::new(
             "required_capability_unavailable",
@@ -784,6 +790,14 @@ pub(super) async fn start_local_runtime(
             config.project_grant_id(&paths),
         )
         .env("WEBCODEX_PROJECT_CREDENTIAL_FILE", &credential_file)
+        .env(
+            "WEBCODEX_PROJECT_SHARE_MCP_QUERY_TOKEN_ENABLED",
+            if mcp_query_token_auth {
+                "true"
+            } else {
+                "false"
+            },
+        )
         .env("WEBCODEX_PROJECT_AGENT_TOKEN_FILE", &paths.agent_token)
         .env("WEBCODEX_CONNECTOR_PROJECT_ID", &config.logical_project_id)
         .env("WEBCODEX_CONNECTOR_PROJECT_NAME", &config.project_name)

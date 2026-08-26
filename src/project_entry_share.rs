@@ -37,6 +37,7 @@ pub(crate) enum TunnelProvider {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShareAuth {
     Bearer,
+    QueryToken,
     OAuth,
 }
 
@@ -83,10 +84,11 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
                     .ok_or_else(|| "--auth requires a value".to_string())?;
                 auth = match value.as_str() {
                     "bearer" => ShareAuth::Bearer,
+                    "query-token" => ShareAuth::QueryToken,
                     "oauth" => ShareAuth::OAuth,
                     _ => {
                         return Err(format!(
-                            "unknown share auth '{value}'; expected bearer or oauth"
+                            "unknown share auth '{value}'; expected bearer, query-token, or oauth"
                         ))
                     }
                 };
@@ -130,7 +132,7 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
         ShareAuth::OAuth if oauth_redirect_uri.as_deref().is_none_or(str::is_empty) => {
             return Err("--auth oauth requires --oauth-redirect-uri <URL>".to_string());
         }
-        ShareAuth::Bearer if oauth_redirect_uri.is_some() => {
+        ShareAuth::Bearer | ShareAuth::QueryToken if oauth_redirect_uri.is_some() => {
             return Err("--oauth-redirect-uri requires --auth oauth".to_string());
         }
         _ => {}
@@ -147,6 +149,12 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
         public_url,
         copy_url,
     })
+}
+
+fn mcp_query_token_url(public_url: &str, credential: &str) -> String {
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    query.append_pair("token", credential);
+    format!("{}?{}", mcp_url(public_url), query.finish())
 }
 
 fn validate_share_public_url(value: &str) -> Result<String, String> {
@@ -458,7 +466,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
     }
 
     let oauth_client = match options.auth {
-        ShareAuth::Bearer => None,
+        ShareAuth::Bearer | ShareAuth::QueryToken => None,
         ShareAuth::OAuth => Some(prepare_share_oauth_client(
             &config,
             &paths,
@@ -501,6 +509,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
         LocalRuntimeOptions {
             public_url: Some(public_url.clone()),
             connector_credential_file: Some(session.credential_file.clone()),
+            mcp_query_token_auth: options.auth == ShareAuth::QueryToken,
             project_share_oauth,
             child_environment_remove: if options.tunnel == TunnelProvider::OpenAiSecure {
                 vec![
@@ -553,6 +562,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
             None => render_share_ready(
                 &runtime.project_name,
                 options.tunnel,
+                options.auth,
                 externally_managed,
                 &runtime.public_url,
                 &session.credential,
@@ -566,11 +576,29 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
     let open_chatgpt_handoff =
         copy_remote_mcp_url || options.tunnel == TunnelProvider::OpenAiSecure;
     let clipboard_outcome = if copy_remote_mcp_url {
-        copy_mcp_url(&mcp_url(&runtime.public_url), options.copy_url).await
+        let clipboard_url = if options.auth == ShareAuth::QueryToken {
+            mcp_query_token_url(&runtime.public_url, &session.credential)
+        } else {
+            mcp_url(&runtime.public_url)
+        };
+        copy_mcp_url(&clipboard_url, options.copy_url).await
     } else {
         ClipboardCopyOutcome::Disabled
     };
-    if let Some(status) = render_clipboard_status(clipboard_outcome) {
+    let clipboard_status = if options.auth == ShareAuth::QueryToken {
+        match clipboard_outcome {
+            ClipboardCopyOutcome::Copied => Some(
+                "Sensitive MCP URL copied to clipboard. It contains the temporary share credential.",
+            ),
+            ClipboardCopyOutcome::Unavailable => {
+                Some("Clipboard copy unavailable; copy the sensitive MCP URL above manually.")
+            }
+            ClipboardCopyOutcome::Disabled => None,
+        }
+    } else {
+        render_clipboard_status(clipboard_outcome)
+    };
+    if let Some(status) = clipboard_status {
         println!("\n{status}");
     }
     let handoff_task = open_chatgpt_handoff
@@ -646,6 +674,7 @@ fn render_openai_share_ready(project_name: &str, tunnel_id: &str) -> String {
 fn render_share_ready(
     project_name: &str,
     tunnel: TunnelProvider,
+    auth: ShareAuth,
     externally_managed: bool,
     public_url: &str,
     credential: &str,
@@ -653,6 +682,17 @@ fn render_share_ready(
     let (tunnel_name, public_access, ready_message) =
         share_access_labels(tunnel, externally_managed);
     let base = public_url.trim_end_matches('/');
+    if auth == ShareAuth::QueryToken {
+        let endpoint = mcp_query_token_url(public_url, credential);
+        let client_step = if tunnel == TunnelProvider::None && !externally_managed {
+            "1. Add this MCP endpoint to a local MCP client."
+        } else {
+            "1. In ChatGPT Developer Mode, create a custom MCP app."
+        };
+        return format!(
+            "WebCodex ready\n\nWhat to do next\n{client_step}\n2. MCP URL (sensitive): {endpoint}\n3. Authentication: No authentication\n4. Scan Tools.\n5. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nCredential transport: URL query (`token=`), explicitly opted in for this temporary share only.\nSecurity: treat the entire MCP URL as a secret; query credentials may appear in client, proxy, clipboard, or access logs. Prefer `--auth bearer` when the client supports headers.\nCredential lifetime: temporary; stopping this share removes the accepted credential.\nPress Ctrl-C to stop sharing."
+        );
+    }
     let next_steps = match tunnel {
         TunnelProvider::CloudflareQuick if !externally_managed => format!(
             "What to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {base}/mcp\n3. Authentication: Bearer token\n4. Credential (this share only): {credential}\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\""
@@ -939,6 +979,10 @@ mod tests {
         let openai = parse_share_options(&["--tunnel".to_string(), "openai".to_string()]).unwrap();
         assert_eq!(openai.tunnel, TunnelProvider::OpenAiSecure);
         assert_eq!(openai.auth, ShareAuth::Bearer);
+        let query_token =
+            parse_share_options(&["--auth".to_string(), "query-token".to_string()]).unwrap();
+        assert_eq!(query_token.auth, ShareAuth::QueryToken);
+        assert!(query_token.oauth_redirect_uri.is_none());
         assert!(parse_share_options(&[
             "--tunnel".to_string(),
             "openai".to_string(),
@@ -946,6 +990,13 @@ mod tests {
             "oauth".to_string(),
             "--oauth-redirect-uri".to_string(),
             "https://client.example/callback".to_string(),
+        ])
+        .is_err());
+        assert!(parse_share_options(&[
+            "--tunnel".to_string(),
+            "openai".to_string(),
+            "--auth".to_string(),
+            "query-token".to_string(),
         ])
         .is_err());
         assert!(parse_share_options(&[
@@ -1000,6 +1051,7 @@ mod tests {
         let output = render_share_ready(
             "demo",
             TunnelProvider::CloudflareQuick,
+            ShareAuth::Bearer,
             false,
             "https://demo.trycloudflare.com",
             temporary,
@@ -1015,10 +1067,32 @@ mod tests {
     }
 
     #[test]
+    fn query_token_share_outputs_one_encoded_sensitive_url() {
+        let credential = "temporary value/?&=";
+        let output = render_share_ready(
+            "demo",
+            TunnelProvider::CloudflareQuick,
+            ShareAuth::QueryToken,
+            false,
+            "https://demo.trycloudflare.com",
+            credential,
+        );
+        assert!(
+            output.contains("https://demo.trycloudflare.com/mcp?token=temporary+value%2F%3F%26%3D")
+        );
+        assert!(output.contains("Authentication: No authentication"));
+        assert!(output.contains("MCP URL (sensitive)"));
+        assert!(output.contains("Prefer `--auth bearer`"));
+        assert!(!output.contains("Credential (this share only)"));
+        assert!(!output.contains("temporary value/?&="));
+    }
+
+    #[test]
     fn local_only_share_output_does_not_claim_remote_chatgpt_readiness() {
         let output = render_share_ready(
             "demo",
             TunnelProvider::None,
+            ShareAuth::Bearer,
             false,
             "http://127.0.0.1:23456",
             "webcodex_temporary-print-once",

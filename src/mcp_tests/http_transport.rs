@@ -248,8 +248,29 @@ async fn start_stateless_observation_session(
         .to_string()
 }
 
-#[tokio::test]
-async fn stateless_full_trace_preserves_raw_context_ack_and_records_effective_internal_ack() {
+#[test]
+fn stateless_full_trace_preserves_raw_context_ack_and_records_effective_internal_ack() {
+    // Full tracing retains the request/response trees plus decoded trace payloads.
+    // Keep this integration fixture off the default libtest stack for the same
+    // reason as the larger stateless MCP continuity/observation fixtures below.
+    std::thread::Builder::new()
+        .name("mcp-stateless-full-trace".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build stateless full-trace test runtime")
+                .block_on(
+                    stateless_full_trace_preserves_raw_context_ack_and_records_effective_internal_ack_body(),
+                );
+        })
+        .expect("spawn stateless full-trace test thread")
+        .join()
+        .expect("stateless full-trace test thread panicked");
+}
+
+async fn stateless_full_trace_preserves_raw_context_ack_and_records_effective_internal_ack_body() {
     let trace_root = tempfile::tempdir().unwrap();
     let mut env = crate::test_support::TestEnvGuard::new();
     env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
@@ -1051,8 +1072,31 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
     assert!(!audit.contains("handled through ordinary list_tools wrapper metadata"));
 }
 
-#[tokio::test]
-async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_invalid_ack() {
+#[test]
+fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_invalid_ack() {
+    // Like the neighboring request-scoped ACK and observation fixtures, this
+    // end-to-end continuity test keeps several large MCP response trees alive
+    // across awaits. The default libtest stack can overflow only in the full
+    // workspace suite, so isolate the fixture on the same bounded larger stack
+    // without changing production request handling or the release gate.
+    std::thread::Builder::new()
+        .name("mcp-session-context-continuity".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build session context continuity test runtime")
+                .block_on(
+                    http_mcp_2026_session_context_revision_recovers_missing_stale_and_invalid_ack_body(),
+                );
+        })
+        .expect("spawn session context continuity test thread")
+        .join()
+        .expect("session context continuity test thread panicked");
+}
+
+async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_invalid_ack_body() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));

@@ -22,6 +22,8 @@ npx --yes @yyjeqhc/webcodex
 3. 认证选择 **Access token / API key**（或等价的 Bearer 令牌选项），再填入输出的临时 **Credential**。
 4. 点击 **Scan Tools**。
 
+Developer Mode、自定义 MCP App 和写入/修改操作是否可用取决于 ChatGPT 套餐、workspace 与管理员策略；WebCodex 无法启用客户端未授予的权限。
+
 第一条消息可以先只读检查：
 
 ```text
@@ -34,9 +36,9 @@ npx --yes @yyjeqhc/webcodex
 npx --yes @yyjeqhc/webcodex share --auth query-token
 ```
 
-把输出的完整 `/mcp?token=...` 地址粘贴到 ChatGPT，并选择 **No authentication**。这条地址包含本次临时密钥，不要公开、转发或记录到日志中。如果已经全局安装 WebCodex，也可以使用等价命令 `webcodex share --auth query-token`。更多客户端配置见[快速开始](docs/QUICK_START.zh-CN.md)和 [MCP 接入指南](docs/MCP.zh-CN.md)。
+把输出的完整 `/mcp?token=...` 地址粘贴到 ChatGPT，并选择 **No authentication**。这个 fallback 需要 WebCodex 0.3.9 或更新版本。这条地址包含本次临时密钥，不要公开、转发或记录到日志中。如果已经全局安装 WebCodex，也可以使用等价命令 `webcodex share --auth query-token`。更多客户端配置见[快速开始](docs/QUICK_START.zh-CN.md)和 [MCP 接入指南](docs/MCP.zh-CN.md)。
 
-WebCodex 会自动准备临时连接所需的组件。代理网络、OAuth、私有隧道、自托管等高级配置都放在单独的文档中，不是第一次使用的前置条件。
+默认的一键流程会创建一个由本次临时凭据保护的公网 HTTPS MCP 地址；关闭命令后，该地址和凭据都会失效。代理网络、OAuth、私有隧道、自托管等高级配置都放在单独的文档中，不是第一次使用的前置条件。
 
 ## 能做什么？
 
@@ -88,7 +90,7 @@ Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP
 npm install -g @yyjeqhc/webcodex
 ```
 
-如果已经有 WebCodex Server，使用 `webcodex connect <server-url>` 把当前仓库接入该服务，并按照服务端配置的认证方式连接。
+对于 operator 提供 shared key 的已有 hosted WebCodex Server，使用 `webcodex connect <server-url>`；新部署的自托管 Server 应把 bootstrap administrator token 留在 Server 侧，并按[部署指南](docs/DEPLOYMENT.zh-CN.md)使用短期 pairing code + `webcodex login` 完成 enrollment。
 
 生产环境、自托管、Windows 接入、OAuth、私有隧道、代理/私有 CA 等运维配置请直接查看下面的专题文档，不需要在第一次体验前理解这些概念。
 
@@ -116,7 +118,7 @@ export PATH="$PWD/target/release:$PATH"
 
 ## 参与贡献
 
-欢迎提交贡献，也欢迎使用 WebCodex 或其他 coding agent 辅助开发。Bug 报告、开发流程与 PR 说明见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+欢迎提交贡献，也欢迎使用 WebCodex 或其他 coding agent 辅助开发。Bug 报告、开发流程与 PR 说明见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。
 
 ## 致谢
 

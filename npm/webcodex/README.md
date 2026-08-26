@@ -24,6 +24,8 @@ When WebCodex reports **WebCodex ready**, keep the terminal open. The **MCP URL*
 3. Choose **Access token / API key** (Bearer token) and paste the printed **Credential**.
 4. Run **Scan Tools**.
 
+The default one-command flow creates a temporary public HTTPS MCP endpoint protected by that run's temporary credential; both the endpoint and credential stop working when the command exits. Developer Mode, custom MCP Apps, and write/modify actions depend on your ChatGPT plan, workspace, and administrator policy; WebCodex cannot enable capabilities the client does not grant.
+
 Try:
 
 ```text
@@ -36,7 +38,7 @@ If ChatGPT does not show a Bearer/access-token option, or reports **does not imp
 npx --yes @yyjeqhc/webcodex share --auth query-token
 ```
 
-Paste the complete `/mcp?token=...` URL and choose **No authentication**. Treat the complete URL as a temporary secret. If the package is installed globally, `webcodex share --auth query-token` is equivalent.
+Paste the complete `/mcp?token=...` URL and choose **No authentication**. This fallback requires WebCodex 0.3.9 or later. Treat the complete URL as a temporary secret. If the package is installed globally, `webcodex share --auth query-token` is equivalent.
 
 ### Platforms
 
@@ -80,6 +82,8 @@ npx --yes @yyjeqhc/webcodex
 3. 认证选择 **Access token / API key**（Bearer 令牌），并填入输出的临时 **Credential**。
 4. 点击 **Scan Tools**。
 
+默认的一键流程会创建一个由本次临时凭据保护的公网 HTTPS MCP 地址；关闭命令后，该地址和凭据都会失效。Developer Mode、自定义 MCP App 和写入/修改操作是否可用取决于 ChatGPT 套餐、workspace 与管理员策略；WebCodex 无法启用客户端未授予的权限。
+
 第一条可以先只读检查：
 
 ```text
@@ -92,7 +96,7 @@ npx --yes @yyjeqhc/webcodex
 npx --yes @yyjeqhc/webcodex share --auth query-token
 ```
 
-粘贴完整的 `/mcp?token=...` 地址并选择 **No authentication**。完整地址包含本次临时密钥，请按敏感信息处理。如果已经全局安装，也可以使用 `webcodex share --auth query-token`。
+粘贴完整的 `/mcp?token=...` 地址并选择 **No authentication**。这个 fallback 需要 WebCodex 0.3.9 或更新版本。完整地址包含本次临时密钥，请按敏感信息处理。如果已经全局安装，也可以使用 `webcodex share --auth query-token`。
 
 ### 平台支持
 

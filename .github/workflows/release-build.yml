@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing annotated release tag (v0.3.8) or verification tag (release-build-test-*)
+        description: Existing annotated release tag (v0.3.9) or verification tag (release-build-test-*)
         required: true
         type: string
       request_id:

@@ -21,7 +21,7 @@ cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex
 ```
 
-You do not need to run `setup`, `doctor`, or `run` first. WebCodex prepares the temporary connection it needs automatically.
+You do not need to run `setup`, `doctor`, or `run` first. The default one-command flow creates a temporary public HTTPS MCP endpoint protected by that run's temporary credential; both the endpoint and credential stop working when the command exits.
 
 ## 2. Wait for `WebCodex ready`
 
@@ -35,7 +35,7 @@ Keep that terminal open. WebCodex prints the values needed by the MCP client and
 4. Paste the printed temporary **Credential**.
 5. Run **Scan Tools**.
 
-ChatGPT labels can vary by workspace and rollout. The values printed by WebCodex are the source of truth.
+ChatGPT labels can vary by workspace and rollout. Developer Mode, custom MCP Apps, and write/modify actions also depend on your ChatGPT plan, workspace, and administrator policy; WebCodex cannot enable capabilities the client does not grant. The values printed by WebCodex are the source of truth.
 
 ### If there is no Bearer/access-token option
 
@@ -45,7 +45,7 @@ If ChatGPT tries OAuth automatically and reports **does not implement OAuth**, o
 npx --yes @yyjeqhc/webcodex share --auth query-token
 ```
 
-Paste the complete `/mcp?token=...` URL, choose **No authentication**, and run **Scan Tools** again. The complete URL contains a temporary secret; do not publish or log it. If WebCodex is installed globally, `webcodex share --auth query-token` is equivalent.
+Paste the complete `/mcp?token=...` URL, choose **No authentication**, and run **Scan Tools** again. This fallback requires WebCodex 0.3.9 or later. The complete URL contains a temporary secret; do not publish or log it. If WebCodex is installed globally, `webcodex share --auth query-token` is equivalent.
 
 ## 4. Try a read-only request
 

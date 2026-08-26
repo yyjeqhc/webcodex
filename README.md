@@ -22,6 +22,8 @@ When WebCodex reports **WebCodex ready**, keep the terminal open. The **MCP URL*
 3. Choose **Access token / API key** (or the equivalent Bearer-token option) and paste the printed **Credential**.
 4. Run **Scan Tools**.
 
+Developer Mode, custom MCP Apps, and write/modify actions depend on your ChatGPT plan, workspace, and administrator policy. WebCodex cannot enable capabilities the client does not grant.
+
 Try a read-only first request:
 
 ```text
@@ -34,9 +36,9 @@ If ChatGPT does not show a Bearer/access-token option, or tries OAuth discovery 
 npx --yes @yyjeqhc/webcodex share --auth query-token
 ```
 
-Paste the complete `/mcp?token=...` URL and choose **No authentication**. That URL contains a temporary secret, so do not publish or log it. If WebCodex is installed globally, the equivalent command is `webcodex share --auth query-token`. See the [Quick Start](docs/QUICK_START.md) and [MCP setup guide](docs/MCP.md) for details and other clients.
+Paste the complete `/mcp?token=...` URL and choose **No authentication**. This fallback requires WebCodex 0.3.9 or later. That URL contains a temporary secret, so do not publish or log it. If WebCodex is installed globally, the equivalent command is `webcodex share --auth query-token`. See the [Quick Start](docs/QUICK_START.md) and [MCP setup guide](docs/MCP.md) for details and other clients.
 
-WebCodex automatically prepares the temporary connection it needs. Advanced networking, OAuth, private tunnels, and self-hosting options are documented separately.
+The default one-command flow creates a temporary public HTTPS MCP endpoint protected by that run's temporary credential; both the endpoint and credential stop working when the command exits. Advanced networking, OAuth, private tunnels, and self-hosting options are documented separately.
 
 ## What can it do?
 
@@ -88,7 +90,7 @@ If you want to keep the CLI installed:
 npm install -g @yyjeqhc/webcodex
 ```
 
-If you already have a hosted WebCodex Server, `webcodex connect <server-url>` connects the current repository using the authentication configured by that Server.
+If an operator has provided a shared key for an existing hosted WebCodex Server, use `webcodex connect <server-url>`. For a newly deployed self-hosted Server, keep the bootstrap administrator token on the Server and use the [Deployment](docs/DEPLOYMENT.md) guide's short-lived pairing code + `webcodex login` enrollment flow.
 
 For production/self-hosted deployment, Windows enrollment, OAuth, private tunnels, proxy/CA configuration, and other operator workflows, use the documentation below rather than the first-run path.
 

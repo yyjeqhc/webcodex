@@ -4,8 +4,14 @@ use super::*;
 // runtime_status via MCP tools/list and tools/call
 // =========================================================================
 
+// This test asserts the default full tools/list schema, including outputSchema.
+// Serialize it with other process-global compact-schema env tests so a concurrent
+// WEBCODEX_MCP_COMPACT_SCHEMAS mutation cannot change the observed contract.
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux_flags() {
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     let outcome = handle_mcp_request(
         &runtime,

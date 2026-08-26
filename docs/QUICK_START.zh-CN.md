@@ -21,7 +21,7 @@ cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex
 ```
 
-第一次使用不需要提前运行 `setup`、`doctor` 或 `run`。WebCodex 会自动准备本次临时连接。
+第一次使用不需要提前运行 `setup`、`doctor` 或 `run`。默认的一键流程会创建一个由本次临时凭据保护的公网 HTTPS MCP 地址；关闭命令后，该地址和凭据都会失效。
 
 ## 2. 等待 `WebCodex ready`
 
@@ -35,7 +35,7 @@ npx --yes @yyjeqhc/webcodex
 4. 填入输出的临时 **Credential**。
 5. 点击 **Scan Tools**。
 
-不同账号或工作区看到的 ChatGPT 文案可能略有区别，具体 URL 和认证值以 WebCodex 终端输出为准。
+不同账号或工作区看到的 ChatGPT 文案可能略有区别。Developer Mode、自定义 MCP App 和写入/修改操作是否可用也取决于 ChatGPT 套餐、workspace 与管理员策略；WebCodex 无法启用客户端未授予的权限。具体 URL 和认证值以 WebCodex 终端输出为准。
 
 ### 如果找不到 Bearer/访问令牌选项
 
@@ -45,7 +45,7 @@ npx --yes @yyjeqhc/webcodex
 npx --yes @yyjeqhc/webcodex share --auth query-token
 ```
 
-把输出的完整 `/mcp?token=...` 地址粘贴进去，认证选择 **No authentication**，然后再次点击 **Scan Tools**。完整地址包含本次临时密钥，不要公开或写入日志。如果已经全局安装 WebCodex，等价命令是 `webcodex share --auth query-token`。
+把输出的完整 `/mcp?token=...` 地址粘贴进去，认证选择 **No authentication**，然后再次点击 **Scan Tools**。这个 fallback 需要 WebCodex 0.3.9 或更新版本。完整地址包含本次临时密钥，不要公开或写入日志。如果已经全局安装 WebCodex，等价命令是 `webcodex share --auth query-token`。
 
 ## 4. 先试一个只读请求
 

@@ -446,12 +446,14 @@ fn startup_workflow_schema() -> Value {
                     "session_context_ack": {"type": "string", "maxLength": 640},
                     "session_recording": {"type": "string", "maxLength": 720},
                     "session_message_ack": {"type": "string", "maxLength": 720},
+                    "session_message_resolution": {"type": "string", "maxLength": 480},
                     "normal_closeout": {"type": "string", "maxLength": 480}
                 },
                 "required": [
                     "session_context_ack",
                     "session_recording",
                     "session_message_ack",
+                    "session_message_resolution",
                     "normal_closeout"
                 ],
                 "additionalProperties": false

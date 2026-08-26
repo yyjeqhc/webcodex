@@ -694,8 +694,31 @@ async fn http_mcp_accepts_chatgpt_2025_11_25_protocol_header() {
     assert!(body["result"].get("resultType").is_none());
 }
 
-#[tokio::test]
-async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution() {
+#[test]
+fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution() {
+    // This integration fixture intentionally keeps several large MCP response
+    // trees alive across many await points. Run the test harness itself on an
+    // explicit stack so CI/libtest thread-stack variance cannot abort the
+    // process; production request handling is unchanged and each HTTP request
+    // still executes through the normal Server runtime path.
+    std::thread::Builder::new()
+        .name("mcp-request-scoped-ack-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build ACK integration test runtime");
+            runtime.block_on(
+                http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_body(),
+            );
+        })
+        .expect("spawn ACK integration test thread")
+        .join()
+        .expect("ACK integration test thread panicked");
+}
+
+async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_body() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));

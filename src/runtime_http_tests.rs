@@ -2112,10 +2112,12 @@ async fn oauth2_tools_call_scope_matrix() {
 async fn session_tools_oauth_scope_policy() {
     let (_tmp, service, tokens) = phase2_oauth_service_with_scopes(&[
         crate::auth::SCOPE_RUNTIME_READ,
+        crate::auth::SCOPE_SESSION_COLLABORATE,
         crate::auth::SCOPE_PROJECT_READ,
     ]);
     let runtime_read = &tokens[0];
-    let project_read = &tokens[1];
+    let session_collaborate = &tokens[1];
+    let project_read = &tokens[2];
 
     let (status, body, _) = oauth_tools_call(
         &service,
@@ -2127,33 +2129,44 @@ async fn session_tools_oauth_scope_policy() {
     assert_eq!(status, StatusCode::OK, "body: {body}");
     let session_id = body["output"]["session_id"].as_str().unwrap();
 
-    for (tool, params) in [
-        ("session_summary", json!({"session_id": session_id})),
-        (
-            "post_session_message",
-            json!({"session_id": session_id, "kind": "note", "message": "oauth metadata"}),
-        ),
-    ] {
-        let (status, body, _) = oauth_tools_call(&service, runtime_read, tool, params).await;
-        assert_eq!(status, StatusCode::OK, "{tool}: {body}");
-    }
+    let (status, body, _) = oauth_tools_call(
+        &service,
+        runtime_read,
+        "session_summary",
+        json!({"session_id": session_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "session_summary: {body}");
+    let (status, body, _) = oauth_tools_call(
+        &service,
+        session_collaborate,
+        "post_session_message",
+        json!({"session_id": session_id, "kind": "note", "message": "oauth metadata"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "post_session_message: {body}");
 
-    for (tool, params) in [
-        ("start_session", json!({})),
-        (
-            "post_session_message",
-            json!({"session_id": "wc_sess_missing", "kind": "note", "message": "denied"}),
-        ),
-    ] {
-        let (status, body, challenge) =
-            oauth_tools_call(&service, project_read, tool, params).await;
-        assert_oauth_scope_rejected(
-            status,
-            &body,
-            challenge.as_deref(),
-            Some(crate::auth::SCOPE_RUNTIME_READ),
-        );
-    }
+    let (status, body, challenge) =
+        oauth_tools_call(&service, project_read, "start_session", json!({})).await;
+    assert_oauth_scope_rejected(
+        status,
+        &body,
+        challenge.as_deref(),
+        Some(crate::auth::SCOPE_RUNTIME_READ),
+    );
+    let (status, body, challenge) = oauth_tools_call(
+        &service,
+        runtime_read,
+        "post_session_message",
+        json!({"session_id": "wc_sess_missing", "kind": "note", "message": "denied"}),
+    )
+    .await;
+    assert_oauth_scope_rejected(
+        status,
+        &body,
+        challenge.as_deref(),
+        Some(crate::auth::SCOPE_SESSION_COLLABORATE),
+    );
 }
 
 #[tokio::test]

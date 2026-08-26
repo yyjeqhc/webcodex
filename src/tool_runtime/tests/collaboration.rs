@@ -1532,6 +1532,7 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
         "recycled-authority-a",
         &[
             crate::auth::SCOPE_RUNTIME_READ,
+            crate::auth::SCOPE_SESSION_COLLABORATE,
             crate::auth::SCOPE_PROJECT_READ,
             crate::auth::SCOPE_PROJECT_WRITE,
             crate::auth::SCOPE_JOB_RUN,

@@ -3,12 +3,14 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
-/// Frozen top-level registration representation from latest stable v0.3.8.
-/// `deny_unknown_fields` intentionally turns any new mandatory top-level wire
-/// field into an explicit rolling-compatibility review instead of silently
-/// widening the guaranteed current -> latest-stable contract. Nested additive
-/// capability/policy content remains opaque because v0.3.8 serde accepts those
-/// additions and current capability semantics are independently fail-closed.
+/// Conservative top-level registration-shape guard based on latest stable v0.3.8.
+///
+/// The real v0.3.8 serde struct ignores unknown top-level fields. This local
+/// `deny_unknown_fields` is intentionally stricter so a future top-level expansion
+/// receives explicit rolling-compatibility review instead of silently widening the
+/// guaranteed current -> latest-stable contract. Nested additive capability/policy
+/// content remains opaque because v0.3.8 serde accepts those additions and current
+/// capability semantics are independently fail-closed.
 #[derive(Deserialize)]
 struct LatestStableV038Capabilities {
     #[serde(default)]
@@ -19,7 +21,7 @@ struct LatestStableV038Capabilities {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LatestStableV038RegisterRequest {
+struct ConservativeV038RegisterShape {
     client_id: String,
     agent_instance_id: String,
     #[serde(default, rename = "display_name")]
@@ -49,7 +51,7 @@ struct LatestStableV038RegisterRequest {
 }
 
 #[test]
-fn current_runner_registration_is_readable_by_latest_stable_v038_top_level_parser() {
+fn current_runner_registration_preserves_conservative_v038_top_level_shape() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/projects.d"));
     for protocol in [
@@ -62,7 +64,7 @@ fn current_runner_registration_is_readable_by_latest_stable_v038_top_level_parse
         assert_eq!(json_value["capabilities"]["agent_protocol_generation"], 2);
         assert!(json_value.get("agent_protocol_generation").is_none());
         let json = serde_json::to_vec(&current).unwrap();
-        let stable: LatestStableV038RegisterRequest = serde_json::from_slice(&json).unwrap();
+        let stable: ConservativeV038RegisterShape = serde_json::from_slice(&json).unwrap();
         assert_eq!(stable.client_id, cfg.client_id);
         assert_eq!(stable.agent_instance_id, "inst-current");
         assert_eq!(stable.agent_protocol_version.as_deref(), Some(protocol));

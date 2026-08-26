@@ -697,10 +697,11 @@ pub struct ShellClientCapabilities {
     /// Registration-only compatibility envelope for explicit protocol generation.
     ///
     /// This is deliberately nested under the historically additive capabilities
-    /// object because stable v0.3.8 rejects unknown *top-level* registration
-    /// fields but ignores unknown nested capability fields. It is not a
-    /// RunnerFeature and Server ingress removes it before retaining the legacy
-    /// capability projection.
+    /// object so the current -> latest-stable compatibility contract keeps the
+    /// top-level registration shape unchanged. Stable v0.3.8 itself also ignores
+    /// unknown top-level struct fields, so nesting is a conservative compatibility
+    /// policy rather than a parser requirement. It is not a RunnerFeature and
+    /// Server ingress removes it before retaining the legacy capability projection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_protocol_generation: Option<AgentProtocolGenerationNumber>,
 }

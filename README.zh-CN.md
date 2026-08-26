@@ -15,10 +15,10 @@ cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex
 ```
 
-看到 **WebCodex ready** 后保持终端运行。接着在 ChatGPT 中：
+看到 **WebCodex ready** 后保持终端运行。**MCP URL** 通常已经复制到剪贴板；可以直接在终端按 **Enter** 打开 ChatGPT App 设置，也可以手动进入 **Settings -> Apps -> Create**。然后：
 
-1. 开启 **Developer Mode**，进入 **Settings -> Apps -> Create**。
-2. 粘贴 WebCodex 输出的 **MCP URL**。
+1. 如有需要，开启 **Developer Mode** 并选择 **Create**。
+2. 粘贴已经复制的 **MCP URL**；也可以使用 WebCodex 终端中打印的地址。
 3. 认证选择 **Access token / API key**（或等价的 Bearer 令牌选项），再填入输出的临时 **Credential**。
 4. 点击 **Scan Tools**。
 

@@ -25,16 +25,15 @@ You do not need to run `setup`, `doctor`, or `run` first. WebCodex prepares the 
 
 ## 2. Wait for `WebCodex ready`
 
-Keep that terminal open. WebCodex prints the values needed by the MCP client and normally copies the MCP URL to your clipboard.
+Keep that terminal open. WebCodex prints the values needed by the MCP client and normally copies the MCP URL to your clipboard. Press **Enter** in the terminal to open ChatGPT App settings; you can also open **Settings -> Apps -> Create** manually.
 
 ## 3. Add WebCodex to ChatGPT
 
-1. Enable **Developer Mode** in ChatGPT.
-2. Open **Settings -> Apps -> Create**.
-3. Paste the printed **MCP URL**.
-4. For the default share, choose **Access token / API key** or the equivalent Bearer-token option.
-5. Paste the printed temporary **Credential**.
-6. Run **Scan Tools**.
+1. If needed, enable **Developer Mode** and choose **Create** in ChatGPT App settings.
+2. Paste the copied **MCP URL** (or use the URL printed by WebCodex).
+3. For the default share, choose **Access token / API key** or the equivalent Bearer-token option.
+4. Paste the printed temporary **Credential**.
+5. Run **Scan Tools**.
 
 ChatGPT labels can vary by workspace and rollout. The values printed by WebCodex are the source of truth.
 

@@ -15,10 +15,10 @@ cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex
 ```
 
-Keep the terminal open after it reports **WebCodex ready**. Then in ChatGPT:
+When WebCodex reports **WebCodex ready**, keep the terminal open. The **MCP URL** is normally copied to your clipboard; press **Enter** in the terminal to open ChatGPT App settings, or open **Settings -> Apps -> Create** manually. Then:
 
-1. Enable **Developer Mode** and open **Settings -> Apps -> Create**.
-2. Paste the **MCP URL** printed by WebCodex.
+1. Enable **Developer Mode** if needed and choose **Create**.
+2. Paste the copied **MCP URL** (or use the URL printed by WebCodex).
 3. Choose **Access token / API key** (or the equivalent Bearer-token option) and paste the printed **Credential**.
 4. Run **Scan Tools**.
 

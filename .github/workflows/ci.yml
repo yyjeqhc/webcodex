@@ -194,7 +194,8 @@ jobs:
           EXPECTED_RUST_HOST: ${{ matrix.rust_host }}
         run: |
           test "$(uname -m)" = "$EXPECTED_HOST_ARCH"
-          rustc -vV | grep -Fxq "host: $EXPECTED_RUST_HOST"
+          rust_host="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$rust_host" = "$EXPECTED_RUST_HOST"
       - name: Check macOS release production surfaces
         run: cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
       - name: Run native macOS Runner tests

@@ -538,6 +538,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("platform: darwin-x64", workflow)
         self.assertIn("runner: macos-15-intel", workflow)
         self.assertIn("rust_host: x86_64-apple-darwin", workflow)
+        self.assertNotIn('rustc -vV | grep -Fxq "host:', workflow)
+        self.assertNotIn('file "$binary" | grep -Fq "$EXPECTED_FILE_ARCH"', workflow)
 
     def test_server_image_publication_is_separate_and_multi_arch(self) -> None:
         candidate = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")

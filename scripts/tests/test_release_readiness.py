@@ -168,6 +168,8 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn(platform, workflow)
         self.assertIn("runner: macos-15-intel", workflow)
         self.assertIn("rust_host: x86_64-apple-darwin", workflow)
+        self.assertNotIn('rustc -vV | grep -Fxq "host:', workflow)
+        self.assertNotIn('file "$binary" | grep -Fq "$EXPECTED_FILE_ARCH"', workflow)
         self.assertGreaterEqual(workflow.count("cargo build --locked --release"), 3)
         self.assertIn("quay.io/pypa/manylinux2014_x86_64", workflow)
         self.assertIn("quay.io/pypa/manylinux2014_aarch64", workflow)
@@ -246,6 +248,11 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("rust_host: x86_64-apple-darwin", macos)
         self.assertIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", macos)
         self.assertIn("if: always()", aggregate)
+
+    def test_macos_ci_host_check_does_not_use_quiet_grep_under_pipefail(self) -> None:
+        workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertNotIn('rustc -vV | grep -Fxq "host:', workflow)
+        self.assertIn("rust_host=\"$(rustc -vV | sed -n 's/^host: //p')\"", workflow)
 
 
 if __name__ == "__main__":

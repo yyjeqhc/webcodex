@@ -722,8 +722,9 @@ jobs:
             echo "Expected native macOS host $EXPECTED_HOST_ARCH, got $(uname -m)." >&2
             exit 1
           fi
-          if ! rustc -vV | grep -Fxq "host: $EXPECTED_RUST_HOST"; then
-            echo "Expected native Rust host $EXPECTED_RUST_HOST." >&2
+          rust_host="$(rustc -vV | sed -n 's/^host: //p')"
+          if [ "$rust_host" != "$EXPECTED_RUST_HOST" ]; then
+            echo "Expected native Rust host $EXPECTED_RUST_HOST, got $rust_host." >&2
             rustc -vV >&2
             exit 1
           fi
@@ -738,7 +739,8 @@ jobs:
             output="$($binary --version)"
             expected="$name $version (commit $short_commit, dirty=false, built_at=$built_at)"
             test "$output" = "$expected"
-            file "$binary" | grep -Fq "$EXPECTED_FILE_ARCH"
+            file_output="$(file "$binary")"
+            [[ "$file_output" == *"$EXPECTED_FILE_ARCH"* ]]
           done
           dist="$(mktemp -d)"
           trap 'rm -rf "$dist"' EXIT

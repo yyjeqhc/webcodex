@@ -365,8 +365,9 @@ jobs:
             echo "Expected native macOS host $EXPECTED_HOST_ARCH, got $(uname -m)." >&2
             exit 1
           fi
-          if ! rustc -vV | grep -Fxq "host: $EXPECTED_RUST_HOST"; then
-            echo "Expected native Rust host $EXPECTED_RUST_HOST." >&2
+          rust_host="$(rustc -vV | sed -n 's/^host: //p')"
+          if [ "$rust_host" != "$EXPECTED_RUST_HOST" ]; then
+            echo "Expected native Rust host $EXPECTED_RUST_HOST, got $rust_host." >&2
             rustc -vV >&2
             exit 1
           fi
@@ -390,9 +391,9 @@ jobs:
               echo "Unexpected $name release identity: $output" >&2
               exit 1
             fi
-            if ! file "$binary" | grep -Fq "$EXPECTED_FILE_ARCH"; then
-              echo "Unexpected Mach-O architecture for $binary" >&2
-              file "$binary" >&2
+            file_output="$(file "$binary")"
+            if [[ "$file_output" != *"$EXPECTED_FILE_ARCH"* ]]; then
+              echo "Unexpected Mach-O architecture for $binary: $file_output" >&2
               exit 1
             fi
           done

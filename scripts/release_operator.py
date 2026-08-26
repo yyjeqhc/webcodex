@@ -12,11 +12,15 @@ if __package__:
     from . import collect_release_bundle as collector
     from . import release_publication as publication
     from . import release_readiness as readiness
+    from . import release_plan as plan
+    from . import release_doctor as doctor
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import collect_release_bundle as collector
     import release_publication as publication
     import release_readiness as readiness
+    import release_plan as plan
+    import release_doctor as doctor
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -111,6 +115,42 @@ def build_parser() -> argparse.ArgumentParser:
     verify_draft.add_argument("--bundle-dir", type=Path, required=True)
     verify_draft.add_argument("--repo", default=collector.DEFAULT_REPO)
     verify_draft.add_argument("--timeout", type=float, default=30.0)
+
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="run read-only release-day control-plane and metadata diagnostics",
+    )
+    doctor_parser.add_argument("--version", required=True)
+    doctor_parser.add_argument("--source-sha", required=True)
+    doctor_parser.add_argument("--root", type=Path, default=Path.cwd())
+    doctor_parser.add_argument("--repo", default=collector.DEFAULT_REPO)
+    doctor_parser.add_argument("--timeout", type=float, default=30.0)
+
+    release_init = subparsers.add_parser(
+        "release-init",
+        help="create a durable high-level release plan after read-only preflight",
+    )
+    release_init.add_argument("--version", required=True)
+    release_init.add_argument("--source-sha", required=True)
+    release_init.add_argument("--root", type=Path, default=Path.cwd())
+    release_init.add_argument("--state-file", type=Path, required=True)
+    release_init.add_argument("--work-dir", type=Path, required=True)
+    release_init.add_argument("--repo", default=collector.DEFAULT_REPO)
+    release_init.add_argument("--timeout", type=float, default=30.0)
+
+    release_resume = subparsers.add_parser(
+        "release-resume",
+        help="advance safe/recoverable release phases until waiting or human authorization is required",
+    )
+    release_resume.add_argument("--state-file", type=Path, required=True)
+    release_resume.add_argument("--timeout", type=float, default=30.0)
+    release_resume.add_argument("--wait-secs", type=int, default=0)
+
+    release_status = subparsers.add_parser(
+        "release-status",
+        help="read one durable high-level release plan without advancing it",
+    )
+    release_status.add_argument("--state-file", type=Path, required=True)
 
     return parser
 
@@ -244,6 +284,65 @@ def main(argv: list[str] | None = None) -> int:
             )
         except (collector.CollectionError, publication.PublicationError) as exc:
             print(f"release operator verify-draft failed: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        return 0
+
+    if args.command == "doctor":
+        try:
+            summary = doctor.run_doctor(
+                repo=args.repo,
+                version=args.version,
+                source_sha=args.source_sha,
+                root=args.root,
+                timeout=args.timeout,
+            )
+        except (collector.CollectionError, publication.PublicationError, doctor.DoctorError) as exc:
+            print(f"release operator doctor failed: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        return 0 if summary["status"] == "passed" else 1
+
+    if args.command == "release-init":
+        try:
+            summary = plan.init_plan(
+                repo=args.repo,
+                version=args.version,
+                source_sha=args.source_sha,
+                root=args.root,
+                state_file=args.state_file,
+                work_dir=args.work_dir,
+                timeout=args.timeout,
+            )
+        except (collector.CollectionError, publication.PublicationError, plan.ReleasePlanError) as exc:
+            print(f"release operator release-init failed: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        return 0
+
+    if args.command == "release-resume":
+        try:
+            summary, exit_code = plan.resume_plan(
+                state_file=args.state_file,
+                timeout=args.timeout,
+                wait_secs=args.wait_secs,
+            )
+        except (
+            collector.CollectionError,
+            publication.PublicationError,
+            readiness.ReadinessError,
+            plan.ReleasePlanError,
+        ) as exc:
+            print(f"release operator release-resume failed: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        return exit_code
+
+    if args.command == "release-status":
+        try:
+            summary = plan.status_plan(state_file=args.state_file)
+        except (collector.CollectionError, publication.PublicationError, plan.ReleasePlanError) as exc:
+            print(f"release operator release-status failed: {exc}", file=sys.stderr)
             return 1
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0

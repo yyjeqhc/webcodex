@@ -131,6 +131,13 @@ runs `release_operator.py preflight`, then GitHub Actions validates the exact pr
 source in the durable readiness workflow. After explicit authorization creates the
 immutable tag, `release_operator.py build-start` / `build-status` bind one durable
 `rb_*` request to the reviewed release-build workflow; GitHub Actions builds and assembles
+For normal human operation, prefer `release_operator.py doctor` before the release window and one durable high-level `release-init` / `release-resume` plan during the release. The plan composes the same low-level readiness/build/collect/stage/verify primitives without weakening their exact-source correlation. It automatically advances only recoverable phases and returns explicit `needs_authorization` states before immutable tag creation, draft creation, and public GitHub/npm publication; it returns `needs_reconciliation` instead of deleting/repeating local outputs whose completion is uncertain. `release-status` is read-only, and every low-level operator command remains available for diagnosis or bounded recovery.
+
+The lower-level release topology deliberately separates roles. The release control host first
+runs `release_operator.py preflight`, then GitHub Actions validates the exact pre-tag
+source in the durable readiness workflow. After explicit authorization creates the
+immutable tag, `release_operator.py build-start` / `build-status` bind one durable
+`rb_*` request to the reviewed release-build workflow; GitHub Actions builds and assembles
 one same-run native candidate bundle. The release control host collects that exact bundle
 with `release_operator.py collect` (locked run id, source SHA, and tag; GitHub artifact
 REST download, no `gh run download`) and stages npm with `stage-npm` using the retained

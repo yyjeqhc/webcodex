@@ -1,6 +1,7 @@
 use super::*;
 use crate::shell_protocol::{
-    ShellCommandExecutionState, AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_QUIC_V1,
+    ShellCommandExecutionState, AGENT_PROTOCOL_VERSION_POLLING_V1,
+    AGENT_PROTOCOL_VERSION_POLLING_V2, AGENT_PROTOCOL_VERSION_QUIC_V1,
     AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
 };
@@ -282,7 +283,7 @@ async fn register_quic_v1_client(registry: &ShellClientRegistry, client_id: &str
         .await
         .unwrap();
     registry
-        .set_transport(client_id, TRANSPORT_QUIC)
+        .set_transport(client_id, AgentTransport::Quic)
         .await
         .unwrap();
 }

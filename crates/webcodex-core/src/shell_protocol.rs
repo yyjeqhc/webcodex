@@ -3024,17 +3024,26 @@ mod envelope_tests {
             );
         }
 
-        let unknown = normalize_agent_protocol_semantics("future-v2");
-        assert_eq!(
-            unknown.compatibility,
-            AgentProtocolCompatibility::Unsupported
-        );
-        assert!(!unknown.compatibility.reports_project_git_metadata());
-        assert_eq!(
-            unknown.project_inventory,
-            AgentProjectInventoryStrategy::Inline,
-            "unknown suffixes must not opt into paged inventory"
-        );
+        for version in [
+            "future-v2",
+            "websocket-next",
+            "quic-next",
+            "polling-v3",
+            "totally-random",
+        ] {
+            let unknown = normalize_agent_protocol_semantics(version);
+            assert_eq!(
+                unknown.compatibility,
+                AgentProtocolCompatibility::Unsupported,
+                "{version}"
+            );
+            assert!(!unknown.compatibility.reports_project_git_metadata());
+            assert_eq!(
+                unknown.project_inventory,
+                AgentProjectInventoryStrategy::Inline,
+                "unknown labels must not opt into paged inventory: {version}"
+            );
+        }
     }
 
     fn sample_process_request() -> ShellAgentShellRequest {

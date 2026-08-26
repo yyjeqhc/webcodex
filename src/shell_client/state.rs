@@ -1,4 +1,5 @@
 use super::auth::ShellClientAuthGroup;
+use super::AgentTransport;
 use crate::mcp_gateway::McpGatewayResponse;
 use crate::shell_protocol::{
     AgentBuildInfo, AgentHostContext, AgentPolicySummary, AgentProtocolSemantics,
@@ -64,9 +65,9 @@ pub(super) struct ShellClientRecord {
     /// Canonical semantics normalized once from the announced compatibility
     /// label. Runtime/business logic must not reinterpret the raw string above.
     pub(super) agent_protocol_semantics: AgentProtocolSemantics,
-    /// How this client is currently connected: `"polling"`, `"websocket"`,
-    /// or `"quic"`.
-    pub(super) transport: String,
+    /// Authoritative transport from the concrete ingress path. External
+    /// projections serialize this typed state as `polling`, `websocket`, or `quic`.
+    pub(super) transport: AgentTransport,
     /// Sanitized agent policy summary reported at registration. `None` for
     /// older agents that did not report a policy. Exposed in
     /// `runtime_status` / `listAgents`; never carries token/env/init_script.

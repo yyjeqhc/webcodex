@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell_client::TRANSPORT_WEBSOCKET;
+use crate::shell_client::{AgentTransport, TRANSPORT_WEBSOCKET};
 use crate::shell_protocol::{ShellClientCapabilities, ShellJobOpRequest};
 use tokio::time::Instant;
 
@@ -69,7 +69,7 @@ async fn register_streaming(
             streaming_registration(client_id, instance),
             None,
             connection_id,
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             notify.clone(),
         )
         .await
@@ -270,7 +270,7 @@ async fn same_instance_replacement_actively_terminates_old_session_without_losin
             streaming_registration("replace-active", "inst-a"),
             None,
             "conn-b",
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             notify_b,
         )
         .await

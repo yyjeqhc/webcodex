@@ -125,6 +125,8 @@ fn project_dashboard(
                     "project_count": agent.get("projects_count").cloned().unwrap_or_else(|| json!(0)),
                     "active_jobs": agent.get("active_jobs").cloned().unwrap_or_else(|| json!(0)),
                     "runner_protocol": text(agent.get("agent_protocol_version")),
+                    "protocol_compatibility": text(agent.get("protocol_compatibility")),
+                    "project_inventory_strategy": text(agent.get("project_inventory_strategy")),
                     "compatibility": compatibility.get(client_id).map(String::as_str).unwrap_or("unknown"),
                 })
             })
@@ -484,14 +486,14 @@ mod tests {
             "version_compatibility": {
                 "status": "version_mismatch",
                 "runners": [
-                    {"client_id":"runner-b","status":"version_mismatch"},
-                    {"client_id":"runner-a","status":"compatible"}
+                    {"client_id":"runner-b","status":"version_mismatch","protocol_compatibility":"v1","project_inventory_strategy":"paged"},
+                    {"client_id":"runner-a","status":"compatible","protocol_compatibility":"v1","project_inventory_strategy":"inline"}
                 ]
             }
         }));
         let agents = ToolResult::ok(json!({"agents":[
-            {"client_id":"runner-b","display_name":"B","status":"stale","capabilities":{"shell":true,"patch":false,"git":true}},
-            {"client_id":"runner-a","display_name":"A","status":"online","capabilities":{"shell":true,"git":true}}
+            {"client_id":"runner-b","display_name":"B","status":"stale","transport":"quic","agent_protocol_version":"quic-v2","protocol_compatibility":"v1","project_inventory_strategy":"paged","capabilities":{"shell":true,"patch":false,"git":true}},
+            {"client_id":"runner-a","display_name":"A","status":"online","transport":"websocket","agent_protocol_version":"websocket-v1","protocol_compatibility":"v1","project_inventory_strategy":"inline","capabilities":{"shell":true,"git":true}}
         ]}));
         let projects = ToolResult::ok(json!({"projects":[
             {"id":"agent:runner-b:zeta","client_id":"runner-b","name":"Zeta","path":"/secret/zeta","connected":false,"capabilities":{"git_available":false}},
@@ -546,9 +548,17 @@ mod tests {
         assert_eq!(body["devices"][0]["status"], "online");
         assert_eq!(body["devices"][0]["capabilities"], json!(["git", "shell"]));
         assert_eq!(body["devices"][0]["compatibility"], "compatible");
+        assert_eq!(body["devices"][0]["runner_protocol"], "websocket-v1");
+        assert_eq!(body["devices"][0]["protocol_compatibility"], "v1");
+        assert_eq!(body["devices"][0]["project_inventory_strategy"], "inline");
+        assert_eq!(body["devices"][0]["transport"], "websocket");
         assert_eq!(body["devices"][1]["status"], "stale");
         assert_eq!(body["devices"][1]["capabilities"], json!(["git", "shell"]));
         assert_eq!(body["devices"][1]["compatibility"], "version_mismatch");
+        assert_eq!(body["devices"][1]["runner_protocol"], "quic-v2");
+        assert_eq!(body["devices"][1]["protocol_compatibility"], "v1");
+        assert_eq!(body["devices"][1]["project_inventory_strategy"], "paged");
+        assert_eq!(body["devices"][1]["transport"], "quic");
         assert_eq!(body["projects"][0]["id"], "agent:runner-a:alpha");
         assert_eq!(body["projects"][0]["compatibility"], "compatible");
         assert_eq!(body["projects"][1]["compatibility"], "version_mismatch");

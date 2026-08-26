@@ -32,7 +32,7 @@ async fn register_with_connection(
             },
             None,
             connection_id,
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
@@ -57,7 +57,7 @@ async fn streaming_registration_commits_transport_connection_and_notifier_togeth
             registration,
             None,
             "atomic-connection",
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             notify.clone(),
         )
         .await
@@ -69,10 +69,27 @@ async fn streaming_registration_commits_transport_connection_and_notifier_togeth
     let client = inner.clients.get("atomic-stream").unwrap();
     let notifier = inner.notifiers.get("atomic-stream").unwrap();
     assert_eq!(client.connection_id.as_deref(), Some("atomic-connection"));
-    assert_eq!(client.transport, TRANSPORT_WEBSOCKET);
+    assert_eq!(client.transport, AgentTransport::WebSocket);
     assert_eq!(notifier.agent_instance_id, "atomic-instance");
     assert_eq!(notifier.connection_id.as_deref(), Some("atomic-connection"));
     assert!(Arc::ptr_eq(&notifier.notify, &notify));
+}
+
+#[tokio::test]
+async fn streaming_registration_rejects_polling_transport_authority() {
+    let registry = ShellClientRegistry::default();
+    let error = registry
+        .register_streaming_session(
+            runner_registration("invalid-stream", "inst", Vec::new()),
+            None,
+            "invalid-connection",
+            AgentTransport::Polling,
+            Arc::new(Notify::new()),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error, "streaming agent transport is unsupported");
+    assert!(registry.list_clients().await.is_empty());
 }
 
 #[tokio::test]
@@ -90,7 +107,7 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
             initial,
             None,
             "connection-a",
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             notify_a.clone(),
         )
         .await
@@ -112,7 +129,7 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
             rejected,
             None,
             "connection-b",
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             notify_b.clone(),
         )
         .await
@@ -353,7 +370,7 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
                 },
                 None,
                 connection_id,
-                TRANSPORT_WEBSOCKET,
+                AgentTransport::WebSocket,
                 Arc::new(Notify::new()),
             )
             .await
@@ -481,7 +498,7 @@ async fn stale_connection_disconnect_cleanup_is_noop_for_current_lease() {
         let client = inner.clients.get("oe").unwrap();
         let notifier = inner.notifiers.get("oe").unwrap();
         assert_eq!(client.connection_id.as_deref(), Some("conn-b"));
-        assert_eq!(client.transport, TRANSPORT_WEBSOCKET);
+        assert_eq!(client.transport, AgentTransport::WebSocket);
         assert_eq!(notifier.connection_id.as_deref(), Some("conn-b"));
         assert_eq!(notifier.agent_instance_id, "inst-x");
     }

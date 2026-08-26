@@ -2403,6 +2403,8 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
     assert_eq!(clients.len(), 1);
     assert_eq!(clients[0]["client_id"], "agent-1");
     assert_eq!(clients[0]["agent_protocol_version"], "polling-v1");
+    assert_eq!(clients[0]["protocol_compatibility"], "v1");
+    assert_eq!(clients[0]["project_inventory_strategy"], "inline");
     assert_eq!(clients[0]["transport"], "polling");
     assert_eq!(clients[0]["connected"], true);
     assert!(clients[0]["capabilities"].is_object());
@@ -2943,7 +2945,7 @@ async fn list_agents_includes_sanitized_policy_summary() {
 
 #[tokio::test]
 async fn runtime_status_distinguishes_stale_registration_from_transport_connection() {
-    use crate::shell_client::TRANSPORT_WEBSOCKET;
+    use crate::shell_client::AgentTransport;
     let registry = Arc::new(ShellClientRegistry::default());
     let mut registration = metadata_agent_registration("ws-stale", "websocket-v1");
     registration.agent_instance_id = "inst".to_string();
@@ -2952,7 +2954,7 @@ async fn runtime_status_distinguishes_stale_registration_from_transport_connecti
     registration.projects = Some(vec![]);
     registry.register(registration).await.unwrap();
     registry
-        .set_transport("ws-stale", TRANSPORT_WEBSOCKET)
+        .set_transport("ws-stale", AgentTransport::WebSocket)
         .await
         .unwrap();
     // Force the agent past the 60s online window so it reads as stale.
@@ -2999,9 +3001,10 @@ async fn runtime_status_reflects_websocket_transport_label() {
     registration.agent_instance_id = "inst".to_string();
     registration.owner = Some("alice".to_string());
     registry.register(registration).await.unwrap();
-    // Flip the transport label the same way the WebSocket handler does.
+    // Simulate the authoritative WebSocket ingress without changing the raw
+    // announced compatibility label.
     registry
-        .set_transport("ws-agent", crate::shell_client::TRANSPORT_WEBSOCKET)
+        .set_transport("ws-agent", crate::shell_client::AgentTransport::WebSocket)
         .await
         .unwrap();
 
@@ -3016,6 +3019,8 @@ async fn runtime_status_reflects_websocket_transport_label() {
         .expect("ws-agent present");
     assert_eq!(entry["transport"], "websocket");
     assert_eq!(entry["agent_protocol_version"], "websocket-v1");
+    assert_eq!(entry["protocol_compatibility"], "v1");
+    assert_eq!(entry["project_inventory_strategy"], "inline");
 }
 
 #[tokio::test]

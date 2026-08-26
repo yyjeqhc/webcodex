@@ -13,7 +13,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
             runner_registration("ttl-connected", "ttl-connected-instance", Vec::new()),
             Some(&connected_auth),
             "ttl-connected-connection",
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
@@ -27,7 +27,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
             runner_registration("ttl-fresh", "ttl-fresh-instance", Vec::new()),
             Some(&fresh_auth),
             "ttl-fresh-connection",
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await

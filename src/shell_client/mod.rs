@@ -142,6 +142,28 @@ pub const TRANSPORT_WEBSOCKET: &str = "websocket";
 /// with `[quic]` configured so QUIC is attempted before fallback transports.
 pub const TRANSPORT_QUIC: &str = "quic";
 
+/// Canonical Server-side transport authority for one registered Runner.
+///
+/// This value comes from the actual polling/WebSocket/QUIC ingress path. It is
+/// deliberately independent from the legacy `agent_protocol_version` label,
+/// which is normalized separately for compatibility and inventory semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentTransport {
+    Polling,
+    WebSocket,
+    Quic,
+}
+
+impl AgentTransport {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Polling => TRANSPORT_POLLING,
+            Self::WebSocket => TRANSPORT_WEBSOCKET,
+            Self::Quic => TRANSPORT_QUIC,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SharedKeyRegistrationLimits {
     per_group: usize,

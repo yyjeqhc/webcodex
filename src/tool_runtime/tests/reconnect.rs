@@ -5,6 +5,7 @@
 use super::support::*;
 use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
+use crate::shell_client::AgentTransport;
 use crate::shell_protocol::{
     AgentBuildInfo, AgentHostContext, ShellClientCapabilities, ShellClientRegisterRequest,
     ShellJobOpRequest, AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_POLLING_V2,
@@ -15,6 +16,7 @@ use crate::tool_runtime::tool_inputs::{SessionMode, StartupDetail};
 use crate::tool_runtime::{ToolCall, ToolRuntime};
 use serde_json::Value;
 use std::sync::Arc;
+use tokio::sync::Notify;
 
 fn rewrite_persisted_session_as_legacy(
     ledger: &std::path::Path,
@@ -1563,52 +1565,67 @@ async fn version_compatibility_accepts_all_normalized_legacy_wire_forms() {
         (
             "polling-inline",
             AGENT_PROTOCOL_VERSION_POLLING_V1,
+            AgentTransport::Polling,
             "polling",
             "inline",
         ),
         (
             "polling-paged",
             AGENT_PROTOCOL_VERSION_POLLING_V2,
+            AgentTransport::Polling,
             "polling",
             "paged",
         ),
         (
             "websocket-inline",
             AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+            AgentTransport::WebSocket,
             "websocket",
             "inline",
         ),
         (
             "websocket-paged",
             AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
+            AgentTransport::WebSocket,
             "websocket",
             "paged",
         ),
         (
             "quic-inline",
             AGENT_PROTOCOL_VERSION_QUIC_V1,
+            AgentTransport::Quic,
             "quic",
             "inline",
         ),
         (
             "quic-paged",
             AGENT_PROTOCOL_VERSION_QUIC_V2,
+            AgentTransport::Quic,
             "quic",
             "paged",
         ),
     ];
 
-    for (client_id, protocol, transport, _) in cases.iter().copied() {
-        runtime
-            .shell_clients
-            .register(register_request(client_id, "inst", None, None, protocol))
-            .await
-            .unwrap();
-        runtime
-            .shell_clients
-            .set_transport(client_id, transport)
-            .await
-            .unwrap();
+    for (client_id, protocol, transport, _, _) in cases.iter().copied() {
+        let registration = register_request(client_id, "inst", None, None, protocol);
+        match transport {
+            AgentTransport::Polling => {
+                runtime.shell_clients.register(registration).await.unwrap();
+            }
+            AgentTransport::WebSocket | AgentTransport::Quic => {
+                runtime
+                    .shell_clients
+                    .register_streaming_session(
+                        registration,
+                        None,
+                        &format!("connection-{client_id}"),
+                        transport,
+                        Arc::new(Notify::new()),
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
     }
 
     let status = runtime.runtime_status(None).await;
@@ -1617,7 +1634,7 @@ async fn version_compatibility_accepts_all_normalized_legacy_wire_forms() {
         .as_array()
         .unwrap();
     let clients = status.output["agents"]["clients"].as_array().unwrap();
-    for (client_id, raw_protocol, transport, inventory_strategy) in cases.iter().copied() {
+    for (client_id, raw_protocol, _, transport, inventory_strategy) in cases.iter().copied() {
         let runner = runners
             .iter()
             .find(|runner| runner["client_id"] == client_id)
@@ -1633,6 +1650,9 @@ async fn version_compatibility_accepts_all_normalized_legacy_wire_forms() {
             .find(|client| client["client_id"] == client_id)
             .unwrap_or_else(|| panic!("client {client_id} missing"));
         assert_eq!(client["transport"], transport);
+        assert_eq!(client["agent_protocol_version"], raw_protocol);
+        assert_eq!(client["protocol_compatibility"], "v1");
+        assert_eq!(client["project_inventory_strategy"], inventory_strategy);
     }
 }
 

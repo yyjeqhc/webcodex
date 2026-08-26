@@ -17,7 +17,7 @@
 
 use crate::auth::authenticate_bearer;
 use crate::config::{Config, QuicRuntimeStatus, QuicServerConfig};
-use crate::shell_client::{ShellClientRegistry, TRANSPORT_QUIC};
+use crate::shell_client::{AgentTransport, ShellClientRegistry};
 use crate::shell_protocol::{
     read_quic_frame, read_quic_register_frame, write_quic_frame, AgentEnvelope,
 };
@@ -319,7 +319,7 @@ async fn handle_quic_connection(
             register_payload,
             Some(&auth),
             &connection_id,
-            TRANSPORT_QUIC,
+            AgentTransport::Quic,
             notify.clone(),
         )
         .await

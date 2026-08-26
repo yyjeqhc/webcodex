@@ -81,15 +81,27 @@ fn protocol_serde_parses_agent_protocol_version() {
 #[tokio::test]
 async fn latest_stable_v038_registration_fixtures_are_accepted() {
     const V038_COMMIT: &str = "477c1f754e8b5c7d9f0e8b1c073487532a749101";
-    for (protocol, transport) in [
-        (AGENT_PROTOCOL_VERSION_POLLING_V1, TRANSPORT_POLLING),
-        (AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, TRANSPORT_WEBSOCKET),
-        (AGENT_PROTOCOL_VERSION_QUIC_V1, TRANSPORT_QUIC),
+    for (protocol, transport, transport_label) in [
+        (
+            AGENT_PROTOCOL_VERSION_POLLING_V1,
+            AgentTransport::Polling,
+            TRANSPORT_POLLING,
+        ),
+        (
+            AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+            AgentTransport::WebSocket,
+            TRANSPORT_WEBSOCKET,
+        ),
+        (
+            AGENT_PROTOCOL_VERSION_QUIC_V1,
+            AgentTransport::Quic,
+            TRANSPORT_QUIC,
+        ),
     ] {
         // Frozen representative v0.3.8 registration shape. Newer additive
         // capability fields are deliberately absent and must remain fail-closed.
         let fixture = format!(
-            r#"{{"client_id":"compat-{transport}","agent_instance_id":"inst-v038-{transport}","display_name":"v0.3.8 fixture","hostname":"stable-host","capabilities":{{"shell":true,"file_read":true,"job_state_reconciliation":false}},"projects":[],"agent_protocol_version":"{protocol}","process_started_at":1700000000,"build":{{"version":"0.3.8","git_commit":"{V038_COMMIT}","git_dirty":false}},"job_concurrency_limit":4}}"#
+            r#"{{"client_id":"compat-{transport_label}","agent_instance_id":"inst-v038-{transport_label}","display_name":"v0.3.8 fixture","hostname":"stable-host","capabilities":{{"shell":true,"file_read":true,"job_state_reconciliation":false}},"projects":[],"agent_protocol_version":"{protocol}","process_started_at":1700000000,"build":{{"version":"0.3.8","git_commit":"{V038_COMMIT}","git_dirty":false}},"job_concurrency_limit":4}}"#
         );
         let registration: ShellClientRegisterRequest = serde_json::from_str(&fixture).unwrap();
         let caps = registration.capabilities.as_ref().unwrap();
@@ -100,23 +112,22 @@ async fn latest_stable_v038_registration_fixtures_are_accepted() {
         assert!(!caps.apply_text_edit_occurrence);
 
         let registry = ShellClientRegistry::default();
-        let view = if transport == TRANSPORT_POLLING {
-            registry.register(registration).await.unwrap()
-        } else {
-            registry
+        let view = match transport {
+            AgentTransport::Polling => registry.register(registration).await.unwrap(),
+            AgentTransport::WebSocket | AgentTransport::Quic => registry
                 .register_streaming_session(
                     registration,
                     None,
-                    &format!("connection-{transport}"),
+                    &format!("connection-{transport_label}"),
                     transport,
                     Arc::new(Notify::new()),
                 )
                 .await
-                .unwrap()
+                .unwrap(),
         };
         assert!(view.connected);
         assert_eq!(view.agent_protocol_version, protocol);
-        assert_eq!(view.transport, transport);
+        assert_eq!(view.transport, transport_label);
     }
 }
 
@@ -157,6 +168,53 @@ async fn polling_http_register_requires_explicit_protocol_version() {
     assert_eq!(body["success"], false);
     assert_eq!(body["error"], "agent_protocol_version is required");
     assert!(registry.list_clients().await.is_empty());
+}
+
+#[tokio::test]
+async fn polling_http_register_accepts_supported_paged_protocol_label() {
+    use salvo::test::{ResponseExt, TestClient};
+    use salvo::Service;
+
+    let registry = Arc::new(ShellClientRegistry::default());
+    let service = Service::new(
+        Router::new()
+            .hoop(affix_state::inject(registry.clone()))
+            .hoop(affix_state::inject(auth_context(None, true)))
+            .push(Router::with_path("api/shell/agent/register").post(shell_agent_register)),
+    );
+    let mut response = TestClient::post("http://localhost/api/shell/agent/register")
+        .json(&json!({
+            "client_id": "polling-supported-protocol",
+            "agent_instance_id": "inst",
+            "agent_protocol_version": AGENT_PROTOCOL_VERSION_POLLING_V2,
+            "projects": []
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(
+        response.status_code.unwrap_or(StatusCode::OK),
+        StatusCode::OK
+    );
+    let body: serde_json::Value = response.take_json().await.unwrap();
+    assert_eq!(body["success"], true);
+
+    let view = registry
+        .get_client_view("polling-supported-protocol")
+        .await
+        .expect("supported polling registration");
+    assert_eq!(
+        view.agent_protocol_version,
+        AGENT_PROTOCOL_VERSION_POLLING_V2
+    );
+    assert_eq!(view.transport, TRANSPORT_POLLING);
+    assert_eq!(
+        view.agent_protocol_semantics.compatibility,
+        crate::shell_protocol::AgentProtocolCompatibility::V1
+    );
+    assert_eq!(
+        view.agent_protocol_semantics.project_inventory,
+        crate::shell_protocol::AgentProjectInventoryStrategy::Paged
+    );
 }
 
 #[tokio::test]
@@ -233,13 +291,20 @@ async fn register_protocol_version_bounds_are_enforced() {
 }
 
 #[tokio::test]
-async fn register_unknown_protocol_version_is_rejected() {
-    let registry = ShellClientRegistry::default();
-    let mut registration = runner_registration("future", "inst", Vec::new());
-    registration.agent_protocol_version = Some("future-v2".to_string());
-    let error = registry.register(registration).await.unwrap_err();
-    assert_eq!(error, "agent_protocol_version is unsupported");
-    assert!(registry.list_clients().await.is_empty());
+async fn register_unknown_protocol_versions_are_rejected_without_suffix_guessing() {
+    for (client_id, protocol) in [
+        ("future", "future-v2"),
+        ("websocket-next", "websocket-next"),
+        ("quic-next", "quic-next"),
+        ("random", "totally-random"),
+    ] {
+        let registry = ShellClientRegistry::default();
+        let mut registration = runner_registration(client_id, "inst", Vec::new());
+        registration.agent_protocol_version = Some(protocol.to_string());
+        let error = registry.register(registration).await.unwrap_err();
+        assert_eq!(error, "agent_protocol_version is unsupported");
+        assert!(registry.list_clients().await.is_empty());
+    }
 }
 
 #[tokio::test]

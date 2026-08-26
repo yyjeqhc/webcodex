@@ -267,7 +267,7 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             registration("shared-client", "shared-instance", "host-a", None),
             Some(&shared_a),
             "connection-a",
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
@@ -282,7 +282,7 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             ),
             Some(&managed),
             "managed-connection",
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
@@ -293,7 +293,7 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             registration("shared-client", "shared-instance", "host-b", None),
             Some(&shared_b),
             "connection-b",
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
@@ -334,7 +334,7 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             registration("shared-client", "shared-instance", "host-a-new", None),
             Some(&shared_a),
             "connection-new",
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await

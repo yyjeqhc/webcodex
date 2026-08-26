@@ -1936,7 +1936,7 @@ async fn job_reconciliation_same_instance_stale_connection_disconnect_is_noop() 
             register_request(INSTANCE_A, empty_inventory()),
             None,
             "connection-a",
-            super::TRANSPORT_WEBSOCKET,
+            super::AgentTransport::WebSocket,
             std::sync::Arc::new(tokio::sync::Notify::new()),
         )
         .await
@@ -1960,7 +1960,7 @@ async fn job_reconciliation_same_instance_stale_connection_disconnect_is_noop() 
             ),
             None,
             "connection-b",
-            super::TRANSPORT_WEBSOCKET,
+            super::AgentTransport::WebSocket,
             std::sync::Arc::new(tokio::sync::Notify::new()),
         )
         .await

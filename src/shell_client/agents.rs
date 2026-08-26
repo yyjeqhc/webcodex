@@ -16,8 +16,8 @@ use super::validation::{
     validate_optional_field, validate_project_summary_batch,
 };
 use super::{
-    now_ts, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS, MAX_RETIRED_INSTANCES_PER_CLIENT,
-    TRANSPORT_POLLING,
+    now_ts, AgentTransport, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS,
+    MAX_RETIRED_INSTANCES_PER_CLIENT,
 };
 use crate::mcp_gateway::validate_providers;
 use crate::shell_protocol::{
@@ -111,7 +111,7 @@ fn validate_coding_agent_registration(
 
 struct StreamingSessionRegistration {
     connection_id: String,
-    transport: String,
+    transport: AgentTransport,
     notify: Arc<Notify>,
     cancel: watch::Sender<bool>,
 }
@@ -139,7 +139,7 @@ impl ShellClientRegistry {
         body: ShellClientRegisterRequest,
         auth: Option<&crate::auth::AuthContext>,
         connection_id: &str,
-        transport: &str,
+        transport: AgentTransport,
         notify: Arc<Notify>,
     ) -> Result<ShellClientView, String> {
         let (cancel, _cancelled) = watch::channel(false);
@@ -163,7 +163,7 @@ impl ShellClientRegistry {
         body: ShellClientRegisterRequest,
         auth: Option<&crate::auth::AuthContext>,
         connection_id: &str,
-        transport: &str,
+        transport: AgentTransport,
         notify: Arc<Notify>,
     ) -> Result<(ShellClientView, watch::Receiver<bool>), String> {
         let (cancel, cancelled) = watch::channel(false);
@@ -185,15 +185,12 @@ impl ShellClientRegistry {
         body: ShellClientRegisterRequest,
         auth: Option<&crate::auth::AuthContext>,
         connection_id: &str,
-        transport: &str,
+        transport: AgentTransport,
         notify: Arc<Notify>,
         cancel: watch::Sender<bool>,
     ) -> Result<ShellClientView, String> {
         validate_id(connection_id, "connection_id")?;
-        if !matches!(
-            transport,
-            super::TRANSPORT_WEBSOCKET | super::TRANSPORT_QUIC
-        ) {
+        if transport == AgentTransport::Polling {
             return Err("streaming agent transport is unsupported".to_string());
         }
         self.register_session(
@@ -201,7 +198,7 @@ impl ShellClientRegistry {
             auth,
             Some(StreamingSessionRegistration {
                 connection_id: connection_id.to_string(),
-                transport: transport.to_string(),
+                transport,
                 notify,
                 cancel,
             }),
@@ -302,8 +299,8 @@ impl ShellClientRegistry {
             agent_protocol_version,
             transport: streaming
                 .as_ref()
-                .map(|session| session.transport.clone())
-                .unwrap_or_else(|| TRANSPORT_POLLING.to_string()),
+                .map(|session| session.transport)
+                .unwrap_or(AgentTransport::Polling),
             agent_protocol_semantics,
             policy,
             auth_group: auth.and_then(ShellClientAuthGroup::from_auth),
@@ -686,7 +683,11 @@ impl ShellClientRegistry {
     /// transport without opening a real streaming connection. Production
     /// streaming registration commits its transport atomically.
     #[cfg(test)]
-    pub async fn set_transport(&self, client_id: &str, transport: &str) -> Result<(), String> {
+    pub async fn set_transport(
+        &self,
+        client_id: &str,
+        transport: AgentTransport,
+    ) -> Result<(), String> {
         self.set_transport_checked(client_id, None, None, transport)
             .await
     }
@@ -697,7 +698,7 @@ impl ShellClientRegistry {
         client_id: &str,
         agent_instance_id: Option<&str>,
         connection_id: Option<&str>,
-        transport: &str,
+        transport: AgentTransport,
     ) -> Result<(), String> {
         let mut inner = self.inner.lock().await;
         let Some(client) = inner.clients.get_mut(client_id) else {
@@ -711,7 +712,7 @@ impl ShellClientRegistry {
                 client_id
             ));
         }
-        client.transport = transport.to_string();
+        client.transport = transport;
         Ok(())
     }
 
@@ -1353,7 +1354,7 @@ impl ShellClientRegistry {
             projects: client.projects.clone(),
             project_inventory: Some(client.project_inventory.status.clone()),
             agent_protocol_version: client.agent_protocol_version.clone(),
-            transport: client.transport.clone(),
+            transport: client.transport.as_str().to_string(),
             agent_protocol_semantics: client.agent_protocol_semantics,
             policy: client.policy.clone(),
             registered_at: client.registered_at,

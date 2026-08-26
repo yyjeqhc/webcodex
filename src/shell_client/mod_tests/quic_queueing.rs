@@ -183,7 +183,7 @@ async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
         .unwrap()
         .unwrap();
     registry
-        .set_transport("quic-stop", TRANSPORT_QUIC)
+        .set_transport("quic-stop", AgentTransport::Quic)
         .await
         .unwrap();
 

@@ -17,7 +17,7 @@
 //!
 //! Polling remains a fully supported fallback transport.
 
-use crate::shell_client::{ShellClientRegistry, TRANSPORT_WEBSOCKET};
+use crate::shell_client::{AgentTransport, ShellClientRegistry};
 use crate::shell_protocol::{AgentEnvelope, ShellClientRegisterRequest};
 use futures_util::{SinkExt, StreamExt};
 use salvo::prelude::*;
@@ -126,7 +126,7 @@ async fn handle_agent_ws(
             register_payload,
             auth.as_ref(),
             &connection_id,
-            TRANSPORT_WEBSOCKET,
+            AgentTransport::WebSocket,
             notify.clone(),
         )
         .await

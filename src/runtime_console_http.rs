@@ -224,6 +224,9 @@ struct RuntimeConsoleRunnerSummary {
     connected: bool,
     status: Option<String>,
     transport: Option<String>,
+    agent_protocol_version: Option<String>,
+    protocol_compatibility: Option<String>,
+    project_inventory_strategy: Option<String>,
     last_seen_age_secs: Option<i64>,
     version: Option<String>,
     build_git_commit: Option<String>,
@@ -818,6 +821,22 @@ fn runner_fleet_rows(
                 connected: safe_bool(agent.get("connected")),
                 status: safe_string(agent.get("status"), MAX_STATUS_CHARS),
                 transport: safe_string(agent.get("transport"), MAX_STATUS_CHARS),
+                agent_protocol_version: safe_string(
+                    agent.get("agent_protocol_version"),
+                    MAX_STATUS_CHARS,
+                ),
+                protocol_compatibility: status
+                    .and_then(|value| {
+                        safe_string(value.get("protocol_compatibility"), MAX_STATUS_CHARS)
+                    })
+                    .or_else(|| safe_string(agent.get("protocol_compatibility"), MAX_STATUS_CHARS)),
+                project_inventory_strategy: status
+                    .and_then(|value| {
+                        safe_string(value.get("project_inventory_strategy"), MAX_STATUS_CHARS)
+                    })
+                    .or_else(|| {
+                        safe_string(agent.get("project_inventory_strategy"), MAX_STATUS_CHARS)
+                    }),
                 last_seen_age_secs: agent.get("last_seen_age_secs").and_then(Value::as_i64),
                 version: safe_string(build.get("version"), 80),
                 build_git_commit: status
@@ -2097,6 +2116,9 @@ mod tests {
                 "connected": true,
                 "status": "online",
                 "transport": "websocket",
+                "agent_protocol_version": "polling-v2",
+                "protocol_compatibility": "v1",
+                "project_inventory_strategy": "paged",
                 "last_seen_age_secs": 2,
                 "active_jobs": 3,
                 "job_concurrency": {"limit": 8, "running": 2, "queued": 1},
@@ -2108,6 +2130,8 @@ mod tests {
             "build_git_commit": "status-commit",
             "build_git_dirty": true,
             "version_matches_server": false,
+            "protocol_compatibility": "v1",
+            "project_inventory_strategy": "paged",
             "source_alignment": {"status": "different"}
         })];
         let rows = runner_fleet_rows(&agents, &status, &scan);
@@ -2128,6 +2152,10 @@ mod tests {
         assert_eq!(row.build_git_dirty, Some(true));
         assert_eq!(row.source_alignment.as_deref(), Some("different"));
         assert_eq!(row.version_matches_server, Some(false));
+        assert_eq!(row.transport.as_deref(), Some("websocket"));
+        assert_eq!(row.agent_protocol_version.as_deref(), Some("polling-v2"));
+        assert_eq!(row.protocol_compatibility.as_deref(), Some("v1"));
+        assert_eq!(row.project_inventory_strategy.as_deref(), Some("paged"));
     }
 
     #[tokio::test]

@@ -203,12 +203,14 @@ export function refreshRuntimeOverview(state) {
 export function isCurrentRuntimeOverviewRequest(state, request) {
     return !!request && request.credentialGeneration === state.credentialGeneration && request.generation === state.overviewGeneration;
 }
-export function refreshRuntimeProjects(state) {
+export function refreshRuntimeProjects(state, query = "") {
     state.projectsGeneration += 1;
     return {
         credentialGeneration: state.credentialGeneration,
         projectGeneration: state.projectGeneration,
         generation: state.projectsGeneration,
+        clientId: String(state.selectedDevice || ""),
+        query: String(query || "").trim(),
     };
 }
 export function isCurrentRuntimeProjectsRequest(state, request) {

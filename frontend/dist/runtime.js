@@ -451,12 +451,14 @@ function refreshRuntimeOverview(state) {
 function isCurrentRuntimeOverviewRequest(state, request) {
     return !!request && request.credentialGeneration === state.credentialGeneration && request.generation === state.overviewGeneration;
 }
-function refreshRuntimeProjects(state) {
+function refreshRuntimeProjects(state, query = "") {
     state.projectsGeneration += 1;
     return {
         credentialGeneration: state.credentialGeneration,
         projectGeneration: state.projectGeneration,
         generation: state.projectsGeneration,
+        clientId: String(state.selectedDevice || ""),
+        query: String(query || "").trim(),
     };
 }
 function isCurrentRuntimeProjectsRequest(state, request) {
@@ -680,6 +682,7 @@ function adoptRuntimeWorkflowSessionDetail(state, request, detail) {
 const API_BASE = "/api/runtime-console/";
 const REFRESH_MS = 8000;
 const COLLABORATION_WAIT_SECS = 25;
+const PROJECT_SEARCH_DEBOUNCE_MS = 200;
 let token = "";
 let timer = 0;
 let overviewAbort = null;
@@ -692,9 +695,13 @@ let homeProjectRows = [];
 let runnerRows = [];
 let recentSessionRows = [];
 let projectSearch = "";
+let projectSearchTimer = 0;
 let collaborationReplyTo = "";
 let refreshInFlight = false;
+let projectRowsTotal = 0;
 let projectRowsTruncated = false;
+let knownProjectDevices = [];
+let selectedProjectSnapshot = null;
 let sessionRows = [];
 const state = initialRuntimeConsoleState();
 function el(id) {
@@ -736,11 +743,17 @@ function abortProjectWork() {
     sessionsAbort = null;
     detailAbort = null;
 }
+function stopProjectSearchTimer() {
+    if (projectSearchTimer)
+        window.clearTimeout(projectSearchTimer);
+    projectSearchTimer = 0;
+}
 function abortAll() {
     abort(overviewAbort);
     abort(projectsAbort);
     overviewAbort = null;
     projectsAbort = null;
+    stopProjectSearchTimer();
     abortProjectWork();
 }
 async function api(path, payload, signal) {
@@ -790,7 +803,10 @@ function lock(message = "") {
     homeProjectRows = [];
     runnerRows = [];
     recentSessionRows = [];
+    projectRowsTotal = 0;
     projectRowsTruncated = false;
+    knownProjectDevices = [];
+    selectedProjectSnapshot = null;
     projectSearch = "";
     collaborationReplyTo = "";
     clearSessionSurface();
@@ -808,6 +824,9 @@ function lock(message = "") {
         input.value = "";
         input.focus();
     }
+    const search = el("runtime-project-search");
+    if (search)
+        search.value = "";
 }
 function unlockUi() {
     show("runtime-token-gate", false);
@@ -890,7 +909,7 @@ async function fetchOverview(request) {
         (recentMeta.scan_truncated ? " · partial scan" : ""));
     renderRecentSessions(recentSessionRows, recentMeta);
     renderRunnerFleet(runnerRows);
-    renderProjectSelectors(projectRows, projectRowsTruncated || !!data.projects_truncated);
+    renderProjectSelectors(projectRows, projectRowsTruncated);
     return true;
 }
 function projectLabel(project) {
@@ -901,10 +920,18 @@ function projectLabel(project) {
     return identity + " · " + status;
 }
 async function fetchProjects(request, unlocking = false) {
+    const priorSelectedProject = selectedProjectRow();
     abort(projectsAbort);
     const controller = new AbortController();
     projectsAbort = controller;
-    const response = await api("projects", { limit: 100 }, controller.signal);
+    const payload = { limit: 100 };
+    const clientId = String(request?.clientId || "");
+    const query = String(request?.query || "").trim();
+    if (clientId)
+        payload.client_id = clientId;
+    if (query)
+        payload.query = query;
+    const response = await api("projects", payload, controller.signal);
     if (projectsAbort === controller)
         projectsAbort = null;
     if (!response || !isCurrentRuntimeProjectsRequest(state, request))
@@ -921,16 +948,41 @@ async function fetchProjects(request, unlocking = false) {
         return false;
     }
     projectRows = Array.isArray(response.data.projects) ? response.data.projects : [];
+    const reportedTotal = typeof response.data.total === "number" && Number.isFinite(response.data.total)
+        ? Math.max(0, Math.floor(response.data.total))
+        : projectRows.length;
+    projectRowsTotal = Math.max(projectRows.length, reportedTotal);
     projectRowsTruncated = !!response.data.truncated;
+    const known = new Set(knownProjectDevices);
+    for (const device of runtimeDeviceIds(projectRows))
+        known.add(device);
+    knownProjectDevices = Array.from(known).sort((left, right) => left.localeCompare(right));
+    if (priorSelectedProject && String(priorSelectedProject.id || "") === String(state.selectedProject || "")) {
+        selectedProjectSnapshot = priorSelectedProject;
+    }
+    const refreshedSelected = effectiveProjects(projectRows).find((project) => String(project?.id || "") === String(state.selectedProject || ""));
+    if (refreshedSelected)
+        selectedProjectSnapshot = refreshedSelected;
     unlockUi();
     showError("");
     const currentDevice = String(state.selectedDevice || "");
     const currentProject = String(state.selectedProject || "");
+    if (query) {
+        renderProjectSelectors(projectRows, projectRowsTruncated);
+        renderSelectedProjectIdentity();
+        return true;
+    }
     const selection = preferredRuntimeProjectSelection(projectRows, currentDevice, currentProject);
     if (!selection.project) {
+        if (currentProject && projectRowsTruncated) {
+            renderProjectSelectors(projectRows, projectRowsTruncated);
+            renderSelectedProjectIdentity();
+            return true;
+        }
         if (currentProject || selection.device !== currentDevice) {
             abortProjectWork();
             selectRuntimeRunnerFilter(state, selection.device || "");
+            selectedProjectSnapshot = null;
             collaborationReplyTo = "";
             clearSessionSurface();
         }
@@ -960,11 +1012,30 @@ function effectiveProjects(projects) {
         return aggregate ? { ...project, sessions: aggregate.sessions } : project;
     });
 }
+function projectSelectorDevices(projects) {
+    const devices = new Set(knownProjectDevices);
+    for (const device of runtimeDeviceIds(projects))
+        devices.add(device);
+    for (const runner of runnerRows) {
+        const clientId = typeof runner?.client_id === "string" ? runner.client_id : "";
+        if (clientId)
+            devices.add(clientId);
+    }
+    const selectedDevice = String(state.selectedDevice || "");
+    if (selectedDevice)
+        devices.add(selectedDevice);
+    return Array.from(devices).sort((left, right) => left.localeCompare(right));
+}
 function selectedProjectRow() {
     const selected = String(state.selectedProject || "");
     if (!selected)
         return null;
-    return effectiveProjects(projectRows).find((project) => String(project?.id || "") === selected) || null;
+    const current = effectiveProjects(projectRows).find((project) => String(project?.id || "") === selected);
+    if (current)
+        return current;
+    return selectedProjectSnapshot && String(selectedProjectSnapshot.id || "") === selected
+        ? selectedProjectSnapshot
+        : null;
 }
 function renderSelectedProjectIdentity() {
     setText("runtime-selected-project", runtimeProjectIdentityText(selectedProjectRow()));
@@ -977,7 +1048,7 @@ function renderProjectSelectors(projects, truncated) {
     const projectList = el("runtime-project-list");
     if (!deviceSelect || !projectList)
         return;
-    const devices = runtimeDeviceIds(projects);
+    const devices = projectSelectorDevices(projects);
     clearNode(deviceSelect);
     const all = document.createElement("option");
     all.value = "";
@@ -991,7 +1062,7 @@ function renderProjectSelectors(projects, truncated) {
     }
     deviceSelect.value = String(state.selectedDevice || "");
     const effective = effectiveProjects(projects);
-    const rows = filterAndSortRuntimeProjects(effective, String(state.selectedDevice || ""), projectSearch);
+    const rows = filterAndSortRuntimeProjects(effective, String(state.selectedDevice || ""), "");
     clearNode(projectList);
     show("runtime-projects-empty", rows.length === 0);
     for (const project of rows) {
@@ -1057,14 +1128,21 @@ function renderProjectSelectors(projects, truncated) {
         } });
         projectList.appendChild(row);
     }
-    const filteredProjects = runtimeProjectsForDevice(effective, String(state.selectedDevice || ""));
+    const returnedProjects = runtimeProjectsForDevice(effective, String(state.selectedDevice || "")).length;
+    const totalProjects = Math.max(returnedProjects, projectRowsTotal);
+    const scope = state.selectedDevice ? " on " + state.selectedDevice : " across fleet";
+    const queryActive = !!projectSearch.trim();
     setText("runtime-device-status", devices.length
-        ? countLabel(devices.length, "authorized Runner") + (state.selectedDevice ? " · filtered" : " · All Runners") + (truncated ? " · bounded project list" : "")
+        ? countLabel(devices.length, "authorized Runner") + (state.selectedDevice ? " · filtered" : " · All Runners")
         : "No authorized Runners");
-    setText("runtime-project-status", countLabel(filteredProjects.length, "visible Project") + (state.selectedDevice ? " on " + state.selectedDevice : " across fleet") + (truncated ? " · bounded list" : ""));
+    setText("runtime-project-status", truncated
+        ? String(returnedProjects) + " of " + String(totalProjects) + (queryActive ? " matching Projects shown" : " visible Projects shown") + scope + " · bounded"
+        : countLabel(totalProjects, queryActive ? "matching Project" : "visible Project") + scope);
     renderSelectedProjectIdentity();
 }
 function switchProject(device, project) {
+    const snapshot = effectiveProjects(projectRows).find((row) => String(row?.id || "") === project);
+    selectedProjectSnapshot = snapshot || null;
     abortProjectWork();
     collaborationReplyTo = "";
     clearSessionSurface();
@@ -1075,16 +1153,22 @@ function switchProject(device, project) {
     renderSelectedProjectIdentity();
     if (request)
         void fetchSessions(request);
+    if (token)
+        void fetchProjects(refreshRuntimeProjects(state, projectSearch));
 }
 function applyRunnerFilter(device) {
+    stopProjectSearchTimer();
     abortProjectWork();
     collaborationReplyTo = "";
     clearSessionSurface();
+    selectedProjectSnapshot = null;
     selectRuntimeRunnerFilter(state, device);
     renderProjectSelectors(projectRows, projectRowsTruncated);
     renderRunnerFleet(runnerRows);
     renderRecentSessions(recentSessionRows, null);
     renderSelectedProjectIdentity();
+    if (token)
+        void fetchProjects(refreshRuntimeProjects(state, projectSearch));
 }
 function runnerAttentionCount(runner) {
     const attention = runner?.sessions?.attention;
@@ -1237,6 +1321,13 @@ function selectRecentSession(session) {
     const sessionId = String(session?.session_id || "");
     if (!clientId || !projectId || !sessionId)
         return;
+    const knownProject = effectiveProjects(projectRows).find((row) => String(row?.id || "") === projectId)
+        || homeProjectRows.find((row) => String(row?.id || "") === projectId);
+    selectedProjectSnapshot = knownProject || {
+        id: projectId,
+        client_id: clientId,
+        name: typeof session?.project_name === "string" ? session.project_name : undefined,
+    };
     abortProjectWork();
     collaborationReplyTo = "";
     clearSessionSurface();
@@ -1253,6 +1344,8 @@ function selectRecentSession(session) {
     const collaborationRequest = runtimeCollaborationRequest(state);
     if (collaborationRequest)
         void startCollaboration(collaborationRequest);
+    if (token)
+        void fetchProjects(refreshRuntimeProjects(state, projectSearch));
 }
 async function fetchSessions(request) {
     abort(sessionsAbort);
@@ -2161,7 +2254,7 @@ async function refreshAll() {
     setText("runtime-refresh-status", "Refreshing…");
     const recoverCollaboration = runtimeCollaborationNeedsRefreshRecovery(state);
     const overviewRequest = refreshRuntimeOverview(state);
-    const projectsRequest = refreshRuntimeProjects(state);
+    const projectsRequest = refreshRuntimeProjects(state, projectSearch);
     try {
         const [overviewOk, projectsOk] = await Promise.all([
             fetchOverview(overviewRequest),
@@ -2222,7 +2315,16 @@ el("runtime-device-select")?.addEventListener("change", () => {
 el("runtime-project-search")?.addEventListener("input", () => {
     const input = el("runtime-project-search");
     projectSearch = input?.value || "";
-    renderProjectSelectors(projectRows, projectRowsTruncated);
+    stopProjectSearchTimer();
+    if (!token)
+        return;
+    setText("runtime-project-status", "Searching…");
+    projectSearchTimer = window.setTimeout(() => {
+        projectSearchTimer = 0;
+        if (!token)
+            return;
+        void fetchProjects(refreshRuntimeProjects(state, projectSearch));
+    }, PROJECT_SEARCH_DEBOUNCE_MS);
 });
 el("runtime-message-kind")?.addEventListener("change", syncAckComposer);
 el("runtime-message-priority")?.addEventListener("change", syncAckComposer);

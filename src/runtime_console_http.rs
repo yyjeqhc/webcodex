@@ -78,6 +78,10 @@ pub(crate) fn routes() -> Router {
 #[serde(deny_unknown_fields)]
 struct ProjectsInput {
     #[serde(default)]
+    client_id: Option<String>,
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
     limit: Option<usize>,
 }
 
@@ -876,6 +880,7 @@ async fn listed_projects_for_auth(
     auth: &AuthContext,
     client_id: Option<String>,
     project: Option<String>,
+    query: Option<String>,
     limit: usize,
 ) -> Result<(Vec<Value>, usize, bool), RuntimeConsoleError> {
     require_project_read(auth)?;
@@ -884,7 +889,7 @@ async fn listed_projects_for_auth(
             ToolCall::ListProjects {
                 client_id,
                 project,
-                query: None,
+                query,
                 limit: Some(limit),
                 summary_only: false,
             },
@@ -892,7 +897,14 @@ async fn listed_projects_for_auth(
         )
         .await;
     if !result.success {
-        return Err(RuntimeConsoleError::Internal);
+        return Err(
+            match result.output.get("error_kind").and_then(Value::as_str) {
+                Some("invalid_client_id" | "invalid_project" | "invalid_query") => {
+                    RuntimeConsoleError::Invalid
+                }
+                _ => RuntimeConsoleError::Internal,
+            },
+        );
     }
     let values = result
         .output
@@ -944,10 +956,7 @@ async fn projects_for_auth(
     auth: &AuthContext,
     limit: Option<usize>,
 ) -> Result<RuntimeConsoleProjects, RuntimeConsoleError> {
-    let limit = limit
-        .unwrap_or(DEFAULT_PROJECT_LIMIT)
-        .clamp(1, MAX_PROJECT_LIMIT);
-    projects_for_client_auth(runtime, auth, None, limit).await
+    projects_for_filters_auth(runtime, auth, None, None, limit).await
 }
 
 async fn projects_for_client_auth(
@@ -956,8 +965,28 @@ async fn projects_for_client_auth(
     client_id: Option<&str>,
     limit: usize,
 ) -> Result<RuntimeConsoleProjects, RuntimeConsoleError> {
-    let (visible, total, source_truncated) =
-        listed_projects_for_auth(runtime, auth, client_id.map(str::to_string), None, limit).await?;
+    projects_for_filters_auth(runtime, auth, client_id, None, Some(limit)).await
+}
+
+async fn projects_for_filters_auth(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    client_id: Option<&str>,
+    query: Option<&str>,
+    limit: Option<usize>,
+) -> Result<RuntimeConsoleProjects, RuntimeConsoleError> {
+    let limit = limit
+        .unwrap_or(DEFAULT_PROJECT_LIMIT)
+        .clamp(1, MAX_PROJECT_LIMIT);
+    let (visible, total, source_truncated) = listed_projects_for_auth(
+        runtime,
+        auth,
+        client_id.map(str::to_string),
+        None,
+        query.map(str::to_string),
+        limit,
+    )
+    .await?;
     let project_rows = visible
         .iter()
         .filter_map(project_selector_row)
@@ -979,7 +1008,7 @@ async fn authorize_exact_project(
         return Err(RuntimeConsoleError::Invalid);
     }
     let (visible, _, _) =
-        listed_projects_for_auth(runtime, auth, None, Some(project.to_string()), 1).await?;
+        listed_projects_for_auth(runtime, auth, None, Some(project.to_string()), None, 1).await?;
     if visible
         .iter()
         .any(|value| value.get("id").and_then(Value::as_str) == Some(project))
@@ -1593,7 +1622,15 @@ async fn projects(req: &mut Request, depot: &mut Depot, res: &mut Response) {
         Ok(input) => input,
         Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
     };
-    match projects_for_auth(&runtime, &auth, input.limit).await {
+    match projects_for_filters_auth(
+        &runtime,
+        &auth,
+        input.client_id.as_deref(),
+        input.query.as_deref(),
+        input.limit,
+    )
+    .await
+    {
         Ok(output) => res.render(Json(output)),
         Err(error) => render_error(res, error),
     }
@@ -2250,6 +2287,87 @@ mod tests {
                 "leaked {private}: {serialized}"
             );
         }
+
+        let mut filtered = TestClient::post("http://localhost/api/runtime-console/projects")
+            .json(&serde_json::json!({
+                "client_id": "special",
+                "query": "webcodex",
+                "limit": 100
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(filtered.status_code, Some(StatusCode::OK));
+        let filtered_body: Value = filtered.take_json().await.unwrap();
+        assert_eq!(filtered_body["total"], 1);
+        assert_eq!(filtered_body["truncated"], false);
+        assert_eq!(filtered_body["projects"][0]["id"], "agent:special:webcodex");
+
+        let invalid_query = TestClient::post("http://localhost/api/runtime-console/projects")
+            .json(&serde_json::json!({"query": "   "}))
+            .send(&service)
+            .await;
+        assert_eq!(invalid_query.status_code, Some(StatusCode::BAD_REQUEST));
+    }
+
+    #[tokio::test]
+    async fn project_filters_apply_before_bounded_runtime_console_limit() {
+        let runtime = test_runtime();
+        let auth = test_bootstrap_auth();
+        for index in 0..100 {
+            register_project(
+                &runtime,
+                &format!("a-{index:03}"),
+                "project",
+                &format!("/private/a-{index:03}"),
+                None,
+            )
+            .await;
+        }
+        register_project(
+            &runtime,
+            "special",
+            "webcodex",
+            "/root/private/webcodex",
+            None,
+        )
+        .await;
+
+        let global = projects_for_auth(&runtime, &auth, Some(100)).await.unwrap();
+        assert_eq!(global.total, 101);
+        assert_eq!(global.projects.len(), 100);
+        assert!(global.truncated);
+        assert!(!global
+            .projects
+            .iter()
+            .any(|project| project.id == "agent:special:webcodex"));
+
+        let by_runner =
+            projects_for_filters_auth(&runtime, &auth, Some("special"), None, Some(100))
+                .await
+                .unwrap();
+        assert_eq!(by_runner.total, 1);
+        assert!(!by_runner.truncated);
+        assert_eq!(by_runner.projects[0].id, "agent:special:webcodex");
+
+        let by_query =
+            projects_for_filters_auth(&runtime, &auth, None, Some("webcodex"), Some(100))
+                .await
+                .unwrap();
+        assert_eq!(by_query.total, 1);
+        assert!(!by_query.truncated);
+        assert_eq!(by_query.projects[0].id, "agent:special:webcodex");
+
+        let combined = projects_for_filters_auth(
+            &runtime,
+            &auth,
+            Some("special"),
+            Some("webcodex"),
+            Some(100),
+        )
+        .await
+        .unwrap();
+        assert_eq!(combined.total, 1);
+        assert_eq!(combined.projects[0].id, "agent:special:webcodex");
     }
 
     #[tokio::test]

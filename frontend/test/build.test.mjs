@@ -74,6 +74,7 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(runtimeHtml, /runtime-project-list/);
   assert.equal(runtimeHtml.includes("runtime-project-" + "select"), false);
   assert.match(runtimeHtml, /runtime-project-search/);
+  assert.match(runtimeHtml, /runtime-project-search[^>]*maxlength="200"/);
   assert.match(runtimeHtml, /runtime-collaboration-form/);
   assert.match(runtimeHtml, /runtime-refresh-status/);
   assert.match(runtimeHtml, /runtime-token-form/);

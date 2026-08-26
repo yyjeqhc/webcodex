@@ -232,12 +232,14 @@ export function isCurrentRuntimeOverviewRequest(state: any, request: any): boole
   return !!request && request.credentialGeneration === state.credentialGeneration && request.generation === state.overviewGeneration;
 }
 
-export function refreshRuntimeProjects(state: any): any {
+export function refreshRuntimeProjects(state: any, query = ""): any {
   state.projectsGeneration += 1;
   return {
     credentialGeneration: state.credentialGeneration,
     projectGeneration: state.projectGeneration,
     generation: state.projectsGeneration,
+    clientId: String(state.selectedDevice || ""),
+    query: String(query || "").trim(),
   };
 }
 

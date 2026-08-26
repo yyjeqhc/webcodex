@@ -812,6 +812,13 @@ fn capture_install_snapshot<E: ProcessExecutor>(
         ExistingUnitKind::Absent => None,
     };
     let active = query_status_output(executor, systemctl, unit, "is-active");
+    if matches!(existing_kind, ExistingUnitKind::ManagedRegularFile)
+        && !matches!(active.as_str(), "active" | "inactive" | "failed")
+    {
+        return Err(format!(
+            "cannot safely overwrite {unit} while systemctl is-active reports '{active}'; wait for the unit to leave its transitional or unknown state before retrying"
+        ));
+    }
     let enabled = query_status_output(executor, systemctl, unit, "is-enabled");
     if matches!(existing_kind, ExistingUnitKind::ManagedRegularFile)
         && !matches!(enabled.as_str(), "enabled" | "disabled")
@@ -934,6 +941,20 @@ fn rollback_failed_install<E: ProcessExecutor>(
 
 fn install_error_with_rollback(unit: &str, error: String, rollback_errors: Vec<String>) -> String {
     let mut message = format!("installation failed for {unit}: {error}");
+    if !rollback_errors.is_empty() {
+        let mut summary = rollback_errors.join("; ");
+        if summary.len() > 600 {
+            summary.truncate(600);
+            summary.push_str("...");
+        }
+        message.push_str("; rollback also encountered: ");
+        message.push_str(&summary);
+    }
+    message
+}
+
+fn uninstall_error_with_rollback(error: String, rollback_errors: Vec<String>) -> String {
+    let mut message = format!("uninstallation failed for webcodex Server unit pair: {error}");
     if !rollback_errors.is_empty() {
         let mut summary = rollback_errors.join("; ");
         if summary.len() > 600 {
@@ -1320,6 +1341,39 @@ fn read_managed_unit_for_uninstall(path: &Path) -> Result<Option<String>, String
         .map_err(|error| format!("failed to read {}: {error}", path.display()))
 }
 
+fn capture_uninstall_snapshot<E: ProcessExecutor>(
+    executor: &mut E,
+    systemctl: &Path,
+    unit: &str,
+    previous_content: Option<String>,
+) -> Result<InstallSnapshot, String> {
+    let existing_kind = if previous_content.is_some() {
+        ExistingUnitKind::ManagedRegularFile
+    } else {
+        ExistingUnitKind::Absent
+    };
+    let active = query_status_output(executor, systemctl, unit, "is-active");
+    let enabled = query_status_output(executor, systemctl, unit, "is-enabled");
+    if matches!(existing_kind, ExistingUnitKind::ManagedRegularFile) {
+        if !matches!(active.as_str(), "active" | "inactive" | "failed") {
+            return Err(format!(
+                "cannot safely uninstall {unit} while systemctl is-active reports '{active}'; wait for the unit to leave its transitional or unknown state before retrying"
+            ));
+        }
+        if !matches!(enabled.as_str(), "enabled" | "disabled") {
+            return Err(format!(
+                "cannot safely uninstall {unit} while systemctl is-enabled reports '{enabled}'; normalize the unit to enabled or disabled before retrying"
+            ));
+        }
+    }
+    Ok(InstallSnapshot {
+        existing_kind,
+        previous_content,
+        active,
+        enabled,
+    })
+}
+
 pub(crate) fn uninstall_server_unit_pair_with_executor<E: ProcessExecutor>(
     executor: &mut E,
     systemctl: &Path,
@@ -1336,34 +1390,45 @@ pub(crate) fn uninstall_server_unit_pair_with_executor<E: ProcessExecutor>(
             removed: false,
         });
     }
-    for unit in [socket_unit, service_unit] {
-        execute_allow_missing(executor, &rollback_invocation(systemctl, "stop", unit))?;
-        execute_allow_missing(executor, &rollback_invocation(systemctl, "disable", unit))?;
-    }
-    if service_previous.is_some() {
-        std::fs::remove_file(service_file)
-            .map_err(|error| format!("failed to remove {}: {error}", service_file.display()))?;
-    }
-    if socket_previous.is_some() {
-        if let Err(error) = std::fs::remove_file(socket_file) {
-            let _ = restore_unit_file(service_file, service_previous.as_deref());
-            return Err(format!(
-                "failed to remove {}: {error}",
-                socket_file.display()
-            ));
-        }
-    }
+    let service_snapshot =
+        capture_uninstall_snapshot(executor, systemctl, service_unit, service_previous)?;
+    let socket_snapshot =
+        capture_uninstall_snapshot(executor, systemctl, socket_unit, socket_previous)?;
+
     let reload = systemctl_invocation(
         systemctl,
         "systemctl daemon-reload",
         vec!["daemon-reload".to_string()],
         Some(service_unit),
     );
-    if let Err(error) = execute_required(executor, &reload) {
-        let _ = restore_unit_file(service_file, service_previous.as_deref());
-        let _ = restore_unit_file(socket_file, socket_previous.as_deref());
-        let _ = execute_allow_missing(executor, &reload);
-        return Err(error);
+    let uninstall = (|| -> Result<(), String> {
+        for unit in [socket_unit, service_unit] {
+            execute_allow_missing(executor, &rollback_invocation(systemctl, "stop", unit))?;
+            execute_allow_missing(executor, &rollback_invocation(systemctl, "disable", unit))?;
+        }
+        if service_snapshot.previous_content.is_some() {
+            std::fs::remove_file(service_file)
+                .map_err(|error| format!("failed to remove {}: {error}", service_file.display()))?;
+        }
+        if socket_snapshot.previous_content.is_some() {
+            std::fs::remove_file(socket_file)
+                .map_err(|error| format!("failed to remove {}: {error}", socket_file.display()))?;
+        }
+        execute_required(executor, &reload)?;
+        Ok(())
+    })();
+    if let Err(error) = uninstall {
+        let rollback_errors = pair_rollback(
+            executor,
+            systemctl,
+            service_file,
+            service_unit,
+            &service_snapshot,
+            socket_file,
+            socket_unit,
+            &socket_snapshot,
+        );
+        return Err(uninstall_error_with_rollback(error, rollback_errors));
     }
     for unit in [socket_unit, service_unit] {
         let _ = execute_allow_missing(
@@ -1920,8 +1985,19 @@ mod tests {
         let socket_file = tmp.path().join("webcodex.socket");
         std::fs::write(&service_file, "service").unwrap();
         std::fs::write(&socket_file, "socket").unwrap();
-        let mut executor =
-            FakeExecutor::with_outputs(vec![ok(), ok(), ok(), ok(), ok(), ok(), ok()]);
+        let mut executor = FakeExecutor::with_outputs(vec![
+            status("active"),
+            status("enabled"),
+            status("active"),
+            status("enabled"),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+        ]);
         let result = uninstall_server_unit_pair_with_executor(
             &mut executor,
             Path::new("/usr/bin/systemctl"),
@@ -1932,12 +2008,107 @@ mod tests {
         )
         .unwrap();
         assert!(result.removed);
-        assert_eq!(executor.calls[0], ["stop", SERVER_SOCKET_UNIT]);
-        assert_eq!(executor.calls[1], ["disable", SERVER_SOCKET_UNIT]);
-        assert_eq!(executor.calls[2], ["stop", SERVER_SERVICE_UNIT]);
-        assert_eq!(executor.calls[3], ["disable", SERVER_SERVICE_UNIT]);
+        assert_eq!(executor.calls[4], ["stop", SERVER_SOCKET_UNIT]);
+        assert_eq!(executor.calls[5], ["disable", SERVER_SOCKET_UNIT]);
+        assert_eq!(executor.calls[6], ["stop", SERVER_SERVICE_UNIT]);
+        assert_eq!(executor.calls[7], ["disable", SERVER_SERVICE_UNIT]);
         assert!(!service_file.exists());
         assert!(!socket_file.exists());
+    }
+
+    #[test]
+    fn server_pair_uninstall_control_failure_restores_prior_pair_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let service_file = tmp.path().join("webcodex.service");
+        let socket_file = tmp.path().join("webcodex.socket");
+        std::fs::write(&service_file, "service").unwrap();
+        std::fs::write(&socket_file, "socket").unwrap();
+        let mut executor = FakeExecutor::with_outputs(vec![
+            status("active"),
+            status("enabled"),
+            status("active"),
+            status("enabled"),
+            ok(),
+            ok(),
+            ok(),
+            failed("service disable rejected"),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+        ]);
+
+        let error = uninstall_server_unit_pair_with_executor(
+            &mut executor,
+            Path::new("/usr/bin/systemctl"),
+            &service_file,
+            SERVER_SERVICE_UNIT,
+            &socket_file,
+            SERVER_SOCKET_UNIT,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("service disable rejected"), "{error}");
+        assert_eq!(std::fs::read_to_string(&service_file).unwrap(), "service");
+        assert_eq!(std::fs::read_to_string(&socket_file).unwrap(), "socket");
+        assert_eq!(executor.calls[8], ["stop", SERVER_SOCKET_UNIT]);
+        assert_eq!(executor.calls[9], ["stop", SERVER_SERVICE_UNIT]);
+        assert_eq!(executor.calls[10], ["daemon-reload"]);
+        assert_eq!(executor.calls[11], ["enable", SERVER_SOCKET_UNIT]);
+        assert_eq!(executor.calls[12], ["enable", SERVER_SERVICE_UNIT]);
+        assert_eq!(executor.calls[13], ["start", SERVER_SOCKET_UNIT]);
+        assert_eq!(executor.calls[14], ["start", SERVER_SERVICE_UNIT]);
+    }
+
+    #[test]
+    fn server_pair_uninstall_reload_failure_restores_files_and_prior_pair_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let service_file = tmp.path().join("webcodex.service");
+        let socket_file = tmp.path().join("webcodex.socket");
+        std::fs::write(&service_file, "service").unwrap();
+        std::fs::write(&socket_file, "socket").unwrap();
+        let mut executor = FakeExecutor::with_outputs(vec![
+            status("active"),
+            status("enabled"),
+            status("active"),
+            status("enabled"),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+            failed("daemon reload rejected"),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+            ok(),
+        ]);
+
+        let error = uninstall_server_unit_pair_with_executor(
+            &mut executor,
+            Path::new("/usr/bin/systemctl"),
+            &service_file,
+            SERVER_SERVICE_UNIT,
+            &socket_file,
+            SERVER_SOCKET_UNIT,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("daemon reload rejected"), "{error}");
+        assert_eq!(std::fs::read_to_string(&service_file).unwrap(), "service");
+        assert_eq!(std::fs::read_to_string(&socket_file).unwrap(), "socket");
+        assert_eq!(executor.calls[9], ["stop", SERVER_SOCKET_UNIT]);
+        assert_eq!(executor.calls[10], ["stop", SERVER_SERVICE_UNIT]);
+        assert_eq!(executor.calls[11], ["daemon-reload"]);
+        assert_eq!(executor.calls[12], ["enable", SERVER_SOCKET_UNIT]);
+        assert_eq!(executor.calls[13], ["enable", SERVER_SERVICE_UNIT]);
+        assert_eq!(executor.calls[14], ["start", SERVER_SOCKET_UNIT]);
+        assert_eq!(executor.calls[15], ["start", SERVER_SERVICE_UNIT]);
     }
 
     #[cfg(unix)]
@@ -2435,6 +2606,36 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("non-regular systemd unit"));
         assert!(executor.calls.is_empty());
+    }
+
+    #[test]
+    fn overwrite_rejects_transitional_or_unknown_active_states_before_writing() {
+        for state in ["activating", "deactivating", "reloading", "unknown"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let service_file = tmp.path().join("webcodex.service");
+            std::fs::write(&service_file, "old unit").unwrap();
+            let mut executor = FakeExecutor::with_outputs(vec![
+                discovery("loaded", service_file.to_str().unwrap()),
+                status(state),
+            ]);
+            let error = install_unit_with_executor(
+                &mut executor,
+                Path::new("/usr/bin/systemctl"),
+                &service_file,
+                SERVER_SERVICE_UNIT,
+                "new unit",
+                true,
+                false,
+            )
+            .unwrap_err();
+            assert!(
+                error.contains("cannot safely overwrite"),
+                "{state}: {error}"
+            );
+            assert!(error.contains("systemctl is-active"), "{state}: {error}");
+            assert_eq!(std::fs::read_to_string(&service_file).unwrap(), "old unit");
+            assert_eq!(executor.calls.len(), 2);
+        }
     }
 
     #[test]

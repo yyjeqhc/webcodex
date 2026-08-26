@@ -2015,7 +2015,7 @@ fn project_registration_bootstrap(
         };
     }
 
-    // A V2 registration never carries the full project inventory. To keep an
+    // A paged-inventory registration never carries the full project inventory. To keep an
     // old Server able to validate same-process Job reconciliation, include only
     // the real project summaries referenced by the bounded register-time Job
     // inventory. Active jobs are complete and therefore have priority; terminal

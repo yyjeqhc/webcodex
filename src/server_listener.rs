@@ -16,6 +16,13 @@ struct ActivationMetadata {
 const SYSTEMD_LISTEN_FD_START: i32 = 3;
 const HTTP_FD_NAME: &str = "webcodex-http";
 
+#[cfg(target_os = "linux")]
+static PREPARED_ACTIVATION_METADATA: std::sync::OnceLock<Option<ActivationMetadata>> =
+    std::sync::OnceLock::new();
+
+#[cfg(target_os = "linux")]
+const SYSTEMD_ACTIVATION_ENV_KEYS: [&str; 3] = ["LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"];
+
 fn activation_metadata_from_values(
     listen_pid: Option<&str>,
     listen_fds: Option<&str>,
@@ -62,7 +69,7 @@ fn activation_metadata_from_values(
 }
 
 #[cfg(target_os = "linux")]
-fn activation_metadata_from_env() -> Result<Option<ActivationMetadata>, String> {
+fn read_activation_metadata_from_env() -> Result<Option<ActivationMetadata>, String> {
     let listen_pid = std::env::var("LISTEN_PID").ok();
     let listen_fds = std::env::var("LISTEN_FDS").ok();
     let listen_fdnames = std::env::var("LISTEN_FDNAMES").ok();
@@ -72,6 +79,47 @@ fn activation_metadata_from_env() -> Result<Option<ActivationMetadata>, String> 
         listen_fdnames.as_deref(),
         std::process::id(),
     )
+}
+
+#[cfg(target_os = "linux")]
+fn clear_activation_environment() {
+    for key in SYSTEMD_ACTIVATION_ENV_KEYS {
+        std::env::remove_var(key);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn activation_metadata_from_env() -> Result<Option<ActivationMetadata>, String> {
+    if let Some(metadata) = PREPARED_ACTIVATION_METADATA.get() {
+        return Ok(metadata.clone());
+    }
+    read_activation_metadata_from_env()
+}
+
+/// Consume systemd's process-local socket-activation contract before the
+/// Server creates its Tokio worker threads. `LISTEN_*` is one-shot metadata:
+/// descendants must not mistake it for their own activation contract, and the
+/// inherited listener must not leak through later `exec` calls.
+#[cfg(target_os = "linux")]
+pub(crate) fn prepare_activation_from_env() -> Result<(), String> {
+    if PREPARED_ACTIVATION_METADATA.get().is_some() {
+        return Ok(());
+    }
+    let metadata = read_activation_metadata_from_env()?;
+    if metadata.is_some() {
+        validate_listening_tcp_fd(SYSTEMD_LISTEN_FD_START)?;
+        set_close_on_exec(SYSTEMD_LISTEN_FD_START)?;
+    }
+    PREPARED_ACTIVATION_METADATA
+        .set(metadata)
+        .map_err(|_| "systemd socket activation was prepared concurrently".to_string())?;
+    clear_activation_environment();
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn prepare_activation_from_env() -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -86,6 +134,26 @@ fn configured_addr_matches(configured: &str, actual: SocketAddr) -> Result<bool,
     Ok(configured_addrs
         .into_iter()
         .any(|candidate| candidate == actual))
+}
+
+#[cfg(target_os = "linux")]
+fn set_close_on_exec(fd: i32) -> Result<(), String> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags == -1 {
+        return Err(format!(
+            "invalid systemd socket activation: failed to inspect inherited fd {fd} flags: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    if flags & libc::FD_CLOEXEC == 0
+        && unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } == -1
+    {
+        return Err(format!(
+            "invalid systemd socket activation: failed to mark inherited fd {fd} close-on-exec: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -164,6 +232,10 @@ fn take_inherited_listener(
     use std::os::fd::FromRawFd;
 
     validate_listening_tcp_fd(fd)?;
+    // systemd deliberately passes activation descriptors without FD_CLOEXEC so
+    // this process can receive them across exec. Once adopted, restore the
+    // normal close-on-exec boundary before any Server child can be spawned.
+    set_close_on_exec(fd)?;
     let listener = unsafe { std::net::TcpListener::from_raw_fd(fd) };
     listener.set_nonblocking(true).map_err(|error| {
         format!("failed to set inherited systemd HTTP listener nonblocking: {error}")
@@ -280,6 +352,36 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    #[test]
+    fn activation_environment_cleanup_removes_one_shot_systemd_metadata() {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        for (key, value) in [
+            ("LISTEN_PID", "123"),
+            ("LISTEN_FDS", "1"),
+            ("LISTEN_FDNAMES", HTTP_FD_NAME),
+        ] {
+            env.set(key, value);
+        }
+        clear_activation_environment();
+        for key in SYSTEMD_ACTIVATION_ENV_KEYS {
+            assert!(std::env::var_os(key).is_none(), "{key} was not cleared");
+        }
+        let inherited = std::process::Command::new("env")
+            .output()
+            .expect("spawn child environment probe");
+        assert!(inherited.status.success());
+        let inherited = String::from_utf8(inherited.stdout).expect("child environment is UTF-8");
+        for key in SYSTEMD_ACTIVATION_ENV_KEYS {
+            assert!(
+                !inherited
+                    .lines()
+                    .any(|line| line.starts_with(&format!("{key}="))),
+                "{key} leaked into a spawned child"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
     fn move_to_isolated_test_fd(fd: i32) -> i32 {
         let isolated = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 1000) };
         assert!(
@@ -287,6 +389,20 @@ mod tests {
             "failed to duplicate fd for isolated ownership test"
         );
         unsafe { libc::close(fd) };
+        isolated
+    }
+
+    #[cfg(target_os = "linux")]
+    fn move_to_isolated_inheritable_test_fd(fd: i32) -> i32 {
+        let isolated = unsafe { libc::fcntl(fd, libc::F_DUPFD, 1000) };
+        assert!(
+            isolated >= 1000,
+            "failed to duplicate fd for inheritable descriptor test"
+        );
+        unsafe { libc::close(fd) };
+        let flags = unsafe { libc::fcntl(isolated, libc::F_GETFD) };
+        assert_ne!(flags, -1);
+        assert_eq!(flags & libc::FD_CLOEXEC, 0, "test fd was not inheritable");
         isolated
     }
 
@@ -340,6 +456,24 @@ mod tests {
         );
         assert_ne!(unsafe { libc::fcntl(raw_fd, libc::F_GETFD) }, -1);
         unsafe { libc::close(raw_fd) };
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn inherited_listener_is_marked_close_on_exec_when_adopted() {
+        use std::os::fd::{AsRawFd, IntoRawFd};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let actual = listener.local_addr().unwrap();
+        let raw_fd = move_to_isolated_inheritable_test_fd(listener.into_raw_fd());
+        let listener = take_inherited_listener(raw_fd, &actual.to_string()).unwrap();
+        let flags = unsafe { libc::fcntl(listener.as_raw_fd(), libc::F_GETFD) };
+        assert_ne!(flags, -1);
+        assert_ne!(
+            flags & libc::FD_CLOEXEC,
+            0,
+            "adopted systemd listener remained inheritable"
+        );
     }
 
     #[cfg(target_os = "linux")]

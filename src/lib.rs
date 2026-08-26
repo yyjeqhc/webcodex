@@ -143,8 +143,30 @@ const SERVER_SYSTEMD_STOP_MARGIN_SECS: u64 = 15;
 pub const SERVER_SYSTEMD_TIMEOUT_STOP_SECS: u64 =
     SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECS + SERVER_SYSTEMD_STOP_MARGIN_SECS;
 
+static PREPARED_SERVER_ENV_LOADS: std::sync::OnceLock<Vec<config::EnvFileLoad>> =
+    std::sync::OnceLock::new();
+
+/// Prepare process-global Server startup state while the binary is still
+/// single-threaded. In particular this consumes systemd `LISTEN_*` metadata
+/// before the Tokio runtime exists, so neither the metadata nor the activation
+/// listener can leak into later child processes.
+#[doc(hidden)]
+pub fn prepare_server_process_environment() -> Result<(), String> {
+    if PREPARED_SERVER_ENV_LOADS.get().is_some() {
+        return Ok(());
+    }
+    let env_loads = load_startup_env_files()?;
+    server_listener::prepare_activation_from_env()?;
+    PREPARED_SERVER_ENV_LOADS
+        .set(env_loads)
+        .map_err(|_| "Server process environment was prepared concurrently".to_string())
+}
+
 pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
-    let env_loads = load_startup_env_files().map_err(std::io::Error::other)?;
+    let env_loads = match PREPARED_SERVER_ENV_LOADS.get() {
+        Some(prepared) => prepared.clone(),
+        None => load_startup_env_files().map_err(std::io::Error::other)?,
+    };
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),

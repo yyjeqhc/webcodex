@@ -16,7 +16,10 @@ fn build_server_runtime() -> std::io::Result<tokio::runtime::Runtime> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match server_binary_action(std::env::args().skip(1)) {
-        ServerBinaryAction::Run => build_server_runtime()?.block_on(webcodex::run_server()),
+        ServerBinaryAction::Run => {
+            webcodex::prepare_server_process_environment().map_err(std::io::Error::other)?;
+            build_server_runtime()?.block_on(webcodex::run_server())
+        }
         ServerBinaryAction::Exit {
             code,
             stdout,

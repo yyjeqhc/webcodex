@@ -234,6 +234,58 @@ async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_repla
     assert!(!first_snapshot.supports(RunnerFeature::ComputerTextInput));
 }
 
+#[tokio::test]
+async fn project_operation_enqueue_rechecks_canonical_features_after_reregistration() {
+    let registry = ShellClientRegistry::default();
+    let mut initial_capabilities = wire_capabilities_with_only(None);
+    initial_capabilities.project_path_registration = true;
+    initial_capabilities.project_lifecycle = true;
+    let mut initial = runner_registration("project-feature-fence", "inst-a", Vec::new());
+    initial.capabilities = Some(initial_capabilities);
+    registry.register(initial).await.unwrap();
+
+    // Hold the old semantic observation to model the ToolRuntime preflight, then
+    // allow the same process to re-register without these non-sticky features.
+    let stale_preflight = registry
+        .get_client_semantic_view("project-feature-fence")
+        .await
+        .unwrap();
+    assert!(stale_preflight.supports(RunnerFeature::ProjectPathRegistration));
+    assert!(stale_preflight.supports(RunnerFeature::ProjectLifecycle));
+
+    let mut downgraded = runner_registration("project-feature-fence", "inst-a", Vec::new());
+    downgraded.capabilities = Some(wire_capabilities_with_only(None));
+    registry.register(downgraded).await.unwrap();
+
+    let path_error = registry
+        .enqueue_project_op(
+            "project-feature-fence".to_string(),
+            "resolve_or_register_project",
+            "{}".to_string(),
+            "test".to_string(),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        path_error.contains("project_path_registration"),
+        "{path_error}"
+    );
+
+    let lifecycle_error = registry
+        .enqueue_project_op(
+            "project-feature-fence".to_string(),
+            "project_lifecycle_disable",
+            "{}".to_string(),
+            "test".to_string(),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        lifecycle_error.contains("project_lifecycle"),
+        "{lifecycle_error}"
+    );
+}
+
 async fn register_structured_delete_state(
     registry: &ShellClientRegistry,
     client_id: &str,

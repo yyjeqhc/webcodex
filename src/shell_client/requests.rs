@@ -1572,6 +1572,14 @@ impl ShellClientRegistry {
         if payload.contains('\0') {
             return Err("project op payload must not contain NUL".to_string());
         }
+        let required_feature = match kind {
+            "resolve_or_register_project" => Some(RunnerFeature::ProjectPathRegistration),
+            "project_lifecycle_enable"
+            | "project_lifecycle_disable"
+            | "project_lifecycle_unregister" => Some(RunnerFeature::ProjectLifecycle),
+            "register_project" | "create_project" => None,
+            _ => unreachable!("project op kind validated above"),
+        };
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let request = ShellAgentShellRequest {
@@ -1604,6 +1612,18 @@ impl ShellClientRegistry {
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
+        if let Some(required_feature) = required_feature {
+            let client = inner
+                .clients
+                .get(&client_id)
+                .ok_or_else(|| format!("unknown shell client: {client_id}"))?;
+            if !client.runner_features.supports(required_feature) {
+                return Err(format!(
+                    "capability_unavailable: agent client {client_id} does not support {}",
+                    required_feature.as_wire_name()
+                ));
+            }
+        }
         enqueue_pending_request_locked(
             &mut inner,
             &client_id,

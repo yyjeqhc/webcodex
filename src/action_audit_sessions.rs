@@ -592,6 +592,39 @@ mod tests {
     }
 
     #[test]
+    fn compute_stats_preserves_removed_endpoint_categories() {
+        fn event(endpoint: &str) -> ActionEventView {
+            ActionEventView {
+                event_id: "evt".to_string(),
+                session_id: "session".to_string(),
+                started_at: 0,
+                ended_at: 0,
+                duration_ms: 0,
+                endpoint: endpoint.to_string(),
+                operation: None,
+                action_name: "legacy".to_string(),
+                project: None,
+                status: "ok".to_string(),
+                http_status: None,
+                error_summary: None,
+                warning_summary: None,
+                changed_files: Vec::new(),
+                ids: json!({}),
+                summary: json!({}),
+                request_bytes: None,
+                response_bytes: None,
+            }
+        }
+
+        let stats = compute_stats(&[
+            event("/api/projects/write_file"),
+            event("/api/shell/clients"),
+        ]);
+        assert_eq!(stats.edit_count, 1);
+        assert_eq!(stats.shell_count, 1);
+    }
+
+    #[test]
     fn audit_sanitize_value_keeps_non_secret_regular_strings() {
         assert_eq!(
             sanitize_value(&json!({"message": "normal project status update"})),

@@ -85,9 +85,10 @@ fn is_agent_transport_path_allows_only_the_six_exact_paths() {
     assert!(!is_agent_transport_path("/api/audit/sessions"));
     assert!(!is_agent_transport_path("/api/users/list"));
     assert!(!is_agent_transport_path("/api/tokens/list"));
-    // Prefix-only matches must not pass (exact match required).
+    // Prefix and trailing-slash aliases must not pass (exact match required).
     assert!(!is_agent_transport_path("/api/shell/agent/register/extra"));
     assert!(!is_agent_transport_path("/api/agents/ws/extra"));
+    assert!(!is_agent_transport_path("/api/agents/ws/"));
     assert!(!is_agent_transport_path(""));
 }
 
@@ -424,6 +425,7 @@ fn account_control_path_allowlist_is_exact() {
     assert!(!is_account_control_path("/api/tools/list"));
     assert!(!is_account_control_path("/mcp"));
     assert!(!is_account_control_path("/api/users/me/extra"));
+    assert!(!is_account_control_path("/api/users/me/"));
 }
 
 #[tokio::test]

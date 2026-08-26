@@ -1586,13 +1586,15 @@ pub(crate) fn lookup(method: &str, path: &str) -> Option<&'static RouteSpec> {
         .find(|spec| spec.method.matches(method) && spec.path == path)
 }
 
+/// Exact path-only lookup for consumers whose historical contract was an
+/// allowlist over `Request::uri().path()` or a persisted audit endpoint.
+/// Method-aware scope lookup below intentionally keeps its older benign
+/// normalization; path-only security gates must not gain new aliases here.
 pub(crate) fn lookup_path(path: &str) -> Option<&'static RouteSpec> {
-    let path = normalize_path(path);
     ROUTES.iter().find(|spec| spec.path == path)
 }
 
 pub(crate) fn path_has_surface(path: &str, surface: RouteSurface) -> bool {
-    let path = normalize_path(path);
     ROUTES
         .iter()
         .any(|spec| spec.path == path && spec.surface == surface)
@@ -1682,6 +1684,13 @@ mod tests {
         assert!(lookup("GET", "/api/runtime/status").is_none());
         assert!(lookup("POST", "/api/future/authenticated-route").is_none());
         assert!(lookup("POST", "/api/runtime/status/extra").is_none());
+
+        // Path-only surface/audit consumers replaced exact historical
+        // allowlists and must not inherit the scope lookup's normalization.
+        assert!(lookup_path("/api/runtime/status").is_some());
+        assert!(lookup_path("/api/runtime/status/").is_none());
+        assert!(path_has_surface("/api/agents/ws", AgentTransport));
+        assert!(!path_has_surface("/api/agents/ws/", AgentTransport));
     }
 
     #[test]
@@ -1785,11 +1794,12 @@ mod tests {
     }
 
     #[test]
-    fn audit_class_is_unambiguous_per_canonical_path() {
-        let mut classes = BTreeMap::new();
+    fn path_only_metadata_is_unambiguous_per_canonical_path() {
+        let mut metadata = BTreeMap::new();
         for spec in routes() {
-            match classes.insert(spec.path, spec.audit_class) {
-                Some(existing) => assert_eq!(existing, spec.audit_class, "{}", spec.path),
+            let path_only = (spec.surface, spec.audit_class);
+            match metadata.insert(spec.path, path_only) {
+                Some(existing) => assert_eq!(existing, path_only, "{}", spec.path),
                 None => {}
             }
         }

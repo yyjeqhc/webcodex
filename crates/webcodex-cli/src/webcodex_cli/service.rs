@@ -641,6 +641,37 @@ fn restore_unit_file(path: &Path, previous: Option<&str>) -> Result<(), String> 
     }
 }
 
+fn write_server_unit_pair_files<W, R>(
+    service_file: &Path,
+    service_content: &str,
+    service_previous: Option<&str>,
+    socket_file: &Path,
+    socket_content: &str,
+    overwrite: bool,
+    mut write: W,
+    mut restore: R,
+) -> Result<(), String>
+where
+    W: FnMut(&Path, &str, bool) -> Result<(), String>,
+    R: FnMut(&Path, Option<&str>) -> Result<(), String>,
+{
+    write(service_file, service_content, overwrite)?;
+    if let Err(error) = write(socket_file, socket_content, overwrite) {
+        let mut rollback_errors = Vec::new();
+        if let Err(rollback_error) = restore(service_file, service_previous) {
+            rollback_errors.push(format!(
+                "service unit file restore failed: {rollback_error}"
+            ));
+        }
+        return Err(install_error_with_rollback(
+            "webcodex Server unit pair",
+            error,
+            rollback_errors,
+        ));
+    }
+    Ok(())
+}
+
 fn rollback_unit(path: &Path, previous: Option<&str>) {
     let _ = restore_unit_file(path, previous);
 }
@@ -1163,11 +1194,16 @@ pub(crate) fn install_server_unit_pair_with_executor<E: ProcessExecutor>(
         ));
     }
 
-    write_text_file_atomic(service_file, service_content, overwrite)?;
-    if let Err(error) = write_text_file_atomic(socket_file, socket_content, overwrite) {
-        let _ = restore_unit_file(service_file, service_snapshot.previous_content.as_deref());
-        return Err(format!("installation failed for Server unit pair: {error}"));
-    }
+    write_server_unit_pair_files(
+        service_file,
+        service_content,
+        service_snapshot.previous_content.as_deref(),
+        socket_file,
+        socket_content,
+        overwrite,
+        write_text_file_atomic,
+        restore_unit_file,
+    )?;
 
     let mut plan = vec![systemctl_invocation(
         systemctl,
@@ -1843,6 +1879,79 @@ mod tests {
             start.calls[3],
             ["is-active", "--quiet", SERVER_SERVICE_UNIT]
         );
+    }
+
+    #[test]
+    fn server_pair_second_file_write_failure_restores_first_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let service_file = tmp.path().join("webcodex.service");
+        let socket_file = tmp.path().join("webcodex.socket");
+        std::fs::write(&service_file, "old service").unwrap();
+        std::fs::write(&socket_file, "old socket").unwrap();
+
+        let error = write_server_unit_pair_files(
+            &service_file,
+            "new service",
+            Some("old service"),
+            &socket_file,
+            "new socket",
+            true,
+            |path, content, overwrite| {
+                if path == socket_file.as_path() {
+                    Err("socket write rejected".to_string())
+                } else {
+                    write_text_file_atomic(path, content, overwrite)
+                }
+            },
+            restore_unit_file,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("socket write rejected"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(&service_file).unwrap(),
+            "old service"
+        );
+        assert_eq!(std::fs::read_to_string(&socket_file).unwrap(), "old socket");
+    }
+
+    #[test]
+    fn server_pair_second_file_write_failure_reports_restore_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let service_file = tmp.path().join("webcodex.service");
+        let socket_file = tmp.path().join("webcodex.socket");
+        std::fs::write(&service_file, "old service").unwrap();
+        std::fs::write(&socket_file, "old socket").unwrap();
+
+        let error = write_server_unit_pair_files(
+            &service_file,
+            "new service",
+            Some("old service"),
+            &socket_file,
+            "new socket",
+            true,
+            |path, content, overwrite| {
+                if path == socket_file.as_path() {
+                    Err("socket write rejected".to_string())
+                } else {
+                    write_text_file_atomic(path, content, overwrite)
+                }
+            },
+            |_path, _previous| Err("restore rejected".to_string()),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("socket write rejected"), "{error}");
+        assert!(error.contains("rollback also encountered"), "{error}");
+        assert!(
+            error.contains("service unit file restore failed: restore rejected"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&service_file).unwrap(),
+            "new service"
+        );
+        assert_eq!(std::fs::read_to_string(&socket_file).unwrap(), "old socket");
     }
 
     #[test]

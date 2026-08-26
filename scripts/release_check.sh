@@ -24,13 +24,14 @@ set -euo pipefail
 #  12. static: no sensitive files tracked or staged by git
 #
 # Final pre-tag acceptance is orchestrated by .github/workflows/release-readiness.yml:
+#   Stage 1 (before any native release-profile or Server-image build):
 #   - this canonical release_check.sh
-#   - cargo test --locked --workspace -- --nocapture
+#   - complete locked Rust workspace tests, package-sharded without test-name filters
+#   Stage 2 (parallel fanout after Stage 1 succeeds):
 #   - frontend typecheck/test/committed-build check
-#   - bash scripts/e2e_zero_config_ws.sh
-#   - E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh
+#   - WebSocket + polling zero-config E2E
 #   - EVAL_MODE=compare bash scripts/eval_coding_loop.sh
-#   - native macOS release-surface compile + webcodex-runner suite
+#   - five native release-profile surfaces + two disposable Server-image architectures
 #
 # Usage:
 #   bash scripts/release_check.sh

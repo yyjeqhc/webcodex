@@ -29,9 +29,11 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  readiness:
+  # Stage 1 is deliberately fail-fast and release-artifact-free: prove the exact
+  # source's Linux correctness before spending native/image build minutes.
+  release-contract:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - name: Fence exact reviewed main source
         shell: bash
@@ -76,7 +78,138 @@ jobs:
         with:
           components: rustfmt
 
+      # Main/PR Linux CI uses the same trusted cache namespace. Reusing it keeps
+      # exact-source validation independent while avoiding a cold rebuild.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-ci
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install release-check dependencies
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y ripgrep
+          fi
+
+      - name: Run canonical release check
+        run: bash scripts/release_check.sh
+
+      - name: Require final release-contract source cleanliness
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+  core-tests:
+    strategy:
+      # A release attempt wants the earliest actionable failure, not a complete
+      # census of sibling shard failures. Ordinary CI remains the broader signal.
+      fail-fast: true
+      matrix:
+        include:
+          - shard: server
+            packages: "-p webcodex"
+          - shard: runner
+            packages: "-p webcodex-runner"
+          - shard: workspace-crates
+            packages: >-
+              -p webcodex-admin
+              -p webcodex-agent-config
+              -p webcodex-core
+              -p webcodex-cli
+              -p webcodex-persistent-shell
+              -p webcodex-sandbox
+              -p webcodex-workspace
+              -p webcodex-process
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Fence exact reviewed main source
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release readiness must be dispatched from the main workflow definition." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_sha must be exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]; then
+            echo "request_id must match rr_<24 lowercase hex>." >&2
+            exit 1
+          fi
+          if [ "$GITHUB_SHA" != "$INPUT_SOURCE_SHA" ]; then
+            echo "main moved before readiness dispatch: requested=$INPUT_SOURCE_SHA run=$GITHUB_SHA" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Verify exact clean checkout
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INPUT_SOURCE_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Restore the cache already warmed by mandatory Linux PR/main CI. Cargo
+      # still validates the exact checkout; cached objects are only an accelerator.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-ci
+
+      - name: Run complete locked Rust suite shard (${{ matrix.shard }})
+        run: cargo test --locked ${{ matrix.packages }} -- --nocapture
+
+      - name: Require final core-test source cleanliness
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+  # Stage 2 starts only after both Stage-1 correctness gates pass. These jobs are
+  # independent release evidence and intentionally fan out in parallel.
+  frontend:
+    needs: [release-contract, core-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Fence exact reviewed main source
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]
+          test "$GITHUB_SHA" = "$INPUT_SOURCE_SHA"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -84,28 +217,57 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      # search_project_texts advanced result modes intentionally require ripgrep;
-      # do not rely on the mutable hosted-runner image to provide it implicitly.
-      - name: Install E2E search dependency
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y ripgrep
-
-      - name: Run canonical release check
-        run: bash scripts/release_check.sh
-
-      - name: Run full workspace suite
-        run: cargo test --locked --workspace -- --nocapture
-
       - name: Validate frontend source and committed build
         run: |
+          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
+          test -z "$(git status --porcelain --untracked-files=all)"
           npm ci --prefix frontend
           npm --prefix frontend run typecheck
           npm --prefix frontend test
           npm --prefix frontend run check:dist
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+  e2e:
+    needs: [release-contract, core-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Fence exact reviewed main source
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]
+          test "$GITHUB_SHA" = "$INPUT_SOURCE_SHA"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-readiness-e2e
+
+      - name: Install E2E search dependency
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y ripgrep
+          fi
 
       - name: Build E2E runtime fixtures
         run: |
+          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
+          test -z "$(git status --porcelain --untracked-files=all)"
           cargo build --locked -p webcodex --bin webcodex-server
           cargo build --locked -p webcodex-runner --bin webcodex-runner
 
@@ -122,12 +284,55 @@ jobs:
           E2E_TRANSPORT: polling
         run: bash scripts/e2e_zero_config_ws.sh
 
+      - name: Require final E2E source cleanliness
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+  eval:
+    needs: [release-contract, core-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Fence exact reviewed main source
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]
+          test "$GITHUB_SHA" = "$INPUT_SOURCE_SHA"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-readiness-eval
+
+      - name: Install eval search dependency
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y ripgrep
+          fi
+
       - name: Run coding-loop eval compare
         env:
           EVAL_MODE: compare
         run: bash scripts/eval_coding_loop.sh
 
-      - name: Require final source cleanliness
+      - name: Require final eval source cleanliness
         shell: bash
         run: |
           set -euo pipefail
@@ -135,6 +340,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   native-linux:
+    needs: [release-contract, core-tests]
     strategy:
       fail-fast: false
       matrix:
@@ -270,6 +476,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   server-image:
+    needs: [release-contract, core-tests]
     strategy:
       fail-fast: false
       matrix:
@@ -428,6 +635,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   macos-runner:
+    needs: [release-contract, core-tests]
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -520,6 +728,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   native-windows:
+    needs: [release-contract, core-tests]
     strategy:
       fail-fast: false
       matrix:
@@ -632,7 +841,7 @@ jobs:
           }
 
   summary:
-    needs: [readiness, native-linux, server-image, macos-runner, native-windows]
+    needs: [release-contract, core-tests, frontend, e2e, eval, native-linux, server-image, macos-runner, native-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Record readiness summary
@@ -645,6 +854,8 @@ jobs:
             echo "### Release readiness passed"
             echo "- source: \`$INPUT_SOURCE_SHA\`"
             echo "- request: \`$INPUT_REQUEST_ID\`"
+            echo "- fail-fast correctness: canonical release contract + complete package-sharded locked Rust suite passed before expensive fanout"
+            echo "- parallel Stage 2: frontend, E2E, eval, native release surfaces, and disposable Server images passed"
             echo "- native release-profile validation: linux-x64, linux-arm64, darwin-arm64, win32-x64, win32-arm64 passed"
             echo "- disposable Server images: linux/amd64 and linux/arm64 build, runtime, health, and digest-pinned bootstrap generation passed"
             echo "- candidate binaries produced: no (pre-tag validation artifacts are disposable)"

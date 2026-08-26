@@ -69,11 +69,9 @@ jobs:
             http_project_connector_lists_and_dispatches_only_canonical_capabilities
 
   test-linux-rust:
+    # Complete Linux Rust coverage is mandatory before merge, including owner PRs.
+    # Release readiness must not be the first place these package suites execute.
     needs: contract
-    if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.user.login != github.repository_owner ||
-      contains(github.event.pull_request.labels.*.name, 'run-ci')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -104,11 +102,9 @@ jobs:
         run: cargo test --locked ${{ matrix.packages }}
 
   test-linux-tooling:
+    # Release/tooling checks are cheap relative to native platform builds and are
+    # mandatory on every PR so release-prep failures are caught before merge.
     needs: contract
-    if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.user.login != github.repository_owner ||
-      contains(github.event.pull_request.labels.*.name, 'run-ci')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -144,16 +140,9 @@ jobs:
 
   test:
     needs: [contract, test-linux-rust, test-linux-tooling]
-    # Preserve the historical aggregate status check. Eligible heavy runs always
-    # evaluate upstream results so a failed or unexpectedly skipped Linux lane
-    # cannot turn this required status into a successful or skipped check.
-    if: >-
-      always() &&
-      (
-        github.event_name == 'push' ||
-        github.event.pull_request.user.login != github.repository_owner ||
-        contains(github.event.pull_request.labels.*.name, 'run-ci')
-      )
+    # Preserve the historical aggregate status check and always evaluate upstream
+    # results so a failed or unexpectedly skipped Linux lane cannot disappear.
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

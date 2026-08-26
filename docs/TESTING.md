@@ -35,15 +35,16 @@ The lanes above define test semantics; workflows decide when to run them.
   lane owns frontend install/type/test/dist validation, workspace-boundary
   self-test/checks, formatting, the heuristic test-inventory self-test/report
   (without count thresholds), and focused registry/OpenAPI/MCP schema and metadata parity.
-- The heavy Linux Rust matrix `test-linux-rust`, Linux tooling lane
-  `test-linux-tooling`, native macOS `test-macos`, and native Windows
-  `test-windows` jobs all depend on a successful `contract` job and retain the
-  existing main/external-PR/owner-`run-ci` policy. The historical `test` job id
-  remains the aggregate Linux status check: on an eligible heavy run it waits for
-  `contract` plus both Linux lanes and fails unless every required result is
-  `success`. Owner-authored pull requests without `run-ci` still intentionally
-  skip the heavy Linux lanes and aggregate. This is CI orchestration, not a claim
-  that the repository now has perfectly pure fast/integration/platform suites.
+- The heavy Linux Rust matrix `test-linux-rust` and Linux tooling lane
+  `test-linux-tooling` both depend on a successful `contract` job and now run for
+  every pull request as well as every push to `main`, including owner-authored PRs.
+  Release readiness must not be the first place complete Linux package suites or
+  release-tooling tests execute. The historical `test` job id remains the aggregate
+  Linux status check and always evaluates `contract` plus both Linux lanes, failing
+  unless every required result is `success`. Native macOS and Windows lanes still
+  retain the existing main/external-PR/owner-`run-ci` policy so routine owner PRs do
+  not automatically consume the full cross-platform matrix. This is CI orchestration,
+  not a claim that the repository now has perfectly pure fast/integration/platform suites.
 - Linux Rust execution is package-sharded without test-name filters: the server
   package `webcodex`, the integration-rich Runner package `webcodex-runner`, and
   the remaining workspace crates run as three complete package groups in
@@ -59,12 +60,13 @@ The lanes above define test semantics; workflows decide when to run them.
   SSH integration fixture remains Linux-only because it depends on Linux daemon
   account/auth configuration; Windows still owns its native library, CLI and
   serialized Runner suites, npm tests, and artifact-to-install smoke.
-- Exact-source release acceptance is a separate trust boundary from ordinary CI
-  and intentionally keeps its independent full locked workspace acceptance suite
-  together with frontend/E2E/native release evidence. Follow
-  [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
-  `.github/workflows/release-readiness.yml`; ordinary-CI package sharding does not
-  reduce that workflow or `scripts/release_check.sh`.
+- Exact-source release acceptance is a separate trust boundary from ordinary CI.
+  Its Stage 1 runs the canonical release contract and the complete locked Rust
+  workspace suite as package shards without test-name filters; Stage 2 is blocked
+  until both succeed, then fans out frontend, E2E, eval, native release-profile,
+  and Server-image evidence in parallel. Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)
+  and `.github/workflows/release-readiness.yml`; sharding changes scheduling, not
+  semantic Rust test coverage or `scripts/release_check.sh`.
 - Slow/manual and real-process lanes remain explicit targeted evidence unless
   a workflow names them. Do not infer that one lane ran merely because another CI
   job passed.

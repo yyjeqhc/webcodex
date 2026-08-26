@@ -111,15 +111,19 @@ Before tagging or publishing, follow sections in
 [`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md). The final executable pre-tag gate is
 `.github/workflows/release-readiness.yml`, dispatched through
 `scripts/release_operator.py readiness-start` for one exact merged `main` SHA and
-observed through the same durable state with `readiness-status`. It runs the canonical
-release check, locked full workspace suite, frontend checks, both zero-config E2E
-transports, the coding-loop compare eval, parallel disposable release-profile native
-validation for all five published platforms, and native `linux/amd64` + `linux/arm64`
-Server-container build/runtime/health plus digest-pinned bootstrap-generation checks. The
-Server-image readiness jobs use only local disposable images: they do not log in to a
-registry, upload artifacts, push packages, or produce formal release candidates. Linux
-preserves the release ABI/dependency gates, macOS adds the Runner suite, and Windows
-includes the local npm-install smoke.
+observed through the same durable state with `readiness-status`. Readiness is deliberately
+two-stage. Stage 1 runs the canonical release check in parallel with the complete locked
+Rust workspace suite, package-sharded without test-name filters; no native release-profile
+or Server-image build may start until both correctness gates succeed. Stage 2 then fans out
+frontend checks, both zero-config E2E transports, the coding-loop compare eval, disposable
+release-profile native validation for all five published platforms, and native
+`linux/amd64` + `linux/arm64` Server-container build/runtime/health plus digest-pinned
+bootstrap-generation checks. These independent Stage-2 lanes run in parallel so release
+wall time is governed by the slowest required lane rather than their sum. The Server-image
+readiness jobs use only local disposable images: they do not log in to a registry, upload
+artifacts, push packages, or produce formal release candidates. Linux preserves the release
+ABI/dependency gates, macOS adds the Runner suite, and Windows includes the local npm-install
+smoke.
 Product-documentation consistency and allowed legacy-term matches remain part of the
 release-prep review rather than being guessed by an automated semantic checker.
 

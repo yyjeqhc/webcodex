@@ -176,11 +176,63 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("DOCKER_BUILDKIT=1 docker build", workflow)
         self.assertIn("scripts/prepare_server_deployment_assets.py", workflow)
         self.assertIn("ghcr.io/yyjeqhc/webcodex-server@$digest", workflow)
-        self.assertIn("needs: [readiness, native-linux, server-image, macos-runner, native-windows]", workflow)
         self.assertNotIn("actions/upload-artifact", workflow)
         self.assertNotIn("docker/login-action", workflow)
         self.assertNotIn("packages: write", workflow)
         self.assertNotIn("push: true", workflow)
+
+    def test_expensive_readiness_fanout_waits_for_fail_fast_correctness(self) -> None:
+        workflow = Path(".github/workflows/release-readiness.yml").read_text(encoding="utf-8")
+        self.assertIn("  release-contract:\n", workflow)
+        self.assertIn("  core-tests:\n", workflow)
+        self.assertIn("      fail-fast: true\n", workflow)
+        self.assertIn('            packages: "-p webcodex"', workflow)
+        self.assertIn('            packages: "-p webcodex-runner"', workflow)
+        for package in (
+            "webcodex-admin",
+            "webcodex-agent-config",
+            "webcodex-core",
+            "webcodex-cli",
+            "webcodex-persistent-shell",
+            "webcodex-sandbox",
+            "webcodex-workspace",
+            "webcodex-process",
+        ):
+            self.assertIn(f"              -p {package}", workflow)
+        self.assertIn(
+            "run: cargo test --locked ${{ matrix.packages }} -- --nocapture",
+            workflow,
+        )
+        self.assertNotIn("cargo test --locked --workspace -- --nocapture", workflow)
+
+        stage_two_dependency = "    needs: [release-contract, core-tests]\n"
+        # frontend, E2E, eval, Linux native, Server image, macOS, Windows native.
+        self.assertEqual(workflow.count(stage_two_dependency), 7)
+        self.assertIn(
+            "needs: [release-contract, core-tests, frontend, e2e, eval, native-linux, server-image, macos-runner, native-windows]",
+            workflow,
+        )
+        self.assertNotIn(
+            "needs: [readiness, native-linux, server-image, macos-runner, native-windows]",
+            workflow,
+        )
+
+    def test_owner_prs_run_complete_linux_ci_before_merge(self) -> None:
+        workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+        def job_block(name: str, next_name: str) -> str:
+            start = workflow.index(f"  {name}:\n")
+            end = workflow.index(f"  {next_name}:\n", start)
+            return workflow[start:end]
+
+        linux_rust = job_block("test-linux-rust", "test-linux-tooling")
+        linux_tooling = job_block("test-linux-tooling", "test")
+        aggregate = job_block("test", "test-macos")
+        self.assertNotIn("pull_request.user.login", linux_rust)
+        self.assertNotIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_rust)
+        self.assertNotIn("pull_request.user.login", linux_tooling)
+        self.assertNotIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_tooling)
+        self.assertIn("if: always()", aggregate)
 
 
 if __name__ == "__main__":

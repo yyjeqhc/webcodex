@@ -1541,7 +1541,7 @@ fn lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
         initialize_timeout: Duration::from_millis(80),
         shutdown_timeout,
         idle_ttl: Duration::from_secs(60),
-        background_reaper: true,
+        background_reaper: false,
     });
 
     let started = Instant::now();
@@ -1550,14 +1550,16 @@ fn lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
         .unwrap_err();
     let elapsed = started.elapsed();
     assert!(
-        matches!(
-            error,
-            LspError::RestartExhausted(_) | LspError::InitializeFailed(_)
-        ),
+        matches!(error, LspError::RestartExhausted(_)),
         "unexpected error: {error:?}"
     );
-    // Two attempts each: initialize_timeout + shutdown_timeout, plus slack.
-    // Must stay well below using the multi-second DEFAULT_SHUTDOWN_TIMEOUT.
+    // The supervisor consumes its one restart after the first initialize
+    // failure. The child-owned start marker is not an authoritative attempt
+    // counter: on Windows a newly spawned process can remain unscheduled past
+    // this intentionally tiny initialize deadline and be killed before main()
+    // writes the marker. RestartExhausted proves the second attempt was
+    // consumed; this test owns only the configured cleanup-budget invariant.
+    // Both attempts must stay well below using the multi-second default.
     assert!(
         elapsed < Duration::from_secs(2),
         "initialize cleanup used an oversized budget: {elapsed:?}"
@@ -1566,12 +1568,6 @@ fn lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
         elapsed < DEFAULT_SHUTDOWN_TIMEOUT.saturating_mul(2),
         "cleanup appears to use DEFAULT_SHUTDOWN_TIMEOUT: {elapsed:?}"
     );
-    let starts = fs::read_to_string(&marker)
-        .unwrap_or_default()
-        .lines()
-        .filter(|line| line.starts_with("start:"))
-        .count();
-    assert_eq!(starts, 2);
     for line in fs::read_to_string(&marker).unwrap_or_default().lines() {
         if let Some(rest) = line.strip_prefix("start:") {
             if let Some(pid) = rest.split(':').next().and_then(|p| p.parse::<u32>().ok()) {

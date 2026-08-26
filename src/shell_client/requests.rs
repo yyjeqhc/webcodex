@@ -3,7 +3,7 @@ use super::jobs::{
     command_preview, ensure_dispatch_supported_locked, ensure_queue_capacity_locked,
     request_preview, PendingRequestEnqueueError,
 };
-use super::projects::{capability_enabled, ShellClientLookupError};
+use super::projects::ShellClientLookupError;
 use super::state::{CodingAgentDispatchFence, PendingShellRequest, ShellClientRegistryInner};
 use super::validation::{
     validate_file_request, validate_id, validate_process_request, validate_run_request,
@@ -1674,7 +1674,7 @@ impl ShellClientRegistry {
         if let Some(required_capability) = required_capabilities
             .iter()
             .copied()
-            .find(|capability| !capability_enabled(&current.capabilities, capability))
+            .find(|capability| !current.runner_features.supports_wire_name(capability))
         {
             return Err(format!(
                 "agent client {client_id} does not support {required_capability}"
@@ -1755,7 +1755,10 @@ impl ShellClientRegistry {
                 .ok_or_else(|| EnqueueLspError::UnknownClient {
                     client_id: client_id.clone(),
                 })?;
-        if !capability_enabled(&current.capabilities, required_capability) {
+        if !current
+            .runner_features
+            .supports_wire_name(required_capability)
+        {
             return Err(EnqueueLspError::UnsupportedCapability {
                 client_id,
                 capability: required_capability,

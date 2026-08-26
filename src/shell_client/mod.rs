@@ -25,6 +25,7 @@ use tokio::sync::Notify;
 
 mod agents;
 mod auth;
+mod capabilities;
 mod handlers;
 mod job_updates;
 mod jobs;
@@ -46,6 +47,9 @@ pub(crate) use auth::{
     effective_register_owner, enforce_agent_transport, enforce_register_owner,
     requested_by_from_auth, require_agent_transport_scope,
 };
+#[cfg(test)]
+pub(crate) use capabilities::RunnerFeatureInference;
+pub(crate) use capabilities::{RunnerFeature, RunnerFeatureSet};
 pub use handlers::{
     shell_agent_job_update, shell_agent_persistent_shell_result, shell_agent_poll,
     shell_agent_register, shell_agent_result,

@@ -16,8 +16,8 @@ use super::validation::{
     validate_optional_field, validate_project_summary_batch,
 };
 use super::{
-    now_ts, AgentTransport, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS,
-    MAX_RETIRED_INSTANCES_PER_CLIENT,
+    now_ts, AgentTransport, RunnerFeature, RunnerFeatureSet, ShellClientRegistry,
+    CLIENT_ONLINE_WINDOW_SECS, MAX_RETIRED_INSTANCES_PER_CLIENT,
 };
 use crate::mcp_gateway::validate_providers;
 use crate::shell_protocol::{
@@ -107,6 +107,25 @@ fn validate_coding_agent_registration(
                 .to_string(),
         ),
     }
+}
+
+fn reject_same_instance_feature_downgrade(
+    existing: Option<&ShellClientRecord>,
+    agent_instance_id: &str,
+    incoming: &RunnerFeatureSet,
+    feature: RunnerFeature,
+) -> Result<(), String> {
+    if existing.is_some_and(|existing| {
+        existing.agent_instance_id == agent_instance_id
+            && existing.runner_features.supports(feature)
+            && !incoming.supports(feature)
+    }) {
+        return Err(format!(
+            "same runner instance cannot downgrade {} capability",
+            feature.as_wire_name()
+        ));
+    }
+    Ok(())
 }
 
 struct StreamingSessionRegistration {
@@ -229,12 +248,13 @@ impl ShellClientRegistry {
         let client_id = body.client_id.trim().to_string();
         let agent_instance_id = body.agent_instance_id.trim().to_string();
         let capabilities = body.capabilities.clone().unwrap_or_default();
+        let runner_features = RunnerFeatureSet::from_wire(&capabilities);
         let job_inventory = body.job_inventory.clone();
         let coding_agent_providers = body.coding_agent_providers.clone();
         let coding_agent_inventory = body.coding_agent_inventory.clone();
         validate_coding_agent_registration(
             &client_id,
-            capabilities.coding_agent_runs,
+            runner_features.supports(RunnerFeature::CodingAgentRuns),
             coding_agent_providers.as_deref(),
             coding_agent_inventory.as_ref(),
         )?;
@@ -293,6 +313,7 @@ impl ShellClientRegistry {
             hostname: trim_string(body.hostname),
             host_context,
             capabilities: capabilities.clone(),
+            runner_features: runner_features.clone(),
             projects,
             project_inventory,
             last_seen: now,
@@ -318,7 +339,7 @@ impl ShellClientRegistry {
             projected_structured_terminal_suppressions: VecDeque::new(),
         };
         match (
-            capabilities.job_state_reconciliation,
+            runner_features.supports(RunnerFeature::JobStateReconciliation),
             job_inventory.as_ref(),
         ) {
             (true, Some(inventory)) => {
@@ -403,25 +424,18 @@ impl ShellClientRegistry {
                 client_id
             ));
         }
-        if inner.clients.get(&client_id).is_some_and(|existing| {
-            existing.agent_instance_id == agent_instance_id
-                && existing.capabilities.job_state_reconciliation
-                && !capabilities.job_state_reconciliation
-        }) {
-            return Err(
-                "same runner instance cannot downgrade job_state_reconciliation capability"
-                    .to_string(),
-            );
-        }
-        if inner.clients.get(&client_id).is_some_and(|existing| {
-            existing.agent_instance_id == agent_instance_id
-                && existing.capabilities.coding_agent_runs
-                && !capabilities.coding_agent_runs
-        }) {
-            return Err(
-                "same runner instance cannot downgrade coding_agent_runs capability".to_string(),
-            );
-        }
+        reject_same_instance_feature_downgrade(
+            inner.clients.get(&client_id),
+            &agent_instance_id,
+            &runner_features,
+            RunnerFeature::JobStateReconciliation,
+        )?;
+        reject_same_instance_feature_downgrade(
+            inner.clients.get(&client_id),
+            &agent_instance_id,
+            &runner_features,
+            RunnerFeature::CodingAgentRuns,
+        )?;
         if inner.clients.get(&client_id).is_some_and(|existing| {
             existing.agent_instance_id == agent_instance_id
                 && existing.coding_agent_providers != coding_agent_providers
@@ -437,42 +451,30 @@ impl ShellClientRegistry {
         // the current record so a queued structured delete is never handed to a
         // registration that cannot understand it. false -> false, false -> true
         // and true -> true reconnects remain allowed.
-        if inner.clients.get(&client_id).is_some_and(|existing| {
-            existing.agent_instance_id == agent_instance_id
-                && existing.capabilities.structured_file_delete
-                && !capabilities.structured_file_delete
-        }) {
-            return Err(
-                "same runner instance cannot downgrade structured_file_delete capability"
-                    .to_string(),
-            );
-        }
+        reject_same_instance_feature_downgrade(
+            inner.clients.get(&client_id),
+            &agent_instance_id,
+            &runner_features,
+            RunnerFeature::StructuredFileDelete,
+        )?;
         // Occurrence enforcement is effect semantics, not optional response
         // metadata. A same-process reconnect cannot withdraw it while an
         // occurrence-bearing edit admitted for that process may still be queued.
-        if inner.clients.get(&client_id).is_some_and(|existing| {
-            existing.agent_instance_id == agent_instance_id
-                && existing.capabilities.apply_text_edit_occurrence
-                && !capabilities.apply_text_edit_occurrence
-        }) {
-            return Err(
-                "same runner instance cannot downgrade apply_text_edit_occurrence capability"
-                    .to_string(),
-            );
-        }
+        reject_same_instance_feature_downgrade(
+            inner.clients.get(&client_id),
+            &agent_instance_id,
+            &runner_features,
+            RunnerFeature::ApplyTextEditOccurrence,
+        )?;
         // The dedicated internal-POSIX request kind is also binary support.
         // A same-process reconnect cannot withdraw it while queued requests may
         // still target that exact instance.
-        if inner.clients.get(&client_id).is_some_and(|existing| {
-            existing.agent_instance_id == agent_instance_id
-                && existing.capabilities.internal_posix_script
-                && !capabilities.internal_posix_script
-        }) {
-            return Err(
-                "same runner instance cannot downgrade internal_posix_script capability"
-                    .to_string(),
-            );
-        }
+        reject_same_instance_feature_downgrade(
+            inner.clients.get(&client_id),
+            &agent_instance_id,
+            &runner_features,
+            RunnerFeature::InternalPosixScript,
+        )?;
         if inner.clients.get(&client_id).is_some_and(|existing| {
             existing.agent_instance_id == agent_instance_id
                 && existing
@@ -491,26 +493,18 @@ impl ShellClientRegistry {
         // This optimized export request kind is process-lifetime binary support.
         // Reject same-instance downgrade so a request already admitted for this
         // process is never handed to a registration claiming it cannot decode it.
-        if inner.clients.get(&client_id).is_some_and(|existing| {
-            existing.agent_instance_id == agent_instance_id
-                && existing.capabilities.artifact_export_chunk_read
-                && !capabilities.artifact_export_chunk_read
-        }) {
-            return Err(
-                "same runner instance cannot downgrade artifact_export_chunk_read capability"
-                    .to_string(),
-            );
-        }
-        if inner.clients.get(&client_id).is_some_and(|existing| {
-            existing.agent_instance_id == agent_instance_id
-                && existing.capabilities.artifact_export_streaming_metadata
-                && !capabilities.artifact_export_streaming_metadata
-        }) {
-            return Err(
-                "same runner instance cannot downgrade artifact_export_streaming_metadata capability"
-                    .to_string(),
-            );
-        }
+        reject_same_instance_feature_downgrade(
+            inner.clients.get(&client_id),
+            &agent_instance_id,
+            &runner_features,
+            RunnerFeature::ArtifactExportChunkRead,
+        )?;
+        reject_same_instance_feature_downgrade(
+            inner.clients.get(&client_id),
+            &agent_instance_id,
+            &runner_features,
+            RunnerFeature::ArtifactExportStreamingMetadata,
+        )?;
         // Enforce the agent instance lease. `client_id` is the unique active
         // agent identity: at most one agent process may be online for it at a
         // time.

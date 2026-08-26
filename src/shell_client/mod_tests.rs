@@ -177,6 +177,9 @@ mod auth_owner;
 #[path = "mod_tests/protocol.rs"]
 mod protocol;
 
+#[path = "mod_tests/capabilities.rs"]
+mod capabilities;
+
 #[path = "mod_tests/polling.rs"]
 mod polling;
 

@@ -1,5 +1,5 @@
 use super::auth::ShellClientAuthGroup;
-use super::AgentTransport;
+use super::{AgentTransport, RunnerFeatureSet};
 use crate::mcp_gateway::McpGatewayResponse;
 use crate::shell_protocol::{
     AgentBuildInfo, AgentHostContext, AgentPolicySummary, AgentProtocolSemantics,
@@ -55,7 +55,12 @@ pub(super) struct ShellClientRecord {
     /// Bounded Runner-configured planning metadata. This is not policy or live
     /// state and is replaced by each successful registration.
     pub(super) host_context: Option<AgentHostContext>,
+    /// Accepted legacy wire snapshot retained for compatibility projection and
+    /// C3b's explicitly inventoried downstream consumers.
     pub(super) capabilities: ShellClientCapabilities,
+    /// Canonical Server capability truth normalized once from `capabilities`
+    /// during registration. This set has no independent mutation path.
+    pub(super) runner_features: RunnerFeatureSet,
     pub(super) projects: Vec<ShellAgentProjectSummary>,
     /// Authoritative project snapshot plus bounded in-progress staging. A
     /// staging failure never changes liveness or partially publishes projects.

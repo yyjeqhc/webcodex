@@ -4,41 +4,7 @@ use super::project_inventory::reconcile_dynamic_projection;
 use super::validation::validate_id;
 use super::validation::validate_project_summary;
 use super::ShellClientRegistry;
-use crate::shell_protocol::{
-    ShellAgentProjectSummary, ShellClientCapabilities,
-    SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
-    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
-    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA, SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
-    SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS, SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
-    SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS, SHELL_CLIENT_CAPABILITY_FILE_READ,
-    SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_GIT,
-    SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT, SHELL_CLIENT_CAPABILITY_JOBS,
-    SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE, SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
-    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, SHELL_CLIENT_CAPABILITY_SHELL,
-    SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SSH_SHELL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
-};
+use crate::shell_protocol::{ShellAgentProjectSummary, ShellClientCapabilities};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,66 +23,6 @@ impl fmt::Display for ShellClientLookupError {
 }
 
 impl std::error::Error for ShellClientLookupError {}
-
-pub(super) fn capability_enabled(caps: &ShellClientCapabilities, capability: &str) -> bool {
-    match capability {
-        SHELL_CLIENT_CAPABILITY_SHELL => caps.shell,
-        SHELL_CLIENT_CAPABILITY_FILE_READ => caps.file_read,
-        SHELL_CLIENT_CAPABILITY_FILE_WRITE => caps.file_write,
-        SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ => caps.artifact_export_chunk_read,
-        SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA => {
-            caps.artifact_export_streaming_metadata
-        }
-        SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE => caps.structured_file_delete,
-        SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE => caps.apply_text_edit_occurrence,
-        SHELL_CLIENT_CAPABILITY_GIT => caps.git,
-        SHELL_CLIENT_CAPABILITY_JOBS => caps.jobs,
-        SHELL_CLIENT_CAPABILITY_ASYNC_JOBS => caps.async_jobs,
-        SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS => caps.async_shell_jobs,
-        SHELL_CLIENT_CAPABILITY_SSH_SHELL => caps.ssh_shell,
-        SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL => caps.persistent_shell,
-        SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL => caps.ssh_persistent_shell,
-        SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV => caps.structured_validation_argv,
-        SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION => {
-            caps.structured_cargo_test_count_assertion
-        }
-        SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON => caps.structured_go_test_json,
-        SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL => caps.structured_go_test_tool,
-        SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES => caps.structured_go_test_packages,
-        SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV => caps.structured_process_argv,
-        SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD => caps.structured_script_payload,
-        SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT => caps.internal_posix_script,
-        SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS => caps.structured_execution_jobs,
-        SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS => caps.detached_process_jobs,
-        SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION => caps.lsp_read_only_navigation,
-        SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY => caps.lsp_call_hierarchy,
-        SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS => caps.sandbox_inspect_commands,
-        SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE => caps.project_lifecycle,
-        SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION => caps.project_path_registration,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE => caps.computer_observe,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY => {
-            caps.computer_application_discovery
-        }
-        SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH => caps.computer_application_launch,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE => caps.computer_display_observe,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ => caps.computer_clipboard_read,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE => caps.computer_clipboard_write,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL => caps.computer_pointer_control,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION => caps.computer_snapshot_region,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE => {
-            caps.computer_accessibility_observe
-        }
-        SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE => caps.computer_element_state,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL => caps.computer_control,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT => caps.computer_scroll_to_element,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT => caps.computer_key_input,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE => caps.computer_window_activate,
-        SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT => caps.computer_text_input,
-        SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION => caps.job_state_reconciliation,
-        SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS => caps.coding_agent_runs,
-        _ => false,
-    }
-}
 
 fn upsert_project_summary(
     projects: &mut Vec<ShellAgentProjectSummary>,
@@ -169,8 +75,16 @@ impl ShellClientRegistry {
         client_id: &str,
         capability: &str,
     ) -> Result<bool, ShellClientLookupError> {
-        let caps = self.get_client_capabilities(client_id).await?;
-        Ok(capability_enabled(&caps, capability))
+        self.prune_expired_shared_key_clients().await;
+        let inner = self.inner.lock().await;
+        let client =
+            inner
+                .clients
+                .get(client_id)
+                .ok_or_else(|| ShellClientLookupError::UnknownClient {
+                    client_id: client_id.to_string(),
+                })?;
+        Ok(client.runner_features.supports_wire_name(capability))
     }
 
     pub(crate) async fn client_supports_for_auth(
@@ -186,7 +100,7 @@ impl ShellClientRegistry {
             .get(client_id)
             .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
         assert_shell_client_access(auth, client)?;
-        Ok(capability_enabled(&client.capabilities, capability))
+        Ok(client.runner_features.supports_wire_name(capability))
     }
 
     /// Test-only accessor for projects registered to a shell client.

@@ -21,6 +21,7 @@ data*
 # They contain real server URLs, tokens, and host paths. If a token was ever
 # committed or exposed, rotate WEBCODEX_TOKEN immediately.
 /.env
+/.webcodex-bootstrap.receipt
 /agent.toml
 /projects.d/
 /*.local.toml

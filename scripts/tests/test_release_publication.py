@@ -571,9 +571,9 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("build:\n", source)
         self.assertIn("--build-from-source", bootstrap)
         self.assertIn("COMPOSE_FILE=${COMPOSE_FILE:-compose.yaml}", bootstrap)
-        self.assertIn("compose config --images", bootstrap)
-        self.assertIn("compose pull webcodex", bootstrap)
-        self.assertIn("compose.build.yaml up -d --build", bootstrap)
+        self.assertIn("compose_base config --images", bootstrap)
+        self.assertIn("compose_base pull webcodex", bootstrap)
+        self.assertIn("compose_full up -d --build", bootstrap)
 
 
 if __name__ == "__main__":

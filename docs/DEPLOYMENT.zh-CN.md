@@ -265,6 +265,29 @@ Release 生成的 bootstrap 内嵌固定到该 Release 不可变 multi-arch imag
 `COMPOSE_FILE` 与精确 image reference 写入私有 `.env`，之后在该目录执行普通
 `docker compose` 命令仍会复用同一份固定部署。
 
+bootstrap 现在是可恢复事务，而不是一次性脚本。它会在创建 administrator secret 之前完成
+严格 HTTPS origin、Compose/source asset、主机端口、Docker/Compose 与公开镜像 preflight；
+随后通过私有 `.webcodex-bootstrap.receipt` 依次记录 `AssetsPrepared`、
+`SecretCommitted`、`ContainerStarted`、`ServerHealthy`、`PairingReady`。receipt 只保存
+hash 与阶段，不保存 administrator token。`.env` 通过 0600 临时文件写入、sync 后原子 rename。
+只有 Compose healthcheck 与 `/openapi.json` 都验证通过后才打印成功，并在这个 readiness
+barrier 之后创建第一枚短期 pairing code。
+
+安装被中断，或 startup/health check 失败时，不要删除 `.env`；在同一目录继续使用同一份
+bootstrap：
+
+```bash
+sh webcodex-server-bootstrap.sh status
+sh webcodex-server-bootstrap.sh resume
+# 清除运行时 effect，但保留已经提交的 administrator token 与 named data volume：
+sh webcodex-server-bootstrap.sh rollback
+```
+
+`resume` 会复用已经提交的 administrator token，不会仅因为 `docker compose up` 或 health
+check 失败就重新生成 token。`rollback` 在 secret 已提交后会回到 `SecretCommitted`，而不是
+删除 `.env`，因为 Server 可能已经用该 token 初始化过 durable data。没有对应 receipt 的旧版或
+非受管 `.env` 不会被自动覆盖或删除。
+
 开发场景，或首个公开 GHCR 镜像尚未完成启用之前，再 clone 源码并显式选择 source build：
 
 ```bash
@@ -275,8 +298,9 @@ cd webcodex
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ```
 
-默认绑定 `127.0.0.1:8080`。在前面配置 HTTPS 反向代理，再创建 pairing code 并
-接入持有仓库的机器。GitHub 首次创建 GHCR package 时默认将其设为 private；维护者
+默认绑定 `127.0.0.1:8080`。在前面配置 HTTPS 反向代理；bootstrap 已经验证本地 Server
+并创建第一枚短期 pairing code，使用该 code 接入持有仓库的机器。GitHub 首次创建 GHCR
+package 时默认将其设为 private；维护者
 需要一次性把 package visibility 改成 Public，之后 workflow 的匿名拉取 gate 才会
 通过，普通用户无需配置 registry 凭据。
 

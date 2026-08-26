@@ -304,6 +304,34 @@ records the materialized `COMPOSE_FILE` and exact image reference in its private
 `.env`; later plain `docker compose` commands in that directory therefore reuse
 the same pinned deployment.
 
+Bootstrap is recoverable rather than all-or-nothing. It validates the strict
+HTTPS origin, Compose/source assets, host port, Docker/Compose availability, and
+published image before creating an administrator secret. It then advances the
+private `.webcodex-bootstrap.receipt` through `AssetsPrepared`,
+`SecretCommitted`, `ContainerStarted`, `ServerHealthy`, and `PairingReady`. The
+receipt contains hashes and state, not the administrator token. `.env` is written
+through a 0600 temporary file, synced, and atomically renamed. Success is printed
+only after the Compose healthcheck and `/openapi.json` verification succeed; a
+short-lived pairing code is created only after that readiness barrier.
+
+If an install is interrupted or a startup/health check fails, keep `.env` and use
+the same downloaded bootstrap in that directory:
+
+```bash
+sh webcodex-server-bootstrap.sh status
+sh webcodex-server-bootstrap.sh resume
+# Remove runtime effects while preserving the committed administrator token
+# and named data volume:
+sh webcodex-server-bootstrap.sh rollback
+```
+
+`resume` reuses a committed administrator token; it never regenerates one merely
+because `docker compose up` or the health check failed. `rollback` deliberately
+returns a post-secret installation to `SecretCommitted` instead of deleting
+`.env`, because the Server may already have initialized durable data with that
+token. An unmanaged or pre-transaction `.env` without a matching receipt is
+never overwritten or deleted automatically.
+
 For development or before the first public GHCR image has been activated, clone
 the source and choose the explicit build path:
 
@@ -315,8 +343,9 @@ cd webcodex
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ```
 
-The default binding is `127.0.0.1:8080`. Put an HTTPS reverse proxy in front,
-then create a pairing code and enroll the machines that hold your
+The default binding is `127.0.0.1:8080`. Put an HTTPS reverse proxy in front;
+the bootstrap has already verified the local Server and created the first
+short-lived pairing code. Use that code to enroll the machines that hold your
 repositories. The first ever GHCR publication creates a private package by
 GitHub default; a maintainer must make that package public once before the
 workflow's anonymous-pull gate can succeed. End users do not need registry

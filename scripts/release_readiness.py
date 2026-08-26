@@ -22,7 +22,10 @@ else:
 
 READINESS_WORKFLOW_FILE = "release-readiness.yml"
 READINESS_WORKFLOW_PATH = f".github/workflows/{READINESS_WORKFLOW_FILE}"
-STATE_SCHEMA_VERSION = 1
+CI_WORKFLOW_FILE = "ci.yml"
+CI_WORKFLOW_PATH = f".github/workflows/{CI_WORKFLOW_FILE}"
+LEGACY_STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
 REQUEST_ID_RE = re.compile(r"^rr_[0-9a-f]{24}$")
 MAX_STATE_BYTES = 64 * 1024
 MAX_RUN_LIST = 100
@@ -96,7 +99,7 @@ def _load_state(path: Path) -> dict:
         raise ReadinessError("could not read readiness state file") from exc
     if not isinstance(value, dict):
         raise ReadinessError("readiness state must be a JSON object")
-    required = {
+    legacy_required = {
         "schema_version",
         "kind",
         "repo",
@@ -115,10 +118,24 @@ def _load_state(path: Path) -> dict:
         "run_conclusion",
         "last_observed_at",
     }
+    ci_proof_fields = {
+        "ci_run_id",
+        "ci_run_attempt",
+        "ci_run_url",
+        "ci_run_head_sha",
+        "ci_run_conclusion",
+    }
+    schema_version = value.get("schema_version")
+    if schema_version == LEGACY_STATE_SCHEMA_VERSION:
+        required = legacy_required
+    elif schema_version == STATE_SCHEMA_VERSION:
+        required = legacy_required | ci_proof_fields
+    else:
+        raise ReadinessError("unsupported readiness state schema")
     if set(value) != required:
         raise ReadinessError("readiness state fields do not match the supported schema")
-    if value.get("schema_version") != STATE_SCHEMA_VERSION or value.get("kind") != "release-readiness":
-        raise ReadinessError("unsupported readiness state schema")
+    if value.get("kind") != "release-readiness":
+        raise ReadinessError("unsupported readiness state kind")
     source_sha = collector.normalize_source_sha(str(value.get("source_sha", "")))
     request_id = _validate_request_id(str(value.get("request_id", "")))
     if value.get("workflow_file") != READINESS_WORKFLOW_FILE or value.get("workflow_path") != READINESS_WORKFLOW_PATH:
@@ -129,6 +146,26 @@ def _load_state(path: Path) -> dict:
         raise ReadinessError("readiness state repository is invalid")
     if not isinstance(value.get("created_at"), int) or value["created_at"] <= 0:
         raise ReadinessError("readiness state created_at is invalid")
+    if schema_version == STATE_SCHEMA_VERSION:
+        ci_run_id = value.get("ci_run_id")
+        ci_run_attempt = value.get("ci_run_attempt")
+        ci_run_url = value.get("ci_run_url")
+        ci_run_head_sha = value.get("ci_run_head_sha")
+        ci_run_conclusion = value.get("ci_run_conclusion")
+        if not isinstance(ci_run_id, int) or ci_run_id <= 0:
+            raise ReadinessError("readiness state CI run id is invalid")
+        if not isinstance(ci_run_attempt, int) or ci_run_attempt <= 0:
+            raise ReadinessError("readiness state CI run attempt is invalid")
+        if not isinstance(ci_run_url, str) or not ci_run_url.startswith("https://github.com/"):
+            raise ReadinessError("readiness state CI run URL is invalid")
+        try:
+            normalized_ci_source = collector.normalize_source_sha(str(ci_run_head_sha))
+        except collector.CollectionError as exc:
+            raise ReadinessError("readiness state CI run head SHA is invalid") from exc
+        if normalized_ci_source != source_sha:
+            raise ReadinessError("readiness state CI proof does not match release source")
+        if ci_run_conclusion != "success":
+            raise ReadinessError("readiness state CI proof is not successful")
     run_id = value.get("run_id")
     if run_id is not None and (not isinstance(run_id, int) or run_id <= 0):
         raise ReadinessError("readiness state run id is invalid")
@@ -167,12 +204,67 @@ def _main_sha(client: collector.GitHubClient) -> str:
         raise ReadinessError("GitHub main branch SHA is invalid") from exc
 
 
-def _post_dispatch(client: collector.GitHubClient, source_sha: str, request_id: str) -> None:
+def select_successful_main_ci_run(payload: dict, source_sha: str) -> dict:
+    source = collector.normalize_source_sha(source_sha)
+    runs = payload.get("workflow_runs")
+    if not isinstance(runs, list):
+        raise ReadinessError("GitHub main CI run listing is malformed")
+    if len(runs) > MAX_RUN_LIST:
+        raise ReadinessError("GitHub main CI run listing exceeds its bound")
+    matches = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        if (
+            run.get("path") != CI_WORKFLOW_PATH
+            or run.get("event") != "push"
+            or run.get("head_branch") != "main"
+            or run.get("head_sha") != source
+        ):
+            continue
+        matches.append(run)
+    if len(matches) != 1:
+        raise ReadinessError(f"expected exactly one exact-source main CI run, found {len(matches)}")
+    run = matches[0]
+    run_id = run.get("id")
+    run_attempt = run.get("run_attempt")
+    run_url = run.get("html_url")
+    if not isinstance(run_id, int) or run_id <= 0:
+        raise ReadinessError("GitHub main CI run id is invalid")
+    if not isinstance(run_attempt, int) or run_attempt <= 0:
+        raise ReadinessError("GitHub main CI run attempt is invalid")
+    if not isinstance(run_url, str) or not run_url.startswith("https://github.com/"):
+        raise ReadinessError("GitHub main CI run URL is invalid")
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
+        raise ReadinessError("exact-source main CI has not completed successfully")
+    return run
+
+
+def _successful_main_ci_run(client: collector.GitHubClient, source_sha: str) -> dict:
+    source = collector.normalize_source_sha(source_sha)
+    payload = client.fetch_json(
+        f"/actions/workflows/{CI_WORKFLOW_FILE}/runs?event=push&branch=main&head_sha={source}&per_page={MAX_RUN_LIST}"
+    )
+    return select_successful_main_ci_run(payload, source)
+
+
+def _post_dispatch(
+    client: collector.GitHubClient,
+    source_sha: str,
+    request_id: str,
+    ci_run_id: int,
+    ci_run_attempt: int,
+) -> None:
     url = client.api_url(f"/actions/workflows/{READINESS_WORKFLOW_FILE}/dispatches")
     data = json.dumps(
         {
             "ref": "main",
-            "inputs": {"source_sha": source_sha, "request_id": request_id},
+            "inputs": {
+                "source_sha": source_sha,
+                "request_id": request_id,
+                "ci_run_id": str(ci_run_id),
+                "ci_run_attempt": str(ci_run_attempt),
+            },
         },
         separators=(",", ":"),
     ).encode("utf-8")
@@ -300,6 +392,11 @@ def start_readiness(
     if main_sha != source:
         raise ReadinessError(f"main source fence failed: expected={source} current={main_sha}")
 
+    ci_run = _successful_main_ci_run(client, source)
+    ci_run_id = ci_run["id"]
+    ci_run_attempt = ci_run["run_attempt"]
+    ci_run_url = ci_run["html_url"]
+
     request_id = f"rr_{secrets.token_hex(12)}"
     now = int(time.time())
     state = {
@@ -313,6 +410,11 @@ def start_readiness(
         "run_name": _run_name(request_id, source),
         "dispatch_state": "prepared",
         "created_at": now,
+        "ci_run_id": ci_run_id,
+        "ci_run_attempt": ci_run_attempt,
+        "ci_run_url": ci_run_url,
+        "ci_run_head_sha": source,
+        "ci_run_conclusion": "success",
         "run_id": None,
         "run_head_sha": None,
         "source_matches": None,
@@ -324,7 +426,7 @@ def start_readiness(
     _write_state(state_path, state)
 
     try:
-        _post_dispatch(client, source, request_id)
+        _post_dispatch(client, source, request_id, ci_run_id, ci_run_attempt)
     except DispatchRejected:
         state["dispatch_state"] = "rejected"
         _write_state(state_path, state)

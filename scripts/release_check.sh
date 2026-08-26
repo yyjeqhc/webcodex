@@ -1,6 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+MODE=full
+case "${1:-}" in
+    "") ;;
+    --static-only) MODE=static; shift ;;
+    --help|-h)
+        printf 'Usage: %s [--static-only]\n' "$0"
+        printf '  --static-only  run only shell/tooling/static release-contract checks\n'
+        exit 0
+        ;;
+    *)
+        printf '[release] unknown option: %s\n' "$1" >&2
+        exit 2
+        ;;
+esac
+if [ "$#" -ne 0 ]; then
+    printf '[release] unexpected positional arguments\n' >&2
+    exit 2
+fi
+
 # ============================================================================
 # WebCodex — Release Readiness Check
 #
@@ -23,15 +42,17 @@ set -euo pipefail
 #  11. static: no python runtime helper regressions
 #  12. static: no sensitive files tracked or staged by git
 #
-# Final pre-tag acceptance is orchestrated by .github/workflows/release-readiness.yml:
-#   Stage 1 (all test gates in parallel, before any release-profile/image build):
-#   - this canonical release_check.sh
-#   - complete locked Rust workspace tests, package-sharded without test-name filters
-#   - frontend typecheck/test/committed-build check
+# Final pre-tag acceptance is orchestrated by .github/workflows/release-readiness.yml.
+# The release operator first binds one successful exact-source main-push CI run;
+# that CI already owns the deterministic release/static contract, complete Linux
+# Rust coverage, frontend checks, both native macOS Runner suites, Windows x64
+# runtime/package coverage, and lightweight Linux/Windows arm64 production-target
+# compilation. Readiness revalidates that exact CI run attempt, then runs only:
 #   - WebSocket + polling zero-config E2E
 #   - EVAL_MODE=compare bash scripts/eval_coding_loop.sh with prebuilt debug fixtures
-#   Stage 2 (parallel fanout only after every Stage-1 test gate succeeds):
-#   - six native release-profile surfaces + two disposable Server-image architectures
+#   - disposable linux/amd64 + linux/arm64 Server-image/runtime/bootstrap validation
+# Six-platform release-profile/ABI/package candidates are built exactly once after
+# immutable tagging by .github/workflows/release-build.yml.
 #
 # Usage:
 #   bash scripts/release_check.sh
@@ -61,8 +82,9 @@ die() {
     exit 1
 }
 
-# Sanity: cargo present.
-if ! command -v cargo >/dev/null 2>&1; then
+# Sanity: cargo is needed only for the full local release check. Main CI uses
+# --static-only after its separate exact workspace all-targets check.
+if [ "$MODE" = full ] && ! command -v cargo >/dev/null 2>&1; then
     printf '[release] cargo is required\n' >&2
     exit 2
 fi
@@ -75,6 +97,7 @@ fi
 
 log "project: $PROJECT_DIR"
 
+if [ "$MODE" = full ]; then
 # ----------------------------------------------------------------------------
 # Stage 1: workspace boundary check
 # ----------------------------------------------------------------------------
@@ -144,6 +167,8 @@ if cargo test -p webcodex --lib mcp -- --nocapture; then
 else
     die "mcp tests"
 fi
+fi
+
 
 # ----------------------------------------------------------------------------
 # Stage 8: bash syntax checks
@@ -267,7 +292,12 @@ fi
 # Summary
 # ----------------------------------------------------------------------------
 printf '\n[release] ===== all stages passed =====\n'
-ok "workspace boundaries, fmt, check --all-targets, focused metadata/schema/openapi/mcp tests, bash syntax, release tooling self-tests, harness contracts, static checks"
-log "final pre-tag acceptance: dispatch the exact-source release-readiness workflow (see docs/RELEASE_CHECKLIST.md)"
-log "release readiness gate PASSED"
+if [ "$MODE" = full ]; then
+    ok "workspace boundaries, fmt, check --all-targets, focused metadata/schema/openapi/mcp tests, bash syntax, release tooling self-tests, harness contracts, static checks"
+    log "final pre-tag acceptance: use exact-main CI evidence plus the release-readiness workflow (see docs/RELEASE_CHECKLIST.md)"
+    log "release readiness local check PASSED"
+else
+    ok "bash syntax, release tooling self-tests, harness contracts, static checks"
+    log "release static/tooling contract PASSED"
+fi
 exit 0

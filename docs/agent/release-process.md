@@ -111,19 +111,18 @@ Before tagging or publishing, follow sections in
 [`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md). The final executable pre-tag gate is
 `.github/workflows/release-readiness.yml`, dispatched through
 `scripts/release_operator.py readiness-start` for one exact merged `main` SHA and
-observed through the same durable state with `readiness-status`. Readiness is deliberately
-two-stage. Stage 1 runs the canonical release check, complete locked Rust workspace suite
-(package-sharded without test-name filters), frontend checks, both zero-config E2E transports,
-and the coding-loop compare eval in parallel. No native release-profile or Server-image build
-may start until every Stage-1 test gate succeeds. Stage 2 then fans out disposable
-release-profile native validation for all six published platforms plus native `linux/amd64`
-and `linux/arm64` Server-container build/runtime/health and digest-pinned bootstrap-generation
-checks. These independent Stage-2 build lanes run in parallel so release wall time is governed
-by the slowest required lane rather than their sum. The Server-image
-readiness jobs use only local disposable images: they do not log in to a registry, upload
-artifacts, push packages, or produce formal release candidates. Linux preserves the release
-ABI/dependency gates, macOS x64/arm64 build on matching native runners and add the Runner suite,
-and Windows includes the local npm-install smoke.
+observed through the same durable state with `readiness-status`. Before dispatch, the operator
+requires and records exactly one successful main-push CI run for that source. The workflow
+revalidates the exact CI run id/attempt with read-only Actions authority, so readiness reuses
+rather than repeats the cross-platform correctness already proven by main CI: complete Linux
+Rust/tooling coverage, frontend contracts, both native macOS Runner suites, Windows x64
+runtime/package lanes, and lightweight Linux/Windows arm64 production-target compilation.
+Readiness then runs only release-specific WebSocket/polling E2E plus coding-loop compare eval;
+after both pass, native `linux/amd64` and `linux/arm64` disposable Server-image jobs verify
+build/runtime/health/non-root behavior and digest-pinned bootstrap generation. These jobs do not
+log in to a registry, upload artifacts, push packages, or produce formal release candidates.
+Six-platform native release-profile/ABI/package validation is intentionally left to the single
+authoritative `release-build.yml` run after immutable tagging instead of being compiled twice.
 Product-documentation consistency and allowed legacy-term matches remain part of the
 release-prep review rather than being guessed by an automated semantic checker.
 

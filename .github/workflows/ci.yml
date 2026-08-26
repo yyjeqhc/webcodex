@@ -109,6 +109,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-ci
       # The retained npm release-smoke tooling below invokes node/npm directly.
       # Frontend dependency installation and frontend-specific npm caching remain
       # contract-lane responsibilities and are intentionally not repeated here.
@@ -121,22 +125,34 @@ jobs:
             sudo apt-get update
             sudo apt-get install --no-install-recommends -y ripgrep
           fi
-      - name: Test release verification tooling
+      - name: Check complete workspace production/test targets
+        run: cargo check --locked --workspace --all-targets
+      - name: Test deterministic release contract and tooling
+        run: bash scripts/release_check.sh --static-only
+
+  # Exact main CI is the pre-tag source of truth for platform correctness. Keep
+  # Linux arm64 cfg/target coverage here so release-readiness does not need a
+  # duplicate release-profile build merely to prove the native architecture.
+  test-linux-arm64:
+    needs: contract
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.user.login != github.repository_owner ||
+      contains(github.event.pull_request.labels.*.name, 'run-ci')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-arm64-ci
+      - name: Verify native Linux arm64 production targets compile
         run: |
-          bash scripts/test_python_tooling.sh
-          python3 scripts/release_operator.py --help >/dev/null
-          python3 scripts/release_operator.py preflight --help >/dev/null
-          python3 scripts/release_operator.py readiness-start --help >/dev/null
-          python3 scripts/release_operator.py readiness-status --help >/dev/null
-          python3 scripts/release_operator.py build-start --help >/dev/null
-          python3 scripts/release_operator.py build-status --help >/dev/null
-          python3 scripts/release_operator.py collect --help >/dev/null
-          python3 scripts/release_operator.py stage-npm --help >/dev/null
-          python3 scripts/release_operator.py verify-draft --help >/dev/null
-          python3 scripts/check_markdown_links.py
-          bash -n scripts/npm_package_smoke.sh scripts/tests/test_npm_package_smoke_existing_binaries.sh
-          bash scripts/npm_package_smoke.sh --help >/dev/null
-          bash scripts/tests/test_npm_package_smoke_existing_binaries.sh
+          test "$(uname -m)" = aarch64
+          rust_host="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$rust_host" = aarch64-unknown-linux-gnu
+          cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
 
   test:
     needs: [contract, test-linux-rust, test-linux-tooling]
@@ -278,8 +294,34 @@ jobs:
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/npm_install_windows_smoke.ps1
 
+  # The x64 Windows lanes above exercise full process/package behavior. Keep one
+  # native ARM64 compile gate on exact main so the release workflow is not the
+  # first place target-specific Windows code is compiled.
+  test-windows-arm64:
+    needs: contract
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.user.login != github.repository_owner ||
+      contains(github.event.pull_request.labels.*.name, 'run-ci')
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-arm64-ci
+      - name: Verify native Windows ARM64 production targets compile
+        shell: pwsh
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'ARM64') { throw "Expected native Windows ARM64 host" }
+          $hostLine = rustc -vV | Select-String '^host: '
+          if ($hostLine.Line -ne 'host: aarch64-pc-windows-msvc') { throw "Unexpected Rust host: $($hostLine.Line)" }
+          cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
+          if ($LASTEXITCODE -ne 0) { throw "cargo check failed with exit code $LASTEXITCODE" }
+
   test-windows:
-    needs: [contract, test-windows-core, test-windows-runner, test-windows-package]
+    needs: [contract, test-windows-core, test-windows-runner, test-windows-package, test-windows-arm64]
     # Preserve the historical required Windows status while moving the expensive
     # work into parallel VMs. Eligible heavy runs inspect every lane even after a
     # failure so branch protection cannot see a false-success aggregate.
@@ -299,12 +341,14 @@ jobs:
           CORE_RESULT: ${{ needs.test-windows-core.result }}
           RUNNER_RESULT: ${{ needs.test-windows-runner.result }}
           PACKAGE_RESULT: ${{ needs.test-windows-package.result }}
+          ARM64_RESULT: ${{ needs.test-windows-arm64.result }}
         run: |
-          echo "contract=$CONTRACT_RESULT core=$CORE_RESULT runner=$RUNNER_RESULT package=$PACKAGE_RESULT"
+          echo "contract=$CONTRACT_RESULT core=$CORE_RESULT runner=$RUNNER_RESULT package=$PACKAGE_RESULT arm64=$ARM64_RESULT"
           if [ "$CONTRACT_RESULT" != success ] || \
              [ "$CORE_RESULT" != success ] || \
              [ "$RUNNER_RESULT" != success ] || \
-             [ "$PACKAGE_RESULT" != success ]; then
+             [ "$PACKAGE_RESULT" != success ] || \
+             [ "$ARM64_RESULT" != success ]; then
             echo "required Windows CI lane did not succeed" >&2
             exit 1
           fi

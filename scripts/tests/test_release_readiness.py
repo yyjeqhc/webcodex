@@ -25,6 +25,11 @@ def _state() -> dict:
         "run_name": readiness._run_name(REQUEST, SOURCE),
         "dispatch_state": "dispatched",
         "created_at": 1234567890,
+        "ci_run_id": 777,
+        "ci_run_attempt": 2,
+        "ci_run_url": "https://github.com/yyjeqhc/webcodex/actions/runs/777",
+        "ci_run_head_sha": SOURCE,
+        "ci_run_conclusion": "success",
         "run_id": None,
         "run_head_sha": None,
         "source_matches": None,
@@ -46,6 +51,20 @@ def _run(run_id: int = 123) -> dict:
         "html_url": f"https://github.com/yyjeqhc/webcodex/actions/runs/{run_id}",
         "status": "in_progress",
         "conclusion": None,
+    }
+
+
+def _ci_run(run_id: int = 777, *, attempt: int = 2, source: str = SOURCE, conclusion: str = "success") -> dict:
+    return {
+        "id": run_id,
+        "run_attempt": attempt,
+        "path": readiness.CI_WORKFLOW_PATH,
+        "event": "push",
+        "head_branch": "main",
+        "head_sha": source,
+        "html_url": f"https://github.com/yyjeqhc/webcodex/actions/runs/{run_id}",
+        "status": "completed",
+        "conclusion": conclusion,
     }
 
 
@@ -71,6 +90,21 @@ class ReadinessSelectionTests(unittest.TestCase):
         readiness._apply_run_snapshot(state, selected)
         self.assertFalse(state["source_matches"])
         self.assertEqual(state["run_head_sha"], "c" * 40)
+
+
+class MainCiProofTests(unittest.TestCase):
+    def test_selects_exact_successful_main_push_ci(self) -> None:
+        selected = readiness.select_successful_main_ci_run({"workflow_runs": [_ci_run()]}, SOURCE)
+        self.assertEqual(selected["id"], 777)
+        self.assertEqual(selected["run_attempt"], 2)
+
+    def test_main_ci_proof_fails_closed_on_failure_wrong_source_or_duplicate(self) -> None:
+        with self.assertRaises(readiness.ReadinessError):
+            readiness.select_successful_main_ci_run({"workflow_runs": [_ci_run(conclusion="failure")]}, SOURCE)
+        with self.assertRaises(readiness.ReadinessError):
+            readiness.select_successful_main_ci_run({"workflow_runs": [_ci_run(source="c" * 40)]}, SOURCE)
+        with self.assertRaises(readiness.ReadinessError):
+            readiness.select_successful_main_ci_run({"workflow_runs": [_ci_run(1), _ci_run(2)]}, SOURCE)
 
 
 class SnapshotFenceTests(unittest.TestCase):
@@ -99,12 +133,27 @@ class ReadinessStateTests(unittest.TestCase):
             readiness._write_state(state_path, _state())
             loaded = readiness._load_state(state_path)
             self.assertEqual(loaded["request_id"], REQUEST)
+            self.assertEqual(loaded["ci_run_id"], 777)
+            self.assertEqual(loaded["ci_run_attempt"], 2)
             state_path.unlink()
             target = root / "target.json"
             target.write_text("{}\n", encoding="utf-8")
             state_path.symlink_to(target)
             with self.assertRaises(readiness.ReadinessError):
                 readiness._load_state(state_path)
+
+
+    def test_legacy_v1_state_remains_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            state = _state()
+            state["schema_version"] = readiness.LEGACY_STATE_SCHEMA_VERSION
+            for field in ("ci_run_id", "ci_run_attempt", "ci_run_url", "ci_run_head_sha", "ci_run_conclusion"):
+                state.pop(field)
+            path = Path(temp) / "legacy.json"
+            readiness._write_state(path, state)
+            loaded = readiness._load_state(path)
+            self.assertEqual(loaded["schema_version"], readiness.LEGACY_STATE_SCHEMA_VERSION)
+            self.assertNotIn("ci_run_id", loaded)
 
 
 class _Response:
@@ -145,100 +194,50 @@ class DispatchClassificationTests(unittest.TestCase):
     def test_204_is_accepted(self) -> None:
         client = self._client()
         client.opener = _Opener(_Response())
-        readiness._post_dispatch(client, SOURCE, REQUEST)
+        readiness._post_dispatch(client, SOURCE, REQUEST, 777, 2)
 
     def test_4xx_is_definite_rejection(self) -> None:
         client = self._client()
         error = urllib.error.HTTPError("https://api.github.test", 422, "bad", {}, None)
         client.opener = _Opener(error)
         with self.assertRaises(readiness.DispatchRejected):
-            readiness._post_dispatch(client, SOURCE, REQUEST)
+            readiness._post_dispatch(client, SOURCE, REQUEST, 777, 2)
 
     def test_transport_failure_is_outcome_unknown(self) -> None:
         client = self._client()
         client.opener = _Opener(urllib.error.URLError("lost"))
         with self.assertRaises(readiness.DispatchOutcomeUnknown):
-            readiness._post_dispatch(client, SOURCE, REQUEST)
+            readiness._post_dispatch(client, SOURCE, REQUEST, 777, 2)
 
 
 class WorkflowContractTests(unittest.TestCase):
-    def test_pre_tag_gate_covers_every_release_platform_without_uploads(self) -> None:
+    def test_pre_tag_gate_reuses_exact_main_ci_and_never_builds_native_release_candidates(self) -> None:
         workflow = Path(".github/workflows/release-readiness.yml").read_text(encoding="utf-8")
-        for platform in ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"):
-            self.assertIn(platform, workflow)
-        self.assertIn("runner: macos-15-intel", workflow)
-        self.assertIn("rust_host: x86_64-apple-darwin", workflow)
-        self.assertNotIn('rustc -vV | grep -Fxq "host:', workflow)
-        self.assertNotIn('file "$binary" | grep -Fq "$EXPECTED_FILE_ARCH"', workflow)
-        self.assertGreaterEqual(workflow.count("cargo build --locked --release"), 3)
-        self.assertIn("quay.io/pypa/manylinux2014_x86_64", workflow)
-        self.assertIn("quay.io/pypa/manylinux2014_aarch64", workflow)
-        self.assertIn("npm_install_windows_smoke.ps1", workflow)
+        self.assertIn("  ci-proof:\n", workflow)
+        self.assertIn("actions: read", workflow)
+        self.assertIn("ci_run_id:", workflow)
+        self.assertIn("ci_run_attempt:", workflow)
+        self.assertIn("/actions/runs/{run_id}/attempts/{attempt}", workflow)
+        self.assertIn('"path": ".github/workflows/ci.yml"', workflow)
+        self.assertIn('"event": "push"', workflow)
+        self.assertIn('"conclusion": "success"', workflow)
+        self.assertNotIn("cargo build --locked --release", workflow)
+        for removed_job in ("release-contract", "core-tests", "frontend", "macos-tests", "native-linux", "native-macos", "native-windows"):
+            self.assertNotIn(f"  {removed_job}:\n", workflow)
         self.assertIn("server-image:", workflow)
         self.assertIn("platform: linux/amd64", workflow)
         self.assertIn("platform: linux/arm64", workflow)
         self.assertIn("DOCKER_BUILDKIT=1 docker build", workflow)
         self.assertIn("scripts/prepare_server_deployment_assets.py", workflow)
         self.assertIn("ghcr.io/yyjeqhc/webcodex-server@$digest", workflow)
+        self.assertIn("e2e:\n    needs: ci-proof", workflow)
+        self.assertIn("eval:\n    needs: ci-proof", workflow)
+        self.assertIn("server-image:\n    needs: [ci-proof, e2e, eval]", workflow)
+        self.assertIn("summary:\n    needs: [ci-proof, e2e, eval, server-image]", workflow)
         self.assertNotIn("actions/upload-artifact", workflow)
         self.assertNotIn("docker/login-action", workflow)
         self.assertNotIn("packages: write", workflow)
         self.assertNotIn("push: true", workflow)
-
-    def test_expensive_readiness_fanout_waits_for_fail_fast_correctness(self) -> None:
-        workflow = Path(".github/workflows/release-readiness.yml").read_text(encoding="utf-8")
-        self.assertIn("  release-contract:\n", workflow)
-        self.assertIn("  core-tests:\n", workflow)
-        self.assertIn("      fail-fast: true\n", workflow)
-        self.assertIn('            packages: "-p webcodex"', workflow)
-        self.assertIn('            packages: "-p webcodex-runner"', workflow)
-        for package in (
-            "webcodex-admin",
-            "webcodex-agent-config",
-            "webcodex-core",
-            "webcodex-cli",
-            "webcodex-persistent-shell",
-            "webcodex-sandbox",
-            "webcodex-workspace",
-            "webcodex-process",
-        ):
-            self.assertIn(f"              -p {package}", workflow)
-        self.assertIn(
-            "run: cargo test --locked ${{ matrix.packages }} -- --nocapture",
-            workflow,
-        )
-        self.assertNotIn("cargo test --locked --workspace -- --nocapture", workflow)
-
-        build_gate_dependency = (
-            "    needs: [release-contract, core-tests, frontend, e2e, eval, macos-tests]\n"
-        )
-        # Every expensive native/image build waits for the complete test gate,
-        # including both native macOS Runner suites. Test jobs themselves have
-        # no upstream build gate and therefore fan out immediately.
-        self.assertEqual(workflow.count(build_gate_dependency), 4)
-        for test_job in ("frontend", "e2e", "eval", "macos-tests"):
-            start = workflow.index(f"  {test_job}:\n")
-            end = workflow.find("\n  ", start + 1)
-            block = workflow[start:] if end == -1 else workflow[start:end]
-            self.assertNotIn("    needs:", block)
-        macos_tests_start = workflow.index("  macos-tests:\n")
-        macos_tests_end = workflow.index("  native-linux:\n", macos_tests_start)
-        macos_tests = workflow[macos_tests_start:macos_tests_end]
-        native_macos_start = workflow.index("  native-macos:\n")
-        self.assertIn(
-            "run: cargo test --locked -p webcodex-runner -- --nocapture",
-            macos_tests,
-        )
-        self.assertNotIn("cargo build --locked --release", macos_tests)
-        native_macos_end = workflow.index("  native-windows:\n", native_macos_start)
-        native_macos = workflow[native_macos_start:native_macos_end]
-        self.assertIn("cargo build --locked --release", native_macos)
-        self.assertNotIn("cargo test --locked -p webcodex-runner", native_macos)
-        self.assertIn(
-            "needs: [release-contract, core-tests, frontend, e2e, eval, macos-tests, native-linux, server-image, native-macos, native-windows]",
-            workflow,
-        )
-        self.assertNotIn("macos-runner", workflow)
 
     def test_owner_prs_run_complete_linux_ci_before_merge(self) -> None:
         workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -249,17 +248,27 @@ class WorkflowContractTests(unittest.TestCase):
             return workflow[start:end]
 
         linux_rust = job_block("test-linux-rust", "test-linux-tooling")
-        linux_tooling = job_block("test-linux-tooling", "test")
+        linux_tooling = job_block("test-linux-tooling", "test-linux-arm64")
+        linux_arm64 = job_block("test-linux-arm64", "test")
         aggregate = job_block("test", "test-macos")
         self.assertNotIn("pull_request.user.login", linux_rust)
         self.assertNotIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_rust)
         self.assertNotIn("pull_request.user.login", linux_tooling)
         self.assertNotIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_tooling)
+        self.assertIn("runs-on: ubuntu-24.04-arm", linux_arm64)
+        self.assertIn("cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner", linux_arm64)
+        self.assertIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_arm64)
+        self.assertIn("cargo check --locked --workspace --all-targets", linux_tooling)
+        self.assertIn("bash scripts/release_check.sh --static-only", linux_tooling)
         macos = job_block("test-macos", "test-windows-core")
         self.assertIn("platform: darwin-x64", macos)
         self.assertIn("runner: macos-15-intel", macos)
         self.assertIn("rust_host: x86_64-apple-darwin", macos)
         self.assertIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", macos)
+        windows_arm64 = job_block("test-windows-arm64", "test-windows")
+        self.assertIn("runs-on: windows-11-arm", windows_arm64)
+        self.assertIn("aarch64-pc-windows-msvc", windows_arm64)
+        self.assertIn("cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner", windows_arm64)
         self.assertIn("if: always()", aggregate)
 
     def test_macos_ci_host_check_does_not_use_quiet_grep_under_pipefail(self) -> None:

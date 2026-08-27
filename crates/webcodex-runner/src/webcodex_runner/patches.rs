@@ -517,20 +517,25 @@ fn edit_plan(
 fn edit_conflict_recovery(error: &EditPlanError) -> Option<serde_json::Value> {
     match error.conflict.as_ref()? {
         EditPlanConflict::Match(conflict) => {
-            let (selector_supported, recovery_action) = match conflict.kind {
-                ApplyTextMatchConflictKind::MultipleMatches => {
-                    (true, "select_occurrence_or_refine_match")
-                }
-                ApplyTextMatchConflictKind::OccurrenceOutOfRange => {
-                    (true, "choose_valid_occurrence_or_refine_match")
-                }
-                ApplyTextMatchConflictKind::MatchNotFound => (false, "reread_or_refine_match"),
-            };
+            let (selector_supported, recovery_action, direct_retry_safe, reread_required) =
+                match conflict.kind {
+                    ApplyTextMatchConflictKind::MultipleMatches => {
+                        (true, "select_occurrence_or_refine_match", true, false)
+                    }
+                    ApplyTextMatchConflictKind::OccurrenceOutOfRange => {
+                        (true, "choose_valid_occurrence_or_refine_match", true, false)
+                    }
+                    ApplyTextMatchConflictKind::MatchNotFound => {
+                        (false, "reread_or_refine_match", false, true)
+                    }
+                };
             let mut recovery = serde_json::json!({
                 "schema_version": 1,
                 "conflict_kind": conflict.kind.as_str(),
                 "match_count": conflict.match_count,
                 "occurrence_selector_supported": selector_supported,
+                "direct_retry_safe": direct_retry_safe,
+                "reread_required": reread_required,
                 "candidate_ranges": conflict.candidate_ranges,
                 "candidates_truncated": conflict.candidates_truncated,
                 "recovery_action": recovery_action,
@@ -547,6 +552,8 @@ fn edit_conflict_recovery(error: &EditPlanError) -> Option<serde_json::Value> {
             "schema_version": 1,
             "conflict_kind": "overlapping_edits",
             "occurrence_selector_supported": false,
+            "direct_retry_safe": true,
+            "reread_required": false,
             "conflicting_edit_indices": [first_edit_index, second_edit_index],
             "recovery_action": "refine_edit_batch",
         })),
@@ -574,13 +581,23 @@ fn edit_conflict_retry_guidance(recovery: Option<&serde_json::Value>) -> &'stati
     }
 }
 
-fn sha256_conflict_recovery() -> serde_json::Value {
-    serde_json::json!({
+fn sha256_conflict_recovery(
+    expected_sha256: Option<&str>,
+    current_sha256: &str,
+) -> serde_json::Value {
+    let mut recovery = serde_json::json!({
         "schema_version": 1,
         "conflict_kind": "sha256_mismatch",
         "occurrence_selector_supported": false,
+        "direct_retry_safe": false,
+        "reread_required": true,
+        "current_sha256": current_sha256,
         "recovery_action": "reread_file",
-    })
+    });
+    if let Some(expected_sha256) = expected_sha256 {
+        recovery["expected_sha256"] = serde_json::json!(expected_sha256);
+    }
+    recovery
 }
 
 fn batch_error(
@@ -1102,7 +1119,13 @@ pub(crate) fn handle_apply_text_edits_file_request(
                         ),
                     });
                     if payload.recovery_metadata_version == Some(1) {
-                        result["conflict_recovery"] = sha256_conflict_recovery();
+                        result["conflict_recovery"] = sha256_conflict_recovery(
+                            change.expected_sha256.as_deref(),
+                            &old_sha256,
+                        );
+                        result["retry_guidance"] = serde_json::json!(
+                            "reread the file to obtain current content and sha256, then retry the whole batch with refreshed guards"
+                        );
                     }
                     return line_edit_stdout(result, start);
                 }
@@ -1136,6 +1159,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
                                     "edit_index": error.edit_index,
                                     "kind": error.edit_kind,
                                     "path": change.path,
+                                    "retry_guidance": retry_guidance,
                                     "error": format!(
                                         "Rejected transactional file batch: {}. No files were modified. Retry guidance: {retry_guidance}",
                                         error.message

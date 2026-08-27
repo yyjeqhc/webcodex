@@ -110,6 +110,7 @@ fn file_apply_text_edits_hash_conflict_keeps_every_file_unchanged() {
     std::fs::write(tmp.path().join("a.txt"), "alpha\n").unwrap();
     std::fs::write(tmp.path().join("b.txt"), "beta\n").unwrap();
     let a_hash = sha256_hex_bytes(&std::fs::read(tmp.path().join("a.txt")).unwrap());
+    let b_hash = sha256_hex_bytes(&std::fs::read(tmp.path().join("b.txt")).unwrap());
 
     let out = line_edit_json(handle_file_request(
         &policy,
@@ -117,6 +118,7 @@ fn file_apply_text_edits_hash_conflict_keeps_every_file_unchanged() {
             tmp.path(),
             "a.txt",
             serde_json::json!({
+                "recovery_metadata_version": 1,
                 "changes": [
                     {
                         "kind": "edit",
@@ -137,6 +139,18 @@ fn file_apply_text_edits_hash_conflict_keeps_every_file_unchanged() {
     assert_eq!(out["error_kind"], "sha256_conflict");
     assert_eq!(out["change_index"], 1);
     assert_eq!(out["state_changed"], false);
+    assert_eq!(out["conflict_recovery"]["conflict_kind"], "sha256_mismatch");
+    assert_eq!(out["conflict_recovery"]["direct_retry_safe"], false);
+    assert_eq!(out["conflict_recovery"]["reread_required"], true);
+    assert_eq!(
+        out["conflict_recovery"]["occurrence_selector_supported"],
+        false
+    );
+    assert_eq!(
+        out["conflict_recovery"]["expected_sha256"],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(out["conflict_recovery"]["current_sha256"], b_hash);
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("a.txt")).unwrap(),
         "alpha\n"
@@ -532,6 +546,8 @@ fn file_apply_text_edits_structured_multiple_match_recovery_is_bounded() {
     assert_eq!(recovery["conflict_kind"], "multiple_matches");
     assert_eq!(recovery["match_count"], 10);
     assert_eq!(recovery["occurrence_selector_supported"], true);
+    assert_eq!(recovery["direct_retry_safe"], true);
+    assert_eq!(recovery["reread_required"], false);
     assert_eq!(recovery["candidate_ranges"].as_array().unwrap().len(), 8);
     assert_eq!(recovery["candidate_ranges"][0]["occurrence"], 1);
     assert_eq!(recovery["candidate_ranges"][0]["start_line"], 2);
@@ -575,6 +591,8 @@ fn file_apply_text_edits_structured_not_found_disables_selector() {
     assert_eq!(recovery["conflict_kind"], "match_not_found");
     assert_eq!(recovery["match_count"], 0);
     assert_eq!(recovery["occurrence_selector_supported"], false);
+    assert_eq!(recovery["direct_retry_safe"], false);
+    assert_eq!(recovery["reread_required"], true);
     assert_eq!(recovery["recovery_action"], "reread_or_refine_match");
     assert_eq!(recovery["candidate_ranges"].as_array().unwrap().len(), 0);
     assert!(!serde_json::to_string(recovery)
@@ -611,6 +629,8 @@ fn file_apply_text_edits_structured_overlap_is_atomic_and_body_free() {
         serde_json::json!([0, 1])
     );
     assert_eq!(recovery["recovery_action"], "refine_edit_batch");
+    assert_eq!(recovery["direct_retry_safe"], true);
+    assert_eq!(recovery["reread_required"], false);
     let serialized = serde_json::to_string(recovery).unwrap();
     assert!(!serialized.contains("SECRET_A"));
     assert!(!serialized.contains("SECRET_B"));
@@ -669,6 +689,8 @@ fn file_apply_text_edits_occurrence_out_of_range_is_actionable_and_atomic() {
     );
     assert_eq!(out["conflict_recovery"]["match_count"], 2);
     assert_eq!(out["conflict_recovery"]["requested_occurrence"], 3);
+    assert_eq!(out["conflict_recovery"]["direct_retry_safe"], true);
+    assert_eq!(out["conflict_recovery"]["reread_required"], false);
     assert!(out["error"]
         .as_str()
         .unwrap()
@@ -682,6 +704,7 @@ fn file_apply_text_edits_sha_conflict_precedes_occurrence_selection() {
     let policy = project_policy(tmp.path());
     let file = tmp.path().join("target.txt");
     std::fs::write(&file, "dup\ndup\n").unwrap();
+    let current_sha256 = sha256_hex_bytes(&std::fs::read(&file).unwrap());
     let out = line_edit_json(handle_file_request(
         &policy,
         &apply_text_edits_request(
@@ -697,6 +720,17 @@ fn file_apply_text_edits_sha_conflict_precedes_occurrence_selection() {
     assert_eq!(out["error_kind"], "sha256_conflict");
     assert_eq!(out["conflict_recovery"]["conflict_kind"], "sha256_mismatch");
     assert_eq!(out["conflict_recovery"]["recovery_action"], "reread_file");
+    assert_eq!(out["conflict_recovery"]["direct_retry_safe"], false);
+    assert_eq!(out["conflict_recovery"]["reread_required"], true);
+    assert_eq!(
+        out["conflict_recovery"]["occurrence_selector_supported"],
+        false
+    );
+    assert_eq!(
+        out["conflict_recovery"]["expected_sha256"],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(out["conflict_recovery"]["current_sha256"], current_sha256);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "dup\ndup\n");
 }
 

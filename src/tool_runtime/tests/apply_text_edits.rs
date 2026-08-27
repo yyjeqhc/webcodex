@@ -27,10 +27,53 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     let output = &spec.output_schema["properties"]["output"]["properties"]["conflict_recovery"];
     assert_eq!(output["properties"]["schema_version"]["const"], 1);
     assert_eq!(output["properties"]["candidate_ranges"]["maxItems"], 8);
+    assert_eq!(output["properties"]["direct_retry_safe"]["type"], "boolean");
+    assert_eq!(output["properties"]["reread_required"]["type"], "boolean");
+    assert_eq!(
+        output["properties"]["expected_sha256"]["pattern"],
+        "^[a-f0-9]{64}$"
+    );
+    assert_eq!(
+        output["properties"]["current_sha256"]["pattern"],
+        "^[a-f0-9]{64}$"
+    );
+    let output_properties = &spec.output_schema["properties"]["output"]["properties"];
+    assert!(output_properties["change_index"]["anyOf"].is_array());
+    assert!(output_properties["edit_index"]["anyOf"].is_array());
+    assert_eq!(output_properties["state_changed"]["type"], "boolean");
+    assert_eq!(output_properties["retry_guidance"]["type"], "string");
     assert!(output["properties"]["conflict_kind"]["enum"]
         .as_array()
         .unwrap()
         .contains(&serde_json::json!("multiple_matches")));
+
+    let sha_conflict = serde_json::json!({
+        "success": false,
+        "output": {
+            "state_changed": false,
+            "error_kind": "sha256_conflict",
+            "change_index": 0,
+            "kind": "edit",
+            "path": "src/lib.rs",
+            "retry_guidance": "reread the file",
+            "conflict_recovery": {
+                "schema_version": 1,
+                "conflict_kind": "sha256_mismatch",
+                "occurrence_selector_supported": false,
+                "direct_retry_safe": false,
+                "reread_required": true,
+                "expected_sha256": "a".repeat(64),
+                "current_sha256": "b".repeat(64),
+                "recovery_action": "reread_file"
+            }
+        },
+        "error": "sha256 mismatch"
+    });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+        &sha_conflict,
+        &spec.output_schema,
+    )
+    .unwrap_or_else(|error| panic!("sha conflict recovery must match output schema: {error}"));
 
     let openapi = crate::openapi::build_openapi_spec();
     let occurrence = &openapi["components"]["schemas"]["ToolCallRequest"]["properties"]["changes"]
@@ -449,6 +492,8 @@ async fn apply_text_edits_conflict_then_same_sha_occurrence_retry_needs_no_hidde
                 "conflict_kind": "multiple_matches",
                 "match_count": 2,
                 "occurrence_selector_supported": true,
+                "direct_retry_safe": true,
+                "reread_required": false,
                 "candidate_ranges": [
                     {"occurrence":1,"start_line":1,"end_line":1},
                     {"occurrence":2,"start_line":3,"end_line":3}
@@ -465,6 +510,14 @@ async fn apply_text_edits_conflict_then_same_sha_occurrence_retry_needs_no_hidde
     let conflict = first.await.unwrap();
     assert!(!conflict.success);
     assert_eq!(conflict.output["conflict_recovery"]["match_count"], 2);
+    assert_eq!(
+        conflict.output["conflict_recovery"]["direct_retry_safe"],
+        true
+    );
+    assert_eq!(
+        conflict.output["conflict_recovery"]["reread_required"],
+        false
+    );
     let conflict_error = conflict
         .error
         .as_deref()
@@ -701,13 +754,79 @@ async fn apply_text_edits_legacy_runner_ambiguous_no_occurrence_keeps_legacy_fai
 }
 
 #[tokio::test]
-async fn apply_text_edits_empty_batch_proves_preflight_no_effect() {
+async fn apply_text_edits_server_preflight_reports_exact_failed_edit() {
+    let runtime = test_runtime();
+    let result = runtime
+        .apply_text_edits(
+            "agent:unused:unused".to_string(),
+            vec![
+                edit_change(
+                    "src/first.rs",
+                    &"a".repeat(64),
+                    vec![text_edit(
+                        ApplyTextEditKind::ReplaceExact,
+                        Some("first"),
+                        Some("FIRST"),
+                        None,
+                    )],
+                ),
+                edit_change(
+                    "src/second.rs",
+                    &"b".repeat(64),
+                    vec![text_edit(
+                        ApplyTextEditKind::ReplaceExact,
+                        None,
+                        Some("SECOND"),
+                        None,
+                    )],
+                ),
+            ],
+            None,
+        )
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["state_changed"], false);
+    assert_eq!(result.output["error_kind"], "invalid_edit");
+    assert_eq!(result.output["change_index"], 1);
+    assert_eq!(result.output["edit_index"], 0);
+    assert_eq!(result.output["kind"], "replace_exact");
+    assert_eq!(result.output["path"], "src/second.rs");
+    assert!(result.output["retry_guidance"]
+        .as_str()
+        .unwrap()
+        .contains("retry the whole batch"));
+    let output_schema = crate::tool_runtime::registry::output_schema_for_tool("apply_text_edits");
+    let serialized = serde_json::to_value(&result).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+        &serialized,
+        &output_schema,
+    )
+    .unwrap_or_else(|error| panic!("structured preflight must match output schema: {error}"));
+    assert!(result.output.get("conflict_recovery").is_none());
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("No files were modified"));
+}
+
+#[tokio::test]
+async fn apply_text_edits_empty_batch_proves_preflight_no_effect_without_fake_indices() {
     let runtime = test_runtime();
     let result = runtime
         .apply_text_edits("agent:unused:unused".to_string(), Vec::new(), None)
         .await;
     assert!(!result.success);
     assert_eq!(result.output["state_changed"], false);
+    assert_eq!(result.output["error_kind"], "empty_batch");
+    for field in ["change_index", "edit_index", "kind", "path"] {
+        assert!(
+            result.output.get(field).is_none(),
+            "{field} must remain absent"
+        );
+    }
+    assert!(result.output["retry_guidance"].is_string());
 }
 
 #[tokio::test]

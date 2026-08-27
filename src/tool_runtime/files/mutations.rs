@@ -164,31 +164,56 @@ fn validate_apply_text_edit(
     Ok(())
 }
 
-fn validate_apply_file_change(index: usize, change: &ApplyFileChangeInput) -> Result<(), String> {
-    let expected_hash = || -> Result<(), String> {
+#[derive(Debug)]
+struct ApplyTextEditsPreflightValidationError {
+    message: String,
+    edit_index: Option<usize>,
+}
+
+impl From<String> for ApplyTextEditsPreflightValidationError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            edit_index: None,
+        }
+    }
+}
+
+fn validate_apply_file_change(
+    index: usize,
+    change: &ApplyFileChangeInput,
+) -> Result<(), ApplyTextEditsPreflightValidationError> {
+    let expected_hash = || -> Result<(), ApplyTextEditsPreflightValidationError> {
         match change.expected_sha256.as_deref() {
             Some(hash) if is_hex_sha256(hash) => Ok(()),
             _ => Err(format!(
                 "change {index} ({}): expected_sha256 is required and must be 64 lowercase hexadecimal characters",
                 change.kind.as_str()
-            )),
+            )
+            .into()),
         }
     };
     match change.kind {
         ApplyFileChangeKind::Edit => {
             expected_hash()?;
             if change.to_path.is_some() || change.content.is_some() {
-                return Err(format!(
-                    "change {index} (edit): to_path and content are not allowed"
-                ));
+                return Err(
+                    format!("change {index} (edit): to_path and content are not allowed").into(),
+                );
             }
             if change.edits.is_empty() || change.edits.len() > MAX_APPLY_TEXT_EDITS {
                 return Err(format!(
                     "change {index} (edit): edits must contain 1..={MAX_APPLY_TEXT_EDITS} entries"
-                ));
+                )
+                .into());
             }
             for (edit_index, edit) in change.edits.iter().enumerate() {
-                validate_apply_text_edit(index, edit_index, edit)?;
+                if let Err(message) = validate_apply_text_edit(index, edit_index, edit) {
+                    return Err(ApplyTextEditsPreflightValidationError {
+                        message,
+                        edit_index: Some(edit_index),
+                    });
+                }
             }
         }
         ApplyFileChangeKind::Create => {
@@ -198,16 +223,17 @@ fn validate_apply_file_change(index: usize, change: &ApplyFileChangeInput) -> Re
             {
                 return Err(format!(
                     "change {index} (create): to_path, expected_sha256, and edits are not allowed"
-                ));
+                )
+                .into());
             }
             let content = change
                 .content
                 .as_deref()
                 .ok_or_else(|| format!("change {index} (create): content is required"))?;
             if content.contains('\0') {
-                return Err(format!(
-                    "change {index} (create): content cannot contain NUL bytes"
-                ));
+                return Err(
+                    format!("change {index} (create): content cannot contain NUL bytes").into(),
+                );
             }
         }
         ApplyFileChangeKind::Delete => {
@@ -215,7 +241,8 @@ fn validate_apply_file_change(index: usize, change: &ApplyFileChangeInput) -> Re
             if change.to_path.is_some() || change.content.is_some() || !change.edits.is_empty() {
                 return Err(format!(
                     "change {index} (delete): to_path, content, and edits are not allowed"
-                ));
+                )
+                .into());
             }
         }
         ApplyFileChangeKind::Rename => {
@@ -225,14 +252,14 @@ fn validate_apply_file_change(index: usize, change: &ApplyFileChangeInput) -> Re
                 .as_deref()
                 .ok_or_else(|| format!("change {index} (rename): to_path is required"))?;
             if to_path == change.path {
-                return Err(format!(
-                    "change {index} (rename): path and to_path must differ"
-                ));
+                return Err(
+                    format!("change {index} (rename): path and to_path must differ").into(),
+                );
             }
             if change.content.is_some() || !change.edits.is_empty() {
-                return Err(format!(
-                    "change {index} (rename): content and edits are not allowed"
-                ));
+                return Err(
+                    format!("change {index} (rename): content and edits are not allowed").into(),
+                );
             }
         }
     }
@@ -241,7 +268,7 @@ fn validate_apply_file_change(index: usize, change: &ApplyFileChangeInput) -> Re
 
 fn apply_text_edits_agent_stdout_result(stdout: &str) -> ToolResult {
     let stdout = stdout.trim();
-    let obj: Value = match serde_json::from_str(stdout) {
+    let mut obj: Value = match serde_json::from_str(stdout) {
         Ok(value) => value,
         Err(error) => {
             return ToolResult::err(format!(
@@ -251,25 +278,85 @@ fn apply_text_edits_agent_stdout_result(stdout: &str) -> ToolResult {
             ))
         }
     };
-    if let Some(error) = obj.get("error").and_then(Value::as_str) {
+    if let Some(error) = obj.get("error").and_then(Value::as_str).map(str::to_string) {
         let uncertain = obj.get("rollback_complete").and_then(Value::as_bool) == Some(false)
             || obj.get("changed").and_then(Value::as_bool) == Some(true);
         let message = if uncertain {
+            if let Some(output) = obj.as_object_mut() {
+                // A Runner response that admits incomplete rollback or a
+                // changed worktree cannot retain deterministic no-mutation
+                // retry authority from an earlier planning conflict.
+                output.remove("conflict_recovery");
+                output.remove("retry_guidance");
+                output.remove("state_changed");
+            }
             format!(
                 "Edit outcome is uncertain: {error}. Inspect the affected files before issuing another write."
             )
         } else if obj.get("conflict_recovery").is_some_and(Value::is_object) {
-            error.to_string()
+            error.clone()
         } else {
-            recoverable_write_rejection(error)
+            recoverable_write_rejection(&error)
         };
         return ToolResult::err_with_output(message, obj);
     }
     ToolResult::ok(obj)
 }
 
-fn apply_text_edits_preflight_rejection(message: impl Into<String>) -> ToolResult {
-    ToolResult::err_with_output(message, json!({"state_changed": false}))
+fn apply_text_edits_preflight_rejection(
+    message: impl Into<String>,
+    error_kind: &'static str,
+    change_index: Option<usize>,
+    edit_index: Option<usize>,
+    kind: Option<&str>,
+    path: Option<&str>,
+    retry_guidance: &'static str,
+) -> ToolResult {
+    let detail = message.into();
+    let mut output = json!({
+        "state_changed": false,
+        "error_kind": error_kind,
+        "retry_guidance": retry_guidance,
+    });
+    if let Some(change_index) = change_index {
+        output["change_index"] = json!(change_index);
+    }
+    if let Some(edit_index) = edit_index {
+        output["edit_index"] = json!(edit_index);
+    }
+    if let Some(kind) = kind {
+        output["kind"] = json!(kind);
+    }
+    if let Some(path) = path {
+        output["path"] = json!(path);
+    }
+    ToolResult::err_with_output(
+        format!(
+            "Rejected before write: {detail}.\nNo files were modified.\nRetry guidance: {retry_guidance}."
+        ),
+        output,
+    )
+}
+
+fn apply_text_edits_path_policy_rejection(
+    change_index: usize,
+    kind: &str,
+    path: &str,
+    message: String,
+) -> ToolResult {
+    let mut result = super::permissions::edit_path_policy_rejected_result(path, message);
+    if let Some(output) = result.output.as_object_mut() {
+        // The rejected path may itself be absolute or sensitive. Keep exact
+        // change provenance without copying that untrusted path into recovery
+        // metadata.
+        output.remove("path");
+        output.remove("error");
+    }
+    result.output["change_index"] = json!(change_index);
+    result.output["kind"] = json!(kind);
+    result.output["retry_guidance"] =
+        json!("correct the rejected project-relative path and retry the whole batch");
+    result
 }
 
 /// Pure, allocation-only computation of an `apply_text_edits` plan against
@@ -934,37 +1021,94 @@ impl ToolRuntime {
         if changes.is_empty() {
             return apply_text_edits_preflight_rejection(
                 "changes must contain at least one file change",
+                "empty_batch",
+                None,
+                None,
+                None,
+                None,
+                "add at least one valid file change and retry",
             );
         }
         if changes.len() > MAX_APPLY_FILE_CHANGES {
-            return apply_text_edits_preflight_rejection(format!(
-                "too many file changes; maximum is {}",
-                MAX_APPLY_FILE_CHANGES
-            ));
+            return apply_text_edits_preflight_rejection(
+                format!(
+                    "too many file changes; maximum is {}",
+                    MAX_APPLY_FILE_CHANGES
+                ),
+                "batch_too_large",
+                None,
+                None,
+                None,
+                None,
+                "reduce the batch to the supported file-change limit and retry",
+            );
         }
         let mut touched_paths = HashSet::new();
         for (change_index, change) in changes.iter().enumerate() {
             if let Err(error) = validate_edit_file_path(&change.path) {
-                return super::permissions::edit_path_policy_rejected_result(&change.path, error);
+                return apply_text_edits_path_policy_rejection(
+                    change_index,
+                    change.kind.as_str(),
+                    &change.path,
+                    error,
+                );
             }
             if !touched_paths.insert(change.path.as_str()) {
-                return apply_text_edits_preflight_rejection(format!(
-                    "change {change_index} reuses path '{}'; each source/destination path may appear only once",
-                    change.path
-                ));
+                return apply_text_edits_preflight_rejection(
+                    format!(
+                        "change {change_index} reuses path '{}'; each source/destination path may appear only once",
+                        change.path
+                    ),
+                    "path_overlap",
+                    Some(change_index),
+                    None,
+                    Some(change.kind.as_str()),
+                    Some(&change.path),
+                    "correct the duplicate source/destination path and retry the whole batch",
+                );
             }
             if let Some(to_path) = change.to_path.as_deref() {
                 if let Err(error) = validate_edit_file_path(to_path) {
-                    return super::permissions::edit_path_policy_rejected_result(to_path, error);
+                    return apply_text_edits_path_policy_rejection(
+                        change_index,
+                        change.kind.as_str(),
+                        to_path,
+                        error,
+                    );
                 }
                 if !touched_paths.insert(to_path) {
-                    return apply_text_edits_preflight_rejection(format!(
-                        "change {change_index} reuses destination path '{to_path}'; each source/destination path may appear only once"
-                    ));
+                    return apply_text_edits_preflight_rejection(
+                        format!(
+                            "change {change_index} reuses destination path '{to_path}'; each source/destination path may appear only once"
+                        ),
+                        "path_overlap",
+                        Some(change_index),
+                        None,
+                        Some(change.kind.as_str()),
+                        Some(to_path),
+                        "correct the duplicate source/destination path and retry the whole batch",
+                    );
                 }
             }
-            if let Err(message) = validate_apply_file_change(change_index, change) {
-                return apply_text_edits_preflight_rejection(message);
+            if let Err(validation_error) = validate_apply_file_change(change_index, change) {
+                let failed_kind = validation_error
+                    .edit_index
+                    .and_then(|edit_index| change.edits.get(edit_index))
+                    .map(|edit| edit.kind.as_str())
+                    .unwrap_or_else(|| change.kind.as_str());
+                return apply_text_edits_preflight_rejection(
+                    validation_error.message,
+                    if validation_error.edit_index.is_some() {
+                        "invalid_edit"
+                    } else {
+                        "invalid_change"
+                    },
+                    Some(change_index),
+                    validation_error.edit_index,
+                    Some(failed_kind),
+                    Some(&change.path),
+                    "correct the rejected change or edit and retry the whole batch",
+                );
             }
         }
         let requires_occurrence_capability = changes
@@ -980,15 +1124,29 @@ impl ToolRuntime {
         let serialized = match serde_json::to_string(&payload) {
             Ok(serialized) if serialized.len() <= MAX_APPLY_FILE_CHANGES_BYTES => serialized,
             Ok(_) => {
-                return apply_text_edits_preflight_rejection(format!(
-                    "serialized file changes exceed {} bytes",
-                    MAX_APPLY_FILE_CHANGES_BYTES
-                ))
+                return apply_text_edits_preflight_rejection(
+                    format!(
+                        "serialized file changes exceed {} bytes",
+                        MAX_APPLY_FILE_CHANGES_BYTES
+                    ),
+                    "payload_too_large",
+                    None,
+                    None,
+                    None,
+                    None,
+                    "reduce the batch payload size and retry",
+                )
             }
             Err(error) => {
-                return apply_text_edits_preflight_rejection(format!(
-                    "failed to serialize file changes payload: {error}"
-                ))
+                return apply_text_edits_preflight_rejection(
+                    format!("failed to serialize file changes payload: {error}"),
+                    "serialization_failed",
+                    None,
+                    None,
+                    None,
+                    None,
+                    "correct the request payload and retry",
+                )
             }
         };
 
@@ -1080,13 +1238,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn apply_text_edits_path_policy_recovery_omits_untrusted_path_metadata() {
+        let result = apply_text_edits_path_policy_rejection(
+            2,
+            "edit",
+            "/private/secret.txt",
+            "path must be project-relative".to_string(),
+        );
+
+        assert!(!result.success);
+        assert_eq!(result.output["state_changed"], false);
+        assert_eq!(result.output["error_kind"], "policy_rejected");
+        assert_eq!(result.output["change_index"], 2);
+        assert_eq!(result.output["kind"], "edit");
+        assert!(result.output.get("path").is_none());
+        assert!(result.output.get("error").is_none());
+        assert!(!serde_json::to_string(&result.output)
+            .unwrap()
+            .contains("/private/secret.txt"));
+    }
+
+    #[test]
     fn incomplete_apply_text_edits_rollback_is_not_reported_as_no_write() {
         let result = apply_text_edits_agent_stdout_result(
-            r#"{"changed":true,"rollback_complete":false,"error":"rollback failed"}"#,
+            r#"{"changed":true,"state_changed":false,"rollback_complete":false,"retry_guidance":"retry directly","conflict_recovery":{"schema_version":1,"conflict_kind":"multiple_matches","occurrence_selector_supported":true,"direct_retry_safe":true,"reread_required":false,"recovery_action":"select_occurrence_or_refine_match"},"error":"rollback failed"}"#,
         );
 
         assert!(!result.success);
         assert_eq!(result.output["rollback_complete"], false);
+        assert!(result.output.get("conflict_recovery").is_none());
+        assert!(result.output.get("retry_guidance").is_none());
+        assert!(result.output.get("state_changed").is_none());
         let error = result.error.unwrap();
         assert!(error.contains("uncertain"));
         assert!(!error.contains("No files were modified"));

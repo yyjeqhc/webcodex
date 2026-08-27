@@ -20,6 +20,24 @@ fn edit_conflict_recovery_schema() -> Value {
                 "choose_valid_occurrence_or_refine_match", "refine_edit_batch", "reread_file"
             ]},
             "occurrence_selector_supported": {"type": "boolean"},
+            "direct_retry_safe": {
+                "type": "boolean",
+                "description": "True only when a corrected request may be retried against the same observed expected_sha256 without rereading. It never authorizes automatic replay of the rejected payload."
+            },
+            "reread_required": {
+                "type": "boolean",
+                "description": "True when the caller must reread the affected file before another write attempt."
+            },
+            "expected_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$",
+                "description": "Caller-provided expected sha256 on a sha256 mismatch; hash only, never file content."
+            },
+            "current_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$",
+                "description": "Current observed file sha256 on a sha256 mismatch; hash only, never file content."
+            },
             "match_count": {"type": "integer", "minimum": 0},
             "requested_occurrence": {"type": "integer", "minimum": 1},
             "candidate_ranges": {
@@ -146,6 +164,34 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "changed_paths",
                 schema_type("array", "Paths touched by the edit batch."),
+            ),
+            (
+                "state_changed",
+                schema_type("boolean", "Authoritative no-effect fact for deterministic rejected batches when false."),
+            ),
+            (
+                "error_kind",
+                schema_type("string", "Stable structured rejection/failure kind when unsuccessful."),
+            ),
+            (
+                "change_index",
+                nullable_schema("integer", "Zero-based failed file-change index when known; null or absent for batch-global failures."),
+            ),
+            (
+                "edit_index",
+                nullable_schema("integer", "Zero-based failed text-edit index when known; null or absent when not edit-specific."),
+            ),
+            (
+                "kind",
+                nullable_schema("string", "Failed change or text-edit kind when known."),
+            ),
+            (
+                "path",
+                nullable_schema("string", "Project-relative failed path when known."),
+            ),
+            (
+                "retry_guidance",
+                schema_type("string", "Bounded recovery guidance for a deterministic no-mutation rejection."),
             ),
             (
                 "conflict_recovery",

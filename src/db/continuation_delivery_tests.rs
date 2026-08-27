@@ -75,6 +75,7 @@ fn succeed(db: &Database, execution_id: &str, now: i64) -> ConnectorExecution {
             assertion_evidence: None,
             validated_workspace_sha256: None,
             executor_failure_code: None,
+            mcp_task_output_tail: None,
             now,
         },
     )

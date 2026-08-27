@@ -30,6 +30,51 @@ impl ConnectorExecutionContinuationIntent {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConnectorTerminalContinuationDeliveryState {
+    Unclaimed,
+    Claimed,
+    Dispatching,
+    Delivered,
+    DeliveryUnknown,
+}
+
+impl ConnectorTerminalContinuationDeliveryState {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unclaimed => "unclaimed",
+            Self::Claimed => "claimed",
+            Self::Dispatching => "dispatching",
+            Self::Delivered => "delivered",
+            Self::DeliveryUnknown => "delivery_unknown",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "unclaimed" => Ok(Self::Unclaimed),
+            "claimed" => Ok(Self::Claimed),
+            "dispatching" => Ok(Self::Dispatching),
+            "delivered" => Ok(Self::Delivered),
+            "delivery_unknown" => Ok(Self::DeliveryUnknown),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                rusqlite::types::Type::Text,
+                format!("unsupported connector terminal continuation delivery state: {other}")
+                    .into(),
+            )),
+        }
+    }
+}
+
+// A2 stops at the durable claim/delivery boundary; the next host-adapter slice
+// will become the first production reader of the returned claim handle.
+#[allow(dead_code)]
+pub(crate) struct ConnectorTerminalContinuationClaim {
+    pub execution: ConnectorExecution,
+    pub claim_fence: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConnectorExecution {
     pub execution_id: String,
@@ -64,6 +109,7 @@ pub(crate) struct ConnectorExecution {
     pub assertion_evidence: Option<Value>,
     pub continuation_intent: ConnectorExecutionContinuationIntent,
     pub continuation_armed_at: Option<i64>,
+    pub continuation_delivery_state: ConnectorTerminalContinuationDeliveryState,
 }
 
 impl ConnectorExecution {
@@ -307,7 +353,8 @@ pub(super) const EXECUTION_COLUMNS: &str =
     executor_reference, first_status_failure_at, last_successful_observation_at, \
     status_failure_code, check_plan, check_recipe_json, check_completed, check_workspace_sha256, \
     validated_workspace_sha256, failed_check, assertion_evidence_json, \
-    terminal_continuation_intent, terminal_continuation_armed_at";
+    terminal_continuation_intent, terminal_continuation_armed_at, \
+    terminal_continuation_delivery_state";
 
 pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConnectorExecution> {
     let cursor = |index| {
@@ -375,6 +422,10 @@ pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<Connect
             30,
         )?,
         continuation_armed_at: row.get(31)?,
+        continuation_delivery_state: ConnectorTerminalContinuationDeliveryState::from_db(
+            &row.get::<_, String>(32)?,
+            32,
+        )?,
     })
 }
 

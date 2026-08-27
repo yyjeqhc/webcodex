@@ -6,6 +6,8 @@
 //! executor project id or workflow-session state.
 
 mod context;
+#[cfg(test)]
+mod continuation_delivery_tests;
 mod execution;
 #[cfg(test)]
 pub(crate) mod execution_tests;

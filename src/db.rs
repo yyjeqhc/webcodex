@@ -61,6 +61,10 @@ impl Database {
 }
 
 #[cfg(test)]
+#[path = "db/continuation_delivery_tests.rs"]
+mod continuation_delivery_tests;
+
+#[cfg(test)]
 #[path = "db/execution_intent_tests.rs"]
 mod execution_intent_tests;
 

@@ -5,14 +5,21 @@ use super::execution_model::{
     execution_event_kind, latest_execution, latest_execution_by_kind, load_execution,
     load_execution_by_operation, observed_state, ConnectorExecution,
     ConnectorExecutionContinuationIntent, ConnectorExecutionFailure, ConnectorExecutionObservation,
-    ConnectorExecutionReservation, EXECUTION_COLUMNS,
+    ConnectorExecutionReservation, ConnectorTerminalContinuationClaim,
+    ConnectorTerminalContinuationDeliveryState, EXECUTION_COLUMNS,
 };
 use super::task_kernel::{
     expire_task_approvals, insert_event, load_task, require_running, touch_task,
 };
 use super::{ConnectorTaskSnapshot, ConnectorTaskStoreError, Database};
-use rusqlite::{params, Transaction};
+use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::json;
+
+const TERMINAL_CONTINUATION_READY_PREDICATE: &str =
+    "terminal_continuation_intent = 'armed_for_terminal' \
+     AND state NOT IN ('accepted','queued','starting','running','cancel_requested') \
+     AND terminal_continuation_delivery_state = 'unclaimed' \
+     AND terminal_continuation_claim_fence IS NULL";
 
 impl Database {
     pub(crate) fn reserve_connector_execution(
@@ -157,8 +164,8 @@ impl Database {
         commit_execution(tx, execution_id)
     }
 
-    // A1 intentionally stops at a durable read boundary; the A2 host adapter
-    // will become the first production consumer of this query.
+    // Ready remains derived: A1 intent + terminal execution truth + unclaimed
+    // delivery state. No second durable ready bit exists.
     #[allow(dead_code)]
     pub(crate) fn terminal_ready_connector_executions(
         &self,
@@ -166,14 +173,182 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut statement = conn.prepare(&format!(
             "SELECT {EXECUTION_COLUMNS} FROM wc_executions
-             WHERE terminal_continuation_intent = 'armed_for_terminal'
-               AND state NOT IN ('accepted','queued','starting','running','cancel_requested')
+             WHERE {TERMINAL_CONTINUATION_READY_PREDICATE}
              ORDER BY finished_at ASC, submitted_at ASC, id ASC"
         ))?;
         let executions = statement
             .query_map([], super::execution_model::map_execution)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(executions)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn claim_next_terminal_continuation(
+        &self,
+    ) -> Result<Option<ConnectorTerminalContinuationClaim>, ConnectorTaskStoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        // Serialize the select+claim decision across independent DB handles as
+        // well as this process-local mutex. A second claimant observes the
+        // committed Claimed state instead of selecting the same ready row.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let candidate = tx
+            .query_row(
+                &format!(
+                    "SELECT {EXECUTION_COLUMNS} FROM wc_executions
+                     WHERE {TERMINAL_CONTINUATION_READY_PREDICATE}
+                     ORDER BY finished_at ASC, submitted_at ASC, id ASC
+                     LIMIT 1"
+                ),
+                [],
+                super::execution_model::map_execution,
+            )
+            .optional()?;
+        let Some(candidate) = candidate else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let claim_fence = format!("wc_claim_{}", uuid::Uuid::new_v4().simple());
+        let updated = tx.execute(
+            &format!(
+                "UPDATE wc_executions
+                 SET terminal_continuation_delivery_state = ?1,
+                     terminal_continuation_claim_fence = ?2
+                 WHERE id = ?3 AND {TERMINAL_CONTINUATION_READY_PREDICATE}"
+            ),
+            params![
+                ConnectorTerminalContinuationDeliveryState::Claimed.as_str(),
+                claim_fence,
+                candidate.execution_id
+            ],
+        )?;
+        if updated != 1 {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "terminal continuation claim lost its ready state".to_string(),
+            ));
+        }
+        let execution = load_execution(&tx, &candidate.execution_id)?
+            .ok_or(ConnectorTaskStoreError::NotFound)?;
+        tx.commit()?;
+        Ok(Some(ConnectorTerminalContinuationClaim {
+            execution,
+            claim_fence,
+        }))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn release_terminal_continuation_claim(
+        &self,
+        execution_id: &str,
+        claim_fence: &str,
+    ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
+        self.transition_terminal_continuation_delivery(
+            execution_id,
+            claim_fence,
+            ConnectorTerminalContinuationDeliveryState::Claimed,
+            ConnectorTerminalContinuationDeliveryState::Unclaimed,
+            true,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn begin_terminal_continuation_dispatch(
+        &self,
+        execution_id: &str,
+        claim_fence: &str,
+    ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
+        self.transition_terminal_continuation_delivery(
+            execution_id,
+            claim_fence,
+            ConnectorTerminalContinuationDeliveryState::Claimed,
+            ConnectorTerminalContinuationDeliveryState::Dispatching,
+            false,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn complete_terminal_continuation_delivery(
+        &self,
+        execution_id: &str,
+        claim_fence: &str,
+    ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
+        self.transition_terminal_continuation_delivery(
+            execution_id,
+            claim_fence,
+            ConnectorTerminalContinuationDeliveryState::Dispatching,
+            ConnectorTerminalContinuationDeliveryState::Delivered,
+            true,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn mark_terminal_continuation_delivery_unknown(
+        &self,
+        execution_id: &str,
+        claim_fence: &str,
+    ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
+        self.transition_terminal_continuation_delivery(
+            execution_id,
+            claim_fence,
+            ConnectorTerminalContinuationDeliveryState::Dispatching,
+            ConnectorTerminalContinuationDeliveryState::DeliveryUnknown,
+            true,
+        )
+    }
+
+    fn transition_terminal_continuation_delivery(
+        &self,
+        execution_id: &str,
+        claim_fence: &str,
+        expected: ConnectorTerminalContinuationDeliveryState,
+        next: ConnectorTerminalContinuationDeliveryState,
+        clear_fence: bool,
+    ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let execution =
+            load_execution(&tx, execution_id)?.ok_or(ConnectorTaskStoreError::NotFound)?;
+        let stored_fence = tx.query_row(
+            "SELECT terminal_continuation_claim_fence FROM wc_executions WHERE id = ?1",
+            params![execution_id],
+            |row| row.get::<_, Option<String>>(0),
+        )?;
+        if stored_fence.as_deref() != Some(claim_fence) {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "terminal continuation claim fence is stale".to_string(),
+            ));
+        }
+        if execution.continuation_delivery_state != expected {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "terminal continuation delivery transition is not allowed from the current state"
+                    .to_string(),
+            ));
+        }
+        let updated = if clear_fence {
+            tx.execute(
+                "UPDATE wc_executions
+                 SET terminal_continuation_delivery_state = ?1,
+                     terminal_continuation_claim_fence = NULL
+                 WHERE id = ?2
+                   AND terminal_continuation_delivery_state = ?3
+                   AND terminal_continuation_claim_fence = ?4",
+                params![next.as_str(), execution_id, expected.as_str(), claim_fence],
+            )?
+        } else {
+            tx.execute(
+                "UPDATE wc_executions
+                 SET terminal_continuation_delivery_state = ?1
+                 WHERE id = ?2
+                   AND terminal_continuation_delivery_state = ?3
+                   AND terminal_continuation_claim_fence = ?4",
+                params![next.as_str(), execution_id, expected.as_str(), claim_fence],
+            )?
+        };
+        if updated != 1 {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "terminal continuation claim fence is no longer current".to_string(),
+            ));
+        }
+        commit_execution(tx, execution_id)
     }
 
     pub(crate) fn latest_connector_execution(
@@ -583,13 +758,61 @@ impl Database {
         Ok(latest_execution(&conn, task_id)?.filter(ConnectorExecution::blocks_finish))
     }
 
+    pub(crate) fn reconcile_connector_startup(
+        &self,
+        project_id: &str,
+        now: i64,
+    ) -> Result<(usize, usize), ConnectorTaskStoreError> {
+        self.reconcile_connector_executions_inner(project_id, now, true)
+    }
+
+    #[cfg(test)]
     pub(crate) fn reconcile_connector_executions(
         &self,
         project_id: &str,
         now: i64,
     ) -> Result<(usize, usize), ConnectorTaskStoreError> {
+        self.reconcile_connector_executions_inner(project_id, now, false)
+    }
+
+    fn reconcile_connector_executions_inner(
+        &self,
+        project_id: &str,
+        now: i64,
+        recover_terminal_continuation_delivery: bool,
+    ) -> Result<(usize, usize), ConnectorTaskStoreError> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
+        if recover_terminal_continuation_delivery {
+            let claimed_released = tx.execute(
+                "UPDATE wc_executions
+                     SET terminal_continuation_delivery_state = 'unclaimed',
+                         terminal_continuation_claim_fence = NULL
+                     WHERE terminal_continuation_delivery_state = 'claimed'
+                       AND terminal_continuation_claim_fence IS NOT NULL
+                       AND terminal_continuation_intent = 'armed_for_terminal'
+                       AND state NOT IN ('accepted','queued','starting','running','cancel_requested')
+                       AND task_id IN (SELECT id FROM wc_tasks WHERE project_id = ?1)",
+                params![project_id],
+            )?;
+            let dispatching_uncertain = tx.execute(
+                "UPDATE wc_executions
+                     SET terminal_continuation_delivery_state = 'delivery_unknown',
+                         terminal_continuation_claim_fence = NULL
+                     WHERE terminal_continuation_delivery_state = 'dispatching'
+                       AND task_id IN (SELECT id FROM wc_tasks WHERE project_id = ?1)",
+                params![project_id],
+            )?;
+            if claimed_released > 0 || dispatching_uncertain > 0 {
+                tracing::warn!(
+                    project_id,
+                    claimed_released,
+                    dispatching_uncertain,
+                    "Reconciled terminal continuation delivery state after restart"
+                );
+            }
+        }
+
         let recoveries = {
             let mut statement = tx.prepare(
                 "SELECT r.id, t.id,

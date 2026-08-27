@@ -464,6 +464,22 @@ impl Database {
                 terminal_continuation_intent TEXT NOT NULL DEFAULT 'none'
                     CHECK(terminal_continuation_intent IN ('none', 'armed_for_terminal')),
                 terminal_continuation_armed_at INTEGER,
+                terminal_continuation_delivery_state TEXT NOT NULL DEFAULT 'unclaimed'
+                    CHECK(terminal_continuation_delivery_state IN (
+                        'unclaimed', 'claimed', 'dispatching', 'delivered', 'delivery_unknown'
+                    )),
+                terminal_continuation_claim_fence TEXT
+                    CHECK(terminal_continuation_claim_fence IS NULL OR (
+                        length(terminal_continuation_claim_fence) BETWEEN 1 AND 80
+                    )),
+                CHECK(
+                    (terminal_continuation_delivery_state = 'unclaimed'
+                        AND terminal_continuation_claim_fence IS NULL)
+                    OR (terminal_continuation_delivery_state IN ('claimed', 'dispatching')
+                        AND terminal_continuation_claim_fence IS NOT NULL)
+                    OR (terminal_continuation_delivery_state IN ('delivered', 'delivery_unknown')
+                        AND terminal_continuation_claim_fence IS NULL)
+                ),
                 UNIQUE(task_id, run_id, operation_id),
                 CHECK(
                     (kind = 'command' AND check_plan IS NULL)
@@ -961,6 +977,14 @@ impl Database {
                 "TEXT NOT NULL DEFAULT 'none' CHECK(terminal_continuation_intent IN ('none', 'armed_for_terminal'))",
             ),
             ("terminal_continuation_armed_at", "INTEGER"),
+            (
+                "terminal_continuation_delivery_state",
+                "TEXT NOT NULL DEFAULT 'unclaimed' CHECK(terminal_continuation_delivery_state IN ('unclaimed', 'claimed', 'dispatching', 'delivered', 'delivery_unknown'))",
+            ),
+            (
+                "terminal_continuation_claim_fence",
+                "TEXT CHECK(terminal_continuation_claim_fence IS NULL OR (length(terminal_continuation_claim_fence) BETWEEN 1 AND 80))",
+            ),
         ] {
             if !columns.iter().any(|existing| existing == column) {
                 conn.execute(
@@ -1013,17 +1037,32 @@ mod connector_execution_column_tests {
         Database::ensure_connector_execution_columns(&conn).unwrap();
         Database::ensure_connector_execution_columns(&conn).unwrap();
 
-        let restored: (String, Option<i64>, String) = conn
+        let restored: (String, Option<i64>, String, String, Option<String>) = conn
             .query_row(
-                "SELECT terminal_continuation_intent, terminal_continuation_armed_at, state
+                "SELECT terminal_continuation_intent, terminal_continuation_armed_at, state,
+                        terminal_continuation_delivery_state, terminal_continuation_claim_fence
                  FROM wc_executions WHERE id = 'legacy'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .unwrap();
         assert_eq!(
             restored,
-            ("none".to_string(), None, "succeeded".to_string())
+            (
+                "none".to_string(),
+                None,
+                "succeeded".to_string(),
+                "unclaimed".to_string(),
+                None,
+            )
         );
     }
 }

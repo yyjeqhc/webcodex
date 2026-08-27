@@ -155,7 +155,7 @@ impl ExecutionService {
         project_id: &str,
         now: i64,
     ) -> Result<(usize, usize), ConnectorTaskStoreError> {
-        self.db.reconcile_connector_executions(project_id, now)
+        self.db.reconcile_connector_startup(project_id, now)
     }
 
     pub(crate) fn reserve(

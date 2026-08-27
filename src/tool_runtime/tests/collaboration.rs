@@ -11,6 +11,7 @@ use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
 use crate::shell_protocol::ShellClientCapabilities;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 async fn call_with_recorder(
@@ -1904,27 +1905,54 @@ async fn projectless_owner_fingerprint_survives_restart_without_raw_principal_ma
 }
 
 #[tokio::test]
-async fn legacy_persisted_projectless_session_without_owner_fails_closed_for_authenticated_caller()
-{
+async fn legacy_projectless_owner_hash_is_not_accepted_after_restart() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = dir.path().join("sessions.json");
-    let store = sessions::SessionStore::with_persistence(
-        &ledger,
-        sessions::DEFAULT_MAX_SESSIONS,
-        sessions::DEFAULT_MAX_EVENTS_PER_SESSION,
-    );
-    let legacy = store.start_session(None, Some("legacy project-less".to_string()));
-    store.flush_persistence();
-    let persisted = std::fs::read_to_string(&ledger).unwrap();
-    assert!(!persisted.contains("owner_authority_fingerprint"));
-    drop(store);
-
-    let runtime = test_runtime().with_session_ledger(&ledger);
     let alice = shared_key_auth_context("legacy-owner-alice");
-    let denied = call_with_recorder(
+    let runtime = test_runtime().with_session_ledger(&ledger);
+    let started = call_with_recorder(
         &runtime,
+        "start_session",
+        json!({"title": "canonical project-less Session"}),
+        None,
+        &alice,
+        None,
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session_id"].as_str().unwrap().to_string();
+    runtime.sessions.flush_persistence();
+    drop(runtime);
+
+    let authority_id = alice.shared_key_hash.as_deref().unwrap();
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex.workflow-session-owner.v1\0");
+    hasher.update(alice.principal_kind().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(authority_id.as_bytes());
+    let legacy_fingerprint = format!("{:x}", hasher.finalize());
+    let canonical_fingerprint =
+        super::super::session_context::workflow_session_authority_fingerprint(Some(&alice))
+            .unwrap();
+    assert_ne!(legacy_fingerprint, canonical_fingerprint);
+
+    let mut persisted: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let row = persisted["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["session_id"] == session_id)
+        .unwrap();
+    row["owner_authority_fingerprint"] = Value::String(legacy_fingerprint);
+    std::fs::write(&ledger, serde_json::to_vec_pretty(&persisted).unwrap()).unwrap();
+
+    let restored = test_runtime().with_session_ledger(&ledger);
+    assert!(restored.sessions.summary(&session_id, None).is_some());
+    let denied = call_with_recorder(
+        &restored,
         "session_summary",
-        json!({"session_id": legacy.session_id}),
+        json!({"session_id": session_id}),
         None,
         &alice,
         None,
@@ -1932,10 +1960,6 @@ async fn legacy_persisted_projectless_session_without_owner_fails_closed_for_aut
     .await;
     assert!(!denied.success);
     assert_eq!(denied.output["error_kind"], "session_authority_denied");
-
-    // The trusted local/dev path retains compatibility for legacy project-less
-    // records; the new authenticated boundary is the fail-closed change.
-    assert!(runtime.sessions.summary(&legacy.session_id, None).is_some());
 }
 
 #[tokio::test]

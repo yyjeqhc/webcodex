@@ -184,7 +184,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "already_closed",
                 schema_type(
                     "boolean",
-                    "True when the session was already closed (or archived); no new transition event was recorded.",
+                    "True when the session was already closed; no new transition event was recorded.",
                 ),
             ),
             (

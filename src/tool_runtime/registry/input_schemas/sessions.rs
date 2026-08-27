@@ -12,12 +12,11 @@ pub(crate) fn session_mode_schema(description: &str) -> Value {
 
 /// Workflow session lifecycle wire values.
 ///
-/// Phase 2: create yields `active`; explicit `close_session` yields `closed`.
-/// `archived` remains reserved for later phases. Missing ledger field → active.
+/// Create yields `active`; explicit `close_session` yields `closed`.
 pub(crate) fn session_lifecycle_schema(description: &str) -> Value {
     json!({
         "type": "string",
-        "enum": ["active", "closed", "archived"],
+        "enum": ["active", "closed"],
         "description": description,
     })
 }

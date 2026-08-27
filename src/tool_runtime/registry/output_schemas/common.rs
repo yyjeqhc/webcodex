@@ -589,7 +589,7 @@ pub(crate) fn handoff_brief_schema(description: &str) -> Value {
                     },
                     "lifecycle": {
                         "type": "string",
-                        "enum": ["active", "closed", "archived"]
+                        "enum": ["active", "closed"]
                     },
                     "mode": {
                         "type": "string",

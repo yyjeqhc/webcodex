@@ -4,7 +4,7 @@ use super::super::project_instructions::{
     ProjectInstructionsSnapshot, ProjectInstructionsSummarySnapshot,
 };
 use super::super::tool_inputs::{ExecutionShell, SessionMode};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{value::RawValue, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, VecDeque};
@@ -249,26 +249,22 @@ impl CurrentSessionKey {
 
 /// Workflow session lifecycle state.
 ///
-/// Wire values use snake_case (`"active"`, `"closed"`, `"archived"`). Missing
-/// ledger fields default to [`SessionLifecycle::Active`] so pre-lifecycle JSON
-/// remains readable without migration.
+/// Canonical wire values are `"active"` and `"closed"`. Lifecycle is explicit
+/// persisted authority: missing or unknown persisted values are rejected row-local
+/// during restore and never become an active mutable Session.
 ///
-/// Transitions (Phase 2):
+/// Transitions:
 /// - Create always yields [`SessionLifecycle::Active`].
 /// - Explicit `close_session` may transition `Active → Closed`.
-/// - `Closed → Active` is not allowed (no reopen in this phase).
-/// - `Archived` is a reserved wire state and is never produced by the store.
+/// - `Closed → Active` is not allowed.
 ///
 /// LRU eviction remains capacity management, not a lifecycle transition.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionLifecycle {
-    #[default]
     Active,
     /// Explicitly closed; query remains allowed, mutations are denied.
     Closed,
-    /// Reserved wire state. Not produced; treated like Closed for denial.
-    Archived,
 }
 
 impl SessionLifecycle {
@@ -281,17 +277,30 @@ impl SessionLifecycle {
         match self {
             Self::Active => "active",
             Self::Closed => "closed",
-            Self::Archived => "archived",
         }
     }
+}
+
+fn deserialize_persisted_session_lifecycle<'de, D>(
+    deserializer: D,
+) -> Result<Option<SessionLifecycle>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(match value.as_str() {
+        Some("active") => Some(SessionLifecycle::Active),
+        Some("closed") => Some(SessionLifecycle::Closed),
+        _ => None,
+    })
 }
 
 /// Result of an explicit close attempt on a known session.
 #[derive(Debug, Clone)]
 pub(crate) struct SessionCloseOutcome {
     pub(crate) summary: SessionSummary,
-    /// True when the session was already `Closed` (or `Archived`); no new
-    /// transition event was recorded.
+    /// True when the session was already `Closed`; no new transition event was
+    /// recorded.
     pub(crate) already_closed: bool,
 }
 
@@ -312,16 +321,15 @@ pub(super) struct SessionRecord {
     pub(super) session_id: String,
     pub(super) project: Option<String>,
     /// Domain-separated SHA-256 of the canonical creation-time authority group.
-    /// The historical field name is retained for ledger compatibility; the raw
-    /// authority identity is never stored. Restore may use a private noncanonical
-    /// marker for a malformed persisted value so it remains distinguishable from
-    /// a genuinely absent legacy field and permanently fails authorization.
-    pub(super) owner_authority_fingerprint: Option<String>,
+    /// The historical field name is retained only in persistence; in-memory
+    /// mutable/queryable Sessions always carry a canonical fingerprint and never
+    /// retain raw authority identity material.
+    pub(super) owner_authority_fingerprint: String,
     pub(super) title: Option<String>,
     pub(super) mode: SessionMode,
     pub(super) guards: SessionGuards,
     pub(super) execution_context: SessionExecutionContext,
-    /// Explicit lifecycle; always set in memory. Default on load: Active.
+    /// Explicit canonical lifecycle; always set in memory.
     pub(super) lifecycle: SessionLifecycle,
     pub(super) created_at: i64,
     pub(super) updated_at: i64,
@@ -383,7 +391,7 @@ pub(super) enum StoredSession {
 pub(super) struct ColdSessionRecord {
     pub(super) session_id: String,
     pub(super) project: Option<String>,
-    pub(super) owner_authority_fingerprint: Option<String>,
+    pub(super) owner_authority_fingerprint: String,
     pub(super) mode: SessionMode,
     pub(super) guards: SessionGuards,
     pub(super) lifecycle: SessionLifecycle,
@@ -408,10 +416,10 @@ impl StoredSession {
         }
     }
 
-    pub(super) fn owner_authority_fingerprint(&self) -> Option<&str> {
+    pub(super) fn owner_authority_fingerprint(&self) -> &str {
         match self {
-            Self::Hot(record) => record.owner_authority_fingerprint.as_deref(),
-            Self::Cold(record) => record.owner_authority_fingerprint.as_deref(),
+            Self::Hot(record) => record.owner_authority_fingerprint.as_str(),
+            Self::Cold(record) => record.owner_authority_fingerprint.as_str(),
         }
     }
 
@@ -525,9 +533,9 @@ impl SessionCreateOptions {
 pub(crate) struct CodingSessionRequest {
     pub(crate) key: Option<CurrentSessionKey>,
     pub(crate) project: String,
-    /// Canonical creation-time authority fence for authenticated callers.
-    /// `None` is reserved for the trusted local/dev path.
-    pub(crate) authority_fingerprint: Option<String>,
+    /// Canonical creation-time authority fence for every caller, including the
+    /// canonical local/dev authority group.
+    pub(crate) authority_fingerprint: String,
     pub(crate) resume_session_id: Option<String>,
     pub(crate) instruction: Option<String>,
     pub(crate) mode: SessionMode,
@@ -574,9 +582,6 @@ pub(crate) enum CodingSessionError {
         request_project: String,
     },
     ResumeAuthorityMismatch {
-        session_id: String,
-    },
-    LegacySessionAuthorityUnverifiable {
         session_id: String,
     },
     ResumeNewSessionConflict,
@@ -701,9 +706,9 @@ pub(super) struct DurableCurrentBinding {
 pub(super) struct PersistedSessionRecord {
     pub(super) session_id: String,
     pub(super) project: Option<String>,
-    /// Additive v1 field. c3a09275 used it only for project-less ownership;
-    /// current writers store the canonical authority-group fingerprint for every
-    /// authenticated Session. The historical name keeps ledger compatibility.
+    /// Historical field name retained for JSON compatibility. Canonical writers
+    /// always store a domain-separated authority-group fingerprint; missing or
+    /// malformed values are rejected row-local during restore.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) owner_authority_fingerprint: Option<String>,
     pub(super) title: Option<String>,
@@ -712,9 +717,15 @@ pub(super) struct PersistedSessionRecord {
     /// Additive ledger-v1 field. Older ledgers restore an empty context.
     #[serde(default)]
     pub(super) execution_context: SessionExecutionContext,
-    /// Optional on disk for ledger compatibility; missing → Active.
-    #[serde(default)]
-    pub(super) lifecycle: SessionLifecycle,
+    /// Canonical writers always persist an explicit lifecycle. Missing, unknown,
+    /// or removed values deserialize as `None` so restore can discard only that
+    /// row instead of poisoning the whole ledger.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_persisted_session_lifecycle",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(super) lifecycle: Option<SessionLifecycle>,
     pub(super) created_at: i64,
     pub(super) updated_at: i64,
     pub(super) events: Vec<Arc<SessionEvent>>,
@@ -1352,8 +1363,8 @@ pub(crate) enum SessionMessageError {
         current: SessionAssignmentCurrentState,
     },
     PersistenceUncertain,
-    /// Message-board mutation denied because the workflow session is closed
-    /// (or archived). Query tools remain available.
+    /// Message-board mutation denied because the workflow session is closed.
+    /// Query tools remain available.
     SessionClosed {
         lifecycle: SessionLifecycle,
     },

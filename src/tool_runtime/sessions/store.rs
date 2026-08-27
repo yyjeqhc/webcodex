@@ -456,19 +456,6 @@ impl SessionStore {
     }
 
     #[cfg(test)]
-    pub(crate) fn insert_process_local_binding_only_for_test(
-        &self,
-        key: CurrentSessionKey,
-        session_id: &str,
-    ) {
-        self.inner
-            .lock()
-            .expect("session store mutex poisoned")
-            .current_sessions
-            .insert(key, session_id.to_string());
-    }
-
-    #[cfg(test)]
     pub(crate) fn hot_payload_entry_count_for_test(&self, session_id: &str) -> Option<usize> {
         self.inner
             .lock()
@@ -528,11 +515,10 @@ impl SessionStore {
     ) -> Result<SessionSummary, String> {
         opts.execution_context = opts.execution_context.validated()?;
         #[cfg(test)]
-        if opts.project.is_some() && opts.owner_authority_fingerprint.is_none() {
-            // cfg(test)-only callers often build a synthetic project Session
-            // directly, without an AuthContext. Mark those fixtures explicitly;
-            // real runtime creation supplies a canonical fingerprint before this
-            // point, so production missing-fingerprint records still fail closed.
+        if opts.owner_authority_fingerprint.is_none() {
+            // Direct store fixtures do not have an AuthContext. Give them an
+            // explicit cfg(test)-only authority so production invariants never
+            // depend on an optional creation-time fingerprint.
             opts.owner_authority_fingerprint =
                 Some(super::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.to_string());
         }
@@ -545,7 +531,9 @@ impl SessionStore {
         let session_id = format!("{SESSION_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let now = now_ts();
         let guards = SessionGuards::effective(opts.mode, opts.guards);
-        let owner_authority_fingerprint = opts.owner_authority_fingerprint;
+        let owner_authority_fingerprint = opts.owner_authority_fingerprint.ok_or_else(|| {
+            "Workflow Session creation requires a canonical authority fingerprint".to_string()
+        })?;
         let record = SessionRecord {
             session_id: session_id.clone(),
             project: opts.project,
@@ -651,48 +639,25 @@ impl SessionStore {
                 None
             };
 
-            let legacy_authority_upgrade = if let (Some(session_id), Some(authority_fingerprint)) = (
-                reusable_session_id.as_deref(),
-                request.authority_fingerprint.as_deref(),
-            ) {
+            if let Some(session_id) = reusable_session_id.as_deref() {
                 let stored_fingerprint = inner
                     .sessions
                     .get(session_id)
-                    .and_then(StoredSession::owner_authority_fingerprint);
+                    .expect("reusable session must exist")
+                    .owner_authority_fingerprint();
                 #[cfg(test)]
-                let synthetic_test_fixture = stored_fingerprint
-                    == Some(super::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT);
+                let synthetic_test_fixture =
+                    stored_fingerprint == super::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT;
                 #[cfg(not(test))]
                 let synthetic_test_fixture = false;
-                if synthetic_test_fixture {
-                    false
-                } else if let Some(stored_fingerprint) = stored_fingerprint {
-                    if stored_fingerprint != authority_fingerprint {
-                        return Err(CodingSessionError::ResumeAuthorityMismatch {
-                            session_id: session_id.to_string(),
-                        });
-                    }
-                    false
-                } else {
-                    let Some(key) = request.key.as_ref() else {
-                        return Err(CodingSessionError::LegacySessionAuthorityUnverifiable {
-                            session_id: session_id.to_string(),
-                        });
-                    };
-                    if !inner.legacy_project_session_authority_upgrade_proof(
-                        session_id,
-                        key,
-                        &request.project,
-                    ) {
-                        return Err(CodingSessionError::LegacySessionAuthorityUnverifiable {
-                            session_id: session_id.to_string(),
-                        });
-                    }
-                    true
+                if !synthetic_test_fixture
+                    && stored_fingerprint != request.authority_fingerprint.as_str()
+                {
+                    return Err(CodingSessionError::ResumeAuthorityMismatch {
+                        session_id: session_id.to_string(),
+                    });
                 }
-            } else {
-                false
-            };
+            }
 
             if let Some(session_id) = reusable_session_id {
                 let (previous_mode, previous_guards, previous_execution_context) = {
@@ -769,12 +734,6 @@ impl SessionStore {
                         .get_mut(&session_id)
                         .and_then(StoredSession::hot_mut)
                         .expect("active reusable session must stay hot before commit");
-                    if legacy_authority_upgrade {
-                        // The exact durable binding proof and every other fallible
-                        // continuation check completed above. Commit the canonical
-                        // fence with the same Session mutation/persistence generation.
-                        record.owner_authority_fingerprint = request.authority_fingerprint.clone();
-                    }
                     record.mode = request.mode;
                     record.guards = next_guards;
                     record.execution_context = next_execution_context;
@@ -1062,7 +1021,7 @@ impl SessionStore {
     pub(crate) fn session_target_authority(
         &self,
         session_id: &str,
-    ) -> Option<(Option<String>, Option<String>)> {
+    ) -> Option<(Option<String>, String)> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.session_target_authority(session_id)
     }
@@ -1193,7 +1152,7 @@ impl SessionStore {
 
     /// Authoritative lifecycle check used by dispatch/kernel before mutation.
     ///
-    /// Closed/Archived sessions deny write-like, shell-like, and a small set of
+    /// Closed sessions deny write-like, shell-like, and a small set of
     /// session-local mutations (messages, checkpoint create/restore/delete).
     /// Query tools and pure reads remain allowed. `close_session` itself is
     /// never denied so repeated close stays idempotent.
@@ -2262,7 +2221,7 @@ impl SessionStore {
 ///
 /// Map fields stay private; sibling modules must use these helpers so create,
 /// bind, message, and event mutations cannot bypass the store.
-/// Tools blocked on Closed/Archived workflow sessions.
+/// Tools blocked on Closed workflow sessions.
 ///
 /// Query and pure-read tools remain allowed. Message-board mutations and
 /// session-scoped checkpoint mutations are blocked even when metadata marks
@@ -2692,7 +2651,7 @@ impl SessionStoreInner {
             .map(StoredSession::lifecycle)
             .ok_or(SessionCloseError::UnknownSession)?;
         match lifecycle {
-            SessionLifecycle::Closed | SessionLifecycle::Archived => {
+            SessionLifecycle::Closed => {
                 self.remove_bindings_for_session(session_id);
                 let Some(record) = self.sessions.get(session_id).and_then(StoredSession::hot)
                 else {
@@ -2810,27 +2769,6 @@ impl SessionStoreInner {
             .remove(&key.durable_binding_key())
             .is_some();
         process_local_removed || durable_removed
-    }
-
-    fn legacy_project_session_authority_upgrade_proof(
-        &self,
-        session_id: &str,
-        key: &CurrentSessionKey,
-        expected_project: &str,
-    ) -> bool {
-        if key.resolved_project != expected_project {
-            return false;
-        }
-        let legacy_session_matches = self.sessions.get(session_id).is_some_and(|record| {
-            record.lifecycle().allows_mutation()
-                && record.project() == Some(expected_project)
-                && record.owner_authority_fingerprint().is_none()
-        });
-        legacy_session_matches
-            && self
-                .durable_current_bindings
-                .get(&key.durable_binding_key())
-                .is_some_and(|binding| binding.session_id == session_id)
     }
 
     fn reusable_current_session_id(
@@ -3633,11 +3571,11 @@ impl SessionStoreInner {
     pub(super) fn session_target_authority(
         &self,
         session_id: &str,
-    ) -> Option<(Option<String>, Option<String>)> {
+    ) -> Option<(Option<String>, String)> {
         self.sessions.get(session_id).map(|record| {
             (
                 record.project().map(str::to_string),
-                record.owner_authority_fingerprint().map(str::to_string),
+                record.owner_authority_fingerprint().to_string(),
             )
         })
     }

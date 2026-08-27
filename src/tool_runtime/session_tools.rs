@@ -1,8 +1,7 @@
 //! Runtime handlers for session and current-session tool calls.
 
 use super::session_context::{
-    current_session_key, current_session_unavailable_result,
-    legacy_workflow_session_owner_fingerprint, session_authority_denied_result,
+    current_session_key, current_session_unavailable_result, session_authority_denied_result,
     session_lifecycle_denied_result, session_message_error_result,
     session_project_mismatch_no_escape_result, unknown_session_result,
     workflow_session_authority_fingerprint, SessionProjectMismatch,
@@ -226,7 +225,7 @@ impl ToolRuntime {
             );
         }
         let owner_authority_fingerprint = match workflow_session_authority_fingerprint(auth) {
-            Ok(fingerprint) => Some(fingerprint),
+            Ok(fingerprint) => fingerprint,
             Err(_) => {
                 return ToolResult::err_with_output(
                     "session_authority_identity_unavailable",
@@ -252,7 +251,7 @@ impl ToolRuntime {
                 },
             ),
         )
-        .with_owner_authority_fingerprint(owner_authority_fingerprint)
+        .with_owner_authority_fingerprint(Some(owner_authority_fingerprint))
         .with_project_instructions(project_instructions.clone())
         .with_execution_context(execution_context.unwrap_or_default());
         let summary = match self.sessions.start_session_with_options(options) {
@@ -426,68 +425,50 @@ impl ToolRuntime {
             return Err(unknown_session_result(session_id));
         };
         if let Some(project) = project {
-            // The trusted local/dev dispatcher remains an explicit compatibility
-            // path. Every authenticated caller must satisfy both current project
-            // authorization and the immutable creation-time authority fence.
-            let Some(auth) = auth else {
-                return Ok(None);
+            // Project authorization and immutable creation-time Session authority
+            // are independent checks. Local/dev has no credential project check,
+            // but still has the same canonical authority fence as every caller.
+            let resolved = if let Some(auth) = auth {
+                let resolved = match self
+                    .resolve_project_input_for_auth(&project, Some(auth))
+                    .await
+                {
+                    Ok(resolved) => resolved,
+                    Err(err) => return Err(err.into_tool_result()),
+                };
+                if resolved.resolved_id != project {
+                    return Err(session_project_mismatch_no_escape_result(
+                        session_id,
+                        tool_name,
+                        &SessionProjectMismatch {
+                            session_project: project,
+                            request_project: resolved.resolved_id,
+                        },
+                    ));
+                }
+                Some(resolved)
+            } else {
+                None
             };
-            let resolved = match self
-                .resolve_project_input_for_auth(&project, Some(auth))
-                .await
-            {
-                Ok(resolved) => resolved,
-                Err(err) => return Err(err.into_tool_result()),
-            };
-            if resolved.resolved_id != project {
-                return Err(session_project_mismatch_no_escape_result(
-                    session_id,
-                    tool_name,
-                    &SessionProjectMismatch {
-                        session_project: project,
-                        request_project: resolved.resolved_id,
-                    },
-                ));
-            }
-            let caller_fingerprint = workflow_session_authority_fingerprint(Some(auth))
+            let caller_fingerprint = workflow_session_authority_fingerprint(auth)
                 .map_err(|_| session_authority_denied_result(session_id, tool_name))?;
             #[cfg(test)]
-            let synthetic_test_fixture = owner_authority_fingerprint.as_deref()
-                == Some(sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT);
+            let synthetic_test_fixture = owner_authority_fingerprint
+                == sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT;
             #[cfg(not(test))]
             let synthetic_test_fixture = false;
-            if !synthetic_test_fixture
-                && owner_authority_fingerprint.as_deref() != Some(caller_fingerprint.as_str())
-            {
+            if !synthetic_test_fixture && owner_authority_fingerprint != caller_fingerprint {
                 return Err(session_authority_denied_result(session_id, tool_name));
             }
-            return Ok(Some(resolved));
+            return Ok(resolved);
         }
 
-        // Project-less Sessions remain available to the trusted local/dev path.
-        // Authenticated callers must match the durable hashed authority. c3a09275
-        // ledgers are accepted only when the same caller matches their legacy
-        // owner fingerprint; a missing fingerprint still fails closed.
-        let Some(auth) = auth else {
-            return Ok(None);
-        };
-        if auth.is_open_anonymous() {
+        if auth.is_some_and(AuthContext::is_open_anonymous) {
             return Err(session_authority_denied_result(session_id, tool_name));
         }
-        let caller_fingerprint = workflow_session_authority_fingerprint(Some(auth))
+        let caller_fingerprint = workflow_session_authority_fingerprint(auth)
             .map_err(|_| session_authority_denied_result(session_id, tool_name))?;
-        let canonical_match =
-            owner_authority_fingerprint.as_deref() == Some(caller_fingerprint.as_str());
-        let legacy_match = if canonical_match {
-            false
-        } else {
-            legacy_workflow_session_owner_fingerprint(Some(auth))
-                .ok()
-                .is_some_and(|fingerprint| {
-                    owner_authority_fingerprint.as_deref() == Some(fingerprint.as_str())
-                })
-        };
-        if !canonical_match && !legacy_match {
+        if owner_authority_fingerprint != caller_fingerprint {
             return Err(session_authority_denied_result(session_id, tool_name));
         }
         Ok(None)

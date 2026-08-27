@@ -187,7 +187,7 @@ pub(crate) fn session_guard_denied_result(
     .with_recovery(RecoveryKind::NoAction, None)
 }
 
-/// Lifecycle denial for Closed/Archived workflow sessions (write/shell/mutation).
+/// Lifecycle denial for Closed workflow sessions (write/shell/mutation).
 pub(crate) fn session_lifecycle_denied_result(
     session_id: &str,
     tool_name: &str,
@@ -196,7 +196,6 @@ pub(crate) fn session_lifecycle_denied_result(
     let lifecycle = denial.lifecycle.as_str();
     let error_kind = match denial.lifecycle {
         sessions::SessionLifecycle::Closed => "session_closed",
-        sessions::SessionLifecycle::Archived => "session_archived",
         sessions::SessionLifecycle::Active => "session_lifecycle_denied",
     };
     let mut output = json!({
@@ -368,21 +367,15 @@ pub(crate) fn session_message_error_result(
             }),
         )
         .with_recovery(RecoveryKind::RetrySame, None),
-        sessions::SessionMessageError::SessionClosed { lifecycle } => {
-            let error_kind = match lifecycle {
-                sessions::SessionLifecycle::Archived => "session_archived",
-                _ => "session_closed",
-            };
-            ToolResult::err_with_output(
-                format!("{error_kind}: session message mutation blocked"),
-                json!({
-                    "error_kind": error_kind,
-                    "session_id": session_id,
-                    "lifecycle": lifecycle.as_str(),
-                }),
-            )
-            .with_recovery(RecoveryKind::NoAction, None)
-        }
+        sessions::SessionMessageError::SessionClosed { lifecycle } => ToolResult::err_with_output(
+            "session_closed: session message mutation blocked",
+            json!({
+                "error_kind": "session_closed",
+                "session_id": session_id,
+                "lifecycle": lifecycle.as_str(),
+            }),
+        )
+        .with_recovery(RecoveryKind::NoAction, None),
         sessions::SessionMessageError::InvalidInput(message) => ToolResult::err_with_output(
             message.clone(),
             json!({
@@ -868,73 +861,6 @@ fn hash_workflow_session_authority(domain: &[u8], kind: &str, id: &str) -> Strin
     hasher.update(b"\0");
     hasher.update(id.as_bytes());
     format!("{:x}", hasher.finalize())
-}
-
-/// Compatibility verifier for project-less Sessions written by c3a09275.
-/// New Sessions always use the canonical authority-group fingerprint above.
-pub(crate) fn legacy_workflow_session_owner_fingerprint(
-    auth: Option<&AuthContext>,
-) -> Result<String, String> {
-    let (principal_kind, principal_id) = match auth {
-        None => ("dev".to_string(), "dev".to_string()),
-        Some(auth) if auth.is_open_anonymous() => {
-            return Err(
-                "project-less Workflow Session requires a distinct stable caller identity"
-                    .to_string(),
-            );
-        }
-        Some(auth) if auth.is_bootstrap => (
-            "bootstrap".to_string(),
-            auth.user_id
-                .as_deref()
-                .or(auth.username.as_deref())
-                .unwrap_or("bootstrap")
-                .to_string(),
-        ),
-        Some(auth) if auth.is_oauth_shared_key_subject() => (
-            auth.principal_kind().to_string(),
-            stable_workflow_authority_id(
-                auth.shared_key_hash.as_deref(),
-                "OAuth shared-key subject has no stable identity",
-            )?,
-        ),
-        Some(auth) if auth.is_oauth_project_subject() => (
-            auth.principal_kind().to_string(),
-            stable_workflow_authority_id(
-                auth.project_grant_id.as_deref(),
-                "OAuth project subject has no stable identity",
-            )?,
-        ),
-        Some(auth) if auth.is_oauth_token() => (
-            auth.principal_kind().to_string(),
-            auth.user_id
-                .as_deref()
-                .or(auth.username.as_deref())
-                .or(auth.api_key_id.as_deref())
-                .map(str::to_string)
-                .ok_or_else(|| "OAuth caller has no stable owner identity".to_string())?,
-        ),
-        Some(auth) if auth.is_shared_key() => (
-            auth.principal_kind().to_string(),
-            stable_workflow_authority_id(
-                auth.shared_key_hash.as_deref(),
-                "shared-key caller has no stable owner identity",
-            )?,
-        ),
-        Some(auth) if auth.is_project_credential() => (
-            auth.principal_kind().to_string(),
-            stable_workflow_authority_id(
-                auth.project_grant_id.as_deref(),
-                "project credential has no stable owner identity",
-            )?,
-        ),
-        Some(auth) => current_session_principal(Some(auth))?,
-    };
-    Ok(hash_workflow_session_authority(
-        b"webcodex.workflow-session-owner.v1\0",
-        &principal_kind,
-        &principal_id,
-    ))
 }
 
 pub(crate) fn current_session_key(

@@ -735,7 +735,7 @@ fn coding_session_context_precommit_failure_leaves_memory_unchanged() {
         CodingSessionRequest {
             key: None,
             project: "agent:oe:private-drop".to_string(),
-            authority_fingerprint: None,
+            authority_fingerprint: TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.to_string(),
             resume_session_id,
             instruction: Some("continue".to_string()),
             mode: SessionMode::Normal,
@@ -903,7 +903,7 @@ fn update_session_execution_context_sets_clears_and_rejects_invalid_states() {
 }
 
 #[test]
-fn archived_session_rejects_execution_context_update() {
+fn removed_lifecycle_value_is_discarded_instead_of_restored_active() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");
     std::fs::write(
@@ -911,9 +911,10 @@ fn archived_session_rejects_execution_context_update() {
         serde_json::to_vec_pretty(&json!({
             "version": SESSION_LEDGER_VERSION,
             "sessions": [{
-                "session_id": "wc_sess_archivedcontext01",
+                "session_id": "wc_sess_removedlifecycle01",
                 "project": "agent:oe:private-drop",
-                "title": "archived",
+                "owner_authority_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "title": "removed lifecycle",
                 "mode": "normal",
                 "guards": {
                     "deny_write_tools": false,
@@ -931,17 +932,16 @@ fn archived_session_rejects_execution_context_update() {
     )
     .unwrap();
     let store = SessionStore::with_persistence(ledger, 10, 10);
+    assert!(store.summary("wc_sess_removedlifecycle01", None).is_none());
     assert_eq!(
         store
             .update_execution_context(
-                "wc_sess_archivedcontext01",
+                "wc_sess_removedlifecycle01",
                 SessionExecutionContext::default(),
                 SessionTransport::Api,
             )
             .unwrap_err(),
-        SessionExecutionContextUpdateError::SessionNotActive {
-            lifecycle: SessionLifecycle::Archived
-        }
+        SessionExecutionContextUpdateError::UnknownSession
     );
 }
 
@@ -3759,7 +3759,7 @@ fn ledger_round_trip_preserves_session_state_events_and_messages() {
     assert!(restored.current_session(&key).is_none());
 }
 
-// --- Workflow session lifecycle (Phase 1: field + ledger default only) ---
+// --- Workflow Session lifecycle: explicit Active/Closed authority ---
 
 #[test]
 fn new_session_defaults_lifecycle_to_active() {
@@ -3796,7 +3796,7 @@ fn persisted_ledger_writes_and_reads_lifecycle_active() {
 }
 
 #[test]
-fn durable_current_binding_legacy_ledger_without_bindings_loads_session_as_active() {
+fn durable_current_binding_legacy_ledger_without_lifecycle_is_discarded() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("sessions.json");
     // Pre-lifecycle JSON shape: no `lifecycle` key on the session record.
@@ -3819,22 +3819,17 @@ fn durable_current_binding_legacy_ledger_without_bindings_loads_session_as_activ
     });
     std::fs::write(&ledger_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
 
-    // Missing field must not fail serde (#[serde(default)] → Active).
+    // Missing lifecycle/authority is tolerated at JSON decode but never inferred
+    // into an active in-memory Session.
     let restored = persistent_store(ledger_path);
     let status = restored.status();
-    assert_eq!(status.restored_sessions, 1);
+    assert_eq!(status.restored_sessions, 0);
     assert_eq!(status.durable_binding_count, 0);
     assert_eq!(status.restored_binding_count, 0);
-    assert_eq!(status.discarded_binding_count, 0);
     assert_eq!(status.last_persist_error, None);
-
-    let summary = restored
+    assert!(restored
         .summary("wc_sess_legacylifecycle01", Some(10))
-        .unwrap();
-    assert_eq!(summary.lifecycle, SessionLifecycle::Active);
-    assert_eq!(summary.project.as_deref(), Some("proj-legacy"));
-    assert_eq!(summary.title.as_deref(), Some("old row"));
-    assert_eq!(summary.mode, SessionMode::Normal);
+        .is_none());
 }
 
 #[test]
@@ -3960,11 +3955,12 @@ fn durable_current_binding_restore_enforces_bounded_count() {
 }
 
 #[test]
-fn persisted_session_record_serde_defaults_missing_lifecycle() {
-    // Direct serde check: omit lifecycle entirely; deserialize succeeds as Active.
+fn persisted_session_record_missing_lifecycle_is_fail_closed() {
+    // Deserialize the row without poisoning the ledger, but never infer Active.
     let json = r#"{
         "session_id": "wc_sess_serde_default_ok",
         "project": null,
+        "owner_authority_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "title": null,
         "mode": "normal",
         "guards": {"deny_write_tools": false, "deny_shell_tools": false},
@@ -3974,7 +3970,26 @@ fn persisted_session_record_serde_defaults_missing_lifecycle() {
         "messages": []
     }"#;
     let record: PersistedSessionRecord = serde_json::from_str(json).unwrap();
-    assert_eq!(record.lifecycle, SessionLifecycle::Active);
+    assert_eq!(record.lifecycle, None);
+    let malformed = json.replace(
+        "\"created_at\": 10,",
+        "\"lifecycle\": {\"removed\": true}, \"created_at\": 10,",
+    );
+    let malformed_record: PersistedSessionRecord = serde_json::from_str(&malformed).unwrap();
+    assert_eq!(malformed_record.lifecycle, None);
+    let uppercase_authority = json.replace(
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    );
+    let uppercase_record: PersistedSessionRecord =
+        serde_json::from_str(&uppercase_authority).unwrap();
+    assert!(uppercase_record.into_record(10).is_none());
+    let padded_authority = json.replace(
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        " bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ",
+    );
+    let padded_record: PersistedSessionRecord = serde_json::from_str(&padded_authority).unwrap();
+    assert!(padded_record.into_record(10).is_none());
     assert!(record.session_id.starts_with(SESSION_ID_PREFIX));
 
     let ledger_json = format!(
@@ -3985,12 +4000,16 @@ fn persisted_session_record_serde_defaults_missing_lifecycle() {
     let ledger: PersistedSessionLedger = serde_json::from_str(&ledger_json).unwrap();
     assert_eq!(ledger.version, SESSION_LEDGER_VERSION);
     assert_eq!(ledger.sessions.len(), 1);
-    assert_eq!(
-        ledger.sessions[0].hot().unwrap().lifecycle,
-        SessionLifecycle::Active
-    );
+    assert_eq!(ledger.sessions[0].hot().unwrap().lifecycle, None);
     assert!(ledger.durable_current_bindings.records.is_empty());
     assert_eq!(ledger.durable_current_bindings.malformed_count, 0);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger_path = tmp.path().join("missing-lifecycle.json");
+    std::fs::write(&ledger_path, ledger_json).unwrap();
+    let restored = SessionStore::with_persistence(ledger_path, 10, 10);
+    assert!(restored.summary("wc_sess_serde_default_ok", None).is_none());
+    assert_eq!(restored.status().restored_sessions, 0);
 }
 
 #[test]
@@ -4004,14 +4023,9 @@ fn session_lifecycle_wire_values_are_snake_case() {
         json!("closed")
     );
     assert_eq!(
-        serde_json::to_value(SessionLifecycle::Archived).unwrap(),
-        json!("archived")
-    );
-    assert_eq!(
         serde_json::from_value::<SessionLifecycle>(json!("active")).unwrap(),
         SessionLifecycle::Active
     );
-    assert_eq!(SessionLifecycle::default(), SessionLifecycle::Active);
 }
 
 // --- Workflow session lifecycle (Phase 2: explicit close) ---

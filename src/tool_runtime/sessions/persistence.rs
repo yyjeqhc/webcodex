@@ -60,12 +60,12 @@ impl PersistedSessionRecord {
         Self {
             session_id: record.session_id.clone(),
             project: record.project.clone(),
-            owner_authority_fingerprint: record.owner_authority_fingerprint.clone(),
+            owner_authority_fingerprint: Some(record.owner_authority_fingerprint.clone()),
             title: record.title.clone(),
             mode: record.mode,
             guards: record.guards,
             execution_context: record.execution_context.clone(),
-            lifecycle: record.lifecycle,
+            lifecycle: Some(record.lifecycle),
             created_at: record.created_at,
             updated_at: record.updated_at,
             events,
@@ -93,12 +93,13 @@ impl PersistedSessionRecord {
     pub(super) fn still_matches_record(&self, record: &SessionRecord) -> bool {
         self.session_id == record.session_id
             && self.project == record.project
-            && self.owner_authority_fingerprint == record.owner_authority_fingerprint
+            && self.owner_authority_fingerprint.as_deref()
+                == Some(record.owner_authority_fingerprint.as_str())
             && self.title == record.title
             && self.mode == record.mode
             && self.guards == record.guards
             && self.execution_context == record.execution_context
-            && self.lifecycle == record.lifecycle
+            && self.lifecycle == Some(record.lifecycle)
             && self.created_at == record.created_at
             && self.updated_at == record.updated_at
             && self.events_observed == record.events_observed
@@ -136,6 +137,12 @@ impl PersistedSessionRecord {
         if !is_valid_session_id(&session_id) {
             return None;
         }
+        // Canonical authority and lifecycle are required before any restored row
+        // can enter the in-memory Session store. Missing, malformed, unknown, or
+        // removed historical values fail closed by discarding only this row.
+        let owner_authority_fingerprint =
+            sanitize_owner_authority_fingerprint(self.owner_authority_fingerprint)?;
+        let lifecycle = self.lifecycle?;
         let events: VecDeque<Arc<SessionEvent>> = self
             .events
             .into_iter()
@@ -327,8 +334,6 @@ impl PersistedSessionRecord {
             .max()
             .unwrap_or(0);
         let project = self.project.map(|value| bound_summary_string(value.trim()));
-        let owner_authority_fingerprint =
-            sanitize_owner_authority_fingerprint(self.owner_authority_fingerprint);
         let execution_context = if project.is_some() {
             self.execution_context.sanitized_for_restore()
         } else {
@@ -342,8 +347,7 @@ impl PersistedSessionRecord {
             mode: self.mode,
             guards: SessionGuards::effective(self.mode, self.guards),
             execution_context,
-            // Missing ledger field deserializes via #[serde(default)] → Active.
-            lifecycle: self.lifecycle,
+            lifecycle,
             created_at: self.created_at,
             updated_at: self.updated_at.max(self.created_at),
             events,
@@ -385,25 +389,9 @@ fn sanitize_materialized_validation_job_ids(values: Vec<String>) -> VecDeque<Str
     newest.into()
 }
 
-// Preserve the distinction between a genuinely absent legacy field and a
-// present-but-malformed value without retaining attacker-controlled material.
-// The marker is internal ledger state, is never a valid canonical fingerprint,
-// and therefore remains permanently fail-closed across subsequent rewrites.
-const INVALID_OWNER_AUTHORITY_FINGERPRINT_MARKER: &str =
-    "invalid_persisted_workflow_session_authority_fingerprint";
-
 fn sanitize_owner_authority_fingerprint(value: Option<String>) -> Option<String> {
     let value = value?;
-    let normalized = value.trim().to_ascii_lowercase();
-    if normalized.len() == 64
-        && normalized
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        Some(normalized)
-    } else {
-        Some(INVALID_OWNER_AUTHORITY_FINGERPRINT_MARKER.to_string())
-    }
+    is_lower_hex_sha256(&value).then_some(value)
 }
 
 pub(super) fn cold_session_from_record(
@@ -423,16 +411,28 @@ pub(super) fn cold_session_from_persisted(
     persisted: &PersistedSessionRecord,
     project_instructions: Option<ProjectInstructionsSummarySnapshot>,
 ) -> Result<ColdSessionRecord, serde_json::Error> {
+    let owner_authority_fingerprint =
+        sanitize_owner_authority_fingerprint(persisted.owner_authority_fingerprint.clone())
+            .ok_or_else(|| {
+                serde_json::Error::io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "persisted Session is missing canonical authority",
+                ))
+            })?;
+    let lifecycle = persisted.lifecycle.ok_or_else(|| {
+        serde_json::Error::io(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "persisted Session is missing canonical lifecycle",
+        ))
+    })?;
     let raw = Arc::from(serde_json::value::to_raw_value(persisted)?);
     Ok(ColdSessionRecord {
         session_id: persisted.session_id.clone(),
         project: persisted.project.clone(),
-        owner_authority_fingerprint: sanitize_owner_authority_fingerprint(
-            persisted.owner_authority_fingerprint.clone(),
-        ),
+        owner_authority_fingerprint,
         mode: persisted.mode,
         guards: persisted.guards,
-        lifecycle: persisted.lifecycle,
+        lifecycle,
         updated_at: persisted.updated_at,
         context_revision: persisted.context_revision,
         project_instructions,

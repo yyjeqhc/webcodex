@@ -694,11 +694,10 @@ impl ToolRuntime {
                 "message": "repository structure overview was unavailable during startup",
             }));
         }
-        // Explicit resume may need the exact historical durable binding as a
-        // legacy authority-upgrade proof even when the caller does not want to
-        // bind this request as current. Building the key does not itself create
-        // or refresh any binding; `bind_current` remains the sole mutation gate.
-        let continuity_key = if bind_current || resume_requested {
+        // Current-session identity is only needed when this request intends to
+        // bind a Session as current. Explicit resume is authorized independently
+        // by project equality plus the Session's canonical creation-time authority.
+        let continuity_key = if bind_current {
             match current_session_key(
                 auth,
                 transport,
@@ -767,24 +766,21 @@ impl ToolRuntime {
         let binding_available = bind_current && continuity_key.is_some();
         let write_scope_verified =
             auth.is_none_or(|auth| auth.has_scope(crate::auth::SCOPE_PROJECT_WRITE));
-        let authority_fingerprint = match auth {
-            None => None,
-            Some(auth) => match workflow_session_authority_fingerprint(Some(auth)) {
-                Ok(fingerprint) => Some(fingerprint),
-                Err(_) => {
-                    return attach_project_resolution(
-                        ToolResult::err_with_output(
-                            "authenticated caller has no canonical Workflow Session authority identity",
-                            json!({
-                                "error_kind": "session_authority_identity_unavailable",
-                                "failure_kind": "session_authority_denied",
-                                "state_changed": false,
-                            }),
-                        ),
-                        &project_resolution,
-                    );
-                }
-            },
+        let authority_fingerprint = match workflow_session_authority_fingerprint(auth) {
+            Ok(fingerprint) => fingerprint,
+            Err(_) => {
+                return attach_project_resolution(
+                    ToolResult::err_with_output(
+                        "caller has no canonical Workflow Session authority identity",
+                        json!({
+                            "error_kind": "session_authority_identity_unavailable",
+                            "failure_kind": "session_authority_denied",
+                            "state_changed": false,
+                        }),
+                    ),
+                    &project_resolution,
+                );
+            }
         };
         let session_outcome = match self.sessions.ensure_coding_session(
             sessions::CodingSessionRequest {
@@ -837,7 +833,6 @@ impl ToolRuntime {
             }) => {
                 let error_kind = match lifecycle {
                     sessions::SessionLifecycle::Closed => "session_closed",
-                    sessions::SessionLifecycle::Archived => "session_archived",
                     sessions::SessionLifecycle::Active => "session_lifecycle_denied",
                 };
                 return attach_project_resolution(
@@ -888,24 +883,6 @@ impl ToolRuntime {
                             "failure_kind": "session_authority_denied",
                             "session_id": session_id,
                             "resume_requested": true,
-                            "state_changed": false,
-                        }),
-                    ),
-                    &project_resolution,
-                );
-            }
-            Err(sessions::CodingSessionError::LegacySessionAuthorityUnverifiable {
-                session_id,
-            }) => {
-                return attach_project_resolution(
-                    ToolResult::err_with_output(
-                        "legacy_session_authority_unverifiable",
-                        json!({
-                            "error_kind": "legacy_session_authority_unverifiable",
-                            "failure_kind": "session_authority_denied",
-                            "reason_code": "legacy_session_authority_unverifiable",
-                            "session_id": session_id,
-                            "resume_requested": resume_requested,
                             "state_changed": false,
                         }),
                     ),

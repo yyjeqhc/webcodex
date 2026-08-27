@@ -126,9 +126,9 @@ Waiting uses process-local notification only as a wake signal; durable revision 
 
 Message observation is not a delivery receipt, not model-context retention, not a subscription/stream, and not an orchestrator wake-up. Room/Discussion, Participant, presence, typing, scheduler/worker-pool, automatic worker spawning, and routing remain future additive capabilities rather than reinterpretations of this cursor.
 
-Authenticated project-scoped Workflow Sessions created by current code also persist an internal canonical authority-group fingerprint. A legacy project-scoped record from before that fence may legitimately have no fingerprint; current project authorization or knowledge of its `session_id` is not enough to claim it. The only automatic compatibility upgrade is a coding continuation/resume whose current caller can reconstruct an exact historical `CurrentSessionKey` and whose pre-existing **durable** binding already points to that exact active Session for the same resolved project. The proof ignores the process-local cache. After all continuation validation succeeds, the canonical fingerprint is written atomically with the instruction/capability/context/binding mutation and enters the same persistence generation. Without that durable proof the legacy Session remains fail-closed.
+Every Workflow Session admitted to the in-memory store carries one canonical creation-time authority-group fingerprint. The ledger keeps only that domain-separated SHA-256 fingerprint under the historical `owner_authority_fingerprint` field; raw user, shared-key, project-grant, credential, or window identity material is never persisted as Session authority. Project authorization and creation-time Session authority are separate checks: access to a project does not authorize another authority group's Session, and a matching Session fingerprint does not bypass project authorization or project equality.
 
-The historical `CurrentSessionKey` and durable binding hash format are unchanged, including their principal-presentation, transport, stable-window, project, and canonical-root components. Consequently a legacy binding created through one presentation (for example direct shared-key) is not rewritten to make a first migration attempt through another presentation match. Once migration succeeds, subsequent Session authorization uses the canonical authority-group fingerprint, so direct shared-key and its OAuth shared-key bridge share the migrated Session normally.
+Persisted rows without an exact lowercase canonical fingerprint, or without an explicit canonical `active`/`closed` lifecycle, are discarded row-locally during restore. A process-local or durable `CurrentSessionKey` binding may select an existing active same-project Session for continuity, but it never grants, repairs, migrates, or upgrades Session authority. After selection, execution/mutation/resume still compares the caller's canonical fingerprint before changing Session state. Direct shared-key and its OAuth shared-key bridge share a Session only because they derive the same canonical authority-group fingerprint, not because a binding bridges their presentation identities.
 
 ### Persistent execution defaults
 
@@ -168,7 +168,7 @@ in-memory store lock. An explicit `{}` clears all execution defaults.
 `update_session_context` requires a project input that the caller may access and
 that resolves exactly to the explicit known active Session project. It never
 uses current-session fallback, never creates an unknown Session, rejects closed,
-archived, project-less, unauthorized, and mismatched Sessions, and has no
+project-less, unauthorized, and mismatched Sessions, and has no
 cross-project escape. The context and event commit together in memory; the JSON
 ledger is then queued to the existing background writer. Persistence failures
 are reported through existing status and logs, and success does not mean a
@@ -423,8 +423,9 @@ remain their own model and do not infer or mutate Workflow Sessions.
 
 ### Current lifecycle contract
 
-- New Workflow Sessions are `active`; older ledgers without a lifecycle field
-  are also read as `active`.
+- New Workflow Sessions are `active`. Persisted Sessions must carry an explicit
+  canonical `active` or `closed` lifecycle; rows with missing or unknown lifecycle
+  values are discarded during restore and never gain mutation authority.
 - `close_session` is the only explicit `active → closed` transition. It requires
   an explicit `session_id`, never uses current-session fallback, and returns
   `unknown_session_id` for malformed or unknown IDs without creating a session.
@@ -437,8 +438,7 @@ remain their own model and do not infer or mutate Workflow Sessions.
   checkpoint create/restore/delete with `session_closed`.
 - `finish_coding_task`, `session_handoff_summary`, and other summary/query tools
   produce closeout information but do not close the session.
-- `archived` is a reserved wire state that current code does not produce. LRU
-  eviction is capacity management, not a lifecycle transition, and removes
+- LRU eviction is capacity management, not a lifecycle transition, and removes
   bindings to the evicted Session.
 - Session modes (`normal`, `inspect`, `read_only`) are execution policy, not
   lifecycle state.

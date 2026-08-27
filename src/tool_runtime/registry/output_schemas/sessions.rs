@@ -219,6 +219,30 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
+        "get_session_assignment" => Some(wrapped_output_schema(vec![
+            ("success", schema_type("boolean", "Always true on success.")),
+            ("session_id", schema_type("string", "Exact coordinator/business Session id.")),
+            ("message_id", schema_type("string", "Exact open todo wc_msg_* id.")),
+            ("todo", open_object_schema("Exact retained open todo.")),
+            (
+                "direct_replies",
+                json!({
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": open_object_schema("Direct reply whose reply_to is the exact todo id."),
+                    "description": "Oldest-first complete retained direct-reply set for this assignment; assignment reads fail closed instead of truncating this set."
+                }),
+            ),
+            (
+                "assignment_fence",
+                json!({
+                    "type": "string",
+                    "maxLength": 192,
+                    "pattern": "^wsa1_[A-Za-z0-9_-]+$",
+                    "description": "Opaque Session/todo-bound completion fence. Pass unchanged as expected_assignment_fence; it is not an observation cursor, authority token, or completion key."
+                }),
+            ),
+        ])),
         "observe_session_messages" => Some(wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success, including timeout.")),
             ("session_id", schema_type("string", "Explicit business Session id being observed.")),

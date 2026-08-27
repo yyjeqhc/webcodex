@@ -440,6 +440,13 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Read one exact open todo plus every retained direct reply under one
+    /// Session-store snapshot and return an opaque assignment fence.
+    GetSessionAssignment {
+        session_id: String,
+        message_id: String,
+    },
+
     /// Observe only message-state changes after an opaque Session-bound durable
     /// cursor. Without a token this establishes a current baseline and returns
     /// no history. Optional waiting is one bounded wait, never a subscription.
@@ -469,6 +476,8 @@ pub enum ToolCall {
         message_id: String,
         answer: String,
         completion_key: String,
+        #[serde(default)]
+        expected_assignment_fence: Option<String>,
         #[serde(default)]
         tags: Vec<String>,
         #[serde(default)]
@@ -2116,6 +2125,7 @@ impl ToolCall {
             Self::ValidationSummary { .. } => "validation_summary",
             Self::PostSessionMessage { .. } => "post_session_message",
             Self::ListSessionMessages { .. } => "list_session_messages",
+            Self::GetSessionAssignment { .. } => "get_session_assignment",
             Self::ObserveSessionMessages { .. } => "observe_session_messages",
             Self::ResolveSessionMessage { .. } => "resolve_session_message",
             Self::CompleteSessionMessage { .. } => "complete_session_message",

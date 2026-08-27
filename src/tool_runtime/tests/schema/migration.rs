@@ -68,6 +68,11 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
             "explicit_business_session",
         ),
         (
+            "get_session_assignment",
+            "session",
+            "explicit_business_session",
+        ),
+        (
             "observe_session_messages",
             "session",
             "explicit_business_session",

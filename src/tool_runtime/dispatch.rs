@@ -1297,6 +1297,7 @@ impl ToolRuntime {
             | ToolCall::ValidationSummary { .. }
             | ToolCall::PostSessionMessage { .. }
             | ToolCall::ListSessionMessages { .. }
+            | ToolCall::GetSessionAssignment { .. }
             | ToolCall::ObserveSessionMessages { .. }
             | ToolCall::ResolveSessionMessage { .. }
             | ToolCall::CompleteSessionMessage { .. }

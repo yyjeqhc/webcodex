@@ -2,14 +2,15 @@
 //!
 //! All message-map mutations go through `SessionStoreInner` helpers.
 
+use super::assignment::{open_assignment_state, snapshot_from_state};
 use super::model::{
     CompleteSessionMessageInput, CompleteSessionMessageOutcome, ListSessionMessagesFilter,
     PostSessionMessageInput, ReplaceSessionMessageInput, ReplaceSessionMessageOutcome,
-    SessionAckObservation, SessionAttentionSnapshot, SessionDiscussionSummary, SessionInboxHint,
-    SessionMessage, SessionMessageError, SessionMessageKind, SessionMessageObservationError,
-    SessionMessageObservationOutcome, SessionMessagePriority, SessionMessageStatus,
-    WithdrawSessionMessageOutcome, DEFAULT_MESSAGE_LIST_LIMIT, MAX_MESSAGE_LIST_LIMIT,
-    MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN,
+    SessionAckObservation, SessionAssignmentSnapshot, SessionAttentionSnapshot,
+    SessionDiscussionSummary, SessionInboxHint, SessionMessage, SessionMessageError,
+    SessionMessageKind, SessionMessageObservationError, SessionMessageObservationOutcome,
+    SessionMessagePriority, SessionMessageStatus, WithdrawSessionMessageOutcome,
+    DEFAULT_MESSAGE_LIST_LIMIT, MAX_MESSAGE_LIST_LIMIT, MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN,
 };
 use super::query::{build_discussion_summary, build_inbox_hint};
 use super::store::SessionStore;
@@ -74,6 +75,26 @@ impl SessionStore {
                 .collect()
         })
         .ok_or(SessionMessageError::UnknownSession)
+    }
+
+    /// Read one exact open todo and every retained direct reply under one
+    /// Session-store snapshot. The durable persistence barrier is completed
+    /// before the opaque fence is returned so a post-restart retry can compare
+    /// against the same observation state.
+    pub(crate) fn get_assignment(
+        &self,
+        session_id: &str,
+        todo_id: &str,
+    ) -> Result<SessionAssignmentSnapshot, SessionMessageError> {
+        let state = self
+            .with_record_for_query(session_id, |record, _| {
+                open_assignment_state(record, todo_id)
+            })
+            .ok_or(SessionMessageError::UnknownSession)??;
+        if self.persist_after_mutation_durable().is_err() {
+            return Err(SessionMessageError::InvalidObservationState);
+        }
+        Ok(snapshot_from_state(session_id, todo_id, state))
     }
 
     pub(crate) fn observe_message_acks(
@@ -216,9 +237,30 @@ impl SessionStore {
         &self,
         input: CompleteSessionMessageInput,
     ) -> Result<CompleteSessionMessageOutcome, SessionMessageError> {
-        let outcome = {
+        let result = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
-            inner.complete_message(input)?
+            inner.complete_message(input)
+        };
+        let outcome = match result {
+            Ok(outcome) => outcome,
+            Err(SessionMessageError::AssignmentStale {
+                current,
+                fresh_assignment_fence,
+            }) => {
+                if fresh_assignment_fence.is_some()
+                    && self.persist_after_mutation_durable().is_err()
+                {
+                    return Err(SessionMessageError::AssignmentStale {
+                        current,
+                        fresh_assignment_fence: None,
+                    });
+                }
+                return Err(SessionMessageError::AssignmentStale {
+                    current,
+                    fresh_assignment_fence,
+                });
+            }
+            Err(error) => return Err(error),
         };
         if self.persist_after_mutation_durable().is_err() {
             if !outcome.replayed {

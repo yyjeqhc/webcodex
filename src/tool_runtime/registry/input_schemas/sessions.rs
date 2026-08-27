@@ -161,6 +161,26 @@ pub(crate) fn list_session_messages_input_schema() -> Value {
     })
 }
 
+pub(crate) fn get_session_assignment_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "pattern": "^wc_sess_[A-Za-z0-9_]+$",
+                "description": "Required coordinator/business Workflow Session containing the exact todo."
+            },
+            "message_id": {
+                "type": "string",
+                "pattern": "^wc_msg_[A-Za-z0-9_]+$",
+                "description": "Required exact open todo id. No current-session or recent-message fallback is used."
+            }
+        },
+        "required": ["session_id", "message_id"],
+        "additionalProperties": false
+    })
+}
+
 pub(crate) fn observe_session_messages_input_schema() -> Value {
     json!({
         "type": "object",
@@ -239,6 +259,12 @@ pub(crate) fn complete_session_message_input_schema() -> Value {
                 "minLength": 1,
                 "maxLength": 128,
                 "description": "Caller-generated idempotency key for this exact completion. Same key and same answer returns the original result; conflicting reuse fails closed."
+            },
+            "expected_assignment_fence": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 192,
+                "description": "Optional opaque fence returned by get_session_assignment for this exact Session/todo. Pass unchanged to reject completion if assignment-local semantics changed. Omission preserves the legacy completion path."
             },
             "tags": {
                 "type": "array",

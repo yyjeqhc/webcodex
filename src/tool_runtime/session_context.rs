@@ -295,6 +295,67 @@ pub(crate) fn session_message_error_result(
             }),
         )
         .with_recovery(RecoveryKind::NoAction, None),
+        sessions::SessionMessageError::InvalidAssignmentFence => ToolResult::err_with_output(
+            "invalid_assignment_fence",
+            json!({
+                "error_kind": "invalid_assignment_fence",
+                "failure_kind": "invalid_arguments",
+                "session_id": session_id,
+                "message_id": message_id,
+                "state_changed": false,
+                "retry_guidance": "read the exact assignment with get_session_assignment and pass its opaque assignment_fence unchanged",
+            }),
+        )
+        .with_recovery(RecoveryKind::FixInput, None),
+        sessions::SessionMessageError::AssignmentStale {
+            current,
+            fresh_assignment_fence,
+        } => ToolResult::err_with_output(
+            "assignment_stale",
+            json!({
+                "error_kind": "assignment_stale",
+                "failure_kind": "conflict",
+                "session_id": session_id,
+                "message_id": message_id,
+                "state_changed": false,
+                "current_assignment": current,
+                "fresh_assignment_fence": fresh_assignment_fence,
+                "retry_guidance": "re-evaluate the returned current assignment; when fresh_assignment_fence is present it is the durable fence for exactly that returned state, otherwise call get_session_assignment again",
+            }),
+        )
+        .with_recovery(RecoveryKind::Reobserve, None),
+        sessions::SessionMessageError::AssignmentHistoryLost { current } => ToolResult::err_with_output(
+            "assignment_history_lost",
+            json!({
+                "error_kind": "assignment_history_lost",
+                "failure_kind": "history_lost",
+                "session_id": session_id,
+                "message_id": message_id,
+                "state_changed": false,
+                "current_assignment": current,
+                "retry_guidance": "retained state cannot prove the full exact assignment; do not complete this todo from stale context",
+            }),
+        )
+        .with_recovery(RecoveryKind::NoAction, None),
+        sessions::SessionMessageError::AssignmentTooLarge {
+            reply_count,
+            max_replies,
+            current,
+        } => ToolResult::err_with_output(
+            "assignment_too_large",
+            json!({
+                "error_kind": "assignment_too_large",
+                "failure_kind": "bounded_output_exceeded",
+                "session_id": session_id,
+                "message_id": message_id,
+                "state_changed": false,
+                "reply_count": reply_count,
+                "max_replies": max_replies,
+                "current_assignment": current,
+                "retry_guidance": "the coordinator must consolidate or supersede this assignment before a fenced completion can be issued",
+            }),
+        )
+        .with_recovery(RecoveryKind::NoAction, None),
         sessions::SessionMessageError::PersistenceUncertain => ToolResult::err_with_output(
             "completion_persistence_uncertain",
             json!({

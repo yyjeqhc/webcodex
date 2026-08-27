@@ -55,6 +55,7 @@ fn completion_input(session_id: &str, message_id: &str) -> CompleteSessionMessag
         completion_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             .to_string(),
         author_session_id: None,
+        expected_assignment_fence: None,
     }
 }
 

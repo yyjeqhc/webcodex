@@ -718,6 +718,10 @@ mod tests {
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
             (
+                "get_session_assignment",
+                OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
+            ),
+            (
                 "observe_session_messages",
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),

@@ -36,6 +36,8 @@ async fn local_coding_tools_list_returns_exact_ordered_surface() {
         "read_file",
         "read_files",
         "search_project_texts",
+        "get_session_assignment",
+        "complete_session_message",
         "apply_text_edits",
         "go_test",
         "finish_coding_task",

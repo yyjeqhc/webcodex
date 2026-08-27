@@ -11,6 +11,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
+use super::assignment::{
+    assignment_fence_fingerprint, current_assignment_state, open_assignment_state,
+    parse_assignment_fence, snapshot_from_state,
+};
 use super::console::{
     build_detail as build_console_detail, build_list_item as build_console_list_item,
     normalize_console_activity_limit, normalize_console_session_limit,
@@ -562,6 +566,10 @@ impl SessionStore {
             message_observation_revision: 0,
             message_observation_floor: 0,
             message_observation_revisions: Default::default(),
+            assignment_history_floors: Default::default(),
+            assignment_history_tracking_complete: true,
+            completion_assignment_fence_fingerprints: Default::default(),
+            completion_assignment_fence_tracking_complete: true,
             project_instructions: opts.project_instructions,
         };
         let summary = {
@@ -853,6 +861,10 @@ impl SessionStore {
                     message_observation_revision: 0,
                     message_observation_floor: 0,
                     message_observation_revisions: Default::default(),
+                    assignment_history_floors: Default::default(),
+                    assignment_history_tracking_complete: true,
+                    completion_assignment_fence_fingerprints: Default::default(),
+                    completion_assignment_fence_tracking_complete: true,
                     project_instructions: request.project_instructions,
                 };
                 let summary = inner.insert_session(record);
@@ -2939,7 +2951,7 @@ impl SessionStoreInner {
             .insert(message.message_id.clone(), revision);
         while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
             if let Some(evicted) = record.messages.pop_front() {
-                Self::note_evicted_message_observation(record, &evicted.message_id);
+                Self::note_evicted_message_observation(record, evicted.as_ref());
             }
         }
         Ok((message, true))
@@ -3193,7 +3205,7 @@ impl SessionStoreInner {
                 return Err(SessionMessageError::InvalidObservationState);
             };
             if let Some(evicted) = record.messages.remove(remove_index) {
-                Self::note_evicted_message_observation(record, &evicted.message_id);
+                Self::note_evicted_message_observation(record, evicted.as_ref());
             }
         }
         record.updated_at = now;
@@ -3380,12 +3392,33 @@ impl SessionStoreInner {
         }
 
         let todo_snapshot = record.messages[todo_index].as_ref().clone();
+        let parsed_assignment_fence = input
+            .expected_assignment_fence
+            .as_deref()
+            .map(|fence| parse_assignment_fence(fence, &input.session_id, &input.message_id))
+            .transpose()?;
+        let provided_assignment_fence_fingerprint = input
+            .expected_assignment_fence
+            .as_deref()
+            .map(assignment_fence_fingerprint);
+        if parsed_assignment_fence
+            .as_ref()
+            .is_some_and(|fence| fence.snapshot_revision > record.message_observation_revision)
+        {
+            return Err(SessionMessageError::InvalidAssignmentFence);
+        }
         if todo_snapshot.status == SessionMessageStatus::Resolved {
             match (
                 todo_snapshot.completion_id.as_deref(),
                 todo_snapshot.resolved_by_message_id.as_deref(),
             ) {
                 (None, None) => {
+                    if parsed_assignment_fence.is_some() {
+                        return Err(SessionMessageError::AssignmentStale {
+                            current: current_assignment_state(record, &input.message_id)?,
+                            fresh_assignment_fence: None,
+                        });
+                    }
                     return Err(SessionMessageError::AlreadyCompleted {
                         answer_message_id: None,
                         completion_id: None,
@@ -3411,6 +3444,34 @@ impl SessionStoreInner {
                     {
                         return Err(SessionMessageError::IdempotencyConflict);
                     }
+                    match record
+                        .completion_assignment_fence_fingerprints
+                        .get(&input.message_id)
+                    {
+                        Some(stored_fingerprint) => {
+                            if stored_fingerprint.as_ref()
+                                != provided_assignment_fence_fingerprint.as_ref()
+                            {
+                                return Err(SessionMessageError::IdempotencyConflict);
+                            }
+                            if stored_fingerprint.is_some()
+                                && answer.author_session_id != input.author_session_id
+                            {
+                                return Err(SessionMessageError::IdempotencyConflict);
+                            }
+                        }
+                        None if record.completion_assignment_fence_tracking_complete => {
+                            return Err(SessionMessageError::InvalidCompletionState);
+                        }
+                        None => {
+                            // Pre-E3 completion: preserve the original no-fence
+                            // replay behavior, but never let a newly supplied fence
+                            // masquerade as the historical call.
+                            if provided_assignment_fence_fingerprint.is_some() {
+                                return Err(SessionMessageError::IdempotencyConflict);
+                            }
+                        }
+                    }
                     return Ok(CompleteSessionMessageOutcome {
                         todo: todo_snapshot,
                         answer: answer.as_ref().clone(),
@@ -3422,6 +3483,20 @@ impl SessionStoreInner {
         }
         if todo_snapshot.completion_id.is_some() || todo_snapshot.resolved_by_message_id.is_some() {
             return Err(SessionMessageError::InvalidCompletionState);
+        }
+        if let Some(fence) = parsed_assignment_fence.as_ref() {
+            let current_assignment = open_assignment_state(record, &input.message_id)?;
+            if current_assignment.semantic_digest != fence.semantic_digest {
+                let current = current_assignment_state(record, &input.message_id)?;
+                let fresh_assignment_fence = Some(
+                    snapshot_from_state(&input.session_id, &input.message_id, current_assignment)
+                        .assignment_fence,
+                );
+                return Err(SessionMessageError::AssignmentStale {
+                    current,
+                    fresh_assignment_fence,
+                });
+            }
         }
 
         let todo_revision = record
@@ -3469,16 +3544,24 @@ impl SessionStoreInner {
         record
             .message_observation_revisions
             .insert(answer.message_id.clone(), answer_revision);
+        record.completion_assignment_fence_fingerprints.insert(
+            input.message_id.clone(),
+            provided_assignment_fence_fingerprint,
+        );
+        let protect_fenced_assignment_replies = parsed_assignment_fence.is_some();
         while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
             let protected_answer_id = answer.message_id.as_str();
             let protected_todo_id = input.message_id.as_str();
             let Some(remove_index) = record.messages.iter().position(|message| {
-                message.message_id != protected_todo_id && message.message_id != protected_answer_id
+                message.message_id != protected_todo_id
+                    && message.message_id != protected_answer_id
+                    && (!protect_fenced_assignment_replies
+                        || message.reply_to.as_deref() != Some(protected_todo_id))
             }) else {
                 return Err(SessionMessageError::InvalidCompletionState);
             };
             if let Some(evicted) = record.messages.remove(remove_index) {
-                Self::note_evicted_message_observation(record, &evicted.message_id);
+                Self::note_evicted_message_observation(record, evicted.as_ref());
             }
         }
         record.updated_at = now;
@@ -3507,9 +3590,35 @@ impl SessionStoreInner {
         Ok(revision)
     }
 
-    fn note_evicted_message_observation(record: &mut SessionRecord, message_id: &str) {
-        if let Some(revision) = record.message_observation_revisions.remove(message_id) {
-            record.message_observation_floor = record.message_observation_floor.max(revision);
+    fn note_evicted_message_observation(record: &mut SessionRecord, message: &SessionMessage) {
+        let Some(revision) = record
+            .message_observation_revisions
+            .remove(&message.message_id)
+        else {
+            record.assignment_history_tracking_complete = false;
+            return;
+        };
+        record.message_observation_floor = record.message_observation_floor.max(revision);
+
+        if message.kind == super::model::SessionMessageKind::Todo {
+            record.assignment_history_floors.remove(&message.message_id);
+            record
+                .completion_assignment_fence_fingerprints
+                .remove(&message.message_id);
+            return;
+        }
+        let Some(todo_id) = message.reply_to.as_deref() else {
+            return;
+        };
+        if record.messages.iter().any(|candidate| {
+            candidate.message_id == todo_id
+                && candidate.kind == super::model::SessionMessageKind::Todo
+        }) {
+            record
+                .assignment_history_floors
+                .entry(todo_id.to_string())
+                .and_modify(|floor| *floor = (*floor).max(revision))
+                .or_insert(revision);
         }
     }
 

@@ -9,6 +9,7 @@ use serde::Deserialize;
 
 use super::super::helpers::is_safe_job_id;
 use super::super::project_instructions::ProjectInstructionsSummarySnapshot;
+use super::assignment::is_valid_assignment_fence_fingerprint;
 use super::events::{
     context_result_summary_for_tool_result, exploration_tool_kind, is_valid_session_id,
     sanitize_failure_expectation_result, sanitize_observed_paths,
@@ -79,6 +80,13 @@ impl PersistedSessionRecord {
             message_observation_revision: record.message_observation_revision,
             message_observation_floor: record.message_observation_floor,
             message_observation_revisions: record.message_observation_revisions.clone(),
+            assignment_history_floors: record.assignment_history_floors.clone(),
+            assignment_history_tracking_complete: record.assignment_history_tracking_complete,
+            completion_assignment_fence_fingerprints: record
+                .completion_assignment_fence_fingerprints
+                .clone(),
+            completion_assignment_fence_tracking_complete: record
+                .completion_assignment_fence_tracking_complete,
         }
     }
 
@@ -102,6 +110,13 @@ impl PersistedSessionRecord {
             && self.message_observation_revision == record.message_observation_revision
             && self.message_observation_floor == record.message_observation_floor
             && self.message_observation_revisions == record.message_observation_revisions
+            && self.assignment_history_floors == record.assignment_history_floors
+            && self.assignment_history_tracking_complete
+                == record.assignment_history_tracking_complete
+            && self.completion_assignment_fence_fingerprints
+                == record.completion_assignment_fence_fingerprints
+            && self.completion_assignment_fence_tracking_complete
+                == record.completion_assignment_fence_tracking_complete
             && self.events.len() == record.events.len()
             && self.messages.len() == record.messages.len()
             && self
@@ -133,6 +148,7 @@ impl PersistedSessionRecord {
             .into_iter()
             .rev()
             .collect();
+        let persisted_message_count = self.messages.len();
         let mut messages: VecDeque<Arc<SessionMessage>> = self
             .messages
             .into_iter()
@@ -157,6 +173,10 @@ impl PersistedSessionRecord {
             }
         }
         let duplicate_retained_message_ids = !duplicate_message_ids.is_empty();
+        let all_persisted_messages_restored =
+            !duplicate_retained_message_ids && messages.len() == persisted_message_count;
+        let legacy_no_eviction_proven = all_persisted_messages_restored
+            && persisted_message_count < DEFAULT_MAX_MESSAGES_PER_SESSION;
         if duplicate_retained_message_ids {
             messages.retain(|message| !duplicate_message_ids.contains(&message.message_id));
         }
@@ -169,8 +189,11 @@ impl PersistedSessionRecord {
             .message_observation_floor
             .min(current_observation_revision);
         let mut observation_revisions = BTreeMap::new();
+        let mut assignment_history_floors = BTreeMap::new();
+        let assignment_history_tracking_complete;
         if current_observation_revision > 0 {
             let mut inconsistent = duplicate_retained_message_ids;
+            let mut observation_metadata_inconsistent = false;
             let mut retained_positive_revisions = HashSet::new();
             for (message_id, revision) in self.message_observation_revisions {
                 if revision > current_observation_revision {
@@ -211,6 +234,7 @@ impl PersistedSessionRecord {
                 inconsistent = true;
             }
             if inconsistent {
+                observation_metadata_inconsistent = true;
                 // Observation metadata is advisory bookkeeping around durable
                 // messages. If it cannot prove the writer's unique ordering,
                 // preserve the messages but fail closed on historical continuity:
@@ -225,6 +249,26 @@ impl PersistedSessionRecord {
                         .map(|message_id| (message_id, 0)),
                 );
             }
+            let retained_todo_ids = messages
+                .iter()
+                .filter(|message| message.kind == super::model::SessionMessageKind::Todo)
+                .map(|message| message.message_id.clone())
+                .collect::<HashSet<_>>();
+            let mut assignment_metadata_inconsistent = observation_metadata_inconsistent;
+            for (todo_id, revision) in self.assignment_history_floors {
+                if revision == 0
+                    || revision > current_observation_revision
+                    || !retained_todo_ids.contains(&todo_id)
+                {
+                    assignment_metadata_inconsistent = true;
+                    continue;
+                }
+                assignment_history_floors.insert(todo_id, revision);
+            }
+            assignment_history_tracking_complete = all_persisted_messages_restored
+                && !assignment_metadata_inconsistent
+                && (self.assignment_history_tracking_complete
+                    || (observation_floor == 0 && legacy_no_eviction_proven));
         } else {
             // Pre-feature ledgers never issued observation tokens. Their retained
             // messages therefore become safe baseline state at revision zero.
@@ -235,7 +279,41 @@ impl PersistedSessionRecord {
                     .map(|message_id| (message_id, 0)),
             );
             observation_floor = 0;
+            assignment_history_tracking_complete = legacy_no_eviction_proven;
         }
+        let retained_completed_todo_ids = messages
+            .iter()
+            .filter(|message| {
+                message.kind == super::model::SessionMessageKind::Todo
+                    && message.status == super::model::SessionMessageStatus::Resolved
+                    && message.completion_id.is_some()
+                    && message.resolved_by_message_id.is_some()
+            })
+            .map(|message| message.message_id.clone())
+            .collect::<HashSet<_>>();
+        let mut completion_assignment_fence_fingerprints = BTreeMap::new();
+        let mut completion_fence_metadata_inconsistent = false;
+        for (todo_id, fingerprint) in self.completion_assignment_fence_fingerprints {
+            if !retained_completed_todo_ids.contains(&todo_id)
+                || fingerprint
+                    .as_deref()
+                    .is_some_and(|value| !is_valid_assignment_fence_fingerprint(value))
+            {
+                completion_fence_metadata_inconsistent = true;
+                continue;
+            }
+            completion_assignment_fence_fingerprints.insert(todo_id, fingerprint);
+        }
+        if self.completion_assignment_fence_tracking_complete
+            && retained_completed_todo_ids
+                .iter()
+                .any(|todo_id| !completion_assignment_fence_fingerprints.contains_key(todo_id))
+        {
+            completion_fence_metadata_inconsistent = true;
+        }
+        let completion_assignment_fence_tracking_complete = all_persisted_messages_restored
+            && self.completion_assignment_fence_tracking_complete
+            && !completion_fence_metadata_inconsistent;
         let materialized_validation_job_ids =
             sanitize_materialized_validation_job_ids(self.materialized_validation_job_ids);
         // On restore, `events_observed` is at least the count of events we just
@@ -277,6 +355,10 @@ impl PersistedSessionRecord {
             message_observation_revision: current_observation_revision,
             message_observation_floor: observation_floor,
             message_observation_revisions: observation_revisions,
+            assignment_history_floors,
+            assignment_history_tracking_complete,
+            completion_assignment_fence_fingerprints,
+            completion_assignment_fence_tracking_complete,
         })
     }
 }

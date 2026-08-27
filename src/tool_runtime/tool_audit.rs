@@ -761,6 +761,9 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 ],
             );
         }
+        "get_session_assignment" => {
+            copy_keys(obj, &mut out, &["session_id", "message_id"]);
+        }
         "observe_session_messages" => {
             copy_keys(obj, &mut out, &["session_id", "wait_secs", "limit"]);
             out.insert(
@@ -816,6 +819,14 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 "completion_id".to_string(),
                 bounded_completion_key_fingerprint(
                     obj.get("completion_key").and_then(Value::as_str),
+                ),
+            );
+            out.insert(
+                "assignment_fence_present".to_string(),
+                Value::Bool(
+                    obj.get("expected_assignment_fence")
+                        .and_then(Value::as_str)
+                        .is_some(),
                 ),
             );
         }
@@ -989,6 +1000,14 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "success": output.get("success").cloned().unwrap_or(Value::Null),
             "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
             "message_count": output.get("messages").and_then(Value::as_array).map(Vec::len),
+        }),
+        "get_session_assignment" => serde_json::json!({
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
+            "message_id": output.get("message_id").cloned().unwrap_or(Value::Null),
+            "direct_reply_count": output.get("direct_replies").and_then(Value::as_array).map(Vec::len),
+            "assignment_fence_present": output.get("assignment_fence").and_then(Value::as_str).is_some(),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
         }),
         "observe_session_messages" => serde_json::json!({
             "success": output.get("success").cloned().unwrap_or(Value::Null),

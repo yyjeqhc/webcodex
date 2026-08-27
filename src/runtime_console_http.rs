@@ -531,10 +531,15 @@ fn session_message_mutation_error(
         | SessionMessageError::AlreadyCompleted { .. }
         | SessionMessageError::InvalidCompletionState
         | SessionMessageError::InvalidObservationState
+        | SessionMessageError::AssignmentStale { .. }
+        | SessionMessageError::AssignmentHistoryLost { .. }
+        | SessionMessageError::AssignmentTooLarge { .. }
         | SessionMessageError::NotTodo
         | SessionMessageError::SessionClosed { .. } => RuntimeConsoleError::Conflict,
         SessionMessageError::PersistenceUncertain => RuntimeConsoleError::PersistenceUncertain,
-        SessionMessageError::InvalidInput(_) => RuntimeConsoleError::Invalid,
+        SessionMessageError::InvalidAssignmentFence | SessionMessageError::InvalidInput(_) => {
+            RuntimeConsoleError::Invalid
+        }
     }
 }
 
@@ -2700,6 +2705,7 @@ mod tests {
                 priority: SessionMessagePriority::Normal,
                 completion_id: "a".repeat(64),
                 author_session_id: Some("wc_sess_worker".to_string()),
+                expected_assignment_fence: None,
             })
             .unwrap();
 
@@ -3126,6 +3132,7 @@ mod tests {
                 priority: SessionMessagePriority::Normal,
                 completion_id: "b".repeat(64),
                 author_session_id: None,
+                expected_assignment_fence: None,
             })
             .unwrap();
         assert_eq!(

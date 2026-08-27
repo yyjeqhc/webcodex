@@ -349,6 +349,23 @@ pub(super) struct SessionRecord {
     pub(super) message_observation_floor: u64,
     /// Last observable mutation revision for each currently retained message.
     pub(super) message_observation_revisions: BTreeMap<String, u64>,
+    /// Highest evicted direct-reply revision for each retained exact todo.
+    /// This separates assignment-local retention loss from unrelated message
+    /// traffic so a fence is not invalidated merely because another thread was
+    /// evicted.
+    pub(super) assignment_history_floors: BTreeMap<String, u64>,
+    /// True only when the retained per-todo history floors are known complete.
+    /// Corrupt/legacy restore paths may clear this; assignment reads then remain
+    /// fail-closed for that restored Session rather than guessing at lost history.
+    pub(super) assignment_history_tracking_complete: bool,
+    /// Exact-fence replay metadata keyed by completed todo. Values are SHA-256
+    /// fingerprints of the opaque fence; `None` records an E3-era legacy-style
+    /// no-fence completion without exposing the raw fence.
+    pub(super) completion_assignment_fence_fingerprints: BTreeMap<String, Option<String>>,
+    /// True when every retained completion in this Session is known to carry an
+    /// explicit E3 completion-fence metadata entry. Legacy restores keep this
+    /// false while preserving exact entries added after upgrade.
+    pub(super) completion_assignment_fence_tracking_complete: bool,
     pub(super) project_instructions: Option<ProjectInstructionsSnapshot>,
 }
 
@@ -708,6 +725,21 @@ pub(super) struct PersistedSessionRecord {
     pub(super) message_observation_floor: u64,
     #[serde(default)]
     pub(super) message_observation_revisions: BTreeMap<String, u64>,
+    /// Additive E3 field: relevant retention floor keyed by exact todo id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) assignment_history_floors: BTreeMap<String, u64>,
+    /// Additive E3 proof bit. Missing legacy field is fail-closed unless the
+    /// restore path can independently prove no message was ever evicted.
+    #[serde(default)]
+    pub(super) assignment_history_tracking_complete: bool,
+    /// Additive E3 completion replay metadata. Raw assignment fences are never
+    /// persisted here; only SHA-256 fingerprints (or null for no-fence calls).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) completion_assignment_fence_fingerprints: BTreeMap<String, Option<String>>,
+    /// Missing legacy field keeps old no-fence replay compatibility while new
+    /// canonical Sessions can fail closed on missing completion metadata.
+    #[serde(default)]
+    pub(super) completion_assignment_fence_tracking_complete: bool,
     /// Additive v1 field. Cumulative number of events ever appended, including
     /// those the per-session event cap has evicted. Older ledgers omit it and
     /// deserialize to 0; the restore path treats 0 as "retain exactly the
@@ -1056,7 +1088,7 @@ pub(crate) enum SessionMessagePriority {
     High,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SessionMessage {
     pub(crate) message_id: String,
     pub(crate) session_id: String,
@@ -1089,6 +1121,29 @@ pub(crate) struct SessionMessage {
     pub(crate) resolved_by_message_id: Option<String>,
     #[serde(default)]
     pub(crate) completion_id: Option<String>,
+}
+
+/// Maximum direct replies returned by the atomic assignment read. If a retained
+/// todo thread exceeds this bound the assignment read fails closed rather than
+/// returning an incomplete fence.
+pub(crate) const MAX_SESSION_ASSIGNMENT_DIRECT_REPLIES: usize = 16;
+/// Opaque assignment fences are intentionally smaller than the generic tool
+/// string budget and never expose the underlying observation revision.
+pub(crate) const MAX_SESSION_ASSIGNMENT_FENCE_LEN: usize = 192;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct SessionAssignmentSnapshot {
+    pub(crate) todo: SessionMessage,
+    /// Oldest-first direct replies whose reply_to is exactly the todo id.
+    pub(crate) direct_replies: Vec<SessionMessage>,
+    pub(crate) assignment_fence: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct SessionAssignmentCurrentState {
+    pub(crate) todo: SessionMessage,
+    pub(crate) direct_replies: Vec<SessionMessage>,
+    pub(crate) direct_replies_truncated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1124,6 +1179,9 @@ pub(crate) struct CompleteSessionMessageInput {
     pub(crate) priority: SessionMessagePriority,
     pub(crate) completion_id: String,
     pub(crate) author_session_id: Option<String>,
+    /// Optional opaque fence returned by get_session_assignment. Omission keeps
+    /// the pre-E3 completion behavior for compatibility.
+    pub(crate) expected_assignment_fence: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1281,6 +1339,19 @@ pub(crate) enum SessionMessageError {
     },
     InvalidCompletionState,
     InvalidObservationState,
+    InvalidAssignmentFence,
+    AssignmentStale {
+        current: SessionAssignmentCurrentState,
+        fresh_assignment_fence: Option<String>,
+    },
+    AssignmentHistoryLost {
+        current: SessionAssignmentCurrentState,
+    },
+    AssignmentTooLarge {
+        reply_count: usize,
+        max_replies: usize,
+        current: SessionAssignmentCurrentState,
+    },
     PersistenceUncertain,
     /// Message-board mutation denied because the workflow session is closed
     /// (or archived). Query tools remain available.

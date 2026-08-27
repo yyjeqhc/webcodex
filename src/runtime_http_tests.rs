@@ -2141,10 +2141,56 @@ async fn session_tools_oauth_scope_policy() {
         &service,
         session_collaborate,
         "post_session_message",
-        json!({"session_id": session_id, "kind": "note", "message": "oauth metadata"}),
+        json!({"session_id": session_id, "kind": "todo", "message": "oauth assignment"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "post_session_message: {body}");
+    let todo_id = body["output"]["message_id"].as_str().unwrap();
+
+    let (status, body, _) = oauth_tools_call(
+        &service,
+        runtime_read,
+        "get_session_assignment",
+        json!({"session_id": session_id, "message_id": todo_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "get_session_assignment: {body}");
+    assert!(body["output"]["assignment_fence"]
+        .as_str()
+        .is_some_and(|fence| fence.starts_with("wsa1_")));
+
+    let (status, body, challenge) = oauth_tools_call(
+        &service,
+        project_read,
+        "get_session_assignment",
+        json!({"session_id": session_id, "message_id": todo_id}),
+    )
+    .await;
+    assert_oauth_scope_rejected(
+        status,
+        &body,
+        challenge.as_deref(),
+        Some(crate::auth::SCOPE_RUNTIME_READ),
+    );
+
+    let (status, body, challenge) = oauth_tools_call(
+        &service,
+        runtime_read,
+        "complete_session_message",
+        json!({
+            "session_id": session_id,
+            "message_id": todo_id,
+            "answer": "must be scope denied before mutation",
+            "completion_key": "oauth-e3"
+        }),
+    )
+    .await;
+    assert_oauth_scope_rejected(
+        status,
+        &body,
+        challenge.as_deref(),
+        Some(crate::auth::SCOPE_SESSION_COLLABORATE),
+    );
 
     let (status, body, challenge) =
         oauth_tools_call(&service, project_read, "start_session", json!({})).await;

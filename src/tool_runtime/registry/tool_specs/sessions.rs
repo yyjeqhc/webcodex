@@ -1,10 +1,11 @@
 use super::super::input_schemas::{
     close_session_input_schema, complete_session_message_input_schema,
-    current_session_input_schema, list_session_messages_input_schema,
-    observe_session_messages_input_schema, post_session_message_input_schema,
-    resolve_session_message_input_schema, session_discussion_summary_input_schema,
-    session_handoff_summary_input_schema, session_summary_input_schema,
-    update_session_context_input_schema, validation_summary_input_schema,
+    current_session_input_schema, get_session_assignment_input_schema,
+    list_session_messages_input_schema, observe_session_messages_input_schema,
+    post_session_message_input_schema, resolve_session_message_input_schema,
+    session_discussion_summary_input_schema, session_handoff_summary_input_schema,
+    session_summary_input_schema, update_session_context_input_schema,
+    validation_summary_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -38,8 +39,13 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "list_session_messages",
-            "Read bounded session-local messages. Supports exact message_id and reply_to lookup plus kind/status filters with deterministic AND semantics; use it to fetch one assignment or its replies without relying on the recent-message window.",
+            "Read bounded session-local messages with exact filters. For an executable todo, prefer get_session_assignment so the todo, all retained direct replies, and its completion fence come from one store snapshot.",
             list_session_messages_input_schema(),
+        ),
+        tool_spec(
+            "get_session_assignment",
+            "Atomically read one exact open todo plus all retained direct replies and return an opaque Session/todo-bound assignment_fence for optional fenced complete_session_message. Unrelated Session traffic and ACK bookkeeping do not change assignment semantics; incomplete retained assignment history fails closed.",
+            get_session_assignment_input_schema(),
         ),
         tool_spec(
             "observe_session_messages",
@@ -53,7 +59,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "complete_session_message",
-            "Worker completion primitive for one exact open todo: atomically creates one answer reply and resolves that todo under one Session-store mutation. completion_key makes uncertain-result retries idempotent; prefer this over separate post answer + resolve calls.",
+            "Worker completion primitive for one exact open todo: atomically creates one answer reply and resolves that todo under one Session-store mutation. Pass expected_assignment_fence from get_session_assignment to reject stale assignment-local context; omission preserves legacy behavior. completion_key keeps uncertain-result retries idempotent.",
             complete_session_message_input_schema(),
         ),
         tool_spec(

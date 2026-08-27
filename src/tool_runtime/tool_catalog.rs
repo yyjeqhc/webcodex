@@ -345,13 +345,14 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "handoff",
-        summary: "Handoff: use session_summary / session_handoff_summary. Coordinator posts todo; worker handles the exact todo in its own Session and complete_session_message atomically answers+resolves. Use observe_session_messages baseline/token for later delta; coordinator revalidates state.",
-        manifest_purpose: "Coordinate independent Workflow Sessions through bounded todos, atomic completions, and explicit message-state delta observation without sharing execution history, authority, subscriptions, or automatic wake-up.",
+        summary: "Handoff: coordinator posts a todo; worker reads the exact assignment once with get_session_assignment (todo + all retained direct replies + opaque fence), then passes that fence to complete_session_message for stale-context rejection and atomic answer+resolve. Use observe_session_messages only for later generic deltas.",
+        manifest_purpose: "Coordinate independent Workflow Sessions through atomic assignment snapshots, optional fenced completions, and explicit generic message-state delta observation without sharing execution history, authority, subscriptions, or automatic wake-up.",
         tools: &[
             "session_summary",
             "post_session_message",
             "session_handoff_summary",
             "list_session_messages",
+            "get_session_assignment",
             "observe_session_messages",
             "complete_session_message",
             "session_discussion_summary",
@@ -368,6 +369,9 @@ pub(crate) const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     // entry
     "work_on_project",
     "list_projects",
+    // exact coordinator assignment read + atomic completion
+    "get_session_assignment",
+    "complete_session_message",
     // delegated ACP coding-agent Runs (explicit coding_agent:run authority)
     "coding_agent_start",
     "coding_agent_observe",

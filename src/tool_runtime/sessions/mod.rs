@@ -8,6 +8,7 @@
 //! - `messages` — message board post/list/resolve and discussion aggregates
 //! - `model` / `events` / `query` / `persistence` / `util` — supporting pieces
 
+mod assignment;
 mod bindings;
 mod console;
 mod events;
@@ -18,6 +19,8 @@ mod query;
 mod store;
 mod util;
 
+#[cfg(test)]
+mod assignment_tests;
 #[cfg(test)]
 mod collaboration_tests;
 #[cfg(test)]

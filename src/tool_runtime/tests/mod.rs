@@ -3,6 +3,7 @@
 mod support;
 
 mod apply_text_edits;
+mod assignment_fence;
 mod checkpoint;
 mod coding_task;
 mod coding_task_semantic_navigation;

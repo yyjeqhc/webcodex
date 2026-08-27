@@ -236,6 +236,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
             "validation_summary",
             "post_session_message",
             "list_session_messages",
+            "get_session_assignment",
             "observe_session_messages",
             "resolve_session_message",
             "complete_session_message",

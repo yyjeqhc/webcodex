@@ -103,6 +103,13 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::GetSessionAssignment {
+                session_id,
+                message_id,
+            } => {
+                self.get_session_assignment_tool(session_id, message_id, auth)
+                    .await
+            }
             ToolCall::ObserveSessionMessages {
                 session_id,
                 after_observation_token,
@@ -132,6 +139,7 @@ impl ToolRuntime {
                 answer,
                 completion_key,
                 tags,
+                expected_assignment_fence,
                 priority,
                 trusted_recording_session_id,
             } => {
@@ -140,6 +148,7 @@ impl ToolRuntime {
                     message_id,
                     answer,
                     completion_key,
+                    expected_assignment_fence,
                     tags,
                     priority,
                     trusted_recording_session_id,
@@ -603,6 +612,31 @@ impl ToolRuntime {
         }
     }
 
+    pub(crate) async fn get_session_assignment_tool(
+        &self,
+        session_id: String,
+        message_id: String,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        if let Err(result) = self
+            .authorize_session_target(&session_id, "get_session_assignment", auth)
+            .await
+        {
+            return result;
+        }
+        match self.sessions.get_assignment(&session_id, &message_id) {
+            Ok(snapshot) => ToolResult::ok(json!({
+                "success": true,
+                "session_id": session_id,
+                "message_id": snapshot.todo.message_id,
+                "todo": snapshot.todo,
+                "direct_replies": snapshot.direct_replies,
+                "assignment_fence": snapshot.assignment_fence,
+            })),
+            Err(err) => session_message_error_result(&session_id, Some(&message_id), err),
+        }
+    }
+
     pub(crate) async fn observe_session_messages_tool(
         &self,
         session_id: String,
@@ -693,6 +727,7 @@ impl ToolRuntime {
         message_id: String,
         answer: String,
         completion_key: String,
+        expected_assignment_fence: Option<String>,
         tags: Vec<String>,
         priority: sessions::SessionMessagePriority,
         trusted_recording_session_id: Option<String>,
@@ -728,6 +763,7 @@ impl ToolRuntime {
                 priority,
                 completion_id: completion_id.clone(),
                 author_session_id,
+                expected_assignment_fence,
             }) {
             Ok(outcome) => ToolResult::ok(json!({
                 "success": true,

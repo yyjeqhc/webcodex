@@ -409,6 +409,10 @@ function renderSessionWorkspaceIdentity(): void {
   setText("runtime-session-workspace", runtimeProjectIdentityText(selectedProjectRow()));
 }
 
+function revealWorkflowSessionDetail(): void {
+  el("runtime-workflow-sessions-panel")?.scrollIntoView({ block: "start", inline: "nearest" });
+}
+
 function renderProjectSelectors(projects: any[], truncated: boolean): void {
   const deviceSelect = el("runtime-device-select") as HTMLSelectElement | null;
   const projectList = el("runtime-project-list");
@@ -651,6 +655,7 @@ function selectRecentSession(session: any): void {
   renderRunnerFleet(runnerRows);
   renderRecentSessions(recentSessionRows, null);
   renderSelectedProjectIdentity();
+  revealWorkflowSessionDetail();
   if (location.sessionListRequest) void fetchSessions(location.sessionListRequest);
   if (location.detailRequest) void fetchSessionDetail(location.detailRequest);
   const collaborationRequest = runtimeCollaborationRequest(state);
@@ -685,6 +690,11 @@ async function fetchSessions(request: any): Promise<void> {
 function updatedLabel(timestamp: any): string {
   if (typeof timestamp !== "number") return "time unavailable";
   return new Date(timestamp * 1000).toLocaleTimeString();
+}
+
+function dateTimeLabel(timestamp: any): string {
+  if (typeof timestamp !== "number") return "time unavailable";
+  return new Date(timestamp * 1000).toLocaleString();
 }
 
 function activityKindLabel(activity: any): string {
@@ -768,6 +778,7 @@ function selectSession(sessionId: string): void {
   const request = selectRuntimeWorkflowSession(state, sessionId);
   resetCollaborationComposerUi();
   renderSessionList(sessionRows, { total: sessionRows.length, truncated: false });
+  revealWorkflowSessionDetail();
   if (request) void fetchSessionDetail(request);
   const collaborationRequest = runtimeCollaborationRequest(state);
   if (collaborationRequest) void startCollaboration(collaborationRequest);
@@ -811,7 +822,9 @@ function renderDetail(detail: any): void {
   const liveness = workflowSessionLivenessPresentation(detail);
   setText("runtime-session-running", liveness.label);
   const livenessNode = el("runtime-session-running"); if (livenessNode) livenessNode.title = liveness.tooltip;
-  setText("runtime-session-updated", "Updated " + updatedLabel(detail.updated_at));
+  setText("runtime-session-id", String(detail.session_id || "session id unavailable"));
+  setText("runtime-session-created", dateTimeLabel(detail.created_at));
+  setText("runtime-session-updated", dateTimeLabel(detail.updated_at));
   renderSessionWorkspaceIdentity();
   renderOverview(detail.overview);
   renderCollaboration();
@@ -871,11 +884,15 @@ function setCollaborationReplyTarget(messageId: string): void {
   collaborationReplyTo = messageId;
   const wasEditing = !!runtimeCollaborationEditTarget(state);
   setRuntimeCollaborationReplyTarget(state, messageId);
-  if (wasEditing) {
-    const body = el("runtime-message-body") as HTMLTextAreaElement | null;
-    if (body) body.value = "";
-  }
+  const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+  if (wasEditing && body) body.value = "";
   syncCollaborationComposer();
+  if (messageId) {
+    setText("runtime-message-send-status", "Reply target selected. Your next message will reply to " + messageId + ".");
+    body?.focus();
+  } else {
+    setText("runtime-message-send-status", "Reply target cleared.");
+  }
 }
 
 function beginCollaborationEdit(message: any): void {
@@ -1173,6 +1190,11 @@ function jumpLatest(): void {
   const node = el("runtime-timeline"); if (node) node.scrollTop = node.scrollHeight; syncFollowUi();
 }
 
+function sessionCollaborationAuthorityFailure(response: any): string | null {
+  if (response?.status !== 403) return null;
+  return "Session collaboration access required. This credential can still read the Session; add session:collaborate to send, edit, or withdraw messages.";
+}
+
 function setHumanJoinSendEnabled(enabled: boolean): void {
   const send = el("runtime-message-send") as HTMLButtonElement | null;
   if (send) send.disabled = !enabled;
@@ -1215,6 +1237,8 @@ async function withdrawHumanCollaborationMessage(messageId: string): Promise<voi
     return;
   }
   if (response?.status === 401) { lock("Credential rejected."); return; }
+  const authorityFailure = sessionCollaborationAuthorityFailure(response);
+  if (authorityFailure) { setText("runtime-message-send-status", authorityFailure); return; }
   if (response?.status === 409) {
     abortCollaboration();
     setRuntimeCollaborationPhase(state, request, "paused");
@@ -1268,6 +1292,8 @@ async function postHumanCollaborationMessage(event: Event): Promise<void> {
     }
     if (send) send.disabled = false;
     if (response?.status === 401) { lock("Credential rejected."); return; }
+    const authorityFailure = sessionCollaborationAuthorityFailure(response);
+    if (authorityFailure) { setText("runtime-message-send-status", authorityFailure); return; }
     if (response?.status === 409) {
       clearRuntimeCollaborationEditTarget(state);
       if (body) body.value = "";
@@ -1311,6 +1337,8 @@ async function postHumanCollaborationMessage(event: Event): Promise<void> {
   }
   if (send) send.disabled = false;
   if (response?.status === 401) { lock("Credential rejected."); return; }
+  const authorityFailure = sessionCollaborationAuthorityFailure(response);
+  if (authorityFailure) { setText("runtime-message-send-status", authorityFailure); return; }
   if (!response?.ok || !response.data) { setText("runtime-message-send-status", "Send failed."); return; }
   adoptRuntimeCollaborationObservation(state, request, { messages: [response.data] });
   if (body) body.value = "";

@@ -81,7 +81,7 @@
         <p id="runtime-projects-empty" class="muted small" hidden>No Projects match this filter.</p>
       </section>
 
-      <section class="panel">
+      <section id="runtime-workflow-sessions-panel" class="panel">
         <div class="panel-head">
           <h2>Workflow Sessions <span id="runtime-sessions-count" class="muted small">0</span></h2>
         </div>
@@ -99,7 +99,20 @@
                 <span id="runtime-session-mode" class="chip">—</span>
                 <span id="runtime-session-running" class="chip">—</span>
               </div>
-              <p id="runtime-session-updated" class="muted small">—</p>
+              <div class="session-identity" aria-label="Workflow Session identity">
+                <div class="session-identity-fact">
+                  <span class="muted small">Session ID</span>
+                  <code id="runtime-session-id" class="session-identity-value">—</code>
+                </div>
+                <div class="session-identity-fact">
+                  <span class="muted small">Created</span>
+                  <span id="runtime-session-created" class="session-identity-value small">—</span>
+                </div>
+                <div class="session-identity-fact">
+                  <span class="muted small">Updated</span>
+                  <span id="runtime-session-updated" class="session-identity-value small">—</span>
+                </div>
+              </div>
               <p id="runtime-session-workspace" class="workspace-identity muted small">—</p>
 
               <div class="overview" aria-label="Workflow Session overview">

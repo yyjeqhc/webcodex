@@ -204,11 +204,11 @@ fn e3_assignment_schema_parser_scope_local_coding_and_audit_are_synchronized() {
     );
     assert_eq!(
         get.output_schema["properties"]["output"]["properties"]["assignment_fence"]["maxLength"],
-        192
+        48
     );
     assert_eq!(
         get.output_schema["properties"]["output"]["properties"]["assignment_fence"]["pattern"],
-        "^wsa1_[A-Za-z0-9_-]+$"
+        "^wsa1_[A-Za-z0-9_-]{43}$"
     );
     let complete = specs
         .iter()
@@ -216,7 +216,7 @@ fn e3_assignment_schema_parser_scope_local_coding_and_audit_are_synchronized() {
         .expect("complete_session_message public spec");
     assert_eq!(
         complete.input_schema["properties"]["expected_assignment_fence"]["maxLength"],
-        192
+        48
     );
     assert!(!complete.input_schema["required"]
         .as_array()

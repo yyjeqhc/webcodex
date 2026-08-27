@@ -107,7 +107,7 @@ fn assignment_snapshot_is_atomic_and_unrelated_traffic_and_ack_do_not_stale() {
     assert_eq!(snapshot.todo.message_id, todo.message_id);
     assert_eq!(snapshot.direct_replies, vec![guidance.clone()]);
     assert!(snapshot.assignment_fence.starts_with("wsa1_"));
-    assert!(snapshot.assignment_fence.len() <= 192);
+    assert_eq!(snapshot.assignment_fence.len(), 48);
 
     // Unrelated Session traffic advances the Session-wide observation high-water
     // but is not assignment-local meaning.
@@ -387,7 +387,7 @@ fn assignment_fence_is_bound_to_exact_session_and_todo() {
                 &"e".repeat(64),
                 Some(snapshot.assignment_fence.clone()),
             )),
-            Err(SessionMessageError::InvalidAssignmentFence)
+            Err(SessionMessageError::AssignmentStale { .. })
         ));
     }
     assert!(matches!(
@@ -413,7 +413,7 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
         &store,
         &session.session_id,
         SessionMessageKind::Progress,
-        "unrelated traffic changes only the snapshot high-water",
+        "unrelated traffic leaves assignment semantics unchanged",
         None,
         SessionMessagePriority::Normal,
         false,
@@ -421,10 +421,24 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
     let same_semantics_new_fence = store
         .get_assignment(&session.session_id, &todo.message_id)
         .unwrap();
-    assert_ne!(
+    assert_eq!(
         same_semantics_new_fence.assignment_fence,
         snapshot.assignment_fence
     );
+    let different_todo = post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Todo,
+        "different replay fence",
+        None,
+        SessionMessagePriority::High,
+        false,
+    );
+    let different_valid_fence = store
+        .get_assignment(&session.session_id, &different_todo.message_id)
+        .unwrap()
+        .assignment_fence;
+    assert_ne!(different_valid_fence, snapshot.assignment_fence);
     let input = fenced_completion(
         &session.session_id,
         &todo.message_id,
@@ -437,7 +451,7 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
     assert_eq!(replay.answer.message_id, first.answer.message_id);
 
     let mut different_fence = input.clone();
-    different_fence.expected_assignment_fence = Some(same_semantics_new_fence.assignment_fence);
+    different_fence.expected_assignment_fence = Some(different_valid_fence);
     assert!(matches!(
         store.complete_message(different_fence),
         Err(SessionMessageError::IdempotencyConflict)

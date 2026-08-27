@@ -262,9 +262,10 @@ pub(crate) fn complete_session_message_input_schema() -> Value {
             },
             "expected_assignment_fence": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 192,
-                "description": "Optional opaque fence returned by get_session_assignment for this exact Session/todo. Pass unchanged to reject completion if assignment-local semantics changed. Omission preserves the legacy completion path."
+                "minLength": 48,
+                "maxLength": 48,
+                "pattern": "^wsa1_[A-Za-z0-9_-]{43}$",
+                "description": "Optional semantic snapshot fence returned by get_session_assignment for this exact Session/todo. Pass unchanged to reject completion if assignment-local semantics changed. Omission preserves the legacy completion path."
             },
             "tags": {
                 "type": "array",

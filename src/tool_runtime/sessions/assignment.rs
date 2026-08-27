@@ -1,9 +1,9 @@
-//! Atomic Session assignment snapshots and opaque completion fences.
+//! Atomic Session assignment snapshots and deterministic completion fences.
 //!
-//! The fence is conflict-detection metadata only. It is bound to one exact
-//! Session/todo pair and carries an opaque snapshot high-water plus a semantic
-//! digest of the retained todo thread. It is never authority, a completion key,
-//! a message-observation token, or a current-session credential.
+//! The fence is conflict-detection metadata only. It is a Session/todo-bound
+//! semantic snapshot fingerprint of the retained todo thread. It is never
+//! authority, a completion key, a message-observation token, or a current-session
+//! credential.
 
 use super::model::{
     SessionAssignmentCurrentState, SessionAssignmentSnapshot, SessionMessage, SessionMessageError,
@@ -14,23 +14,13 @@ use base64::{engine::general_purpose, Engine as _};
 use sha2::{Digest, Sha256};
 
 const ASSIGNMENT_FENCE_PREFIX: &str = "wsa1_";
-const ASSIGNMENT_BINDING_BYTES: usize = 16;
 const ASSIGNMENT_DIGEST_BYTES: usize = 32;
-const ASSIGNMENT_TAG_BYTES: usize = 16;
-const ASSIGNMENT_FENCE_PAYLOAD_BYTES: usize =
-    ASSIGNMENT_BINDING_BYTES * 2 + 8 + ASSIGNMENT_DIGEST_BYTES + ASSIGNMENT_TAG_BYTES;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ParsedAssignmentFence {
-    pub(super) snapshot_revision: u64,
-    pub(super) semantic_digest: [u8; ASSIGNMENT_DIGEST_BYTES],
-}
+const ASSIGNMENT_FENCE_PAYLOAD_BYTES: usize = 32;
 
 #[derive(Debug, Clone)]
 pub(super) struct AssignmentState {
     pub(super) todo: SessionMessage,
     pub(super) direct_replies: Vec<SessionMessage>,
-    pub(super) snapshot_revision: u64,
     pub(super) semantic_digest: [u8; ASSIGNMENT_DIGEST_BYTES],
 }
 
@@ -95,7 +85,6 @@ pub(super) fn open_assignment_state(
     Ok(AssignmentState {
         todo,
         direct_replies,
-        snapshot_revision: record.message_observation_revision,
         semantic_digest,
     })
 }
@@ -112,17 +101,20 @@ pub(super) fn current_assignment_state(
     ))
 }
 
+pub(super) fn assignment_fence_from_state(
+    session_id: &str,
+    todo_id: &str,
+    state: &AssignmentState,
+) -> String {
+    encode_assignment_fence(session_id, todo_id, &state.semantic_digest)
+}
+
 pub(super) fn snapshot_from_state(
     session_id: &str,
     todo_id: &str,
     state: AssignmentState,
 ) -> SessionAssignmentSnapshot {
-    let assignment_fence = encode_assignment_fence(
-        session_id,
-        todo_id,
-        state.snapshot_revision,
-        &state.semantic_digest,
-    );
+    let assignment_fence = assignment_fence_from_state(session_id, todo_id, &state);
     SessionAssignmentSnapshot {
         todo: state.todo,
         direct_replies: state.direct_replies,
@@ -153,12 +145,8 @@ pub(super) fn is_valid_assignment_fence_fingerprint(value: &str) -> bool {
         .is_ok_and(|decoded| decoded.len() == 32)
 }
 
-pub(super) fn parse_assignment_fence(
-    token: &str,
-    session_id: &str,
-    todo_id: &str,
-) -> Result<ParsedAssignmentFence, SessionMessageError> {
-    if token.len() > MAX_SESSION_ASSIGNMENT_FENCE_LEN || !token.is_ascii() {
+pub(super) fn validate_assignment_fence(token: &str) -> Result<(), SessionMessageError> {
+    if token.len() != MAX_SESSION_ASSIGNMENT_FENCE_LEN || !token.is_ascii() {
         return Err(SessionMessageError::InvalidAssignmentFence);
     }
     let encoded = token
@@ -167,61 +155,12 @@ pub(super) fn parse_assignment_fence(
     let payload = general_purpose::URL_SAFE_NO_PAD
         .decode(encoded)
         .map_err(|_| SessionMessageError::InvalidAssignmentFence)?;
-    if payload.len() != ASSIGNMENT_FENCE_PAYLOAD_BYTES {
-        return Err(SessionMessageError::InvalidAssignmentFence);
-    }
-
-    let expected_session_binding = scoped_digest(
-        b"webcodex/session-assignment/session-binding/v1\0",
-        session_id,
-        todo_id,
-        &[],
-    );
-    let expected_todo_binding = scoped_digest(
-        b"webcodex/session-assignment/todo-binding/v1\0",
-        session_id,
-        todo_id,
-        &[],
-    );
-    if payload[..ASSIGNMENT_BINDING_BYTES] != expected_session_binding[..ASSIGNMENT_BINDING_BYTES]
-        || payload[ASSIGNMENT_BINDING_BYTES..ASSIGNMENT_BINDING_BYTES * 2]
-            != expected_todo_binding[..ASSIGNMENT_BINDING_BYTES]
+    if payload.len() != ASSIGNMENT_FENCE_PAYLOAD_BYTES
+        || general_purpose::URL_SAFE_NO_PAD.encode(&payload) != encoded
     {
         return Err(SessionMessageError::InvalidAssignmentFence);
     }
-
-    let tag_start = ASSIGNMENT_FENCE_PAYLOAD_BYTES - ASSIGNMENT_TAG_BYTES;
-    let expected_tag = scoped_digest(
-        b"webcodex/session-assignment/tag/v1\0",
-        session_id,
-        todo_id,
-        &payload[..tag_start],
-    );
-    if payload[tag_start..] != expected_tag[..ASSIGNMENT_TAG_BYTES] {
-        return Err(SessionMessageError::InvalidAssignmentFence);
-    }
-
-    let revision_start = ASSIGNMENT_BINDING_BYTES * 2;
-    let mut masked_revision = [0u8; 8];
-    masked_revision.copy_from_slice(&payload[revision_start..revision_start + 8]);
-    let revision_mask = scoped_digest(
-        b"webcodex/session-assignment/revision-mask/v1\0",
-        session_id,
-        todo_id,
-        &[],
-    );
-    for (byte, mask) in masked_revision.iter_mut().zip(revision_mask.iter()) {
-        *byte ^= *mask;
-    }
-    let snapshot_revision = u64::from_be_bytes(masked_revision);
-
-    let digest_start = revision_start + 8;
-    let mut semantic_digest = [0u8; ASSIGNMENT_DIGEST_BYTES];
-    semantic_digest.copy_from_slice(&payload[digest_start..digest_start + ASSIGNMENT_DIGEST_BYTES]);
-    Ok(ParsedAssignmentFence {
-        snapshot_revision,
-        semantic_digest,
-    })
+    Ok(())
 }
 
 fn retained_assignment_thread(
@@ -273,49 +212,19 @@ fn hash_semantic_message(hasher: &mut Sha256, message: &SessionMessage) {
 fn encode_assignment_fence(
     session_id: &str,
     todo_id: &str,
-    snapshot_revision: u64,
     semantic_digest: &[u8; ASSIGNMENT_DIGEST_BYTES],
 ) -> String {
-    let session_binding = scoped_digest(
-        b"webcodex/session-assignment/session-binding/v1\0",
+    let payload = scoped_digest(
+        b"webcodex/session-assignment/fence/v1\0",
         session_id,
         todo_id,
-        &[],
+        semantic_digest,
     );
-    let todo_binding = scoped_digest(
-        b"webcodex/session-assignment/todo-binding/v1\0",
-        session_id,
-        todo_id,
-        &[],
-    );
-    let revision_mask = scoped_digest(
-        b"webcodex/session-assignment/revision-mask/v1\0",
-        session_id,
-        todo_id,
-        &[],
-    );
-    let mut masked_revision = snapshot_revision.to_be_bytes();
-    for (byte, mask) in masked_revision.iter_mut().zip(revision_mask.iter()) {
-        *byte ^= *mask;
-    }
-
-    let mut payload = Vec::with_capacity(ASSIGNMENT_FENCE_PAYLOAD_BYTES);
-    payload.extend_from_slice(&session_binding[..ASSIGNMENT_BINDING_BYTES]);
-    payload.extend_from_slice(&todo_binding[..ASSIGNMENT_BINDING_BYTES]);
-    payload.extend_from_slice(&masked_revision);
-    payload.extend_from_slice(semantic_digest);
-    let tag = scoped_digest(
-        b"webcodex/session-assignment/tag/v1\0",
-        session_id,
-        todo_id,
-        &payload,
-    );
-    payload.extend_from_slice(&tag[..ASSIGNMENT_TAG_BYTES]);
     let token = format!(
         "{ASSIGNMENT_FENCE_PREFIX}{}",
         general_purpose::URL_SAFE_NO_PAD.encode(payload)
     );
-    debug_assert!(token.len() <= MAX_SESSION_ASSIGNMENT_FENCE_LEN);
+    debug_assert_eq!(token.len(), MAX_SESSION_ASSIGNMENT_FENCE_LEN);
     token
 }
 

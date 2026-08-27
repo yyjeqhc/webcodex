@@ -1127,9 +1127,8 @@ pub(crate) struct SessionMessage {
 /// todo thread exceeds this bound the assignment read fails closed rather than
 /// returning an incomplete fence.
 pub(crate) const MAX_SESSION_ASSIGNMENT_DIRECT_REPLIES: usize = 16;
-/// Opaque assignment fences are intentionally smaller than the generic tool
-/// string budget and never expose the underlying observation revision.
-pub(crate) const MAX_SESSION_ASSIGNMENT_FENCE_LEN: usize = 192;
+/// `wsa1_` plus one base64url-no-pad SHA-256 semantic snapshot fingerprint.
+pub(crate) const MAX_SESSION_ASSIGNMENT_FENCE_LEN: usize = 48;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct SessionAssignmentSnapshot {

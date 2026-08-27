@@ -79,8 +79,8 @@ impl SessionStore {
 
     /// Read one exact open todo and every retained direct reply under one
     /// Session-store snapshot. The durable persistence barrier is completed
-    /// before the opaque fence is returned so a post-restart retry can compare
-    /// against the same observation state.
+    /// before the semantic snapshot fence is returned so a post-restart retry
+    /// can compare against the same durable assignment state.
     pub(crate) fn get_assignment(
         &self,
         session_id: &str,

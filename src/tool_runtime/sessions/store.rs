@@ -12,8 +12,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 use super::assignment::{
-    assignment_fence_fingerprint, current_assignment_state, open_assignment_state,
-    parse_assignment_fence, snapshot_from_state,
+    assignment_fence_fingerprint, assignment_fence_from_state, current_assignment_state,
+    open_assignment_state, validate_assignment_fence,
 };
 use super::console::{
     build_detail as build_console_detail, build_list_item as build_console_list_item,
@@ -3392,28 +3392,23 @@ impl SessionStoreInner {
         }
 
         let todo_snapshot = record.messages[todo_index].as_ref().clone();
-        let parsed_assignment_fence = input
+        let has_assignment_fence = input
             .expected_assignment_fence
             .as_deref()
-            .map(|fence| parse_assignment_fence(fence, &input.session_id, &input.message_id))
-            .transpose()?;
+            .map(validate_assignment_fence)
+            .transpose()?
+            .is_some();
         let provided_assignment_fence_fingerprint = input
             .expected_assignment_fence
             .as_deref()
             .map(assignment_fence_fingerprint);
-        if parsed_assignment_fence
-            .as_ref()
-            .is_some_and(|fence| fence.snapshot_revision > record.message_observation_revision)
-        {
-            return Err(SessionMessageError::InvalidAssignmentFence);
-        }
         if todo_snapshot.status == SessionMessageStatus::Resolved {
             match (
                 todo_snapshot.completion_id.as_deref(),
                 todo_snapshot.resolved_by_message_id.as_deref(),
             ) {
                 (None, None) => {
-                    if parsed_assignment_fence.is_some() {
+                    if has_assignment_fence {
                         return Err(SessionMessageError::AssignmentStale {
                             current: current_assignment_state(record, &input.message_id)?,
                             fresh_assignment_fence: None,
@@ -3484,17 +3479,18 @@ impl SessionStoreInner {
         if todo_snapshot.completion_id.is_some() || todo_snapshot.resolved_by_message_id.is_some() {
             return Err(SessionMessageError::InvalidCompletionState);
         }
-        if let Some(fence) = parsed_assignment_fence.as_ref() {
+        if let Some(fence) = input.expected_assignment_fence.as_deref() {
             let current_assignment = open_assignment_state(record, &input.message_id)?;
-            if current_assignment.semantic_digest != fence.semantic_digest {
+            let fresh_assignment_fence = assignment_fence_from_state(
+                &input.session_id,
+                &input.message_id,
+                &current_assignment,
+            );
+            if fresh_assignment_fence != fence {
                 let current = current_assignment_state(record, &input.message_id)?;
-                let fresh_assignment_fence = Some(
-                    snapshot_from_state(&input.session_id, &input.message_id, current_assignment)
-                        .assignment_fence,
-                );
                 return Err(SessionMessageError::AssignmentStale {
                     current,
-                    fresh_assignment_fence,
+                    fresh_assignment_fence: Some(fresh_assignment_fence),
                 });
             }
         }
@@ -3548,7 +3544,7 @@ impl SessionStoreInner {
             input.message_id.clone(),
             provided_assignment_fence_fingerprint,
         );
-        let protect_fenced_assignment_replies = parsed_assignment_fence.is_some();
+        let protect_fenced_assignment_replies = has_assignment_fence;
         while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
             let protected_answer_id = answer.message_id.as_str();
             let protected_todo_id = input.message_id.as_str();

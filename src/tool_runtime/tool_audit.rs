@@ -498,6 +498,89 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 out.insert("instruction_present".to_string(), Value::Bool(true));
             }
         }
+        "skill_list" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "project",
+                    "offset",
+                    "limit",
+                    "expected_catalog_revision",
+                    "session_id",
+                ],
+            );
+            out.insert(
+                "query_present".to_string(),
+                Value::Bool(
+                    obj.get("query")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.is_empty()),
+                ),
+            );
+        }
+        "skill_read_file" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "project",
+                    "skill_id",
+                    "path",
+                    "start_line",
+                    "limit",
+                    "expected_definition_revision",
+                    "expected_package_revision",
+                    "session_id",
+                ],
+            );
+        }
+        "skill_versions" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["project", "skill_key", "offset", "limit", "session_id"],
+            );
+        }
+        "skill_install" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "project",
+                    "skill_key",
+                    "expected_artifact_sha256",
+                    "activate",
+                    "expected_state_revision",
+                    "session_id",
+                ],
+            );
+            out.insert(
+                "artifact_path_present".to_string(),
+                Value::Bool(obj.get("artifact_path").and_then(Value::as_str).is_some()),
+            );
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+        "skill_activate" | "skill_remove_revision" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "project",
+                    "skill_key",
+                    "package_revision",
+                    "expected_state_revision",
+                    "session_id",
+                ],
+            );
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
         "search_project_text" => {
             copy_keys(
                 obj,
@@ -1050,6 +1133,89 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "recent_completion_count": output.get("recent_completions").and_then(Value::as_array).map(Vec::len),
             "summary_only": output.get("summary_only").cloned().unwrap_or(Value::Null),
             "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "skill_list" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "catalog_revision": output.get("catalog_revision").cloned().unwrap_or(Value::Null),
+            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
+            "returned_count": output.get("returned_count").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "invalid_count": output.get("invalid_count").cloned().unwrap_or(Value::Null),
+            "discovery_truncated": output.get("discovery_truncated").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
+        "skill_read_file" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "skill_id": output.get("skill_id").cloned().unwrap_or(Value::Null),
+            "source_scope": output.get("source_scope").cloned().unwrap_or(Value::Null),
+            "trust": output.get("trust").cloned().unwrap_or(Value::Null),
+            "package_revision": output.get("package_revision").cloned().unwrap_or(Value::Null),
+            "definition_revision": output.get("definition_revision").cloned().unwrap_or(Value::Null),
+            "path": output.get("path").cloned().unwrap_or(Value::Null),
+            "sha256": output.get("sha256").cloned().unwrap_or(Value::Null),
+            "start_line": output.get("start_line").cloned().unwrap_or(Value::Null),
+            "end_line": output.get("end_line").cloned().unwrap_or(Value::Null),
+            "returned_lines": output.get("returned_lines").cloned().unwrap_or(Value::Null),
+            "has_more": output.get("has_more").cloned().unwrap_or(Value::Null),
+            "next_start_line": output.get("next_start_line").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
+        "skill_versions" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "skill_id": output.get("skill_id").cloned().unwrap_or(Value::Null),
+            "skill_key": output.get("skill_key").cloned().unwrap_or(Value::Null),
+            "state_revision": output.get("state_revision").cloned().unwrap_or(Value::Null),
+            "active_package_revision": output.get("active_package_revision").cloned().unwrap_or(Value::Null),
+            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
+            "offset": output.get("offset").cloned().unwrap_or(Value::Null),
+            "next_offset": output.get("next_offset").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
+        "skill_install" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "skill_id": output.get("skill_id").cloned().unwrap_or(Value::Null),
+            "skill_key": output.get("skill_key").cloned().unwrap_or(Value::Null),
+            "package_revision": output.get("package_revision").cloned().unwrap_or(Value::Null),
+            "definition_revision": output.get("definition_revision").cloned().unwrap_or(Value::Null),
+            "artifact_sha256": output.get("artifact_sha256").cloned().unwrap_or(Value::Null),
+            "file_count": output.get("file_count").cloned().unwrap_or(Value::Null),
+            "total_bytes": output.get("total_bytes").cloned().unwrap_or(Value::Null),
+            "installed": output.get("installed").cloned().unwrap_or(Value::Null),
+            "activated": output.get("activated").cloned().unwrap_or(Value::Null),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "state_revision": output.get("state_revision").cloned().unwrap_or(Value::Null),
+            "active_package_revision": output.get("active_package_revision").cloned().unwrap_or(Value::Null),
+            "outcome_unknown": output.get("outcome_unknown").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
+        "skill_activate" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "skill_id": output.get("skill_id").cloned().unwrap_or(Value::Null),
+            "skill_key": output.get("skill_key").cloned().unwrap_or(Value::Null),
+            "previous_active_package_revision": output.get("previous_active_package_revision").cloned().unwrap_or(Value::Null),
+            "active_package_revision": output.get("active_package_revision").cloned().unwrap_or(Value::Null),
+            "state_revision": output.get("state_revision").cloned().unwrap_or(Value::Null),
+            "changed": output.get("changed").cloned().unwrap_or(Value::Null),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "outcome_unknown": output.get("outcome_unknown").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
+        "skill_remove_revision" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "skill_id": output.get("skill_id").cloned().unwrap_or(Value::Null),
+            "skill_key": output.get("skill_key").cloned().unwrap_or(Value::Null),
+            "package_revision": output.get("package_revision").cloned().unwrap_or(Value::Null),
+            "state_revision": output.get("state_revision").cloned().unwrap_or(Value::Null),
+            "removed": output.get("removed").cloned().unwrap_or(Value::Null),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "outcome_unknown": output.get("outcome_unknown").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
         }),
         "computer_list_targets" => serde_json::json!({
             "count": output.get("count").cloned().unwrap_or(Value::Null),
@@ -1677,6 +1843,146 @@ mod computer_privacy_tests {
         assert!(!serialized.contains("Private App"));
         assert!(!serialized.contains("application_"));
         assert!(!serialized.contains("native_identity"));
+    }
+
+    #[test]
+    fn skill_runtime_audit_results_are_metadata_only() {
+        let list = session_log_result_for_tool(
+            "skill_list",
+            &json!({
+                "project": "agent:test:demo",
+                "catalog_revision": "wc_skillcat_deadbeef",
+                "total_count": 1,
+                "returned_count": 1,
+                "truncated": false,
+                "invalid_count": 0,
+                "discovery_truncated": false,
+                "skills": [{"name": "PRIVATE DESCRIPTION", "description": "PRIVATE CATALOG BODY"}]
+            }),
+        );
+        let list_serialized = serde_json::to_string(&list).unwrap();
+        assert!(!list_serialized.contains("PRIVATE DESCRIPTION"));
+        assert!(!list_serialized.contains("PRIVATE CATALOG BODY"));
+        assert!(list.get("skills").is_none());
+
+        let read = session_log_result_for_tool(
+            "skill_read_file",
+            &json!({
+                "project": "agent:test:demo",
+                "skill_id": "wc_skill_0123456789abcdef0123456789abcdef",
+                "definition_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "path": "SKILL.md",
+                "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "text": "PRIVATE_SKILL_BODY",
+                "start_line": 1,
+                "end_line": 2,
+                "returned_lines": 2,
+                "has_more": false,
+                "next_start_line": null
+            }),
+        );
+        let read_serialized = serde_json::to_string(&read).unwrap();
+        assert!(!read_serialized.contains("PRIVATE_SKILL_BODY"));
+        assert!(read.get("text").is_none());
+        assert_eq!(read["path"], "SKILL.md");
+        assert_eq!(read["returned_lines"], 2);
+    }
+
+    #[test]
+    fn skill_management_audit_omits_paths_keys_and_package_bodies() {
+        let args = session_log_arguments_for_tool_request(
+            "skill_install",
+            &json!({
+                "project": "agent:test:demo",
+                "skill_key": "demo",
+                "artifact_path": "artifacts/PRIVATE_PACKAGE_NAME.zip",
+                "expected_artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "idempotency_key": "PRIVATE_IDEMPOTENCY_KEY",
+                "activate": true,
+                "expected_state_revision": "wc_skillstate_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }),
+        );
+        let args_serialized = serde_json::to_string(&args).unwrap();
+        assert!(!args_serialized.contains("PRIVATE_PACKAGE_NAME"));
+        assert!(!args_serialized.contains("PRIVATE_IDEMPOTENCY_KEY"));
+        assert_eq!(args["artifact_path_present"], true);
+        assert_eq!(args["idempotency_key_present"], true);
+
+        let typed_args = ToolCall::SkillInstall {
+            project: "agent:test:demo".to_string(),
+            skill_key: "demo".to_string(),
+            artifact_path: "artifacts/PRIVATE_PACKAGE_NAME.zip".to_string(),
+            expected_artifact_sha256:
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            idempotency_key: "PRIVATE_IDEMPOTENCY_KEY".to_string(),
+            activate: Some(true),
+            expected_state_revision: Some(
+                "wc_skillstate_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    .to_string(),
+            ),
+            session_id: None,
+        }
+        .session_log_arguments();
+        let typed_serialized = serde_json::to_string(&typed_args).unwrap();
+        assert!(!typed_serialized.contains("PRIVATE_PACKAGE_NAME"));
+        assert!(!typed_serialized.contains("PRIVATE_IDEMPOTENCY_KEY"));
+        assert_eq!(typed_args["skill_key"], "demo");
+        assert_eq!(typed_args["artifact_path_present"], true);
+        assert_eq!(typed_args["idempotency_key_present"], true);
+
+        let versions = session_log_result_for_tool(
+            "skill_versions",
+            &json!({
+                "project": "agent:test:demo",
+                "skill_id": "wc_skill_0123456789abcdef0123456789abcdef",
+                "skill_key": "demo",
+                "state_revision": "wc_skillstate_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "active_package_revision": "wc_skillpkg_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "total_count": 1,
+                "offset": 0,
+                "next_offset": null,
+                "versions": [{
+                    "description": "PRIVATE_REVISION_DESCRIPTION",
+                    "native_store_path": "/PRIVATE/NATIVE/STORE/PATH"
+                }]
+            }),
+        );
+        let versions_serialized = serde_json::to_string(&versions).unwrap();
+        assert!(!versions_serialized.contains("PRIVATE_REVISION_DESCRIPTION"));
+        assert!(!versions_serialized.contains("PRIVATE/NATIVE/STORE"));
+        assert!(versions.get("versions").is_none());
+
+        let install = session_log_result_for_tool(
+            "skill_install",
+            &json!({
+                "project": "agent:test:demo",
+                "skill_id": "wc_skill_0123456789abcdef0123456789abcdef",
+                "skill_key": "demo",
+                "package_revision": "wc_skillpkg_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "definition_revision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "artifact_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "file_count": 2,
+                "total_bytes": 123,
+                "installed": true,
+                "activated": false,
+                "replayed": false,
+                "state_revision": "wc_skillstate_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "active_package_revision": null,
+                "raw_skill_body": "PRIVATE_SKILL_BODY",
+                "archive_bytes": "PRIVATE_ZIP_BYTES",
+                "native_store_path": "/PRIVATE/NATIVE/STORE/PATH",
+                "staging_path": "/PRIVATE/STAGING/PATH"
+            }),
+        );
+        let install_serialized = serde_json::to_string(&install).unwrap();
+        for private in [
+            "PRIVATE_SKILL_BODY",
+            "PRIVATE_ZIP_BYTES",
+            "PRIVATE/NATIVE/STORE",
+            "PRIVATE/STAGING/PATH",
+        ] {
+            assert!(!install_serialized.contains(private), "leaked {private}");
+        }
     }
 
     #[test]
@@ -2988,6 +3294,112 @@ impl ToolCall {
                 "items": items,
                 "with_line_numbers": with_line_numbers,
             }),
+            Self::SkillList {
+                project,
+                query,
+                offset,
+                limit,
+                expected_catalog_revision,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "query_present": query.as_ref().is_some_and(|value| !value.is_empty()),
+                "offset": offset,
+                "limit": limit,
+                "expected_catalog_revision": expected_catalog_revision,
+            }),
+            Self::SkillReadFile {
+                project,
+                skill_id,
+                path,
+                start_line,
+                limit,
+                expected_definition_revision,
+                expected_package_revision,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "skill_id": skill_id,
+                "path": path,
+                "start_line": start_line,
+                "limit": limit,
+                "expected_definition_revision": expected_definition_revision,
+                "expected_package_revision": expected_package_revision,
+            }),
+            Self::SkillVersions {
+                project,
+                skill_key,
+                offset,
+                limit,
+                session_id,
+            } => session_log_arguments_for_tool_request(
+                "skill_versions",
+                &serde_json::json!({
+                    "project": project,
+                    "skill_key": skill_key,
+                    "offset": offset,
+                    "limit": limit,
+                    "session_id": session_id,
+                }),
+            ),
+            Self::SkillInstall {
+                project,
+                skill_key,
+                artifact_path,
+                expected_artifact_sha256,
+                idempotency_key,
+                activate,
+                expected_state_revision,
+                session_id,
+            } => session_log_arguments_for_tool_request(
+                "skill_install",
+                &serde_json::json!({
+                    "project": project,
+                    "skill_key": skill_key,
+                    "artifact_path": artifact_path,
+                    "expected_artifact_sha256": expected_artifact_sha256,
+                    "idempotency_key": idempotency_key,
+                    "activate": activate,
+                    "expected_state_revision": expected_state_revision,
+                    "session_id": session_id,
+                }),
+            ),
+            Self::SkillActivate {
+                project,
+                skill_key,
+                package_revision,
+                expected_state_revision,
+                idempotency_key,
+                session_id,
+            } => session_log_arguments_for_tool_request(
+                "skill_activate",
+                &serde_json::json!({
+                    "project": project,
+                    "skill_key": skill_key,
+                    "package_revision": package_revision,
+                    "expected_state_revision": expected_state_revision,
+                    "idempotency_key": idempotency_key,
+                    "session_id": session_id,
+                }),
+            ),
+            Self::SkillRemoveRevision {
+                project,
+                skill_key,
+                package_revision,
+                expected_state_revision,
+                idempotency_key,
+                session_id,
+            } => session_log_arguments_for_tool_request(
+                "skill_remove_revision",
+                &serde_json::json!({
+                    "project": project,
+                    "skill_key": skill_key,
+                    "package_revision": package_revision,
+                    "expected_state_revision": expected_state_revision,
+                    "idempotency_key": idempotency_key,
+                    "session_id": session_id,
+                }),
+            ),
             Self::ListProjectFiles {
                 project,
                 path,

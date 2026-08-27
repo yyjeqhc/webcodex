@@ -1378,13 +1378,16 @@ impl SessionStore {
             // newer revision without ever seeing a complete context prefix.
             let pre_response_context_revision = next_revision.saturating_sub(1);
             let recovery_start = match ack_session_context_revision {
-                SessionContextRevisionAck::Unsupported => pre_response_context_revision,
                 SessionContextRevisionAck::Revision(revision)
                     if revision <= pre_call_context_revision =>
                 {
                     revision
                 }
-                _ => 0,
+                // Missing, malformed, and future ACKs prove no caller-held
+                // prefix. They recover from a compact current-state handoff at
+                // response projection time instead of replaying retained history
+                // as though revision zero had been explicitly acknowledged.
+                _ => pre_response_context_revision,
             };
             let recovery_events = record
                 .events
@@ -1397,13 +1400,12 @@ impl SessionStore {
                 })
                 .collect::<Vec<_>>();
             let expected_recovery_count = match ack_session_context_revision {
-                SessionContextRevisionAck::Unsupported => 0,
                 SessionContextRevisionAck::Revision(revision)
                     if revision <= pre_call_context_revision =>
                 {
                     pre_response_context_revision.saturating_sub(revision)
                 }
-                _ => pre_response_context_revision,
+                _ => 0,
             };
             let history_lost = expected_recovery_count > recovery_events.len() as u64;
             event.context_revision = Some(next_revision);

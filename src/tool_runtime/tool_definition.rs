@@ -18,6 +18,7 @@ mod jobs;
 mod lsp;
 mod patches;
 mod sessions;
+mod skills;
 mod testing;
 
 use super::metadata::{
@@ -72,7 +73,7 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_GIT,
     SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
     SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SHELL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+    SHELL_CLIENT_CAPABILITY_SKILL_STORE_MANAGE, SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
 
@@ -140,6 +141,8 @@ pub(crate) enum AgentCapability {
     /// Runner-owned delegated ACP coding-agent execution. Never inferred from
     /// shell, Job, MCP, or file-write capability.
     CodingAgentRuns,
+    /// Runner-global operator Skill store management. Never inferred from read.
+    SkillStoreManage,
 }
 
 impl AgentCapability {
@@ -176,6 +179,7 @@ impl AgentCapability {
             Self::LspReadOnlyNavigation => SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
             Self::LspCallHierarchy => SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
             Self::CodingAgentRuns => SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS,
+            Self::SkillStoreManage => SHELL_CLIENT_CAPABILITY_SKILL_STORE_MANAGE,
         }
     }
 
@@ -217,6 +221,7 @@ impl AgentCapability {
             Self::LspReadOnlyNavigation => &[SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION],
             Self::LspCallHierarchy => &[SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY],
             Self::CodingAgentRuns => &[SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS],
+            Self::SkillStoreManage => &[SHELL_CLIENT_CAPABILITY_SKILL_STORE_MANAGE],
         }
     }
 
@@ -484,6 +489,7 @@ pub(crate) fn tool_definitions() -> impl Iterator<Item = &'static ToolDefinition
 const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     TOOL_DEFINITION_HEAD,
     sessions::DEFINITIONS,
+    skills::DEFINITIONS,
     hygiene::DEFINITIONS,
     checkpoints::DEFINITIONS,
     coding_agents::DEFINITIONS,

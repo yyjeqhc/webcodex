@@ -11,7 +11,7 @@ use crate::model_surface::ModelSurface;
 use crate::tool_request_trace::ToolRequestLifecycle;
 use crate::tool_runtime::kernel::{
     check_runtime_tool_scope, HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
-    ToolCallRequest as KernelToolCallRequest, ToolTransport,
+    ToolCallRequest as KernelToolCallRequest, ToolProtocolCapabilities, ToolTransport,
 };
 use crate::tool_runtime::model_ergonomics_telemetry::{
     ModelErgonomicsRecord, ModelErgonomicsTimer,
@@ -126,6 +126,103 @@ fn adapt_computer_snapshot_output_schema_for_mcp(spec: &mut ToolSpec) {
     );
 }
 
+fn mcp_context_projection_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Optional bounded post-tool context sidecar. It describes material projected after the main effect/observation and never grants authority or retroactively governs that effect.",
+        "properties": {
+            "timing": {"type": "string", "const": "post_tool"},
+            "applies_to_current_effect": {"type": "boolean", "const": false},
+            "materials": {
+                "type": "array",
+                "maxItems": crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_ITEMS,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string", "maxLength": crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_KEY_CHARS},
+                        "status": {"type": "string", "enum": ["available", "unavailable", "unsupported"]},
+                        "reason_code": {"type": "string"},
+                        "projection": {}
+                    },
+                    "required": ["key", "status"],
+                    "additionalProperties": false
+                }
+            },
+            "truncated": {"type": "boolean"}
+        },
+        "required": ["timing", "applies_to_current_effect", "materials", "truncated"],
+        "additionalProperties": false
+    })
+}
+
+fn add_context_projection_to_output_shape(schema: &mut Value, projection_schema: &Value) {
+    if schema.get("type").and_then(Value::as_str) == Some("object") {
+        if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+            properties.insert("context_projection".to_string(), projection_schema.clone());
+        }
+    }
+    for keyword in ["anyOf", "oneOf", "allOf"] {
+        if let Some(branches) = schema.get_mut(keyword).and_then(Value::as_array_mut) {
+            for branch in branches {
+                add_context_projection_to_output_shape(branch, projection_schema);
+            }
+        }
+    }
+}
+
+fn add_stateless_context_projection_output_schema(tool: &mut Value) {
+    let Some(output_schema) = tool.get_mut("outputSchema") else {
+        return;
+    };
+    let projection_schema = mcp_context_projection_output_schema();
+    if let Some(output) = output_schema.pointer_mut("/properties/output") {
+        add_context_projection_to_output_shape(output, &projection_schema);
+    }
+    if let Some(conditions) = output_schema.get_mut("allOf").and_then(Value::as_array_mut) {
+        for condition in conditions {
+            for branch_name in ["then", "else"] {
+                if let Some(output) =
+                    condition.pointer_mut(&format!("/{branch_name}/properties/output"))
+                {
+                    add_context_projection_to_output_shape(output, &projection_schema);
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn add_stateless_skill_tools(
+    payload: &mut Value,
+    model_surface: ModelSurface,
+    compact: bool,
+    app_enabled: bool,
+    auth: Option<&AuthContext>,
+) {
+    if !matches!(model_surface, ModelSurface::FullOperatorRuntime) {
+        return;
+    }
+    let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
+    for spec in crate::tool_runtime::skill_runtime_tool_specs()
+        .into_iter()
+        .filter(|spec| {
+            !oauth_scope_projection || check_runtime_tool_scope(auth, &spec.name).is_ok()
+        })
+    {
+        tools.push(mcp_tool_spec_json(spec, compact, app_enabled));
+    }
+    // Runner-global store management is intentionally narrower than Skill read.
+    // Absence of authentication is never operator authority, and project:write
+    // or direct shared-key access does not imply admin.
+    if auth.is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_ADMIN)) {
+        for spec in crate::tool_runtime::skill_management_tool_specs() {
+            tools.push(mcp_tool_spec_json(spec, compact, app_enabled));
+        }
+    }
+}
+
 pub(super) fn add_stateless_workflow_recorder_metadata(
     payload: &mut Value,
     model_surface: ModelSurface,
@@ -185,14 +282,30 @@ pub(super) fn add_stateless_workflow_recorder_metadata(
         );
         if matches!(model_surface, ModelSurface::FullOperatorRuntime) {
             properties.insert(
+                crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD
+                    .to_string(),
+                json!({
+                    "type": "array",
+                    "maxItems": crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_ITEMS,
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_KEY_CHARS,
+                        "description": "Bounded context material key. Keys are open-ended rather than schema-enumerated; unsupported keys are reported nonfatally in context_projection."
+                    },
+                    "description": "MCP wrapper metadata only. Request bounded context material to be appended as context_projection after this tool's main effect/observation is already complete. This sidecar grants no authority and does not retroactively make requested guidance a precondition of the current effect. If project rules were lost, first recover project.instructions on an observation call before a mutation that must follow those rules."
+                }),
+            );
+            properties.insert(
                 crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD
                     .to_string(),
                 json!({
                     "type": "integer",
                     "minimum": 0,
-                    "description": "Echo the latest Session context revision still present in the current model context. Omit it when unknown. If it is missing or behind the Session's model-facing continuity watermark, the tool still executes normally and the result may include bounded Session recovery context."
+                    "description": "Echo the latest Session context revision still present in the current model context. Omit it when unknown. A known behind revision may receive bounded continuous delta recovery; missing, invalid, future, retained-history-loss, or bounded-delta truncation recovery uses a compact current Session handoff. The tool effect remains nonblocking."
                 }),
             );
+            add_stateless_context_projection_output_schema(tool);
         }
     }
 }
@@ -298,6 +411,13 @@ pub(super) fn handle_list(
         mcp_tools_list_payload(runtime.model_surface())
     };
     if stateless_2026 {
+        add_stateless_skill_tools(
+            &mut result,
+            runtime.model_surface(),
+            crate::config::mcp_compact_schemas_enabled(),
+            resources::model_surface_supports_computer_app(runtime.model_surface()),
+            auth,
+        );
         add_stateless_workflow_recorder_metadata(&mut result, runtime.model_surface());
     }
     if crate::mcp_gateway::authorized(auth) {
@@ -725,6 +845,60 @@ pub(super) fn strip_stateless_session_message_resolution(
     ))
 }
 
+pub(super) fn strip_stateless_context_request(
+    arguments: &mut Value,
+) -> Result<Vec<String>, String> {
+    let Some(object) = arguments.as_object_mut() else {
+        return Ok(Vec::new());
+    };
+    let Some(value) =
+        object.remove(crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD)
+    else {
+        return Ok(Vec::new());
+    };
+    let Value::Array(values) = value else {
+        return Err(format!(
+            "field '{}' must be an array of bounded context material keys",
+            crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD
+        ));
+    };
+    if values.len() > crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_ITEMS {
+        return Err(format!(
+            "field '{}' accepts at most {} context material keys",
+            crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD,
+            crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_ITEMS
+        ));
+    }
+    let mut normalized = Vec::with_capacity(values.len());
+    let mut seen = std::collections::HashSet::new();
+    for value in values {
+        let Value::String(value) = value else {
+            return Err(format!(
+                "field '{}' must contain only strings",
+                crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD
+            ));
+        };
+        let key = value.trim();
+        let valid = !key.is_empty()
+            && key.chars().count()
+                <= crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_KEY_CHARS
+            && key
+                .chars()
+                .all(|ch| !ch.is_control() && !ch.is_whitespace());
+        if !valid {
+            return Err(format!(
+                "field '{}' keys must be non-empty, at most {} characters, and contain no whitespace or control characters",
+                crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD,
+                crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_KEY_CHARS
+            ));
+        }
+        if seen.insert(key.to_string()) {
+            normalized.push(key.to_string());
+        }
+    }
+    Ok(normalized)
+}
+
 pub(super) fn strip_stateless_ack_session_context_revision(arguments: &mut Value) -> Option<Value> {
     arguments
         .as_object_mut()?
@@ -1023,6 +1197,48 @@ pub(super) async fn handle_call(
     }
     let context_continuity_capable =
         stateless_2026 && matches!(runtime.model_surface(), ModelSurface::FullOperatorRuntime);
+    // The sidecar is surface-scoped like the ACK today, but it is a
+    // separate caller-explicit protocol and must not participate in
+    // revision continuity bookkeeping.
+    let context_sidecar_capable =
+        stateless_2026 && matches!(runtime.model_surface(), ModelSurface::FullOperatorRuntime);
+    let skill_runtime_capable =
+        stateless_2026 && matches!(runtime.model_surface(), ModelSurface::FullOperatorRuntime);
+    let skill_management_capable =
+        stateless_2026 && matches!(runtime.model_surface(), ModelSurface::FullOperatorRuntime);
+    let context_request = if context_sidecar_capable {
+        match strip_stateless_context_request(&mut params.arguments) {
+            Ok(keys) => keys,
+            Err(message) => {
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_failed("invalid_arguments");
+                    lc.dispatch_finished(false, Some(false), "invalid_arguments");
+                }
+                if let (Some(slot), Some(timer)) = (
+                    model_ergonomics_out.as_deref_mut(),
+                    pre_kernel_model_ergonomics.take(),
+                ) {
+                    *slot = Some(
+                        timer
+                            .finish()
+                            .record_for_pre_result_failure("invalid_arguments"),
+                    );
+                }
+                return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    if !context_request.is_empty() {
+        if let Some(arguments) = params.arguments.as_object_mut() {
+            arguments.insert(
+                crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD
+                    .to_string(),
+                json!(context_request),
+            );
+        }
+    }
     if context_continuity_capable {
         if let Some(arguments) = params.arguments.as_object_mut() {
             arguments.remove(
@@ -1046,7 +1262,7 @@ pub(super) async fn handle_call(
     let as_image_requested = params.name == "read_project_artifact"
         && params.arguments.get("as_image").and_then(Value::as_bool) == Some(true);
     let outcome = runtime
-        .call_tool_with_context_protocol_capability(
+        .call_tool_with_protocol_capabilities(
             KernelToolCallRequest {
                 tool_name: params.name.clone(),
                 arguments: params.arguments,
@@ -1059,7 +1275,12 @@ pub(super) async fn handle_call(
                 record_oauth_scope_denials: false,
                 host_file_import_trust,
             },
-            context_continuity_capable,
+            ToolProtocolCapabilities {
+                context_continuity: context_continuity_capable,
+                context_sidecar: context_sidecar_capable,
+                skill_runtime: skill_runtime_capable,
+                skill_management: skill_management_capable,
+            },
         )
         .await;
     let model_ergonomics_completion = outcome.model_ergonomics;

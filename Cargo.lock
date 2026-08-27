@@ -5238,6 +5238,7 @@ dependencies = [
  "block2",
  "chrono",
  "flate2",
+ "fs2",
  "futures-util",
  "image",
  "libc",
@@ -5271,6 +5272,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "xcap",
  "xml",
+ "zip",
 ]
 
 [[package]]

@@ -59,6 +59,8 @@ pub(crate) fn is_basic_file_request_kind(kind: &str) -> bool {
             | "file_list"
             | "file_project_overview"
             | "file_delete_project_files"
+            | "file_skill_list_packages"
+            | "file_skill_read_file"
     )
 }
 
@@ -72,6 +74,8 @@ pub(crate) fn handle_basic_file_request(
         "file_read" => handle_file_read_request(policy, request, resolved, start),
         "file_write" => handle_file_write_request(policy, request, resolved, start),
         "file_list" => handle_file_list_request(resolved, start),
+        "file_skill_list_packages" => handle_skill_list_packages_request(request, resolved, start),
+        "file_skill_read_file" => handle_skill_read_file_request(policy, request, resolved, start),
         "file_project_overview" => handle_project_overview_request(request, start),
         "file_delete_project_files" => {
             handle_delete_project_files_request(request, resolved, start)
@@ -470,6 +474,324 @@ fn handle_file_read_range_request(
             duration_ms: Some(start.elapsed().as_millis() as u64),
             error: Some(read_file_reason_message(error.reason)),
         },
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillPackageListOptions {
+    limit: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct SkillPackageListEntry {
+    name: String,
+    kind: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct SkillPackageListEnvelope {
+    format: &'static str,
+    entries: Vec<SkillPackageListEntry>,
+    truncated: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillReadOptions {
+    package_root: String,
+    max_file_bytes: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct SkillFileReadEnvelope<'a> {
+    format: &'static str,
+    content: &'a str,
+    sha256: &'a str,
+    file_bytes: usize,
+    total_lines: usize,
+    start_line: usize,
+    limit: usize,
+    returned_lines: usize,
+    end_line: Option<usize>,
+    has_more: bool,
+    next_start_line: Option<usize>,
+}
+
+fn skill_command_error(start: Instant, code: &'static str) -> CommandResult {
+    CommandResult {
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+        duration_ms: Some(start.elapsed().as_millis() as u64),
+        error: Some(code.to_string()),
+    }
+}
+
+fn skill_list_success(
+    start: Instant,
+    entries: Vec<SkillPackageListEntry>,
+    truncated: bool,
+) -> CommandResult {
+    let output = SkillPackageListEnvelope {
+        format: "webcodex.skill_package_list.v1",
+        entries,
+        truncated,
+    };
+    match serde_json::to_string(&output) {
+        Ok(stdout) => CommandResult {
+            exit_code: Some(0),
+            stdout: Some(stdout),
+            stderr: Some(String::new()),
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: None,
+        },
+        Err(_) => skill_command_error(start, "skill_list_unavailable"),
+    }
+}
+
+fn canonical_skill_package_root(path: &str) -> bool {
+    if path.contains(['\\', '\0']) {
+        return false;
+    }
+    let components = path.split('/').collect::<Vec<_>>();
+    components.len() == 3
+        && components[0] == ".agents"
+        && components[1] == "skills"
+        && !components[2].is_empty()
+        && components[2] != "."
+        && components[2] != ".."
+}
+
+fn canonical_skill_resource_request_path(package_root: &str, path: &str) -> bool {
+    let Some(resource) = path
+        .strip_prefix(package_root)
+        .and_then(|rest| rest.strip_prefix('/'))
+    else {
+        return false;
+    };
+    !resource.is_empty()
+        && !resource.contains(['\\', '\0'])
+        && resource
+            .split('/')
+            .all(|component| !component.is_empty() && component != "." && component != "..")
+}
+
+fn handle_skill_list_packages_request(
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    if request.path.as_deref() != Some(".agents/skills") {
+        return skill_command_error(start, "skill_path_invalid");
+    }
+    let options = match request
+        .content
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<SkillPackageListOptions>(value).ok())
+    {
+        Some(options) if (1..=257).contains(&options.limit) => options,
+        _ => return skill_command_error(start, "skill_list_invalid_options"),
+    };
+    let project_root = match request
+        .cwd
+        .as_deref()
+        .and_then(|path| Path::new(path).canonicalize().ok())
+    {
+        Some(root) => root,
+        None => return skill_command_error(start, "skill_list_unavailable"),
+    };
+    let metadata = match std::fs::symlink_metadata(resolved) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return skill_list_success(start, Vec::new(), false)
+        }
+        Err(_) => return skill_command_error(start, "skill_list_unavailable"),
+    };
+    if metadata.file_type().is_symlink() {
+        return skill_command_error(start, "skill_path_escape");
+    }
+    let canonical = match resolved.canonicalize() {
+        Ok(path) => path,
+        Err(_) => return skill_command_error(start, "skill_list_unavailable"),
+    };
+    if !canonical.starts_with(&project_root) || !canonical.is_dir() {
+        return skill_command_error(start, "skill_path_escape");
+    }
+    let directory = match std::fs::read_dir(&canonical) {
+        Ok(directory) => directory,
+        Err(_) => return skill_command_error(start, "skill_list_unavailable"),
+    };
+    let mut retained = std::collections::BTreeSet::<(String, &'static str)>::new();
+    let mut candidate_count = 0usize;
+    for entry in directory {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => return skill_command_error(start, "skill_list_unavailable"),
+        };
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => return skill_command_error(start, "skill_list_unavailable"),
+        };
+        let kind = if file_type.is_dir() {
+            "dir"
+        } else if file_type.is_symlink() {
+            "symlink"
+        } else {
+            continue;
+        };
+        candidate_count = candidate_count.saturating_add(1);
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        retained.insert((name, kind));
+        if retained.len() > options.limit {
+            if let Some(last) = retained.iter().next_back().cloned() {
+                retained.remove(&last);
+            }
+        }
+    }
+    let entries = retained
+        .into_iter()
+        .map(|(name, kind)| SkillPackageListEntry { name, kind })
+        .collect();
+    skill_list_success(start, entries, candidate_count > options.limit)
+}
+
+fn handle_skill_read_file_request(
+    policy: &AgentPolicy,
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    const MAX_SKILL_FILE_BYTES: usize = 512 * 1024;
+    const MAX_SKILL_INTERNAL_OUTPUT_BYTES: usize = 512 * 1024;
+    let options = match request
+        .content
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<SkillReadOptions>(value).ok())
+    {
+        Some(options)
+            if !options.package_root.trim().is_empty()
+                && (1..=MAX_SKILL_FILE_BYTES).contains(&options.max_file_bytes) =>
+        {
+            options
+        }
+        _ => return skill_command_error(start, "skill_path_invalid"),
+    };
+    if !canonical_skill_package_root(&options.package_root)
+        || !request
+            .path
+            .as_deref()
+            .is_some_and(|path| canonical_skill_resource_request_path(&options.package_root, path))
+    {
+        return skill_command_error(start, "skill_path_invalid");
+    }
+    let Some(project_root_raw) = request.cwd.as_deref() else {
+        return skill_command_error(start, "skill_path_invalid");
+    };
+    let project_root = match Path::new(project_root_raw).canonicalize() {
+        Ok(root) => root,
+        Err(_) => return skill_command_error(start, "skill_path_invalid"),
+    };
+    let package_raw = project_root.join(&options.package_root);
+    let package_meta = match std::fs::symlink_metadata(&package_raw) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return skill_command_error(start, "skill_file_not_found")
+        }
+        Err(_) => return skill_command_error(start, "skill_path_invalid"),
+    };
+    if package_meta.file_type().is_symlink() || !package_meta.is_dir() {
+        return skill_command_error(start, "skill_path_escape");
+    }
+    let package_root = match package_raw.canonicalize() {
+        Ok(root) => root,
+        Err(_) => return skill_command_error(start, "skill_path_invalid"),
+    };
+    if !package_root.starts_with(&project_root) {
+        return skill_command_error(start, "skill_path_escape");
+    }
+    let target = match resolved.canonicalize() {
+        Ok(target) => target,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return skill_command_error(start, "skill_file_not_found")
+        }
+        Err(_) => return skill_command_error(start, "skill_path_invalid"),
+    };
+    if !target.starts_with(&package_root) || !target.starts_with(&project_root) || !target.is_file()
+    {
+        return skill_command_error(start, "skill_path_escape");
+    }
+    let requested_project_relative = request.path.as_deref().unwrap_or_default();
+    let canonical_project_relative = match target.strip_prefix(&project_root) {
+        Ok(relative) => relative.to_string_lossy(),
+        Err(_) => return skill_command_error(start, "skill_path_escape"),
+    };
+    if webcodex_core::sensitive_paths::is_secret_path(requested_project_relative)
+        || webcodex_core::sensitive_paths::is_secret_path(canonical_project_relative.as_ref())
+    {
+        return skill_command_error(start, "skill_sensitive_path");
+    }
+    let file_bytes = match target.metadata() {
+        Ok(metadata) => metadata.len().min(usize::MAX as u64) as usize,
+        Err(_) => return skill_command_error(start, "skill_path_invalid"),
+    };
+    if file_bytes > options.max_file_bytes {
+        return skill_command_error(start, "skill_file_too_large");
+    }
+    let (Some(start_line), Some(end_line)) = (request.start_line, request.end_line) else {
+        return skill_command_error(start, "skill_path_invalid");
+    };
+    if start_line == 0 || end_line < start_line {
+        return skill_command_error(start, "skill_path_invalid");
+    }
+    let limit = end_line.saturating_sub(start_line).saturating_add(1);
+    let range = file_read_range::EffectiveRange::new(Some(start_line), Some(limit));
+    let text_budget = request
+        .max_bytes
+        .unwrap_or(48 * 1024)
+        .min(policy.max_output_bytes)
+        .min(file_read_range::MAX_RANGE_CONTENT_BYTES);
+    let result = match file_read_range::read_range_with_budget(&target, range, text_budget) {
+        Ok(result) => result,
+        Err(error) => {
+            return skill_command_error(
+                start,
+                match error.reason {
+                    ReadFileReason::InvalidUtf8 => "skill_invalid_utf8",
+                    ReadFileReason::RangeTooLarge => "skill_read_output_too_large",
+                    ReadFileReason::NotFound => "skill_file_not_found",
+                    _ => "skill_read_unavailable",
+                },
+            )
+        }
+    };
+    let envelope = SkillFileReadEnvelope {
+        format: "webcodex.skill_file_read.v1",
+        content: &result.content,
+        sha256: &result.sha256,
+        file_bytes,
+        total_lines: result.total_lines,
+        start_line: result.start_line,
+        limit: result.limit,
+        returned_lines: result.returned_lines,
+        end_line: result.end_line,
+        has_more: result.has_more,
+        next_start_line: result.next_start_line,
+    };
+    let serialized = match serde_json::to_vec(&envelope) {
+        Ok(serialized) => serialized,
+        Err(_) => return skill_command_error(start, "skill_read_unavailable"),
+    };
+    let output_cap = policy.max_output_bytes.min(MAX_SKILL_INTERNAL_OUTPUT_BYTES);
+    if serialized.len() > output_cap {
+        return skill_command_error(start, "skill_read_output_too_large");
+    }
+    CommandResult {
+        exit_code: Some(0),
+        stdout: Some(String::from_utf8(serialized).expect("JSON serialization is UTF-8")),
+        stderr: Some(String::new()),
+        duration_ms: Some(start.elapsed().as_millis() as u64),
+        error: None,
     }
 }
 

@@ -610,6 +610,92 @@ fn session_store_persists_and_restores_basic_session() {
 }
 
 #[test]
+fn skill_read_body_and_catalog_descriptions_never_enter_durable_session_ledger() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger.clone());
+    let project = "agent:special:skills-private";
+    let session = store.start_session(
+        Some(project.to_string()),
+        Some("skills privacy".to_string()),
+    );
+    let private_body = "PRIVATE_SKILL_BODY_MUST_NOT_PERSIST";
+    let private_description = "PRIVATE_SKILL_DESCRIPTION_MUST_NOT_PERSIST";
+
+    let list_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Mcp,
+        "skill_list",
+        &json!({"project": project, "query_present": false, "limit": 20}),
+    );
+    store.record_model_facing_tool_call_finished(
+        list_start,
+        true,
+        &json!({
+            "project": project,
+            "catalog_revision": "wc_skillcat_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "total_count": 1,
+            "returned_count": 1,
+            "truncated": false,
+            "invalid_count": 0,
+            "discovery_truncated": false,
+            "skills": [{"name": "private", "description": private_description}]
+        }),
+        None,
+        None,
+    );
+
+    let read_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Mcp,
+        "skill_read_file",
+        &json!({
+            "project": project,
+            "skill_id": "wc_skill_0123456789abcdef0123456789abcdef",
+            "path": "SKILL.md",
+            "start_line": 1,
+            "limit": 20
+        }),
+    );
+    store.record_model_facing_tool_call_finished(
+        read_start,
+        true,
+        &json!({
+            "project": project,
+            "skill_id": "wc_skill_0123456789abcdef0123456789abcdef",
+            "definition_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "package_revision": "wc_skillpkg_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "path": "SKILL.md",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "text": private_body,
+            "start_line": 1,
+            "end_line": 2,
+            "returned_lines": 2,
+            "has_more": false,
+            "next_start_line": null
+        }),
+        None,
+        None,
+    );
+
+    let restored = flush_and_restore(&store, ledger.clone());
+    let raw = std::fs::read_to_string(&ledger).unwrap();
+    assert!(!raw.contains(private_body));
+    assert!(!raw.contains(private_description));
+    assert!(!raw.contains("\"skills\""));
+    assert!(raw.contains("wc_skill_0123456789abcdef0123456789abcdef"));
+    assert!(raw
+        .contains("wc_skillpkg_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"));
+    assert!(raw.contains("returned_lines"));
+    assert!(raw.contains("catalog_revision"));
+
+    let recovery =
+        serde_json::to_string(&restored.summary(&session.session_id, Some(20)).unwrap()).unwrap();
+    assert!(!recovery.contains(private_body));
+    assert!(!recovery.contains(private_description));
+}
+
+#[test]
 fn write_ledger_atomic_cleans_up_temp_file_when_rename_fails() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("sessions.json");
@@ -4165,7 +4251,7 @@ fn closed_session_does_not_reopen() {
 }
 
 #[test]
-fn session_context_revision_exact_missing_stale_invalid_and_failure_semantics() {
+fn session_context_revision_exact_missing_stale_invalid_future_and_failure_semantics() {
     let store = SessionStore::new(10, 100);
     let session = store.start_session(Some("proj".to_string()), Some("continuity".to_string()));
 
@@ -4202,7 +4288,10 @@ fn session_context_revision_exact_missing_stale_invalid_and_failure_semantics() 
         json!({"state_changed": true}),
     );
     assert_eq!(missing.context_revision, 3);
-    assert_eq!(missing.recovery_events.len(), 2);
+    assert!(
+        missing.recovery_events.is_empty(),
+        "unknown caller state must not be treated as an acknowledged revision-zero delta"
+    );
     assert!(!missing.history_lost);
 
     let stale = record_model_facing_result(
@@ -4224,7 +4313,7 @@ fn session_context_revision_exact_missing_stale_invalid_and_failure_semantics() 
         vec![2, 3]
     );
 
-    let invalid = record_model_facing_result(
+    let future = record_model_facing_result(
         &store,
         &session.session_id,
         "read_file",
@@ -4232,20 +4321,35 @@ fn session_context_revision_exact_missing_stale_invalid_and_failure_semantics() 
         true,
         json!({"content": "future ack still executes"}),
     );
-    assert_eq!(invalid.context_revision, 5);
-    assert_eq!(invalid.pre_call_context_revision, 4);
+    assert_eq!(future.context_revision, 5);
+    assert_eq!(future.pre_call_context_revision, 4);
+    assert!(future.recovery_events.is_empty());
+    assert!(!future.history_lost);
+
+    let invalid = record_model_facing_result(
+        &store,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Invalid,
+        true,
+        json!({"content": "malformed ack still executes"}),
+    );
+    assert_eq!(invalid.context_revision, 6);
+    assert_eq!(invalid.pre_call_context_revision, 5);
+    assert!(invalid.recovery_events.is_empty());
+    assert!(!invalid.history_lost);
 
     let failed = record_model_facing_result(
         &store,
         &session.session_id,
         "run_process",
-        SessionContextRevisionAck::Revision(5),
+        SessionContextRevisionAck::Revision(6),
         false,
         json!({"failure_kind": "process_failed", "command_started": true, "command_completed": true}),
     );
-    assert_eq!(failed.pre_call_context_revision, 5);
-    assert_eq!(failed.context_revision, 6);
-    assert_eq!(store.context_revision(&session.session_id), Some(6));
+    assert_eq!(failed.pre_call_context_revision, 6);
+    assert_eq!(failed.context_revision, 7);
+    assert_eq!(store.context_revision(&session.session_id), Some(7));
 }
 
 #[test]
@@ -4621,6 +4725,129 @@ fn batch_budget_preserves_compact_and_recovery_session_protocol_overlays() {
 }
 
 #[tokio::test]
+async fn unknown_session_context_recovery_uses_current_handoff_not_history_replay() {
+    let runtime = super::super::ToolRuntime::new_for_tests();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("unknown continuity recovery".to_string()));
+    let first = record_model_facing_result(
+        &runtime.sessions,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"content": "one"}),
+    );
+    assert_eq!(first.context_revision, 1);
+    let second = record_model_facing_result(
+        &runtime.sessions,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Revision(1),
+        true,
+        json!({"content": "two"}),
+    );
+    assert_eq!(second.context_revision, 2);
+
+    let unknown = record_model_facing_result(
+        &runtime.sessions,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"clean": false}),
+    );
+    assert_eq!(unknown.pre_call_context_revision, 2);
+    assert_eq!(unknown.context_revision, 3);
+    assert!(unknown.recovery_events.is_empty());
+    assert!(!unknown.history_lost);
+
+    let mut response = super::super::ToolResult::ok(json!({"clean": false}));
+    assert!(
+        super::super::session_context::add_session_context_continuity(&mut response, &unknown,)
+    );
+    assert_eq!(
+        response.output["session_continuity"]["status"],
+        "unacknowledged"
+    );
+    assert!(response.output["session_continuity"]
+        .get("events_after_ack")
+        .is_none());
+    assert!(response.output["session_recovery"]["model_facing_events"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(response.output["session_recovery"]
+        .get("current_handoff")
+        .is_none());
+
+    runtime
+        .add_session_history_recovery(&mut response, &unknown, None)
+        .await;
+    let current = &response.output["session_recovery"]["current_handoff"];
+    assert!(current.is_object());
+    assert!(current["work_performed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|work| work["tool_name"] == "git_status"));
+    assert!(response.output["session_recovery"]["model_facing_events"]
+        .as_array()
+        .unwrap()
+        .is_empty(),
+        "the current ToolResult may inform current state but must not be replayed as missed history");
+}
+
+#[tokio::test]
+async fn required_session_context_recovery_handoff_failure_does_not_expose_new_revision() {
+    let runtime = super::super::ToolRuntime::new_for_tests();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("handoff failure continuity".to_string()));
+    let first = record_model_facing_result(
+        &runtime.sessions,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"content": "seed"}),
+    );
+    assert_eq!(first.context_revision, 1);
+    let mut unknown = record_model_facing_result(
+        &runtime.sessions,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"clean": true}),
+    );
+    assert_eq!(unknown.context_revision, 2);
+    assert!(unknown.recovery_events.is_empty());
+
+    // The production path re-authorizes the exact recorded Session before
+    // reading current handoff state. Corrupt only this local projection id to
+    // force that read to fail and verify the revision fail-safe.
+    unknown.session_id = "wc_sess_missing_for_handoff_test".to_string();
+    let mut response = super::super::ToolResult::ok(json!({"clean": true}));
+    assert!(
+        super::super::session_context::add_session_context_continuity(&mut response, &unknown,)
+    );
+    assert_eq!(response.output["session_context_revision"], 2);
+    assert_eq!(
+        response.output["session_continuity"]["status"],
+        "unacknowledged"
+    );
+
+    runtime
+        .add_session_history_recovery(&mut response, &unknown, None)
+        .await;
+    assert!(response.output.get("session_context_revision").is_none());
+    assert!(response.output["session_recovery"]
+        .get("current_handoff")
+        .is_none());
+}
+
+#[tokio::test]
 async fn bounded_session_context_recovery_adds_current_handoff_before_latest_ack() {
     let runtime = super::super::ToolRuntime::new_for_tests();
     let session = runtime
@@ -4668,6 +4895,55 @@ async fn bounded_session_context_recovery_adds_current_handoff_before_latest_ack
         response.output["session_recovery"]["current_handoff"].is_object(),
         "bounded event omission must add a compact current-state recovery before revision 26 is ACK-able"
     );
+}
+
+#[tokio::test]
+async fn history_lost_session_context_recovery_adds_current_handoff() {
+    let runtime = super::super::ToolRuntime::new_for_tests();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("history lost continuity recovery".to_string()));
+    let first = record_model_facing_result(
+        &runtime.sessions,
+        &session.session_id,
+        "read_file",
+        SessionContextRevisionAck::Unacknowledged,
+        true,
+        json!({"content": "seed"}),
+    );
+    assert_eq!(first.context_revision, 1);
+    let mut behind = record_model_facing_result(
+        &runtime.sessions,
+        &session.session_id,
+        "git_status",
+        SessionContextRevisionAck::Revision(0),
+        true,
+        json!({"clean": true}),
+    );
+    assert_eq!(
+        behind
+            .recovery_events
+            .iter()
+            .filter_map(|event| event.context_revision)
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
+    // Store retention behavior is covered independently above. Force the same
+    // recorded projection flag here so this test isolates the response fallback.
+    behind.history_lost = true;
+
+    let mut response = super::super::ToolResult::ok(json!({"clean": true}));
+    assert!(super::super::session_context::add_session_context_continuity(&mut response, &behind,));
+    assert_eq!(response.output["session_continuity"]["status"], "behind");
+    assert_eq!(response.output["session_continuity"]["history_lost"], true);
+    assert!(response.output["session_recovery"]
+        .get("current_handoff")
+        .is_none());
+
+    runtime
+        .add_session_history_recovery(&mut response, &behind, None)
+        .await;
+    assert!(response.output["session_recovery"]["current_handoff"].is_object());
 }
 
 #[test]

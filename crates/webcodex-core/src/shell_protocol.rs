@@ -330,6 +330,13 @@ pub const SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE: &str = "project_lifecycle";
 /// atomically persist a new projects.d entry. Missing on older runners and
 /// therefore fails closed.
 pub const SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION: &str = "project_path_registration";
+/// Runner-global read-only operator-installed Skill store discovery/read.
+/// Missing on older Runners is false and is never inferred from file_read or
+/// project lifecycle support.
+pub const SHELL_CLIENT_CAPABILITY_SKILL_STORE_READ: &str = "skill_store_read";
+/// Runner-global operator Skill store mutation. This is an independent
+/// consequential capability and is never inferred from Skill read support.
+pub const SHELL_CLIENT_CAPABILITY_SKILL_STORE_MANAGE: &str = "skill_store_manage";
 /// Same-process async job recovery across server restarts and transport
 /// reconnects. Missing on older runners and therefore defaults to `false`.
 /// Read-only native desktop/window observation. Missing on older Runners and
@@ -459,6 +466,8 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
     SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
+    SHELL_CLIENT_CAPABILITY_SKILL_STORE_READ,
+    SHELL_CLIENT_CAPABILITY_SKILL_STORE_MANAGE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
@@ -628,6 +637,14 @@ pub struct ShellClientCapabilities {
     /// fail-closed.
     #[serde(default)]
     pub project_path_registration: bool,
+    /// Read-only operator-installed Skill store support. Missing on older
+    /// Runners is false and never follows from generic file_read.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub skill_store_read: bool,
+    /// Operator Skill store mutation support. Missing on older Runners is
+    /// false and never follows from skill_store_read or file_write.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub skill_store_manage: bool,
     /// Native read-only desktop/window observation. Missing on older Runners
     /// and therefore fail-closed.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -762,6 +779,8 @@ impl Default for ShellClientCapabilities {
             sandbox_inspect_commands: false,
             project_lifecycle: false,
             project_path_registration: false,
+            skill_store_read: false,
+            skill_store_manage: false,
             computer_observe: false,
             computer_application_discovery: false,
             computer_application_launch: false,
@@ -3323,6 +3342,8 @@ mod envelope_tests {
                 sandbox_inspect_commands: false,
                 project_lifecycle: false,
                 project_path_registration: false,
+                skill_store_read: false,
+                skill_store_manage: false,
                 computer_observe: false,
                 computer_application_discovery: false,
                 computer_application_launch: false,

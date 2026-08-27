@@ -982,6 +982,7 @@ async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
                         host_file_import_trust: HostFileImportTrust::Untrusted,
                     },
                     true,
+                    true,
                 )
                 .await
         }
@@ -1071,6 +1072,8 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
         "items": [{"path": "a.rs"}]
     });
     arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(0);
+    arguments[crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD] =
+        json!(["webcodex.workflow"]);
 
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -1091,6 +1094,7 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
                         record_oauth_scope_denials: false,
                         host_file_import_trust: HostFileImportTrust::Untrusted,
                     },
+                    true,
                     true,
                 )
                 .await
@@ -1129,6 +1133,15 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
     assert_eq!(attention_messages[0]["message_truncated"], true);
     assert_eq!(result.output["session_attention"]["truncated"], true);
     assert_eq!(result.output["session_attention"]["omitted_count"], 4);
+    assert_eq!(result.output["context_projection"]["timing"], "post_tool");
+    assert_eq!(
+        result.output["context_projection"]["applies_to_current_effect"],
+        false
+    );
+    assert_eq!(
+        result.output["context_projection"]["materials"][0]["key"],
+        "webcodex.workflow"
+    );
     assert!(result.output.get("output_truncated").is_none());
     assert_eq!(result.output["items"].as_array().unwrap().len(), 1);
     let serialized_len = serde_json::to_vec(&result).unwrap().len();
@@ -1186,6 +1199,7 @@ async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap(
                         record_oauth_scope_denials: false,
                         host_file_import_trust: HostFileImportTrust::Untrusted,
                     },
+                    true,
                     true,
                 )
                 .await

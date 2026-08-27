@@ -59,6 +59,14 @@ pub(crate) struct ToolCallRequest {
     pub(crate) arguments: Value,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ToolProtocolCapabilities {
+    pub(crate) context_continuity: bool,
+    pub(crate) context_sidecar: bool,
+    pub(crate) skill_runtime: bool,
+    pub(crate) skill_management: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ToolCallErrorStatus {
     InvalidArguments {
@@ -155,23 +163,52 @@ impl ToolRuntime {
         request: ToolCallRequest,
         context: ToolCallContext<'_>,
     ) -> ToolCallOutcome {
-        self.call_tool_with_context_protocol_capability(request, context, false)
-            .await
+        self.call_tool_with_protocol_capabilities(
+            request,
+            context,
+            ToolProtocolCapabilities::default(),
+        )
+        .await
     }
 
+    /// Test-only compatibility shim for Phase-2/3 fixtures that predate the
+    /// explicit capability bundle. Production surfaces must call
+    /// `call_tool_with_protocol_capabilities` and set Skill capabilities
+    /// independently. Management is intentionally never enabled here.
+    #[cfg(test)]
     pub(crate) async fn call_tool_with_context_protocol_capability(
         &self,
         request: ToolCallRequest,
         context: ToolCallContext<'_>,
         context_continuity_capable: bool,
+        context_sidecar_capable: bool,
+    ) -> ToolCallOutcome {
+        self.call_tool_with_protocol_capabilities(
+            request,
+            context,
+            ToolProtocolCapabilities {
+                context_continuity: context_continuity_capable,
+                context_sidecar: context_sidecar_capable,
+                skill_runtime: context_sidecar_capable,
+                skill_management: false,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn call_tool_with_protocol_capabilities(
+        &self,
+        request: ToolCallRequest,
+        context: ToolCallContext<'_>,
+        capabilities: ToolProtocolCapabilities,
     ) -> ToolCallOutcome {
         let telemetry = ModelErgonomicsTimer::start_with_protocol(
             &request.tool_name,
             &request.arguments,
-            context_continuity_capable,
+            capabilities.context_continuity,
         );
         let mut outcome = self
-            .call_tool_with_context_inner(request, context, context_continuity_capable)
+            .call_tool_with_context_inner(request, context, capabilities)
             .await;
         outcome.model_ergonomics = telemetry.map(ModelErgonomicsTimer::finish);
         outcome
@@ -181,14 +218,69 @@ impl ToolRuntime {
         &self,
         request: ToolCallRequest,
         context: ToolCallContext<'_>,
-        context_continuity_capable: bool,
+        capabilities: ToolProtocolCapabilities,
     ) -> ToolCallOutcome {
         let mut recorder_metadata =
             ToolCallRecorderMetadata::from_arguments_with_context_continuity(
                 &request.arguments,
-                context_continuity_capable,
+                capabilities.context_continuity,
             );
+        // Phase-3 Skill tools are kernel-known only so ToolCall parsing stays
+        // typed, but execution is authoritative-surface-gated. A private tool
+        // name from REST, legacy MCP, Local Coding, or Connector cannot enable
+        // this runtime.
+        if super::skills::is_skill_runtime_tool_name(&request.tool_name)
+            && !capabilities.skill_runtime
+        {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments {
+                    message:
+                        "Skill runtime tools are available only on Stateless MCP 2026 Full Operator"
+                            .to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+            };
+        }
+        if super::skills::is_skill_management_tool_name(&request.tool_name)
+            && !capabilities.skill_management
+        {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments {
+                    message:
+                        "Skill management tools are available only on Stateless MCP 2026 Full Operator"
+                            .to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+            };
+        }
+        if super::skills::is_skill_management_tool_name(&request.tool_name)
+            && !context
+                .auth
+                .is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_ADMIN))
+        {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InsufficientScope {
+                    required_scope: Some(crate::auth::SCOPE_ADMIN),
+                    description: "missing required scope: admin".to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+            };
+        }
         let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments.clone());
+        let context_request = if capabilities.context_sidecar {
+            super::context_projection::context_request_from_arguments(&request.arguments)
+        } else {
+            Vec::new()
+        };
         // A wrapper recording_session_id is authority-bearing internal context,
         // not a ledger address. Authorize it before any lifecycle/guard lookup,
         // project mismatch computation, provenance derivation, or ledger write.
@@ -591,7 +683,7 @@ impl ToolRuntime {
         // derives inspect sandboxing and execution defaults exclusively from an
         // explicit concrete business Session id.
         let mut result = self
-            .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode(
+            .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
                 call,
                 context.auth,
                 context.transport.into(),
@@ -599,6 +691,7 @@ impl ToolRuntime {
                 None,
                 context.window,
                 context.session_id.is_none(),
+                context_request,
             )
             .await;
         if let Some(start) = session_event.as_mut() {

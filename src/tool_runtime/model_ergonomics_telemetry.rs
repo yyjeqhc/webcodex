@@ -469,25 +469,49 @@ mod tests {
         assert_eq!(exact.context_ack_present, Some(true));
         assert_eq!(exact.context_continuity_status.as_deref(), Some("exact"));
 
-        for (status, ack_value) in [("behind", json!(1)), ("invalid", json!("bad"))] {
-            let record = ModelErgonomicsTimer::start_with_protocol(
-                "read_file",
-                &json!({ack_field: ack_value}),
-                true,
-            )
-            .unwrap()
-            .finish_after(Duration::ZERO)
-            .record_for_tool_result(&ToolResult::ok(json!({
-                "session_context_revision": 3,
-                "session_continuity": {"status": status, "history_lost": status == "invalid"},
-                "session_recovery": {"model_facing_events": [{"tool_name": "read_file"}], "truncated": false, "history_lost": status == "invalid"}
-            })))
-            .unwrap();
-            assert_eq!(record.context_ack_present, Some(true));
-            assert_eq!(record.context_continuity_status.as_deref(), Some(status));
-            assert_eq!(record.session_recovery_event_count, Some(1));
-            assert_eq!(record.session_history_lost, Some(status == "invalid"));
-        }
+        let behind = ModelErgonomicsTimer::start_with_protocol(
+            "read_file",
+            &json!({ack_field: 1}),
+            true,
+        )
+        .unwrap()
+        .finish_after(Duration::ZERO)
+        .record_for_tool_result(&ToolResult::ok(json!({
+            "session_context_revision": 3,
+            "session_continuity": {"status": "behind", "history_lost": false},
+            "session_recovery": {"model_facing_events": [{"tool_name": "read_file"}], "truncated": false, "history_lost": false}
+        })))
+        .unwrap();
+        assert_eq!(behind.context_ack_present, Some(true));
+        assert_eq!(behind.context_continuity_status.as_deref(), Some("behind"));
+        assert_eq!(behind.session_recovery_event_count, Some(1));
+        assert_eq!(behind.session_history_lost, Some(false));
+
+        let invalid = ModelErgonomicsTimer::start_with_protocol(
+            "read_file",
+            &json!({ack_field: "bad"}),
+            true,
+        )
+        .unwrap()
+        .finish_after(Duration::ZERO)
+        .record_for_tool_result(&ToolResult::ok(json!({
+            "session_context_revision": 4,
+            "session_continuity": {"status": "invalid", "history_lost": false},
+            "session_recovery": {
+                "model_facing_events": [],
+                "truncated": false,
+                "history_lost": false,
+                "current_handoff": {"work_performed": []}
+            }
+        })))
+        .unwrap();
+        assert_eq!(invalid.context_ack_present, Some(true));
+        assert_eq!(
+            invalid.context_continuity_status.as_deref(),
+            Some("invalid")
+        );
+        assert_eq!(invalid.session_recovery_event_count, Some(0));
+        assert_eq!(invalid.session_history_lost, Some(false));
     }
 
     #[test]

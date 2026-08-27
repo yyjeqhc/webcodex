@@ -193,6 +193,68 @@ impl ShellClientRegistry {
                 inner.persistent_waiters.remove(&request_id);
                 continue;
             }
+            let stale_skill_store_error =
+                inner.pending_by_id.get(&request_id).and_then(|pending| {
+                    match (pending.request.kind.as_str(), pending.skill_store_fence.as_ref()) {
+                        ("skill_store", Some(fence)) => {
+                            let Some(client) = inner.clients.get(&body.client_id) else {
+                                return Some(
+                                    "stale_runner: Skill store target Runner disappeared before dispatch"
+                                        .to_string(),
+                                );
+                            };
+                            if client.agent_instance_id != fence.agent_instance_id {
+                                return Some(
+                                    "stale_runner: Skill store target Runner changed before dispatch"
+                                        .to_string(),
+                                );
+                            }
+                            let required = if fence.management {
+                                RunnerFeature::SkillStoreManage
+                            } else {
+                                RunnerFeature::SkillStoreRead
+                            };
+                            (!client.runner_features.supports(required)).then(|| {
+                                format!(
+                                    "skill_store_capability_unavailable: exact Runner no longer advertises {} before dispatch",
+                                    required.as_wire_name()
+                                )
+                            })
+                        }
+                        ("skill_store", None) => Some(
+                            "stale_runner: Skill store exact dispatch fence is missing".to_string(),
+                        ),
+                        (_, Some(_)) => Some(
+                            "stale_runner: Skill store dispatch fence is attached to the wrong request kind"
+                                .to_string(),
+                        ),
+                        (_, None) => None,
+                    }
+                });
+            if let Some(error) = stale_skill_store_error {
+                let Some(mut pending) = inner.pending_by_id.remove(&request_id) else {
+                    continue;
+                };
+                if let Some(waiter) = pending.waiter.take() {
+                    let response = ShellRunResponse {
+                        success: false,
+                        request_id: request_id.clone(),
+                        client_id: body.client_id.clone(),
+                        cwd: None,
+                        command_preview: request_preview(&pending.request),
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: None,
+                        error: Some(error),
+                        request_dispatched: Some(false),
+                        command_execution_state: Some(ShellCommandExecutionState::NotStarted),
+                    };
+                    let _ = waiter.send(response);
+                }
+                inner.persistent_waiters.remove(&request_id);
+                continue;
+            }
             let stale_coding_agent_error =
                 inner.pending_by_id.get(&request_id).and_then(|pending| {
                     if pending.request.coding_agent.is_none() {

@@ -5,7 +5,7 @@ use super::validation::{handle_validation_request, is_validation_request_kind};
 use super::{
     handle_computer_request, handle_project_lifecycle_op,
     handle_project_op_with_temporary_projects_root, handle_resolve_or_register_project,
-    is_computer_request_kind,
+    handle_skill_store_request, is_computer_request_kind,
     run_internal_posix_script_with_profiles_in_sandbox_and_execution_state,
     run_internal_search_script_with_profiles_in_sandbox_and_execution_state,
     run_process_with_profiles_in_sandbox_and_execution_state,
@@ -179,6 +179,33 @@ pub(crate) fn dispatch_request(
             duration_ms: Some(0),
             error: Some(
                 "invalid_request: bridge payload is valid only for mcp_gateway requests; command was not started"
+                    .to_string(),
+            ),
+        };
+        return sink
+            .submit_result_with_metadata(request.request_id, result, config, runtime)
+            .map(|_| true);
+    }
+    if request.kind == "skill_store" {
+        let request_id = request.request_id.clone();
+        let result = handle_skill_store_request(
+            runtime.client_id(),
+            runtime.server_url(),
+            &config.policy,
+            &request,
+        );
+        return sink
+            .submit_result_with_metadata(request_id, result, config, runtime)
+            .map(|_| true);
+    }
+    if request.kind.starts_with("skill_store") {
+        let result = CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some(
+                "invalid_request: unsupported Skill store request kind; command was not started"
                     .to_string(),
             ),
         };

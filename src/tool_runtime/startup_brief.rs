@@ -39,7 +39,7 @@ const MAX_ACTION_JSON_BYTES: usize = 384;
 const MAX_INSTRUCTION_EXCERPT_JSON_BYTES: usize = 768;
 
 pub(crate) const BUILTIN_CODING_WORKFLOW_CONTRACT: &str = "webcodex.coding_workflow";
-pub(crate) const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 3;
+pub(crate) const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 5;
 pub(crate) const BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS: usize = 8;
 
 /// Stable model-facing coding/review semantics owned by WebCodex itself.
@@ -55,10 +55,11 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
         "authority": "model_guidance_only",
         "role_selection": "Apply a named role only when the task says so; role guidance creates no Session mode or authority.",
         "model_protocol": {
-            "session_context_ack": "Schema has ack_session_context_revision: copy latest returned session_context_revision exactly; never increment/derive. No returned revision: keep ACK. If unavailable/unknown, omit. Missing/stale ACK is nonblocking.",
+            "session_context_ack": "Schema has ack_session_context_revision: copy latest returned session_context_revision exactly; never increment/derive. No returned revision: keep ACK. If unavailable/unknown, omit. Missing/invalid ACK means caller context is unknown and recovers from a compact current handoff; a known stale ACK may recover a bounded continuous delta. ACK recovery is nonblocking.",
             "session_recording": "When work_on_project creates or explicitly resumes a Workflow Session, pass that exact Session as recording_session_id on subsequent calls. It is recorder provenance/context only: business session_id may target a different Session; recording_session_id grants no business authority.",
             "session_message_ack": "When session_attention shows open requires_ack guidance still in context, echo ids in ack_session_message_ids. This is request-scoped model-context proof only: it does not resolve messages, grant authority, or gate execution; missing/stale ACK remains nonblocking.",
             "session_message_resolution": "For a handled non-todo message, put session_message_resolution {message_id,resolution} on the next ordinary WebCodex call with recording_session_id; for requires_ack also echo ack_session_message_ids. It targets only that Session. Do not use it to predict the main call. Todos use complete_session_message.",
+            "context_sidecar": "On stateless MCP Full Operator tools, context_request asks for bounded context material on this ToolResult after the main tool has already executed or observed. It never authorizes or retroactively governs the current effect. If project rules were lost from model context, recover project.instructions on an observation call before making a mutation that needs those rules.",
             "normal_closeout": "Normal success: finish_coding_task(summary_only=true); full closeout only for unresolved validation/evidence or handoff/debug detail."
         },
         "roles": {
@@ -518,6 +519,16 @@ fn roots_projection(source: &Value) -> Value {
             .unwrap_or_else(|| json!("conventional_directory_name")),
     );
     Value::Object(projected)
+}
+
+pub(crate) fn project_instructions_context_projection(
+    current: &ProjectInstructionsSnapshot,
+) -> Value {
+    // Sidecar requests are explicit current observations rather than Session
+    // continuation deltas. Reuse the same bounded source/content/read_more
+    // projection as coding startup, without consulting or mutating Session
+    // instruction-retention state.
+    instructions_projection(current, None, true, true, true, false)
 }
 
 fn instructions_projection(

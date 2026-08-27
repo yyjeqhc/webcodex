@@ -82,7 +82,7 @@ fn instruction_source<'a>(output: &'a Value, path: &str) -> &'a Value {
 fn assert_builtin_workflow(output: &Value) {
     let workflow = &output["workflow"];
     assert_eq!(workflow["contract"], "webcodex.coding_workflow");
-    assert_eq!(workflow["version"], 3);
+    assert_eq!(workflow["version"], 5);
     assert_eq!(workflow["authority"], "model_guidance_only");
     assert!(workflow["role_selection"]
         .as_str()
@@ -96,7 +96,10 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(ack_guidance.contains("No returned revision: keep ACK"));
     assert!(ack_guidance.contains("unavailable/unknown"));
     assert!(ack_guidance.contains("omit"));
-    assert!(ack_guidance.contains("Missing/stale ACK is nonblocking"));
+    assert!(ack_guidance.contains("Missing/invalid ACK means caller context is unknown"));
+    assert!(ack_guidance.contains("compact current handoff"));
+    assert!(ack_guidance.contains("known stale ACK"));
+    assert!(ack_guidance.contains("nonblocking"));
     let recording_guidance = workflow["model_protocol"]["session_recording"]
         .as_str()
         .expect("Session recording guidance");
@@ -125,6 +128,13 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(message_resolution_guidance.contains("ack_session_message_ids"));
     assert!(message_resolution_guidance.contains("Do not use it to predict"));
     assert!(message_resolution_guidance.contains("complete_session_message"));
+    let sidecar_guidance = workflow["model_protocol"]["context_sidecar"]
+        .as_str()
+        .expect("context sidecar guidance");
+    assert!(sidecar_guidance.contains("context_request"));
+    assert!(sidecar_guidance.contains("after the main tool"));
+    assert!(sidecar_guidance.contains("never authorizes"));
+    assert!(sidecar_guidance.contains("observation call before making a mutation"));
     let closeout_guidance = workflow["model_protocol"]["normal_closeout"]
         .as_str()
         .expect("normal closeout guidance");

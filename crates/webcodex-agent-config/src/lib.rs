@@ -246,6 +246,10 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             sandbox_inspect_commands: false,
             project_lifecycle: false,
             project_path_registration: false,
+            // Runner-global Skill store support is runtime-only and never
+            // inferred from project/file capabilities in generated config.
+            skill_store_read: false,
+            skill_store_manage: false,
             // Desktop observation is a runtime/platform capability and is never
             // claimed by generated static config.
             computer_observe: false,

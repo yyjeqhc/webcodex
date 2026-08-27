@@ -203,6 +203,12 @@ impl ShellClientRecord {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct SkillStoreDispatchFence {
+    pub(super) agent_instance_id: String,
+    pub(super) management: bool,
+}
+
 #[derive(Debug)]
 pub(super) struct PendingShellRequest {
     pub(super) request: ShellAgentShellRequest,
@@ -223,6 +229,10 @@ pub(super) struct PendingShellRequest {
     /// before dequeue.
     pub(super) expected_mcp_gateway_provider_id: Option<String>,
     pub(super) expected_mcp_gateway_provider_instance_id: Option<String>,
+    /// Exact Runner process lease plus read/manage mode captured for a
+    /// Runner-global Skill store request. Revalidated at dequeue so a
+    /// replacement process using the same client_id cannot inherit authority.
+    pub(super) skill_store_fence: Option<SkillStoreDispatchFence>,
     pub(super) dispatched: bool,
 }
 

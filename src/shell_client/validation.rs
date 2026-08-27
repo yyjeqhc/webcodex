@@ -270,10 +270,12 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         | "artifact_upload_finish"
         | "artifact_upload_abort"
         | "checkpoint_create"
-        | "checkpoint_restore" => {}
+        | "checkpoint_restore"
+        | "skill_list_packages"
+        | "skill_read_file" => {}
         _ => {
             return Err(
-                "op must be one of read, write, list, project_overview, write_project_file, apply_text_edits, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_project_artifact_export_chunk, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, checkpoint_create, checkpoint_restore"
+                "op must be one of read, write, list, project_overview, write_project_file, apply_text_edits, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_project_artifact_export_chunk, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, checkpoint_create, checkpoint_restore, skill_list_packages, skill_read_file"
                     .to_string(),
             )
         }
@@ -292,6 +294,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
             | "artifact_upload_abort"
     );
     let checkpoint_payload = matches!(body.op.as_str(), "checkpoint_create" | "checkpoint_restore");
+    let skill_payload = matches!(body.op.as_str(), "skill_list_packages" | "skill_read_file");
 
     let path = body.path.trim();
     if path.is_empty() {
@@ -354,9 +357,10 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
             && !structured_delete_payload
             && !artifact_payload
             && !checkpoint_payload
+            && !skill_payload
         {
             return Err(
-                "content is only allowed for op=write, project_overview options, delete_project_files, apply_text_edits, structured edit tools, artifact tools, or checkpoint tools"
+                "content is only allowed for op=write, project_overview options, delete_project_files, apply_text_edits, structured edit tools, artifact tools, checkpoint tools, or skill runtime file ops"
                     .to_string(),
             );
         }
@@ -394,6 +398,43 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
             }
             if body.line.is_some() {
                 return Err("line is not supported for any file op".to_string());
+            }
+        }
+        "skill_read_file" => {
+            if body.content.is_none() || body.start_line.is_none() || body.end_line.is_none() {
+                return Err("skill_read_file requires content/start_line/end_line".to_string());
+            }
+            if body.start_line == Some(0)
+                || body
+                    .end_line
+                    .zip(body.start_line)
+                    .is_some_and(|(end, start)| end < start)
+                || body.old_text.is_some()
+                || body.pattern.is_some()
+                || body.expected_sha256.is_some()
+                || body.expected_prefix.is_some()
+                || body.line.is_some()
+                || body.create_dirs
+            {
+                return Err(
+                    "skill_read_file only accepts path/cwd/content/max_bytes/start_line/end_line"
+                        .to_string(),
+                );
+            }
+        }
+        "skill_list_packages" => {
+            if body.content.is_none()
+                || body.old_text.is_some()
+                || body.pattern.is_some()
+                || body.expected_sha256.is_some()
+                || body.expected_prefix.is_some()
+                || body.start_line.is_some()
+                || body.end_line.is_some()
+                || body.line.is_some()
+                || body.max_bytes.is_some()
+                || body.create_dirs
+            {
+                return Err("skill_list_packages only accepts path/cwd/content".to_string());
             }
         }
         "write_project_file" => {

@@ -50,6 +50,12 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
         .filter(|name| name.as_str() != "export_project_artifact")
         .cloned()
         .collect();
+    let mut stateless_runtime_names = runtime_names.clone();
+    stateless_runtime_names.extend(
+        crate::tool_runtime::skill_runtime_tool_specs()
+            .into_iter()
+            .map(|spec| spec.name),
+    );
 
     for compact in [false, true] {
         if compact {
@@ -98,8 +104,8 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             .map(|tool| tool["name"].as_str().unwrap().to_string())
             .collect();
         assert_eq!(
-            stateless_names, runtime_names,
-            "stateless-2026 tools/list must match the full runtime registry (compact={compact})"
+            stateless_names, stateless_runtime_names,
+            "stateless-2026 tools/list must equal the full runtime registry plus the two fixed Skill runtime tools (compact={compact})"
         );
         for tool in stateless_value["result"]["tools"].as_array().unwrap() {
             let properties = tool["inputSchema"]["properties"].as_object().unwrap();
@@ -158,6 +164,190 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
 }
 
 #[test]
+fn skill_runtime_tools_are_stateless_full_operator_only_and_schema_static() {
+    let generic_names = registered_tool_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect::<Vec<_>>();
+    assert!(!generic_names.iter().any(|name| name == "skill_list"));
+    assert!(!generic_names.iter().any(|name| name == "skill_read_file"));
+
+    let render_full = || {
+        let mut payload = mcp_tools_list_payload_with_compact_and_app(
+            ModelSurface::FullOperatorRuntime,
+            false,
+            false,
+        );
+        add_stateless_skill_tools(
+            &mut payload,
+            ModelSurface::FullOperatorRuntime,
+            false,
+            false,
+            None,
+        );
+        add_stateless_workflow_recorder_metadata(&mut payload, ModelSurface::FullOperatorRuntime);
+        payload
+    };
+    let before = render_full();
+    let skill_names = before["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .filter(|name| name.starts_with("skill_"))
+        .collect::<Vec<_>>();
+    assert_eq!(skill_names, vec!["skill_list", "skill_read_file"]);
+
+    let skill_list = before["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "skill_list")
+        .unwrap();
+    assert_eq!(
+        skill_list["inputSchema"]["properties"]["limit"]["maximum"],
+        64
+    );
+    let context_request = &skill_list["inputSchema"]["properties"]["context_request"];
+    assert_eq!(context_request["items"]["type"], "string");
+    assert!(context_request["items"].get("enum").is_none());
+    assert_eq!(
+        skill_list["outputSchema"]["properties"]["output"]["properties"]["skills"]["type"],
+        "array"
+    );
+
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join(".agents/skills/foo")).unwrap();
+    std::fs::write(
+        tmp.path().join(".agents/skills/foo/SKILL.md"),
+        "---\nname: foo\ndescription: first\n---\nbody\n",
+    )
+    .unwrap();
+    let one_package = render_full();
+    std::fs::create_dir_all(tmp.path().join(".agents/skills/bar")).unwrap();
+    std::fs::write(
+        tmp.path().join(".agents/skills/bar/SKILL.md"),
+        "---\nname: bar\ndescription: second\n---\nbody\n",
+    )
+    .unwrap();
+    let two_packages = render_full();
+    assert_eq!(before, one_package);
+    assert_eq!(
+        one_package, two_packages,
+        "Skill package count must not alter MCP tool schemas"
+    );
+
+    for surface in [ModelSurface::CanonicalConnector, ModelSurface::LocalCoding] {
+        let mut payload = mcp_tools_list_payload_with_compact(surface, false);
+        add_stateless_skill_tools(&mut payload, surface, false, false, None);
+        assert!(payload["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|tool| !matches!(
+                tool["name"].as_str(),
+                Some("skill_list" | "skill_read_file")
+            )));
+    }
+    let legacy_full = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
+    assert!(legacy_full["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|tool| !matches!(
+            tool["name"].as_str(),
+            Some("skill_list" | "skill_read_file")
+        )));
+}
+
+#[test]
+fn skill_management_tools_require_admin_and_remain_fixed_schema() {
+    let render = |auth: Option<&crate::auth::AuthContext>| {
+        let mut payload = mcp_tools_list_payload_with_compact_and_app(
+            ModelSurface::FullOperatorRuntime,
+            false,
+            false,
+        );
+        add_stateless_skill_tools(
+            &mut payload,
+            ModelSurface::FullOperatorRuntime,
+            false,
+            false,
+            auth,
+        );
+        payload
+    };
+    let shared = crate::auth::shared_key_context("skill-management-test");
+    let shared_payload = render(Some(&shared));
+    let shared_names = shared_payload["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .filter(|name| name.starts_with("skill_"))
+        .collect::<Vec<_>>();
+    assert_eq!(shared_names, vec!["skill_list", "skill_read_file"]);
+
+    let admin = crate::auth::AuthContext {
+        role: Some("admin".to_string()),
+        scopes: vec![crate::auth::SCOPE_ADMIN.to_string()],
+        is_bootstrap: true,
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap)
+    };
+    let first = render(Some(&admin));
+    let names = first["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .filter(|name| name.starts_with("skill_"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        vec![
+            "skill_list",
+            "skill_read_file",
+            "skill_versions",
+            "skill_install",
+            "skill_activate",
+            "skill_remove_revision",
+        ]
+    );
+    assert_eq!(
+        crate::tool_runtime::skill_management_tool_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>(),
+        vec![
+            "skill_versions",
+            "skill_install",
+            "skill_activate",
+            "skill_remove_revision",
+        ]
+    );
+    for name in ["skill_install", "skill_activate", "skill_remove_revision"] {
+        let description = first["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .and_then(|tool| tool["description"].as_str())
+            .unwrap_or_else(|| panic!("missing {name} retention description"));
+        for required in ["24 hours", "7 days", "skill_versions", "not proof"] {
+            assert!(
+                description.contains(required),
+                "{name} must document replay retention: {description}"
+            );
+        }
+    }
+    assert_eq!(
+        first,
+        render(Some(&admin)),
+        "management schemas are content-independent"
+    );
+}
+
+#[test]
 fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_tool_schema() {
     let mut connector =
         mcp_tools_list_payload_with_compact(ModelSurface::CanonicalConnector, false);
@@ -171,6 +361,9 @@ fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_too
         assert!(!properties.contains_key(
             crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD
         ));
+        assert!(!properties.contains_key(
+            crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD
+        ));
     }
 
     let mut local = mcp_tools_list_payload_with_compact(ModelSurface::LocalCoding, false);
@@ -182,6 +375,40 @@ fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_too
         .all(|tool| tool["inputSchema"]["properties"]
             .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD)
             .is_none()));
+
+    assert!(local["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|tool| tool["inputSchema"]["properties"]
+            .get(crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD)
+            .is_none()));
+
+    let mut full = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
+    add_stateless_workflow_recorder_metadata(&mut full, ModelSurface::FullOperatorRuntime);
+    let read_files = full["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "read_files")
+        .expect("full-operator read_files schema");
+    let read_files_output = serde_json::to_string(&read_files["outputSchema"]).unwrap();
+    assert!(read_files_output.contains("context_projection"));
+    assert!(read_files_output.contains("post_tool"));
+    let list_tools = full["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "list_tools")
+        .expect("full-operator list_tools schema");
+    let context_output =
+        &list_tools["outputSchema"]["properties"]["output"]["properties"]["context_projection"];
+    assert_eq!(context_output["type"], "object");
+    assert_eq!(context_output["properties"]["timing"]["const"], "post_tool");
+    assert_eq!(
+        context_output["properties"]["applies_to_current_effect"]["const"],
+        false
+    );
 
     let generic = registered_tool_specs()
         .into_iter()
@@ -196,6 +423,8 @@ fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_too
         .contains_key(crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD));
     assert!(!generic_properties
         .contains_key(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD));
+    assert!(!generic_properties
+        .contains_key(crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD));
 }
 
 #[test]
@@ -302,6 +531,57 @@ fn stateless_message_resolution_wrapper_is_validated_and_removed_before_concrete
     ] {
         let mut malformed = malformed;
         assert!(strip_stateless_session_message_resolution(&mut malformed).is_err());
+    }
+}
+
+#[test]
+fn stateless_context_request_is_deduped_open_ended_and_removed_before_parsing() {
+    let mut arguments = json!({
+        crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: [
+            "project.instructions",
+            "future.material",
+            "project.instructions"
+        ]
+    });
+    let normalized = strip_stateless_context_request(&mut arguments).unwrap();
+    assert_eq!(
+        normalized,
+        vec![
+            "project.instructions".to_string(),
+            "future.material".to_string()
+        ]
+    );
+    assert!(arguments
+        .get(crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD)
+        .is_none());
+    arguments[crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD] =
+        json!(normalized);
+    assert_eq!(
+        crate::tool_runtime::context_projection::context_request_from_arguments(&arguments),
+        vec![
+            "project.instructions".to_string(),
+            "future.material".to_string()
+        ]
+    );
+    let concrete = crate::tool_runtime::sessions::strip_tool_call_expectation_metadata(arguments);
+    assert!(concrete
+        .get(crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD)
+        .is_none());
+    crate::tool_runtime::ToolCall::from_tool_name("list_tools", concrete)
+        .expect("context_request wrapper metadata must be gone before concrete parsing");
+
+    for malformed in [
+        json!({crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: "project.instructions"}),
+        json!({crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: ["bad key"]}),
+        json!({crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: [""]}),
+        json!({crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD:
+            (0..=crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_ITEMS)
+                .map(|index| format!("future.material.{index}"))
+                .collect::<Vec<_>>()
+        }),
+    ] {
+        let mut malformed = malformed;
+        assert!(strip_stateless_context_request(&mut malformed).is_err());
     }
 }
 

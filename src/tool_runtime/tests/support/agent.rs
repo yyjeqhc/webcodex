@@ -107,6 +107,12 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
     if req.kind == "file_project_overview" {
         return run_agent_project_overview_request_locally(req);
     }
+    if req.kind == "file_skill_list_packages" {
+        return run_agent_skill_list_packages_locally(req);
+    }
+    if req.kind == "file_skill_read_file" {
+        return run_agent_skill_read_file_locally(req);
+    }
     let structured_process = if req.kind == "run_process" {
         assert!(req.command.is_empty());
         assert!(req.script.is_none());
@@ -253,6 +259,145 @@ fn run_agent_file_read_request_locally(req: &ShellAgentShellRequest) -> (i32, St
         }
         Err(error) => (-1, String::new(), error.to_string()),
     }
+}
+
+fn run_agent_skill_list_packages_locally(req: &ShellAgentShellRequest) -> (i32, String, String) {
+    let root = request_root(req);
+    let limit = req
+        .content
+        .as_deref()
+        .and_then(|content| serde_json::from_str::<Value>(content).ok())
+        .and_then(|value| value["limit"].as_u64())
+        .map(|value| value as usize)
+        .unwrap_or(257);
+    let entries =
+        match std::fs::read_dir(&root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return (
+                0,
+                json!({"format":"webcodex.skill_package_list.v1","entries":[],"truncated":false})
+                    .to_string(),
+                String::new(),
+            ),
+            Err(error) => return (-1, String::new(), error.to_string()),
+        };
+    let mut items = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let kind = entry.file_type().ok()?;
+            let kind = if kind.is_dir() {
+                "dir"
+            } else if kind.is_symlink() {
+                "symlink"
+            } else {
+                return None;
+            };
+            Some(json!({"name": entry.file_name().to_string_lossy(), "kind": kind}))
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
+    let truncated = items.len() > limit;
+    items.truncate(limit);
+    (
+        0,
+        json!({
+            "format":"webcodex.skill_package_list.v1",
+            "entries":items,
+            "truncated":truncated
+        })
+        .to_string(),
+        String::new(),
+    )
+}
+
+fn run_agent_skill_read_file_locally(req: &ShellAgentShellRequest) -> (i32, String, String) {
+    use webcodex_workspace::file_read_range::{self, EffectiveRange};
+    let Some(cwd) = req.cwd.as_deref() else {
+        return (-1, String::new(), "skill_path_invalid".to_string());
+    };
+    let Some(path) = req.path.as_deref() else {
+        return (-1, String::new(), "skill_path_invalid".to_string());
+    };
+    let options = req
+        .content
+        .as_deref()
+        .and_then(|content| serde_json::from_str::<Value>(content).ok())
+        .unwrap_or(Value::Null);
+    let Some(package_root) = options["package_root"].as_str() else {
+        return (-1, String::new(), "skill_path_invalid".to_string());
+    };
+    let max_file_bytes = options["max_file_bytes"].as_u64().unwrap_or(0) as usize;
+    let project_root = match Path::new(cwd).canonicalize() {
+        Ok(root) => root,
+        Err(_) => return (-1, String::new(), "skill_path_invalid".to_string()),
+    };
+    let package = match project_root.join(package_root).canonicalize() {
+        Ok(root) => root,
+        Err(_) => return (-1, String::new(), "skill_file_not_found".to_string()),
+    };
+    let target = match project_root.join(path).canonicalize() {
+        Ok(target) => target,
+        Err(_) => return (-1, String::new(), "skill_file_not_found".to_string()),
+    };
+    if !package.starts_with(&project_root) || !target.starts_with(&package) || !target.is_file() {
+        return (-1, String::new(), "skill_path_escape".to_string());
+    }
+    let canonical_relative = target
+        .strip_prefix(&project_root)
+        .unwrap_or(&target)
+        .to_string_lossy();
+    if crate::sensitive_paths::is_secret_path(path)
+        || crate::sensitive_paths::is_secret_path(canonical_relative.as_ref())
+    {
+        return (-1, String::new(), "skill_sensitive_path".to_string());
+    }
+    let file_bytes = target
+        .metadata()
+        .map(|m| m.len() as usize)
+        .unwrap_or(usize::MAX);
+    if file_bytes > max_file_bytes {
+        return (-1, String::new(), "skill_file_too_large".to_string());
+    }
+    let start_line = req.start_line.unwrap_or(1);
+    let end_line = req.end_line.unwrap_or(start_line);
+    let limit = end_line.saturating_sub(start_line).saturating_add(1);
+    let range = EffectiveRange::new(Some(start_line), Some(limit));
+    let result = match file_read_range::read_range_with_budget(
+        &target,
+        range,
+        req.max_bytes.unwrap_or(48 * 1024),
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            let reason = if matches!(
+                error.reason,
+                webcodex_workspace::file_read_range::ReadFileReason::InvalidUtf8
+            ) {
+                "skill_invalid_utf8"
+            } else {
+                "skill_read_unavailable"
+            };
+            return (-1, String::new(), reason.to_string());
+        }
+    };
+    (
+        0,
+        json!({
+            "format":"webcodex.skill_file_read.v1",
+            "content":result.content,
+            "sha256":result.sha256,
+            "file_bytes":file_bytes,
+            "total_lines":result.total_lines,
+            "start_line":result.start_line,
+            "limit":result.limit,
+            "returned_lines":result.returned_lines,
+            "end_line":result.end_line,
+            "has_more":result.has_more,
+            "next_start_line":result.next_start_line
+        })
+        .to_string(),
+        String::new(),
+    )
 }
 
 fn run_agent_project_overview_request_locally(

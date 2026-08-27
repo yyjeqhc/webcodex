@@ -1916,6 +1916,10 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // This binary implements resolve_or_register_project; do not trust config to
     // advertise a capability that the binary does not implement.
     capabilities.project_path_registration = true;
+    // Runner-global operator-installed Skill store read and management are
+    // explicit rolling-upgrade capabilities implemented by this binary.
+    capabilities.skill_store_read = true;
+    capabilities.skill_store_manage = true;
     // MCP gateway support is fenced by the validated provider inventory in
     // registration rather than a separate capability bit. Older binaries omit
     // that inventory, so a newer Server will never target them.
@@ -2424,9 +2428,9 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         | "file_write"
         | "file_list"
         | "file_project_overview"
-        | "file_delete_project_files" => {
-            handle_basic_file_request(policy, request, &resolved, start)
-        }
+        | "file_delete_project_files"
+        | "file_skill_list_packages"
+        | "file_skill_read_file" => handle_basic_file_request(policy, request, &resolved, start),
         _ => CommandResult {
             exit_code: None,
             stdout: None,

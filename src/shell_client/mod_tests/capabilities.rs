@@ -95,6 +95,8 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
         RunnerFeature::ComputerTextInput,
         RunnerFeature::JobStateReconciliation,
         RunnerFeature::CodingAgentRuns,
+        RunnerFeature::SkillStoreRead,
+        RunnerFeature::SkillStoreManage,
     ] {
         assert_eq!(
             feature.inference(),

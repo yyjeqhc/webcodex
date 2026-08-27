@@ -813,6 +813,15 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
         .as_array()
         .unwrap()
         .is_empty());
+    assert_eq!(
+        acknowledged["session_continuity"]["status"], "unacknowledged",
+        "guidance ACK must remain independent when model-facing context ACK is omitted"
+    );
+    assert!(acknowledged["session_recovery"]["model_facing_events"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(acknowledged["session_recovery"]["current_handoff"].is_object());
     let retained = runtime
         .sessions
         .list_messages(
@@ -1072,6 +1081,47 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
     assert!(!audit.contains("handled through ordinary list_tools wrapper metadata"));
 }
 
+#[tokio::test]
+async fn http_mcp_2026_context_request_projects_post_tool_materials_nonfatally() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db, runtime));
+    let arguments = json!({
+        crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: [
+            "webcodex.workflow",
+            "future.material",
+            "webcodex.workflow",
+            "project.instructions"
+        ]
+    });
+    let (status, body) =
+        stateless_2026_tool_call(&service, "secret", 226, "list_tools", arguments, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["isError"], false);
+    let output = stateless_tool_output(&body);
+    assert_eq!(output["context_projection"]["timing"], "post_tool");
+    assert_eq!(
+        output["context_projection"]["applies_to_current_effect"],
+        false
+    );
+    let materials = output["context_projection"]["materials"]
+        .as_array()
+        .unwrap();
+    assert_eq!(materials.len(), 3);
+    assert_eq!(materials[0]["key"], "webcodex.workflow");
+    assert_eq!(materials[0]["status"], "available");
+    assert_eq!(
+        materials[0]["projection"]["contract"],
+        "webcodex.coding_workflow"
+    );
+    assert_eq!(materials[1]["key"], "future.material");
+    assert_eq!(materials[1]["status"], "unsupported");
+    assert_eq!(materials[2]["key"], "project.instructions");
+    assert_eq!(materials[2]["status"], "unavailable");
+    assert_eq!(materials[2]["reason_code"], "project_target_unavailable");
+}
+
 #[test]
 fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_invalid_ack() {
     // Like the neighboring request-scoped ACK and observation fixtures, this
@@ -1184,26 +1234,62 @@ async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_inval
     let invalid = stateless_tool_output(&invalid_body);
     assert_eq!(invalid["session_context_revision"], 5);
     assert_eq!(invalid["session_continuity"]["status"], "invalid");
-    assert!(invalid.get("session_recovery").is_some());
+    assert!(invalid["session_continuity"]
+        .get("events_after_ack")
+        .is_none());
+    assert!(invalid["session_recovery"]["model_facing_events"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(invalid["session_recovery"]["current_handoff"].is_object());
+    assert_eq!(invalid["session_recovery"]["history_lost"], false);
+
+    let mut future_args = with_mcp_recording_session(json!({}), &session_id);
+    future_args.as_object_mut().unwrap().insert(
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD.to_string(),
+        json!(999),
+    );
+    let (status, future_body) =
+        stateless_2026_tool_call(&service, "secret", 233, "list_tools", future_args, None).await;
+    assert_eq!(status, StatusCode::OK, "{future_body}");
+    let future = stateless_tool_output(&future_body);
+    assert_eq!(future["session_context_revision"], 6);
+    assert_eq!(future["session_continuity"]["status"], "invalid");
+    assert_eq!(future["session_continuity"]["ack_revision"], 999);
+    assert!(future["session_continuity"]
+        .get("events_after_ack")
+        .is_none());
+    assert!(future["session_recovery"]["model_facing_events"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(future["session_recovery"]["current_handoff"].is_object());
 
     let omitted_args = with_mcp_recording_session(json!({}), &session_id);
     let (status, omitted_body) =
-        stateless_2026_tool_call(&service, "secret", 233, "list_tools", omitted_args, None).await;
+        stateless_2026_tool_call(&service, "secret", 234, "list_tools", omitted_args, None).await;
     assert_eq!(status, StatusCode::OK, "{omitted_body}");
     let omitted = stateless_tool_output(&omitted_body);
-    assert_eq!(omitted["session_context_revision"], 6);
+    assert_eq!(omitted["session_context_revision"], 7);
     assert_eq!(omitted["session_continuity"]["status"], "unacknowledged");
-    assert!(omitted.get("session_recovery").is_some());
+    assert!(omitted["session_continuity"]
+        .get("events_after_ack")
+        .is_none());
+    assert!(omitted["session_recovery"]["model_facing_events"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(omitted["session_recovery"]["current_handoff"].is_object());
 
     let mut after_missing_args = with_mcp_recording_session(json!({}), &session_id);
     after_missing_args.as_object_mut().unwrap().insert(
         crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD.to_string(),
-        json!(6),
+        json!(7),
     );
     let (status, after_missing_body) = stateless_2026_tool_call(
         &service,
         "secret",
-        234,
+        235,
         "list_tools",
         after_missing_args,
         None,
@@ -1211,7 +1297,7 @@ async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_inval
     .await;
     assert_eq!(status, StatusCode::OK, "{after_missing_body}");
     let after_missing = stateless_tool_output(&after_missing_body);
-    assert_eq!(after_missing["session_context_revision"], 7);
+    assert_eq!(after_missing["session_context_revision"], 8);
     assert!(after_missing.get("session_continuity").is_none());
     assert!(after_missing.get("session_recovery").is_none());
 
@@ -1251,9 +1337,15 @@ async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_inval
     );
     assert_eq!(telemetry[4]["context_ack_present"], true);
     assert_eq!(telemetry[4]["context_continuity_status"], "invalid");
-    assert_eq!(telemetry[5]["context_ack_present"], false);
-    assert_eq!(telemetry[5]["context_continuity_status"], "unacknowledged");
-    assert_eq!(telemetry[6]["context_continuity_status"], "exact");
+    assert_eq!(telemetry[4]["session_recovery_event_count"], 0);
+    assert_eq!(telemetry[4]["session_history_lost"], false);
+    assert_eq!(telemetry[5]["context_ack_present"], true);
+    assert_eq!(telemetry[5]["context_continuity_status"], "invalid");
+    assert_eq!(telemetry[5]["session_recovery_event_count"], 0);
+    assert_eq!(telemetry[6]["context_ack_present"], false);
+    assert_eq!(telemetry[6]["context_continuity_status"], "unacknowledged");
+    assert_eq!(telemetry[6]["session_recovery_event_count"], 0);
+    assert_eq!(telemetry[7]["context_continuity_status"], "exact");
     assert!(telemetry
         .iter()
         .all(|row| row["serialized_result_bytes"].is_u64()));

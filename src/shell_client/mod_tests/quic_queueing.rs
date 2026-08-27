@@ -57,6 +57,35 @@ async fn enqueue_file_op_allows_read_with_line_range() {
 }
 
 #[tokio::test]
+async fn generic_file_enqueue_rejects_internal_skill_runtime_ops() {
+    let registry = ShellClientRegistry::default();
+
+    let mut list = file_request("skill_list_packages");
+    list.path = ".agents/skills".to_string();
+    list.content = Some(r#"{"limit":257}"#.to_string());
+    let error = registry
+        .enqueue_file_op(list, "rest-like-caller".to_string())
+        .await
+        .unwrap_err();
+    assert!(error.contains("internal-only"));
+    assert!(error.contains("skill_list_packages"));
+
+    let mut read = file_request("skill_read_file");
+    read.path = ".agents/skills/foo/SKILL.md".to_string();
+    read.content =
+        Some(r#"{"package_root":".agents/skills/foo","max_file_bytes":65536}"#.to_string());
+    read.start_line = Some(1);
+    read.end_line = Some(20);
+    read.max_bytes = Some(48 * 1024);
+    let error = registry
+        .enqueue_file_op(read, "rest-like-caller".to_string())
+        .await
+        .unwrap_err();
+    assert!(error.contains("internal-only"));
+    assert!(error.contains("skill_read_file"));
+}
+
+#[tokio::test]
 async fn registry_allows_quic_v1_file_and_project_ops_queueing() {
     let registry = ShellClientRegistry::default();
     register_quic_v1_client(&registry, "quic-ops").await;

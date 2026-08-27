@@ -8,6 +8,8 @@ fn file_request_kind_includes_edit_and_basic_ops() {
         "file_list",
         "file_project_overview",
         "file_delete_project_files",
+        "file_skill_list_packages",
+        "file_skill_read_file",
         "file_write_project_file",
         "file_apply_text_edits",
     ] {
@@ -58,6 +60,120 @@ fn project_overview_agent_request_returns_metadata_without_contents() {
     assert!(!output
         .to_string()
         .contains(&tmp.path().display().to_string()));
+}
+
+#[test]
+fn skill_file_ops_are_project_contained_text_only_and_path_private() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+
+    let empty_request = json_file_op_request(
+        tmp.path(),
+        "file_skill_list_packages",
+        ".agents/skills",
+        serde_json::json!({"limit": 257}),
+    );
+    let empty = line_edit_json(handle_file_request(&policy, &empty_request));
+    assert_eq!(empty["format"], "webcodex.skill_package_list.v1");
+    assert_eq!(empty["entries"].as_array().unwrap().len(), 0);
+    assert_eq!(empty["truncated"], false);
+
+    let skill_root = tmp.path().join(".agents/skills/foo");
+    std::fs::create_dir_all(skill_root.join("references")).unwrap();
+    std::fs::write(
+        skill_root.join("SKILL.md"),
+        "---\nname: foo\ndescription: demo\n---\nline one\nline two\n",
+    )
+    .unwrap();
+    std::fs::write(
+        skill_root.join("references/guide.md"),
+        "alpha\nbeta\ngamma\n",
+    )
+    .unwrap();
+    std::fs::write(skill_root.join("references/binary.dat"), [0xff, 0xfe]).unwrap();
+    std::fs::write(skill_root.join(".env"), "TOKEN=secret\n").unwrap();
+
+    let listed = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_skill_list_packages",
+            ".agents/skills",
+            serde_json::json!({"limit": 257}),
+        ),
+    ));
+    assert_eq!(listed["entries"][0]["name"], "foo");
+    assert_eq!(listed["entries"][0]["kind"], "dir");
+    assert!(!listed
+        .to_string()
+        .contains(&tmp.path().display().to_string()));
+
+    let mut read = json_file_op_request(
+        tmp.path(),
+        "file_skill_read_file",
+        ".agents/skills/foo/references/guide.md",
+        serde_json::json!({
+            "package_root": ".agents/skills/foo",
+            "max_file_bytes": 524288
+        }),
+    );
+    read.start_line = Some(2);
+    read.end_line = Some(2);
+    read.max_bytes = Some(48 * 1024);
+    let output = line_edit_json(handle_file_request(&policy, &read));
+    assert_eq!(output["format"], "webcodex.skill_file_read.v1");
+    assert_eq!(output["content"], "beta");
+    assert_eq!(output["start_line"], 2);
+    assert_eq!(output["end_line"], 2);
+    assert!(output["sha256"].as_str().unwrap().len() == 64);
+    assert!(!output
+        .to_string()
+        .contains(&tmp.path().display().to_string()));
+
+    let mut sensitive = read.clone();
+    sensitive.path = Some(".agents/skills/foo/.env".to_string());
+    let sensitive_result = handle_file_request(&policy, &sensitive);
+    assert_eq!(sensitive_result.exit_code, None);
+    assert_eq!(
+        sensitive_result.error.as_deref(),
+        Some("skill_sensitive_path")
+    );
+    assert_eq!(sensitive_result.stdout, None);
+
+    let mut binary = read.clone();
+    binary.path = Some(".agents/skills/foo/references/binary.dat".to_string());
+    let binary_result = handle_file_request(&policy, &binary);
+    assert_eq!(binary_result.exit_code, None);
+    assert_eq!(binary_result.error.as_deref(), Some("skill_invalid_utf8"));
+    assert_eq!(binary_result.stdout, None);
+
+    let mut too_large = read.clone();
+    too_large.content = Some(
+        serde_json::json!({
+            "package_root": ".agents/skills/foo",
+            "max_file_bytes": 4
+        })
+        .to_string(),
+    );
+    let too_large_result = handle_file_request(&policy, &too_large);
+    assert_eq!(
+        too_large_result.error.as_deref(),
+        Some("skill_file_too_large")
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let outside = tmp.path().join("outside.txt");
+        std::fs::write(&outside, "outside\n").unwrap();
+        symlink(&outside, skill_root.join("references/escape.md")).unwrap();
+        let mut escape = read.clone();
+        escape.path = Some(".agents/skills/foo/references/escape.md".to_string());
+        let escape_result = handle_file_request(&policy, &escape);
+        assert_eq!(escape_result.exit_code, None);
+        assert_eq!(escape_result.error.as_deref(), Some("skill_path_escape"));
+        assert_eq!(escape_result.stdout, None);
+    }
 }
 
 #[test]

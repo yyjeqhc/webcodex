@@ -15,6 +15,7 @@ webcodex-workspace = { path = "../webcodex-workspace" }
 base64 = "0.22"
 chrono = "0.4"
 futures-util = "0.3"
+fs2 = "0.4"
 flate2 = "1"
 quinn = "0.11"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
@@ -30,6 +31,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 xml = "1"
 webpki-roots = "0.26"
 

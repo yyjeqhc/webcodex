@@ -927,6 +927,86 @@ pub enum ToolCall {
         max_result_bytes: Option<usize>,
     },
 
+    /// Fresh bounded discovery of project-scoped Agent Skills. This tool is
+    /// model-hidden globally and exposed only by capable Stateless MCP Full
+    /// Operator surfaces.
+    SkillList {
+        project: String,
+        #[serde(default)]
+        query: Option<String>,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        expected_catalog_revision: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Read one bounded UTF-8 text resource from a selected Skill package.
+    SkillReadFile {
+        project: String,
+        skill_id: String,
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        start_line: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        expected_definition_revision: Option<String>,
+        #[serde(default)]
+        expected_package_revision: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    SkillVersions {
+        project: String,
+        skill_key: String,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    SkillInstall {
+        project: String,
+        skill_key: String,
+        artifact_path: String,
+        expected_artifact_sha256: String,
+        idempotency_key: String,
+        #[serde(default)]
+        activate: Option<bool>,
+        #[serde(default)]
+        expected_state_revision: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    SkillActivate {
+        project: String,
+        skill_key: String,
+        package_revision: String,
+        expected_state_revision: String,
+        idempotency_key: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    SkillRemoveRevision {
+        project: String,
+        skill_key: String,
+        package_revision: String,
+        expected_state_revision: String,
+        idempotency_key: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Start an async background job (long-running commands, codex CLI, etc.).
     RunJob {
         project: String,
@@ -2134,6 +2214,12 @@ impl ToolCall {
             Self::GoTest { .. } => "go_test",
             Self::ReadFile { .. } => "read_file",
             Self::ReadFiles { .. } => "read_files",
+            Self::SkillList { .. } => "skill_list",
+            Self::SkillReadFile { .. } => "skill_read_file",
+            Self::SkillVersions { .. } => "skill_versions",
+            Self::SkillInstall { .. } => "skill_install",
+            Self::SkillActivate { .. } => "skill_activate",
+            Self::SkillRemoveRevision { .. } => "skill_remove_revision",
             Self::RunJob { .. } => "run_job",
             Self::StopJob { .. } => "stop_job",
             Self::JobStatus { .. } => "job_status",
@@ -2222,6 +2308,12 @@ impl ToolCall {
             | Self::GoTest { session_id, .. }
             | Self::ReadFile { session_id, .. }
             | Self::ReadFiles { session_id, .. }
+            | Self::SkillList { session_id, .. }
+            | Self::SkillReadFile { session_id, .. }
+            | Self::SkillVersions { session_id, .. }
+            | Self::SkillInstall { session_id, .. }
+            | Self::SkillActivate { session_id, .. }
+            | Self::SkillRemoveRevision { session_id, .. }
             | Self::RunJob { session_id, .. }
             | Self::StopJob { session_id, .. }
             | Self::ListProjectFiles { session_id, .. }
@@ -2345,6 +2437,12 @@ impl ToolCall {
             | Self::GoTest { project, .. }
             | Self::ReadFile { project, .. }
             | Self::ReadFiles { project, .. }
+            | Self::SkillList { project, .. }
+            | Self::SkillReadFile { project, .. }
+            | Self::SkillVersions { project, .. }
+            | Self::SkillInstall { project, .. }
+            | Self::SkillActivate { project, .. }
+            | Self::SkillRemoveRevision { project, .. }
             | Self::RunJob { project, .. }
             | Self::StopJob { project, .. }
             | Self::ListProjectFiles { project, .. }

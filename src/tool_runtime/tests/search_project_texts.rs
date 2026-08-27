@@ -1693,6 +1693,7 @@ async fn search_project_texts_outer_recording_session_preserves_complete_sparse_
                         host_file_import_trust: HostFileImportTrust::Untrusted,
                     },
                     true,
+                    true,
                 )
                 .await
         }
@@ -1758,6 +1759,8 @@ async fn search_project_texts_outer_recording_session_keeps_final_response_under
         "max_result_bytes": MAX_SERIALIZED_OUTPUT_BYTES
     });
     arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(0);
+    arguments[crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD] =
+        json!(["webcodex.workflow"]);
 
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -1778,6 +1781,7 @@ async fn search_project_texts_outer_recording_session_keeps_final_response_under
                         record_oauth_scope_denials: false,
                         host_file_import_trust: HostFileImportTrust::Untrusted,
                     },
+                    true,
                     true,
                 )
                 .await
@@ -1802,6 +1806,11 @@ async fn search_project_texts_outer_recording_session_keeps_final_response_under
     let result = outcome.result.expect("model-facing result");
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["session_continuity"]["status"], "behind");
+    assert_eq!(result.output["context_projection"]["timing"], "post_tool");
+    assert_eq!(
+        result.output["context_projection"]["materials"][0]["key"],
+        "webcodex.workflow"
+    );
     assert_eq!(
         result.output["session_recovery"]["model_facing_events"]
             .as_array()

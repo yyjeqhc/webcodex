@@ -518,6 +518,14 @@ impl ReloadableAgentConfig {
         self.coding_agents.as_ref()
     }
 
+    pub(crate) fn client_id(&self) -> &str {
+        &self.startup.client_id
+    }
+
+    pub(crate) fn server_url(&self) -> &str {
+        &self.startup.server_url
+    }
+
     /// Startup-owned managed temporary-project root. Like `projects_dir`, a
     /// changed value is reported as restart-required so one running Runner
     /// cannot silently switch its project-registration boundary.

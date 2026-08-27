@@ -244,13 +244,24 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
             assert!(resolution_description.contains("same WebCodex call"));
             assert!(resolution_description.contains("recording_session_id"));
             assert!(resolution_description.contains("complete_session_message"));
+            let context_request = &read_files["inputSchema"]["properties"]["context_request"];
+            assert_eq!(context_request["type"], "array");
+            assert_eq!(context_request["maxItems"], 8);
+            assert_eq!(context_request["items"]["type"], "string");
+            assert!(context_request["items"].get("enum").is_none());
+            assert_eq!(context_request["items"]["maxLength"], 64);
+            let request_description = context_request["description"].as_str().unwrap();
+            assert!(request_description.contains("after this tool's main effect/observation"));
+            assert!(request_description.contains("grants no authority"));
             let context_ack =
                 &read_files["inputSchema"]["properties"]["ack_session_context_revision"];
             assert_eq!(context_ack["type"], "integer");
             assert_eq!(context_ack["minimum"], 0);
             let context_description = context_ack["description"].as_str().unwrap();
             assert!(context_description.contains("latest Session context revision"));
-            assert!(context_description.contains("tool still executes normally"));
+            assert!(context_description.contains("known behind revision"));
+            assert!(context_description.contains("compact current Session handoff"));
+            assert!(context_description.contains("nonblocking"));
         }
         other => panic!("expected Ok for stateless tools/list, got {:?}", other),
     }
@@ -291,6 +302,13 @@ async fn mcp_legacy_tools_list_omits_2026_only_result_fields() {
                 .iter()
                 .all(|tool| tool["inputSchema"]["properties"]
                     .get("ack_session_context_revision")
+                    .is_none()));
+            assert!(value["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|tool| tool["inputSchema"]["properties"]
+                    .get("context_request")
                     .is_none()));
         }
         other => panic!("expected Ok for legacy tools/list, got {:?}", other),

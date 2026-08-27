@@ -39,6 +39,8 @@ pub(crate) enum RunnerFeature {
     SandboxInspectCommands,
     ProjectLifecycle,
     ProjectPathRegistration,
+    SkillStoreRead,
+    SkillStoreManage,
     ComputerObserve,
     ComputerApplicationDiscovery,
     ComputerApplicationLaunch,
@@ -58,7 +60,7 @@ pub(crate) enum RunnerFeature {
     ComputerTextInput,
 }
 
-const ALL_RUNNER_FEATURES: [RunnerFeature; 46] = [
+const ALL_RUNNER_FEATURES: [RunnerFeature; 48] = [
     RunnerFeature::Shell,
     RunnerFeature::FileRead,
     RunnerFeature::FileWrite,
@@ -88,6 +90,8 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 46] = [
     RunnerFeature::SandboxInspectCommands,
     RunnerFeature::ProjectLifecycle,
     RunnerFeature::ProjectPathRegistration,
+    RunnerFeature::SkillStoreRead,
+    RunnerFeature::SkillStoreManage,
     RunnerFeature::ComputerObserve,
     RunnerFeature::ComputerApplicationDiscovery,
     RunnerFeature::ComputerApplicationLaunch,
@@ -173,6 +177,8 @@ impl RunnerFeature {
             Self::ProjectPathRegistration => {
                 wire::SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION
             }
+            Self::SkillStoreRead => wire::SHELL_CLIENT_CAPABILITY_SKILL_STORE_READ,
+            Self::SkillStoreManage => wire::SHELL_CLIENT_CAPABILITY_SKILL_STORE_MANAGE,
             Self::ComputerObserve => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
             Self::ComputerApplicationDiscovery => {
                 wire::SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY
@@ -250,6 +256,8 @@ impl RunnerFeature {
             wire::SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION => {
                 Self::ProjectPathRegistration
             }
+            wire::SHELL_CLIENT_CAPABILITY_SKILL_STORE_READ => Self::SkillStoreRead,
+            wire::SHELL_CLIENT_CAPABILITY_SKILL_STORE_MANAGE => Self::SkillStoreManage,
             wire::SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE => Self::ComputerObserve,
             wire::SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY => {
                 Self::ComputerApplicationDiscovery
@@ -310,6 +318,8 @@ impl RunnerFeature {
             | Self::SshPersistentShell
             | Self::DetachedProcessJobs
             | Self::SandboxInspectCommands
+            | Self::SkillStoreRead
+            | Self::SkillStoreManage
             | Self::ComputerObserve
             | Self::ComputerApplicationDiscovery
             | Self::ComputerApplicationLaunch
@@ -365,6 +375,8 @@ impl RunnerFeature {
             Self::SandboxInspectCommands => capabilities.sandbox_inspect_commands,
             Self::ProjectLifecycle => capabilities.project_lifecycle,
             Self::ProjectPathRegistration => capabilities.project_path_registration,
+            Self::SkillStoreRead => capabilities.skill_store_read,
+            Self::SkillStoreManage => capabilities.skill_store_manage,
             Self::ComputerObserve => capabilities.computer_observe,
             Self::ComputerApplicationDiscovery => capabilities.computer_application_discovery,
             Self::ComputerApplicationLaunch => capabilities.computer_application_launch,

@@ -4,7 +4,10 @@ use super::jobs::{
     request_preview, PendingRequestEnqueueError,
 };
 use super::projects::ShellClientLookupError;
-use super::state::{CodingAgentDispatchFence, PendingShellRequest, ShellClientRegistryInner};
+use super::state::{
+    CodingAgentDispatchFence, PendingShellRequest, ShellClientRegistryInner,
+    SkillStoreDispatchFence,
+};
 use super::validation::{
     validate_file_request, validate_id, validate_process_request, validate_run_request,
     validate_script_enqueue_request,
@@ -35,6 +38,7 @@ use webcodex_core::coding_agent::{
     validate_request as validate_coding_agent_request, CodingAgentDispatchState,
     CodingAgentRequest, CodingAgentResponse,
 };
+use webcodex_core::skill_store::SkillStoreRequest;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EnqueueLspError {
@@ -165,6 +169,7 @@ pub(super) fn enqueue_pending_request_locked(
             expected_mcp_gateway_agent_instance_id: None,
             expected_mcp_gateway_provider_id: None,
             expected_mcp_gateway_provider_instance_id: None,
+            skill_store_fence: None,
             dispatched: false,
         },
     );
@@ -288,12 +293,42 @@ impl ShellClientRegistry {
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_file_request(&body)?;
-        if body.op == "read_project_artifact_export_chunk" {
-            return Err(
-                "read_project_artifact_export_chunk is internal-only; generic file-op enqueue is forbidden"
-                    .to_string(),
-            );
+        if matches!(
+            body.op.as_str(),
+            "read_project_artifact_export_chunk" | "skill_list_packages" | "skill_read_file"
+        ) {
+            return Err(format!(
+                "{} is internal-only; generic file-op enqueue is forbidden",
+                body.op
+            ));
         }
+        self.enqueue_validated_file_op(body, requested_by).await
+    }
+
+    /// Enqueue one Phase-3 read-only Skill filesystem primitive. Generic
+    /// `/api/shell/file` callers cannot reach these ops through
+    /// `enqueue_file_op`; ToolRuntime calls this internal method only after the
+    /// authoritative model-surface/project gates have resolved.
+    pub(crate) async fn enqueue_skill_file_op(
+        &self,
+        body: ShellFileOpRequest,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        validate_file_request(&body)?;
+        if !matches!(body.op.as_str(), "skill_list_packages" | "skill_read_file") {
+            return Err(format!(
+                "Skill file-op enqueue only accepts project Skill runtime ops (got {})",
+                body.op
+            ));
+        }
+        self.enqueue_validated_file_op(body, requested_by).await
+    }
+
+    async fn enqueue_validated_file_op(
+        &self,
+        body: ShellFileOpRequest,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let kind = format!("file_{}", body.op);
@@ -1226,6 +1261,102 @@ impl ShellClientRegistry {
         inner.coding_agent_waiters.remove(request_id);
         inner.coding_agent_fences.remove(request_id);
         remove_pending_request_locked(&mut inner, request_id).map(|pending| pending.dispatched)
+    }
+
+    /// Enqueue one closed Runner-global Skill store operation for one exact
+    /// live Runner process. Read and management capabilities are independent;
+    /// the exact process lease and capability are revalidated again at dequeue.
+    pub(crate) async fn enqueue_skill_store(
+        &self,
+        client_id: &str,
+        expected_agent_instance_id: &str,
+        operation: SkillStoreRequest,
+        auth: Option<&crate::auth::AuthContext>,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        let management = operation.requires_management_capability();
+        let content = serde_json::to_string(&operation)
+            .map_err(|_| "invalid Skill store request".to_string())?;
+        if content.len() > 32 * 1024 {
+            return Err("invalid Skill store request".to_string());
+        }
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: client_id.to_string(),
+            kind: "skill_store".to_string(),
+            job_id: None,
+            cwd: None,
+            path: None,
+            content: Some(content),
+            max_bytes: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            create_dirs: false,
+            command: String::new(),
+            process: None,
+            script: None,
+            stdin: None,
+            timeout_secs: 120,
+            requested_by,
+            created_at: now_ts(),
+            validation: None,
+            lsp: None,
+            sandbox: None,
+            job_context: None,
+            persistent_shell: None,
+            mcp_gateway: None,
+            coding_agent: None,
+        };
+        let mut inner = self.inner.lock().await;
+        let client = inner
+            .clients
+            .get(client_id)
+            .ok_or_else(|| "exact Runner is unavailable".to_string())?;
+        assert_shell_client_access(auth, client)
+            .map_err(|_| "exact Runner is unavailable".to_string())?;
+        if client.agent_instance_id != expected_agent_instance_id {
+            return Err(
+                "stale Runner identity; Skill store request was not dispatched".to_string(),
+            );
+        }
+        let required = if management {
+            RunnerFeature::SkillStoreManage
+        } else {
+            RunnerFeature::SkillStoreRead
+        };
+        if !client.runner_features.supports(required) {
+            return Err(format!(
+                "skill_store_capability_unavailable: exact Runner does not support {}",
+                required.as_wire_name()
+            ));
+        }
+        if now_ts().saturating_sub(client.last_seen) > CLIENT_ONLINE_WINDOW_SECS {
+            return Err(
+                "exact Runner is offline; Skill store request was not dispatched".to_string(),
+            );
+        }
+        enqueue_pending_request_locked(
+            &mut inner,
+            client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+        )?;
+        let pending = inner
+            .pending_by_id
+            .get_mut(&request_id)
+            .expect("Skill store request was just enqueued");
+        pending.skill_store_fence = Some(SkillStoreDispatchFence {
+            agent_instance_id: expected_agent_instance_id.to_string(),
+            management,
+        });
+        notify_client_locked(&inner, client_id);
+        Ok((request_id, rx))
     }
 
     /// Enqueue one typed MCP gateway operation for an exact live Runner

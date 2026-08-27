@@ -767,8 +767,10 @@ pub(crate) struct RecordedModelFacingToolCall {
     pub(crate) context_revision: u64,
     pub(crate) pre_call_context_revision: u64,
     pub(crate) ack_session_context_revision: SessionContextRevisionAck,
-    /// Retained model-facing results strictly after the caller's proven view and
-    /// at or before the pre-call watermark. The current ToolResult is excluded.
+    /// Retained model-facing results strictly after a caller's explicitly proven
+    /// revision and before the current ToolResult. Unknown caller state keeps this
+    /// empty and recovers through a compact current handoff instead of revision-zero
+    /// replay. The current ToolResult is always excluded from this history delta.
     pub(crate) recovery_events: Vec<SessionEvent>,
     pub(crate) history_lost: bool,
 }

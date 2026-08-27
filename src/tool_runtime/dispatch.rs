@@ -632,10 +632,35 @@ impl ToolRuntime {
         window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
     ) -> ToolResult {
+        self.dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+            call,
+            auth,
+            transport,
+            recorder_metadata,
+            inherited_sandbox,
+            window,
+            inner_model_facing_recording,
+            Vec::new(),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+        &self,
+        call: ToolCall,
+        auth: Option<&AuthContext>,
+        transport: sessions::SessionTransport,
+        recorder_metadata: sessions::ToolCallRecorderMetadata,
+        inherited_sandbox: Option<&'static str>,
+        window: Option<&crate::client_window::ClientWindow>,
+        inner_model_facing_recording: bool,
+        context_request: Vec<String>,
+    ) -> ToolResult {
         // Phase-1 edit usage telemetry: argument-free structured log only.
         // Does not alter execution, session ledger, Action Audit, or schemas.
         let mut edit_usage = edit_tool_telemetry::start_edit_tool_usage(call.tool_name());
-        let result = self
+        let mut result = self
             .dispatch_with_auth_transport_options_and_metadata_inner(
                 call,
                 auth,
@@ -644,8 +669,17 @@ impl ToolRuntime {
                 inherited_sandbox,
                 window,
                 inner_model_facing_recording,
+                context_request.clone(),
             )
             .await;
+        // Early project/session/auth failures can return before the normal
+        // resolved-project sidecar hook. Preserve the main ToolResult while still
+        // answering the explicit sidecar request conservatively: static material
+        // remains available, but project-scoped material must not guess a target.
+        if !context_request.is_empty() && result.output.get("context_projection").is_none() {
+            self.add_requested_context_projection(&mut result, &context_request, None, auth)
+                .await;
+        }
         if let Some(guard) = edit_usage.as_mut() {
             guard.finish_with_result(&result);
         }
@@ -765,6 +799,7 @@ impl ToolRuntime {
         inherited_sandbox: Option<&'static str>,
         _window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
+        context_request: Vec<String>,
     ) -> ToolResult {
         call = call
             .with_coding_agent_recording_session_id(recorder_metadata.recording_session_id.clone());
@@ -781,6 +816,11 @@ impl ToolRuntime {
         let activity_project = resolved_project
             .as_ref()
             .map(|resolved| resolved.resolved_id.clone());
+        let context_projection_project = if context_request.is_empty() {
+            None
+        } else {
+            resolved_project.cloned()
+        };
         // work_on_project.session_id is explicit coding-resume business input,
         // never a generic tool recorder. Its implementation delegates exact
         // Session/project/lifecycle/authority handling to start_coding_task.
@@ -1170,6 +1210,13 @@ impl ToolRuntime {
                 );
             }
         }
+        self.add_requested_context_projection(
+            &mut result,
+            &context_request,
+            context_projection_project.as_ref(),
+            auth,
+        )
+        .await;
         let defer_batch_sparsification = !inner_model_facing_recording
             && !matches!(
                 &batch_budget_projection,
@@ -1345,6 +1392,146 @@ impl ToolRuntime {
             call @ (ToolCall::ApplyPatch { .. }
             | ToolCall::ApplyPatchChecked { .. }
             | ToolCall::ValidatePatch { .. }) => self.dispatch_patch_tool(call).await,
+
+            ToolCall::SkillList {
+                query,
+                offset,
+                limit,
+                expected_catalog_revision,
+                ..
+            } => {
+                let project = match project_resolution {
+                    Some(Ok(project)) => project,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => return ToolResult::err("skill_list requires a resolved Project"),
+                };
+                self.skill_list(
+                    &project,
+                    query,
+                    offset,
+                    limit,
+                    expected_catalog_revision,
+                    auth,
+                )
+                .await
+            }
+
+            ToolCall::SkillReadFile {
+                skill_id,
+                path,
+                start_line,
+                limit,
+                expected_definition_revision,
+                expected_package_revision,
+                ..
+            } => {
+                let project = match project_resolution {
+                    Some(Ok(project)) => project,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => return ToolResult::err("skill_read_file requires a resolved Project"),
+                };
+                self.skill_read_file(
+                    &project,
+                    skill_id,
+                    path,
+                    start_line,
+                    limit,
+                    expected_definition_revision,
+                    expected_package_revision,
+                    auth,
+                )
+                .await
+            }
+
+            ToolCall::SkillVersions {
+                skill_key,
+                offset,
+                limit,
+                ..
+            } => {
+                let project = match project_resolution {
+                    Some(Ok(project)) => project,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => return ToolResult::err("skill_versions requires a resolved Project"),
+                };
+                self.skill_versions(&project, skill_key, offset, limit, auth)
+                    .await
+            }
+
+            ToolCall::SkillInstall {
+                skill_key,
+                artifact_path,
+                expected_artifact_sha256,
+                idempotency_key,
+                activate,
+                expected_state_revision,
+                ..
+            } => {
+                let project = match project_resolution {
+                    Some(Ok(project)) => project,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => return ToolResult::err("skill_install requires a resolved Project"),
+                };
+                self.skill_install(
+                    &project,
+                    skill_key,
+                    artifact_path,
+                    expected_artifact_sha256,
+                    idempotency_key,
+                    activate.unwrap_or(false),
+                    expected_state_revision,
+                    auth,
+                )
+                .await
+            }
+
+            ToolCall::SkillActivate {
+                skill_key,
+                package_revision,
+                expected_state_revision,
+                idempotency_key,
+                ..
+            } => {
+                let project = match project_resolution {
+                    Some(Ok(project)) => project,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => return ToolResult::err("skill_activate requires a resolved Project"),
+                };
+                self.skill_activate(
+                    &project,
+                    skill_key,
+                    package_revision,
+                    expected_state_revision,
+                    idempotency_key,
+                    auth,
+                )
+                .await
+            }
+
+            ToolCall::SkillRemoveRevision {
+                skill_key,
+                package_revision,
+                expected_state_revision,
+                idempotency_key,
+                ..
+            } => {
+                let project = match project_resolution {
+                    Some(Ok(project)) => project,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => {
+                        return ToolResult::err("skill_remove_revision requires a resolved Project")
+                    }
+                };
+                self.skill_remove_revision(
+                    &project,
+                    skill_key,
+                    package_revision,
+                    expected_state_revision,
+                    idempotency_key,
+                    auth,
+                )
+                .await
+            }
 
             call @ ToolCall::ImportConversationFilesToProject { .. } => {
                 self.dispatch_conversation_import_tool(call, auth, transport)

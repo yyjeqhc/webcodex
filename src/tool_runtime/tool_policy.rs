@@ -34,7 +34,7 @@ impl ToolDefinition {
     pub(crate) fn is_write_like(self) -> bool {
         matches!(
             self.metadata.risk,
-            ToolRisk::ProjectWrite | ToolRisk::ComputerControl
+            ToolRisk::ProjectWrite | ToolRisk::SkillManage | ToolRisk::ComputerControl
         )
     }
 
@@ -105,7 +105,10 @@ fn permission_risk_from_metadata(metadata: ToolMetadata) -> &'static str {
     }
     if matches!(
         metadata.risk,
-        ToolRisk::ProjectWrite | ToolRisk::ComputerControl | ToolRisk::AccountManage
+        ToolRisk::ProjectWrite
+            | ToolRisk::SkillManage
+            | ToolRisk::ComputerControl
+            | ToolRisk::AccountManage
     ) {
         return PERMISSION_RISK_WRITE;
     }
@@ -199,7 +202,7 @@ pub(crate) fn runtime_tool_is_write_like(name: &str) -> bool {
         Ok(definition) => definition.is_write_like(),
         Err(metadata) => matches!(
             metadata.risk,
-            ToolRisk::ProjectWrite | ToolRisk::ComputerControl
+            ToolRisk::ProjectWrite | ToolRisk::SkillManage | ToolRisk::ComputerControl
         ),
     }
 }

@@ -11,6 +11,7 @@ mod hygiene;
 mod jobs;
 mod lsp;
 mod sessions;
+mod skills;
 mod testing;
 
 use super::super::tool_definition::{
@@ -26,6 +27,31 @@ pub(crate) fn registered_tool_specs() -> Vec<ToolSpec> {
         model_visible_tool_definitions(),
         separate_tool_spec_declarations_by_name(),
     )
+}
+
+/// Fixed read-only Skill runtime contract. These definitions are deliberately
+/// ModelHidden globally and are projected only by the capable Stateless MCP
+/// Full Operator adapter.
+pub(crate) fn skill_runtime_tool_specs() -> Vec<ToolSpec> {
+    skills::tool_specs()
+        .into_iter()
+        .filter(|spec| matches!(spec.name.as_str(), "skill_list" | "skill_read_file"))
+        .collect()
+}
+
+/// Fixed Runner-global Skill-management contract. Package/version cardinality
+/// never changes this schema set; the MCP adapter additionally requires explicit
+/// operator authority before projecting these tools.
+pub(crate) fn skill_management_tool_specs() -> Vec<ToolSpec> {
+    skills::tool_specs()
+        .into_iter()
+        .filter(|spec| {
+            matches!(
+                spec.name.as_str(),
+                "skill_versions" | "skill_install" | "skill_activate" | "skill_remove_revision"
+            )
+        })
+        .collect()
 }
 
 #[allow(dead_code)]

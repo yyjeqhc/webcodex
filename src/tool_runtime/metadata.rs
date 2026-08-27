@@ -2,6 +2,7 @@
 pub(crate) enum ToolRisk {
     ReadOnly,
     ProjectWrite,
+    SkillManage,
     ComputerControl,
     JobRun,
     /// Reserved for account-control tools; the current runtime manifest has
@@ -16,6 +17,7 @@ impl ToolRisk {
         match self {
             ToolRisk::ReadOnly => "read_only",
             ToolRisk::ProjectWrite => "project_write",
+            ToolRisk::SkillManage => "skill_manage",
             ToolRisk::ComputerControl => "computer_control",
             ToolRisk::JobRun => "job_run",
             ToolRisk::AccountManage => "account_manage",
@@ -62,6 +64,7 @@ pub(crate) const RUNTIME_READ: &str = crate::auth::SCOPE_RUNTIME_READ;
 pub(crate) const SESSION_COLLABORATE: &str = crate::auth::SCOPE_SESSION_COLLABORATE;
 pub(crate) const PROJECT_READ: &str = crate::auth::SCOPE_PROJECT_READ;
 pub(crate) const PROJECT_WRITE: &str = crate::auth::SCOPE_PROJECT_WRITE;
+pub(crate) const ADMIN: &str = crate::auth::SCOPE_ADMIN;
 pub(crate) const JOB_RUN: &str = crate::auth::SCOPE_JOB_RUN;
 pub(crate) const CODING_AGENT_RUN: &str = crate::auth::SCOPE_CODING_AGENT_RUN;
 pub(crate) const COMPUTER_READ: &str = crate::auth::SCOPE_COMPUTER_READ;

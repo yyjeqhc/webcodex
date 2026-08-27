@@ -141,6 +141,7 @@ pub(crate) fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
     obj.remove(TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD);
     obj.remove(TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD);
     obj.remove(TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD);
+    obj.remove(crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD);
     Value::Object(obj)
 }
 
@@ -835,6 +836,38 @@ pub(super) fn context_result_summary_for_tool_result(
                 "untracked_file_count",
                 "status_summary",
                 "kind",
+            ],
+        ),
+        "skill_list" => selected(
+            output,
+            &[
+                "catalog_revision",
+                "total_count",
+                "returned_count",
+                "offset",
+                "next_offset",
+                "truncated",
+                "invalid_count",
+                "discovery_truncated",
+                "error_kind",
+                "state_changed",
+            ],
+        ),
+        "skill_read_file" => selected(
+            output,
+            &[
+                "skill_id",
+                "definition_revision",
+                "package_revision",
+                "path",
+                "sha256",
+                "start_line",
+                "end_line",
+                "returned_lines",
+                "has_more",
+                "next_start_line",
+                "error_kind",
+                "state_changed",
             ],
         ),
         "git_status" if output.get("status_excerpt").is_some() => selected(

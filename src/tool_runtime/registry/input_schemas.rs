@@ -15,6 +15,7 @@ mod lsp;
 mod patches;
 mod projects;
 mod sessions;
+mod skills;
 mod text_edits;
 mod validation;
 
@@ -96,6 +97,10 @@ pub(super) use sessions::{
     session_execution_context_schema, session_guards_schema, session_handoff_summary_input_schema,
     session_lifecycle_schema, session_mode_schema, session_summary_input_schema,
     update_session_context_input_schema, validation_summary_input_schema,
+};
+pub(super) use skills::{
+    skill_activate_input_schema, skill_install_input_schema, skill_list_input_schema,
+    skill_read_file_input_schema, skill_remove_revision_input_schema, skill_versions_input_schema,
 };
 pub(super) use text_edits::write_project_file_input_schema;
 pub(super) use validation::{

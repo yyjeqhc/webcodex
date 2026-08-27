@@ -382,6 +382,8 @@ async fn register_agent_projects_for_auth(
                     sandbox_inspect_commands: false,
                     project_lifecycle: false,
                     project_path_registration: false,
+                    skill_store_read: false,
+                    skill_store_manage: false,
                     computer_observe: false,
                     computer_application_discovery: false,
                     computer_application_launch: false,

@@ -380,6 +380,9 @@ mod abandoned_sync;
 #[path = "mod_tests/mcp_gateway.rs"]
 mod mcp_gateway;
 
+#[path = "mod_tests/skill_store.rs"]
+mod skill_store;
+
 // ------------------------------------------------------------------------
 // Agent instance identity / lease model (Phase 1)
 // ------------------------------------------------------------------------

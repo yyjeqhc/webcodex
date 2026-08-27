@@ -23,6 +23,7 @@ pub(crate) mod projects;
 pub(crate) mod remote_shell;
 pub(crate) mod shell;
 pub(crate) mod shutdown;
+pub(crate) mod skill_store;
 pub(crate) mod ssh;
 pub(crate) mod transport;
 pub(crate) mod util;
@@ -87,6 +88,7 @@ pub(crate) use shell::{run_shell, run_shell_with_profiles};
 // runner directly; keep the re-export gated to its consumer.
 #[cfg(all(test, target_os = "linux"))]
 pub(crate) use shell::run_shell_with_profiles_in_sandbox;
+pub(crate) use skill_store::handle_skill_store_request;
 pub(crate) use ssh::{is_transport_failure, run_ssh_shell_with_execution_state, SshConnectionPool};
 #[cfg(test)]
 pub(crate) use transport::{

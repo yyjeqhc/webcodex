@@ -948,6 +948,8 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 sandbox_inspect_commands: true,
                 project_lifecycle: true,
                 project_path_registration: true,
+                skill_store_read: true,
+                skill_store_manage: true,
                 computer_observe: true,
                 computer_application_discovery: true,
                 computer_application_launch: true,

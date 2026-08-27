@@ -12,6 +12,7 @@ mod coding_agent;
 mod coding_task;
 mod coding_task_tools;
 mod computer_tools;
+pub(crate) mod context_projection;
 mod continuation_feedback;
 pub(crate) mod conversation_import;
 mod discovery_tools;
@@ -60,6 +61,7 @@ mod session_tools;
 pub(crate) mod sessions;
 mod shell;
 mod shell_tools;
+pub(crate) mod skills;
 pub(crate) mod startup_brief;
 mod structured_execution;
 mod surface;
@@ -130,7 +132,10 @@ pub(crate) use project_resolution::ProjectResolverErrorKind;
 pub(crate) use project_resolution::{agent_project_runtime_id, ProjectResolverError};
 #[cfg(test)]
 pub(crate) use registry::start_coding_task_compatibility_spec;
-pub(crate) use registry::{accepted_flattened_args_for_spec, registered_tool_specs};
+pub(crate) use registry::{
+    accepted_flattened_args_for_spec, registered_tool_specs, skill_management_tool_specs,
+    skill_runtime_tool_specs,
+};
 pub(crate) use session_context::{add_session_telemetry_hint, unknown_session_result};
 pub(crate) use session_shell::SessionShellRegistry;
 #[cfg(test)]

@@ -1,7 +1,8 @@
-use super::{
-    mcp_runtime_tool_result_fallback, mcp_stateless_result, request_client_capabilities,
-    require_mcp_scope, rpc_error, rpc_result, scope_forbidden, McpOutcome,
+use super::protocol::request_client_capabilities;
+use super::response::{
+    mcp_runtime_tool_result_fallback, mcp_stateless_result, rpc_error, rpc_result,
 };
+use super::{require_mcp_scope, scope_forbidden, McpOutcome};
 use crate::auth::AuthContext;
 use crate::model_surface::ModelSurface;
 use crate::tool_runtime::kernel::{
@@ -955,15 +956,15 @@ pub(super) async fn mcp_artifact_export_read_chunk(
 
 #[derive(Debug)]
 pub(super) struct McpArtifactExportStreamPlan {
-    pub(super) uri: String,
-    pub(super) record: McpArtifactExportRecord,
-    pub(super) first_chunk: Vec<u8>,
-    pub(super) route: Option<McpArtifactExportChunkRoute>,
-    pub(super) offset: usize,
-    pub(super) chunks: usize,
-    pub(super) max_chunks: usize,
-    pub(super) read_budget: Duration,
-    pub(super) _permit: OwnedSemaphorePermit,
+    uri: String,
+    record: McpArtifactExportRecord,
+    first_chunk: Vec<u8>,
+    route: Option<McpArtifactExportChunkRoute>,
+    offset: usize,
+    chunks: usize,
+    max_chunks: usize,
+    read_budget: Duration,
+    _permit: OwnedSemaphorePermit,
 }
 
 pub(super) async fn mcp_artifact_export_with_read_budget<T, F>(
@@ -1644,31 +1645,38 @@ pub(super) fn prepare_tool_call(
     })
 }
 
+pub(super) enum McpResourceToolResultAdaptation {
+    Framed(Value),
+    Unhandled(ToolResult),
+}
+
 pub(super) fn adapt_tool_result(
     tool_name: &str,
     as_image_requested: bool,
     result: ToolResult,
     context: McpResourceToolCallContext,
-) -> Value {
+) -> McpResourceToolResultAdaptation {
     if tool_name == "export_project_artifact" {
-        return mcp_artifact_export_tool_result(
+        return McpResourceToolResultAdaptation::Framed(mcp_artifact_export_tool_result(
             result,
             context
                 .artifact_export_caller
                 .expect("validated artifact export caller binding"),
-        );
+        ));
     }
     if matches!(tool_name, "computer_snapshot" | "computer_snapshot_display")
         || (tool_name == "read_project_artifact" && as_image_requested)
     {
-        return mcp_runtime_tool_result_with_snapshot_resource(
-            tool_name,
-            as_image_requested,
-            result,
-            context.snapshot_resource_caller,
+        return McpResourceToolResultAdaptation::Framed(
+            mcp_runtime_tool_result_with_snapshot_resource(
+                tool_name,
+                as_image_requested,
+                result,
+                context.snapshot_resource_caller,
+            ),
         );
     }
-    super::mcp_runtime_tool_result(tool_name, as_image_requested, result)
+    McpResourceToolResultAdaptation::Unhandled(result)
 }
 
 pub(super) fn start_artifact_export_stream(

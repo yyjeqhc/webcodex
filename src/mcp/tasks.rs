@@ -1,7 +1,8 @@
-use super::{
-    connector_call_tool_result, mcp_stateless_result, request_client_capabilities,
-    require_mcp_scope, rpc_error, rpc_error_with_data, rpc_result, scope_forbidden, McpOutcome,
+use super::protocol::request_client_capabilities;
+use super::response::{
+    connector_call_tool_result, mcp_stateless_result, rpc_error, rpc_error_with_data, rpc_result,
 };
+use super::{require_mcp_scope, scope_forbidden, McpOutcome};
 use crate::auth::{AuthContext, SCOPE_JOB_RUN};
 use crate::connector_runtime::{ConnectorCallOutcome, ConnectorRuntime};
 use crate::db::ConnectorExecution;

@@ -20,6 +20,8 @@ mod task_kernel;
 
 pub use self::activity::WorkspaceActivityStore;
 pub(crate) use self::admin_project_lifecycle::AdminProjectAudit;
+#[cfg(test)]
+pub(crate) use self::execution_model::ConnectorExecutionContinuationIntent;
 pub(crate) use self::execution_model::{
     ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
     ConnectorExecutionReservation, MAX_ASSERTION_EVIDENCE_BYTES,
@@ -57,6 +59,10 @@ impl Database {
         self.conn.lock().unwrap()
     }
 }
+
+#[cfg(test)]
+#[path = "db/execution_intent_tests.rs"]
+mod execution_intent_tests;
 
 #[cfg(test)]
 #[path = "db_tests.rs"]

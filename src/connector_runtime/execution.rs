@@ -200,7 +200,7 @@ impl ExecutionService {
                     self.spawn_monitor(task.clone(), execution.execution_id.clone(), auth.clone());
                 }
                 return self
-                    .wait_for_terminal(&execution.execution_id, self.yield_ms)
+                    .wait_for_terminal_or_arm_continuation(&execution.execution_id, self.yield_ms)
                     .await;
             }
             ConnectorExecutionReservation::Created(execution) => {
@@ -265,7 +265,7 @@ impl ExecutionService {
             return Ok(attached);
         }
         self.spawn_monitor(task, execution.execution_id.clone(), auth);
-        self.wait_for_terminal(&execution.execution_id, self.yield_ms)
+        self.wait_for_terminal_or_arm_continuation(&execution.execution_id, self.yield_ms)
             .await
     }
 
@@ -367,6 +367,19 @@ impl ExecutionService {
             execution,
             heartbeat: false,
         })
+    }
+
+    async fn wait_for_terminal_or_arm_continuation(
+        &self,
+        execution_id: &str,
+        wait_ms: u64,
+    ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
+        let execution = self.wait_for_terminal(execution_id, wait_ms).await?;
+        if execution.is_terminal() {
+            return Ok(execution);
+        }
+        self.db
+            .arm_connector_terminal_continuation(execution_id, chrono::Utc::now().timestamp())
     }
 
     pub(crate) async fn wait_for_terminal(

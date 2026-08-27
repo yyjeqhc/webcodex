@@ -3,8 +3,9 @@
 
 use super::execution_model::{
     execution_event_kind, latest_execution, latest_execution_by_kind, load_execution,
-    load_execution_by_operation, observed_state, ConnectorExecution, ConnectorExecutionFailure,
-    ConnectorExecutionObservation, ConnectorExecutionReservation,
+    load_execution_by_operation, observed_state, ConnectorExecution,
+    ConnectorExecutionContinuationIntent, ConnectorExecutionFailure, ConnectorExecutionObservation,
+    ConnectorExecutionReservation, EXECUTION_COLUMNS,
 };
 use super::task_kernel::{
     expire_task_approvals, insert_event, load_task, require_running, touch_task,
@@ -124,6 +125,55 @@ impl Database {
     ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
         let conn = self.conn.lock().unwrap();
         load_execution(&conn, execution_id)?.ok_or(ConnectorTaskStoreError::NotFound)
+    }
+
+    pub(crate) fn arm_connector_terminal_continuation(
+        &self,
+        execution_id: &str,
+        now: i64,
+    ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let execution =
+            load_execution(&tx, execution_id)?.ok_or(ConnectorTaskStoreError::NotFound)?;
+        if execution.is_terminal()
+            || execution.continuation_intent
+                == ConnectorExecutionContinuationIntent::ArmedForTerminal
+        {
+            tx.commit()?;
+            return Ok(execution);
+        }
+        tx.execute(
+            "UPDATE wc_executions
+             SET terminal_continuation_intent = ?1,
+                 terminal_continuation_armed_at = COALESCE(terminal_continuation_armed_at, ?2)
+             WHERE id = ?3 AND state IN ('accepted','queued','starting','running','cancel_requested')",
+            params![
+                ConnectorExecutionContinuationIntent::ArmedForTerminal.as_str(),
+                now,
+                execution_id
+            ],
+        )?;
+        commit_execution(tx, execution_id)
+    }
+
+    // A1 intentionally stops at a durable read boundary; the A2 host adapter
+    // will become the first production consumer of this query.
+    #[allow(dead_code)]
+    pub(crate) fn terminal_ready_connector_executions(
+        &self,
+    ) -> Result<Vec<ConnectorExecution>, ConnectorTaskStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut statement = conn.prepare(&format!(
+            "SELECT {EXECUTION_COLUMNS} FROM wc_executions
+             WHERE terminal_continuation_intent = 'armed_for_terminal'
+               AND state NOT IN ('accepted','queued','starting','running','cancel_requested')
+             ORDER BY finished_at ASC, submitted_at ASC, id ASC"
+        ))?;
+        let executions = statement
+            .query_map([], super::execution_model::map_execution)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(executions)
     }
 
     pub(crate) fn latest_connector_execution(

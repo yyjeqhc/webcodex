@@ -461,6 +461,9 @@ impl Database {
                 validated_workspace_sha256 TEXT,
                 failed_check TEXT,
                 assertion_evidence_json TEXT,
+                terminal_continuation_intent TEXT NOT NULL DEFAULT 'none'
+                    CHECK(terminal_continuation_intent IN ('none', 'armed_for_terminal')),
+                terminal_continuation_armed_at INTEGER,
                 UNIQUE(task_id, run_id, operation_id),
                 CHECK(
                     (kind = 'command' AND check_plan IS NULL)
@@ -953,6 +956,11 @@ impl Database {
             ("validated_workspace_sha256", "TEXT"),
             ("failed_check", "TEXT"),
             ("assertion_evidence_json", "TEXT"),
+            (
+                "terminal_continuation_intent",
+                "TEXT NOT NULL DEFAULT 'none' CHECK(terminal_continuation_intent IN ('none', 'armed_for_terminal'))",
+            ),
+            ("terminal_continuation_armed_at", "INTEGER"),
         ] {
             if !columns.iter().any(|existing| existing == column) {
                 conn.execute(
@@ -987,6 +995,37 @@ fn restore_foreign_keys(conn: &Connection) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod connector_execution_column_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_execution_rows_migrate_to_unarmed_terminal_continuation() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE wc_executions (id TEXT PRIMARY KEY, state TEXT NOT NULL);
+             INSERT INTO wc_executions (id, state) VALUES ('legacy', 'succeeded');",
+        )
+        .unwrap();
+
+        Database::ensure_connector_execution_columns(&conn).unwrap();
+        Database::ensure_connector_execution_columns(&conn).unwrap();
+
+        let restored: (String, Option<i64>, String) = conn
+            .query_row(
+                "SELECT terminal_continuation_intent, terminal_continuation_armed_at, state
+                 FROM wc_executions WHERE id = 'legacy'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            restored,
+            ("none".to_string(), None, "succeeded".to_string())
+        );
+    }
 }
 
 #[cfg(test)]

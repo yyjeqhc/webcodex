@@ -3,6 +3,33 @@ use serde_json::Value;
 
 pub(crate) const MAX_ASSERTION_EVIDENCE_BYTES: usize = 16 * 1024;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConnectorExecutionContinuationIntent {
+    None,
+    ArmedForTerminal,
+}
+
+impl ConnectorExecutionContinuationIntent {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::ArmedForTerminal => "armed_for_terminal",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "none" => Ok(Self::None),
+            "armed_for_terminal" => Ok(Self::ArmedForTerminal),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                rusqlite::types::Type::Text,
+                format!("unsupported connector continuation intent: {other}").into(),
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConnectorExecution {
     pub execution_id: String,
@@ -35,6 +62,8 @@ pub(crate) struct ConnectorExecution {
     pub validated_workspace_sha256: Option<String>,
     pub failed_check: Option<String>,
     pub assertion_evidence: Option<Value>,
+    pub continuation_intent: ConnectorExecutionContinuationIntent,
+    pub continuation_armed_at: Option<i64>,
 }
 
 impl ConnectorExecution {
@@ -277,7 +306,8 @@ pub(super) const EXECUTION_COLUMNS: &str =
     exit_code, failure_source, failure_code, terminal_reason, operation_id, request_sha256, \
     executor_reference, first_status_failure_at, last_successful_observation_at, \
     status_failure_code, check_plan, check_recipe_json, check_completed, check_workspace_sha256, \
-    validated_workspace_sha256, failed_check, assertion_evidence_json";
+    validated_workspace_sha256, failed_check, assertion_evidence_json, \
+    terminal_continuation_intent, terminal_continuation_armed_at";
 
 pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConnectorExecution> {
     let cursor = |index| {
@@ -340,6 +370,11 @@ pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<Connect
                 })
             })
             .transpose()?,
+        continuation_intent: ConnectorExecutionContinuationIntent::from_db(
+            &row.get::<_, String>(30)?,
+            30,
+        )?,
+        continuation_armed_at: row.get(31)?,
     })
 }
 

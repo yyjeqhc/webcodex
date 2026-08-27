@@ -1,6 +1,8 @@
 use super::wire_models::sanitize_value;
 use super::*;
-use crate::db::{ConnectorExecutionFailure, ConnectorExecutionObservation};
+use crate::db::{
+    ConnectorExecutionContinuationIntent, ConnectorExecutionFailure, ConnectorExecutionObservation,
+};
 use crate::shell_client::{ShellClientRegistry, ShellJobStartMetadata};
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentPollRequest, ShellAgentProjectSummary,
@@ -730,6 +732,116 @@ async fn connector_readiness_uses_registered_agent_capabilities() {
         .findings
         .iter()
         .any(|finding| finding.code == "agent_offline"));
+}
+
+#[tokio::test]
+async fn quick_yield_arms_terminal_continuation_before_return_and_replay_keeps_single_intent() {
+    let fixture = fixture(20).await;
+    let arguments = command_arguments(&fixture, "continuation-yield-1", "sleep 30");
+    let connector = fixture.connector.clone();
+    let owner = fixture.owner.clone();
+    let call =
+        tokio::spawn(
+            async move { call(&connector, &owner, "commands_run", arguments.clone()).await },
+        );
+    let request = next_request(&fixture.registry).await;
+    assert_eq!(request.kind, "start_job");
+    let job_id = request.job_id.unwrap();
+    update_job(&fixture.registry, &job_id, "running", None, None).await;
+
+    let yielded = call.await.unwrap();
+    assert!(yielded.ok, "{}", yielded.body);
+    assert!(matches!(
+        yielded.body["data"]["execution"]["execution_status"].as_str(),
+        Some("queued" | "running")
+    ));
+    let execution_id = yielded.body["data"]["execution"]["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let armed = execution_by_id(&fixture, &execution_id);
+    assert_eq!(
+        armed.continuation_intent,
+        ConnectorExecutionContinuationIntent::ArmedForTerminal
+    );
+    let armed_at = armed
+        .continuation_armed_at
+        .expect("active yielded execution must be durably armed");
+
+    let reopened = Database::open(&fixture._temp.path().join("connector.db")).unwrap();
+    let durable = reopened.connector_execution(&execution_id).unwrap();
+    assert_eq!(durable.continuation_armed_at, Some(armed_at));
+    drop(reopened);
+
+    let replay = fixture
+        .call(
+            "commands_run",
+            command_arguments(&fixture, "continuation-yield-1", "sleep 30"),
+        )
+        .await;
+    assert!(replay.ok, "{}", replay.body);
+    assert_eq!(
+        replay.body["data"]["execution"]["execution_id"],
+        execution_id
+    );
+    assert!(poll(&fixture.registry).await.is_none());
+    assert_eq!(
+        execution_by_id(&fixture, &execution_id).continuation_armed_at,
+        Some(armed_at)
+    );
+
+    update_job(&fixture.registry, &job_id, "completed", None, Some(0)).await;
+    let completed = wait_for_execution(
+        &fixture,
+        Some(&execution_id),
+        Duration::from_secs(10),
+        "armed yielded execution terminal continuation readiness",
+        |execution| execution.state == "succeeded",
+    )
+    .await;
+    assert_eq!(
+        completed.continuation_intent,
+        ConnectorExecutionContinuationIntent::ArmedForTerminal
+    );
+    assert_eq!(completed.continuation_armed_at, Some(armed_at));
+    let ready = fixture
+        .connector
+        .db
+        .terminal_ready_connector_executions()
+        .unwrap();
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].execution_id, execution_id);
+}
+
+#[tokio::test]
+async fn terminal_before_yield_boundary_is_not_newly_armed() {
+    let fixture = fixture(1_000).await;
+    let arguments = command_arguments(&fixture, "continuation-terminal-1", "printf done");
+    let registry = fixture.registry.clone();
+    let responder = tokio::spawn(async move {
+        let request = next_request(&registry).await;
+        let job_id = request.job_id.unwrap();
+        update_job(&registry, &job_id, "completed", Some("done\n"), Some(0)).await;
+    });
+    let outcome = fixture.call("commands_run", arguments).await;
+    responder.await.unwrap();
+    assert!(outcome.ok, "{}", outcome.body);
+    assert_eq!(
+        outcome.body["data"]["execution"]["execution_status"],
+        "succeeded"
+    );
+    let execution = latest_execution(&fixture);
+    assert_eq!(
+        execution.continuation_intent,
+        ConnectorExecutionContinuationIntent::None
+    );
+    assert_eq!(execution.continuation_armed_at, None);
+    assert!(fixture
+        .connector
+        .db
+        .terminal_ready_connector_executions()
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]

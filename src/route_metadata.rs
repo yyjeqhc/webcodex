@@ -56,6 +56,9 @@ pub(crate) enum RouteSurface {
     AccountControl,
     Pairing,
     AgentTransport,
+    /// Public browser/document delivery only. This surface carries no bearer
+    /// authentication or token-admission semantics.
+    PublicWeb,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -199,6 +202,16 @@ pub(crate) enum RouteId {
     AuditSessions,
     AuditSession,
     AuditStats,
+    OpenApiDocument,
+    ConsoleWebRoot,
+    ConsoleWebAppJs,
+    ConsoleWebStylesCss,
+    RuntimeWebRoot,
+    RuntimeWebAppJs,
+    RuntimeWebStylesCss,
+    AdminWebRoot,
+    AdminWebAppJs,
+    AdminWebStylesCss,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,8 +262,6 @@ use OAuthRouteScopePolicy::*;
 #[cfg(test)]
 use OpenApiVisibility::*;
 #[cfg(test)]
-use RouteAuth::AuthMiddleware;
-#[cfg(test)]
 use RouteId::*;
 #[cfg(test)]
 use RouteSurface::*;
@@ -268,6 +279,8 @@ const ROUTE_GROUPS: &[&[RouteSpec]] = &[
     runtime::SHELL_ROUTES,
     agent_transport::ROUTES,
     operations::AUDIT_ROUTES,
+    operations::PUBLIC_WEB_ROUTES,
+    consoles::PUBLIC_WEB_ROUTES,
 ];
 
 #[allow(dead_code)]
@@ -296,6 +309,24 @@ pub(crate) fn api_path(id: RouteId) -> &'static str {
 /// Path relative to the root Salvo router.
 pub(crate) fn root_path(id: RouteId) -> &'static str {
     spec(id).path.trim_start_matches('/')
+}
+
+/// Return the path segment for one canonical direct child route.
+///
+/// The production browser routers stay nested; this helper proves that the
+/// child RouteSpec actually belongs immediately under the canonical parent.
+pub(crate) fn direct_child_path(parent: RouteId, child: RouteId) -> &'static str {
+    let parent_path = spec(parent).path;
+    let child_path = spec(child).path;
+    child_path
+        .strip_prefix(parent_path)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+        .filter(|suffix| !suffix.is_empty() && !suffix.contains('/'))
+        .unwrap_or_else(|| {
+            panic!(
+                "RouteId {child:?} path {child_path:?} is not a direct child of {parent:?} path {parent_path:?}"
+            )
+        })
 }
 
 /// Return one root-relative path after proving two method-specific specs share
@@ -405,9 +436,10 @@ mod tests {
         }
         assert_eq!(
             iter_routes().count(),
-            AuditStats as usize + 1,
+            AdminWebStylesCss as usize + 1,
             "canonical iteration must cover every RouteId exactly once",
         );
+        assert_eq!(iter_routes().count(), 127, "R2 canonical route closure");
         assert_eq!(lookup("GET", "/mcp").unwrap().id, McpGet);
         assert_eq!(lookup("POST", "/mcp").unwrap().id, McpPost);
     }
@@ -433,41 +465,34 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_mounts_reference_each_canonical_spec_exactly_once() {
-        let sources = mounted_route_sources();
-        let combined = sources.concat();
-        for spec in iter_routes().filter(|spec| spec.auth == AuthMiddleware) {
+    fn production_leaf_mounts_reference_each_canonical_spec_exactly_once() {
+        let combined = mounted_route_sources().concat();
+        let mut references = 0usize;
+        for spec in iter_routes() {
             let needle = format!("RouteId::{:?}", spec.id);
             assert_eq!(
                 exact_route_id_reference_count(&combined, &needle),
                 1,
-                "authenticated mount must reference {needle} exactly once"
+                "production leaf mount must reference {needle} exactly once"
             );
+            references += 1;
         }
+        assert_eq!(references, 127, "R2 production leaf RouteId closure");
     }
 
     #[test]
-    fn authenticated_mount_blocks_do_not_reintroduce_literal_route_paths() {
-        for (name, source) in [
-            (
-                "connector",
-                production_prefix(include_str!("connector_runtime/http.rs")),
-            ),
-            (
-                "host-console",
-                production_prefix(include_str!("host_console_http.rs")),
-            ),
-            (
-                "runtime-console",
-                production_prefix(include_str!("runtime_console_http.rs")),
-            ),
-            ("admin", production_prefix(include_str!("admin_http.rs"))),
-        ] {
-            assert!(
-                !source.contains("Router::with_path(\""),
-                "{name} authenticated mount reintroduced a literal route path"
-            );
-        }
+    fn production_leaf_mounts_do_not_use_literal_paths() {
+        let combined = mounted_route_sources().concat();
+        assert_eq!(
+            combined.matches("Router::with_path(\"").count(),
+            1,
+            "only the structural /api parent may remain a literal mount"
+        );
+        assert_eq!(
+            combined.matches("Router::with_path(\"api\")").count(),
+            1,
+            "the sole literal mount must be the non-leaf /api parent"
+        );
 
         let lib = include_str!("lib.rs");
         assert_eq!(
@@ -475,39 +500,36 @@ mod tests {
             3,
             "a new AuthMiddleware root must be covered by the canonical route inventory invariant"
         );
-        let authed = lib
-            .split_once("let authed_api_router")
-            .unwrap()
-            .1
-            .split_once("let api_router")
-            .unwrap()
-            .0;
-        assert!(
-            !authed.contains("Router::with_path(\""),
-            "main authenticated /api mount reintroduced a literal route path"
+    }
+
+    #[test]
+    fn public_web_routes_are_neutral_hidden_metadata() {
+        let routes = iter_routes()
+            .filter(|spec| spec.surface == PublicWeb)
+            .collect::<Vec<_>>();
+        assert_eq!(routes.len(), 10);
+        for route in routes {
+            assert_eq!(route.method, RouteMethod::Get, "{:?}", route.id);
+            assert_eq!(
+                route.scope_policy,
+                OAuthRouteScopePolicy::Public,
+                "{:?}",
+                route.id
+            );
+            assert_eq!(route.auth, RouteAuth::Public, "{:?}", route.id);
+            assert_eq!(route.openapi_visibility, Hidden, "{:?}", route.id);
+            assert_eq!(route.audit_class, Other, "{:?}", route.id);
+            assert!(!route.pat_account_manage_compat, "{:?}", route.id);
+        }
+        assert_eq!(direct_child_path(ConsoleWebRoot, ConsoleWebAppJs), "app.js");
+        assert_eq!(
+            direct_child_path(RuntimeWebRoot, RuntimeWebStylesCss),
+            "styles.css"
         );
-        let oauth_mcp = lib
-            .split_once("// OAuth2 token, revocation, and discovery endpoints")
-            .unwrap()
-            .1
-            .split_once("// Read-only audit query API")
-            .unwrap()
-            .0;
-        assert!(
-            !oauth_mcp.contains("Router::with_path(\""),
-            "OAuth/MCP mounts must use canonical RouteId-backed paths"
-        );
-        let audit = lib
-            .split_once("// Read-only audit query API")
-            .unwrap()
-            .1
-            .split_once("tracing::info!(\"Server started successfully!\")")
-            .unwrap()
-            .0;
-        assert!(
-            !audit.contains("Router::with_path(\""),
-            "audit authenticated mounts must use canonical RouteId-backed paths"
-        );
+        assert!(std::panic::catch_unwind(|| {
+            direct_child_path(ConsoleWebRoot, RuntimeWebAppJs)
+        })
+        .is_err());
     }
 
     #[test]

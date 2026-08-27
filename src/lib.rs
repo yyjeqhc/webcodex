@@ -584,26 +584,66 @@ only for local/trusted-network demos."
             ),
         );
 
-    let openapi_router = Router::with_path("openapi.json").get(openapi_json);
+    let openapi_router =
+        Router::with_path(route_metadata::root_path(RouteId::OpenApiDocument)).get(openapi_json);
 
     // Read-only readiness console. Public static entry — the HTML/JS/CSS
     // bundle carries no secrets; project facts come from the protected shared
     // `POST /api/connector/readiness` application projection. Mirrors
     // `/openapi.json` being public. NOT part of the GPT Actions schema.
-    let console_router = Router::with_path("console")
+    let console_root = RouteId::ConsoleWebRoot;
+    let console_router = Router::with_path(route_metadata::root_path(console_root))
         .get(console_web::console_html)
-        .push(Router::with_path("app.js").get(console_web::console_app_js))
-        .push(Router::with_path("styles.css").get(console_web::console_styles_css));
+        .push(
+            Router::with_path(route_metadata::direct_child_path(
+                console_root,
+                RouteId::ConsoleWebAppJs,
+            ))
+            .get(console_web::console_app_js),
+        )
+        .push(
+            Router::with_path(route_metadata::direct_child_path(
+                console_root,
+                RouteId::ConsoleWebStylesCss,
+            ))
+            .get(console_web::console_styles_css),
+        );
 
-    let runtime_console_router = Router::with_path("runtime")
+    let runtime_root = RouteId::RuntimeWebRoot;
+    let runtime_console_router = Router::with_path(route_metadata::root_path(runtime_root))
         .get(console_web::runtime_html)
-        .push(Router::with_path("app.js").get(console_web::runtime_app_js))
-        .push(Router::with_path("styles.css").get(console_web::runtime_styles_css));
+        .push(
+            Router::with_path(route_metadata::direct_child_path(
+                runtime_root,
+                RouteId::RuntimeWebAppJs,
+            ))
+            .get(console_web::runtime_app_js),
+        )
+        .push(
+            Router::with_path(route_metadata::direct_child_path(
+                runtime_root,
+                RouteId::RuntimeWebStylesCss,
+            ))
+            .get(console_web::runtime_styles_css),
+        );
 
-    let admin_router = Router::with_path("admin")
+    let admin_root = RouteId::AdminWebRoot;
+    let admin_router = Router::with_path(route_metadata::root_path(admin_root))
         .get(console_web::admin_html)
-        .push(Router::with_path("app.js").get(console_web::admin_app_js))
-        .push(Router::with_path("styles.css").get(console_web::admin_styles_css));
+        .push(
+            Router::with_path(route_metadata::direct_child_path(
+                admin_root,
+                RouteId::AdminWebAppJs,
+            ))
+            .get(console_web::admin_app_js),
+        )
+        .push(
+            Router::with_path(route_metadata::direct_child_path(
+                admin_root,
+                RouteId::AdminWebStylesCss,
+            ))
+            .get(console_web::admin_styles_css),
+        );
 
     let mut router = Router::new()
         .hoop(server_shutdown::DrainAdmission::new(

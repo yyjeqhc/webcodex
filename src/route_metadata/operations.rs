@@ -1,9 +1,21 @@
 use super::RouteAuth::AuthMiddleware;
 use super::{
-    route, AuditClass::*, OpenApiVisibility::*, RouteId::*, RouteMethod::*, RouteSpec,
+    route, AuditClass::*, OpenApiVisibility::*, RouteAuth, RouteId::*, RouteMethod::*, RouteSpec,
     RouteSurface::*,
 };
 use crate::auth::scopes::{OAuthRouteScopePolicy::*, SCOPE_ACCOUNT_MANAGE};
+
+pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[route(
+    OpenApiDocument,
+    Get,
+    "/openapi.json",
+    Public,
+    PublicWeb,
+    Hidden,
+    Other,
+    RouteAuth::Public,
+    false,
+)];
 
 // Admin handlers impose their own admin identity check. Production route
 // scope previously admitted only bootstrap because these paths were unknown;

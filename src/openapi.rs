@@ -145,9 +145,9 @@ const GPT_ACTION_OPS: &[&str] = &[
     "callRuntimeTool",
 ];
 
-/// Removed or non-route resources that must never appear in `/openapi.json`.
-/// Current HTTP-route visibility is owned by `route_metadata`; this list keeps
-/// only historical endpoints and browser/static resources with no RouteSpec.
+/// Removed historical endpoints that must never appear in `/openapi.json`.
+/// Current HTTP-route visibility, including public browser/document delivery,
+/// is owned by `route_metadata`.
 #[cfg(test)]
 const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/messages",
@@ -167,13 +167,6 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/codex/projects",
     "/api/codex/run",
     "/api/projects/write_file",
-    "/openapi.json",
-    "/runtime",
-    "/runtime/app.js",
-    "/runtime/styles.css",
-    "/console",
-    "/console/app.js",
-    "/console/styles.css",
 ];
 
 #[handler]

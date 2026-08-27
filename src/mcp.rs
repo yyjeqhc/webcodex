@@ -2511,11 +2511,15 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         };
     let mut model_ergonomics = None;
     let active_trace_id = guard.active_trace_id();
+    // Keep the complete MCP dispatch future off the current thread's stack. The
+    // handler state spans every method arm (including Connector task polling),
+    // so nesting it inline under tracing + timeout can exhaust the default
+    // ~2 MiB libtest/Tokio worker stack even when a request takes another arm.
     let outcome = match tokio::time::timeout(
         MCP_DISPATCH_HARD_TIMEOUT,
         scope_active_trace(
             active_trace_id,
-            handle_mcp_request_with_lifecycle(
+            Box::pin(handle_mcp_request_with_lifecycle(
                 &runtime,
                 connector.as_deref(),
                 request,
@@ -2525,7 +2529,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 window.identity.as_ref(),
                 Some(&mut guard),
                 Some(&mut model_ergonomics),
-            ),
+            )),
         ),
     )
     .await

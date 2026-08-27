@@ -628,6 +628,7 @@ async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen(
     assert_eq!(create["resultType"], "task");
     assert_eq!(create["taskId"], task_id);
     assert_eq!(create["status"], "working");
+    assert_eq!(create["lastUpdatedAt"], create["createdAt"]);
 
     let mut missing_capability = mcp_2026_task_request(
         &service,
@@ -642,7 +643,10 @@ async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen(
         StatusCode::BAD_REQUEST
     );
     let missing_body: Value = missing_capability.take_json().await.unwrap();
-    assert_eq!(missing_body["error"]["code"], -32003);
+    assert_eq!(
+        missing_body["error"]["code"],
+        MCP_MISSING_REQUIRED_CLIENT_CAPABILITY
+    );
     assert_eq!(
         missing_body["error"]["data"]["requiredCapabilities"]["extensions"][MCP_TASKS_EXTENSION],
         json!({})

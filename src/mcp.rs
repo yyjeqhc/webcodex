@@ -56,6 +56,7 @@ const MAX_MCP_ARTIFACT_EXPORTS: usize = 128;
 const MAX_MCP_ARTIFACT_EXPORTS_PER_CALLER: usize = 16;
 const MCP_ARTIFACT_EXPORT_BUSY_CODE: i64 = -32029;
 const MCP_HEADER_MISMATCH: i64 = -32020;
+const MCP_MISSING_REQUIRED_CLIENT_CAPABILITY: i64 = -32021;
 const MCP_UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
 const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     MCP_STATELESS_PROTOCOL_VERSION,
@@ -491,7 +492,8 @@ fn mcp_task_base(
         .or(execution.last_output_at)
         .or(execution.started_at)
         .or(execution.queued_at)
-        .unwrap_or(created_at);
+        .unwrap_or(created_at)
+        .max(created_at);
     json!({
         "resultType": result_type,
         "taskId": execution.execution_id,
@@ -524,7 +526,7 @@ fn mcp_detailed_task_result(
 fn missing_tasks_capability(id: Option<Value>) -> McpOutcome {
     McpOutcome::BadRequest(rpc_error_with_data(
         id,
-        -32003,
+        MCP_MISSING_REQUIRED_CLIENT_CAPABILITY,
         "Missing required client capability",
         json!({
             "requiredCapabilities": {

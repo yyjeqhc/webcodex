@@ -1,0 +1,31 @@
+use super::RouteAuth::AuthMiddleware;
+use super::{
+    route, AuditClass::*, OpenApiVisibility::*, RouteId::*, RouteMethod::*, RouteSpec,
+    RouteSurface::*,
+};
+use crate::auth::scopes::{OAuthBodyAwarePolicy, OAuthRouteScopePolicy::*, SCOPE_RUNTIME_READ};
+
+pub(super) const ROUTES: &[RouteSpec] = &[
+    route(
+        McpGet,
+        Get,
+        "/mcp",
+        Require(SCOPE_RUNTIME_READ),
+        Mcp,
+        Hidden,
+        Other,
+        AuthMiddleware,
+        false,
+    ),
+    route(
+        McpPost,
+        Post,
+        "/mcp",
+        BodyAware(OAuthBodyAwarePolicy::McpToolCall),
+        Mcp,
+        Hidden,
+        Other,
+        AuthMiddleware,
+        false,
+    ),
+];

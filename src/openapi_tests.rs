@@ -207,8 +207,7 @@ fn openapi_route_visibility_matches_canonical_metadata() {
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let expected = crate::route_metadata::routes()
-        .iter()
+    let expected = crate::route_metadata::iter_routes()
         .filter(|route| {
             route.openapi_visibility == crate::route_metadata::OpenApiVisibility::PublicActions
         })
@@ -216,7 +215,7 @@ fn openapi_route_visibility_matches_canonical_metadata() {
         .collect::<BTreeSet<_>>();
     assert_eq!(actual, expected);
 
-    for route in crate::route_metadata::routes().iter().filter(|route| {
+    for route in crate::route_metadata::iter_routes().filter(|route| {
         route.openapi_visibility == crate::route_metadata::OpenApiVisibility::Hidden
     }) {
         assert!(

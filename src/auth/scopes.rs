@@ -666,8 +666,7 @@ mod tests {
 
     #[test]
     fn oauth_route_policy_authenticated_route_audit() {
-        for spec in crate::route_metadata::routes()
-            .iter()
+        for spec in crate::route_metadata::iter_routes()
             .filter(|spec| spec.auth == crate::route_metadata::RouteAuth::AuthMiddleware)
         {
             assert_ne!(

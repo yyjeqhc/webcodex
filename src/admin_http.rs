@@ -711,8 +711,7 @@ mod tests {
 
     #[test]
     fn admin_routes_are_separate_from_console_routes() {
-        let mut admin = crate::route_metadata::routes()
-            .iter()
+        let mut admin = crate::route_metadata::iter_routes()
             .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::Admin);
         assert!(admin
             .clone()

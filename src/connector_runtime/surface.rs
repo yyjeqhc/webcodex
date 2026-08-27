@@ -628,8 +628,7 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(operations, expected);
         assert_eq!(spec["paths"].as_object().unwrap().len(), 14);
-        let expected_paths = crate::route_metadata::routes()
-            .iter()
+        let expected_paths = crate::route_metadata::iter_routes()
             .filter(|route| {
                 route.openapi_visibility
                     == crate::route_metadata::OpenApiVisibility::ConnectorActions

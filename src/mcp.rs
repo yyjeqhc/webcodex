@@ -63,6 +63,8 @@ const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     MCP_PROTOCOL_VERSION,
 ];
 const MCP_UI_EXTENSION: &str = "io.modelcontextprotocol/ui";
+const MCP_TASKS_EXTENSION: &str = "io.modelcontextprotocol/tasks";
+const MCP_TASK_POLL_INTERVAL_MS: u64 = 2_000;
 const MCP_COMPUTER_UI_RESOURCE_URI: &str = "ui://webcodex/computer/v11";
 const MCP_COMPUTER_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
     "ui://webcodex/computer/v1",
@@ -123,6 +125,19 @@ struct McpToolCallParams {
     pub name: String,
     #[serde(default)]
     pub arguments: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct McpTaskParams {
+    pub task_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct McpTaskUpdateParams {
+    pub task_id: String,
+    pub input_responses: Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,6 +215,17 @@ fn request_supports_mcp_apps(params: &Value) -> bool {
     }
 }
 
+fn request_supports_tasks(params: &Value) -> bool {
+    request_client_capabilities(params)
+        .and_then(|capabilities| capabilities.get("extensions"))
+        .and_then(|extensions| extensions.get(MCP_TASKS_EXTENSION))
+        .is_some_and(Value::is_object)
+}
+
+fn model_surface_supports_tasks(model_surface: ModelSurface) -> bool {
+    model_surface == ModelSurface::CanonicalConnector
+}
+
 fn model_surface_supports_computer_app(model_surface: ModelSurface) -> bool {
     model_surface == ModelSurface::FullOperatorRuntime
 }
@@ -239,6 +265,9 @@ fn request_mcp_name(request: &JsonRpcRequest) -> Option<Option<&str>> {
     match request.method.as_str() {
         "tools/call" | "prompts/get" => Some(request.params.get("name").and_then(Value::as_str)),
         "resources/read" => Some(request.params.get("uri").and_then(Value::as_str)),
+        "tasks/get" | "tasks/update" | "tasks/cancel" => {
+            Some(request.params.get("taskId").and_then(Value::as_str))
+        }
         _ => None,
     }
 }
@@ -415,6 +444,123 @@ fn mcp_stateless_result(mut result: Value, cacheable: bool) -> Value {
             });
     }
     result
+}
+
+fn connector_call_tool_result(outcome: crate::connector_runtime::ConnectorCallOutcome) -> Value {
+    let text = serde_json::to_string(&outcome.body).unwrap_or_else(|_| "{}".to_string());
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "structuredContent": outcome.body,
+        "isError": !outcome.ok
+    })
+}
+
+fn mcp_task_timestamp(timestamp: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(timestamp, 0)
+        .map(|value| value.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
+}
+
+fn mcp_task_id_is_valid(task_id: &str) -> bool {
+    task_id.strip_prefix("wc_exec_").is_some_and(|suffix| {
+        suffix.len() == 32 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
+fn mcp_task_base(
+    execution: &crate::db::ConnectorExecution,
+    result_type: &str,
+    status: &str,
+) -> Value {
+    let last_updated_at = execution
+        .finished_at
+        .or(execution.last_output_at)
+        .or(execution.started_at)
+        .or(execution.queued_at)
+        .unwrap_or(execution.submitted_at);
+    json!({
+        "resultType": result_type,
+        "taskId": execution.execution_id,
+        "status": status,
+        "createdAt": mcp_task_timestamp(execution.submitted_at),
+        "lastUpdatedAt": mcp_task_timestamp(last_updated_at),
+        "ttlMs": null,
+        "pollIntervalMs": MCP_TASK_POLL_INTERVAL_MS
+    })
+}
+
+fn mcp_create_task_result(execution: &crate::db::ConnectorExecution) -> Value {
+    mcp_task_base(execution, "task", "working")
+}
+
+fn mcp_detailed_task_result(
+    execution: &crate::db::ConnectorExecution,
+    call_tool_result: Option<Value>,
+) -> Value {
+    let status = if execution.state == "cancelled" {
+        "cancelled"
+    } else if execution.is_terminal() {
+        "completed"
+    } else {
+        "working"
+    };
+    let mut result = mcp_task_base(execution, "complete", status);
+    if status == "completed" {
+        if let (Some(object), Some(call_tool_result)) = (result.as_object_mut(), call_tool_result) {
+            object.insert("result".to_string(), call_tool_result);
+        }
+    }
+    result
+}
+
+fn missing_tasks_capability(id: Option<Value>) -> McpOutcome {
+    McpOutcome::BadRequest(rpc_error_with_data(
+        id,
+        -32003,
+        "Missing required client capability",
+        json!({
+            "requiredCapabilities": {
+                "extensions": {
+                    MCP_TASKS_EXTENSION: {}
+                }
+            }
+        }),
+    ))
+}
+
+fn mcp_task_connector_error(
+    id: Option<Value>,
+    auth: Option<&AuthContext>,
+    outcome: crate::connector_runtime::ConnectorCallOutcome,
+) -> McpOutcome {
+    if let Some(required_scope) = outcome.required_scope {
+        let description = outcome
+            .body
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or("connector credential lacks the required scope")
+            .to_string();
+        return scope_forbidden(auth, Some(required_scope), description);
+    }
+    if outcome.http_status == 404
+        || outcome.body.pointer("/error/code").and_then(Value::as_str) == Some("task_not_found")
+    {
+        return McpOutcome::BadRequest(rpc_error(id, -32602, "Invalid params: task not found"));
+    }
+    if outcome.protocol_error {
+        let message = outcome
+            .body
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or("Invalid task params")
+            .to_string();
+        return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+    }
+    McpOutcome::BadRequest(rpc_error(
+        id,
+        -32603,
+        "Internal error while resolving durable Connector task",
+    ))
 }
 
 /// MCP tools/list payload for the immutable startup-selected model surface.
@@ -2740,6 +2886,13 @@ async fn handle_mcp_request_with_lifecycle(
                             }
                         }
                     })
+                } else if model_surface_supports_tasks(runtime.model_surface()) {
+                    json!({
+                        "tools": { "listChanged": false },
+                        "extensions": {
+                            MCP_TASKS_EXTENSION: {}
+                        }
+                    })
                 } else {
                     json!({ "tools": { "listChanged": false } })
                 },
@@ -2916,7 +3069,137 @@ async fn handle_mcp_request_with_lifecycle(
             }
             rpc_result(id, result)
         }
+        "tasks/get" if stateless_2026 && model_surface_supports_tasks(runtime.model_surface()) => {
+            if !request_supports_tasks(&request.params) {
+                return missing_tasks_capability(id);
+            }
+            let params: McpTaskParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(error) => {
+                    return McpOutcome::BadRequest(rpc_error(
+                        id,
+                        -32602,
+                        format!("Invalid params: {error}"),
+                    ));
+                }
+            };
+            if !mcp_task_id_is_valid(&params.task_id) {
+                return McpOutcome::BadRequest(rpc_error(
+                    id,
+                    -32602,
+                    "Invalid params: task not found",
+                ));
+            }
+            let Some(auth) = auth else {
+                return scope_forbidden(
+                    None,
+                    Some(crate::auth::SCOPE_JOB_RUN),
+                    "connector credential is required for MCP task access",
+                );
+            };
+            if let Some(outcome) = require_mcp_scope(Some(auth), crate::auth::SCOPE_JOB_RUN) {
+                return outcome;
+            }
+            let connector = connector.expect("validated canonical Connector state");
+            match connector
+                .execution_task_result_for_auth(&params.task_id, auth)
+                .await
+            {
+                Ok((_task, execution, outcome)) => {
+                    let call_tool_result = execution
+                        .is_terminal()
+                        .then(|| connector_call_tool_result(outcome));
+                    let result = mcp_detailed_task_result(&execution, call_tool_result);
+                    return McpOutcome::Ok(rpc_result(id, mcp_stateless_result(result, false)));
+                }
+                Err(outcome) => return mcp_task_connector_error(id, Some(auth), outcome),
+            }
+        }
+        "tasks/update"
+            if stateless_2026 && model_surface_supports_tasks(runtime.model_surface()) =>
+        {
+            if !request_supports_tasks(&request.params) {
+                return missing_tasks_capability(id);
+            }
+            let params: McpTaskUpdateParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(error) => {
+                    return McpOutcome::BadRequest(rpc_error(
+                        id,
+                        -32602,
+                        format!("Invalid params: {error}"),
+                    ));
+                }
+            };
+            if !mcp_task_id_is_valid(&params.task_id) || !params.input_responses.is_object() {
+                return McpOutcome::BadRequest(rpc_error(id, -32602, "Invalid params"));
+            }
+            let Some(auth) = auth else {
+                return scope_forbidden(
+                    None,
+                    Some(crate::auth::SCOPE_JOB_RUN),
+                    "connector credential is required for MCP task access",
+                );
+            };
+            if let Some(outcome) = require_mcp_scope(Some(auth), crate::auth::SCOPE_JOB_RUN) {
+                return outcome;
+            }
+            let connector = connector.expect("validated canonical Connector state");
+            if let Err(outcome) = connector
+                .execution_task_result_for_auth(&params.task_id, auth)
+                .await
+            {
+                return mcp_task_connector_error(id, Some(auth), outcome);
+            }
+            // A3 never creates input_required Tasks. Per the Tasks extension,
+            // responses for unknown/already-satisfied input requests are ignored.
+            return McpOutcome::Ok(rpc_result(id, mcp_stateless_result(json!({}), false)));
+        }
+        "tasks/cancel"
+            if stateless_2026 && model_surface_supports_tasks(runtime.model_surface()) =>
+        {
+            if !request_supports_tasks(&request.params) {
+                return missing_tasks_capability(id);
+            }
+            let params: McpTaskParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(error) => {
+                    return McpOutcome::BadRequest(rpc_error(
+                        id,
+                        -32602,
+                        format!("Invalid params: {error}"),
+                    ));
+                }
+            };
+            if !mcp_task_id_is_valid(&params.task_id) {
+                return McpOutcome::BadRequest(rpc_error(
+                    id,
+                    -32602,
+                    "Invalid params: task not found",
+                ));
+            }
+            let Some(auth) = auth else {
+                return scope_forbidden(
+                    None,
+                    Some(crate::auth::SCOPE_JOB_RUN),
+                    "connector credential is required for MCP task access",
+                );
+            };
+            if let Some(outcome) = require_mcp_scope(Some(auth), crate::auth::SCOPE_JOB_RUN) {
+                return outcome;
+            }
+            let connector = connector.expect("validated canonical Connector state");
+            if let Err(outcome) = connector
+                .cancel_execution_task_for_auth(&params.task_id, auth)
+                .await
+            {
+                return mcp_task_connector_error(id, Some(auth), outcome);
+            }
+            return McpOutcome::Ok(rpc_result(id, mcp_stateless_result(json!({}), false)));
+        }
         "tools/call" => {
+            let tasks_extension_declared =
+                stateless_2026 && request_supports_tasks(&request.params);
             let mut params: McpToolCallParams = match serde_json::from_value(request.params) {
                 Ok(params) => params,
                 Err(e) => {
@@ -3043,15 +3326,29 @@ async fn handle_mcp_request_with_lifecycle(
                 if let Some(lc) = lifecycle.as_deref() {
                     lc.capture_payload("effective_arguments", &params.arguments);
                 }
-                let outcome = connector
-                    .call_for_window(
-                        &params.name,
-                        params.arguments,
-                        auth,
-                        ConnectorTransport::Mcp,
-                        window,
-                    )
-                    .await;
+                let task_polling = tasks_extension_declared
+                    && matches!(params.name.as_str(), "commands_run" | "checks_run");
+                let outcome = if task_polling {
+                    connector
+                        .call_for_window_with_task_polling(
+                            &params.name,
+                            params.arguments,
+                            auth,
+                            ConnectorTransport::Mcp,
+                            window,
+                        )
+                        .await
+                } else {
+                    connector
+                        .call_for_window(
+                            &params.name,
+                            params.arguments,
+                            auth,
+                            ConnectorTransport::Mcp,
+                            window,
+                        )
+                        .await
+                };
                 if let Some(required_scope) = outcome.required_scope {
                     if let Some(lc) = lifecycle.as_deref() {
                         lc.dispatch_failed("forbidden");
@@ -3082,13 +3379,50 @@ async fn handle_mcp_request_with_lifecycle(
                     let category = if outcome.ok { "success" } else { "tool_error" };
                     lc.dispatch_finished(true, Some(outcome.ok), category);
                 }
-                let text =
-                    serde_json::to_string(&outcome.body).unwrap_or_else(|_| "{}".to_string());
-                let result = json!({
-                    "content": [{ "type": "text", "text": text }],
-                    "structuredContent": outcome.body,
-                    "isError": !outcome.ok
-                });
+                if task_polling && outcome.ok {
+                    if let Some(execution_id) = outcome
+                        .body
+                        .pointer("/data/execution/execution_id")
+                        .and_then(Value::as_str)
+                    {
+                        let Some(auth) = auth else {
+                            return scope_forbidden(
+                                None,
+                                Some(crate::auth::SCOPE_JOB_RUN),
+                                "connector credential is required for MCP task access",
+                            );
+                        };
+                        match connector
+                            .execution_task_result_for_auth(execution_id, auth)
+                            .await
+                        {
+                            Ok((_task, execution, _)) if execution.is_active() => {
+                                if !execution.terminal_continuation_is_armed() {
+                                    return McpOutcome::BadRequest(rpc_error(
+                                        id,
+                                        -32603,
+                                        "active Connector execution is not durably armed for terminal polling",
+                                    ));
+                                }
+                                return McpOutcome::Ok(rpc_result(
+                                    id,
+                                    mcp_stateless_result(mcp_create_task_result(&execution), false),
+                                ));
+                            }
+                            Ok(_) => {}
+                            Err(task_outcome) => {
+                                return mcp_task_connector_error(id, Some(auth), task_outcome);
+                            }
+                        }
+                    } else if outcome.body["blocking"].as_bool() == Some(true) {
+                        return McpOutcome::BadRequest(rpc_error(
+                            id,
+                            -32603,
+                            "active Connector execution did not expose durable execution identity",
+                        ));
+                    }
+                }
+                let result = connector_call_tool_result(outcome);
                 return McpOutcome::Ok(rpc_result(
                     id,
                     if stateless_2026 {

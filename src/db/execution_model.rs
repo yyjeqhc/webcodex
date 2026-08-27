@@ -128,6 +128,11 @@ impl ConnectorExecution {
         !self.is_active()
     }
 
+    pub(crate) fn terminal_continuation_is_armed(&self) -> bool {
+        self.continuation_intent == ConnectorExecutionContinuationIntent::ArmedForTerminal
+            && self.continuation_armed_at.is_some()
+    }
+
     pub(crate) fn blocks_finish(&self) -> bool {
         self.is_active() || self.state == "unknown"
     }

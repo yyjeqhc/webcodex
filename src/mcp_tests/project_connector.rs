@@ -1,14 +1,18 @@
 use super::*;
 
+const CONNECTOR_TEST_PROJECT_ID: &str = "wc_proj_1234567890";
+const CONNECTOR_TEST_WORKSPACE_ID: &str = "wc_ws_1234567890";
+const CONNECTOR_TEST_GRANT_ID: &str = "wc_pgrant_3333333333333333";
+const CONNECTOR_TEST_SUBJECT_ID: &str = "project:wc_pgrant_3333333333333333";
+const CONNECTOR_TEST_CREDENTIAL: &str =
+    "webcodex_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
 fn build_connector_test_router(
     config: Arc<crate::Config>,
     db: Arc<crate::Database>,
     runtime: Arc<ToolRuntime>,
     project_root: &std::path::Path,
 ) -> Router {
-    const PROJECT_GRANT_ID: &str = "wc_pgrant_3333333333333333";
-    const PROJECT_CREDENTIAL: &str =
-        "webcodex_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     let state_root = project_root
         .parent()
         .expect("connector test project parent")
@@ -17,9 +21,9 @@ fn build_connector_test_router(
         runtime.clone(),
         db.clone(),
         crate::connector_runtime::ConnectorContext {
-            project_id: "wc_proj_1234567890".to_string(),
+            project_id: CONNECTOR_TEST_PROJECT_ID.to_string(),
             project_name: "demo".to_string(),
-            workspace_id: "wc_ws_1234567890".to_string(),
+            workspace_id: CONNECTOR_TEST_WORKSPACE_ID.to_string(),
             executor_project: "agent:hosted:demo".to_string(),
             executor_root: project_root.to_string_lossy().to_string(),
             runs_root: state_root.join("runs").to_string_lossy().to_string(),
@@ -29,11 +33,11 @@ fn build_connector_test_router(
                 .to_string_lossy()
                 .to_string(),
             profile: "personal".to_string(),
-            project_grant_id: PROJECT_GRANT_ID.to_string(),
+            project_grant_id: CONNECTOR_TEST_GRANT_ID.to_string(),
         },
         crate::auth::ProjectCredentialVerifier::new(
-            PROJECT_GRANT_ID.to_string(),
-            PROJECT_CREDENTIAL,
+            CONNECTOR_TEST_GRANT_ID.to_string(),
+            CONNECTOR_TEST_CREDENTIAL,
         )
         .unwrap(),
     )
@@ -58,6 +62,91 @@ fn build_connector_test_router(
                 .push(Router::with_path("tools/call").post(crate::runtime_http::tools_call)),
         )
         .push(Router::with_path("openapi.json").get(crate::openapi::openapi_json))
+}
+
+fn seed_mcp_execution(
+    db: &crate::Database,
+    project_root: &std::path::Path,
+) -> crate::db::ConnectorExecution {
+    db.ensure_connector_binding(crate::db::ConnectorBinding {
+        project_id: CONNECTOR_TEST_PROJECT_ID,
+        project_name: "demo",
+        workspace_id: CONNECTOR_TEST_WORKSPACE_ID,
+        executor_ref: "agent:hosted:demo",
+        subject_id: CONNECTOR_TEST_SUBJECT_ID,
+        profile: "personal",
+        now: 10,
+    })
+    .unwrap();
+    let task_id = format!("wc_task_{}", uuid::Uuid::new_v4().simple());
+    let run_id = format!("wc_run_{}", uuid::Uuid::new_v4().simple());
+    let root = project_root.to_string_lossy().into_owned();
+    let task = db
+        .start_connector_task(crate::db::NewConnectorTask {
+            task_id: &task_id,
+            run_id: &run_id,
+            project_id: CONNECTOR_TEST_PROJECT_ID,
+            workspace_id: CONNECTOR_TEST_WORKSPACE_ID,
+            subject_id: CONNECTOR_TEST_SUBJECT_ID,
+            goal: "exercise MCP 2026 durable task polling",
+            mode: "read_only",
+            target_executor_ref: "agent:hosted:demo",
+            execution_executor_ref: "agent:hosted:demo",
+            target_root: &root,
+            execution_root: &root,
+            baseline_commit: None,
+            baseline_tree: None,
+            isolated: false,
+            now: 11,
+        })
+        .unwrap();
+    let execution = match db
+        .reserve_connector_execution(
+            &task,
+            "command",
+            "mcp-task-op",
+            "mcp-task-request-hash",
+            &[],
+            None,
+            None,
+            120,
+            12,
+        )
+        .unwrap()
+    {
+        crate::db::ConnectorExecutionReservation::Created(execution) => execution,
+        crate::db::ConnectorExecutionReservation::Existing(_) => unreachable!(),
+    };
+    db.start_connector_execution(&execution.execution_id, 13)
+        .unwrap();
+    db.arm_connector_terminal_continuation(&execution.execution_id, 14)
+        .unwrap()
+}
+
+async fn mcp_2026_task_request(
+    service: &Service,
+    user_token: &str,
+    method: &str,
+    task_id: &str,
+    params: Value,
+) -> salvo::Response {
+    TestClient::post("http://localhost/mcp")
+        .bearer_auth(user_token)
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_STATELESS_PROTOCOL_VERSION,
+            true,
+        )
+        .add_header(MCP_METHOD_HEADER, method, true)
+        .add_header(MCP_NAME_HEADER, task_id, true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 300,
+            "method": method,
+            "params": params
+        }))
+        .send(service)
+        .await
 }
 
 #[tokio::test]
@@ -477,4 +566,281 @@ async fn http_project_connector_2026_uses_explicit_task_ids_without_transport_wi
         resumed_body["result"]["structuredContent"]["data"]["continuity"]["window_rebound"],
         false
     );
+}
+
+#[tokio::test]
+async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen() {
+    let config = test_config(Some("secret"));
+    let (tmp, db) = test_db();
+    let db_path = tmp.path().join("test.db");
+    let project = tmp.path().join("connector-2026-task-project");
+    crate::connector_runtime::tests::init_repo(&project);
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::CanonicalConnector));
+    let service = Service::new(build_connector_test_router(
+        config,
+        db.clone(),
+        runtime,
+        &project,
+    ));
+
+    let mut discover = TestClient::post("http://localhost/mcp")
+        .bearer_auth(CONNECTOR_TEST_CREDENTIAL)
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_STATELESS_PROTOCOL_VERSION,
+            true,
+        )
+        .add_header(MCP_METHOD_HEADER, "server/discover", true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 299,
+            "method": "server/discover",
+            "params": mcp_2026_params(json!({}))
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&discover), StatusCode::OK);
+    let discover_body: Value = discover.take_json().await.unwrap();
+    assert_eq!(
+        discover_body["result"]["capabilities"]["extensions"][MCP_TASKS_EXTENSION],
+        json!({})
+    );
+
+    let execution = seed_mcp_execution(&db, &project);
+    let task_id = execution.execution_id.clone();
+    let create = mcp_create_task_result(&execution);
+    assert_eq!(create["resultType"], "task");
+    assert_eq!(create["taskId"], task_id);
+    assert_eq!(create["status"], "working");
+
+    let mut missing_capability = mcp_2026_task_request(
+        &service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/get",
+        &task_id,
+        mcp_2026_params(json!({ "taskId": task_id })),
+    )
+    .await;
+    assert_eq!(
+        effective_status(&missing_capability),
+        StatusCode::BAD_REQUEST
+    );
+    let missing_body: Value = missing_capability.take_json().await.unwrap();
+    assert_eq!(missing_body["error"]["code"], -32003);
+    assert_eq!(
+        missing_body["error"]["data"]["requiredCapabilities"]["extensions"][MCP_TASKS_EXTENSION],
+        json!({})
+    );
+
+    let mut working = mcp_2026_task_request(
+        &service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/get",
+        &task_id,
+        mcp_2026_tasks_params(json!({ "taskId": task_id })),
+    )
+    .await;
+    assert_eq!(effective_status(&working), StatusCode::OK);
+    assert!(working
+        .headers
+        .get(crate::client_window::MCP_SESSION_HEADER)
+        .is_none());
+    let working_body: Value = working.take_json().await.unwrap();
+    assert_eq!(working_body["result"]["resultType"], "complete");
+    assert_eq!(working_body["result"]["taskId"], task_id);
+    assert_eq!(working_body["result"]["status"], "working");
+    assert!(working_body["result"].get("result").is_none());
+
+    let mut updated = mcp_2026_task_request(
+        &service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/update",
+        &task_id,
+        mcp_2026_tasks_params(json!({
+            "taskId": task_id,
+            "inputResponses": { "unused": { "resultType": "complete" } }
+        })),
+    )
+    .await;
+    assert_eq!(effective_status(&updated), StatusCode::OK);
+    let updated_body: Value = updated.take_json().await.unwrap();
+    assert_eq!(updated_body["result"]["resultType"], "complete");
+    assert!(updated_body["result"].get("taskId").is_none());
+    assert!(matches!(
+        db.connector_execution_for_subject(
+            &task_id,
+            CONNECTOR_TEST_PROJECT_ID,
+            "project:foreign-grant"
+        ),
+        Err(crate::db::ConnectorTaskStoreError::NotFound)
+    ));
+    assert!(matches!(
+        db.connector_execution_for_subject(&task_id, "wc_proj_foreign", CONNECTOR_TEST_SUBJECT_ID),
+        Err(crate::db::ConnectorTaskStoreError::NotFound)
+    ));
+
+    db.finish_connector_execution(
+        &task_id,
+        crate::db::ConnectorExecutionFailure::Submission("mcp_task_test_terminal"),
+        20,
+    )
+    .unwrap();
+    let mut completed = mcp_2026_task_request(
+        &service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/get",
+        &task_id,
+        mcp_2026_tasks_params(json!({ "taskId": task_id })),
+    )
+    .await;
+    assert_eq!(effective_status(&completed), StatusCode::OK);
+    let completed_body: Value = completed.take_json().await.unwrap();
+    assert_eq!(completed_body["result"]["status"], "completed");
+    assert_eq!(completed_body["result"]["taskId"], task_id);
+    assert_eq!(
+        completed_body["result"]["result"]["structuredContent"]["data"]["execution"]
+            ["execution_status"],
+        "failed"
+    );
+
+    let mut replayed = mcp_2026_task_request(
+        &service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/get",
+        &task_id,
+        mcp_2026_tasks_params(json!({ "taskId": task_id })),
+    )
+    .await;
+    assert_eq!(effective_status(&replayed), StatusCode::OK);
+    let replayed_body: Value = replayed.take_json().await.unwrap();
+    assert_eq!(replayed_body["result"], completed_body["result"]);
+
+    drop(service);
+    drop(db);
+    let reopened_db = Arc::new(crate::Database::open(&db_path).unwrap());
+    let reopened_runtime = Arc::new(test_runtime_with_surface(ModelSurface::CanonicalConnector));
+    let reopened_service = Service::new(build_connector_test_router(
+        test_config(Some("secret")),
+        reopened_db,
+        reopened_runtime,
+        &project,
+    ));
+    let mut after_restart = mcp_2026_task_request(
+        &reopened_service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/get",
+        &task_id,
+        mcp_2026_tasks_params(json!({ "taskId": task_id })),
+    )
+    .await;
+    assert_eq!(effective_status(&after_restart), StatusCode::OK);
+    let after_restart_body: Value = after_restart.take_json().await.unwrap();
+    assert_eq!(after_restart_body["result"], completed_body["result"]);
+}
+
+#[tokio::test]
+async fn http_project_connector_2026_tasks_cancel_reuses_execution_cancellation() {
+    let config = test_config(Some("secret"));
+    let (tmp, db) = test_db();
+    let project = tmp.path().join("connector-2026-task-cancel");
+    crate::connector_runtime::tests::init_repo(&project);
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::CanonicalConnector));
+    let service = Service::new(build_connector_test_router(
+        config,
+        db.clone(),
+        runtime,
+        &project,
+    ));
+    let execution = seed_mcp_execution(&db, &project);
+    let task_id = execution.execution_id.clone();
+
+    let mut cancelled = mcp_2026_task_request(
+        &service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/cancel",
+        &task_id,
+        mcp_2026_tasks_params(json!({ "taskId": task_id })),
+    )
+    .await;
+    assert_eq!(effective_status(&cancelled), StatusCode::OK);
+    let cancelled_body: Value = cancelled.take_json().await.unwrap();
+    assert_eq!(cancelled_body["result"]["resultType"], "complete");
+
+    let mut observed = mcp_2026_task_request(
+        &service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/get",
+        &task_id,
+        mcp_2026_tasks_params(json!({ "taskId": task_id })),
+    )
+    .await;
+    assert_eq!(effective_status(&observed), StatusCode::OK);
+    let observed_body: Value = observed.take_json().await.unwrap();
+    assert_eq!(observed_body["result"]["status"], "working");
+    assert_eq!(
+        observed_body["result"]["result"].is_null(),
+        true,
+        "cancel ACK must not claim terminal cancellation"
+    );
+    assert_eq!(
+        db.connector_execution(&task_id).unwrap().state,
+        "cancel_requested"
+    );
+
+    db.observe_connector_execution(
+        &task_id,
+        crate::db::ConnectorExecutionObservation {
+            executor_status: "cancelled",
+            stdout_cursor: 1,
+            stderr_cursor: 1,
+            exit_code: None,
+            started_at: None,
+            finished_at: Some(21),
+            check_completed: None,
+            failed_check: None,
+            assertion_evidence: None,
+            validated_workspace_sha256: None,
+            executor_failure_code: None,
+            now: 21,
+        },
+    )
+    .unwrap();
+    let mut terminal = mcp_2026_task_request(
+        &service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/get",
+        &task_id,
+        mcp_2026_tasks_params(json!({ "taskId": task_id })),
+    )
+    .await;
+    assert_eq!(effective_status(&terminal), StatusCode::OK);
+    let terminal_body: Value = terminal.take_json().await.unwrap();
+    assert_eq!(terminal_body["result"]["status"], "cancelled");
+    assert!(terminal_body["result"].get("result").is_none());
+
+    let mut repeated_cancel = mcp_2026_task_request(
+        &service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/cancel",
+        &task_id,
+        mcp_2026_tasks_params(json!({ "taskId": task_id })),
+    )
+    .await;
+    assert_eq!(effective_status(&repeated_cancel), StatusCode::OK);
+    let repeated_body: Value = repeated_cancel.take_json().await.unwrap();
+    assert_eq!(repeated_body["result"]["resultType"], "complete");
+
+    let unknown_task_id = "wc_exec_ffffffffffffffffffffffffffffffff";
+    let mut missing = mcp_2026_task_request(
+        &service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/get",
+        unknown_task_id,
+        mcp_2026_tasks_params(json!({ "taskId": unknown_task_id })),
+    )
+    .await;
+    assert_eq!(effective_status(&missing), StatusCode::BAD_REQUEST);
+    let missing_body: Value = missing.take_json().await.unwrap();
+    assert_eq!(missing_body["error"]["code"], -32602);
+    assert!(!missing_body.to_string().contains(&task_id));
 }

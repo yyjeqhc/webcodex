@@ -12,6 +12,7 @@ use crate::shell_protocol::{
 };
 use crate::tool_runtime::validation_profile::{RecipeId, SemanticCheck};
 use crate::tool_runtime::ApplyFileChangeInput;
+use salvo::test::ResponseExt;
 use std::time::{Duration, Instant};
 
 #[tokio::test]
@@ -811,6 +812,277 @@ async fn quick_yield_arms_terminal_continuation_before_return_and_replay_keeps_s
         .unwrap();
     assert_eq!(ready.len(), 1);
     assert_eq!(ready[0].execution_id, execution_id);
+}
+
+#[tokio::test]
+async fn mcp_task_polling_quick_yield_replays_exact_armed_execution() {
+    let fixture = fixture(20).await;
+    let arguments = command_arguments(&fixture, "mcp-task-yield-1", "sleep 30");
+    let connector = fixture.connector.clone();
+    let owner = fixture.owner.clone();
+    let call_arguments = arguments.clone();
+    let call = tokio::spawn(async move {
+        connector
+            .call_for_window_with_task_polling(
+                "commands_run",
+                call_arguments,
+                Some(&owner),
+                ConnectorTransport::Mcp,
+                None,
+            )
+            .await
+    });
+    let request = next_request(&fixture.registry).await;
+    assert_eq!(request.kind, "start_job");
+    let job_id = request.job_id.unwrap();
+    update_job(&fixture.registry, &job_id, "running", None, None).await;
+
+    let yielded = call.await.unwrap();
+    assert!(yielded.ok, "{}", yielded.body);
+    let execution_id = yielded.body["data"]["execution"]["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let armed = execution_by_id(&fixture, &execution_id);
+    assert!(armed.is_active());
+    assert!(armed.terminal_continuation_is_armed());
+
+    let (_task, materialized, working_outcome) = fixture
+        .connector
+        .execution_task_result_for_auth(&execution_id, &fixture.owner)
+        .await
+        .unwrap();
+    assert_eq!(materialized.execution_id, execution_id);
+    assert!(materialized.is_active());
+    assert_eq!(
+        working_outcome.body["data"]["execution"]["execution_id"],
+        execution_id
+    );
+    assert_eq!(working_outcome.body["blocking"], true);
+
+    let foreign = tests::auth("foreign-grant");
+    let denied = fixture
+        .connector
+        .execution_task_result_for_auth(&execution_id, &foreign)
+        .await;
+    let Err(denied) = denied else {
+        panic!("foreign project credential must not resolve an execution task id");
+    };
+    assert_eq!(denied.http_status, 404);
+    assert!(!denied.body.to_string().contains(&execution_id));
+
+    let replay = fixture
+        .connector
+        .call_for_window_with_task_polling(
+            "commands_run",
+            arguments,
+            Some(&fixture.owner),
+            ConnectorTransport::Mcp,
+            None,
+        )
+        .await;
+    assert!(replay.ok, "{}", replay.body);
+    assert_eq!(
+        replay.body["data"]["execution"]["execution_id"],
+        execution_id
+    );
+    assert!(poll(&fixture.registry).await.is_none());
+    assert!(execution_by_id(&fixture, &execution_id).terminal_continuation_is_armed());
+
+    update_job(&fixture.registry, &job_id, "completed", None, Some(0)).await;
+    let completed = wait_for_execution(
+        &fixture,
+        Some(&execution_id),
+        Duration::from_secs(10),
+        "MCP task-polling execution completion",
+        |execution| execution.state == "succeeded",
+    )
+    .await;
+    let (_task, terminal, terminal_outcome) = fixture
+        .connector
+        .execution_task_result_for_auth(&execution_id, &fixture.owner)
+        .await
+        .unwrap();
+    assert_eq!(terminal.execution_id, completed.execution_id);
+    assert!(!terminal.is_active());
+    assert_eq!(terminal_outcome.body["blocking"], false);
+}
+
+#[tokio::test]
+async fn mcp_tools_call_tasks_extension_switches_only_active_command_results_to_tasks() {
+    const PROJECT_CREDENTIAL: &str =
+        "webcodex_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const PROTOCOL_VERSION: &str = "2026-07-28";
+    const TASKS_EXTENSION: &str = "io.modelcontextprotocol/tasks";
+
+    let fixture = fixture(20).await;
+    let mcp_runtime = Arc::new(
+        ToolRuntime::new_for_tests_with_shell_clients(fixture.registry.clone())
+            .with_model_surface(crate::model_surface::ModelSurface::CanonicalConnector),
+    );
+    let service = Arc::new(salvo::Service::new(
+        salvo::Router::new()
+            .hoop(salvo::affix_state::inject(
+                crate::test_support::test_config(Some("secret")),
+            ))
+            .hoop(salvo::affix_state::inject(fixture.connector.db.clone()))
+            .hoop(salvo::affix_state::inject(mcp_runtime))
+            .hoop(salvo::affix_state::inject(ConnectorRuntimeSlot(Some(
+                fixture.connector.clone(),
+            ))))
+            .push(
+                salvo::Router::with_path("mcp")
+                    .hoop(crate::AuthMiddleware)
+                    .post(crate::mcp::mcp_post),
+            ),
+    ));
+    let arguments = command_arguments(&fixture, "mcp-http-task-yield-1", "sleep 30");
+
+    let service_for_call = service.clone();
+    let first_arguments = arguments.clone();
+    let first_call = tokio::spawn(async move {
+        salvo::test::TestClient::post("http://localhost/mcp")
+            .bearer_auth(PROJECT_CREDENTIAL)
+            .add_header("mcp-protocol-version", PROTOCOL_VERSION, true)
+            .add_header("mcp-method", "tools/call", true)
+            .add_header("mcp-name", "commands_run", true)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 401,
+                "method": "tools/call",
+                "params": {
+                    "name": "commands_run",
+                    "arguments": first_arguments,
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                        "io.modelcontextprotocol/clientCapabilities": {
+                            "extensions": { TASKS_EXTENSION: {} }
+                        }
+                    }
+                }
+            }))
+            .send(service_for_call.as_ref())
+            .await
+    });
+    let request = next_request(&fixture.registry).await;
+    assert_eq!(request.kind, "start_job");
+    let job_id = request.job_id.unwrap();
+    update_job(&fixture.registry, &job_id, "running", None, None).await;
+
+    let mut first = first_call.await.unwrap();
+    assert_eq!(
+        first.status_code.unwrap_or(salvo::http::StatusCode::OK),
+        salvo::http::StatusCode::OK
+    );
+    let first_body: Value = first.take_json().await.unwrap();
+    assert_eq!(first_body["result"]["resultType"], "task");
+    assert_eq!(first_body["result"]["status"], "working");
+    let execution_id = first_body["result"]["taskId"]
+        .as_str()
+        .expect("active task-augmented call must expose durable execution id")
+        .to_string();
+    assert_eq!(
+        execution_by_id(&fixture, &execution_id).terminal_continuation_is_armed(),
+        true
+    );
+
+    let mut no_capability = salvo::test::TestClient::post("http://localhost/mcp")
+        .bearer_auth(PROJECT_CREDENTIAL)
+        .add_header("mcp-protocol-version", PROTOCOL_VERSION, true)
+        .add_header("mcp-method", "tools/call", true)
+        .add_header("mcp-name", "commands_run", true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 402,
+            "method": "tools/call",
+            "params": {
+                "name": "commands_run",
+                "arguments": arguments.clone(),
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientCapabilities": {}
+                }
+            }
+        }))
+        .send(service.as_ref())
+        .await;
+    let no_capability_body: Value = no_capability.take_json().await.unwrap();
+    assert_eq!(no_capability_body["result"]["resultType"], "complete");
+    assert_eq!(
+        no_capability_body["result"]["structuredContent"]["data"]["execution"]["execution_id"],
+        execution_id
+    );
+    assert_eq!(
+        no_capability_body["result"]["structuredContent"]["blocking"],
+        true
+    );
+
+    let mut replay = salvo::test::TestClient::post("http://localhost/mcp")
+        .bearer_auth(PROJECT_CREDENTIAL)
+        .add_header("mcp-protocol-version", PROTOCOL_VERSION, true)
+        .add_header("mcp-method", "tools/call", true)
+        .add_header("mcp-name", "commands_run", true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 403,
+            "method": "tools/call",
+            "params": {
+                "name": "commands_run",
+                "arguments": arguments.clone(),
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientCapabilities": {
+                        "extensions": { TASKS_EXTENSION: {} }
+                    }
+                }
+            }
+        }))
+        .send(service.as_ref())
+        .await;
+    let replay_body: Value = replay.take_json().await.unwrap();
+    assert_eq!(replay_body["result"]["resultType"], "task");
+    assert_eq!(replay_body["result"]["taskId"], execution_id);
+    assert!(poll(&fixture.registry).await.is_none());
+
+    update_job(&fixture.registry, &job_id, "completed", None, Some(0)).await;
+    wait_for_execution(
+        &fixture,
+        Some(&execution_id),
+        Duration::from_secs(10),
+        "MCP task-augmented HTTP execution completion",
+        |execution| execution.state == "succeeded",
+    )
+    .await;
+
+    let mut terminal = salvo::test::TestClient::post("http://localhost/mcp")
+        .bearer_auth(PROJECT_CREDENTIAL)
+        .add_header("mcp-protocol-version", PROTOCOL_VERSION, true)
+        .add_header("mcp-method", "tools/call", true)
+        .add_header("mcp-name", "commands_run", true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 404,
+            "method": "tools/call",
+            "params": {
+                "name": "commands_run",
+                "arguments": arguments,
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientCapabilities": {
+                        "extensions": { TASKS_EXTENSION: {} }
+                    }
+                }
+            }
+        }))
+        .send(service.as_ref())
+        .await;
+    let terminal_body: Value = terminal.take_json().await.unwrap();
+    assert_eq!(terminal_body["result"]["resultType"], "complete");
+    assert!(terminal_body["result"].get("taskId").is_none());
+    assert_eq!(
+        terminal_body["result"]["structuredContent"]["data"]["execution"]["execution_status"],
+        "succeeded"
+    );
 }
 
 #[tokio::test]

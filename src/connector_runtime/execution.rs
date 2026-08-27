@@ -460,6 +460,23 @@ impl ExecutionService {
         };
         execution_projection(execution, chrono::Utc::now().timestamp(), output_tail)
     }
+
+    pub(crate) fn durable_task_projection(&self, execution: &ConnectorExecution) -> Value {
+        let projection_at = if execution.is_terminal() {
+            execution
+                .finished_at
+                .or(execution.last_output_at)
+                .or(execution.started_at)
+                .or(execution.queued_at)
+                .unwrap_or(execution.submitted_at)
+        } else {
+            chrono::Utc::now().timestamp()
+        };
+        // MCP Tasks polling must remain durable and replay-stable even if the
+        // Runner later drops retained Job logs. The same bounded execution
+        // projection is reused, but optional live output tails are omitted.
+        execution_projection(execution, projection_at, None)
+    }
 }
 
 pub(crate) fn execution_projection(

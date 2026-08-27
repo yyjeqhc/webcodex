@@ -204,6 +204,33 @@ MCP 2026 中，每次 `tools/call` 对聊天/窗口连续性而言都是应用�
 adapter 契约可以显式提供 stable `ClientWindow`，但这不是 MCP 的普遍属性，也不是
 Workflow Session 或 model-context identity。
 
+### Stateless MCP 2026 Tasks extension
+
+对于 `canonical_connector`，`server/discover` 会声明官方
+`io.modelcontextprotocol/tasks` extension。能力只按**当前请求**的
+`_meta.io.modelcontextprotocol/clientCapabilities.extensions` 协商；不会从前一次请求、
+`Mcp-Session-Id` 或其他隐藏状态记住能力。
+
+只有 `commands_run` 与 `checks_run` 会使用 task-augmented execution，并且仅限现有的
+有界 quick-yield 返回后 execution 仍处于 active 状态。支持 Tasks 的客户端会收到
+`resultType: "task"`，其中 durable execution ID 直接作为 `taskId`；相同
+`operation_id` 的精确 replay 会复用同一个 execution，因此得到同一个 task handle。
+如果 execution 已经 terminal，或者当前请求没有声明 Tasks extension，原有
+`CallToolResult` 形状完全不变。
+
+使用 `tasks/get` 轮询。`working` 直接来自 durable execution truth；terminal poll
+返回同一套有界、脱敏的 Connector execution result，并在 Server/数据库 reopen 后保持
+稳定。`tasks/update` 为协议兼容而接受，但 Connector execution Task 不会进入
+`input_required`，因此未知或已经满足的 input response 会被忽略。`tasks/cancel` 复用
+现有 Connector cancellation：ACK 只表示取消请求已接受，不代表已经 terminal；客户端
+仍应继续轮询直到出现 terminal status。本集成不提供 `tasks/list`，也不实现 task
+notification/subscription。
+
+每次 task 请求都会重新按绑定 project 与 owner 做授权。`taskId` 不能提供跨用户或跨
+project 权限，也不编码 Workflow Session、window、credential，更不会消费 terminal
+continuation delivery state。`ttlMs` 为 `null`（不伪造 expiry/retry authority），
+`pollIntervalMs` 建议为 2 秒。
+
 ## 黄金 coding 循环
 
 ```text

@@ -49,14 +49,15 @@ pub(crate) use projections::{
 pub(crate) use wire_models::{TaskCancelInput, TaskReviewInput};
 
 use crate::auth::{
-    AuthContext, ProjectAgentTokenVerifier, ProjectCredentialVerifier, SCOPE_PROJECT_WRITE,
+    AuthContext, ProjectAgentTokenVerifier, ProjectCredentialVerifier, SCOPE_JOB_RUN,
+    SCOPE_PROJECT_WRITE,
 };
 use crate::client_window::ClientWindow;
 use crate::connector_runtime::workspace::{
     LocalResultDecision, PreparedWorkspace, WorkspaceManager,
 };
 use crate::db::{
-    ConnectorApprovalGate, ConnectorBinding, ConnectorEditOperationGate,
+    ConnectorApprovalGate, ConnectorBinding, ConnectorEditOperationGate, ConnectorExecution,
     ConnectorExecutionReservation, ConnectorTaskContinuation, ConnectorTaskResult,
     ConnectorTaskSnapshot, ConnectorTaskStoreError, ConnectorWorkspaceTransition,
     NewConnectorResult, NewConnectorTask,
@@ -426,6 +427,101 @@ impl ConnectorRuntime {
         )
     }
 
+    fn execution_task_not_found() -> ConnectorCallOutcome {
+        store_error_outcome(ConnectorTaskStoreError::NotFound, None)
+    }
+
+    fn execution_task_for_auth(
+        &self,
+        execution_id: &str,
+        auth: &AuthContext,
+    ) -> Result<(ConnectorTaskSnapshot, ConnectorExecution), ConnectorCallOutcome> {
+        if !auth.has_scope(SCOPE_JOB_RUN) {
+            return Err(ConnectorCallOutcome::scope_denied(SCOPE_JOB_RUN));
+        }
+        if !self.project_access_allowed(auth) {
+            return Err(Self::execution_task_not_found());
+        }
+        let subject_id = stable_subject_id(auth).map_err(|_| Self::execution_task_not_found())?;
+        self.db
+            .connector_execution_for_subject(execution_id, &self.context.project_id, &subject_id)
+            .map_err(|error| match error {
+                ConnectorTaskStoreError::NotFound => Self::execution_task_not_found(),
+                other => store_error_outcome(other, None),
+            })
+    }
+
+    pub(crate) async fn execution_task_result_for_auth(
+        &self,
+        execution_id: &str,
+        auth: &AuthContext,
+    ) -> Result<
+        (
+            ConnectorTaskSnapshot,
+            ConnectorExecution,
+            ConnectorCallOutcome,
+        ),
+        ConnectorCallOutcome,
+    > {
+        let (mut task, execution) = self.execution_task_for_auth(execution_id, auth)?;
+        // A Connector task may have been resumed into a later run. MCP task
+        // identity is the exact durable execution, so never project a newer
+        // run id onto an older execution handle.
+        task.run_id = execution.run_id.clone();
+        let execution_event_cursor = self
+            .db
+            .connector_execution_event_cursor(&execution)
+            .map_err(|error| store_error_outcome(error, Some(&task)))?;
+        let projection = self.executions.durable_task_projection(&execution);
+        let outcome = ConnectorCallOutcome::success_blocking_at(
+            &task,
+            execution_event_cursor,
+            json!({ "execution": projection }),
+            execution.blocks_finish(),
+        );
+        Ok((task, execution, outcome))
+    }
+
+    pub(crate) async fn cancel_execution_task_for_auth(
+        &self,
+        execution_id: &str,
+        auth: &AuthContext,
+    ) -> Result<(), ConnectorCallOutcome> {
+        let (task, execution) = self.execution_task_for_auth(execution_id, auth)?;
+        if execution.is_terminal() {
+            return Ok(());
+        }
+        let task_lock = self.task_lock(&task.task_id);
+        let _task_guard = task_lock.lock().await;
+        let (task, execution) = self.execution_task_for_auth(execution_id, auth)?;
+        if execution.is_terminal() {
+            return Ok(());
+        }
+        if task.run_id != execution.run_id {
+            return Err(Self::execution_task_not_found());
+        }
+        let current = self
+            .db
+            .latest_connector_execution(
+                &task.task_id,
+                &self.context.project_id,
+                &task.owner_subject_id,
+                None,
+            )
+            .map_err(|error| store_error_outcome(error, Some(&task)))?;
+        if current
+            .as_ref()
+            .is_none_or(|current| current.execution_id != execution.execution_id)
+        {
+            return Err(Self::execution_task_not_found());
+        }
+        self.executions
+            .cancel_task(task.clone(), None, auth.clone())
+            .await
+            .map(|_| ())
+            .map_err(|error| store_error_outcome(error, Some(&task)))
+    }
+
     #[cfg(test)]
     pub(crate) async fn call(
         &self,
@@ -445,6 +541,31 @@ impl ConnectorRuntime {
         auth: Option<&AuthContext>,
         transport: ConnectorTransport,
         window: Option<&ClientWindow>,
+    ) -> ConnectorCallOutcome {
+        self.call_for_window_inner(capability, arguments, auth, transport, window, false)
+            .await
+    }
+
+    pub(crate) async fn call_for_window_with_task_polling(
+        &self,
+        capability: &str,
+        arguments: Value,
+        auth: Option<&AuthContext>,
+        transport: ConnectorTransport,
+        window: Option<&ClientWindow>,
+    ) -> ConnectorCallOutcome {
+        self.call_for_window_inner(capability, arguments, auth, transport, window, true)
+            .await
+    }
+
+    async fn call_for_window_inner(
+        &self,
+        capability: &str,
+        arguments: Value,
+        auth: Option<&AuthContext>,
+        transport: ConnectorTransport,
+        window: Option<&ClientWindow>,
+        defer_active_execution_guidance: bool,
     ) -> ConnectorCallOutcome {
         if surface::capability_spec(capability).is_none() {
             return ConnectorCallOutcome::error(
@@ -568,12 +689,26 @@ impl ConnectorRuntime {
                     .await
             }
             "checks_run" => {
-                self.checks_run(arguments, &subject_id, auth, transport, now)
-                    .await
+                self.checks_run(
+                    arguments,
+                    &subject_id,
+                    auth,
+                    transport,
+                    now,
+                    defer_active_execution_guidance,
+                )
+                .await
             }
             "commands_run" => {
-                self.commands_run(arguments, &subject_id, auth, transport, now)
-                    .await
+                self.commands_run(
+                    arguments,
+                    &subject_id,
+                    auth,
+                    transport,
+                    now,
+                    defer_active_execution_guidance,
+                )
+                .await
             }
             "task_review" => {
                 self.task_review(arguments, &subject_id, auth, transport, true)
@@ -1749,6 +1884,7 @@ impl ConnectorRuntime {
         auth: &AuthContext,
         _transport: ConnectorTransport,
         now: i64,
+        defer_active_execution_guidance: bool,
     ) -> ConnectorCallOutcome {
         let input: ChecksRunInput = match parse_input("checks_run", arguments) {
             Ok(input) => input,
@@ -1965,6 +2101,7 @@ impl ConnectorRuntime {
                 .await,
             &task,
             auth,
+            defer_active_execution_guidance,
         )
         .await
     }
@@ -1976,6 +2113,7 @@ impl ConnectorRuntime {
         auth: &AuthContext,
         _transport: ConnectorTransport,
         now: i64,
+        defer_active_execution_guidance: bool,
     ) -> ConnectorCallOutcome {
         let input: CommandsRunInput = match parse_input("commands_run", arguments) {
             Ok(input) => input,
@@ -2164,6 +2302,7 @@ impl ConnectorRuntime {
                 .await,
             &task,
             auth,
+            defer_active_execution_guidance,
         )
         .await
     }
@@ -2173,6 +2312,7 @@ impl ConnectorRuntime {
         result: Result<crate::db::ConnectorExecution, ConnectorTaskStoreError>,
         task: &ConnectorTaskSnapshot,
         auth: &AuthContext,
+        defer_active_execution_guidance: bool,
     ) -> ConnectorCallOutcome {
         let current = self
             .task(&task.task_id, &task.owner_subject_id)
@@ -2181,7 +2321,9 @@ impl ConnectorRuntime {
             Ok(execution) => {
                 let projection = self.executions.projection(&execution, auth, true).await;
                 let mut data = json!({ "execution": projection });
-                self.attach_pending_guidance(&current, &mut data);
+                if !defer_active_execution_guidance || execution.is_terminal() {
+                    self.attach_pending_guidance(&current, &mut data);
+                }
                 ConnectorCallOutcome::success_blocking_at(
                     &current,
                     current.event_cursor,

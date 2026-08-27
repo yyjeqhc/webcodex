@@ -168,6 +168,27 @@ async fn mcp_legacy_server_discover_is_method_not_found() {
 }
 
 #[tokio::test]
+async fn mcp_legacy_protocol_does_not_expose_tasks_extension_methods() {
+    let runtime = test_runtime();
+    for method in ["tasks/get", "tasks/update", "tasks/cancel"] {
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                method,
+                Some(Value::from(62)),
+                json!({ "taskId": "wc_exec_ffffffffffffffffffffffffffffffff" }),
+            ),
+            None,
+        )
+        .await;
+        match outcome {
+            McpOutcome::BadRequest(value) => assert_eq!(value["error"]["code"], -32601),
+            other => panic!("legacy {method} must be method-not-found, got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
 async fn mcp_stateless_tools_list_uses_2026_result_shape() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     let outcome = handle_mcp_request(

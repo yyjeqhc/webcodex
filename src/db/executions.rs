@@ -134,6 +134,42 @@ impl Database {
         load_execution(&conn, execution_id)?.ok_or(ConnectorTaskStoreError::NotFound)
     }
 
+    pub(crate) fn connector_execution_for_subject(
+        &self,
+        execution_id: &str,
+        project_id: &str,
+        subject_id: &str,
+    ) -> Result<(ConnectorTaskSnapshot, ConnectorExecution), ConnectorTaskStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let execution =
+            load_execution(&conn, execution_id)?.ok_or(ConnectorTaskStoreError::NotFound)?;
+        let task = load_task(&conn, &execution.task_id, project_id, subject_id)?
+            .ok_or(ConnectorTaskStoreError::NotFound)?;
+        Ok((task, execution))
+    }
+
+    pub(crate) fn connector_execution_event_cursor(
+        &self,
+        execution: &ConnectorExecution,
+    ) -> Result<i64, ConnectorTaskStoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT MAX(sequence)
+             FROM wc_task_events
+             WHERE task_id = ?1
+               AND run_id = ?2
+               AND kind LIKE 'execution_%'
+               AND json_extract(payload_json, '$.execution_id') = ?3",
+            params![execution.task_id, execution.run_id, execution.execution_id],
+            |row| row.get::<_, Option<i64>>(0),
+        )?
+        .ok_or_else(|| {
+            ConnectorTaskStoreError::InvalidState(
+                "durable execution has no matching execution event cursor".to_string(),
+            )
+        })
+    }
+
     pub(crate) fn arm_connector_terminal_continuation(
         &self,
         execution_id: &str,

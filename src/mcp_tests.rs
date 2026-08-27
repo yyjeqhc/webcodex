@@ -103,6 +103,38 @@ fn mcp_2026_params(mut params: Value) -> Value {
     params
 }
 
+fn mcp_2026_tasks_params(mut params: Value) -> Value {
+    params
+        .as_object_mut()
+        .expect("MCP params must be an object")
+        .insert(
+            "_meta".to_string(),
+            json!({
+                "io.modelcontextprotocol/protocolVersion": MCP_STATELESS_PROTOCOL_VERSION,
+                "io.modelcontextprotocol/clientCapabilities": {
+                    "extensions": {
+                        MCP_TASKS_EXTENSION: {}
+                    }
+                }
+            }),
+        );
+    params
+}
+
+#[test]
+fn mcp_2026_tasks_capability_is_request_scoped_and_shape_strict() {
+    assert!(!request_supports_tasks(&mcp_2026_params(json!({}))));
+    assert!(request_supports_tasks(&mcp_2026_tasks_params(json!({}))));
+
+    let mut malformed = mcp_2026_params(json!({}));
+    malformed["_meta"]["io.modelcontextprotocol/clientCapabilities"] = json!({
+        "extensions": {
+            MCP_TASKS_EXTENSION: true
+        }
+    });
+    assert!(!request_supports_tasks(&malformed));
+}
+
 fn mcp_2026_ui_params(mut params: Value) -> Value {
     params
         .as_object_mut()

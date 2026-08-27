@@ -15,7 +15,7 @@ use super::continuation_feedback::{
 use super::handoff::{
     actionable_unexpected_failure_count, apply_compact_workflow_outcomes, closeout_work_projection,
     compact_jobs, compact_review_evidence, compact_tool_failures, compact_validation,
-    project_tool_failure_actionability, review_evidence_summary_for_session,
+    reconcile_closeout_evidence, review_evidence_summary_for_session,
     validation_has_cargo_test_zero_tests,
 };
 use super::handoff_brief::{build_handoff_brief, HandoffBriefInput};
@@ -1425,12 +1425,6 @@ impl ToolRuntime {
         let workspace = workspace_payload_from_show_changes(&changes_result.output);
         append_workspace_warnings(&workspace, &mut final_warnings);
 
-        let validation = if include_validation_summary {
-            self.validation_summary_for_session_with_jobs(&session_summary, 10, auth)
-                .await
-        } else {
-            skipped_validation_summary()
-        };
         let permissions = permission_summary_from_events(
             &session_summary.events,
             super::permissions::DEFAULT_PERMISSION_RECENT_LIMIT,
@@ -1507,10 +1501,28 @@ impl ToolRuntime {
         } else {
             Value::Null
         };
-        let closeout_session_summary = self
+        // Reconcile from the freshest post-inspection ledger snapshot. Validation
+        // materialization may itself append authoritative terminal evidence, so
+        // refresh once more after deriving validation before classifying tool
+        // failure actionability.
+        let closeout_pre_validation_summary = self
             .sessions
             .summary(&session_id, Some(FINISH_SESSION_EVENT_LIMIT))
             .unwrap_or_else(|| session_summary.clone());
+        let validation = if include_validation_summary {
+            self.validation_summary_for_session_with_jobs(
+                &closeout_pre_validation_summary,
+                10,
+                auth,
+            )
+            .await
+        } else {
+            skipped_validation_summary()
+        };
+        let closeout_session_summary = self
+            .sessions
+            .summary(&session_id, Some(FINISH_SESSION_EVENT_LIMIT))
+            .unwrap_or(closeout_pre_validation_summary);
         let review_evidence = review_evidence_summary_for_session(&closeout_session_summary);
         let (work_performed, changed_paths) =
             closeout_work_projection(&closeout_session_summary.events);
@@ -1559,7 +1571,7 @@ impl ToolRuntime {
             "validation": validation,
             "continuation_feedback": continuation_feedback,
             "permissions": permissions,
-            "tool_failures": tool_failure_summary_from_events(&session_summary.events, 10),
+            "tool_failures": tool_failure_summary_from_events(&closeout_session_summary.events, 10),
             "review_evidence": review_evidence,
             "work_performed": work_performed,
             "changed_paths": changed_paths,
@@ -1575,11 +1587,13 @@ impl ToolRuntime {
             output["session_project"] = json!(mismatch.session_project);
             output["request_project"] = json!(mismatch.request_project);
         }
-        output["tool_failures"] = project_tool_failure_actionability(
+        let reconciliation = reconcile_closeout_evidence(
             output.get("tool_failures").unwrap_or(&Value::Null),
-            &session_summary.events,
+            &closeout_session_summary.events,
             output.get("validation").unwrap_or(&Value::Null),
         );
+        output["tool_failures"] = reconciliation.tool_failures;
+        output["validation"] = reconciliation.validation;
         output["suggested_next_actions"] = json!(finish_suggested_next_actions(&output));
         output["handoff_brief"] = build_handoff_brief(HandoffBriefInput {
             session_summary: &closeout_session_summary,
@@ -2617,38 +2631,14 @@ fn compact_finish_output(decision: &Value) -> Value {
 }
 
 fn compact_finish_validation(validation: &Value) -> Value {
-    let latest_status = validation
-        .get("latest_status")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let successes = validation
-        .get("successes")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let unresolved_failure_count = validation
-        .pointer("/unresolved_failures/count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    // Full validation history intentionally remains `mixed` after a failure is
-    // resolved. Summary-only closeout instead reports the current authoritative
-    // state so resolved history does not masquerade as an open validation
-    // problem while the dedicated resolved count still preserves that history.
-    let status = if latest_status == "passed" && successes > 0 && unresolved_failure_count == 0 {
-        "passed"
-    } else {
-        validation
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("not_run")
-    };
     json!({
-        "status": status,
+        "status": validation.get("status").cloned().unwrap_or_else(|| json!("not_run")),
         "reason": validation.get("reason").cloned().unwrap_or(Value::Null),
-        "latest_status": latest_status,
-        "successes": successes,
+        "latest_status": validation.get("latest_status").cloned().unwrap_or_else(|| json!("unknown")),
+        "successes": validation.get("successes").and_then(Value::as_u64).unwrap_or(0),
         "failures": validation.get("failures").and_then(Value::as_u64).unwrap_or(0),
         "resolved_failure_count": validation.pointer("/resolved_failures/count").and_then(Value::as_u64).unwrap_or(0),
-        "unresolved_failure_count": unresolved_failure_count,
+        "unresolved_failure_count": validation.pointer("/unresolved_failures/count").and_then(Value::as_u64).unwrap_or(0),
         "cargo_test_zero_tests_run": validation_has_cargo_test_zero_tests(validation),
     })
 }

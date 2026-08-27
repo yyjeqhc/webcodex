@@ -1892,10 +1892,18 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
     let full = finish_coding_task_with_agent(
         &fixture.runtime,
         fixture.client_id,
-        fixture.project,
-        fixture.session_id,
-        fixture.auth,
+        fixture.project.clone(),
+        fixture.session_id.clone(),
+        fixture.auth.clone(),
         false,
+    )
+    .await;
+    let handoff = session_handoff_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project.clone(),
+        fixture.session_id.clone(),
+        fixture.auth.clone(),
     )
     .await;
 
@@ -1913,7 +1921,17 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
     );
     assert_eq!(result.output["validation"]["status"], "passed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
-    assert_eq!(full.output["validation"]["status"], "mixed");
+    assert_eq!(full.output["validation"]["status"], "passed");
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["validation"]["status"], "passed");
+    assert_eq!(
+        handoff.output["validation"]["resolved_failures"]["count"],
+        result.output["validation"]["resolved_failure_count"]
+    );
+    assert_eq!(
+        handoff.output["validation"]["unresolved_failures"]["count"],
+        result.output["validation"]["unresolved_failure_count"]
+    );
     assert_eq!(result.output["validation"]["resolved_failure_count"], 1);
     assert_eq!(result.output["validation"]["unresolved_failure_count"], 0);
     assert_eq!(result.output["task_outcome"]["status"], "pass");
@@ -1932,6 +1950,27 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
         "review unexpected failed tool calls before proceeding",
     );
     assert_eq!(full.output["task_outcome"], result.output["task_outcome"]);
+    for key in [
+        "expected_count",
+        "unexpected_count",
+        "historical_non_actionable_count",
+        "actionable_unexpected_count",
+        "expectation_mismatch_count",
+        "unexpected_success_count",
+    ] {
+        assert_eq!(
+            handoff.output["tool_failures"][key], result.output["tool_failures"][key],
+            "tool failure parity for {key}"
+        );
+    }
+    assert_eq!(
+        handoff.output["task_outcome"],
+        result.output["task_outcome"]
+    );
+    assert_eq!(
+        handoff.output["evidence_integrity"],
+        result.output["evidence_integrity"]
+    );
     assert!(full.output["advisories"].is_array());
     assert!(full.output["evidence_history"].is_object());
     assert!(full.output["informational_notes"].is_array());
@@ -3230,6 +3269,42 @@ async fn finish_coding_task_with_agent(
     });
     service_agent_task_until_finished(runtime, client_id, &task, "finish_coding_task summary_only")
         .await;
+    task.await.unwrap()
+}
+
+async fn session_handoff_summary_only_with_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: String,
+    session_id: String,
+    auth: AuthContext,
+) -> ToolResult {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SessionHandoffSummary {
+                        session_id,
+                        project: Some(project),
+                        include_workspace: Some(true),
+                        include_checkpoints: Some(false),
+                        include_validation: Some(true),
+                        summary_only: true,
+                        limit: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    service_agent_task_until_finished(
+        runtime,
+        client_id,
+        &task,
+        "session_handoff_summary summary_only",
+    )
+    .await;
     task.await.unwrap()
 }
 

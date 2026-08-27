@@ -2487,11 +2487,12 @@ fn failure_history_legacy_event_without_effect_evidence_restores_conservatively(
         .find(|event| event.kind == "tool_call_finished")
         .unwrap();
     assert!(finished.effect_evidence.is_none());
-    let projected = crate::tool_runtime::handoff::project_tool_failure_actionability(
+    let projected = crate::tool_runtime::handoff::reconcile_closeout_evidence(
         &json!({"unexpected_count": 1}),
         &summary.events,
         &json!({}),
-    );
+    )
+    .tool_failures;
     assert_eq!(projected["historical_non_actionable_count"], 0);
     assert_eq!(projected["actionable_unexpected_count"], 1);
 }

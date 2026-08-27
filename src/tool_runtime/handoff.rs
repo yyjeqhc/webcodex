@@ -318,11 +318,15 @@ impl ToolRuntime {
                 .unwrap_or(0)
                 > 0,
         });
-        output["tool_failures"] = project_tool_failure_actionability(
+        let reconciliation = reconcile_closeout_evidence(
             output.get("tool_failures").unwrap_or(&Value::Null),
             &summary.events,
             &feedback_validation,
         );
+        output["tool_failures"] = reconciliation.tool_failures;
+        if include_validation {
+            output["validation"] = reconciliation.validation;
+        }
 
         // --- bounded suggested next actions ---
         output["suggested_next_actions"] = json!(handoff_suggested_next_actions(&output));
@@ -958,12 +962,15 @@ fn compact_workflow_outcomes(
         .pointer("/unresolved_failures/count")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    let evidence_history_status = match validation_status {
-        Some("mixed") if validation_historical_failures_resolved(validation) => "mixed_resolved",
-        Some("mixed") => "mixed_unresolved",
-        Some("failed") => "failed",
-        _ if validation_historical_failures_unresolved(validation) => "mixed_unresolved",
-        _ => "clean",
+    let evidence_history_status = if validation_historical_failures_resolved(validation) {
+        "mixed_resolved"
+    } else {
+        match validation_status {
+            Some("mixed") => "mixed_unresolved",
+            Some("failed") => "failed",
+            _ if validation_historical_failures_unresolved(validation) => "mixed_unresolved",
+            _ => "clean",
+        }
     };
 
     match validation_status {
@@ -1017,6 +1024,12 @@ fn compact_workflow_outcomes(
         }
         Some("failed") => {}
         Some(_) => {}
+    }
+    if validation_historical_failures_resolved(validation) {
+        push_unique(
+            &mut informational_notes,
+            "historical validation failures were resolved by later successful validation",
+        );
     }
     if unresolved_failure_count > 0 && !matches!(validation_status, Some("failed" | "mixed")) {
         push_unique(
@@ -1136,18 +1149,28 @@ pub(crate) fn actionable_unexpected_failure_count(tool_failures: &Value) -> u64 
         .unwrap_or_else(|| count_field(tool_failures, "unexpected_count"))
 }
 
-pub(crate) fn project_tool_failure_actionability(
+#[derive(Debug, Clone)]
+pub(crate) struct CloseoutEvidenceReconciliation {
+    pub(crate) validation: Value,
+    pub(crate) tool_failures: Value,
+}
+
+/// Reconcile immutable ledger history into the single current closeout view used
+/// by both handoff and finish projections. Raw failure counts and validation
+/// events remain intact; only their current actionability/status is projected.
+pub(crate) fn reconcile_closeout_evidence(
     tool_failures: &Value,
     events: &[SessionEvent],
     validation: &Value,
-) -> Value {
+) -> CloseoutEvidenceReconciliation {
+    let validation = reconcile_closeout_validation(validation);
     let mut projected = tool_failures.clone();
     let raw_unexpected = count_field(tool_failures, "unexpected_count");
     let historical_non_actionable = events
         .iter()
         .filter(|event| unexpected_failure_event(event))
         .filter(|event| {
-            is_resolved_unexpected_validation_failure(event, validation)
+            is_resolved_unexpected_validation_failure(event, &validation)
                 || unexpected_failure_is_proven_non_actionable(event)
         })
         .count() as u64;
@@ -1155,6 +1178,28 @@ pub(crate) fn project_tool_failure_actionability(
     projected["historical_non_actionable_count"] = json!(historical_non_actionable);
     projected["actionable_unexpected_count"] =
         json!(raw_unexpected.saturating_sub(historical_non_actionable));
+    CloseoutEvidenceReconciliation {
+        validation,
+        tool_failures: projected,
+    }
+}
+
+fn reconcile_closeout_validation(validation: &Value) -> Value {
+    let mut projected = validation.clone();
+    let current_validation_passed = validation.get("latest_status").and_then(Value::as_str)
+        == Some("passed")
+        && validation
+            .get("successes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
+        && validation
+            .pointer("/unresolved_failures/count")
+            .and_then(Value::as_u64)
+            == Some(0);
+    if projected.is_object() && current_validation_passed {
+        projected["status"] = json!("passed");
+    }
     projected
 }
 
@@ -1172,14 +1217,29 @@ fn is_resolved_unexpected_validation_failure(event: &SessionEvent, validation: &
     if !unexpected_failure_event(event) {
         return false;
     }
+    let event_project = event
+        .resolved_project
+        .as_deref()
+        .or(event.project.as_deref());
     validation
         .pointer("/resolved_failures/events")
         .and_then(Value::as_array)
         .is_some_and(|resolved| {
             resolved.iter().any(|resolved| {
-                resolved.get("tool_name").and_then(Value::as_str) == Some(event.tool_name.as_str())
+                // Membership in resolved_failures is decided upstream by the
+                // canonical validation identity. The remaining fields only
+                // correlate that already-resolved validation fact back to its
+                // immutable source Session event; they never infer resolution.
+                resolved
+                    .get("identity")
+                    .and_then(Value::as_str)
+                    .is_some_and(|identity| !identity.is_empty())
+                    && resolved.get("success").and_then(Value::as_bool) == Some(false)
+                    && resolved.get("tool_name").and_then(Value::as_str)
+                        == Some(event.tool_name.as_str())
                     && resolved.get("session_id").and_then(Value::as_str)
                         == Some(event.session_id.as_str())
+                    && resolved.get("project").and_then(Value::as_str) == event_project
                     && resolved.get("completed_at").and_then(Value::as_i64) == event.finished_at
             })
         })

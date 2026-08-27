@@ -2284,6 +2284,7 @@ async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test
         result.output["tool_failures"]["actionable_unexpected_count"],
         0
     );
+    assert_eq!(result.output["validation"]["status"], "passed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
     assert_eq!(
         result.output["validation"]["historical_failures"]["resolved"],
@@ -2336,6 +2337,23 @@ async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test
         VALIDATION_IDENTITY_REUSE_ACTION,
     );
     assert_eq!(full.output["task_outcome"], result.output["task_outcome"]);
+    assert_eq!(
+        full.output["validation"]["status"],
+        result.output["validation"]["status"]
+    );
+    for key in [
+        "expected_count",
+        "unexpected_count",
+        "historical_non_actionable_count",
+        "actionable_unexpected_count",
+        "expectation_mismatch_count",
+        "unexpected_success_count",
+    ] {
+        assert_eq!(
+            full.output["tool_failures"][key], result.output["tool_failures"][key],
+            "full/summary tool failure projection must agree for {key}"
+        );
+    }
     assert_eq!(full.output["verdict"], result.output["verdict"]);
     assert_eq!(
         full.output["evidence_history"],

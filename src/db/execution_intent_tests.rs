@@ -73,6 +73,7 @@ fn succeed(db: &Database, execution_id: &str, now: i64) -> ConnectorExecution {
             assertion_evidence: None,
             validated_workspace_sha256: None,
             executor_failure_code: None,
+            mcp_task_output_tail: None,
             now,
         },
     )
@@ -135,6 +136,73 @@ fn reservation_is_unarmed_and_arm_is_durable_idempotent_and_replay_stable() {
         ConnectorExecutionContinuationIntent::ArmedForTerminal
     );
     assert_eq!(restored.continuation_armed_at, Some(20));
+}
+
+#[test]
+fn mcp_task_materialization_and_terminal_result_finalize_durably_together() {
+    let (_temp, path, db) = database();
+    let task = task(&db, "mcp-final");
+    let execution = reserve(&db, &task, "op-mcp-final");
+    db.arm_connector_terminal_continuation(&execution.execution_id, 20)
+        .unwrap();
+    let materialized = db
+        .materialize_connector_execution_mcp_task_for_subject(
+            &execution.execution_id,
+            "wc_proj_intent",
+            "user:intent",
+            21,
+        )
+        .unwrap();
+    assert_eq!(materialized.mcp_task_materialized_at, Some(21));
+    assert_eq!(materialized.mcp_task_result_finalized_at, None);
+
+    let tail = serde_json::json!({
+        "stdout": "durable stdout\n",
+        "stderr": "durable stderr\n",
+        "bounded": true
+    });
+    let terminal = db
+        .observe_connector_execution(
+            &execution.execution_id,
+            ConnectorExecutionObservation {
+                executor_status: "completed",
+                stdout_cursor: 2,
+                stderr_cursor: 2,
+                exit_code: Some(0),
+                started_at: Some(22),
+                finished_at: Some(23),
+                check_completed: None,
+                failed_check: None,
+                assertion_evidence: None,
+                validated_workspace_sha256: None,
+                executor_failure_code: None,
+                mcp_task_output_tail: Some(&tail),
+                now: 23,
+            },
+        )
+        .unwrap();
+    assert_eq!(terminal.state, "succeeded");
+    assert_eq!(terminal.mcp_task_result_finalized_at, Some(23));
+    assert_eq!(terminal.mcp_task_output_tail.as_ref(), Some(&tail));
+
+    drop(db);
+    let reopened = Database::open(&path).unwrap();
+    let restored = reopened
+        .connector_execution(&execution.execution_id)
+        .unwrap();
+    assert_eq!(restored.mcp_task_materialized_at, Some(21));
+    assert_eq!(restored.mcp_task_result_finalized_at, Some(23));
+    assert_eq!(restored.mcp_task_output_tail.as_ref(), Some(&tail));
+    let replay = reopened
+        .materialize_connector_execution_mcp_task_for_subject(
+            &execution.execution_id,
+            "wc_proj_intent",
+            "user:intent",
+            30,
+        )
+        .unwrap();
+    assert_eq!(replay.mcp_task_materialized_at, Some(21));
+    assert_eq!(replay.mcp_task_result_finalized_at, Some(23));
 }
 
 #[test]

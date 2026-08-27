@@ -64,7 +64,7 @@ fn build_connector_test_router(
         .push(Router::with_path("openapi.json").get(crate::openapi::openapi_json))
 }
 
-fn seed_mcp_execution(
+fn seed_armed_mcp_execution(
     db: &crate::Database,
     project_root: &std::path::Path,
 ) -> crate::db::ConnectorExecution {
@@ -121,6 +121,20 @@ fn seed_mcp_execution(
         .unwrap();
     db.arm_connector_terminal_continuation(&execution.execution_id, 14)
         .unwrap()
+}
+
+fn seed_mcp_execution(
+    db: &crate::Database,
+    project_root: &std::path::Path,
+) -> crate::db::ConnectorExecution {
+    let execution = seed_armed_mcp_execution(db, project_root);
+    db.materialize_connector_execution_mcp_task_for_subject(
+        &execution.execution_id,
+        CONNECTOR_TEST_PROJECT_ID,
+        CONNECTOR_TEST_SUBJECT_ID,
+        15,
+    )
+    .unwrap()
 }
 
 async fn mcp_2026_task_request(
@@ -608,6 +622,8 @@ async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen(
 
     let execution = seed_mcp_execution(&db, &project);
     let task_id = execution.execution_id.clone();
+    assert!(execution.mcp_task_is_materialized());
+    assert_eq!(execution.mcp_task_materialized_at, Some(15));
     let create = mcp_create_task_result(&execution);
     assert_eq!(create["resultType"], "task");
     assert_eq!(create["taskId"], task_id);
@@ -679,12 +695,34 @@ async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen(
         Err(crate::db::ConnectorTaskStoreError::NotFound)
     ));
 
-    db.finish_connector_execution(
-        &task_id,
-        crate::db::ConnectorExecutionFailure::Submission("mcp_task_test_terminal"),
-        20,
-    )
-    .unwrap();
+    let durable_tail = json!({
+        "stdout": "durable terminal stdout\n",
+        "stderr": "durable terminal stderr\n",
+        "bounded": true
+    });
+    let finalized = db
+        .observe_connector_execution(
+            &task_id,
+            crate::db::ConnectorExecutionObservation {
+                executor_status: "failed",
+                stdout_cursor: 2,
+                stderr_cursor: 2,
+                exit_code: Some(7),
+                started_at: Some(13),
+                finished_at: Some(20),
+                check_completed: None,
+                failed_check: None,
+                assertion_evidence: None,
+                validated_workspace_sha256: None,
+                executor_failure_code: None,
+                mcp_task_output_tail: Some(&durable_tail),
+                now: 20,
+            },
+        )
+        .unwrap();
+    assert_eq!(finalized.state, "failed");
+    assert_eq!(finalized.mcp_task_result_finalized_at, Some(20));
+    assert_eq!(finalized.mcp_task_output_tail.as_ref(), Some(&durable_tail));
     let mut completed = mcp_2026_task_request(
         &service,
         CONNECTOR_TEST_CREDENTIAL,
@@ -701,6 +739,10 @@ async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen(
         completed_body["result"]["result"]["structuredContent"]["data"]["execution"]
             ["execution_status"],
         "failed"
+    );
+    assert_eq!(
+        completed_body["result"]["result"]["structuredContent"]["data"]["execution"]["output_tail"],
+        durable_tail
     );
 
     let mut replayed = mcp_2026_task_request(
@@ -736,6 +778,77 @@ async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen(
     assert_eq!(effective_status(&after_restart), StatusCode::OK);
     let after_restart_body: Value = after_restart.take_json().await.unwrap();
     assert_eq!(after_restart_body["result"], completed_body["result"]);
+}
+
+#[tokio::test]
+async fn http_project_connector_2026_tasks_reject_unmaterialized_execution_ids() {
+    let config = test_config(Some("secret"));
+    let (tmp, db) = test_db();
+    let project = tmp.path().join("connector-2026-unmaterialized-task");
+    crate::connector_runtime::tests::init_repo(&project);
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::CanonicalConnector));
+    let service = Service::new(build_connector_test_router(
+        config,
+        db.clone(),
+        runtime,
+        &project,
+    ));
+    let execution = seed_armed_mcp_execution(&db, &project);
+    let execution_id = execution.execution_id.clone();
+    assert!(!execution.mcp_task_is_materialized());
+
+    for (method, params) in [
+        ("tasks/get", json!({ "taskId": execution_id })),
+        (
+            "tasks/update",
+            json!({ "taskId": execution_id, "inputResponses": {} }),
+        ),
+        ("tasks/cancel", json!({ "taskId": execution_id })),
+    ] {
+        let mut response = mcp_2026_task_request(
+            &service,
+            CONNECTOR_TEST_CREDENTIAL,
+            method,
+            &execution_id,
+            mcp_2026_tasks_params(params),
+        )
+        .await;
+        assert_eq!(effective_status(&response), StatusCode::BAD_REQUEST);
+        let body: Value = response.take_json().await.unwrap();
+        assert_eq!(body["error"]["code"], -32602, "{method}: {body}");
+    }
+
+    let terminal = db
+        .finish_connector_execution(
+            &execution_id,
+            crate::db::ConnectorExecutionFailure::Submission("terminal_before_materialization"),
+            20,
+        )
+        .unwrap();
+    assert!(terminal.is_terminal());
+    assert!(!terminal.mcp_task_is_materialized());
+    assert!(!terminal.mcp_task_result_is_finalized());
+    let rematerialize = db
+        .materialize_connector_execution_mcp_task_for_subject(
+            &execution_id,
+            CONNECTOR_TEST_PROJECT_ID,
+            CONNECTOR_TEST_SUBJECT_ID,
+            21,
+        )
+        .unwrap();
+    assert!(!rematerialize.mcp_task_is_materialized());
+
+    let mut response = mcp_2026_task_request(
+        &service,
+        CONNECTOR_TEST_CREDENTIAL,
+        "tasks/get",
+        &execution_id,
+        mcp_2026_tasks_params(json!({ "taskId": execution_id })),
+    )
+    .await;
+    assert_eq!(effective_status(&response), StatusCode::BAD_REQUEST);
+    let body: Value = response.take_json().await.unwrap();
+    assert_eq!(body["error"]["code"], -32602);
 }
 
 #[tokio::test]
@@ -801,6 +914,7 @@ async fn http_project_connector_2026_tasks_cancel_reuses_execution_cancellation(
             assertion_evidence: None,
             validated_workspace_sha256: None,
             executor_failure_code: None,
+            mcp_task_output_tail: None,
             now: 21,
         },
     )

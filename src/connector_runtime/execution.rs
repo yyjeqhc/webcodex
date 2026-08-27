@@ -291,6 +291,12 @@ impl ExecutionService {
         match self.dispatch_cancel(&task, &execution, &auth).await {
             CancelDispatch::ReferencePending => return Ok(Some(execution)),
             CancelDispatch::Failed => {
+                if let Some(output_tail) = self.bounded_output_tail(&execution, &auth).await {
+                    let _ = self.db.record_connector_mcp_task_output_tail(
+                        &execution.execution_id,
+                        &output_tail,
+                    );
+                }
                 execution = self.db.finish_connector_execution(
                     &execution.execution_id,
                     ConnectorExecutionFailure::Unknown("cancel_transport_unknown"),
@@ -436,27 +442,36 @@ impl ExecutionService {
         }
     }
 
+    pub(super) async fn bounded_output_tail(
+        &self,
+        execution: &ConnectorExecution,
+        auth: &AuthContext,
+    ) -> Option<Value> {
+        let job_id = execution.executor_reference.as_deref()?;
+        self.tools
+            .shell_clients
+            .job_log_for_auth(Some(auth), job_id, None, None, Some(200), None, None)
+            .await
+            .ok()
+            .map(|(_, stdout, stderr, _, _, _)| {
+                json!({
+                    "stdout": stdout.unwrap_or_default(),
+                    "stderr": stderr.unwrap_or_default(),
+                    "bounded": true
+                })
+            })
+    }
+
     pub(crate) async fn projection(
         &self,
         execution: &ConnectorExecution,
         auth: &AuthContext,
         include_output_tail: bool,
     ) -> Value {
-        let output_tail = match (include_output_tail, execution.executor_reference.as_deref()) {
-            (true, Some(job_id)) => self
-                .tools
-                .shell_clients
-                .job_log_for_auth(Some(auth), job_id, None, None, Some(200), None, None)
-                .await
-                .ok()
-                .map(|(_, stdout, stderr, _, _, _)| {
-                    json!({
-                        "stdout": stdout.unwrap_or_default(),
-                        "stderr": stderr.unwrap_or_default(),
-                        "bounded": true
-                    })
-                }),
-            _ => None,
+        let output_tail = if include_output_tail {
+            self.bounded_output_tail(execution, auth).await
+        } else {
+            None
         };
         execution_projection(execution, chrono::Utc::now().timestamp(), output_tail)
     }
@@ -472,10 +487,14 @@ impl ExecutionService {
         } else {
             chrono::Utc::now().timestamp()
         };
-        // MCP Tasks polling must remain durable and replay-stable even if the
-        // Runner later drops retained Job logs. The same bounded execution
-        // projection is reused, but optional live output tails are omitted.
-        execution_projection(execution, projection_at, None)
+        // MCP Tasks polling never re-reads Runner logs. Once terminal, the
+        // exact bounded/redacted tail captured at the durable terminal boundary
+        // is part of the replay-stable task result.
+        let output_tail = execution
+            .mcp_task_result_is_finalized()
+            .then(|| execution.mcp_task_output_tail.clone())
+            .flatten();
+        execution_projection(execution, projection_at, output_tail)
     }
 }
 

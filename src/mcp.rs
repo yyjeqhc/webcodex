@@ -467,22 +467,36 @@ fn mcp_task_id_is_valid(task_id: &str) -> bool {
     })
 }
 
+fn mcp_task_status(execution: &crate::db::ConnectorExecution) -> &'static str {
+    if execution.state == "cancelled" {
+        "cancelled"
+    } else if execution.is_terminal() {
+        "completed"
+    } else {
+        "working"
+    }
+}
+
 fn mcp_task_base(
     execution: &crate::db::ConnectorExecution,
     result_type: &str,
     status: &str,
 ) -> Value {
+    let created_at = execution
+        .mcp_task_materialized_at
+        .unwrap_or(execution.submitted_at);
     let last_updated_at = execution
-        .finished_at
+        .mcp_task_result_finalized_at
+        .or(execution.finished_at)
         .or(execution.last_output_at)
         .or(execution.started_at)
         .or(execution.queued_at)
-        .unwrap_or(execution.submitted_at);
+        .unwrap_or(created_at);
     json!({
         "resultType": result_type,
         "taskId": execution.execution_id,
         "status": status,
-        "createdAt": mcp_task_timestamp(execution.submitted_at),
+        "createdAt": mcp_task_timestamp(created_at),
         "lastUpdatedAt": mcp_task_timestamp(last_updated_at),
         "ttlMs": null,
         "pollIntervalMs": MCP_TASK_POLL_INTERVAL_MS
@@ -490,20 +504,14 @@ fn mcp_task_base(
 }
 
 fn mcp_create_task_result(execution: &crate::db::ConnectorExecution) -> Value {
-    mcp_task_base(execution, "task", "working")
+    mcp_task_base(execution, "task", mcp_task_status(execution))
 }
 
 fn mcp_detailed_task_result(
     execution: &crate::db::ConnectorExecution,
     call_tool_result: Option<Value>,
 ) -> Value {
-    let status = if execution.state == "cancelled" {
-        "cancelled"
-    } else if execution.is_terminal() {
-        "completed"
-    } else {
-        "working"
-    };
+    let status = mcp_task_status(execution);
     let mut result = mcp_task_base(execution, "complete", status);
     if status == "completed" {
         if let (Some(object), Some(call_tool_result)) = (result.as_object_mut(), call_tool_result) {
@@ -3392,16 +3400,24 @@ async fn handle_mcp_request_with_lifecycle(
                                 "connector credential is required for MCP task access",
                             );
                         };
-                        match connector
-                            .execution_task_result_for_auth(execution_id, auth)
-                            .await
-                        {
-                            Ok((_task, execution, _)) if execution.is_active() => {
-                                if !execution.terminal_continuation_is_armed() {
+                        match connector.materialize_execution_task_for_auth(execution_id, auth) {
+                            Ok(execution) if execution.mcp_task_is_materialized() => {
+                                if execution.is_active()
+                                    && !execution.terminal_continuation_is_armed()
+                                {
                                     return McpOutcome::BadRequest(rpc_error(
                                         id,
                                         -32603,
                                         "active Connector execution is not durably armed for terminal polling",
+                                    ));
+                                }
+                                if execution.is_terminal()
+                                    && !execution.mcp_task_result_is_finalized()
+                                {
+                                    return McpOutcome::BadRequest(rpc_error(
+                                        id,
+                                        -32603,
+                                        "materialized MCP task became terminal before its durable result was finalized",
                                     ));
                                 }
                                 return McpOutcome::Ok(rpc_result(
@@ -3409,7 +3425,33 @@ async fn handle_mcp_request_with_lifecycle(
                                     mcp_stateless_result(mcp_create_task_result(&execution), false),
                                 ));
                             }
-                            Ok(_) => {}
+                            Ok(execution) if execution.is_terminal() => {
+                                let ordinary = match connector
+                                    .ordinary_execution_result_for_auth(execution_id, auth)
+                                    .await
+                                {
+                                    Ok(ordinary) => ordinary,
+                                    Err(task_outcome) => {
+                                        return mcp_task_connector_error(
+                                            id,
+                                            Some(auth),
+                                            task_outcome,
+                                        );
+                                    }
+                                };
+                                let result = connector_call_tool_result(ordinary);
+                                return McpOutcome::Ok(rpc_result(
+                                    id,
+                                    mcp_stateless_result(result, false),
+                                ));
+                            }
+                            Ok(_) => {
+                                return McpOutcome::BadRequest(rpc_error(
+                                    id,
+                                    -32603,
+                                    "active Connector execution was not durably materialized for MCP task polling",
+                                ));
+                            }
                             Err(task_outcome) => {
                                 return mcp_task_connector_error(id, Some(auth), task_outcome);
                             }

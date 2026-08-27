@@ -212,22 +212,26 @@ Workflow Session 或 model-context identity。
 `Mcp-Session-Id` 或其他隐藏状态记住能力。
 
 只有 `commands_run` 与 `checks_run` 会使用 task-augmented execution，并且仅限现有的
-有界 quick-yield 返回后 execution 仍处于 active 状态。支持 Tasks 的客户端会收到
-`resultType: "task"`，其中 durable execution ID 直接作为 `taskId`；相同
-`operation_id` 的精确 replay 会复用同一个 execution，因此得到同一个 task handle。
-如果 execution 已经 terminal，或者当前请求没有声明 Tasks extension，原有
-`CallToolResult` 形状完全不变。
+有界 quick-yield 返回后 execution 仍处于 active 状态。只有当这个 exact durable
+execution 已经被持久化标记为 MCP Task 后，支持 Tasks 的客户端才会收到
+`resultType: "task"`；execution ID 直接作为 `taskId`。一旦 materialized，相同
+`operation_id` 的精确 replay 即使发生在 execution terminal 之后，也仍返回同一个 task
+handle。若 execution 在从未 materialize 为 MCP Task 前已经 terminal，或者当前请求没有
+声明 Tasks extension，则原有 `CallToolResult` 形状完全不变。
 
-使用 `tasks/get` 轮询。`working` 直接来自 durable execution truth；terminal poll
-返回同一套有界、脱敏的 Connector execution result，并在 Server/数据库 reopen 后保持
-稳定。`tasks/update` 为协议兼容而接受，但 Connector execution Task 不会进入
+使用 `tasks/get` 轮询。`working` 直接来自 durable execution truth。materialized Task
+进入 terminal 的同一持久化边界会固化有界、脱敏的 Connector result 输入，其中包括与
+普通同步结果相同的 bounded stdout/stderr tail；terminal poll 只从该 durable snapshot
+重建，因此在 Server/数据库 reopen，甚至后续 Runner Job log 已丢失后仍保持稳定。
+`tasks/update` 为协议兼容而接受，但 Connector execution Task 不会进入
 `input_required`，因此未知或已经满足的 input response 会被忽略。`tasks/cancel` 复用
 现有 Connector cancellation：ACK 只表示取消请求已接受，不代表已经 terminal；客户端
 仍应继续轮询直到出现 terminal status。本集成不提供 `tasks/list`，也不实现 task
 notification/subscription。
 
-每次 task 请求都会重新按绑定 project 与 owner 做授权。`taskId` 不能提供跨用户或跨
-project 权限，也不编码 Workflow Session、window、credential，更不会消费 terminal
+每次 task 请求都会重新按绑定 project 与 owner 做授权，并且 task method 只接受真正
+materialized 为 MCP Task 的 execution ID。`taskId` 不能提供跨用户或跨 project 权限，
+也不编码 Workflow Session、window、credential，更不会消费 terminal
 continuation delivery state。`ttlMs` 为 `null`（不伪造 expiry/retry authority），
 `pollIntervalMs` 建议为 2 秒。
 

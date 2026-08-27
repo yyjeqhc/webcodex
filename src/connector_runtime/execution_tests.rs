@@ -436,6 +436,7 @@ fn executor_status_observation<'a>(
         assertion_evidence: None,
         validated_workspace_sha256: None,
         executor_failure_code: None,
+        mcp_task_output_tail: None,
         now,
     }
 }
@@ -847,6 +848,20 @@ async fn mcp_task_polling_quick_yield_replays_exact_armed_execution() {
     assert!(armed.is_active());
     assert!(armed.terminal_continuation_is_armed());
 
+    let before_materialization = fixture
+        .connector
+        .execution_task_result_for_auth(&execution_id, &fixture.owner)
+        .await;
+    let Err(before_materialization) = before_materialization else {
+        panic!("an armed execution is not an MCP Task until materialization");
+    };
+    assert_eq!(before_materialization.http_status, 404);
+    let materialized_execution = fixture
+        .connector
+        .materialize_execution_task_for_auth(&execution_id, &fixture.owner)
+        .unwrap();
+    assert!(materialized_execution.mcp_task_is_materialized());
+
     let (_task, materialized, working_outcome) = fixture
         .connector
         .execution_task_result_for_auth(&execution_id, &fixture.owner)
@@ -889,13 +904,20 @@ async fn mcp_task_polling_quick_yield_replays_exact_armed_execution() {
     assert!(poll(&fixture.registry).await.is_none());
     assert!(execution_by_id(&fixture, &execution_id).terminal_continuation_is_armed());
 
-    update_job(&fixture.registry, &job_id, "completed", None, Some(0)).await;
+    update_job(
+        &fixture.registry,
+        &job_id,
+        "completed",
+        Some("durable task tail\n"),
+        Some(0),
+    )
+    .await;
     let completed = wait_for_execution(
         &fixture,
         Some(&execution_id),
         Duration::from_secs(10),
         "MCP task-polling execution completion",
-        |execution| execution.state == "succeeded",
+        |execution| execution.state == "succeeded" && execution.mcp_task_result_is_finalized(),
     )
     .await;
     let (_task, terminal, terminal_outcome) = fixture
@@ -906,6 +928,17 @@ async fn mcp_task_polling_quick_yield_replays_exact_armed_execution() {
     assert_eq!(terminal.execution_id, completed.execution_id);
     assert!(!terminal.is_active());
     assert_eq!(terminal_outcome.body["blocking"], false);
+    assert_eq!(
+        terminal.mcp_task_output_tail.as_ref().unwrap()["stdout"],
+        "durable task tail\n"
+    );
+    assert!(fixture
+        .connector
+        .db
+        .terminal_ready_connector_executions()
+        .unwrap()
+        .iter()
+        .all(|ready| ready.execution_id != execution_id));
 }
 
 #[tokio::test]
@@ -985,6 +1018,7 @@ async fn mcp_tools_call_tasks_extension_switches_only_active_command_results_to_
         execution_by_id(&fixture, &execution_id).terminal_continuation_is_armed(),
         true
     );
+    assert!(execution_by_id(&fixture, &execution_id).mcp_task_is_materialized());
 
     let mut no_capability = salvo::test::TestClient::post("http://localhost/mcp")
         .bearer_auth(PROJECT_CREDENTIAL)
@@ -1016,6 +1050,11 @@ async fn mcp_tools_call_tasks_extension_switches_only_active_command_results_to_
         no_capability_body["result"]["structuredContent"]["blocking"],
         true
     );
+    let guided = fixture.connector.host_guide(
+        &fixture.task_id,
+        "task polling must not consume this guidance",
+    );
+    assert!(guided.ok, "{}", guided.body);
 
     let mut replay = salvo::test::TestClient::post("http://localhost/mcp")
         .bearer_auth(PROJECT_CREDENTIAL)
@@ -1044,13 +1083,20 @@ async fn mcp_tools_call_tasks_extension_switches_only_active_command_results_to_
     assert_eq!(replay_body["result"]["taskId"], execution_id);
     assert!(poll(&fixture.registry).await.is_none());
 
-    update_job(&fixture.registry, &job_id, "completed", None, Some(0)).await;
+    update_job(
+        &fixture.registry,
+        &job_id,
+        "completed",
+        Some("http durable final\n"),
+        Some(0),
+    )
+    .await;
     wait_for_execution(
         &fixture,
         Some(&execution_id),
         Duration::from_secs(10),
         "MCP task-augmented HTTP execution completion",
-        |execution| execution.state == "succeeded",
+        |execution| execution.state == "succeeded" && execution.mcp_task_result_is_finalized(),
     )
     .await;
 
@@ -1077,12 +1123,142 @@ async fn mcp_tools_call_tasks_extension_switches_only_active_command_results_to_
         .send(service.as_ref())
         .await;
     let terminal_body: Value = terminal.take_json().await.unwrap();
-    assert_eq!(terminal_body["result"]["resultType"], "complete");
-    assert!(terminal_body["result"].get("taskId").is_none());
+    assert_eq!(terminal_body["result"]["resultType"], "task");
+    assert_eq!(terminal_body["result"]["taskId"], execution_id);
+    assert_eq!(terminal_body["result"]["status"], "completed");
+    assert!(poll(&fixture.registry).await.is_none());
+
+    let mut polled = salvo::test::TestClient::post("http://localhost/mcp")
+        .bearer_auth(PROJECT_CREDENTIAL)
+        .add_header("mcp-protocol-version", PROTOCOL_VERSION, true)
+        .add_header("mcp-method", "tasks/get", true)
+        .add_header("mcp-name", &execution_id, true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 405,
+            "method": "tasks/get",
+            "params": {
+                "taskId": execution_id,
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientCapabilities": {
+                        "extensions": { TASKS_EXTENSION: {} }
+                    }
+                }
+            }
+        }))
+        .send(service.as_ref())
+        .await;
+    let polled_body: Value = polled.take_json().await.unwrap();
+    assert_eq!(polled_body["result"]["status"], "completed");
     assert_eq!(
-        terminal_body["result"]["structuredContent"]["data"]["execution"]["execution_status"],
+        polled_body["result"]["result"]["structuredContent"]["data"]["execution"]["output_tail"]
+            ["stdout"],
+        "http durable final\n"
+    );
+    let review = fixture
+        .call("task_review", json!({ "task_id": fixture.task_id }))
+        .await;
+    assert!(review.ok, "{}", review.body);
+    assert_eq!(
+        review.body["data"]["guidance"][0]["message"],
+        "task polling must not consume this guidance"
+    );
+}
+
+#[tokio::test]
+async fn mcp_tools_call_tasks_extension_keeps_terminal_before_yield_ordinary() {
+    const PROJECT_CREDENTIAL: &str =
+        "webcodex_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const PROTOCOL_VERSION: &str = "2026-07-28";
+    const TASKS_EXTENSION: &str = "io.modelcontextprotocol/tasks";
+
+    let fixture = fixture(1_000).await;
+    let mcp_runtime = Arc::new(
+        ToolRuntime::new_for_tests_with_shell_clients(fixture.registry.clone())
+            .with_model_surface(crate::model_surface::ModelSurface::CanonicalConnector),
+    );
+    let service = Arc::new(salvo::Service::new(
+        salvo::Router::new()
+            .hoop(salvo::affix_state::inject(
+                crate::test_support::test_config(Some("secret")),
+            ))
+            .hoop(salvo::affix_state::inject(fixture.connector.db.clone()))
+            .hoop(salvo::affix_state::inject(mcp_runtime))
+            .hoop(salvo::affix_state::inject(ConnectorRuntimeSlot(Some(
+                fixture.connector.clone(),
+            ))))
+            .push(
+                salvo::Router::with_path("mcp")
+                    .hoop(crate::AuthMiddleware)
+                    .post(crate::mcp::mcp_post),
+            ),
+    ));
+    let arguments = command_arguments(&fixture, "mcp-http-sync-terminal-1", "printf sync");
+    let service_for_call = service.clone();
+    let call = tokio::spawn(async move {
+        salvo::test::TestClient::post("http://localhost/mcp")
+            .bearer_auth(PROJECT_CREDENTIAL)
+            .add_header("mcp-protocol-version", PROTOCOL_VERSION, true)
+            .add_header("mcp-method", "tools/call", true)
+            .add_header("mcp-name", "commands_run", true)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 406,
+                "method": "tools/call",
+                "params": {
+                    "name": "commands_run",
+                    "arguments": arguments,
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                        "io.modelcontextprotocol/clientCapabilities": {
+                            "extensions": { TASKS_EXTENSION: {} }
+                        }
+                    }
+                }
+            }))
+            .send(service_for_call.as_ref())
+            .await
+    });
+    let request = next_request(&fixture.registry).await;
+    let job_id = request.job_id.unwrap();
+    let guided = fixture.connector.host_guide(
+        &fixture.task_id,
+        "ordinary fallback must carry this guidance",
+    );
+    assert!(guided.ok, "{}", guided.body);
+    update_job(
+        &fixture.registry,
+        &job_id,
+        "completed",
+        Some("sync terminal\n"),
+        Some(0),
+    )
+    .await;
+
+    let mut response = call.await.unwrap();
+    let body: Value = response.take_json().await.unwrap();
+    assert_eq!(body["result"]["resultType"], "complete");
+    assert!(body["result"].get("taskId").is_none());
+    assert_eq!(
+        body["result"]["structuredContent"]["data"]["execution"]["execution_status"],
         "succeeded"
     );
+    assert_eq!(
+        body["result"]["structuredContent"]["data"]["execution"]["output_tail"]["stdout"],
+        "sync terminal\n"
+    );
+    assert_eq!(
+        body["result"]["structuredContent"]["data"]["guidance"][0]["message"],
+        "ordinary fallback must carry this guidance"
+    );
+    let execution_id = body["result"]["structuredContent"]["data"]["execution"]["execution_id"]
+        .as_str()
+        .unwrap();
+    let execution = execution_by_id(&fixture, execution_id);
+    assert!(!execution.mcp_task_is_materialized());
+    assert!(!execution.mcp_task_result_is_finalized());
+    assert!(poll(&fixture.registry).await.is_none());
 }
 
 #[tokio::test]
@@ -2085,6 +2261,7 @@ async fn terminal_validation_success_without_progress_fails_closed() {
                 assertion_evidence: None,
                 validated_workspace_sha256: None,
                 executor_failure_code: None,
+                mcp_task_output_tail: None,
                 now: 4,
             },
         )
@@ -3633,6 +3810,7 @@ async fn nonzero_exit_keeps_submission_and_execution_outcomes_separate() {
                     assertion_evidence: None,
                     validated_workspace_sha256: None,
                     executor_failure_code: None,
+                    mcp_task_output_tail: None,
                     now,
                 },
             )

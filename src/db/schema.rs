@@ -480,6 +480,9 @@ impl Database {
                     OR (terminal_continuation_delivery_state IN ('delivered', 'delivery_unknown')
                         AND terminal_continuation_claim_fence IS NULL)
                 ),
+                mcp_task_materialized_at INTEGER,
+                mcp_task_result_finalized_at INTEGER,
+                mcp_task_output_tail_json TEXT,
                 UNIQUE(task_id, run_id, operation_id),
                 CHECK(
                     (kind = 'command' AND check_plan IS NULL)
@@ -985,6 +988,9 @@ impl Database {
                 "terminal_continuation_claim_fence",
                 "TEXT CHECK(terminal_continuation_claim_fence IS NULL OR (length(terminal_continuation_claim_fence) BETWEEN 1 AND 80))",
             ),
+            ("mcp_task_materialized_at", "INTEGER"),
+            ("mcp_task_result_finalized_at", "INTEGER"),
+            ("mcp_task_output_tail_json", "TEXT"),
         ] {
             if !columns.iter().any(|existing| existing == column) {
                 conn.execute(
@@ -1037,10 +1043,21 @@ mod connector_execution_column_tests {
         Database::ensure_connector_execution_columns(&conn).unwrap();
         Database::ensure_connector_execution_columns(&conn).unwrap();
 
-        let restored: (String, Option<i64>, String, String, Option<String>) = conn
+        let restored: (
+            String,
+            Option<i64>,
+            String,
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+        ) = conn
             .query_row(
                 "SELECT terminal_continuation_intent, terminal_continuation_armed_at, state,
-                        terminal_continuation_delivery_state, terminal_continuation_claim_fence
+                        terminal_continuation_delivery_state, terminal_continuation_claim_fence,
+                        mcp_task_materialized_at, mcp_task_result_finalized_at,
+                        mcp_task_output_tail_json
                  FROM wc_executions WHERE id = 'legacy'",
                 [],
                 |row| {
@@ -1050,6 +1067,9 @@ mod connector_execution_column_tests {
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
                     ))
                 },
             )
@@ -1061,6 +1081,9 @@ mod connector_execution_column_tests {
                 None,
                 "succeeded".to_string(),
                 "unclaimed".to_string(),
+                None,
+                None,
+                None,
                 None,
             )
         );

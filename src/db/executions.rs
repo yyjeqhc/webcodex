@@ -6,7 +6,7 @@ use super::execution_model::{
     load_execution_by_operation, observed_state, ConnectorExecution,
     ConnectorExecutionContinuationIntent, ConnectorExecutionFailure, ConnectorExecutionObservation,
     ConnectorExecutionReservation, ConnectorTerminalContinuationClaim,
-    ConnectorTerminalContinuationDeliveryState, EXECUTION_COLUMNS,
+    ConnectorTerminalContinuationDeliveryState, EXECUTION_COLUMNS, MAX_MCP_TASK_OUTPUT_TAIL_BYTES,
 };
 use super::task_kernel::{
     expire_task_approvals, insert_event, load_task, require_running, touch_task,
@@ -18,8 +18,27 @@ use serde_json::json;
 const TERMINAL_CONTINUATION_READY_PREDICATE: &str =
     "terminal_continuation_intent = 'armed_for_terminal' \
      AND state NOT IN ('accepted','queued','starting','running','cancel_requested') \
+     AND mcp_task_materialized_at IS NULL \
      AND terminal_continuation_delivery_state = 'unclaimed' \
      AND terminal_continuation_claim_fence IS NULL";
+
+fn serialize_mcp_task_output_tail(
+    output_tail: Option<&serde_json::Value>,
+) -> Result<Option<String>, ConnectorTaskStoreError> {
+    let serialized = output_tail
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| ConnectorTaskStoreError::InvalidState(error.to_string()))?;
+    if serialized
+        .as_ref()
+        .is_some_and(|value| value.len() > MAX_MCP_TASK_OUTPUT_TAIL_BYTES)
+    {
+        return Err(ConnectorTaskStoreError::InvalidState(
+            "MCP task output tail exceeds its durable size limit".to_string(),
+        ));
+    }
+    Ok(serialized)
+}
 
 impl Database {
     pub(crate) fn reserve_connector_execution(
@@ -146,6 +165,70 @@ impl Database {
         let task = load_task(&conn, &execution.task_id, project_id, subject_id)?
             .ok_or(ConnectorTaskStoreError::NotFound)?;
         Ok((task, execution))
+    }
+
+    pub(crate) fn materialize_connector_execution_mcp_task_for_subject(
+        &self,
+        execution_id: &str,
+        project_id: &str,
+        subject_id: &str,
+        now: i64,
+    ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let execution =
+            load_execution(&tx, execution_id)?.ok_or(ConnectorTaskStoreError::NotFound)?;
+        load_task(&tx, &execution.task_id, project_id, subject_id)?
+            .ok_or(ConnectorTaskStoreError::NotFound)?;
+        if execution.mcp_task_is_materialized() || execution.is_terminal() {
+            tx.commit()?;
+            return Ok(execution);
+        }
+        if !execution.terminal_continuation_is_armed() {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "active Connector execution is not durably armed for MCP task polling".to_string(),
+            ));
+        }
+        tx.execute(
+            "UPDATE wc_executions
+             SET mcp_task_materialized_at = COALESCE(mcp_task_materialized_at, ?1)
+             WHERE id = ?2
+               AND state IN ('accepted','queued','starting','running','cancel_requested')
+               AND terminal_continuation_intent = 'armed_for_terminal'
+               AND terminal_continuation_armed_at IS NOT NULL",
+            params![now, execution_id],
+        )?;
+        commit_execution(tx, execution_id)
+    }
+
+    pub(crate) fn record_connector_mcp_task_output_tail(
+        &self,
+        execution_id: &str,
+        output_tail: &serde_json::Value,
+    ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
+        let output_tail_json = serialize_mcp_task_output_tail(Some(output_tail))?
+            .expect("serializing a provided MCP task output tail returns Some");
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let execution =
+            load_execution(&tx, execution_id)?.ok_or(ConnectorTaskStoreError::NotFound)?;
+        if !execution.mcp_task_is_materialized()
+            || execution.mcp_task_result_is_finalized()
+            || execution.is_terminal()
+        {
+            tx.commit()?;
+            return Ok(execution);
+        }
+        tx.execute(
+            "UPDATE wc_executions
+             SET mcp_task_output_tail_json = ?1
+             WHERE id = ?2
+               AND mcp_task_materialized_at IS NOT NULL
+               AND mcp_task_result_finalized_at IS NULL
+               AND state IN ('accepted','queued','starting','running','cancel_requested')",
+            params![output_tail_json, execution_id],
+        )?;
+        commit_execution(tx, execution_id)
     }
 
     pub(crate) fn connector_execution_event_cursor(
@@ -577,6 +660,8 @@ impl Database {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|error| ConnectorTaskStoreError::InvalidState(error.to_string()))?;
+        let mcp_task_output_tail_json =
+            serialize_mcp_task_output_tail(observation.mcp_task_output_tail)?;
         if evidence_json
             .as_ref()
             .is_some_and(|evidence| evidence.len() > super::MAX_ASSERTION_EVIDENCE_BYTES)
@@ -637,7 +722,16 @@ impl Database {
                         AND ?10 = 'check'
                         THEN ?16 ELSE assertion_evidence_json END,
                     validated_workspace_sha256 = CASE WHEN ?1 = 'succeeded' AND kind = 'check'
-                        THEN ?17 ELSE NULL END
+                        THEN ?17 ELSE NULL END,
+                    mcp_task_output_tail_json = CASE
+                        WHEN mcp_task_materialized_at IS NOT NULL AND ?18 IS NOT NULL THEN ?18
+                        ELSE mcp_task_output_tail_json
+                    END,
+                    mcp_task_result_finalized_at = CASE
+                        WHEN ?7 AND mcp_task_materialized_at IS NOT NULL
+                        THEN COALESCE(mcp_task_result_finalized_at, ?5)
+                        ELSE mcp_task_result_finalized_at
+                    END
                     WHERE id = ?13",
             params![
                 state,
@@ -656,7 +750,8 @@ impl Database {
                 observation.check_completed.map(|count| count as i64),
                 observation.failed_check,
                 evidence_json,
-                validated_workspace
+                validated_workspace,
+                mcp_task_output_tail_json
             ],
         )?;
         if state_changed {
@@ -721,7 +816,12 @@ impl Database {
                 "UPDATE wc_executions SET state = ?1,
                         cancel_requested_at = COALESCE(cancel_requested_at, ?2),
                         terminal_reason = 'user_cancelled',
-                        finished_at = CASE WHEN ?3 THEN ?2 ELSE finished_at END
+                        finished_at = CASE WHEN ?3 THEN ?2 ELSE finished_at END,
+                        mcp_task_result_finalized_at = CASE
+                            WHEN ?3 AND mcp_task_materialized_at IS NOT NULL
+                            THEN COALESCE(mcp_task_result_finalized_at, ?2)
+                            ELSE mcp_task_result_finalized_at
+                        END
                  WHERE id = ?4",
                 params![state, now, immediate, execution.execution_id],
             )?;
@@ -877,7 +977,13 @@ impl Database {
                 tx.execute(
                     "UPDATE wc_executions SET state = 'interrupted', finished_at = ?1,
                      failure_source = 'runtime', failure_code = 'executor_handle_unverified',
-                     terminal_reason = 'runtime_restarted' WHERE id = ?2",
+                     terminal_reason = 'runtime_restarted',
+                     mcp_task_result_finalized_at = CASE
+                         WHEN mcp_task_materialized_at IS NOT NULL
+                         THEN COALESCE(mcp_task_result_finalized_at, ?1)
+                         ELSE mcp_task_result_finalized_at
+                     END
+                     WHERE id = ?2",
                     params![now, execution_id],
                 )?;
                 append_execution_event(&tx, &execution, "interrupted", now)?;
@@ -939,7 +1045,12 @@ impl Database {
         tx.execute(
             "UPDATE wc_executions SET state = ?1, finished_at = ?2, exit_code = ?3,
                         failure_source = ?4, failure_code = ?5, terminal_reason = ?6,
-                        assertion_evidence_json = COALESCE(?7, assertion_evidence_json)
+                        assertion_evidence_json = COALESCE(?7, assertion_evidence_json),
+                        mcp_task_result_finalized_at = CASE
+                            WHEN mcp_task_materialized_at IS NOT NULL
+                            THEN COALESCE(mcp_task_result_finalized_at, ?2)
+                            ELSE mcp_task_result_finalized_at
+                        END
              WHERE id = ?8",
             params![
                 state,

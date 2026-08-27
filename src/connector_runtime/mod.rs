@@ -431,7 +431,7 @@ impl ConnectorRuntime {
         store_error_outcome(ConnectorTaskStoreError::NotFound, None)
     }
 
-    fn execution_task_for_auth(
+    fn execution_for_auth(
         &self,
         execution_id: &str,
         auth: &AuthContext,
@@ -451,6 +451,61 @@ impl ConnectorRuntime {
             })
     }
 
+    fn execution_task_for_auth(
+        &self,
+        execution_id: &str,
+        auth: &AuthContext,
+    ) -> Result<(ConnectorTaskSnapshot, ConnectorExecution), ConnectorCallOutcome> {
+        let (task, execution) = self.execution_for_auth(execution_id, auth)?;
+        if !execution.mcp_task_is_materialized() {
+            return Err(Self::execution_task_not_found());
+        }
+        Ok((task, execution))
+    }
+
+    pub(crate) async fn ordinary_execution_result_for_auth(
+        &self,
+        execution_id: &str,
+        auth: &AuthContext,
+    ) -> Result<ConnectorCallOutcome, ConnectorCallOutcome> {
+        let (mut task, execution) = self.execution_for_auth(execution_id, auth)?;
+        task.run_id = execution.run_id.clone();
+        let projection = self.executions.projection(&execution, auth, true).await;
+        let mut data = json!({ "execution": projection });
+        self.attach_pending_guidance(&task, &mut data);
+        Ok(ConnectorCallOutcome::success_blocking_at(
+            &task,
+            task.event_cursor,
+            data,
+            execution.blocks_finish(),
+        ))
+    }
+
+    pub(crate) fn materialize_execution_task_for_auth(
+        &self,
+        execution_id: &str,
+        auth: &AuthContext,
+    ) -> Result<ConnectorExecution, ConnectorCallOutcome> {
+        if !auth.has_scope(SCOPE_JOB_RUN) {
+            return Err(ConnectorCallOutcome::scope_denied(SCOPE_JOB_RUN));
+        }
+        if !self.project_access_allowed(auth) {
+            return Err(Self::execution_task_not_found());
+        }
+        let subject_id = stable_subject_id(auth).map_err(|_| Self::execution_task_not_found())?;
+        self.db
+            .materialize_connector_execution_mcp_task_for_subject(
+                execution_id,
+                &self.context.project_id,
+                &subject_id,
+                chrono::Utc::now().timestamp(),
+            )
+            .map_err(|error| match error {
+                ConnectorTaskStoreError::NotFound => Self::execution_task_not_found(),
+                other => store_error_outcome(other, None),
+            })
+    }
+
     pub(crate) async fn execution_task_result_for_auth(
         &self,
         execution_id: &str,
@@ -464,6 +519,15 @@ impl ConnectorRuntime {
         ConnectorCallOutcome,
     > {
         let (mut task, execution) = self.execution_task_for_auth(execution_id, auth)?;
+        if execution.is_terminal() && !execution.mcp_task_result_is_finalized() {
+            return Err(store_error_outcome(
+                ConnectorTaskStoreError::InvalidState(
+                    "materialized MCP task is terminal before its durable result was finalized"
+                        .to_string(),
+                ),
+                Some(&task),
+            ));
+        }
         // A Connector task may have been resumed into a later run. MCP task
         // identity is the exact durable execution, so never project a newer
         // run id onto an older execution handle.
@@ -565,7 +629,7 @@ impl ConnectorRuntime {
         auth: Option<&AuthContext>,
         transport: ConnectorTransport,
         window: Option<&ClientWindow>,
-        defer_active_execution_guidance: bool,
+        defer_execution_guidance: bool,
     ) -> ConnectorCallOutcome {
         if surface::capability_spec(capability).is_none() {
             return ConnectorCallOutcome::error(
@@ -695,7 +759,7 @@ impl ConnectorRuntime {
                     auth,
                     transport,
                     now,
-                    defer_active_execution_guidance,
+                    defer_execution_guidance,
                 )
                 .await
             }
@@ -706,7 +770,7 @@ impl ConnectorRuntime {
                     auth,
                     transport,
                     now,
-                    defer_active_execution_guidance,
+                    defer_execution_guidance,
                 )
                 .await
             }
@@ -1884,7 +1948,7 @@ impl ConnectorRuntime {
         auth: &AuthContext,
         _transport: ConnectorTransport,
         now: i64,
-        defer_active_execution_guidance: bool,
+        defer_execution_guidance: bool,
     ) -> ConnectorCallOutcome {
         let input: ChecksRunInput = match parse_input("checks_run", arguments) {
             Ok(input) => input,
@@ -2101,7 +2165,7 @@ impl ConnectorRuntime {
                 .await,
             &task,
             auth,
-            defer_active_execution_guidance,
+            defer_execution_guidance,
         )
         .await
     }
@@ -2113,7 +2177,7 @@ impl ConnectorRuntime {
         auth: &AuthContext,
         _transport: ConnectorTransport,
         now: i64,
-        defer_active_execution_guidance: bool,
+        defer_execution_guidance: bool,
     ) -> ConnectorCallOutcome {
         let input: CommandsRunInput = match parse_input("commands_run", arguments) {
             Ok(input) => input,
@@ -2302,7 +2366,7 @@ impl ConnectorRuntime {
                 .await,
             &task,
             auth,
-            defer_active_execution_guidance,
+            defer_execution_guidance,
         )
         .await
     }
@@ -2312,7 +2376,7 @@ impl ConnectorRuntime {
         result: Result<crate::db::ConnectorExecution, ConnectorTaskStoreError>,
         task: &ConnectorTaskSnapshot,
         auth: &AuthContext,
-        defer_active_execution_guidance: bool,
+        defer_execution_guidance: bool,
     ) -> ConnectorCallOutcome {
         let current = self
             .task(&task.task_id, &task.owner_subject_id)
@@ -2321,7 +2385,7 @@ impl ConnectorRuntime {
             Ok(execution) => {
                 let projection = self.executions.projection(&execution, auth, true).await;
                 let mut data = json!({ "execution": projection });
-                if !defer_active_execution_guidance || execution.is_terminal() {
+                if !defer_execution_guidance {
                     self.attach_pending_guidance(&current, &mut data);
                 }
                 ConnectorCallOutcome::success_blocking_at(

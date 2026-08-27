@@ -236,15 +236,19 @@ remembered from an earlier request or from `Mcp-Session-Id`.
 
 Only `commands_run` and `checks_run` use task-augmented execution, and only when
 the existing bounded quick-yield returns an execution that is still active. A
-Tasks-capable client receives `resultType: "task"` with the durable execution ID
-as `taskId`; an exact `operation_id` replay resolves to the same execution and
-therefore the same task handle. If the execution is already terminal, or the
-request does not advertise the Tasks extension, the normal `CallToolResult`
-shape is unchanged.
+Tasks-capable client receives `resultType: "task"` only after that exact durable
+execution is materialized as an MCP Task; its execution ID is the `taskId`.
+Once materialized, an exact `operation_id` replay resolves to the same task
+handle even after the execution becomes terminal. If an execution reaches
+terminal state before it was ever materialized, or the request does not
+advertise the Tasks extension, the normal `CallToolResult` shape is unchanged.
 
-Poll with `tasks/get`. `working` is derived from the durable execution; terminal
-polls return the same bounded/redacted Connector execution result and remain
-stable across Server/database reopen. `tasks/update` is accepted for protocol
+Poll with `tasks/get`. `working` is derived from the durable execution. At the
+terminal transition, a materialized Task durably finalizes the bounded/redacted
+Connector result inputs, including the same bounded stdout/stderr tail used by
+the ordinary synchronous result. Terminal polls reconstruct only from that
+durable snapshot, so repeated polls remain stable across Server/database reopen
+and later Runner Job-log loss. `tasks/update` is accepted for protocol
 compatibility, but Connector execution Tasks never enter `input_required`, so
 unknown/already-satisfied input responses are ignored. `tasks/cancel` delegates
 to the existing Connector cancellation path: its ACK means the cancel request
@@ -253,8 +257,9 @@ the task reports a terminal status. There is no `tasks/list` and no task
 notification/subscription surface in this Connector integration.
 
 Task access is re-authorized on every request against the bound project and
-owner. Task IDs do not grant cross-user or cross-project access, do not encode a
-Workflow Session/window/credential, and do not consume terminal-continuation
+owner, and only execution IDs that were actually materialized as MCP Tasks are
+accepted by task methods. Task IDs do not grant cross-user or cross-project
+access, do not encode a Workflow Session/window/credential, and do not consume terminal-continuation
 delivery state. `ttlMs` is `null` (no fabricated expiry authority) and
 `pollIntervalMs` is an advisory two seconds.
 

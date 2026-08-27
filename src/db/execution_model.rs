@@ -2,6 +2,10 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 
 pub(crate) const MAX_ASSERTION_EVIDENCE_BYTES: usize = 16 * 1024;
+// Two already-bounded 256 KiB UTF-8 streams can expand substantially under
+// JSON escaping. Keep the persisted MCP task snapshot hard-bounded while
+// allowing any ordinary Connector output-tail projection to serialize.
+pub(crate) const MAX_MCP_TASK_OUTPUT_TAIL_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConnectorExecutionContinuationIntent {
@@ -110,6 +114,9 @@ pub(crate) struct ConnectorExecution {
     pub continuation_intent: ConnectorExecutionContinuationIntent,
     pub continuation_armed_at: Option<i64>,
     pub continuation_delivery_state: ConnectorTerminalContinuationDeliveryState,
+    pub mcp_task_materialized_at: Option<i64>,
+    pub mcp_task_result_finalized_at: Option<i64>,
+    pub mcp_task_output_tail: Option<Value>,
 }
 
 impl ConnectorExecution {
@@ -131,6 +138,14 @@ impl ConnectorExecution {
     pub(crate) fn terminal_continuation_is_armed(&self) -> bool {
         self.continuation_intent == ConnectorExecutionContinuationIntent::ArmedForTerminal
             && self.continuation_armed_at.is_some()
+    }
+
+    pub(crate) fn mcp_task_is_materialized(&self) -> bool {
+        self.mcp_task_materialized_at.is_some()
+    }
+
+    pub(crate) fn mcp_task_result_is_finalized(&self) -> bool {
+        self.mcp_task_result_finalized_at.is_some()
     }
 
     pub(crate) fn blocks_finish(&self) -> bool {
@@ -187,6 +202,7 @@ pub(crate) struct ConnectorExecutionObservation<'a> {
     pub assertion_evidence: Option<&'a Value>,
     pub validated_workspace_sha256: Option<&'a str>,
     pub executor_failure_code: Option<&'static str>,
+    pub mcp_task_output_tail: Option<&'a Value>,
     pub now: i64,
 }
 
@@ -359,7 +375,8 @@ pub(super) const EXECUTION_COLUMNS: &str =
     status_failure_code, check_plan, check_recipe_json, check_completed, check_workspace_sha256, \
     validated_workspace_sha256, failed_check, assertion_evidence_json, \
     terminal_continuation_intent, terminal_continuation_armed_at, \
-    terminal_continuation_delivery_state";
+    terminal_continuation_delivery_state, mcp_task_materialized_at, \
+    mcp_task_result_finalized_at, mcp_task_output_tail_json";
 
 pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConnectorExecution> {
     let cursor = |index| {
@@ -431,6 +448,20 @@ pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<Connect
             &row.get::<_, String>(32)?,
             32,
         )?,
+        mcp_task_materialized_at: row.get(33)?,
+        mcp_task_result_finalized_at: row.get(34)?,
+        mcp_task_output_tail: row
+            .get::<_, Option<String>>(35)?
+            .map(|output_tail| {
+                serde_json::from_str(&output_tail).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        35,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })
+            })
+            .transpose()?,
     })
 }
 

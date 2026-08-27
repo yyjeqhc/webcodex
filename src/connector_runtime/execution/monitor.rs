@@ -191,6 +191,22 @@ impl ExecutionService {
             )
             .await
             .map_err(|error| ("executor_status_unavailable", error))?;
+        let executor_failure_code = job.error.as_deref().and_then(executor_failure_code);
+        let terminal_candidate = executor_failure_code.is_some()
+            || matches!(
+                job.status.as_str(),
+                "completed" | "stopped" | "cancelled" | "timeout" | "timed_out" | "lost" | "failed"
+            );
+        let mcp_task_output_tail = if terminal_candidate {
+            self.bounded_output_tail(&execution, auth).await
+        } else {
+            None
+        };
+        if let Some(output_tail) = mcp_task_output_tail.as_ref() {
+            self.db
+                .record_connector_mcp_task_output_tail(execution_id, output_tail)
+                .map_err(|error| ("task_store_error", error.to_string()))?;
+        }
         if job.status == "lost" {
             return Err((
                 "executor_status_unavailable",
@@ -207,7 +223,6 @@ impl ExecutionService {
         let progress = job.validation_progress.as_ref();
         let check_completed = progress.map(|progress| progress.completed);
         let failed_check = progress.and_then(|progress| progress.failed_step.as_deref());
-        let executor_failure_code = job.error.as_deref().and_then(executor_failure_code);
         let assertion_evidence = if execution.kind == "check" && failed_check.is_some() {
             let (_, full_stdout, full_stderr, _, _, _) = self
                 .tools
@@ -291,6 +306,7 @@ impl ExecutionService {
                     assertion_evidence: assertion_evidence.as_ref(),
                     validated_workspace_sha256: validated_workspace_sha256.as_deref(),
                     executor_failure_code,
+                    mcp_task_output_tail: mcp_task_output_tail.as_ref(),
                     now: chrono::Utc::now().timestamp(),
                 },
             )

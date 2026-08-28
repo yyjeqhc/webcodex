@@ -89,8 +89,8 @@ pub(super) use lsp::{
     lsp_status_input_schema, workspace_symbols_input_schema,
 };
 pub(super) use memory::{
-    memory_delete_input_schema, memory_read_input_schema, memory_search_input_schema,
-    memory_set_input_schema,
+    memory_delete_input_schema, memory_read_input_schema, memory_scope_list_input_schema,
+    memory_scope_purge_input_schema, memory_search_input_schema, memory_set_input_schema,
 };
 pub(super) use patches::{apply_patch_checked_input_schema, apply_patch_input_schema};
 pub(crate) use projects::{

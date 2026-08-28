@@ -181,6 +181,8 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
         "memory_read",
         "memory_set",
         "memory_delete",
+        "memory_scope_list",
+        "memory_scope_purge",
     ] {
         assert!(!generic_names.iter().any(|generic| generic == name));
     }
@@ -238,6 +240,13 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
         crate::auth::SCOPE_MEMORY_MANAGE,
     ]);
     let full = render(Some(&full_auth));
+    // Project Memory manage authority is not global lifecycle authority.
+    assert!(!memory_names(&full).contains(&"memory_scope_list".to_string()));
+    assert!(!memory_names(&full).contains(&"memory_scope_purge".to_string()));
+    let admin_auth = oauth(&[crate::auth::SCOPE_ADMIN]);
+    let admin = render(Some(&admin_auth));
+    assert!(memory_names(&admin).contains(&"memory_scope_list".to_string()));
+    assert!(memory_names(&admin).contains(&"memory_scope_purge".to_string()));
     assert_eq!(
         memory_names(&full),
         vec![
@@ -334,7 +343,12 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
             .into_iter()
             .map(|spec| spec.name)
             .collect::<Vec<_>>(),
-        vec!["memory_set", "memory_delete"]
+        vec![
+            "memory_set",
+            "memory_delete",
+            "memory_scope_list",
+            "memory_scope_purge"
+        ]
     );
 
     for surface in [ModelSurface::CanonicalConnector, ModelSurface::LocalCoding] {

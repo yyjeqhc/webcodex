@@ -1058,6 +1058,28 @@ pub(super) fn context_result_summary_for_tool_result(
                 "state_changed",
             ],
         ),
+        "memory_scope_list" => selected(
+            output,
+            &[
+                "total_count",
+                "returned_count",
+                "truncated",
+                "error_kind",
+                "state_changed",
+            ],
+        ),
+        "memory_scope_purge" => selected(
+            output,
+            &[
+                "memory_scope_id",
+                "catalog_revision",
+                "current_catalog_revision",
+                "purged_count",
+                "purged",
+                "error_kind",
+                "state_changed",
+            ],
+        ),
         "skill_list" => selected(
             output,
             &[

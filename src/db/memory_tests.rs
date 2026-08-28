@@ -1,7 +1,8 @@
 use super::*;
 use crate::db::memory::{
-    legacy_memory_revision_v1, memory_definition_hash, memory_state_revision, MemoryPriority,
-    MemorySetInput,
+    legacy_memory_revision_v1, memory_definition_hash, memory_state_revision,
+    MemoryPrincipalAttribution, MemoryPriority, MemoryScopeAttribution, MemorySetInput,
+    MEMORY_PROVENANCE_LEGACY, MEMORY_SCOPE_IDENTITY_ATTRIBUTED, MEMORY_SCOPE_IDENTITY_LEGACY,
 };
 use rusqlite::{params, Connection};
 use std::sync::{Arc, Barrier};
@@ -20,6 +21,47 @@ fn input(key: &str, summary: &str) -> MemorySetInput {
         tags: vec!["architecture".to_string(), "stable".to_string()],
         expected_revision: None,
     }
+}
+
+fn scope_attribution(project: &str, runner: &str, hex: char) -> MemoryScopeAttribution {
+    MemoryScopeAttribution {
+        project_runtime_id: project.to_string(),
+        runner_client_id: runner.to_string(),
+        root_fingerprint: format!("wc_memroot_{}", hex.to_string().repeat(64)),
+    }
+}
+
+fn principal(kind: &str, hex: char) -> MemoryPrincipalAttribution {
+    MemoryPrincipalAttribution {
+        kind: kind.to_string(),
+        principal_digest: format!("wc_memprincipal_{}", hex.to_string().repeat(64)),
+    }
+}
+
+fn create_current_v2_memory_schema(conn: &Connection) {
+    conn.execute_batch(
+        "CREATE TABLE project_memories (
+            memory_id TEXT PRIMARY KEY,
+            memory_scope_id TEXT NOT NULL,
+            memory_key TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            body TEXT NOT NULL,
+            priority TEXT NOT NULL CHECK(priority IN ('high', 'normal', 'low')),
+            bootstrap INTEGER NOT NULL CHECK(bootstrap IN (0, 1)),
+            tags_json TEXT NOT NULL,
+            definition_hash TEXT NOT NULL,
+            generation INTEGER NOT NULL CHECK(generation >= 1),
+            revision TEXT NOT NULL,
+            created_at_unix_ms INTEGER NOT NULL,
+            updated_at_unix_ms INTEGER NOT NULL,
+            UNIQUE(memory_scope_id, memory_key)
+        );
+        CREATE INDEX idx_project_memories_scope_key
+            ON project_memories(memory_scope_id, memory_key);
+        CREATE INDEX idx_project_memories_scope_bootstrap
+            ON project_memories(memory_scope_id, bootstrap, priority, memory_key);",
+    )
+    .unwrap();
 }
 
 #[test]
@@ -75,6 +117,30 @@ fn memory_create_retry_cas_update_delete_and_restart_are_durable() {
         .unwrap();
     assert_eq!(durable.revision, updated.record.revision);
     assert_eq!(durable.summary, "Use canary deploys.");
+    assert_eq!(durable.created_by_kind, "dev");
+    assert_eq!(durable.updated_by_kind, "dev");
+    assert!(durable.created_by_principal_digest.is_some());
+    assert_eq!(
+        durable.created_by_principal_digest,
+        durable.updated_by_principal_digest
+    );
+    let durable_scope = reopened
+        .get_project_memory_scope(&scope)
+        .unwrap()
+        .expect("attributed scope must survive reopen");
+    assert_eq!(
+        durable_scope.scope.identity_state,
+        MEMORY_SCOPE_IDENTITY_ATTRIBUTED
+    );
+    assert_eq!(
+        durable_scope.scope.project_runtime_id.as_deref(),
+        Some("agent:test:memory")
+    );
+    assert_eq!(
+        durable_scope.scope.runner_client_id.as_deref(),
+        Some("test-runner")
+    );
+    assert_eq!(durable_scope.memories.len(), 1);
 
     assert_eq!(
         reopened
@@ -191,14 +257,30 @@ fn memory_global_capacity_is_hard_and_does_not_evict() {
                 "INSERT INTO project_memories
                  (memory_id, memory_scope_id, memory_key, summary, body, priority, bootstrap,
                   tags_json, definition_hash, generation, revision,
-                  created_at_unix_ms, updated_at_unix_ms)
-                 VALUES (?1, ?2, ?3, 's', '', 'normal', 0, '[]', ?4, 1, ?5, 1, 1)",
+                  created_at_unix_ms, updated_at_unix_ms,
+                  created_by_kind, created_by_principal_digest,
+                  updated_by_kind, updated_by_principal_digest)
+                 VALUES (?1, ?2, ?3, 's', '', 'normal', 0, '[]', ?4, 1, ?5, 1, 1,
+                         'dev', ?6, 'dev', ?6)",
                 params![
                     memory_id,
                     memory_scope_id,
                     memory_key,
                     definition_hash,
-                    revision
+                    revision,
+                    format!("wc_memprincipal_{}", "1".repeat(64))
+                ],
+            )
+            .unwrap();
+            tx.execute(
+                "INSERT INTO project_memory_scopes
+                 (memory_scope_id, identity_state, project_runtime_id, runner_client_id,
+                  root_fingerprint, created_at_unix_ms, last_mutated_at_unix_ms)
+                 VALUES (?1, 'attributed', ?2, 'test-runner', ?3, 1, 1)",
+                params![
+                    memory_scope_id,
+                    format!("agent:test:global-{index}"),
+                    format!("wc_memroot_{:064x}", index + 1),
                 ],
             )
             .unwrap();
@@ -218,6 +300,31 @@ fn memory_global_capacity_is_hard_and_does_not_evict() {
             row.get(0)
         })
         .unwrap();
+    assert_eq!(total as usize, MAX_MEMORIES_GLOBAL);
+
+    let reclaim_scope = format!("wc_memscope_{:064x}", 100);
+    let reclaim = db
+        .get_project_memory_scope(&reclaim_scope)
+        .unwrap()
+        .unwrap();
+    let reclaim_catalog = memory_catalog_revision(&reclaim.memories);
+    let purged = db
+        .purge_project_memory_scope(&reclaim_scope, &reclaim_catalog)
+        .unwrap();
+    assert!(purged.purged && purged.state_changed);
+    assert_eq!(purged.purged_count, 1);
+    assert!(
+        db.set_project_memory(&new_scope, input("new", "capacity recovered"))
+            .unwrap()
+            .created
+    );
+    let recovered_total: i64 = db
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM project_memories", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(recovered_total as usize, MAX_MEMORIES_GLOBAL);
     assert_eq!(total as usize, MAX_MEMORIES_GLOBAL);
 }
 
@@ -637,6 +744,559 @@ fn corrupted_persisted_memory_rows_fail_closed_before_projection() {
             "{label} list"
         );
     }
+}
+
+#[test]
+fn current_205_rows_migrate_scope_metadata_and_legacy_provenance_without_revision_churn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("memory-v2.db");
+    let raw = Connection::open(&path).unwrap();
+    create_current_v2_memory_schema(&raw);
+    let memory_scope_id = scope('a');
+    let mut expected_revisions = Vec::new();
+    for (index, (key, summary, created, updated)) in [
+        ("policy-a", "first", 10_i64, 20_i64),
+        ("policy-b", "second", 30_i64, 40_i64),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let memory_id = format!("wc_mem_{:032x}", index + 1);
+        let definition_hash =
+            memory_definition_hash(key, summary, "body", MemoryPriority::Normal, false, &[]);
+        let revision = memory_state_revision(&memory_scope_id, &memory_id, 1, &definition_hash);
+        raw.execute(
+            "INSERT INTO project_memories
+             (memory_id, memory_scope_id, memory_key, summary, body, priority, bootstrap,
+              tags_json, definition_hash, generation, revision,
+              created_at_unix_ms, updated_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, 'body', 'normal', 0, '[]', ?5, 1, ?6, ?7, ?8)",
+            params![
+                memory_id,
+                memory_scope_id,
+                key,
+                summary,
+                definition_hash,
+                revision,
+                created,
+                updated,
+            ],
+        )
+        .unwrap();
+        expected_revisions.push((key.to_string(), revision));
+    }
+    drop(raw);
+
+    let db = Database::open(&path).unwrap();
+    let snapshot = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .expect("migrated scope");
+    assert_eq!(snapshot.scope.identity_state, MEMORY_SCOPE_IDENTITY_LEGACY);
+    assert!(snapshot.scope.project_runtime_id.is_none());
+    assert!(snapshot.scope.runner_client_id.is_none());
+    assert!(snapshot.scope.root_fingerprint.is_none());
+    assert_eq!(snapshot.scope.created_at_unix_ms, 10);
+    assert_eq!(snapshot.scope.last_mutated_at_unix_ms, 40);
+    assert_eq!(snapshot.memories.len(), 2);
+    for (key, revision) in expected_revisions {
+        let record = snapshot
+            .memories
+            .iter()
+            .find(|record| record.memory_key == key)
+            .unwrap();
+        assert_eq!(
+            record.revision, revision,
+            "migration must preserve #205 state ETag"
+        );
+        assert_eq!(record.generation, 1);
+        assert_eq!(record.created_by_kind, MEMORY_PROVENANCE_LEGACY);
+        assert_eq!(record.updated_by_kind, MEMORY_PROVENANCE_LEGACY);
+        assert!(record.created_by_principal_digest.is_none());
+        assert!(record.updated_by_principal_digest.is_none());
+    }
+    drop(db);
+
+    let reopened = Database::open(&path).unwrap();
+    let durable = reopened
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(durable.scope.identity_state, MEMORY_SCOPE_IDENTITY_LEGACY);
+    assert_eq!(durable.memories.len(), 2);
+}
+
+#[test]
+fn malformed_current_205_row_migration_rolls_back_without_trusting_provenance() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("memory-v2-corrupt.db");
+    let raw = Connection::open(&path).unwrap();
+    create_current_v2_memory_schema(&raw);
+    let memory_scope_id = scope('b');
+    let memory_id = "wc_mem_0123456789abcdef0123456789abcdef";
+    let definition_hash = memory_definition_hash(
+        "policy",
+        "summary",
+        "body",
+        MemoryPriority::Normal,
+        false,
+        &[],
+    );
+    raw.execute(
+        "INSERT INTO project_memories
+         (memory_id, memory_scope_id, memory_key, summary, body, priority, bootstrap,
+          tags_json, definition_hash, generation, revision, created_at_unix_ms, updated_at_unix_ms)
+         VALUES (?1, ?2, 'policy', 'summary', 'body', 'normal', 0, '[]', ?3, 1, ?4, 1, 1)",
+        params![
+            memory_id,
+            memory_scope_id,
+            definition_hash,
+            format!("wc_memrev_{}", "0".repeat(64)),
+        ],
+    )
+    .unwrap();
+    drop(raw);
+
+    assert!(Database::open(&path).is_err());
+    let raw = Connection::open(&path).unwrap();
+    let columns = raw
+        .prepare("PRAGMA table_info(project_memories)")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(!columns.iter().any(|column| column == "created_by_kind"));
+    let scope_table_count: i64 = raw
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_memory_scopes'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(scope_table_count, 0);
+}
+
+#[test]
+fn attributed_scope_and_provenance_track_real_mutations_without_noop_churn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("memory.db");
+    let db = Database::open(&path).unwrap();
+    let memory_scope_id = scope('c');
+    let scope_meta = scope_attribution("agent:runner:demo", "runner", 'a');
+    let creator = principal("shared-key", '1');
+    let updater = principal("oauth2", '2');
+
+    let created = db
+        .set_project_memory_attributed(
+            &memory_scope_id,
+            &scope_meta,
+            &creator,
+            input("policy-a", "original"),
+        )
+        .unwrap();
+    assert_eq!(created.record.created_by_kind, creator.kind);
+    assert_eq!(created.record.updated_by_kind, creator.kind);
+    assert_eq!(
+        created.record.created_by_principal_digest.as_deref(),
+        Some(creator.principal_digest.as_str())
+    );
+    let first_scope = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap()
+        .scope;
+    assert_eq!(first_scope.identity_state, MEMORY_SCOPE_IDENTITY_ATTRIBUTED);
+    assert_eq!(
+        first_scope.project_runtime_id.as_deref(),
+        Some(scope_meta.project_runtime_id.as_str())
+    );
+    assert_eq!(
+        first_scope.runner_client_id.as_deref(),
+        Some(scope_meta.runner_client_id.as_str())
+    );
+    assert_eq!(
+        first_scope.root_fingerprint.as_deref(),
+        Some(scope_meta.root_fingerprint.as_str())
+    );
+
+    let noop = db
+        .set_project_memory_attributed(
+            &memory_scope_id,
+            &scope_meta,
+            &updater,
+            input("policy-a", "original"),
+        )
+        .unwrap();
+    assert!(!noop.state_changed);
+    assert_eq!(noop.record.updated_by_kind, creator.kind);
+    assert_eq!(noop.record.revision, created.record.revision);
+    let after_noop_scope = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap()
+        .scope;
+    assert_eq!(
+        after_noop_scope.last_mutated_at_unix_ms,
+        first_scope.last_mutated_at_unix_ms
+    );
+
+    let second = db
+        .set_project_memory_attributed(
+            &memory_scope_id,
+            &scope_meta,
+            &creator,
+            input("policy-b", "second"),
+        )
+        .unwrap();
+    let shared_scope = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(shared_scope.memories.len(), 2);
+
+    let mut update = input("policy-a", "changed");
+    update.expected_revision = Some(created.record.revision.clone());
+    let changed = db
+        .set_project_memory_attributed(&memory_scope_id, &scope_meta, &updater, update)
+        .unwrap();
+    assert!(changed.state_changed);
+    assert_eq!(changed.record.created_by_kind, creator.kind);
+    assert_eq!(changed.record.updated_by_kind, updater.kind);
+    assert_eq!(
+        changed.record.created_by_principal_digest,
+        created.record.created_by_principal_digest
+    );
+    assert_eq!(
+        changed.record.updated_by_principal_digest.as_deref(),
+        Some(updater.principal_digest.as_str())
+    );
+
+    // Scope attribution and provenance are durable Control data, not process
+    // memory. Reopening the same SQLite store must preserve them exactly.
+    drop(db);
+    let db = Database::open(&path).unwrap();
+    let restarted = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        restarted.scope.identity_state,
+        MEMORY_SCOPE_IDENTITY_ATTRIBUTED
+    );
+    let restarted_policy = restarted
+        .memories
+        .iter()
+        .find(|record| record.memory_key == "policy-a")
+        .unwrap();
+    assert_eq!(restarted_policy.created_by_kind, creator.kind);
+    assert_eq!(restarted_policy.updated_by_kind, updater.kind);
+    assert_eq!(
+        restarted_policy.updated_by_principal_digest.as_deref(),
+        Some(updater.principal_digest.as_str())
+    );
+
+    db.delete_project_memory_attributed(
+        &memory_scope_id,
+        &scope_meta,
+        "policy-b",
+        &second.record.revision,
+    )
+    .unwrap();
+    assert_eq!(
+        db.get_project_memory_scope(&memory_scope_id)
+            .unwrap()
+            .unwrap()
+            .memories
+            .len(),
+        1
+    );
+    db.delete_project_memory_attributed(
+        &memory_scope_id,
+        &scope_meta,
+        "policy-a",
+        &changed.record.revision,
+    )
+    .unwrap();
+    assert!(db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn legacy_scope_is_attributed_only_by_real_mutation_and_reads_remain_read_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("legacy-scope.db");
+    let raw = Connection::open(&path).unwrap();
+    create_current_v2_memory_schema(&raw);
+    let memory_scope_id = scope('d');
+    let memory_id = "wc_mem_11111111111111111111111111111111";
+    let definition_hash = memory_definition_hash(
+        "policy",
+        "summary",
+        "body",
+        MemoryPriority::Normal,
+        false,
+        &[],
+    );
+    let revision = memory_state_revision(&memory_scope_id, memory_id, 1, &definition_hash);
+    raw.execute(
+        "INSERT INTO project_memories VALUES (?1, ?2, 'policy', 'summary', 'body', 'normal', 0, '[]', ?3, 1, ?4, 10, 20)",
+        params![memory_id, memory_scope_id, definition_hash, revision],
+    )
+    .unwrap();
+    drop(raw);
+    let db = Database::open(&path).unwrap();
+    let before = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(before.scope.identity_state, MEMORY_SCOPE_IDENTITY_LEGACY);
+
+    let _ = db.list_project_memories(&memory_scope_id).unwrap();
+    let _ = db.get_project_memory(&memory_scope_id, "policy").unwrap();
+    let after_reads = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(after_reads.scope, before.scope);
+
+    let scope_meta = scope_attribution("agent:runner:demo", "runner", 'b');
+    let current = principal("shared-key", '3');
+    let noop = db
+        .set_project_memory_attributed(
+            &memory_scope_id,
+            &scope_meta,
+            &current,
+            MemorySetInput {
+                memory_key: "policy".to_string(),
+                summary: "summary".to_string(),
+                body: "body".to_string(),
+                priority: MemoryPriority::Normal,
+                bootstrap: false,
+                tags: vec![],
+                expected_revision: None,
+            },
+        )
+        .unwrap();
+    assert!(!noop.state_changed);
+    assert_eq!(
+        db.get_project_memory_scope(&memory_scope_id)
+            .unwrap()
+            .unwrap()
+            .scope
+            .identity_state,
+        MEMORY_SCOPE_IDENTITY_LEGACY
+    );
+
+    let mut real_update = MemorySetInput {
+        memory_key: "policy".to_string(),
+        summary: "changed".to_string(),
+        body: "body".to_string(),
+        priority: MemoryPriority::Normal,
+        bootstrap: false,
+        tags: vec![],
+        expected_revision: Some(revision),
+    };
+    let updated = db
+        .set_project_memory_attributed(&memory_scope_id, &scope_meta, &current, real_update.clone())
+        .unwrap();
+    real_update.expected_revision = Some(updated.record.revision.clone());
+    let after = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.scope.identity_state, MEMORY_SCOPE_IDENTITY_ATTRIBUTED);
+    assert_eq!(after.memories[0].created_by_kind, MEMORY_PROVENANCE_LEGACY);
+    assert_eq!(after.memories[0].updated_by_kind, current.kind);
+}
+
+#[test]
+fn purge_is_catalog_fenced_atomic_and_desired_state_idempotent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::open(&tmp.path().join("purge.db")).unwrap();
+    let memory_scope_id = scope('e');
+    let scope_meta = scope_attribution("agent:runner:detached", "runner", 'c');
+    let actor = principal("bootstrap", '4');
+    let first = db
+        .set_project_memory_attributed(&memory_scope_id, &scope_meta, &actor, input("a", "A"))
+        .unwrap();
+    let second = db
+        .set_project_memory_attributed(&memory_scope_id, &scope_meta, &actor, input("b", "B"))
+        .unwrap();
+    let initial = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap();
+    let stale_catalog = memory_catalog_revision(&initial.memories);
+
+    let mut update = input("a", "A2");
+    update.expected_revision = Some(first.record.revision);
+    let updated = db
+        .set_project_memory_attributed(&memory_scope_id, &scope_meta, &actor, update)
+        .unwrap();
+    assert_eq!(
+        db.purge_project_memory_scope(&memory_scope_id, &stale_catalog)
+            .unwrap_err()
+            .code(),
+        "memory_scope_changed"
+    );
+    assert_eq!(
+        db.get_project_memory_scope(&memory_scope_id)
+            .unwrap()
+            .unwrap()
+            .memories
+            .len(),
+        2
+    );
+
+    let before_recreate = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap();
+    let recreate_stale = memory_catalog_revision(&before_recreate.memories);
+    db.delete_project_memory_attributed(
+        &memory_scope_id,
+        &scope_meta,
+        "b",
+        &second.record.revision,
+    )
+    .unwrap();
+    let recreated = db
+        .set_project_memory_attributed(&memory_scope_id, &scope_meta, &actor, input("b", "B"))
+        .unwrap();
+    assert_ne!(recreated.record.memory_id, second.record.memory_id);
+    assert_eq!(
+        db.purge_project_memory_scope(&memory_scope_id, &recreate_stale)
+            .unwrap_err()
+            .code(),
+        "memory_scope_changed"
+    );
+
+    let current = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap();
+    let current_catalog = memory_catalog_revision(&current.memories);
+    db.conn_for_tests()
+        .execute_batch(
+            "CREATE TRIGGER fail_scope_metadata_delete BEFORE DELETE ON project_memory_scopes
+             BEGIN SELECT RAISE(ABORT, 'forced scope purge failure'); END;",
+        )
+        .unwrap();
+    assert_eq!(
+        db.purge_project_memory_scope(&memory_scope_id, &current_catalog)
+            .unwrap_err()
+            .code(),
+        "memory_store_unavailable"
+    );
+    let after_failed_purge = db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(after_failed_purge.memories.len(), 2);
+    db.conn_for_tests()
+        .execute_batch("DROP TRIGGER fail_scope_metadata_delete;")
+        .unwrap();
+    let purged = db
+        .purge_project_memory_scope(&memory_scope_id, &current_catalog)
+        .unwrap();
+    assert!(purged.purged && purged.state_changed);
+    assert_eq!(purged.purged_count, 2);
+    assert!(db
+        .get_project_memory_scope(&memory_scope_id)
+        .unwrap()
+        .is_none());
+    assert!(db
+        .get_project_memory(&memory_scope_id, "a")
+        .unwrap()
+        .is_none());
+    let repeated = db
+        .purge_project_memory_scope(&memory_scope_id, &current_catalog)
+        .unwrap();
+    assert!(!repeated.purged && !repeated.state_changed);
+    assert_eq!(repeated.purged_count, 0);
+    let _ = updated;
+}
+
+#[test]
+fn corrupted_scope_or_provenance_metadata_fails_closed() {
+    for (label, corrupt) in [
+        (
+            "scope_identity",
+            "PRAGMA ignore_check_constraints = ON;
+             UPDATE project_memory_scopes SET identity_state = 'bogus';
+             PRAGMA ignore_check_constraints = OFF;",
+        ),
+        (
+            "scope_root",
+            "UPDATE project_memory_scopes SET root_fingerprint = 'wc_memroot_bad';",
+        ),
+        (
+            "scope_project_too_long",
+            "UPDATE project_memory_scopes SET project_runtime_id = printf('%0513d', 0);",
+        ),
+        (
+            "scope_runner_too_long",
+            "UPDATE project_memory_scopes SET runner_client_id = printf('%0129d', 0);",
+        ),
+        (
+            "scope_timestamps",
+            "UPDATE project_memory_scopes
+             SET last_mutated_at_unix_ms = created_at_unix_ms - 1;",
+        ),
+        (
+            "provenance_digest",
+            "UPDATE project_memories
+             SET created_by_kind = 'shared-key', created_by_principal_digest = NULL;",
+        ),
+        (
+            "provenance_kind",
+            "UPDATE project_memories SET created_by_kind = 'bogus';",
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join(format!("{label}.db"))).unwrap();
+        let memory_scope_id = scope('f');
+        db.set_project_memory(&memory_scope_id, input("policy", "summary"))
+            .unwrap();
+        db.conn_for_tests().execute_batch(corrupt).unwrap();
+        assert_eq!(
+            db.get_project_memory_scope(&memory_scope_id)
+                .unwrap_err()
+                .code(),
+            "memory_store_unavailable",
+            "{label} scope"
+        );
+        assert_eq!(
+            db.list_project_memories(&memory_scope_id)
+                .unwrap_err()
+                .code(),
+            "memory_store_unavailable",
+            "{label} memory"
+        );
+    }
+}
+
+#[test]
+fn lifecycle_scope_list_fails_closed_when_scope_metadata_is_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::open(&tmp.path().join("missing-scope-row.db")).unwrap();
+    let memory_scope_id = scope('e');
+    db.set_project_memory(&memory_scope_id, input("policy", "summary"))
+        .unwrap();
+    db.conn_for_tests()
+        .execute(
+            "DELETE FROM project_memory_scopes WHERE memory_scope_id = ?1",
+            params![memory_scope_id],
+        )
+        .unwrap();
+    assert_eq!(
+        db.list_project_memory_scopes(0, 10).unwrap_err().code(),
+        "memory_store_unavailable",
+        "lifecycle inventory must not silently omit Memory rows whose scope metadata is missing"
+    );
 }
 
 #[test]

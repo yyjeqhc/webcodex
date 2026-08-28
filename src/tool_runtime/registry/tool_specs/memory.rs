@@ -1,6 +1,6 @@
 use super::super::input_schemas::{
-    memory_delete_input_schema, memory_read_input_schema, memory_search_input_schema,
-    memory_set_input_schema,
+    memory_delete_input_schema, memory_read_input_schema, memory_scope_list_input_schema,
+    memory_scope_purge_input_schema, memory_search_input_schema, memory_set_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -26,6 +26,16 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "memory_delete",
             "CAS-delete one explicit durable project Memory by memory_key and current state revision / ETag in expected_revision. An already-absent key is desired-state idempotent (deleted=false) but is not proof that an earlier deletion succeeded; delete+recreate has a different incarnation and revision. Requires project:write plus memory:manage and the normal permission gate.",
             memory_delete_input_schema(),
+        ),
+        tool_spec(
+            "memory_scope_list",
+            "Admin-only paginated inventory of durable Control-owned project Memory scopes. Reports attributed/legacy identity metadata, current/not_current/unknown status from fresh authoritative Project inventory, counts, timestamps, opaque root fingerprints, and catalog CAS revisions; never returns native roots or Memory content.",
+            memory_scope_list_input_schema(),
+        ),
+        tool_spec(
+            "memory_scope_purge",
+            "Admin-only destructive purge of one explicitly non-current project Memory scope. Requires confirm=true, current_status=not_current under a fresh authoritative Project inventory fence, and the exact current catalog revision. Current or unknown scopes fail closed. Reconcile a lost response with memory_scope_list; an already-absent scope is desired-state no-op, not proof of who performed an earlier purge.",
+            memory_scope_purge_input_schema(),
         ),
     ]
 }

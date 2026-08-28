@@ -230,6 +230,8 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
         "memory_read",
         "memory_set",
         "memory_delete",
+        "memory_scope_list",
+        "memory_scope_purge",
     ]
     .into_iter()
     .collect();

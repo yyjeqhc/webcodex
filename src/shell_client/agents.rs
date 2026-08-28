@@ -1237,6 +1237,38 @@ impl ShellClientRegistry {
             .collect()
     }
 
+    /// Hold the authoritative Runner/Project registry snapshot stable while one
+    /// bounded synchronous Control operation decides against that inventory.
+    /// This is intentionally narrow: callers must not await inside `f`.
+    pub(crate) async fn with_client_semantic_views_for_auth_locked<R>(
+        &self,
+        auth: Option<&crate::auth::AuthContext>,
+        f: impl FnOnce(Vec<ShellClientSemanticView>) -> R,
+    ) -> R {
+        let now = now_ts();
+        let mut inner = self.inner.lock().await;
+        self.prune_expired_shared_key_clients_locked(&mut inner, now);
+        for client in inner.clients.values_mut() {
+            expire_staging(client, now);
+        }
+        let mut ids = inner.clients.keys().cloned().collect::<Vec<_>>();
+        ids.sort();
+        let views = ids
+            .into_iter()
+            .filter(|id| {
+                inner
+                    .clients
+                    .get(id)
+                    .map(|client| shell_client_visible_to_auth(auth, client))
+                    .unwrap_or(false)
+            })
+            .filter_map(|id| Self::client_semantic_view_locked(&inner, &id))
+            .collect();
+        let result = f(views);
+        drop(inner);
+        result
+    }
+
     pub async fn get_client_view(&self, client_id: &str) -> Option<ShellClientView> {
         let now = now_ts();
         let mut inner = self.inner.lock().await;

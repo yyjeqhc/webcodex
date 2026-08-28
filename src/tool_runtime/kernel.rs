@@ -97,13 +97,17 @@ pub(crate) fn check_runtime_tool_scope(
     let policy = crate::auth::scopes::oauth_scope_policy_for_runtime_tool(tool_name);
     let Some(auth) = auth else {
         // Preserve historical unauthenticated compatibility for unrelated
-        // internal tools, but Memory authority is intentionally never inferred
-        // from surface presence or a missing credential.
-        let required_memory_scope = match policy {
+        // internal tools, but explicit Memory and administrator authority is
+        // intentionally never inferred from surface presence or a missing
+        // credential. This derives only from the canonical ToolDefinition
+        // authority policy; it is not a tool-name registry.
+        let required_explicit_scope = match policy {
             OAuthToolScopePolicy::Require(scope)
                 if matches!(
                     scope,
-                    crate::auth::SCOPE_MEMORY_READ | crate::auth::SCOPE_MEMORY_MANAGE
+                    crate::auth::SCOPE_MEMORY_READ
+                        | crate::auth::SCOPE_MEMORY_MANAGE
+                        | crate::auth::SCOPE_ADMIN
                 ) =>
             {
                 Some(scope)
@@ -111,12 +115,14 @@ pub(crate) fn check_runtime_tool_scope(
             OAuthToolScopePolicy::RequireAll(scopes) => scopes.iter().copied().find(|scope| {
                 matches!(
                     *scope,
-                    crate::auth::SCOPE_MEMORY_READ | crate::auth::SCOPE_MEMORY_MANAGE
+                    crate::auth::SCOPE_MEMORY_READ
+                        | crate::auth::SCOPE_MEMORY_MANAGE
+                        | crate::auth::SCOPE_ADMIN
                 )
             }),
             _ => None,
         };
-        if let Some(scope) = required_memory_scope {
+        if let Some(scope) = required_explicit_scope {
             return Err(ToolCallErrorStatus::InsufficientScope {
                 required_scope: Some(scope),
                 description: format!("missing required scope: {scope}"),

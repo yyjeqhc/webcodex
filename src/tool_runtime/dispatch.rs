@@ -1618,6 +1618,7 @@ impl ToolRuntime {
                     bootstrap,
                     tags,
                     expected_revision,
+                    auth,
                 )
             }
 
@@ -1632,6 +1633,19 @@ impl ToolRuntime {
                     None => return ToolResult::err("memory_delete requires a resolved Project"),
                 };
                 self.memory_delete(&project, memory_key, expected_revision)
+            }
+
+            ToolCall::MemoryScopeList { offset, limit } => {
+                self.memory_scope_list(auth, offset, limit).await
+            }
+
+            ToolCall::MemoryScopePurge {
+                memory_scope_id,
+                expected_catalog_revision,
+                confirm,
+            } => {
+                self.memory_scope_purge(auth, memory_scope_id, expected_catalog_revision, confirm)
+                    .await
             }
 
             call @ ToolCall::ImportConversationFilesToProject { .. } => {

@@ -633,7 +633,35 @@ impl Database {
             "created_at_unix_ms",
             "updated_at_unix_ms",
         ];
-        const CREATE_V2_TABLE: &str = "
+        const V3_COLUMNS: &[&str] = &[
+            "memory_id",
+            "memory_scope_id",
+            "memory_key",
+            "summary",
+            "body",
+            "priority",
+            "bootstrap",
+            "tags_json",
+            "definition_hash",
+            "generation",
+            "revision",
+            "created_at_unix_ms",
+            "updated_at_unix_ms",
+            "created_by_kind",
+            "created_by_principal_digest",
+            "updated_by_kind",
+            "updated_by_principal_digest",
+        ];
+        const SCOPE_COLUMNS: &[&str] = &[
+            "memory_scope_id",
+            "identity_state",
+            "project_runtime_id",
+            "runner_client_id",
+            "root_fingerprint",
+            "created_at_unix_ms",
+            "last_mutated_at_unix_ms",
+        ];
+        const CREATE_V3_TABLE: &str = "
             CREATE TABLE project_memories (
                 memory_id TEXT PRIMARY KEY,
                 memory_scope_id TEXT NOT NULL,
@@ -648,7 +676,32 @@ impl Database {
                 revision TEXT NOT NULL,
                 created_at_unix_ms INTEGER NOT NULL,
                 updated_at_unix_ms INTEGER NOT NULL,
+                created_by_kind TEXT NOT NULL,
+                created_by_principal_digest TEXT,
+                updated_by_kind TEXT NOT NULL,
+                updated_by_principal_digest TEXT,
                 UNIQUE(memory_scope_id, memory_key)
+            );";
+        const CREATE_SCOPE_TABLE: &str = "
+            CREATE TABLE project_memory_scopes (
+                memory_scope_id TEXT PRIMARY KEY,
+                identity_state TEXT NOT NULL CHECK(identity_state IN ('attributed', 'legacy_unattributed')),
+                project_runtime_id TEXT,
+                runner_client_id TEXT,
+                root_fingerprint TEXT,
+                created_at_unix_ms INTEGER NOT NULL,
+                last_mutated_at_unix_ms INTEGER NOT NULL,
+                CHECK(
+                    (identity_state = 'legacy_unattributed'
+                        AND project_runtime_id IS NULL
+                        AND runner_client_id IS NULL
+                        AND root_fingerprint IS NULL)
+                    OR
+                    (identity_state = 'attributed'
+                        AND project_runtime_id IS NOT NULL
+                        AND runner_client_id IS NOT NULL
+                        AND root_fingerprint IS NOT NULL)
+                )
             );";
         const CREATE_INDEXES: &str = "
             CREATE INDEX IF NOT EXISTS idx_project_memories_scope_key
@@ -660,6 +713,8 @@ impl Database {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .context("begin project Memory schema migration")?;
         let columns = table_columns(&transaction, "project_memories")?;
+        let fresh = columns.is_empty();
+        let mut backfill_scope_metadata = false;
         let matches_columns = |expected: &[&str]| {
             columns
                 .iter()
@@ -669,9 +724,10 @@ impl Database {
 
         if columns.is_empty() {
             transaction
-                .execute_batch(CREATE_V2_TABLE)
-                .context("create project Memory v2 table")?;
+                .execute_batch(CREATE_V3_TABLE)
+                .context("create project Memory v3 table")?;
         } else if matches_columns(V1_COLUMNS) {
+            backfill_scope_metadata = true;
             // Current #203 schema. Rebuild instead of ALTERing nullable columns:
             // every legacy row must be validated before it can acquire trusted
             // v2 definition/state identities, and any failure rolls back the
@@ -682,8 +738,8 @@ impl Database {
                  ALTER TABLE project_memories RENAME TO project_memories_v1;",
             )?;
             transaction
-                .execute_batch(CREATE_V2_TABLE)
-                .context("create project Memory v2 table during migration")?;
+                .execute_batch(CREATE_V3_TABLE)
+                .context("create project Memory v3 table during migration")?;
 
             let rows = {
                 let mut statement = transaction.prepare(
@@ -763,8 +819,11 @@ impl Database {
                     "INSERT INTO project_memories
                      (memory_id, memory_scope_id, memory_key, summary, body, priority, bootstrap,
                       tags_json, definition_hash, generation, revision,
-                      created_at_unix_ms, updated_at_unix_ms)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12)",
+                      created_at_unix_ms, updated_at_unix_ms,
+                      created_by_kind, created_by_principal_digest,
+                      updated_by_kind, updated_by_principal_digest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12,
+                             'legacy_unattributed', NULL, 'legacy_unattributed', NULL)",
                     rusqlite::params![
                         memory_id,
                         memory_scope_id,
@@ -782,8 +841,105 @@ impl Database {
                 )?;
             }
             transaction.execute_batch("DROP TABLE project_memories_v1;")?;
-        } else if !matches_columns(V2_COLUMNS) {
+        } else if matches_columns(V2_COLUMNS) {
+            backfill_scope_metadata = true;
+            {
+                let mut statement = transaction.prepare(
+                    "SELECT memory_id, memory_scope_id, memory_key, summary, body, priority,
+                            bootstrap, tags_json, definition_hash, generation, revision,
+                            created_at_unix_ms, updated_at_unix_ms,
+                            length(memory_id), length(memory_scope_id), length(memory_key),
+                            length(summary), length(CAST(body AS BLOB)), length(priority),
+                            length(CAST(tags_json AS BLOB)), length(definition_hash), length(revision)
+                     FROM project_memories ORDER BY memory_scope_id, memory_key",
+                )?;
+                statement
+                    .query_map([], |row| {
+                        super::memory::validate_current_memory_v2_row_lengths(
+                            row.get::<_, i64>(13)?,
+                            row.get::<_, i64>(14)?,
+                            row.get::<_, i64>(15)?,
+                            row.get::<_, i64>(16)?,
+                            row.get::<_, i64>(17)?,
+                            row.get::<_, i64>(18)?,
+                            row.get::<_, i64>(19)?,
+                            row.get::<_, i64>(20)?,
+                            row.get::<_, i64>(21)?,
+                        )
+                        .map_err(|_| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                13,
+                                rusqlite::types::Type::Integer,
+                                "current Memory row exceeds bounded shape".into(),
+                            )
+                        })?;
+                        super::memory::validate_current_memory_v2_row_identity(
+                            &row.get::<_, String>(0)?,
+                            &row.get::<_, String>(1)?,
+                            &row.get::<_, String>(2)?,
+                            &row.get::<_, String>(3)?,
+                            &row.get::<_, String>(4)?,
+                            &row.get::<_, String>(5)?,
+                            row.get::<_, i64>(6)?,
+                            &row.get::<_, String>(7)?,
+                            &row.get::<_, String>(8)?,
+                            row.get::<_, i64>(9)?,
+                            &row.get::<_, String>(10)?,
+                            row.get::<_, i64>(11)?,
+                            row.get::<_, i64>(12)?,
+                        )
+                        .map_err(|_| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                0,
+                                rusqlite::types::Type::Text,
+                                "malformed #205 project Memory row".into(),
+                            )
+                        })?;
+                        Ok(())
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+            }
+            transaction.execute_batch(
+                "ALTER TABLE project_memories
+                    ADD COLUMN created_by_kind TEXT NOT NULL DEFAULT 'legacy_unattributed';
+                 ALTER TABLE project_memories
+                    ADD COLUMN created_by_principal_digest TEXT;
+                 ALTER TABLE project_memories
+                    ADD COLUMN updated_by_kind TEXT NOT NULL DEFAULT 'legacy_unattributed';
+                 ALTER TABLE project_memories
+                    ADD COLUMN updated_by_principal_digest TEXT;",
+            )?;
+        } else if !matches_columns(V3_COLUMNS) {
             anyhow::bail!("unsupported project Memory schema shape");
+        }
+
+        let scope_columns = table_columns(&transaction, "project_memory_scopes")?;
+        let scope_shape_matches = scope_columns
+            .iter()
+            .map(String::as_str)
+            .eq(SCOPE_COLUMNS.iter().copied());
+        if scope_columns.is_empty() {
+            if !fresh && !backfill_scope_metadata {
+                anyhow::bail!("project Memory scope metadata is missing");
+            }
+            transaction
+                .execute_batch(CREATE_SCOPE_TABLE)
+                .context("create project Memory scope metadata table")?;
+        } else if !scope_shape_matches {
+            anyhow::bail!("unsupported project Memory scope schema shape");
+        }
+
+        if backfill_scope_metadata {
+            transaction.execute(
+                "INSERT INTO project_memory_scopes
+                 (memory_scope_id, identity_state, project_runtime_id, runner_client_id,
+                  root_fingerprint, created_at_unix_ms, last_mutated_at_unix_ms)
+                 SELECT memory_scope_id, 'legacy_unattributed', NULL, NULL, NULL,
+                        MIN(created_at_unix_ms), MAX(updated_at_unix_ms)
+                 FROM project_memories
+                 GROUP BY memory_scope_id",
+                [],
+            )?;
         }
 
         transaction

@@ -712,6 +712,7 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
     let memory_id = "wc_mem_0123456789abcdef0123456789abcdef";
     let revision = format!("wc_memrev_{}", "a".repeat(64));
     let catalog_revision = format!("wc_memcat_{}", "b".repeat(64));
+    let private_principal_digest = format!("wc_memprincipal_{}", "c".repeat(64));
 
     let set_args = super::super::ToolCall::MemorySet {
         project: project.to_string(),
@@ -819,7 +820,13 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
             "tags": [private_tag],
             "revision": revision,
             "created_at_unix_ms": 1,
-            "updated_at_unix_ms": 2
+            "updated_at_unix_ms": 2,
+            "provenance": {
+                "created_by_kind": "user",
+                "updated_by_kind": "oauth2",
+                "created_by_principal_digest": private_principal_digest,
+                "updated_by_principal_digest": private_principal_digest
+            }
         }),
         None,
         None,
@@ -827,7 +834,13 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
 
     let restored = flush_and_restore(&store, ledger.clone());
     let raw = std::fs::read_to_string(&ledger).unwrap();
-    for private in [private_query, private_summary, private_body, private_tag] {
+    for private in [
+        private_query,
+        private_summary,
+        private_body,
+        private_tag,
+        private_principal_digest.as_str(),
+    ] {
         assert!(!raw.contains(private), "ledger leaked {private}");
     }
     assert!(raw.contains(memory_id));
@@ -838,7 +851,13 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
 
     let recovery =
         serde_json::to_string(&restored.summary(&session.session_id, Some(30)).unwrap()).unwrap();
-    for private in [private_query, private_summary, private_body, private_tag] {
+    for private in [
+        private_query,
+        private_summary,
+        private_body,
+        private_tag,
+        private_principal_digest.as_str(),
+    ] {
         assert!(!recovery.contains(private), "recovery leaked {private}");
     }
 }

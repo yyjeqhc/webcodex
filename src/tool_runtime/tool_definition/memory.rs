@@ -4,7 +4,7 @@ use crate::auth::scopes::{MEMORY_MANAGE_SCOPES, MEMORY_READ_SCOPES};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{MemoryManage, ReadOnly},
-    PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_CONTROL,
+    ADMIN, PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_CONTROL,
 };
 
 /// Fixed Control-owned project Memory runtime contract. These tools remain
@@ -74,5 +74,31 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
         ),
         MEMORY_MANAGE_SCOPES,
+    ),
+    def(
+        "memory_scope_list",
+        ModelHidden,
+        TOOL_CATEGORY_RUNTIME,
+        None,
+        TOOL_PROVIDER_CONTROL,
+        ReadOnly,
+        Some(ADMIN),
+        false,
+        NoPath,
+        false,
+        false,
+    ),
+    def(
+        "memory_scope_purge",
+        ModelHidden,
+        TOOL_CATEGORY_RUNTIME,
+        None,
+        TOOL_PROVIDER_CONTROL,
+        MemoryManage,
+        Some(ADMIN),
+        false,
+        NoPath,
+        true,
+        false,
     ),
 ];

@@ -1063,6 +1063,22 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Admin-only paginated inventory of durable project Memory scopes.
+    MemoryScopeList {
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Admin-only explicit purge of one non-current durable Memory scope.
+    MemoryScopePurge {
+        memory_scope_id: String,
+        expected_catalog_revision: String,
+        #[serde(default)]
+        confirm: bool,
+    },
+
     /// Start an async background job (long-running commands, codex CLI, etc.).
     RunJob {
         project: String,
@@ -2317,6 +2333,8 @@ impl ToolCall {
             Self::MemoryRead { .. } => "memory_read",
             Self::MemorySet { .. } => "memory_set",
             Self::MemoryDelete { .. } => "memory_delete",
+            Self::MemoryScopeList { .. } => "memory_scope_list",
+            Self::MemoryScopePurge { .. } => "memory_scope_purge",
             Self::RunJob { .. } => "run_job",
             Self::StopJob { .. } => "stop_job",
             Self::JobStatus { .. } => "job_status",

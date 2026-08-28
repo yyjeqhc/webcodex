@@ -1,8 +1,9 @@
 use serde_json::{json, Value};
 
 use crate::db::{
-    MAX_MEMORY_BODY_BYTES, MAX_MEMORY_KEY_CHARS, MAX_MEMORY_QUERY_CHARS, MAX_MEMORY_SEARCH_LIMIT,
-    MAX_MEMORY_SUMMARY_CHARS, MAX_MEMORY_TAGS, MAX_MEMORY_TAG_CHARS,
+    MAX_MEMORY_BODY_BYTES, MAX_MEMORY_KEY_CHARS, MAX_MEMORY_QUERY_CHARS,
+    MAX_MEMORY_SCOPE_LIST_LIMIT, MAX_MEMORY_SEARCH_LIMIT, MAX_MEMORY_SUMMARY_CHARS,
+    MAX_MEMORY_TAGS, MAX_MEMORY_TAG_CHARS,
 };
 
 fn memory_key_schema() -> Value {
@@ -103,6 +104,41 @@ pub(crate) fn memory_delete_input_schema() -> Value {
             "session_id": {"type":"string"}
         },
         "required": ["project", "memory_key", "expected_revision"],
+        "additionalProperties": false
+    })
+}
+
+pub(crate) fn memory_scope_list_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "offset": {"type":"integer","minimum":0},
+            "limit": {"type":"integer","minimum":1,"maximum":MAX_MEMORY_SCOPE_LIST_LIMIT}
+        },
+        "additionalProperties": false
+    })
+}
+
+pub(crate) fn memory_scope_purge_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "memory_scope_id": {
+                "type":"string",
+                "pattern":"^wc_memscope_[0-9a-f]{64}$",
+                "description":"Opaque Control-owned project Memory scope identity from memory_scope_list. It contains no native root path."
+            },
+            "expected_catalog_revision": {
+                "type":"string",
+                "pattern":"^wc_memcat_[0-9a-f]{64}$",
+                "description":"Required scope-content CAS fence from memory_scope_list. Any Memory add/update/delete/recreate makes a prior value stale."
+            },
+            "confirm": {
+                "type":"boolean",
+                "description":"Must be true. Confirmation never overrides current or unknown scope status."
+            }
+        },
+        "required": ["memory_scope_id", "expected_catalog_revision", "confirm"],
         "additionalProperties": false
     })
 }

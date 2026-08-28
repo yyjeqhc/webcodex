@@ -40,13 +40,19 @@ pub(crate) fn memory_runtime_tool_specs() -> Vec<ToolSpec> {
         .collect()
 }
 
-/// Fixed project Memory management contract. Durable Memory cardinality never
-/// changes this schema set; execution additionally requires the independent
-/// management capability, project:write scope, and permission evaluator.
+/// Fixed project Memory mutation plus global Memory lifecycle contract. Durable
+/// Memory/scope cardinality never changes this schema set. Each tool's canonical
+/// ToolDefinition authority distinguishes project-scoped memory:manage from
+/// admin-only lifecycle inspection/purge; permission evaluation remains independent.
 pub(crate) fn memory_management_tool_specs() -> Vec<ToolSpec> {
     memory::tool_specs()
         .into_iter()
-        .filter(|spec| matches!(spec.name.as_str(), "memory_set" | "memory_delete"))
+        .filter(|spec| {
+            matches!(
+                spec.name.as_str(),
+                "memory_set" | "memory_delete" | "memory_scope_list" | "memory_scope_purge"
+            )
+        })
         .collect()
 }
 

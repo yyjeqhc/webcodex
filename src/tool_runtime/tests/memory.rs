@@ -12,7 +12,9 @@ use super::super::{ToolResult, ToolRuntime};
 use super::support::*;
 use crate::db::{memory_catalog_revision, MemoryPriority, MAX_MEMORY_BOOTSTRAP_BYTES};
 use crate::projects::ProjectConfig;
+use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest};
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 fn resolved(id: &str, client: &str, root: &str) -> ResolvedProject {
@@ -111,6 +113,31 @@ async fn list_files_with_session_context(
         .unwrap_or_else(|| panic!("list_project_files failed: {:?}", outcome.error_status))
 }
 
+fn set_raw(
+    runtime: &ToolRuntime,
+    project: &ResolvedProject,
+    memory_key: String,
+    summary: String,
+    body: Option<String>,
+    priority: Option<String>,
+    bootstrap: Option<bool>,
+    tags: Option<Vec<String>>,
+    expected_revision: Option<String>,
+) -> ToolResult {
+    let auth = shared_key_auth_context("memory-test-writer");
+    runtime.memory_set(
+        project,
+        memory_key,
+        summary,
+        body,
+        priority,
+        bootstrap,
+        tags,
+        expected_revision,
+        Some(&auth),
+    )
+}
+
 fn set(
     runtime: &ToolRuntime,
     project: &ResolvedProject,
@@ -122,7 +149,8 @@ fn set(
     tags: &[&str],
     expected_revision: Option<String>,
 ) -> ToolResult {
-    runtime.memory_set(
+    set_raw(
+        runtime,
         project,
         key.to_string(),
         summary.to_string(),
@@ -177,7 +205,8 @@ fn memory_runtime_search_read_cas_pagination_and_project_scope_are_explicit() {
     // A response-lost create retry is interpreted using create defaults, not
     // whatever optional fields a concurrent writer has since installed. Only an
     // explicit expected_revision turns omitted optional fields into "preserve".
-    let default_create = runtime.memory_set(
+    let default_create = set_raw(
+        &runtime,
         &project_a,
         "create-retry-defaults".to_string(),
         "Stable create intent.".to_string(),
@@ -192,7 +221,8 @@ fn memory_runtime_search_read_cas_pagination_and_project_scope_are_explicit() {
         .as_str()
         .unwrap()
         .to_string();
-    let intervening = runtime.memory_set(
+    let intervening = set_raw(
+        &runtime,
         &project_a,
         "create-retry-defaults".to_string(),
         "Stable create intent.".to_string(),
@@ -204,7 +234,8 @@ fn memory_runtime_search_read_cas_pagination_and_project_scope_are_explicit() {
     );
     assert!(intervening.success);
     let intervening_revision = intervening.output["revision"].as_str().unwrap().to_string();
-    let retried_create = runtime.memory_set(
+    let retried_create = set_raw(
+        &runtime,
         &project_a,
         "create-retry-defaults".to_string(),
         "Stable create intent.".to_string(),
@@ -417,7 +448,8 @@ fn memory_set_cas_update_preserves_omitted_optional_fields() {
     assert!(created.success);
     let original_revision = created.output["revision"].as_str().unwrap().to_string();
 
-    let updated = runtime.memory_set(
+    let updated = set_raw(
+        &runtime,
         &project,
         "preserve-fields".to_string(),
         "updated summary".to_string(),
@@ -437,7 +469,8 @@ fn memory_set_cas_update_preserves_omitted_optional_fields() {
     assert_eq!(read.output["bootstrap"], true);
     assert_eq!(read.output["tags"], json!(["one", "two"]));
 
-    let no_change = runtime.memory_set(
+    let no_change = set_raw(
+        &runtime,
         &project,
         "preserve-fields".to_string(),
         "updated summary".to_string(),
@@ -1155,6 +1188,819 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
 }
 
 #[tokio::test]
+async fn memory_scope_lifecycle_is_offline_safe_unregister_explicit_and_purge_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Arc::new(crate::Database::open(&tmp.path().join("webcodex.db")).unwrap());
+    let runtime = ToolRuntime::new_for_tests()
+        .with_memory_database(db.clone())
+        .with_permission_evaluator(PermissionEvaluator::with_mode(AuthorityMode::TrustedAgent));
+    let admin = bootstrap_auth_context();
+    let client_id = "memory-lifecycle";
+    let root = tempfile::tempdir().unwrap();
+    let root_text = root.path().to_string_lossy().to_string();
+    let revision = format!("sha256:{}", "a".repeat(64));
+    let mut summary = registered_project("demo", &root_text);
+    summary.revision = Some(revision.clone());
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            project_lifecycle: true,
+            ..Default::default()
+        },
+        vec![summary.clone()],
+    )
+    .await;
+    let project_id = crate::tool_runtime::agent_project_runtime_id(client_id, "demo");
+    let project = runtime
+        .resolve_project_input_for_auth(&project_id, Some(&admin))
+        .await
+        .unwrap();
+    let created = set(
+        &runtime,
+        &project,
+        "lifecycle-policy",
+        "Preserve explicit Memory lifecycle.",
+        "PRIVATE_LIFECYCLE_BODY",
+        "high",
+        true,
+        &["lifecycle"],
+        None,
+    );
+    assert!(created.success, "{}", created.output);
+    let scope_id = super::super::memory::memory_scope_id(&project);
+
+    let before_read_only = db
+        .get_project_memory_scope(&scope_id)
+        .unwrap()
+        .unwrap()
+        .scope
+        .last_mutated_at_unix_ms;
+    assert!(
+        runtime
+            .memory_read(&project, "lifecycle-policy".to_string(), None)
+            .success
+    );
+    assert!(
+        runtime
+            .memory_search(&project, None, None, None, None, None)
+            .success
+    );
+    runtime
+        .memory_bootstrap_context_projection(&project)
+        .unwrap();
+    let current = runtime.memory_scope_list(Some(&admin), None, None).await;
+    assert!(current.success, "{}", current.output);
+    let current_scope = current.output["scopes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|scope| scope["memory_scope_id"] == scope_id)
+        .unwrap();
+    assert_eq!(current_scope["current_status"], "current");
+    assert_eq!(current_scope["project_runtime_id"], project_id);
+    assert_eq!(current_scope["runner_client_id"], client_id);
+    assert_eq!(
+        current_scope["root_fingerprint"],
+        super::super::memory::memory_root_fingerprint(&root_text)
+    );
+    assert!(!current.output.to_string().contains(&root_text));
+    assert!(!current
+        .output
+        .to_string()
+        .contains("PRIVATE_LIFECYCLE_BODY"));
+    assert_eq!(
+        db.get_project_memory_scope(&scope_id)
+            .unwrap()
+            .unwrap()
+            .scope
+            .last_mutated_at_unix_ms,
+        before_read_only,
+        "read/search/bootstrap/scope-list must not mutate scope metadata"
+    );
+    let catalog_revision = current_scope["catalog_revision"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let current_purge = runtime
+        .memory_scope_purge(
+            Some(&admin),
+            scope_id.clone(),
+            catalog_revision.clone(),
+            true,
+        )
+        .await;
+    assert!(!current_purge.success);
+    assert_eq!(current_purge.output["error_kind"], "memory_scope_current");
+    assert!(db
+        .get_project_memory(&scope_id, "lifecycle-policy")
+        .unwrap()
+        .is_some());
+
+    runtime
+        .shell_clients
+        .reconcile_disconnect(client_id, &format!("inst-{client_id}"))
+        .await;
+    let offline = runtime.memory_scope_list(Some(&admin), None, None).await;
+    let offline_scope = offline.output["scopes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|scope| scope["memory_scope_id"] == scope_id)
+        .unwrap();
+    assert_eq!(offline_scope["current_status"], "current");
+    assert!(db
+        .get_project_memory(&scope_id, "lifecycle-policy")
+        .unwrap()
+        .is_some());
+
+    // Restore the same Runner registration, then explicitly unregister only the
+    // Project registration. Memory must remain until a separate lifecycle purge.
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            project_lifecycle: true,
+            ..Default::default()
+        },
+        vec![summary],
+    )
+    .await;
+    let unregister = tokio::spawn({
+        let runtime = runtime.clone();
+        let admin = admin.clone();
+        let project_id = project_id.clone();
+        let revision = revision.clone();
+        async move {
+            runtime
+                .unregister_project(project_id, revision, Some(&admin))
+                .await
+        }
+    });
+    let request = wait_for_agent_request_for_client(&runtime, client_id).await;
+    assert_eq!(request.kind, "project_lifecycle_unregister");
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        client_id,
+        &format!("inst-{client_id}"),
+        &request.request_id,
+        0,
+        &json!({
+            "operation": "unregister",
+            "agent_project_id": "demo",
+            "outcome": "unregistered",
+            "changed": true,
+            "revision": serde_json::Value::Null
+        })
+        .to_string(),
+        "",
+    )
+    .await;
+    assert!(unregister.await.unwrap().success);
+    assert!(
+        runtime
+            .memory_read(&project, "lifecycle-policy".to_string(), None)
+            .success
+    );
+
+    let detached = runtime.memory_scope_list(Some(&admin), None, None).await;
+    let detached_scope = detached.output["scopes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|scope| scope["memory_scope_id"] == scope_id)
+        .unwrap();
+    assert_eq!(detached_scope["current_status"], "not_current");
+    let detached_revision = detached_scope["catalog_revision"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let purged = runtime
+        .memory_scope_purge(Some(&admin), scope_id.clone(), detached_revision, true)
+        .await;
+    assert!(purged.success, "{}", purged.output);
+    assert_eq!(purged.output["purged_count"], 1);
+    assert_eq!(purged.output["state_changed"], true);
+    assert!(db.get_project_memory_scope(&scope_id).unwrap().is_none());
+    assert!(
+        !runtime
+            .memory_read(&project, "lifecycle-policy".to_string(), None)
+            .success
+    );
+}
+
+#[tokio::test]
+async fn memory_scope_same_project_id_new_root_does_not_migrate_old_memory() {
+    let (runtime, _tmp) = runtime_with_memory();
+    let admin = bootstrap_auth_context();
+    let client_id = "memory-root-change";
+    let root_a = tempfile::tempdir().unwrap();
+    let root_b = tempfile::tempdir().unwrap();
+    let root_a_text = root_a.path().to_string_lossy().to_string();
+    let root_b_text = root_b.path().to_string_lossy().to_string();
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities::default(),
+        vec![registered_project("demo", &root_a_text)],
+    )
+    .await;
+    let project_id = crate::tool_runtime::agent_project_runtime_id(client_id, "demo");
+    let project_a = runtime
+        .resolve_project_input_for_auth(&project_id, Some(&admin))
+        .await
+        .unwrap();
+    assert!(
+        set(
+            &runtime,
+            &project_a,
+            "root-policy",
+            "Root A only.",
+            "old root body",
+            "normal",
+            false,
+            &[],
+            None,
+        )
+        .success
+    );
+    let scope_a = super::super::memory::memory_scope_id(&project_a);
+
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities::default(),
+        vec![registered_project("demo", &root_b_text)],
+    )
+    .await;
+    let project_b = runtime
+        .resolve_project_input_for_auth(&project_id, Some(&admin))
+        .await
+        .unwrap();
+    let scope_b = super::super::memory::memory_scope_id(&project_b);
+    assert_ne!(scope_a, scope_b);
+    assert!(
+        !runtime
+            .memory_read(&project_b, "root-policy".to_string(), None)
+            .success
+    );
+    let before_new_memory = runtime.memory_scope_list(Some(&admin), None, None).await;
+    let old = before_new_memory.output["scopes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|scope| scope["memory_scope_id"] == scope_a)
+        .unwrap();
+    assert_eq!(old["current_status"], "not_current");
+    assert_eq!(
+        old["root_fingerprint"],
+        super::super::memory::memory_root_fingerprint(&root_a_text)
+    );
+
+    assert!(
+        set(
+            &runtime,
+            &project_b,
+            "root-policy",
+            "Root B only.",
+            "new root body",
+            "normal",
+            false,
+            &[],
+            None,
+        )
+        .success
+    );
+    let after = runtime.memory_scope_list(Some(&admin), None, None).await;
+    let scopes = after.output["scopes"].as_array().unwrap();
+    assert_eq!(scopes.len(), 2);
+    assert_eq!(
+        scopes
+            .iter()
+            .find(|scope| scope["memory_scope_id"] == scope_a)
+            .unwrap()["current_status"],
+        "not_current"
+    );
+    assert_eq!(
+        scopes
+            .iter()
+            .find(|scope| scope["memory_scope_id"] == scope_b)
+            .unwrap()["current_status"],
+        "current"
+    );
+}
+
+#[tokio::test]
+async fn memory_scope_legacy_exact_match_is_current_without_read_side_attribution() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Arc::new(crate::Database::open(&tmp.path().join("webcodex.db")).unwrap());
+    let runtime = ToolRuntime::new_for_tests()
+        .with_memory_database(db.clone())
+        .with_permission_evaluator(PermissionEvaluator::with_mode(AuthorityMode::TrustedAgent));
+    let admin = bootstrap_auth_context();
+    let client_id = "memory-legacy-current";
+    let root = tempfile::tempdir().unwrap();
+    let root_text = root.path().to_string_lossy().to_string();
+    let project_id = crate::tool_runtime::agent_project_runtime_id(client_id, "demo");
+    let project = resolved(&project_id, client_id, &root_text);
+    assert!(
+        set(
+            &runtime,
+            &project,
+            "legacy-current",
+            "Exact current match remains discoverable.",
+            "body",
+            "normal",
+            false,
+            &[],
+            None,
+        )
+        .success
+    );
+    let scope_id = super::super::memory::memory_scope_id(&project);
+    {
+        let conn = db.conn_for_tests();
+        conn.execute(
+            "UPDATE project_memory_scopes
+             SET identity_state = 'legacy_unattributed', project_runtime_id = NULL,
+                 runner_client_id = NULL, root_fingerprint = NULL
+             WHERE memory_scope_id = ?1",
+            rusqlite::params![scope_id],
+        )
+        .unwrap();
+    }
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities::default(),
+        vec![registered_project("demo", &root_text)],
+    )
+    .await;
+    let listed = runtime.memory_scope_list(Some(&admin), None, None).await;
+    assert!(listed.success, "{}", listed.output);
+    let scope = &listed.output["scopes"][0];
+    assert_eq!(scope["identity_state"], "legacy_unattributed");
+    assert_eq!(scope["current_status"], "current");
+    assert_eq!(scope["current_project_runtime_id"], project_id);
+    assert!(scope["project_runtime_id"].is_null());
+    assert!(scope["runner_client_id"].is_null());
+    assert!(scope["root_fingerprint"].is_null());
+    let persisted = db.get_project_memory_scope(&scope_id).unwrap().unwrap();
+    assert_eq!(persisted.scope.identity_state, "legacy_unattributed");
+    assert!(persisted.scope.project_runtime_id.is_none());
+    // The same legacy scope becomes safely purgeable only after a non-empty,
+    // fully synchronized current Server inventory proves there is no exact
+    // Project scope match. No durable attribution is guessed in the process.
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities::default(),
+        Vec::new(),
+    )
+    .await;
+    let detached = runtime.memory_scope_list(Some(&admin), None, None).await;
+    let detached_scope = &detached.output["scopes"][0];
+    assert_eq!(detached_scope["identity_state"], "legacy_unattributed");
+    assert_eq!(detached_scope["current_status"], "not_current");
+    let catalog_revision = detached_scope["catalog_revision"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let purged = runtime
+        .memory_scope_purge(Some(&admin), scope_id.clone(), catalog_revision, true)
+        .await;
+    assert!(purged.success, "{}", purged.output);
+    assert!(db.get_project_memory_scope(&scope_id).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn memory_scope_missing_or_incomplete_inventory_is_unknown_until_complete() {
+    let (runtime, _tmp) = runtime_with_memory();
+    let admin = bootstrap_auth_context();
+    let client_id = "memory-incomplete";
+    let project = resolved(
+        &crate::tool_runtime::agent_project_runtime_id(client_id, "demo"),
+        client_id,
+        "/registered/missing-at-runtime",
+    );
+    assert!(
+        set(
+            &runtime,
+            &project,
+            "unknown-policy",
+            "Unknown until inventory proves absence.",
+            "body",
+            "normal",
+            false,
+            &[],
+            None,
+        )
+        .success
+    );
+    let scope_id = super::super::memory::memory_scope_id(&project);
+    let first = runtime.memory_scope_list(Some(&admin), None, None).await;
+    let first_scope = first.output["scopes"].as_array().unwrap()[0].clone();
+    assert_eq!(first_scope["current_status"], "unknown");
+    let catalog_revision = first_scope["catalog_revision"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let denied = runtime
+        .memory_scope_purge(
+            Some(&admin),
+            scope_id.clone(),
+            catalog_revision.clone(),
+            true,
+        )
+        .await;
+    assert!(!denied.success);
+    assert_eq!(denied.output["error_kind"], "memory_scope_status_unknown");
+
+    runtime
+        .shell_clients
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            coding_agent_providers: None,
+            coding_agent_inventory: None,
+            client_id: client_id.to_string(),
+            agent_instance_id: format!("inst-{client_id}"),
+            display_name: None,
+            owner: None,
+            hostname: None,
+            host_context: None,
+            capabilities: Some(ShellClientCapabilities::default()),
+            projects: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
+            policy: None,
+        })
+        .await
+        .unwrap();
+    let pending = runtime.memory_scope_list(Some(&admin), None, None).await;
+    assert_eq!(pending.output["scopes"][0]["current_status"], "unknown");
+
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities::default(),
+        Vec::new(),
+    )
+    .await;
+    let complete = runtime.memory_scope_list(Some(&admin), None, None).await;
+    assert_eq!(
+        complete.output["scopes"][0]["current_status"],
+        "not_current"
+    );
+    let purged = runtime
+        .memory_scope_purge(Some(&admin), scope_id, catalog_revision, true)
+        .await;
+    assert!(purged.success, "{}", purged.output);
+}
+
+#[test]
+fn memory_provenance_digest_is_stable_private_and_updates_only_on_real_content_change() {
+    let (runtime, _tmp) = runtime_with_memory();
+    let project = resolved(
+        "agent:runner:provenance",
+        "runner",
+        "/registered/provenance",
+    );
+    let creator = auth_context(Some("alice"), false);
+    let creator_again = creator.clone();
+    let other = auth_context(Some("bob"), false);
+    let mut other_kind_same_id = creator.clone();
+    other_kind_same_id.kind = crate::auth::AuthKind::OAuth2Token;
+    other_kind_same_id.token_kind = Some("oauth2".to_string());
+
+    let creator_attr = super::super::memory::memory_principal_attribution(Some(&creator)).unwrap();
+    assert_eq!(
+        creator_attr,
+        super::super::memory::memory_principal_attribution(Some(&creator_again)).unwrap()
+    );
+    assert_ne!(
+        creator_attr.principal_digest,
+        super::super::memory::memory_principal_attribution(Some(&other))
+            .unwrap()
+            .principal_digest
+    );
+    let other_kind_attr =
+        super::super::memory::memory_principal_attribution(Some(&other_kind_same_id)).unwrap();
+    assert_ne!(
+        creator_attr.principal_digest,
+        other_kind_attr.principal_digest
+    );
+    assert!(!creator_attr.principal_digest.contains("key-alice"));
+
+    let created = runtime.memory_set(
+        &project,
+        "provenance".to_string(),
+        "Initial guidance".to_string(),
+        Some("body".to_string()),
+        Some("normal".to_string()),
+        Some(true),
+        Some(Vec::new()),
+        None,
+        Some(&creator),
+    );
+    assert!(created.success);
+    let created_revision = created.output["revision"].as_str().unwrap().to_string();
+    let scope_id = super::super::memory::memory_scope_id(&project);
+    let stored_created = runtime
+        .memory_db
+        .as_ref()
+        .unwrap()
+        .get_project_memory(&scope_id, "provenance")
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored_created.created_by_kind, creator.principal_kind());
+    assert_eq!(
+        stored_created.created_by_principal_digest.as_deref(),
+        Some(creator_attr.principal_digest.as_str())
+    );
+    assert_eq!(
+        stored_created.updated_by_principal_digest,
+        stored_created.created_by_principal_digest
+    );
+    let persisted_provenance: (String, Option<String>, String, Option<String>) = runtime
+        .memory_db
+        .as_ref()
+        .unwrap()
+        .conn_for_tests()
+        .query_row(
+            "SELECT created_by_kind, created_by_principal_digest,
+                    updated_by_kind, updated_by_principal_digest
+             FROM project_memories WHERE memory_scope_id = ?1 AND memory_key = 'provenance'",
+            rusqlite::params![scope_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    let persisted_provenance_text = format!("{persisted_provenance:?}");
+    assert!(!persisted_provenance_text.contains("key-alice"));
+    assert!(!persisted_provenance_text.contains("user-alice"));
+
+    let read = runtime.memory_read(&project, "provenance".to_string(), None);
+    assert_eq!(
+        read.output["provenance"]["created_by_kind"],
+        creator.principal_kind()
+    );
+    assert_eq!(
+        read.output["provenance"]["updated_by_kind"],
+        creator.principal_kind()
+    );
+    let read_text = read.output.to_string();
+    assert!(!read_text.contains("wc_memprincipal_"));
+    assert!(!read_text.contains("key-alice"));
+    let search_text = runtime
+        .memory_search(&project, None, None, None, None, None)
+        .output
+        .to_string();
+    let bootstrap_text = runtime
+        .memory_bootstrap_context_projection(&project)
+        .unwrap()
+        .to_string();
+    assert!(!search_text.contains("wc_memprincipal_"));
+    assert!(!bootstrap_text.contains("wc_memprincipal_"));
+
+    let no_op_other = runtime.memory_set(
+        &project,
+        "provenance".to_string(),
+        "Initial guidance".to_string(),
+        Some("body".to_string()),
+        Some("normal".to_string()),
+        Some(true),
+        Some(Vec::new()),
+        None,
+        Some(&other),
+    );
+    assert!(no_op_other.success);
+    assert_eq!(no_op_other.output["state_changed"], false);
+    assert_eq!(no_op_other.output["revision"], created_revision);
+    let after_no_op = runtime
+        .memory_db
+        .as_ref()
+        .unwrap()
+        .get_project_memory(&scope_id, "provenance")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after_no_op.updated_by_principal_digest,
+        stored_created.updated_by_principal_digest
+    );
+
+    let updated = runtime.memory_set(
+        &project,
+        "provenance".to_string(),
+        "Updated guidance".to_string(),
+        Some("body".to_string()),
+        Some("normal".to_string()),
+        Some(true),
+        Some(Vec::new()),
+        Some(created_revision),
+        Some(&other_kind_same_id),
+    );
+    assert!(updated.success);
+    assert_eq!(updated.output["state_changed"], true);
+    let updated_revision = updated.output["revision"].as_str().unwrap().to_string();
+    let stored_updated = runtime
+        .memory_db
+        .as_ref()
+        .unwrap()
+        .get_project_memory(&scope_id, "provenance")
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored_updated.created_by_kind, creator.principal_kind());
+    assert_eq!(
+        stored_updated.created_by_principal_digest,
+        stored_created.created_by_principal_digest
+    );
+    assert_eq!(stored_updated.updated_by_kind, "oauth2");
+    assert_eq!(
+        stored_updated.updated_by_principal_digest.as_deref(),
+        Some(other_kind_attr.principal_digest.as_str())
+    );
+    let no_op_cas = runtime.memory_set(
+        &project,
+        "provenance".to_string(),
+        "Updated guidance".to_string(),
+        Some("body".to_string()),
+        Some("normal".to_string()),
+        Some(true),
+        Some(Vec::new()),
+        Some(updated_revision.clone()),
+        Some(&creator),
+    );
+    assert!(no_op_cas.success);
+    assert_eq!(no_op_cas.output["state_changed"], false);
+    assert_eq!(no_op_cas.output["revision"], updated_revision);
+    assert_eq!(
+        runtime
+            .memory_db
+            .as_ref()
+            .unwrap()
+            .get_project_memory(&scope_id, "provenance")
+            .unwrap()
+            .unwrap()
+            .updated_by_principal_digest,
+        stored_updated.updated_by_principal_digest
+    );
+    let final_read = runtime.memory_read(&project, "provenance".to_string(), None);
+    assert_eq!(final_read.output["provenance"]["created_by_kind"], "user");
+    assert_eq!(final_read.output["provenance"]["updated_by_kind"], "oauth2");
+}
+
+#[tokio::test]
+async fn memory_scope_lifecycle_authority_surface_and_permission_are_independent() {
+    let (runtime, _tmp) = runtime_with_memory();
+    let admin = bootstrap_auth_context();
+    let non_admin = shared_key_auth_context("memory-lifecycle-nonadmin");
+    for tool in ["memory_scope_list", "memory_scope_purge"] {
+        assert!(matches!(
+            check_runtime_tool_scope(None, tool),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_ADMIN),
+                ..
+            })
+        ));
+        assert!(matches!(
+            check_runtime_tool_scope(Some(&non_admin), tool),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_ADMIN),
+                ..
+            })
+        ));
+        assert!(check_runtime_tool_scope(Some(&admin), tool).is_ok());
+    }
+    let context = |auth| ToolCallContext {
+        transport: ToolTransport::Mcp,
+        session_id: None,
+        auth,
+        window: None,
+        record_oauth_scope_denials: false,
+        host_file_import_trust: HostFileImportTrust::Untrusted,
+    };
+    let hidden = runtime
+        .call_tool_with_protocol_capabilities(
+            ToolCallRequest {
+                tool_name: "memory_scope_list".to_string(),
+                arguments: json!({}),
+            },
+            context(Some(&admin)),
+            Default::default(),
+        )
+        .await;
+    assert!(matches!(
+        hidden.error_status,
+        Some(ToolCallErrorStatus::InvalidArguments { .. })
+    ));
+    let denied = runtime
+        .call_tool_with_protocol_capabilities(
+            ToolCallRequest {
+                tool_name: "memory_scope_list".to_string(),
+                arguments: json!({}),
+            },
+            context(Some(&non_admin)),
+            ToolProtocolCapabilities {
+                memory_surface: true,
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(matches!(
+        denied.error_status,
+        Some(ToolCallErrorStatus::InsufficientScope {
+            required_scope: Some(crate::auth::SCOPE_ADMIN),
+            ..
+        })
+    ));
+    let allowed = runtime
+        .call_tool_with_protocol_capabilities(
+            ToolCallRequest {
+                tool_name: "memory_scope_list".to_string(),
+                arguments: json!({}),
+            },
+            context(Some(&admin)),
+            ToolProtocolCapabilities {
+                memory_surface: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .result
+        .expect("admin lifecycle list result");
+    assert!(allowed.success);
+    assert_eq!(allowed.output["total_count"], 0);
+
+    let restricted_tmp = tempfile::tempdir().unwrap();
+    let restricted_db =
+        Arc::new(crate::Database::open(&restricted_tmp.path().join("webcodex.db")).unwrap());
+    let eval_count = Arc::new(AtomicUsize::new(0));
+    let restricted = ToolRuntime::new_for_tests()
+        .with_memory_database(restricted_db.clone())
+        .with_permission_evaluator(
+            PermissionEvaluator::with_mode(AuthorityMode::Restricted)
+                .with_eval_counter(eval_count.clone()),
+        );
+    let detached_project = resolved(
+        "agent:missing:restricted-memory",
+        "missing",
+        "/registered/restricted-memory",
+    );
+    assert!(
+        set(
+            &restricted,
+            &detached_project,
+            "restricted-purge",
+            "Must still pass permission evaluation.",
+            "body",
+            "normal",
+            false,
+            &[],
+            None,
+        )
+        .success
+    );
+    let scope_id = super::super::memory::memory_scope_id(&detached_project);
+    let catalog_revision =
+        memory_catalog_revision(&restricted_db.list_project_memories(&scope_id).unwrap());
+    let before_eval = eval_count.load(Ordering::SeqCst);
+    let outcome = restricted
+        .call_tool_with_protocol_capabilities(
+            ToolCallRequest {
+                tool_name: "memory_scope_purge".to_string(),
+                arguments: json!({
+                    "memory_scope_id": scope_id,
+                    "expected_catalog_revision": catalog_revision,
+                    "confirm": true
+                }),
+            },
+            context(Some(&admin)),
+            ToolProtocolCapabilities {
+                memory_surface: true,
+                ..Default::default()
+            },
+        )
+        .await;
+    let result = outcome.result.expect("permission denial is a tool result");
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "permission_denied");
+    assert_eq!(result.output["permission"]["status"], "denied");
+    assert_eq!(eval_count.load(Ordering::SeqCst), before_eval + 1);
+    assert!(restricted_db
+        .get_project_memory_scope(&super::super::memory::memory_scope_id(&detached_project))
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
 async fn session_and_skill_observations_do_not_automatically_create_memory() {
     let (runtime, _tmp) = runtime_with_memory();
     let root = tempfile::tempdir().unwrap();
@@ -1295,6 +2141,10 @@ fn memory_catalog_revision_depends_only_on_key_revision_pairs() {
             bootstrap: false,
             tags: tags.clone(),
             definition_hash: format!("wc_memdef_{}", "b".repeat(64)),
+            created_by_kind: "test".to_string(),
+            created_by_principal_digest: Some(format!("wc_memprincipal_{}", "1".repeat(64))),
+            updated_by_kind: "test".to_string(),
+            updated_by_principal_digest: Some(format!("wc_memprincipal_{}", "1".repeat(64))),
             generation: 1,
             revision: format!("wc_memrev_{}", "b".repeat(64)),
             created_at_unix_ms: 1,
@@ -1309,6 +2159,10 @@ fn memory_catalog_revision_depends_only_on_key_revision_pairs() {
             bootstrap: true,
             tags,
             definition_hash: format!("wc_memdef_{}", "a".repeat(64)),
+            created_by_kind: "test".to_string(),
+            created_by_principal_digest: Some(format!("wc_memprincipal_{}", "2".repeat(64))),
+            updated_by_kind: "test".to_string(),
+            updated_by_principal_digest: Some(format!("wc_memprincipal_{}", "2".repeat(64))),
             generation: 1,
             revision: format!("wc_memrev_{}", "a".repeat(64)),
             created_at_unix_ms: 2,

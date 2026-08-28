@@ -29,11 +29,12 @@ pub(crate) use self::execution_model::{
 };
 pub(crate) use self::memory::{
     canonicalize_memory_tags, memory_catalog_revision, valid_memory_catalog_revision,
-    validate_memory_query, validate_memory_revision, MemoryPriority, MemorySetInput,
-    MemoryStoreError, ProjectMemoryRecord, MAX_MEMORY_BODY_BYTES, MAX_MEMORY_BOOTSTRAP_BYTES,
-    MAX_MEMORY_KEY_CHARS, MAX_MEMORY_QUERY_CHARS, MAX_MEMORY_SEARCH_LIMIT,
-    MAX_MEMORY_SEARCH_RESULT_BYTES, MAX_MEMORY_SUMMARY_CHARS, MAX_MEMORY_TAGS,
-    MAX_MEMORY_TAG_CHARS,
+    validate_memory_query, validate_memory_revision, validate_memory_scope_id,
+    MemoryPrincipalAttribution, MemoryPriority, MemoryScopeAttribution, MemorySetInput,
+    MemoryStoreError, ProjectMemoryRecord, ProjectMemoryScopeRecord, MAX_MEMORY_BODY_BYTES,
+    MAX_MEMORY_BOOTSTRAP_BYTES, MAX_MEMORY_KEY_CHARS, MAX_MEMORY_QUERY_CHARS,
+    MAX_MEMORY_SCOPE_LIST_LIMIT, MAX_MEMORY_SEARCH_LIMIT, MAX_MEMORY_SEARCH_RESULT_BYTES,
+    MAX_MEMORY_SUMMARY_CHARS, MAX_MEMORY_TAGS, MAX_MEMORY_TAG_CHARS,
 };
 #[cfg(test)]
 pub(crate) use self::memory::{

@@ -1,12 +1,16 @@
 use super::project_resolution::ResolvedProject;
 use super::{ToolResult, ToolRuntime};
+use crate::auth::AuthContext;
 use crate::db::{
     canonicalize_memory_tags, memory_catalog_revision, valid_memory_catalog_revision,
-    validate_memory_query, MemoryPriority, MemorySetInput, MemoryStoreError, ProjectMemoryRecord,
-    MAX_MEMORY_BOOTSTRAP_BYTES, MAX_MEMORY_SEARCH_LIMIT, MAX_MEMORY_SEARCH_RESULT_BYTES,
+    validate_memory_query, validate_memory_scope_id, MemoryPrincipalAttribution, MemoryPriority,
+    MemoryScopeAttribution, MemorySetInput, MemoryStoreError, ProjectMemoryRecord,
+    ProjectMemoryScopeRecord, MAX_MEMORY_BOOTSTRAP_BYTES, MAX_MEMORY_SCOPE_LIST_LIMIT,
+    MAX_MEMORY_SEARCH_LIMIT, MAX_MEMORY_SEARCH_RESULT_BYTES,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 const DEFAULT_MEMORY_SEARCH_LIMIT: usize = 20;
 
@@ -15,21 +19,176 @@ pub(crate) fn is_memory_runtime_tool_name(name: &str) -> bool {
 }
 
 pub(crate) fn is_memory_management_tool_name(name: &str) -> bool {
-    matches!(name, "memory_set" | "memory_delete")
+    matches!(
+        name,
+        "memory_set" | "memory_delete" | "memory_scope_list" | "memory_scope_purge"
+    )
 }
 
-pub(crate) fn memory_scope_id(project: &ResolvedProject) -> String {
+fn memory_hash_field(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update((value.len() as u64).to_be_bytes());
+    hasher.update(value);
+}
+
+fn memory_scope_id_from_parts(project_runtime_id: &str, client_id: &str, root: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"webcodex-project-memory-scope-v1\0");
     for value in [
-        project.resolved_id.as_bytes(),
-        project.config.client_id.as_bytes(),
-        project.config.path.as_bytes(),
+        project_runtime_id.as_bytes(),
+        client_id.as_bytes(),
+        root.as_bytes(),
     ] {
-        hasher.update((value.len() as u64).to_be_bytes());
-        hasher.update(value);
+        memory_hash_field(&mut hasher, value);
     }
     format!("wc_memscope_{:x}", hasher.finalize())
+}
+
+pub(crate) fn memory_scope_id(project: &ResolvedProject) -> String {
+    memory_scope_id_from_parts(
+        &project.resolved_id,
+        &project.config.client_id,
+        &project.config.path,
+    )
+}
+
+pub(crate) fn memory_root_fingerprint(root: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex-project-memory-root-v1\0");
+    memory_hash_field(&mut hasher, root.as_bytes());
+    format!("wc_memroot_{:x}", hasher.finalize())
+}
+
+fn memory_scope_attribution(project: &ResolvedProject) -> MemoryScopeAttribution {
+    MemoryScopeAttribution {
+        project_runtime_id: project.resolved_id.clone(),
+        runner_client_id: project.config.client_id.clone(),
+        root_fingerprint: memory_root_fingerprint(&project.config.path),
+    }
+}
+
+pub(crate) fn memory_principal_attribution(
+    auth: Option<&AuthContext>,
+) -> Result<MemoryPrincipalAttribution, &'static str> {
+    let (kind, stable_principal_id) = super::session_context::runtime_observation_principal(auth)
+        .map_err(|_| "memory_principal_unavailable")?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex-project-memory-principal-v1\0");
+    memory_hash_field(&mut hasher, kind.as_bytes());
+    memory_hash_field(&mut hasher, stable_principal_id.as_bytes());
+    Ok(MemoryPrincipalAttribution {
+        kind,
+        principal_digest: format!("wc_memprincipal_{:x}", hasher.finalize()),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemoryScopeCurrentStatus {
+    Current,
+    NotCurrent,
+    Unknown,
+}
+
+impl MemoryScopeCurrentStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::NotCurrent => "not_current",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct MemoryInventoryObservation {
+    current_projects: BTreeMap<String, String>,
+    client_inventory_complete: BTreeMap<String, bool>,
+    global_inventory_complete: bool,
+}
+
+fn memory_inventory_observation(
+    views: &[crate::shell_client::ShellClientSemanticView],
+) -> MemoryInventoryObservation {
+    let mut current_projects = BTreeMap::new();
+    let mut client_inventory_complete = BTreeMap::new();
+    for semantic in views {
+        let client_id = &semantic.view.client_id;
+        let complete = semantic
+            .view
+            .project_inventory
+            .as_ref()
+            .is_some_and(|status| status.sync_state == "complete");
+        client_inventory_complete.insert(client_id.clone(), complete);
+        for project in &semantic.view.projects {
+            let runtime_id =
+                super::project_resolution::agent_project_runtime_id(client_id, &project.id);
+            let scope = memory_scope_id_from_parts(&runtime_id, client_id, &project.path);
+            if current_projects.insert(scope, runtime_id).is_some() {
+                // A domain collision or duplicated authoritative identity makes
+                // negative lifecycle conclusions unsafe for every affected scope.
+                client_inventory_complete.insert(client_id.clone(), false);
+            }
+        }
+    }
+    let global_inventory_complete =
+        !views.is_empty() && client_inventory_complete.values().all(|complete| *complete);
+    MemoryInventoryObservation {
+        current_projects,
+        client_inventory_complete,
+        global_inventory_complete,
+    }
+}
+
+fn memory_scope_current_status(
+    scope: &ProjectMemoryScopeRecord,
+    inventory: &MemoryInventoryObservation,
+) -> MemoryScopeCurrentStatus {
+    if inventory
+        .current_projects
+        .contains_key(&scope.memory_scope_id)
+    {
+        return MemoryScopeCurrentStatus::Current;
+    }
+    let Some(client_id) = scope.runner_client_id.as_deref() else {
+        // Legacy opaque scopes cannot target one Runner for a negative check. A
+        // complete non-empty current Server inventory can still prove that no
+        // currently registered Project has this exact scope identity. Empty,
+        // pending, degraded, or collision-ambiguous observations remain unknown.
+        return if inventory.global_inventory_complete {
+            MemoryScopeCurrentStatus::NotCurrent
+        } else {
+            MemoryScopeCurrentStatus::Unknown
+        };
+    };
+    if inventory.client_inventory_complete.get(client_id) == Some(&true) {
+        MemoryScopeCurrentStatus::NotCurrent
+    } else {
+        // Missing Runner records, pending/degraded inventory, and Server restart
+        // gaps are not evidence of permanent detachment.
+        MemoryScopeCurrentStatus::Unknown
+    }
+}
+
+fn memory_lifecycle_error(kind: &str, extra: Value) -> ToolResult {
+    let mut output = json!({
+        "error_kind": kind,
+        "state_changed": false,
+    });
+    if let (Some(target), Some(extra)) = (output.as_object_mut(), extra.as_object()) {
+        for (key, value) in extra {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+    ToolResult::err_with_output(kind.to_string(), output)
+}
+
+fn memory_lifecycle_store_error(error: MemoryStoreError) -> ToolResult {
+    let mut extra = json!({});
+    if let (Some(revision), Some(object)) =
+        (error.current_catalog_revision(), extra.as_object_mut())
+    {
+        object.insert("current_catalog_revision".to_string(), json!(revision));
+    }
+    memory_lifecycle_error(error.code(), extra)
 }
 
 fn memory_descriptor(
@@ -245,6 +404,10 @@ impl ToolRuntime {
             "revision": record.revision,
             "created_at_unix_ms": record.created_at_unix_ms,
             "updated_at_unix_ms": record.updated_at_unix_ms,
+            "provenance": {
+                "created_by_kind": record.created_by_kind,
+                "updated_by_kind": record.updated_by_kind,
+            },
         }))
     }
 
@@ -259,11 +422,17 @@ impl ToolRuntime {
         bootstrap: Option<bool>,
         tags: Option<Vec<String>>,
         expected_revision: Option<String>,
+        auth: Option<&AuthContext>,
     ) -> ToolResult {
         let Some(db) = self.memory_db.as_deref() else {
             return memory_simple_error(project, "memory_store_unavailable", json!({}));
         };
         let scope = memory_scope_id(project);
+        let scope_attribution = memory_scope_attribution(project);
+        let principal = match memory_principal_attribution(auth) {
+            Ok(principal) => principal,
+            Err(kind) => return memory_simple_error(project, kind, json!({})),
+        };
         // memory_set is a full canonical definition update for the required
         // summary. Omitted optional fields preserve current values only on an
         // explicit CAS update; without expected_revision they retain create
@@ -311,8 +480,10 @@ impl ToolRuntime {
                 .unwrap_or_default(),
             None => Vec::new(),
         };
-        let outcome = match db.set_project_memory(
+        let outcome = match db.set_project_memory_attributed(
             &scope,
+            &scope_attribution,
+            &principal,
             MemorySetInput {
                 memory_key,
                 summary,
@@ -347,7 +518,13 @@ impl ToolRuntime {
             return memory_simple_error(project, "memory_store_unavailable", json!({}));
         };
         let scope = memory_scope_id(project);
-        let outcome = match db.delete_project_memory(&scope, &memory_key, &expected_revision) {
+        let scope_attribution = memory_scope_attribution(project);
+        let outcome = match db.delete_project_memory_attributed(
+            &scope,
+            &scope_attribution,
+            &memory_key,
+            &expected_revision,
+        ) {
             Ok(outcome) => outcome,
             Err(error) => return memory_error(project, error),
         };
@@ -359,6 +536,156 @@ impl ToolRuntime {
             "deleted": outcome.deleted,
             "state_changed": outcome.state_changed,
         }))
+    }
+
+    pub(crate) async fn memory_scope_list(
+        &self,
+        auth: Option<&AuthContext>,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    ) -> ToolResult {
+        let Some(db) = self.memory_db.as_deref() else {
+            return memory_lifecycle_error("memory_store_unavailable", json!({}));
+        };
+        let offset = offset.unwrap_or(0);
+        let limit = limit.unwrap_or(50);
+        if !(1..=MAX_MEMORY_SCOPE_LIST_LIMIT).contains(&limit) {
+            return memory_lifecycle_store_error(MemoryStoreError::InvalidLimit);
+        }
+        let (total_count, snapshots) = match db.list_project_memory_scopes(offset, limit) {
+            Ok(value) => value,
+            Err(error) => return memory_lifecycle_store_error(error),
+        };
+        let views = self
+            .shell_clients
+            .list_client_semantic_views_for_auth(auth)
+            .await;
+        let inventory = memory_inventory_observation(&views);
+        let normalized_offset = offset.min(total_count);
+        let mut scopes = Vec::with_capacity(snapshots.len());
+        for snapshot in snapshots {
+            let status = memory_scope_current_status(&snapshot.scope, &inventory);
+            let catalog_revision = memory_catalog_revision(&snapshot.memories);
+            let memory_count = snapshot.memories.len();
+            let bootstrap_count = snapshot
+                .memories
+                .iter()
+                .filter(|memory| memory.bootstrap)
+                .count();
+            let oldest_memory_created_at_unix_ms = snapshot
+                .memories
+                .iter()
+                .map(|memory| memory.created_at_unix_ms)
+                .min()
+                .expect("scope snapshots are non-empty");
+            let latest_memory_updated_at_unix_ms = snapshot
+                .memories
+                .iter()
+                .map(|memory| memory.updated_at_unix_ms)
+                .max()
+                .expect("scope snapshots are non-empty");
+            let current_project_runtime_id = inventory
+                .current_projects
+                .get(&snapshot.scope.memory_scope_id)
+                .cloned();
+            scopes.push(json!({
+                "memory_scope_id": snapshot.scope.memory_scope_id,
+                "identity_state": snapshot.scope.identity_state,
+                "current_status": status.as_str(),
+                "project_runtime_id": snapshot.scope.project_runtime_id,
+                "runner_client_id": snapshot.scope.runner_client_id,
+                "root_fingerprint": snapshot.scope.root_fingerprint,
+                "current_project_runtime_id": current_project_runtime_id,
+                "memory_count": memory_count,
+                "bootstrap_count": bootstrap_count,
+                "catalog_revision": catalog_revision,
+                "oldest_memory_created_at_unix_ms": oldest_memory_created_at_unix_ms,
+                "latest_memory_updated_at_unix_ms": latest_memory_updated_at_unix_ms,
+                "scope_created_at_unix_ms": snapshot.scope.created_at_unix_ms,
+                "scope_last_mutated_at_unix_ms": snapshot.scope.last_mutated_at_unix_ms,
+            }));
+        }
+        let next = normalized_offset + scopes.len();
+        let truncated = next < total_count;
+        ToolResult::ok(json!({
+            "total_count": total_count,
+            "returned_count": scopes.len(),
+            "offset": normalized_offset,
+            "next_offset": truncated.then_some(next),
+            "truncated": truncated,
+            "scopes": scopes,
+        }))
+    }
+
+    pub(crate) async fn memory_scope_purge(
+        &self,
+        auth: Option<&AuthContext>,
+        memory_scope_id: String,
+        expected_catalog_revision: String,
+        confirm: bool,
+    ) -> ToolResult {
+        if !confirm {
+            return memory_lifecycle_error(
+                "memory_scope_confirmation_required",
+                json!({"memory_scope_id": memory_scope_id}),
+            );
+        }
+        if let Err(error) = validate_memory_scope_id(&memory_scope_id) {
+            return memory_lifecycle_store_error(error);
+        }
+        if !valid_memory_catalog_revision(&expected_catalog_revision) {
+            return memory_lifecycle_error(
+                "memory_catalog_revision_invalid",
+                json!({"memory_scope_id": memory_scope_id}),
+            );
+        }
+        let Some(db) = self.memory_db.as_deref() else {
+            return memory_lifecycle_error("memory_store_unavailable", json!({}));
+        };
+        let scope_record = match db.get_project_memory_scope(&memory_scope_id) {
+            Ok(None) => {
+                return ToolResult::ok(json!({
+                    "memory_scope_id": memory_scope_id,
+                    "catalog_revision": Value::Null,
+                    "purged_count": 0,
+                    "purged": false,
+                    "state_changed": false,
+                }))
+            }
+            Ok(Some(scope)) => scope,
+            Err(error) => return memory_lifecycle_store_error(error),
+        };
+
+        self.shell_clients
+            .with_client_semantic_views_for_auth_locked(auth, |views| {
+                let inventory = memory_inventory_observation(&views);
+                match memory_scope_current_status(&scope_record.scope, &inventory) {
+                    MemoryScopeCurrentStatus::Current => {
+                        return memory_lifecycle_error(
+                            "memory_scope_current",
+                            json!({"memory_scope_id": memory_scope_id}),
+                        )
+                    }
+                    MemoryScopeCurrentStatus::Unknown => {
+                        return memory_lifecycle_error(
+                            "memory_scope_status_unknown",
+                            json!({"memory_scope_id": memory_scope_id}),
+                        )
+                    }
+                    MemoryScopeCurrentStatus::NotCurrent => {}
+                }
+                match db.purge_project_memory_scope(&memory_scope_id, &expected_catalog_revision) {
+                    Ok(outcome) => ToolResult::ok(json!({
+                        "memory_scope_id": outcome.memory_scope_id,
+                        "catalog_revision": outcome.catalog_revision,
+                        "purged_count": outcome.purged_count,
+                        "purged": outcome.purged,
+                        "state_changed": outcome.state_changed,
+                    })),
+                    Err(error) => memory_lifecycle_store_error(error),
+                }
+            })
+            .await
     }
 
     pub(crate) fn memory_bootstrap_context_projection(
@@ -461,6 +788,10 @@ mod tests {
             bootstrap: false,
             tags: Vec::new(),
             definition_hash: format!("wc_memdef_{}", "a".repeat(64)),
+            created_by_kind: "test".to_string(),
+            created_by_principal_digest: Some(format!("wc_memprincipal_{}", "1".repeat(64))),
+            updated_by_kind: "test".to_string(),
+            updated_by_principal_digest: Some(format!("wc_memprincipal_{}", "1".repeat(64))),
             generation: 1,
             revision: format!("wc_memrev_{}", "a".repeat(64)),
             created_at_unix_ms: 1,

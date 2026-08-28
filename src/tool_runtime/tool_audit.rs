@@ -573,6 +573,16 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 &["project", "memory_key", "expected_revision", "session_id"],
             );
         }
+        "memory_scope_list" => {
+            copy_keys(obj, &mut out, &["offset", "limit"]);
+        }
+        "memory_scope_purge" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["memory_scope_id", "expected_catalog_revision", "confirm"],
+            );
+        }
         "skill_list" => {
             copy_keys(
                 obj,
@@ -1245,6 +1255,22 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "memory_key": output.get("memory_key").cloned().unwrap_or(Value::Null),
             "revision": output.get("revision").cloned().unwrap_or(Value::Null),
             "deleted": output.get("deleted").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
+        "memory_scope_list" => serde_json::json!({
+            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
+            "returned_count": output.get("returned_count").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
+        "memory_scope_purge" => serde_json::json!({
+            "memory_scope_id": output.get("memory_scope_id").cloned().unwrap_or(Value::Null),
+            "catalog_revision": output.get("catalog_revision").cloned().unwrap_or(Value::Null),
+            "current_catalog_revision": output.get("current_catalog_revision").cloned().unwrap_or(Value::Null),
+            "purged_count": output.get("purged_count").cloned().unwrap_or(Value::Null),
+            "purged": output.get("purged").cloned().unwrap_or(Value::Null),
             "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
             "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
         }),
@@ -2252,6 +2278,79 @@ mod computer_privacy_tests {
                 "body": private_body
             }),
         );
+        let private_principal_digest = format!("wc_memprincipal_{}", "d".repeat(64));
+        let private_native_root = "/PRIVATE/NATIVE/MEMORY/ROOT";
+        let scope_id = format!("wc_memscope_{}", "c".repeat(64));
+        let catalog_revision = format!("wc_memcat_{}", "e".repeat(64));
+        let scope_list = session_log_result_for_tool(
+            "memory_scope_list",
+            &json!({
+                "total_count": 1,
+                "returned_count": 1,
+                "truncated": false,
+                "scopes": [{
+                    "memory_scope_id": scope_id,
+                    "identity_state": "attributed",
+                    "current_status": "not_current",
+                    "catalog_revision": catalog_revision,
+                    "memory_count": 1,
+                    "summary": private_summary,
+                    "body": private_body,
+                    "tags": [private_tag],
+                    "native_root": private_native_root,
+                    "principal_digest": private_principal_digest
+                }]
+            }),
+        );
+        let scope_list_text = scope_list.to_string();
+        assert_eq!(scope_list["total_count"], 1);
+        assert_eq!(scope_list["returned_count"], 1);
+        assert!(scope_list.get("scopes").is_none());
+        for private in [
+            private_summary,
+            private_body,
+            private_tag,
+            private_native_root,
+            private_principal_digest.as_str(),
+        ] {
+            assert!(
+                !scope_list_text.contains(private),
+                "scope-list audit leaked {private}"
+            );
+        }
+
+        let purge = session_log_result_for_tool(
+            "memory_scope_purge",
+            &json!({
+                "memory_scope_id": scope_id,
+                "catalog_revision": catalog_revision,
+                "purged_count": 1,
+                "purged": true,
+                "state_changed": true,
+                "summary": private_summary,
+                "body": private_body,
+                "tags": [private_tag],
+                "native_root": private_native_root,
+                "principal_digest": private_principal_digest
+            }),
+        );
+        let purge_text = purge.to_string();
+        assert_eq!(purge["memory_scope_id"], scope_id);
+        assert_eq!(purge["catalog_revision"], catalog_revision);
+        assert_eq!(purge["purged_count"], 1);
+        assert_eq!(purge["state_changed"], true);
+        for private in [
+            private_summary,
+            private_body,
+            private_tag,
+            private_native_root,
+            private_principal_digest.as_str(),
+        ] {
+            assert!(
+                !purge_text.contains(private),
+                "purge audit leaked {private}"
+            );
+        }
         assert!(!delete_result.to_string().contains(private_body));
     }
 
@@ -3634,6 +3733,22 @@ impl ToolCall {
                     "memory_key": memory_key,
                     "expected_revision": expected_revision,
                     "session_id": session_id,
+                }),
+            ),
+            Self::MemoryScopeList { offset, limit } => session_log_arguments_for_tool_request(
+                "memory_scope_list",
+                &serde_json::json!({"offset": offset, "limit": limit}),
+            ),
+            Self::MemoryScopePurge {
+                memory_scope_id,
+                expected_catalog_revision,
+                confirm,
+            } => session_log_arguments_for_tool_request(
+                "memory_scope_purge",
+                &serde_json::json!({
+                    "memory_scope_id": memory_scope_id,
+                    "expected_catalog_revision": expected_catalog_revision,
+                    "confirm": confirm,
                 }),
             ),
             Self::SkillList {

@@ -779,8 +779,16 @@ fn validation_event_decides_historical_failure_status(event: &ValidationEvent) -
     !cargo_test_zero_tests_success(event) && !cargo_test_unproven_execution_success(event)
 }
 
+// `validation_kind = test` is only an intent/category for generic execution.
+// Only an actual first-class structured test tool opts into count/zero-test proof.
+fn structured_test_requires_execution_proof(event: &ValidationEvent) -> bool {
+    validation_adapter_for_tool(&event.tool_name).is_some_and(|adapter| {
+        adapter.validation_kind() == "test" && adapter.reports_test_run_metadata()
+    })
+}
+
 fn cargo_test_unproven_execution_success(event: &ValidationEvent) -> bool {
-    event.validation_kind == "test"
+    structured_test_requires_execution_proof(event)
         && event.success
         && (event.tests_run_count.is_none() || event.zero_tests_run.is_none())
 }
@@ -1511,7 +1519,9 @@ fn validation_test_run_metadata(
 }
 
 fn cargo_test_zero_tests_success(event: &ValidationEvent) -> bool {
-    event.validation_kind == "test" && event.success && event.zero_tests_run == Some(true)
+    structured_test_requires_execution_proof(event)
+        && event.success
+        && event.zero_tests_run == Some(true)
 }
 
 fn to_value(summary: ValidationSummary) -> Value {

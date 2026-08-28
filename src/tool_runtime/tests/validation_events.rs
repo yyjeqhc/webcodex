@@ -1050,6 +1050,85 @@ fn same_validation_identity_success_resolves_failure_without_deleting_history() 
 }
 
 #[test]
+fn generic_test_success_without_structured_counts_resolves_same_identity_failure() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let input = crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
+        "run_process",
+        &json!({
+            "project": "agent:eval:demo",
+            "executable": "cargo",
+            "args": ["test", "focused", "-p", "webcodex"],
+            "cwd": ".",
+            "purpose": "test"
+        }),
+    );
+    let identity = input["validation_target_id"]
+        .as_str()
+        .expect("generic validation identity")
+        .to_string();
+    assert_eq!(input["validation_tool"], "cargo_test");
+
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_process",
+        input.clone(),
+        false,
+        json!({
+            "exit_code": 101,
+            "purpose": "test",
+            "execution_state": "completed",
+            "stdout_tail": "generic harness failed\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false
+        }),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_process",
+        input,
+        true,
+        json!({
+            "exit_code": 0,
+            "purpose": "test",
+            "execution_state": "completed",
+            "stdout_tail": "generic harness passed\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false
+        }),
+    );
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let raw_finished = summary
+        .events
+        .iter()
+        .filter(|event| event.kind == "tool_call_finished" && event.tool_name == "run_process")
+        .collect::<Vec<_>>();
+    assert_eq!(raw_finished.len(), 2);
+    assert_eq!(raw_finished[0].status.as_deref(), Some("failed"));
+    assert_eq!(raw_finished[1].status.as_deref(), Some("succeeded"));
+
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["events_total"], 2);
+    assert_eq!(validation["status"], "mixed");
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["historical_failures"]["resolved"], true);
+    assert_eq!(validation["historical_failures"]["unresolved"], false);
+    assert_eq!(validation["resolved_failures"]["count"], 1);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+    assert_eq!(validation["latest"]["execution_source"], "run_process");
+    assert_eq!(validation["latest"]["validation_kind"], "test");
+    assert_eq!(validation["latest"]["identity"], identity);
+    assert!(validation["latest"]["tests_run_count"].is_null());
+    assert!(validation["latest"]["zero_tests_run"].is_null());
+}
+
+#[test]
 fn proven_generic_cargo_test_resolves_same_generic_and_structured_target_only() {
     let store = SessionStore::default();
     let session = store.start_session(Some("agent:eval:demo".to_string()), None);

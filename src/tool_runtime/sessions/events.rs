@@ -131,45 +131,68 @@ pub(super) fn is_valid_logical_invocation_role(value: &str) -> bool {
     )
 }
 
-fn logical_invocation_role_priority(event: &SessionEvent) -> u8 {
-    match event.logical_invocation_role.as_deref() {
-        Some(LOGICAL_INVOCATION_ROLE_BUSINESS) => 2,
-        Some(LOGICAL_INVOCATION_ROLE_RECORDER) => 1,
-        _ => 0,
-    }
-}
-
 /// Canonical finished-tool evidence for one Workflow Session. Correlated
 /// recorder/business duplicates are collapsed only inside the supplied Session
 /// slice; legacy events without complete correlation remain independent facts.
 pub(crate) fn canonical_tool_call_finished_events(events: &[SessionEvent]) -> Vec<&SessionEvent> {
     let mut selected = Vec::<(usize, &SessionEvent)>::new();
-    let mut correlated = HashMap::<&str, usize>::new();
+    let mut correlated = HashMap::<&str, Vec<(usize, &SessionEvent)>>::new();
     for (event_index, event) in events.iter().enumerate() {
         if event.kind != "tool_call_finished" {
             continue;
         }
-        let correlated_id = event.logical_invocation_id.as_deref().filter(|_| {
-            event
-                .logical_invocation_role
-                .as_deref()
-                .is_some_and(is_valid_logical_invocation_role)
+        let correlated_id = event.logical_invocation_id.as_deref().filter(|logical_id| {
+            is_valid_logical_invocation_id(logical_id)
+                && event
+                    .logical_invocation_role
+                    .as_deref()
+                    .is_some_and(is_valid_logical_invocation_role)
         });
         let Some(logical_id) = correlated_id else {
             selected.push((event_index, event));
             continue;
         };
-        if let Some(selected_index) = correlated.get(logical_id).copied() {
-            let (_, current) = selected[selected_index];
-            if logical_invocation_role_priority(event) >= logical_invocation_role_priority(current)
-            {
-                selected[selected_index] = (event_index, event);
+        correlated
+            .entry(logical_id)
+            .or_default()
+            .push((event_index, event));
+    }
+
+    for group in correlated.into_values() {
+        // Only suppress raw evidence when the retained facts prove the exact
+        // runtime shape: one recorder finish plus one business finish for the
+        // same request. Valid-looking but reused/corrupt correlation metadata is
+        // projected conservatively rather than hiding an otherwise real event.
+        let canonical_business = if group.len() == 2 {
+            let recorder = group.iter().find(|(_, event)| {
+                event.logical_invocation_role.as_deref() == Some(LOGICAL_INVOCATION_ROLE_RECORDER)
+            });
+            let business = group.iter().find(|(_, event)| {
+                event.logical_invocation_role.as_deref() == Some(LOGICAL_INVOCATION_ROLE_BUSINESS)
+            });
+            match (recorder, business) {
+                (Some((_, recorder)), Some((business_index, business)))
+                    if recorder.session_id == business.session_id
+                        && recorder.tool_name == business.tool_name
+                        && recorder.status == business.status
+                        && recorder.call_id.is_some()
+                        && business.call_id.is_some()
+                        && recorder.call_id != business.call_id =>
+                {
+                    Some((*business_index, *business))
+                }
+                _ => None,
             }
         } else {
-            correlated.insert(logical_id, selected.len());
-            selected.push((event_index, event));
+            None
+        };
+        if let Some(business) = canonical_business {
+            selected.push(business);
+        } else {
+            selected.extend(group);
         }
     }
+
     selected.sort_by_key(|(event_index, _)| *event_index);
     selected.into_iter().map(|(_, event)| event).collect()
 }

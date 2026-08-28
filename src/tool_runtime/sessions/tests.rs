@@ -1523,6 +1523,35 @@ fn legacy_session_events_without_logical_invocation_correlation_restore_without_
     );
 }
 
+#[test]
+fn reused_logical_invocation_metadata_does_not_suppress_ambiguous_evidence() {
+    let store = SessionStore::new_in_memory(10, 20);
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let mut business = ToolCallRecorderMetadata::default();
+    business.assign_logical_invocation();
+    business.mark_business_execution();
+
+    for path in ["src/one.rs", "src/two.rs"] {
+        let start = store.record_tool_call_started_with_metadata(
+            Some(&session.session_id),
+            SessionTransport::Api,
+            "read_file",
+            &json!({"project": "agent:eval:demo", "path": path}),
+            Some("agent:eval:demo".to_string()),
+            business.clone(),
+        );
+        store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
+    }
+
+    let summary = store.summary(&session.session_id, Some(20)).unwrap();
+    assert_eq!(
+        summary.counts.tool_calls, 2,
+        "a duplicated valid-looking business correlation is ambiguous and must stay conservative"
+    );
+    let canonical = super::events::canonical_tool_call_finished_events(&summary.events);
+    assert_eq!(canonical.len(), 2);
+}
+
 fn record_console_tool(
     store: &SessionStore,
     session_id: &str,

@@ -328,6 +328,71 @@ async fn validation_summary_preserves_history_bounds_and_safe_diagnostics() {
 }
 
 #[test]
+fn correlated_validation_matches_the_business_start_by_call_id() {
+    let runtime = test_runtime();
+    let project = "agent:logical-validation-pair:project".to_string();
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("logical validation pair".to_string()),
+    );
+    let recorder_target = "target:111111111111111111111111";
+    let business_target = "target:222222222222222222222222";
+    let mut recorder = ToolCallRecorderMetadata::default();
+    recorder.assign_logical_invocation();
+    let mut business = recorder.clone();
+    business.mark_business_execution();
+    let recorder_start = runtime.sessions.record_tool_call_started_with_metadata(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_check",
+        &json!({"project": project, "validation_target_id": recorder_target}),
+        Some(project.clone()),
+        recorder,
+    );
+    let business_start = runtime.sessions.record_tool_call_started_with_metadata(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_check",
+        &json!({"project": project, "validation_target_id": business_target}),
+        Some(project.clone()),
+        business,
+    );
+    let output = json!({
+        "exit_code": 0,
+        "stdout_tail": "Finished dev profile\n",
+        "stderr_tail": "",
+        "stdout_truncated": false,
+        "stderr_truncated": false,
+        "passed": true,
+        "errors_count": 0,
+        "warnings_count": 0
+    });
+    // Real kernel ordering is outer start -> business start -> business finish -> outer finish.
+    runtime
+        .sessions
+        .record_tool_call_finished(business_start, true, &output, None, None);
+    runtime
+        .sessions
+        .record_tool_call_finished(recorder_start, true, &output, None, None);
+
+    let mut summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    // Force the old fallback key to collide deterministically. call_id must still
+    // select the business start paired with the canonical business finish.
+    for event in &mut summary.events {
+        if event.kind.starts_with("tool_call_") {
+            event.started_at = Some(42);
+        }
+    }
+    let validation =
+        crate::tool_runtime::validation_events::validation_summary_from_events(&summary.events, 20);
+    assert_eq!(validation["events_total"], 1);
+    assert_eq!(validation["events"][0]["identity"], business_target);
+}
+
+#[test]
 fn correlated_outer_and_business_validation_events_count_once_per_logical_invocation() {
     let runtime = test_runtime();
     let project = "agent:logical-validation:project".to_string();

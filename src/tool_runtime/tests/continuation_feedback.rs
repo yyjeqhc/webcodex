@@ -364,6 +364,60 @@ fn attempt_only_counts_events_after_the_last_task_instruction() {
 }
 
 #[test]
+fn attempt_does_not_recount_recorder_finish_when_business_finish_precedes_boundary() {
+    let runtime = test_runtime();
+    let session = create_session(&runtime, "logical boundary straddle");
+    let arguments = json!({
+        "project": "test-project",
+        "changes": [{"kind": "edit", "path": "src/prior.rs"}],
+    });
+    let mut recorder = sessions::ToolCallRecorderMetadata::default();
+    recorder.assign_logical_invocation();
+    let mut business = recorder.clone();
+    business.mark_business_execution();
+    let recorder_start = runtime.sessions.record_tool_call_started_with_metadata(
+        Some(&session),
+        SessionTransport::Api,
+        "apply_text_edits",
+        &arguments,
+        Some("test-project".to_string()),
+        recorder,
+    );
+    let business_start = runtime.sessions.record_tool_call_started_with_metadata(
+        Some(&session),
+        SessionTransport::Api,
+        "apply_text_edits",
+        &arguments,
+        Some("test-project".to_string()),
+        business,
+    );
+    runtime.sessions.record_tool_call_finished(
+        business_start,
+        true,
+        &json!({"applied": true}),
+        None,
+        None,
+    );
+    add_instruction(&runtime, &session, "next attempt", SessionMode::Normal);
+    runtime.sessions.record_tool_call_finished(
+        recorder_start,
+        true,
+        &json!({"applied": true}),
+        None,
+        None,
+    );
+
+    let summary = runtime.sessions.summary(&session, Some(200)).unwrap();
+    let feedback = feedback_for(&runtime, &summary, "continued");
+    assert_eq!(
+        feedback["attempt"]["boundary"]["source"],
+        "task_instruction"
+    );
+    assert_eq!(feedback["attempt"]["activity"]["meaningful_tool_calls"], 0);
+    assert_eq!(feedback["attempt"]["changes"]["total_changed_paths"], 0);
+}
+
+#[test]
 fn attempt_without_task_instruction_falls_back_to_session_start() {
     let runtime = test_runtime();
     let session = create_session(&runtime, "no instruction");

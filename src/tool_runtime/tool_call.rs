@@ -5,8 +5,9 @@
 //! logging.
 
 use super::sessions::{
-    strip_tool_call_expectation_metadata, SessionExecutionContext, SessionMessageKind,
-    SessionMessagePriority, SessionMessageStatus, ToolCallRecorderMetadata,
+    strip_tool_call_expectation_metadata, validate_model_facing_assertion_name,
+    SessionExecutionContext, SessionMessageKind, SessionMessagePriority, SessionMessageStatus,
+    ToolCallRecorderMetadata,
 };
 use super::tool_definition::{lookup_tool_definition, model_visible_tool_names_csv};
 use super::tool_inputs::{
@@ -2163,6 +2164,7 @@ impl ToolCall {
                 model_visible_tool_names_csv()
             )
         })?;
+        validate_model_facing_assertion_name(name, &arguments)?;
         let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&arguments);
         let arguments = strip_tool_call_expectation_metadata(arguments);
         if name == "start_coding_task" {

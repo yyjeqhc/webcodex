@@ -1640,6 +1640,7 @@ pub(crate) fn is_structured_validation_target_identity(value: &str) -> bool {
 }
 
 const GENERIC_VALIDATION_IDENTITY_PREFIX: &str = "command:";
+const ASSERTION_VALIDATION_IDENTITY_PREFIX: &str = "assertion:";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GenericValidationIdentity {
@@ -1651,12 +1652,30 @@ pub(crate) fn is_validation_execution_identity(value: &str) -> bool {
     if is_structured_validation_target_identity(value) {
         return true;
     }
-    value
-        .strip_prefix(GENERIC_VALIDATION_IDENTITY_PREFIX)
-        .is_some_and(|suffix| {
+    [
+        GENERIC_VALIDATION_IDENTITY_PREFIX,
+        ASSERTION_VALIDATION_IDENTITY_PREFIX,
+    ]
+    .into_iter()
+    .any(|prefix| {
+        value.strip_prefix(prefix).is_some_and(|suffix| {
             suffix.len() == STRUCTURED_VALIDATION_TARGET_HEX_LEN
                 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
         })
+    })
+}
+
+pub(crate) fn assertion_validation_identity(assertion_name: &str) -> String {
+    let assertion_name = assertion_name.trim();
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex-validation-assertion-v1\0");
+    hasher.update((assertion_name.len() as u64).to_le_bytes());
+    hasher.update(assertion_name.as_bytes());
+    let digest = format!("{:x}", hasher.finalize());
+    format!(
+        "{ASSERTION_VALIDATION_IDENTITY_PREFIX}{}",
+        &digest[..STRUCTURED_VALIDATION_TARGET_HEX_LEN]
+    )
 }
 
 fn validation_like_purpose(purpose: Option<&str>) -> bool {

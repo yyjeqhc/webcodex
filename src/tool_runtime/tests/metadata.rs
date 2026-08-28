@@ -1648,12 +1648,21 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
         );
         assert_eq!(tool["deprecated_or_unsupported_args"], json!([]));
         let accepted = tool["accepted_flattened_args"].as_array().unwrap();
+        let tool_name = tool["name"].as_str().unwrap_or("unknown");
         for &field in TOOL_CALL_EXPECTATION_METADATA_FIELDS {
-            assert!(
-                !accepted.iter().any(|value| value.as_str() == Some(field)),
-                "{} manifest entry must not advertise recorder metadata field {field}",
-                tool["name"].as_str().unwrap_or("unknown")
-            );
+            let advertised = accepted.iter().any(|value| value.as_str() == Some(field));
+            if field == "assertion_name" {
+                assert_eq!(
+                    advertised,
+                    matches!(tool_name, "run_process" | "run_script" | "run_shell" | "run_job"),
+                    "{tool_name} manifest assertion_name exposure must match the model-facing generic validation tools"
+                );
+            } else {
+                assert!(
+                    !advertised,
+                    "{tool_name} manifest entry must not advertise internal expectation field {field}"
+                );
+            }
         }
     }
 

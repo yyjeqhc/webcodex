@@ -15,8 +15,8 @@ use super::session_context::{
 };
 use super::sessions::{canonical_tool_call_finished_events, SessionEvent, SessionSummary};
 use super::tool_audit::{
-    is_structured_validation_target_identity, is_validation_execution_identity,
-    structured_validation_target_identity,
+    assertion_validation_identity, is_structured_validation_target_identity,
+    is_validation_execution_identity, structured_validation_target_identity,
 };
 use super::validation_parser::{
     ValidationDiagnostics, PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION,
@@ -1145,7 +1145,7 @@ fn execution_identity(
         .or(finished.assertion_name.as_deref())
         .filter(|value| !value.is_empty())
     {
-        return format!("assertion:{assertion}");
+        return assertion_validation_identity(assertion);
     }
     if let Some(identity) = started
         .and_then(|event| event.input_summary.as_ref())

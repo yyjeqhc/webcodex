@@ -33,6 +33,9 @@ pub(super) const DEFAULT_SUMMARY_LIMIT: usize = 50;
 pub(super) const MAX_SUMMARY_LIMIT: usize = 200;
 pub(super) const MAX_SUMMARY_STRING_CHARS: usize = 240;
 pub(super) const MAX_INPUT_STRING_CHARS: usize = 120;
+/// Public model-facing `assertion_name` bound. Keep this aligned with the
+/// ordinary Session input-string bound so correlation labels stay compact.
+pub(crate) const MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS: usize = MAX_INPUT_STRING_CHARS;
 pub(super) const MAX_INPUT_OBJECT_KEYS: usize = 16;
 pub(super) const MAX_INPUT_ARRAY_ITEMS: usize = 8;
 pub(crate) const MAX_VALIDATION_EXCERPT_CHARS: usize = 800;

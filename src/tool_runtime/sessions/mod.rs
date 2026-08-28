@@ -37,7 +37,7 @@ pub(crate) use console::{
 pub(crate) use events::{
     canonical_tool_call_finished_events, exploration_tool_kind, is_valid_session_id,
     normalize_observed_project_path, strip_tool_call_expectation_metadata,
-    tool_failure_summary_from_events,
+    tool_failure_summary_from_events, validate_model_facing_assertion_name,
     validation_output_summary_for_tool_result as execution_output_summary_for_tool_result,
     ExplorationToolKind, EXPLORATION_TOOL_NAMES,
 };
@@ -53,8 +53,10 @@ pub(crate) use model::{
     SessionTransport, ToolCallRecorderMetadata, ToolCallSessionMessageResolution, ToolCallStart,
     DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_SESSIONS, MAX_CODING_INSTRUCTION_CHARS,
     MAX_MESSAGE_COMPLETION_KEY_CHARS, MAX_MESSAGE_LIST_LIMIT, MAX_MESSAGE_RESOLUTION_CHARS,
-    MAX_TOOL_CALL_ACK_MESSAGE_IDS, SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION,
-    SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON, TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD,
+    MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, MAX_TOOL_CALL_ACK_MESSAGE_IDS,
+    SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION,
+    SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON, TOOL_ASSERTION_NAME_FIELD,
+    TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD,
     TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD, TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
     TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
     TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD,

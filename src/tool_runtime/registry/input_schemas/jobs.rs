@@ -8,6 +8,19 @@ use crate::shell_protocol::{
     SCRIPT_ARGV_MAX_BYTES, SCRIPT_ARG_MAX_BYTES, SCRIPT_ARG_MAX_COUNT, SCRIPT_CWD_MAX_BYTES,
     SCRIPT_MAX_BYTES, SCRIPT_STDIN_MAX_BYTES, SCRIPT_TIMEOUT_MAX_SECS,
 };
+use crate::tool_runtime::sessions::{
+    MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, TOOL_ASSERTION_NAME_FIELD,
+};
+
+fn with_optional_validation_assertion(mut schema: Value) -> Value {
+    schema["properties"][TOOL_ASSERTION_NAME_FIELD] = json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS,
+        "description": "Optional stable human-readable validation assertion label. Reuse the same value after a fix to correlate later validation evidence even when the command changes. It never grants execution authority, changes success, or bypasses structured validation proof. It is inert unless the existing purpose/evidence rules classify the execution as validation-like."
+    });
+    schema
+}
 
 pub(crate) fn run_process_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
@@ -75,11 +88,15 @@ pub(crate) fn run_process_input_schema() -> Value {
         "operation",
         "other"
     ]);
-    schema
+    with_optional_validation_assertion(schema)
 }
 
 pub(crate) fn run_detached_process_input_schema() -> Value {
     let mut schema = run_process_input_schema();
+    schema["properties"]
+        .as_object_mut()
+        .expect("run_process schema properties")
+        .remove(TOOL_ASSERTION_NAME_FIELD);
     schema["properties"]["idempotency_key"] = json!({
         "type": "string",
         "minLength": 1,
@@ -175,7 +192,7 @@ pub(crate) fn run_script_input_schema() -> Value {
         "operation",
         "other"
     ]);
-    schema
+    with_optional_validation_assertion(schema)
 }
 
 pub(crate) fn run_shell_input_schema() -> Value {
@@ -225,7 +242,7 @@ pub(crate) fn run_shell_input_schema() -> Value {
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
     schema["properties"]["timeout_secs"]["maximum"] = json!(120);
     schema["properties"]["timeout_secs"]["default"] = json!(60);
-    schema
+    with_optional_validation_assertion(schema)
 }
 
 pub(crate) fn run_job_input_schema() -> Value {
@@ -277,7 +294,7 @@ pub(crate) fn run_job_input_schema() -> Value {
     schema["properties"]["command"]["description"] = json!(format!(
         "Shell command to run asynchronously. At most {RAW_SHELL_COMMAND_MAX_BYTES} UTF-8 bytes; use run_script for larger program text and stdin/files/artifacts for large data."
     ));
-    schema
+    with_optional_validation_assertion(schema)
 }
 
 pub(crate) fn open_session_shell_input_schema() -> Value {

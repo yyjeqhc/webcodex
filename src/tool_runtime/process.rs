@@ -329,6 +329,7 @@ impl ToolRuntime {
         sandbox: Option<&str>,
         ssh_resource: Option<&str>,
         session_id: Option<String>,
+        validation_assertion_identity: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         self.run_process_with_contract_mode(
@@ -343,6 +344,7 @@ impl ToolRuntime {
             ssh_resource,
             session_id,
             auth,
+            validation_assertion_identity,
             true,
         )
         .await
@@ -606,6 +608,7 @@ impl ToolRuntime {
             None,
             None,
             None,
+            None,
             false,
         )
         .await
@@ -625,6 +628,7 @@ impl ToolRuntime {
         ssh_resource: Option<&str>,
         session_id: Option<String>,
         auth: Option<&AuthContext>,
+        validation_assertion_identity: Option<&str>,
         allow_async_handoff: bool,
     ) -> ToolResult {
         let budget = match StructuredExecutionBudget::resolve(timeout_secs) {
@@ -670,7 +674,13 @@ impl ToolRuntime {
             stdin.as_deref(),
             cwd.as_deref(),
             Some(declared_purpose.as_str()),
-        );
+        )
+        .map(|mut identity| {
+            if let Some(assertion_identity) = validation_assertion_identity {
+                identity.identity = assertion_identity.to_string();
+            }
+            identity
+        });
         let proj = match self.resolve_project(&project).await {
             Ok(project) => project,
             Err(error) => {

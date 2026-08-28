@@ -1880,7 +1880,7 @@ fn same_assertion_identity_resolves_only_its_own_failure() {
     assert_eq!(validation["unresolved_failures"]["count"], 0);
     assert_eq!(
         validation["resolved_failures"]["events"][0]["identity"],
-        "assertion:release_check"
+        crate::tool_runtime::tool_audit::assertion_validation_identity("release_check")
     );
 }
 
@@ -1977,18 +1977,29 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
         .sessions
         .start_session(Some(project.clone()), Some("job validation".to_string()));
 
+    let assertion_name = "direct run job validation";
+    let expected_identity =
+        crate::tool_runtime::tool_audit::assertion_validation_identity(assertion_name);
+    let (call, recorder_metadata) = ToolCall::from_tool_name_with_recorder_metadata(
+        "run_job",
+        json!({
+            "project": project,
+            "command": "cargo test focused",
+            "session_id": session.session_id,
+            "timeout_secs": 30,
+            "cwd": ".",
+            "purpose": "test",
+            "shell": "bash",
+            "assertion_name": assertion_name,
+        }),
+    )
+    .unwrap();
     let execution = runtime
-        .dispatch_with_auth(
-            ToolCall::RunJob {
-                project: project.clone(),
-                command: "cargo test focused".to_string(),
-                session_id: Some(session.session_id.clone()),
-                timeout_secs: Some(30),
-                cwd: Some(".".to_string()),
-                purpose: Some(ExecutionPurpose::Test),
-                shell: Some(ExecutionShell::Bash),
-            },
+        .dispatch_with_auth_transport_options_and_metadata(
+            call,
             Some(&auth),
+            SessionTransport::Mcp,
+            recorder_metadata,
         )
         .await;
     assert!(execution.success, "{:?}", execution.error);
@@ -2044,6 +2055,7 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
     assert_eq!(event["purpose"], "test");
     assert_eq!(event["execution_state"], "completed");
     assert_eq!(event["exit_code"], 0);
+    assert_eq!(event["identity"], expected_identity);
     assert_eq!(
         handoff.output["facts"]["executions"][0]["identity"],
         event["identity"]
@@ -2077,30 +2089,33 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
     let session = runtime.sessions.start_session(Some(project.clone()), None);
     let session_id = session.session_id.clone();
 
+    let assertion_name = "promoted process validation";
+    let expected_identity =
+        crate::tool_runtime::tool_audit::assertion_validation_identity(assertion_name);
+    let (call, recorder_metadata) = ToolCall::from_tool_name_with_recorder_metadata(
+        "run_process",
+        json!({
+            "project": project,
+            "executable": "cargo",
+            "args": ["test", "focused", "-p", "webcodex"],
+            "session_id": session_id,
+            "timeout_secs": 121,
+            "cwd": ".",
+            "purpose": "test",
+            "assertion_name": assertion_name,
+        }),
+    )
+    .unwrap();
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let auth = auth.clone();
-        let project = project.clone();
-        let session_id = session_id.clone();
         async move {
             runtime
-                .dispatch_with_auth(
-                    ToolCall::RunProcess {
-                        project,
-                        executable: "cargo".to_string(),
-                        args: vec![
-                            "test".to_string(),
-                            "focused".to_string(),
-                            "-p".to_string(),
-                            "webcodex".to_string(),
-                        ],
-                        stdin: None,
-                        session_id: Some(session_id),
-                        timeout_secs: Some(121),
-                        cwd: Some(".".to_string()),
-                        purpose: Some(ExecutionPurpose::Test),
-                    },
+                .dispatch_with_auth_transport_options_and_metadata(
+                    call,
                     Some(&auth),
+                    SessionTransport::Mcp,
+                    recorder_metadata,
                 )
                 .await
         }
@@ -2121,7 +2136,8 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
         .as_deref()
         .expect("admission-derived validation identity")
         .to_string();
-    assert!(target.starts_with("target:"));
+    assert_eq!(target, expected_identity);
+    assert!(target.starts_with("assertion:"));
 
     runtime
         .shell_clients

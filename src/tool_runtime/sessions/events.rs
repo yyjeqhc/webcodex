@@ -300,6 +300,10 @@ pub(crate) fn tool_call_expectation_from_arguments(arguments: &Value) -> ToolCal
     }
 }
 
+pub(crate) fn is_tool_call_expectation_metadata_field(field: &str) -> bool {
+    TOOL_CALL_EXPECTATION_METADATA_FIELDS.contains(&field)
+}
+
 pub(crate) fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
     let Value::Object(mut obj) = arguments else {
         return arguments;

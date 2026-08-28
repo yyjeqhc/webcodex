@@ -112,6 +112,21 @@ fn accepted_flattened_args_cover_each_tool_spec_input_property() {
             .collect::<BTreeSet<_>>();
 
         for field in input_properties.keys() {
+            if crate::tool_runtime::sessions::TOOL_CALL_EXPECTATION_METADATA_FIELDS
+                .contains(&field.as_str())
+            {
+                assert!(
+                    !accepted.contains(field),
+                    "{} recorder metadata input {field} must stay out of generic flattened GPT Action args",
+                    spec.name
+                );
+                assert!(
+                    !tool_call_properties.contains_key(field),
+                    "generic ToolCallRequest must not publish {} recorder metadata input {field}",
+                    spec.name
+                );
+                continue;
+            }
             assert!(
                 accepted.contains(field),
                 "{} input_schema.properties.{field} must be accepted as a flattened GPT Action arg",

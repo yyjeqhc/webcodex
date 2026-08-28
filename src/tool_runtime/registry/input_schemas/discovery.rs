@@ -2,7 +2,9 @@ use serde_json::{json, Value};
 
 use super::super::super::tool_spec::ToolSpec;
 use super::common::object_schema;
-use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
+use crate::tool_runtime::sessions::{
+    is_tool_call_expectation_metadata_field, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
+};
 use crate::tool_runtime::tool_definition::runtime_tool_extra_accepted_flattened_args;
 
 pub(crate) fn list_tools_input_schema() -> Value {
@@ -210,6 +212,7 @@ pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
         .keys()
         .map(String::as_str)
         .filter(|field| !ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER.contains(field))
+        .filter(|field| !is_tool_call_expectation_metadata_field(field))
         .collect();
     remaining.sort_unstable();
     names.extend(remaining.into_iter().map(str::to_string));

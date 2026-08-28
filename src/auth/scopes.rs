@@ -20,6 +20,14 @@ pub const SCOPE_RUNTIME_READ: &str = "runtime:read";
 pub const SCOPE_SESSION_COLLABORATE: &str = "session:collaborate";
 pub const SCOPE_PROJECT_READ: &str = "project:read";
 pub const SCOPE_PROJECT_WRITE: &str = "project:write";
+pub const SCOPE_MEMORY_READ: &str = "memory:read";
+pub const SCOPE_MEMORY_MANAGE: &str = "memory:manage";
+/// Canonical project Memory read authority. Both dimensions are required;
+/// neither a project grant nor Memory authority alone is sufficient.
+pub(crate) const MEMORY_READ_SCOPES: &[&str] = &[SCOPE_PROJECT_READ, SCOPE_MEMORY_READ];
+/// Canonical project Memory mutation authority. PermissionEvaluator remains an
+/// independent consequential-effect gate after these credential scopes pass.
+pub(crate) const MEMORY_MANAGE_SCOPES: &[&str] = &[SCOPE_PROJECT_WRITE, SCOPE_MEMORY_MANAGE];
 pub const SCOPE_JOB_RUN: &str = "job:run";
 pub const SCOPE_JOB_DETACH: &str = "job:detach";
 pub const SCOPE_COMPUTER_READ: &str = "computer:read";
@@ -65,6 +73,8 @@ pub(crate) const KNOWN_SCOPES: &[&str] = &[
     SCOPE_SESSION_COLLABORATE,
     SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE,
+    SCOPE_MEMORY_READ,
+    SCOPE_MEMORY_MANAGE,
     SCOPE_JOB_RUN,
     SCOPE_JOB_DETACH,
     SCOPE_COMPUTER_READ,
@@ -193,6 +203,12 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
 }
 
 pub(crate) fn oauth_scope_policy_for_runtime_tool(tool_name: &str) -> OAuthToolScopePolicy {
+    if matches!(tool_name, "memory_search" | "memory_read") {
+        return OAuthToolScopePolicy::RequireAll(MEMORY_READ_SCOPES);
+    }
+    if matches!(tool_name, "memory_set" | "memory_delete") {
+        return OAuthToolScopePolicy::RequireAll(MEMORY_MANAGE_SCOPES);
+    }
     if tool_name == "run_detached_process" {
         return OAuthToolScopePolicy::RequireAll(&[SCOPE_JOB_RUN, SCOPE_JOB_DETACH]);
     }
@@ -871,7 +887,11 @@ mod tests {
     fn oauth_route_policy_tool_scope_policy_covers_metadata_for_known_tools() {
         for tool in known_tool_names() {
             let metadata = lookup_tool_metadata(tool).unwrap();
-            let expected = if tool == "run_detached_process" {
+            let expected = if matches!(tool, "memory_search" | "memory_read") {
+                OAuthToolScopePolicy::RequireAll(MEMORY_READ_SCOPES)
+            } else if matches!(tool, "memory_set" | "memory_delete") {
+                OAuthToolScopePolicy::RequireAll(MEMORY_MANAGE_SCOPES)
+            } else if tool == "run_detached_process" {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_JOB_RUN, SCOPE_JOB_DETACH])
             } else if tool == "coding_agent_start" {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_CODING_AGENT_RUN, SCOPE_PROJECT_WRITE])
@@ -966,6 +986,55 @@ mod tests {
             auth.scopes = vec![base.to_string()];
             assert!(!auth.has_scope(SCOPE_CODING_AGENT_RUN), "{base}");
         }
+    }
+
+    #[test]
+    fn memory_scope_policy_and_lightweight_credential_classes_are_explicit() {
+        assert_eq!(
+            oauth_scope_policy_for_runtime_tool("memory_search"),
+            OAuthToolScopePolicy::RequireAll(MEMORY_READ_SCOPES)
+        );
+        assert_eq!(
+            oauth_scope_policy_for_runtime_tool("memory_read"),
+            OAuthToolScopePolicy::RequireAll(MEMORY_READ_SCOPES)
+        );
+        assert_eq!(
+            oauth_scope_policy_for_runtime_tool("memory_set"),
+            OAuthToolScopePolicy::RequireAll(MEMORY_MANAGE_SCOPES)
+        );
+        assert_eq!(
+            oauth_scope_policy_for_runtime_tool("memory_delete"),
+            OAuthToolScopePolicy::RequireAll(MEMORY_MANAGE_SCOPES)
+        );
+        assert!(KNOWN_SCOPES.contains(&SCOPE_MEMORY_READ));
+        assert!(KNOWN_SCOPES.contains(&SCOPE_MEMORY_MANAGE));
+
+        let direct = crate::auth::shared_key_context("memory-scope-contract");
+        assert!(direct.has_scope(SCOPE_MEMORY_READ));
+        assert!(direct.has_scope(SCOPE_MEMORY_MANAGE));
+        assert!(
+            crate::auth::shared_key::DIRECT_SHARED_KEY_MODEL_SCOPES.contains(&SCOPE_MEMORY_READ)
+        );
+        assert!(
+            crate::auth::shared_key::DIRECT_SHARED_KEY_MODEL_SCOPES.contains(&SCOPE_MEMORY_MANAGE)
+        );
+
+        for (label, auth) in [
+            ("open", crate::auth::open_anonymous_context()),
+            (
+                "project-credential",
+                crate::auth::shared_key::project_credential_context("wc_pgrant_memoryscope"),
+            ),
+        ] {
+            assert!(!auth.has_scope(SCOPE_MEMORY_READ), "{label}");
+            assert!(!auth.has_scope(SCOPE_MEMORY_MANAGE), "{label}");
+        }
+        assert!(
+            !crate::auth::project_share::PROJECT_SHARE_OAUTH_SCOPES.contains(&SCOPE_MEMORY_READ)
+        );
+        assert!(
+            !crate::auth::project_share::PROJECT_SHARE_OAUTH_SCOPES.contains(&SCOPE_MEMORY_MANAGE)
+        );
     }
 
     #[test]

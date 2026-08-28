@@ -1,4 +1,6 @@
-use super::super::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD;
+use super::super::context_projection::{
+    ContextMaterialCapabilities, TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD,
+};
 use super::super::kernel::{
     HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolProtocolCapabilities, ToolTransport,
 };
@@ -109,7 +111,10 @@ async fn dispatch_with_context_and_local_agent(
                     None,
                     true,
                     context_request,
-                    false,
+                    ContextMaterialCapabilities {
+                        skill_runtime: true,
+                        memory_surface: false,
+                    },
                 )
                 .await
         }

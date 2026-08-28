@@ -44,6 +44,8 @@ pub(in crate::tool_runtime::tests) fn shared_key_auth_context(
             crate::auth::SCOPE_SESSION_COLLABORATE.to_string(),
             crate::auth::SCOPE_PROJECT_READ.to_string(),
             crate::auth::SCOPE_PROJECT_WRITE.to_string(),
+            crate::auth::SCOPE_MEMORY_READ.to_string(),
+            crate::auth::SCOPE_MEMORY_MANAGE.to_string(),
             crate::auth::SCOPE_JOB_RUN.to_string(),
             crate::auth::SCOPE_AGENT_REGISTER.to_string(),
         ],

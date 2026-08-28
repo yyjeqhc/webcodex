@@ -204,28 +204,12 @@ pub(super) fn add_stateless_memory_tools(
     let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) else {
         return;
     };
-    let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
     for spec in crate::tool_runtime::memory_runtime_tool_specs()
         .into_iter()
-        .filter(|spec| {
-            !oauth_scope_projection || check_runtime_tool_scope(auth, &spec.name).is_ok()
-        })
+        .chain(crate::tool_runtime::memory_management_tool_specs())
+        .filter(|spec| check_runtime_tool_scope(auth, &spec.name).is_ok())
     {
         tools.push(mcp_tool_spec_json(spec, compact, app_enabled));
-    }
-    // Project Memory mutation is durable model-context authority. Unlike the
-    // historical generic scope helper's auth=None compatibility, management
-    // requires explicit project:write evidence before the schema is surfaced;
-    // the kernel repeats this gate authoritatively before parsing/execution.
-    if auth.is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_PROJECT_WRITE)) {
-        for spec in crate::tool_runtime::memory_management_tool_specs()
-            .into_iter()
-            .filter(|spec| {
-                !oauth_scope_projection || check_runtime_tool_scope(auth, &spec.name).is_ok()
-            })
-        {
-            tools.push(mcp_tool_spec_json(spec, compact, app_enabled));
-        }
     }
 }
 
@@ -331,7 +315,7 @@ pub(super) fn add_stateless_workflow_recorder_metadata(
                         "maxLength": crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_KEY_CHARS,
                         "description": "Bounded context material key. Keys are open-ended rather than schema-enumerated; unsupported keys are reported nonfatally in context_projection."
                     },
-                    "description": "MCP wrapper metadata only. Request bounded context material to be appended as context_projection after this tool's main effect/observation is already complete. Keys remain open-ended; current materials include project.instructions, webcodex.workflow, skills.catalog, and memory.bootstrap. This sidecar grants no authority and does not retroactively make requested guidance a precondition of the current effect. If project rules or durable Memory guidance were lost, first recover project.instructions and/or memory.bootstrap on an observation call, use memory_read when detail is needed, reason, and only then issue a later mutation that must follow that guidance."
+                    "description": format!("MCP wrapper metadata only. Request bounded context material to be appended as context_projection after this tool's main effect/observation is already complete. Keys remain open-ended; current materials include {}. This sidecar grants no authority and does not retroactively make requested guidance a precondition of the current effect. If project rules or durable Memory guidance were lost, first recover project.instructions and/or memory.bootstrap on an observation call, use memory_read when detail is needed, reason, and only then issue a later mutation that must follow that guidance.", crate::tool_runtime::context_projection::context_material_keys_csv())
                 }),
             );
             properties.insert(
@@ -1251,9 +1235,7 @@ pub(super) async fn handle_call(
         stateless_2026 && matches!(runtime.model_surface(), ModelSurface::FullOperatorRuntime);
     let skill_management_capable =
         stateless_2026 && matches!(runtime.model_surface(), ModelSurface::FullOperatorRuntime);
-    let memory_runtime_capable =
-        stateless_2026 && matches!(runtime.model_surface(), ModelSurface::FullOperatorRuntime);
-    let memory_management_capable =
+    let memory_surface_capable =
         stateless_2026 && matches!(runtime.model_surface(), ModelSurface::FullOperatorRuntime);
     let context_request = if context_sidecar_capable {
         match strip_stateless_context_request(&mut params.arguments) {
@@ -1329,8 +1311,7 @@ pub(super) async fn handle_call(
                 context_sidecar: context_sidecar_capable,
                 skill_runtime: skill_runtime_capable,
                 skill_management: skill_management_capable,
-                memory_runtime: memory_runtime_capable,
-                memory_management: memory_management_capable,
+                memory_surface: memory_surface_capable,
             },
         )
         .await;

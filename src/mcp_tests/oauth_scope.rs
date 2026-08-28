@@ -451,6 +451,89 @@ fn listed_tool_names(body: &Value) -> std::collections::HashSet<String> {
 }
 
 #[tokio::test]
+async fn oauth2_memory_tools_require_canonical_project_and_memory_scopes() {
+    for (extra_scopes, expected) in [
+        ("project:read", vec![]),
+        ("memory:read", vec![]),
+        (
+            "project:read memory:read",
+            vec!["memory_search", "memory_read"],
+        ),
+        (
+            "project:write memory:manage",
+            vec!["memory_set", "memory_delete"],
+        ),
+        ("project:write", vec![]),
+        ("memory:manage", vec![]),
+        (
+            "project:read memory:read project:write memory:manage",
+            vec![
+                "memory_search",
+                "memory_read",
+                "memory_set",
+                "memory_delete",
+            ],
+        ),
+    ] {
+        let scopes = format!("runtime:read {extra_scopes}");
+        let (_tmp, service, token) =
+            oauth_mcp_service_with_surface(&scopes, ModelSurface::FullOperatorRuntime);
+        let (status, body, _) =
+            oauth_mcp_request(&service, &token, "tools/list", mcp_2026_params(json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{scopes}: {body:?}");
+        let names = listed_tool_names(&body);
+        let actual = [
+            "memory_search",
+            "memory_read",
+            "memory_set",
+            "memory_delete",
+        ]
+        .into_iter()
+        .filter(|name| names.contains(*name))
+        .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "{scopes}");
+    }
+
+    for (scopes, tool, arguments, missing_scope) in [
+        (
+            "runtime:read project:read",
+            "memory_search",
+            json!({"project": "demo"}),
+            crate::auth::SCOPE_MEMORY_READ,
+        ),
+        (
+            "runtime:read memory:read",
+            "memory_search",
+            json!({"project": "demo"}),
+            crate::auth::SCOPE_PROJECT_READ,
+        ),
+        (
+            "runtime:read project:write",
+            "memory_set",
+            json!({"project":"demo","memory_key":"policy","summary":"summary"}),
+            crate::auth::SCOPE_MEMORY_MANAGE,
+        ),
+        (
+            "runtime:read memory:manage",
+            "memory_set",
+            json!({"project":"demo","memory_key":"policy","summary":"summary"}),
+            crate::auth::SCOPE_PROJECT_WRITE,
+        ),
+    ] {
+        let (_tmp, service, token) =
+            oauth_mcp_service_with_surface(scopes, ModelSurface::FullOperatorRuntime);
+        let (status, body, challenge) = oauth_mcp_request(
+            &service,
+            &token,
+            "tools/call",
+            mcp_2026_params(json!({"name":tool,"arguments":arguments})),
+        )
+        .await;
+        assert_mcp_oauth_scope_rejected(status, &body, challenge.as_deref(), Some(missing_scope));
+    }
+}
+
+#[tokio::test]
 async fn oauth2_tools_list_projects_optional_computer_tools_from_actual_token_scopes() {
     let baseline = "runtime:read project:read project:write job:run computer:read computer:control";
     let (_tmp, service, token) =

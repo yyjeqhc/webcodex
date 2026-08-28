@@ -42,6 +42,8 @@ fn bridge_computer_scopes_use_explicit_closed_ceiling_without_changing_direct_au
             "session:collaborate",
             "project:read",
             "project:write",
+            "memory:read",
+            "memory:manage",
             "job:run",
             "computer:read",
             "computer:control",

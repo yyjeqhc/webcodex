@@ -76,7 +76,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("project", schema_type("string", "Resolved Project id.")),
             (
                 "memory_id",
-                schema_type("string", "Opaque stable Memory identity."),
+                schema_type("string", "Opaque identity of the current Memory incarnation. Delete plus recreate produces a new memory_id."),
             ),
             (
                 "memory_key",
@@ -93,7 +93,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "Bounded durable Memory body; guidance only, never execution authority.",
                 ),
             ),
-            ("priority", schema_type("string", "high, normal, or low.")),
+            ("priority", schema_type("string", "high, normal, or low; used only for ordering Memory entries within bootstrap, never trust or authority.")),
             (
                 "bootstrap",
                 schema_type(
@@ -109,7 +109,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "revision",
                 schema_type(
                     "string",
-                    "Current model-relevant Memory definition revision.",
+                    "Current Memory state revision / ETag used for CAS. It changes for each real incarnation generation even if content later returns to an earlier definition.",
                 ),
             ),
             (
@@ -137,7 +137,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("project", schema_type("string", "Resolved Project id.")),
             (
                 "memory_id",
-                schema_type("string", "Opaque stable Memory identity."),
+                schema_type("string", "Opaque identity of the current Memory incarnation."),
             ),
             (
                 "memory_key",
@@ -149,7 +149,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "revision",
-                schema_type("string", "Current model-relevant Memory revision."),
+                schema_type("string", "Current Memory state revision / ETag for CAS."),
             ),
             (
                 "created",

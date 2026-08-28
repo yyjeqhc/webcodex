@@ -641,7 +641,7 @@ impl ToolRuntime {
             window,
             inner_model_facing_recording,
             Vec::new(),
-            false,
+            super::context_projection::ContextMaterialCapabilities::default(),
         )
         .await
     }
@@ -657,7 +657,7 @@ impl ToolRuntime {
         window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
         context_request: Vec<String>,
-        memory_runtime_capable: bool,
+        material_capabilities: super::context_projection::ContextMaterialCapabilities,
     ) -> ToolResult {
         // Phase-1 edit usage telemetry: argument-free structured log only.
         // Does not alter execution, session ledger, Action Audit, or schemas.
@@ -672,7 +672,7 @@ impl ToolRuntime {
                 window,
                 inner_model_facing_recording,
                 context_request.clone(),
-                memory_runtime_capable,
+                material_capabilities,
             )
             .await;
         // Early project/session/auth failures can return before the normal
@@ -685,7 +685,7 @@ impl ToolRuntime {
                 &context_request,
                 None,
                 auth,
-                memory_runtime_capable,
+                material_capabilities,
             )
             .await;
         }
@@ -809,7 +809,7 @@ impl ToolRuntime {
         _window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
         context_request: Vec<String>,
-        memory_runtime_capable: bool,
+        material_capabilities: super::context_projection::ContextMaterialCapabilities,
     ) -> ToolResult {
         call = call
             .with_coding_agent_recording_session_id(recorder_metadata.recording_session_id.clone());
@@ -1225,7 +1225,7 @@ impl ToolRuntime {
             &context_request,
             context_projection_project.as_ref(),
             auth,
-            memory_runtime_capable,
+            material_capabilities,
         )
         .await;
         let defer_batch_sparsification = !inner_model_facing_recording

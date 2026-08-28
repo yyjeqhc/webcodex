@@ -11,6 +11,8 @@ const OAUTH_SCOPES_SUPPORTED: &[&str] = &[
     scopes::SCOPE_SESSION_COLLABORATE,
     scopes::SCOPE_PROJECT_READ,
     scopes::SCOPE_PROJECT_WRITE,
+    scopes::SCOPE_MEMORY_READ,
+    scopes::SCOPE_MEMORY_MANAGE,
     scopes::SCOPE_JOB_RUN,
     scopes::SCOPE_JOB_DETACH,
     scopes::SCOPE_COMPUTER_READ,

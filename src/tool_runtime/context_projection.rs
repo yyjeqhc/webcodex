@@ -14,6 +14,101 @@ pub(crate) const MAX_CONTEXT_REQUEST_ITEMS: usize = 8;
 pub(crate) const MAX_CONTEXT_REQUEST_KEY_CHARS: usize = 64;
 pub(crate) const MAX_CONTEXT_PROJECTION_BYTES: usize = 20 * 1024;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContextMaterialScopePolicy {
+    Public,
+    Require(&'static str),
+    RequireAll(&'static [&'static str]),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContextMaterialSurface {
+    AnySidecar,
+    SkillRuntime,
+    MemorySurface,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ContextMaterialSpec {
+    pub(crate) key: &'static str,
+    pub(crate) project_required: bool,
+    pub(crate) scope_policy: ContextMaterialScopePolicy,
+    pub(crate) surface: ContextMaterialSurface,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ContextMaterialCapabilities {
+    pub(crate) skill_runtime: bool,
+    pub(crate) memory_surface: bool,
+}
+
+pub(crate) const CONTEXT_MATERIAL_SPECS: &[ContextMaterialSpec] = &[
+    ContextMaterialSpec {
+        key: "project.instructions",
+        project_required: true,
+        scope_policy: ContextMaterialScopePolicy::Require(crate::auth::SCOPE_PROJECT_READ),
+        surface: ContextMaterialSurface::AnySidecar,
+    },
+    ContextMaterialSpec {
+        key: "webcodex.workflow",
+        project_required: false,
+        scope_policy: ContextMaterialScopePolicy::Public,
+        surface: ContextMaterialSurface::AnySidecar,
+    },
+    ContextMaterialSpec {
+        key: "skills.catalog",
+        project_required: true,
+        scope_policy: ContextMaterialScopePolicy::Require(crate::auth::SCOPE_PROJECT_READ),
+        surface: ContextMaterialSurface::SkillRuntime,
+    },
+    ContextMaterialSpec {
+        key: "memory.bootstrap",
+        project_required: true,
+        scope_policy: ContextMaterialScopePolicy::RequireAll(
+            crate::auth::scopes::MEMORY_READ_SCOPES,
+        ),
+        surface: ContextMaterialSurface::MemorySurface,
+    },
+];
+
+pub(crate) fn context_material_keys_csv() -> String {
+    CONTEXT_MATERIAL_SPECS
+        .iter()
+        .map(|spec| spec.key)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn context_material_spec(key: &str) -> Option<&'static ContextMaterialSpec> {
+    CONTEXT_MATERIAL_SPECS.iter().find(|spec| spec.key == key)
+}
+
+fn context_material_surface_available(
+    surface: ContextMaterialSurface,
+    capabilities: ContextMaterialCapabilities,
+) -> bool {
+    match surface {
+        ContextMaterialSurface::AnySidecar => true,
+        ContextMaterialSurface::SkillRuntime => capabilities.skill_runtime,
+        ContextMaterialSurface::MemorySurface => capabilities.memory_surface,
+    }
+}
+
+fn context_material_scope_available(
+    policy: ContextMaterialScopePolicy,
+    auth: Option<&AuthContext>,
+) -> bool {
+    match policy {
+        ContextMaterialScopePolicy::Public => true,
+        ContextMaterialScopePolicy::Require(scope) => {
+            auth.is_some_and(|auth| auth.has_scope(scope))
+        }
+        ContextMaterialScopePolicy::RequireAll(scopes) => {
+            auth.is_some_and(|auth| scopes.iter().all(|scope| auth.has_scope(scope)))
+        }
+    }
+}
+
 pub(crate) fn context_request_from_arguments(arguments: &Value) -> Vec<String> {
     let Some(values) = arguments
         .as_object()
@@ -64,7 +159,7 @@ impl ToolRuntime {
         requested: &[String],
         resolved_project: Option<&ResolvedProject>,
         auth: Option<&AuthContext>,
-        memory_runtime_capable: bool,
+        capabilities: ContextMaterialCapabilities,
     ) {
         if requested.is_empty() {
             return;
@@ -80,65 +175,74 @@ impl ToolRuntime {
             .filter(|key| seen.insert((*key).to_string()))
             .take(MAX_CONTEXT_REQUEST_ITEMS)
         {
-            let material = match key {
-                "project.instructions" => match resolved_project {
-                    Some(project) => {
-                        let snapshot = self.load_coding_project_instructions(&project.config).await;
-                        let projection = project_instructions_context_projection(&snapshot);
-                        if snapshot.scan_complete {
-                            json!({
-                                "key": key,
-                                "status": "available",
-                                "projection": projection,
-                            })
-                        } else {
-                            json!({
-                                "key": key,
-                                "status": "unavailable",
-                                "reason_code": "project_instructions_observation_incomplete",
-                                "projection": projection,
-                            })
+            let material = if let Some(spec) = context_material_spec(key) {
+                if !context_material_surface_available(spec.surface, capabilities) {
+                    unavailable(key, "context_material_surface_unavailable")
+                } else if spec.project_required && resolved_project.is_none() {
+                    unavailable(key, "project_target_unavailable")
+                } else if !context_material_scope_available(spec.scope_policy, auth) {
+                    unavailable(key, "context_material_scope_unavailable")
+                } else {
+                    match key {
+                        "project.instructions" => {
+                            let project =
+                                resolved_project.expect("registry requires project target");
+                            let snapshot =
+                                self.load_coding_project_instructions(&project.config).await;
+                            let projection = project_instructions_context_projection(&snapshot);
+                            if snapshot.scan_complete {
+                                json!({
+                                    "key": key,
+                                    "status": "available",
+                                    "projection": projection,
+                                })
+                            } else {
+                                json!({
+                                    "key": key,
+                                    "status": "unavailable",
+                                    "reason_code": "project_instructions_observation_incomplete",
+                                    "projection": projection,
+                                })
+                            }
                         }
-                    }
-                    None => unavailable(key, "project_target_unavailable"),
-                },
-                "skills.catalog" => match resolved_project {
-                    Some(project) => {
-                        match self.skills_catalog_context_projection(project, auth).await {
-                            Ok(projection) => json!({
-                                "key": key,
-                                "status": "available",
-                                "projection": projection,
-                            }),
-                            Err(reason_code) => unavailable(key, reason_code),
+                        "skills.catalog" => {
+                            let project =
+                                resolved_project.expect("registry requires project target");
+                            match self.skills_catalog_context_projection(project, auth).await {
+                                Ok(projection) => json!({
+                                    "key": key,
+                                    "status": "available",
+                                    "projection": projection,
+                                }),
+                                Err(reason_code) => unavailable(key, reason_code),
+                            }
                         }
-                    }
-                    None => unavailable(key, "project_target_unavailable"),
-                },
-                "memory.bootstrap" if !memory_runtime_capable => {
-                    unavailable(key, "memory_runtime_capability_unavailable")
-                }
-                "memory.bootstrap" => match resolved_project {
-                    Some(project) => match self.memory_bootstrap_context_projection(project) {
-                        Ok(projection) => json!({
+                        "memory.bootstrap" => {
+                            let project =
+                                resolved_project.expect("registry requires project target");
+                            match self.memory_bootstrap_context_projection(project) {
+                                Ok(projection) => json!({
+                                    "key": key,
+                                    "status": "available",
+                                    "projection": projection,
+                                }),
+                                Err(reason_code) => unavailable(key, reason_code),
+                            }
+                        }
+                        "webcodex.workflow" => json!({
                             "key": key,
                             "status": "available",
-                            "projection": projection,
+                            "projection": builtin_coding_workflow_projection(),
                         }),
-                        Err(reason_code) => unavailable(key, reason_code),
-                    },
-                    None => unavailable(key, "project_target_unavailable"),
-                },
-                "webcodex.workflow" => json!({
-                    "key": key,
-                    "status": "available",
-                    "projection": builtin_coding_workflow_projection(),
-                }),
-                _ => json!({
+                        _ => unreachable!("context material registry/provider match drifted"),
+                    }
+                }
+            } else {
+                json!({
                     "key": key,
                     "status": "unsupported",
                     "reason_code": "unsupported_context_material",
-                }),
+                })
             };
 
             let mut candidate = materials.clone();

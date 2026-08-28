@@ -65,8 +65,9 @@ pub(crate) struct ToolProtocolCapabilities {
     pub(crate) context_sidecar: bool,
     pub(crate) skill_runtime: bool,
     pub(crate) skill_management: bool,
-    pub(crate) memory_runtime: bool,
-    pub(crate) memory_management: bool,
+    /// Protocol-surface support for the Control-owned Memory runtime. Read vs
+    /// manage authority is expressed only by canonical credential scopes.
+    pub(crate) memory_surface: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,11 +94,38 @@ pub(crate) fn check_runtime_tool_scope(
     auth: Option<&AuthContext>,
     tool_name: &str,
 ) -> Result<(), ToolCallErrorStatus> {
+    let policy = crate::auth::scopes::oauth_scope_policy_for_runtime_tool(tool_name);
     let Some(auth) = auth else {
+        // Preserve historical unauthenticated compatibility for unrelated
+        // internal tools, but Memory authority is intentionally never inferred
+        // from surface presence or a missing credential.
+        let required_memory_scope = match policy {
+            OAuthToolScopePolicy::Require(scope)
+                if matches!(
+                    scope,
+                    crate::auth::SCOPE_MEMORY_READ | crate::auth::SCOPE_MEMORY_MANAGE
+                ) =>
+            {
+                Some(scope)
+            }
+            OAuthToolScopePolicy::RequireAll(scopes) => scopes.iter().copied().find(|scope| {
+                matches!(
+                    *scope,
+                    crate::auth::SCOPE_MEMORY_READ | crate::auth::SCOPE_MEMORY_MANAGE
+                )
+            }),
+            _ => None,
+        };
+        if let Some(scope) = required_memory_scope {
+            return Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(scope),
+                description: format!("missing required scope: {scope}"),
+            });
+        }
         return Ok(());
     };
 
-    match crate::auth::scopes::oauth_scope_policy_for_runtime_tool(tool_name) {
+    match policy {
         OAuthToolScopePolicy::Require(scope) => {
             if auth.has_scope(scope) {
                 Ok(())
@@ -193,8 +221,7 @@ impl ToolRuntime {
                 context_sidecar: context_sidecar_capable,
                 skill_runtime: context_sidecar_capable,
                 skill_management: false,
-                memory_runtime: false,
-                memory_management: false,
+                memory_surface: false,
             },
         )
         .await
@@ -229,49 +256,19 @@ impl ToolRuntime {
                 &request.arguments,
                 capabilities.context_continuity,
             );
-        // Project Memory tools are kernel-known but globally model-hidden. The
-        // explicit protocol capability is authoritative; REST, legacy MCP,
-        // Connector/Local surfaces, and private wrapper markers cannot enable
-        // Memory execution.
-        if super::memory::is_memory_runtime_tool_name(&request.tool_name)
-            && !capabilities.memory_runtime
+        // Project Memory tools are kernel-known but globally model-hidden. One
+        // explicit protocol-surface capability gates all four tools; canonical
+        // memory:read/manage + project scopes below decide caller authority.
+        if (super::memory::is_memory_runtime_tool_name(&request.tool_name)
+            || super::memory::is_memory_management_tool_name(&request.tool_name))
+            && !capabilities.memory_surface
         {
             return ToolCallOutcome {
                 success: false,
                 result: None,
                 error_status: Some(ToolCallErrorStatus::InvalidArguments {
-                    message: "Memory runtime tools are available only on Stateless MCP 2026 Full Operator"
+                    message: "Memory tools are available only on Stateless MCP 2026 Full Operator"
                         .to_string(),
-                }),
-                project: None,
-                model_ergonomics: None,
-            };
-        }
-        if super::memory::is_memory_management_tool_name(&request.tool_name)
-            && !capabilities.memory_management
-        {
-            return ToolCallOutcome {
-                success: false,
-                result: None,
-                error_status: Some(ToolCallErrorStatus::InvalidArguments {
-                    message: "Memory management tools are available only on Stateless MCP 2026 Full Operator"
-                        .to_string(),
-                }),
-                project: None,
-                model_ergonomics: None,
-            };
-        }
-        if super::memory::is_memory_management_tool_name(&request.tool_name)
-            && !context
-                .auth
-                .is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_PROJECT_WRITE))
-        {
-            return ToolCallOutcome {
-                success: false,
-                result: None,
-                error_status: Some(ToolCallErrorStatus::InsufficientScope {
-                    required_scope: Some(crate::auth::SCOPE_PROJECT_WRITE),
-                    description: "missing required scope: project:write".to_string(),
                 }),
                 project: None,
                 model_ergonomics: None,
@@ -744,7 +741,10 @@ impl ToolRuntime {
                 context.window,
                 context.session_id.is_none(),
                 context_request,
-                capabilities.memory_runtime,
+                super::context_projection::ContextMaterialCapabilities {
+                    skill_runtime: capabilities.skill_runtime,
+                    memory_surface: capabilities.memory_surface,
+                },
             )
             .await;
         if let Some(start) = session_event.as_mut() {

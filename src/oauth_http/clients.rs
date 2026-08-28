@@ -54,6 +54,16 @@ mod detached_scope_tests {
         assert!(default_client_allowed_scopes().contains(&"job:run"));
         assert!(!default_client_allowed_scopes().contains(&"job:detach"));
     }
+
+    #[test]
+    fn legacy_default_client_does_not_gain_memory_authority() {
+        assert!(super::super::scope_registry::oauth_scopes_supported()
+            .contains(&crate::auth::SCOPE_MEMORY_READ));
+        assert!(super::super::scope_registry::oauth_scopes_supported()
+            .contains(&crate::auth::SCOPE_MEMORY_MANAGE));
+        assert!(!default_client_allowed_scopes().contains(&"memory:read"));
+        assert!(!default_client_allowed_scopes().contains(&"memory:manage"));
+    }
 }
 
 /// Validate a redirect URI for OAuth client registration.

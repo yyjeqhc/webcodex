@@ -199,17 +199,84 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
         add_stateless_workflow_recorder_metadata(&mut payload, ModelSurface::FullOperatorRuntime);
         payload
     };
+    let memory_names = |payload: &Value| {
+        payload["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .filter(|name| name.starts_with("memory_"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    let oauth = |scopes: &[&str]| crate::auth::AuthContext {
+        scopes: scopes.iter().map(|scope| (*scope).to_string()).collect(),
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::OAuth2Token)
+    };
 
-    let anonymous = render(None);
-    let names = anonymous["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|tool| tool["name"].as_str())
-        .filter(|name| name.starts_with("memory_"))
-        .collect::<Vec<_>>();
-    assert_eq!(names, vec!["memory_search", "memory_read"]);
-    let memory_search = anonymous["tools"]
+    assert!(memory_names(&render(None)).is_empty());
+    assert!(memory_names(&render(Some(&oauth(&[crate::auth::SCOPE_PROJECT_READ])))).is_empty());
+    assert!(memory_names(&render(Some(&oauth(&[crate::auth::SCOPE_MEMORY_READ])))).is_empty());
+    assert_eq!(
+        memory_names(&render(Some(&oauth(&[
+            crate::auth::SCOPE_PROJECT_READ,
+            crate::auth::SCOPE_MEMORY_READ,
+        ])))),
+        vec!["memory_search", "memory_read"]
+    );
+    assert!(memory_names(&render(Some(&oauth(&[crate::auth::SCOPE_PROJECT_WRITE])))).is_empty());
+    assert!(memory_names(&render(Some(&oauth(&[crate::auth::SCOPE_MEMORY_MANAGE])))).is_empty());
+    assert_eq!(
+        memory_names(&render(Some(&oauth(&[
+            crate::auth::SCOPE_PROJECT_WRITE,
+            crate::auth::SCOPE_MEMORY_MANAGE,
+        ])))),
+        vec!["memory_set", "memory_delete"]
+    );
+    let full_auth = oauth(&[
+        crate::auth::SCOPE_PROJECT_READ,
+        crate::auth::SCOPE_MEMORY_READ,
+        crate::auth::SCOPE_PROJECT_WRITE,
+        crate::auth::SCOPE_MEMORY_MANAGE,
+    ]);
+    let full = render(Some(&full_auth));
+    assert_eq!(
+        memory_names(&full),
+        vec![
+            "memory_search",
+            "memory_read",
+            "memory_set",
+            "memory_delete"
+        ]
+    );
+
+    let open = crate::auth::open_anonymous_context();
+    assert!(memory_names(&render(Some(&open))).is_empty());
+    let project_credential =
+        crate::auth::shared_key::project_credential_context("wc_pgrant_memorytools");
+    assert!(memory_names(&render(Some(&project_credential))).is_empty());
+    let direct = crate::auth::shared_key_context("memory-tools-direct-shared-key");
+    assert_eq!(
+        memory_names(&render(Some(&direct))),
+        vec![
+            "memory_search",
+            "memory_read",
+            "memory_set",
+            "memory_delete"
+        ]
+    );
+    let project_share = crate::auth::AuthContext {
+        kind: crate::auth::AuthKind::OAuth2Token,
+        scopes: crate::auth::project_share::PROJECT_SHARE_OAUTH_SCOPES
+            .iter()
+            .map(|scope| (*scope).to_string())
+            .collect(),
+        token_kind: Some(crate::auth::project_share::PROJECT_SHARE_OAUTH_TOKEN_KIND.to_string()),
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::OAuth2Token)
+    };
+    assert!(memory_names(&render(Some(&project_share))).is_empty());
+
+    let memory_search = full["tools"]
         .as_array()
         .unwrap()
         .iter()
@@ -218,53 +285,21 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
     let context_request = &memory_search["inputSchema"]["properties"]["context_request"];
     assert_eq!(context_request["items"]["type"], "string");
     assert!(context_request["items"].get("enum").is_none());
-    assert!(context_request["description"]
-        .as_str()
-        .unwrap()
-        .contains("after this tool's main effect/observation is already complete"));
+    let description = context_request["description"].as_str().unwrap();
+    assert!(description.contains("after this tool's main effect/observation is already complete"));
+    for key in [
+        "project.instructions",
+        "webcodex.workflow",
+        "skills.catalog",
+        "memory.bootstrap",
+    ] {
+        assert!(description.contains(key));
+    }
     assert!(
         memory_search["outputSchema"]["properties"]["output"]["properties"]["memories"].is_object()
     );
 
-    let read_oauth = crate::auth::AuthContext {
-        scopes: vec![crate::auth::SCOPE_PROJECT_READ.to_string()],
-        ..crate::auth::AuthContext::new(crate::auth::AuthKind::OAuth2Token)
-    };
-    let read_only = render(Some(&read_oauth));
-    let read_names = read_only["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|tool| tool["name"].as_str())
-        .filter(|name| name.starts_with("memory_"))
-        .collect::<Vec<_>>();
-    assert_eq!(read_names, vec!["memory_search", "memory_read"]);
-
-    let write_oauth = crate::auth::AuthContext {
-        scopes: vec![
-            crate::auth::SCOPE_PROJECT_READ.to_string(),
-            crate::auth::SCOPE_PROJECT_WRITE.to_string(),
-        ],
-        ..crate::auth::AuthContext::new(crate::auth::AuthKind::OAuth2Token)
-    };
-    let writable = render(Some(&write_oauth));
-    let write_names = writable["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|tool| tool["name"].as_str())
-        .filter(|name| name.starts_with("memory_"))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        write_names,
-        vec![
-            "memory_search",
-            "memory_read",
-            "memory_set",
-            "memory_delete"
-        ]
-    );
-    let set_description = writable["tools"]
+    let set_description = full["tools"]
         .as_array()
         .unwrap()
         .iter()
@@ -273,6 +308,7 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
         .unwrap();
     for required in [
         "project:write",
+        "memory:manage",
         "permission",
         "credentials",
         "execution authority",
@@ -284,8 +320,8 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
     }
 
     assert_eq!(
-        anonymous,
-        render(None),
+        full,
+        render(Some(&full_auth)),
         "Memory schemas are record-content independent"
     );
     assert_eq!(
@@ -305,23 +341,11 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
 
     for surface in [ModelSurface::CanonicalConnector, ModelSurface::LocalCoding] {
         let mut payload = mcp_tools_list_payload_with_compact(surface, false);
-        add_stateless_memory_tools(&mut payload, surface, false, false, None);
-        assert!(payload["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|tool| !tool["name"]
-                .as_str()
-                .is_some_and(|name| name.starts_with("memory_"))));
+        add_stateless_memory_tools(&mut payload, surface, false, false, Some(&direct));
+        assert!(memory_names(&payload).is_empty());
     }
     let legacy_full = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
-    assert!(legacy_full["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|tool| !tool["name"]
-            .as_str()
-            .is_some_and(|name| name.starts_with("memory_"))));
+    assert!(memory_names(&legacy_full).is_empty());
 }
 
 #[test]

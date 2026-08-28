@@ -19,7 +19,7 @@ fn expected_revision_schema() -> Value {
     json!({
         "type": "string",
         "pattern": "^wc_memrev_[0-9a-f]{64}$",
-        "description": "Explicit Memory definition revision CAS guard."
+        "description": "Explicit Memory state revision / ETag CAS guard. It identifies the current incarnation generation, not only the current content definition."
     })
 }
 
@@ -82,7 +82,7 @@ pub(crate) fn memory_set_input_schema() -> Value {
             "memory_key": memory_key_schema(),
             "summary": {"type":"string","minLength":1,"maxLength":MAX_MEMORY_SUMMARY_CHARS,"description":"Required lightweight project guidance summary. Do not persist credentials, passwords, access tokens, private keys, or other secrets in Memory."},
             "body": {"type":"string","maxLength":MAX_MEMORY_BODY_BYTES,"description":"Optional detailed UTF-8 guidance, runtime-bounded to 8 KiB by bytes. On create omission means empty body; on CAS update omission preserves the current body. Returned only by memory_read. Memory is not a secret vault."},
-            "priority": {"type":"string","enum":["high","normal","low"],"description":"On create omission means normal; on CAS update omission preserves the current priority."},
+            "priority": {"type":"string","enum":["high","normal","low"],"description":"On create omission means normal; on CAS update omission preserves the current priority. Priority only orders Memory entries within memory.bootstrap and never increases trust, authority, or instruction precedence."},
             "bootstrap": {"type":"boolean","description":"Only bootstrap=true Memories are eligible for caller-explicit memory.bootstrap sidecar projection. On create omission means false; on CAS update omission preserves the current value."},
             "tags": memory_set_tags_schema(),
             "expected_revision": expected_revision_schema(),

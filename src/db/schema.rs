@@ -605,33 +605,190 @@ impl Database {
     }
 
     fn ensure_project_memory_schema(conn: &mut Connection) -> anyhow::Result<()> {
+        const V1_COLUMNS: &[&str] = &[
+            "memory_id",
+            "memory_scope_id",
+            "memory_key",
+            "summary",
+            "body",
+            "priority",
+            "bootstrap",
+            "tags_json",
+            "revision",
+            "created_at_unix_ms",
+            "updated_at_unix_ms",
+        ];
+        const V2_COLUMNS: &[&str] = &[
+            "memory_id",
+            "memory_scope_id",
+            "memory_key",
+            "summary",
+            "body",
+            "priority",
+            "bootstrap",
+            "tags_json",
+            "definition_hash",
+            "generation",
+            "revision",
+            "created_at_unix_ms",
+            "updated_at_unix_ms",
+        ];
+        const CREATE_V2_TABLE: &str = "
+            CREATE TABLE project_memories (
+                memory_id TEXT PRIMARY KEY,
+                memory_scope_id TEXT NOT NULL,
+                memory_key TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                body TEXT NOT NULL,
+                priority TEXT NOT NULL CHECK(priority IN ('high', 'normal', 'low')),
+                bootstrap INTEGER NOT NULL CHECK(bootstrap IN (0, 1)),
+                tags_json TEXT NOT NULL,
+                definition_hash TEXT NOT NULL,
+                generation INTEGER NOT NULL CHECK(generation >= 1),
+                revision TEXT NOT NULL,
+                created_at_unix_ms INTEGER NOT NULL,
+                updated_at_unix_ms INTEGER NOT NULL,
+                UNIQUE(memory_scope_id, memory_key)
+            );";
+        const CREATE_INDEXES: &str = "
+            CREATE INDEX IF NOT EXISTS idx_project_memories_scope_key
+                ON project_memories(memory_scope_id, memory_key);
+            CREATE INDEX IF NOT EXISTS idx_project_memories_scope_bootstrap
+                ON project_memories(memory_scope_id, bootstrap, priority, memory_key);";
+
         let transaction = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .context("begin project Memory schema migration")?;
+        let columns = table_columns(&transaction, "project_memories")?;
+        let matches_columns = |expected: &[&str]| {
+            columns
+                .iter()
+                .map(String::as_str)
+                .eq(expected.iter().copied())
+        };
+
+        if columns.is_empty() {
+            transaction
+                .execute_batch(CREATE_V2_TABLE)
+                .context("create project Memory v2 table")?;
+        } else if matches_columns(V1_COLUMNS) {
+            // Current #203 schema. Rebuild instead of ALTERing nullable columns:
+            // every legacy row must be validated before it can acquire trusted
+            // v2 definition/state identities, and any failure rolls back the
+            // entire rename/copy/index sequence.
+            transaction.execute_batch(
+                "DROP INDEX IF EXISTS idx_project_memories_scope_key;
+                 DROP INDEX IF EXISTS idx_project_memories_scope_bootstrap;
+                 ALTER TABLE project_memories RENAME TO project_memories_v1;",
+            )?;
+            transaction
+                .execute_batch(CREATE_V2_TABLE)
+                .context("create project Memory v2 table during migration")?;
+
+            let rows = {
+                let mut statement = transaction.prepare(
+                    "SELECT memory_id, memory_scope_id, memory_key, summary, body, priority,
+                            bootstrap, tags_json, revision, created_at_unix_ms, updated_at_unix_ms,
+                            length(memory_id), length(memory_scope_id), length(memory_key),
+                            length(summary), length(CAST(body AS BLOB)), length(priority),
+                            length(CAST(tags_json AS BLOB)), length(revision)
+                     FROM project_memories_v1 ORDER BY memory_scope_id, memory_key",
+                )?;
+                let rows = statement
+                    .query_map([], |row| {
+                        super::memory::validate_legacy_memory_row_lengths(
+                            row.get::<_, i64>(11)?,
+                            row.get::<_, i64>(12)?,
+                            row.get::<_, i64>(13)?,
+                            row.get::<_, i64>(14)?,
+                            row.get::<_, i64>(15)?,
+                            row.get::<_, i64>(16)?,
+                            row.get::<_, i64>(17)?,
+                            row.get::<_, i64>(18)?,
+                        )
+                        .map_err(|_| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                11,
+                                rusqlite::types::Type::Integer,
+                                "legacy Memory row exceeds bounded shape".into(),
+                            )
+                        })?;
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                            row.get::<_, i64>(6)?,
+                            row.get::<_, String>(7)?,
+                            row.get::<_, String>(8)?,
+                            row.get::<_, i64>(9)?,
+                            row.get::<_, i64>(10)?,
+                        ))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                rows
+            };
+            for (
+                memory_id,
+                memory_scope_id,
+                memory_key,
+                summary,
+                body,
+                priority,
+                bootstrap,
+                tags_json,
+                legacy_revision,
+                created_at_unix_ms,
+                updated_at_unix_ms,
+            ) in rows
+            {
+                let (definition_hash, revision) =
+                    super::memory::validate_legacy_memory_row_identity(
+                        &memory_id,
+                        &memory_scope_id,
+                        &memory_key,
+                        &summary,
+                        &body,
+                        &priority,
+                        bootstrap,
+                        &tags_json,
+                        &legacy_revision,
+                        created_at_unix_ms,
+                        updated_at_unix_ms,
+                    )
+                    .map_err(|_| anyhow::anyhow!("malformed #203 project Memory row"))?;
+                transaction.execute(
+                    "INSERT INTO project_memories
+                     (memory_id, memory_scope_id, memory_key, summary, body, priority, bootstrap,
+                      tags_json, definition_hash, generation, revision,
+                      created_at_unix_ms, updated_at_unix_ms)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12)",
+                    rusqlite::params![
+                        memory_id,
+                        memory_scope_id,
+                        memory_key,
+                        summary,
+                        body,
+                        priority,
+                        bootstrap,
+                        tags_json,
+                        definition_hash,
+                        revision,
+                        created_at_unix_ms,
+                        updated_at_unix_ms,
+                    ],
+                )?;
+            }
+            transaction.execute_batch("DROP TABLE project_memories_v1;")?;
+        } else if !matches_columns(V2_COLUMNS) {
+            anyhow::bail!("unsupported project Memory schema shape");
+        }
+
         transaction
-            .execute_batch(
-                "
-                CREATE TABLE IF NOT EXISTS project_memories (
-                    memory_id TEXT PRIMARY KEY,
-                    memory_scope_id TEXT NOT NULL,
-                    memory_key TEXT NOT NULL,
-                    summary TEXT NOT NULL,
-                    body TEXT NOT NULL,
-                    priority TEXT NOT NULL CHECK(priority IN ('high', 'normal', 'low')),
-                    bootstrap INTEGER NOT NULL CHECK(bootstrap IN (0, 1)),
-                    tags_json TEXT NOT NULL,
-                    revision TEXT NOT NULL,
-                    created_at_unix_ms INTEGER NOT NULL,
-                    updated_at_unix_ms INTEGER NOT NULL,
-                    UNIQUE(memory_scope_id, memory_key)
-                );
-                CREATE INDEX IF NOT EXISTS idx_project_memories_scope_key
-                    ON project_memories(memory_scope_id, memory_key);
-                CREATE INDEX IF NOT EXISTS idx_project_memories_scope_bootstrap
-                    ON project_memories(memory_scope_id, bootstrap, priority, memory_key);
-                ",
-            )
-            .context("apply project Memory schema migration")?;
+            .execute_batch(CREATE_INDEXES)
+            .context("create project Memory indexes")?;
         transaction
             .commit()
             .context("commit project Memory schema migration")?;

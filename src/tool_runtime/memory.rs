@@ -460,6 +460,8 @@ mod tests {
             priority: MemoryPriority::Normal,
             bootstrap: false,
             tags: Vec::new(),
+            definition_hash: format!("wc_memdef_{}", "a".repeat(64)),
+            generation: 1,
             revision: format!("wc_memrev_{}", "a".repeat(64)),
             created_at_unix_ms: 1,
             updated_at_unix_ms: 1,

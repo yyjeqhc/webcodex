@@ -498,6 +498,81 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 out.insert("instruction_present".to_string(), Value::Bool(true));
             }
         }
+        "memory_search" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "project",
+                    "offset",
+                    "limit",
+                    "expected_catalog_revision",
+                    "session_id",
+                ],
+            );
+            out.insert(
+                "query_present".to_string(),
+                Value::Bool(
+                    obj.get("query")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.is_empty()),
+                ),
+            );
+            out.insert(
+                "tag_count".to_string(),
+                Value::from(
+                    obj.get("tags")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0),
+                ),
+            );
+        }
+        "memory_read" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["project", "memory_key", "expected_revision", "session_id"],
+            );
+        }
+        "memory_set" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "project",
+                    "memory_key",
+                    "priority",
+                    "bootstrap",
+                    "expected_revision",
+                    "session_id",
+                ],
+            );
+            out.insert(
+                "summary_present".to_string(),
+                Value::Bool(obj.get("summary").and_then(Value::as_str).is_some()),
+            );
+            out.insert(
+                "body_present".to_string(),
+                Value::Bool(obj.get("body").and_then(Value::as_str).is_some()),
+            );
+            out.insert(
+                "tag_count".to_string(),
+                Value::from(
+                    obj.get("tags")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0),
+                ),
+            );
+        }
+        "memory_delete" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["project", "memory_key", "expected_revision", "session_id"],
+            );
+        }
         "skill_list" => {
             copy_keys(
                 obj,
@@ -1133,6 +1208,45 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "recent_completion_count": output.get("recent_completions").and_then(Value::as_array).map(Vec::len),
             "summary_only": output.get("summary_only").cloned().unwrap_or(Value::Null),
             "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "memory_search" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "catalog_revision": output.get("catalog_revision").cloned().unwrap_or(Value::Null),
+            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
+            "returned_count": output.get("returned_count").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
+        "memory_read" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "memory_id": output.get("memory_id").cloned().unwrap_or(Value::Null),
+            "memory_key": output.get("memory_key").cloned().unwrap_or(Value::Null),
+            "revision": output.get("revision").cloned().unwrap_or(Value::Null),
+            "bootstrap": output.get("bootstrap").cloned().unwrap_or(Value::Null),
+            "priority": output.get("priority").cloned().unwrap_or(Value::Null),
+            "returned_body_bytes": output.get("body").and_then(Value::as_str).map(str::len),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
+        "memory_set" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "memory_id": output.get("memory_id").cloned().unwrap_or(Value::Null),
+            "memory_key": output.get("memory_key").cloned().unwrap_or(Value::Null),
+            "old_revision": output.get("old_revision").cloned().unwrap_or(Value::Null),
+            "revision": output.get("revision").cloned().unwrap_or(Value::Null),
+            "created": output.get("created").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
+        "memory_delete" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "memory_id": output.get("memory_id").cloned().unwrap_or(Value::Null),
+            "memory_key": output.get("memory_key").cloned().unwrap_or(Value::Null),
+            "revision": output.get("revision").cloned().unwrap_or(Value::Null),
+            "deleted": output.get("deleted").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
         }),
         "skill_list" => serde_json::json!({
             "project": output.get("project").cloned().unwrap_or(Value::Null),
@@ -1983,6 +2097,143 @@ mod computer_privacy_tests {
         ] {
             assert!(!install_serialized.contains(private), "leaked {private}");
         }
+    }
+
+    #[test]
+    fn memory_audit_is_metadata_only_for_search_read_set_and_delete() {
+        let private_query = "PRIVATE_MEMORY_QUERY";
+        let private_summary = "PRIVATE_MEMORY_SUMMARY";
+        let private_body = "PRIVATE_MEMORY_BODY";
+        let private_tag = "PRIVATE_MEMORY_TAG";
+        let revision = format!("wc_memrev_{}", "a".repeat(64));
+        let memory_id = "wc_mem_0123456789abcdef0123456789abcdef";
+
+        let search_args = session_log_arguments_for_tool_request(
+            "memory_search",
+            &json!({
+                "project": "agent:test:demo",
+                "query": private_query,
+                "tags": [private_tag],
+                "limit": 10
+            }),
+        );
+        let search_args_serialized = search_args.to_string();
+        assert!(!search_args_serialized.contains(private_query));
+        assert!(!search_args_serialized.contains(private_tag));
+        assert_eq!(search_args["query_present"], true);
+        assert_eq!(search_args["tag_count"], 1);
+
+        let set_args = session_log_arguments_for_tool_request(
+            "memory_set",
+            &json!({
+                "project": "agent:test:demo",
+                "memory_key": "policy",
+                "summary": private_summary,
+                "body": private_body,
+                "priority": "high",
+                "bootstrap": true,
+                "tags": [private_tag]
+            }),
+        );
+        let set_args_serialized = set_args.to_string();
+        for private in [private_summary, private_body, private_tag] {
+            assert!(!set_args_serialized.contains(private));
+        }
+        assert_eq!(set_args["summary_present"], true);
+        assert_eq!(set_args["body_present"], true);
+        assert_eq!(set_args["tag_count"], 1);
+
+        let typed_set = ToolCall::MemorySet {
+            project: "agent:test:demo".to_string(),
+            memory_key: "policy".to_string(),
+            summary: private_summary.to_string(),
+            body: Some(private_body.to_string()),
+            priority: Some("high".to_string()),
+            bootstrap: Some(true),
+            tags: Some(vec![private_tag.to_string()]),
+            expected_revision: None,
+            session_id: None,
+        }
+        .session_log_arguments();
+        let typed_set_serialized = typed_set.to_string();
+        for private in [private_summary, private_body, private_tag] {
+            assert!(!typed_set_serialized.contains(private));
+        }
+
+        let search_result = session_log_result_for_tool(
+            "memory_search",
+            &json!({
+                "project": "agent:test:demo",
+                "catalog_revision": format!("wc_memcat_{}", "b".repeat(64)),
+                "total_count": 1,
+                "returned_count": 1,
+                "truncated": false,
+                "memories": [{
+                    "memory_id": memory_id,
+                    "memory_key": "policy",
+                    "summary": private_summary,
+                    "tags": [private_tag],
+                    "revision": revision
+                }]
+            }),
+        );
+        let search_result_serialized = search_result.to_string();
+        assert!(!search_result_serialized.contains(private_summary));
+        assert!(!search_result_serialized.contains(private_tag));
+        assert!(search_result.get("memories").is_none());
+
+        let read_result = session_log_result_for_tool(
+            "memory_read",
+            &json!({
+                "project": "agent:test:demo",
+                "memory_id": memory_id,
+                "memory_key": "policy",
+                "summary": private_summary,
+                "body": private_body,
+                "priority": "high",
+                "bootstrap": true,
+                "tags": [private_tag],
+                "revision": revision
+            }),
+        );
+        let read_result_serialized = read_result.to_string();
+        for private in [private_summary, private_body, private_tag] {
+            assert!(!read_result_serialized.contains(private));
+        }
+        assert_eq!(read_result["returned_body_bytes"], private_body.len());
+
+        let set_result = session_log_result_for_tool(
+            "memory_set",
+            &json!({
+                "project": "agent:test:demo",
+                "memory_id": memory_id,
+                "memory_key": "policy",
+                "revision": revision,
+                "created": true,
+                "state_changed": true,
+                "summary": private_summary,
+                "body": private_body,
+                "tags": [private_tag]
+            }),
+        );
+        let set_result_serialized = set_result.to_string();
+        for private in [private_summary, private_body, private_tag] {
+            assert!(!set_result_serialized.contains(private));
+        }
+
+        let delete_result = session_log_result_for_tool(
+            "memory_delete",
+            &json!({
+                "project": "agent:test:demo",
+                "memory_id": memory_id,
+                "memory_key": "policy",
+                "revision": revision,
+                "deleted": true,
+                "state_changed": true,
+                "body": private_body
+            }),
+        );
+        assert!(!delete_result.to_string().contains(private_body));
     }
 
     #[test]
@@ -3294,6 +3545,78 @@ impl ToolCall {
                 "items": items,
                 "with_line_numbers": with_line_numbers,
             }),
+            Self::MemorySearch {
+                project,
+                query,
+                tags,
+                offset,
+                limit,
+                expected_catalog_revision,
+                session_id,
+            } => session_log_arguments_for_tool_request(
+                "memory_search",
+                &serde_json::json!({
+                    "project": project,
+                    "query": query,
+                    "tags": tags,
+                    "offset": offset,
+                    "limit": limit,
+                    "expected_catalog_revision": expected_catalog_revision,
+                    "session_id": session_id,
+                }),
+            ),
+            Self::MemoryRead {
+                project,
+                memory_key,
+                expected_revision,
+                session_id,
+            } => session_log_arguments_for_tool_request(
+                "memory_read",
+                &serde_json::json!({
+                    "project": project,
+                    "memory_key": memory_key,
+                    "expected_revision": expected_revision,
+                    "session_id": session_id,
+                }),
+            ),
+            Self::MemorySet {
+                project,
+                memory_key,
+                summary,
+                body,
+                priority,
+                bootstrap,
+                tags,
+                expected_revision,
+                session_id,
+            } => session_log_arguments_for_tool_request(
+                "memory_set",
+                &serde_json::json!({
+                    "project": project,
+                    "memory_key": memory_key,
+                    "summary": summary,
+                    "body": body,
+                    "priority": priority,
+                    "bootstrap": bootstrap,
+                    "tags": tags,
+                    "expected_revision": expected_revision,
+                    "session_id": session_id,
+                }),
+            ),
+            Self::MemoryDelete {
+                project,
+                memory_key,
+                expected_revision,
+                session_id,
+            } => session_log_arguments_for_tool_request(
+                "memory_delete",
+                &serde_json::json!({
+                    "project": project,
+                    "memory_key": memory_key,
+                    "expected_revision": expected_revision,
+                    "session_id": session_id,
+                }),
+            ),
             Self::SkillList {
                 project,
                 query,

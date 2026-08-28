@@ -3,6 +3,7 @@ pub(crate) enum ToolRisk {
     ReadOnly,
     ProjectWrite,
     SkillManage,
+    MemoryManage,
     ComputerControl,
     JobRun,
     /// Reserved for account-control tools; the current runtime manifest has
@@ -18,6 +19,7 @@ impl ToolRisk {
             ToolRisk::ReadOnly => "read_only",
             ToolRisk::ProjectWrite => "project_write",
             ToolRisk::SkillManage => "skill_manage",
+            ToolRisk::MemoryManage => "memory_manage",
             ToolRisk::ComputerControl => "computer_control",
             ToolRisk::JobRun => "job_run",
             ToolRisk::AccountManage => "account_manage",

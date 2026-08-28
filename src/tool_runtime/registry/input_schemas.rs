@@ -12,6 +12,7 @@ mod hygiene;
 mod jobs;
 mod line_edits;
 mod lsp;
+mod memory;
 mod patches;
 mod projects;
 mod sessions;
@@ -84,6 +85,10 @@ pub(super) use lsp::{
     call_hierarchy_input_schema, document_diagnostics_input_schema, document_symbols_input_schema,
     find_references_input_schema, goto_definition_input_schema, hover_input_schema,
     lsp_status_input_schema, workspace_symbols_input_schema,
+};
+pub(super) use memory::{
+    memory_delete_input_schema, memory_read_input_schema, memory_search_input_schema,
+    memory_set_input_schema,
 };
 pub(super) use patches::{apply_patch_checked_input_schema, apply_patch_input_schema};
 pub(crate) use projects::{

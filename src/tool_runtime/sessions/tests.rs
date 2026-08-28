@@ -696,6 +696,154 @@ fn skill_read_body_and_catalog_descriptions_never_enter_durable_session_ledger()
 }
 
 #[test]
+fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_recovery() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger.clone());
+    let project = "agent:special:memory-private";
+    let session = store.start_session(
+        Some(project.to_string()),
+        Some("memory privacy".to_string()),
+    );
+    let private_query = "PRIVATE_MEMORY_QUERY_MUST_NOT_PERSIST";
+    let private_summary = "PRIVATE_MEMORY_SUMMARY_MUST_NOT_PERSIST";
+    let private_body = "PRIVATE_MEMORY_BODY_MUST_NOT_PERSIST";
+    let private_tag = "PRIVATE_MEMORY_TAG_MUST_NOT_PERSIST";
+    let memory_id = "wc_mem_0123456789abcdef0123456789abcdef";
+    let revision = format!("wc_memrev_{}", "a".repeat(64));
+    let catalog_revision = format!("wc_memcat_{}", "b".repeat(64));
+
+    let set_args = super::super::ToolCall::MemorySet {
+        project: project.to_string(),
+        memory_key: "deployment-policy".to_string(),
+        summary: private_summary.to_string(),
+        body: Some(private_body.to_string()),
+        priority: Some("high".to_string()),
+        bootstrap: Some(true),
+        tags: Some(vec![private_tag.to_string()]),
+        expected_revision: None,
+        session_id: Some(session.session_id.clone()),
+    }
+    .session_log_arguments();
+    let set_args_serialized = set_args.to_string();
+    assert!(!set_args_serialized.contains(private_summary));
+    assert!(!set_args_serialized.contains(private_body));
+    assert!(!set_args_serialized.contains(private_tag));
+    let set_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Mcp,
+        "memory_set",
+        &set_args,
+    );
+    store.record_model_facing_tool_call_finished(
+        set_start,
+        true,
+        &json!({
+            "project": project,
+            "memory_id": memory_id,
+            "memory_key": "deployment-policy",
+            "revision": revision,
+            "created": true,
+            "state_changed": true,
+            "summary": private_summary,
+            "body": private_body,
+            "tags": [private_tag]
+        }),
+        None,
+        None,
+    );
+
+    let search_args = super::super::tool_audit::session_log_arguments_for_tool_request(
+        "memory_search",
+        &json!({
+            "project": project,
+            "query": private_query,
+            "tags": [private_tag],
+            "limit": 20
+        }),
+    );
+    assert!(!search_args.to_string().contains(private_query));
+    assert!(!search_args.to_string().contains(private_tag));
+    let search_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Mcp,
+        "memory_search",
+        &search_args,
+    );
+    store.record_model_facing_tool_call_finished(
+        search_start,
+        true,
+        &json!({
+            "project": project,
+            "catalog_revision": catalog_revision,
+            "total_count": 1,
+            "returned_count": 1,
+            "offset": 0,
+            "next_offset": null,
+            "truncated": false,
+            "memories": [{
+                "memory_id": memory_id,
+                "memory_key": "deployment-policy",
+                "summary": private_summary,
+                "priority": "high",
+                "bootstrap": true,
+                "tags": [private_tag],
+                "revision": revision
+            }]
+        }),
+        None,
+        None,
+    );
+
+    let read_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Mcp,
+        "memory_read",
+        &json!({
+            "project": project,
+            "memory_key": "deployment-policy",
+            "expected_revision": revision
+        }),
+    );
+    store.record_model_facing_tool_call_finished(
+        read_start,
+        true,
+        &json!({
+            "project": project,
+            "memory_id": memory_id,
+            "memory_key": "deployment-policy",
+            "summary": private_summary,
+            "body": private_body,
+            "priority": "high",
+            "bootstrap": true,
+            "tags": [private_tag],
+            "revision": revision,
+            "created_at_unix_ms": 1,
+            "updated_at_unix_ms": 2
+        }),
+        None,
+        None,
+    );
+
+    let restored = flush_and_restore(&store, ledger.clone());
+    let raw = std::fs::read_to_string(&ledger).unwrap();
+    for private in [private_query, private_summary, private_body, private_tag] {
+        assert!(!raw.contains(private), "ledger leaked {private}");
+    }
+    assert!(raw.contains(memory_id));
+    assert!(raw.contains(&revision));
+    assert!(raw.contains(&catalog_revision));
+    assert!(raw.contains("returned_body_bytes"));
+    assert!(!raw.contains("\"memories\""));
+
+    let recovery =
+        serde_json::to_string(&restored.summary(&session.session_id, Some(30)).unwrap()).unwrap();
+    for private in [private_query, private_summary, private_body, private_tag] {
+        assert!(!recovery.contains(private), "recovery leaked {private}");
+    }
+}
+
+#[test]
 fn write_ledger_atomic_cleans_up_temp_file_when_rename_fails() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("sessions.json");

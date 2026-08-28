@@ -114,6 +114,17 @@ impl ToolRuntime {
                     }
                     None => unavailable(key, "project_target_unavailable"),
                 },
+                "memory.bootstrap" => match resolved_project {
+                    Some(project) => match self.memory_bootstrap_context_projection(project) {
+                        Ok(projection) => json!({
+                            "key": key,
+                            "status": "available",
+                            "projection": projection,
+                        }),
+                        Err(reason_code) => unavailable(key, reason_code),
+                    },
+                    None => unavailable(key, "project_target_unavailable"),
+                },
                 "webcodex.workflow" => json!({
                     "key": key,
                     "status": "available",

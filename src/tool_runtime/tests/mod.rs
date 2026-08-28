@@ -21,6 +21,7 @@ mod handoff_brief;
 mod hygiene;
 mod jobs;
 mod lsp;
+mod memory;
 mod metadata;
 mod observe_jobs;
 mod permission_gate;

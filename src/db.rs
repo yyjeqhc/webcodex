@@ -14,6 +14,7 @@ mod admin_project_lifecycle;
 mod audit;
 mod execution_model;
 mod executions;
+mod memory;
 mod oauth;
 mod schema;
 mod task_kernel;
@@ -25,6 +26,19 @@ pub(crate) use self::execution_model::ConnectorExecutionContinuationIntent;
 pub(crate) use self::execution_model::{
     ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
     ConnectorExecutionReservation, MAX_ASSERTION_EVIDENCE_BYTES,
+};
+pub(crate) use self::memory::{
+    canonicalize_memory_tags, memory_catalog_revision, valid_memory_catalog_revision,
+    validate_memory_query, validate_memory_revision, MemoryPriority, MemorySetInput,
+    MemoryStoreError, ProjectMemoryRecord, MAX_MEMORY_BODY_BYTES, MAX_MEMORY_BOOTSTRAP_BYTES,
+    MAX_MEMORY_KEY_CHARS, MAX_MEMORY_QUERY_CHARS, MAX_MEMORY_SEARCH_LIMIT,
+    MAX_MEMORY_SEARCH_RESULT_BYTES, MAX_MEMORY_SUMMARY_CHARS, MAX_MEMORY_TAGS,
+    MAX_MEMORY_TAG_CHARS,
+};
+#[cfg(test)]
+pub(crate) use self::memory::{
+    validate_memory_body, validate_memory_key, validate_memory_summary, MAX_MEMORIES_GLOBAL,
+    MAX_MEMORIES_PER_PROJECT,
 };
 pub use self::oauth::RotateResult;
 pub(crate) use self::task_kernel::{
@@ -67,6 +81,10 @@ mod continuation_delivery_tests;
 #[cfg(test)]
 #[path = "db/execution_intent_tests.rs"]
 mod execution_intent_tests;
+
+#[cfg(test)]
+#[path = "db/memory_tests.rs"]
+mod memory_tests;
 
 #[cfg(test)]
 #[path = "db_tests.rs"]

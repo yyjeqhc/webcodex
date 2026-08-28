@@ -70,7 +70,7 @@ impl Database {
     }
 
     fn init_tables(&self) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap();
         // Drop prototype tables that no longer have product callers.
         Self::drop_legacy_tables(&conn)?;
 
@@ -585,6 +585,11 @@ impl Database {
             ",
         )?;
 
+        // Phase-4B project Memory is an additive migration with its own
+        // transaction boundary. A failed table/index creation cannot expose a
+        // partially initialized Memory store on an otherwise existing DB.
+        Self::ensure_project_memory_schema(&mut conn)?;
+
         // Optional additive columns for older single-file DBs that predate the
         // current CREATE TABLE definitions. OAuth subject shape is not migrated:
         // tables are always created with the current schema, and pre-subject
@@ -596,6 +601,40 @@ impl Database {
         Self::ensure_connector_task_columns(&conn)?;
         Self::ensure_connector_task_modes(&conn)?;
         Self::ensure_activity_scope_columns(&conn)?;
+        Ok(())
+    }
+
+    fn ensure_project_memory_schema(conn: &mut Connection) -> anyhow::Result<()> {
+        let transaction = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .context("begin project Memory schema migration")?;
+        transaction
+            .execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS project_memories (
+                    memory_id TEXT PRIMARY KEY,
+                    memory_scope_id TEXT NOT NULL,
+                    memory_key TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    priority TEXT NOT NULL CHECK(priority IN ('high', 'normal', 'low')),
+                    bootstrap INTEGER NOT NULL CHECK(bootstrap IN (0, 1)),
+                    tags_json TEXT NOT NULL,
+                    revision TEXT NOT NULL,
+                    created_at_unix_ms INTEGER NOT NULL,
+                    updated_at_unix_ms INTEGER NOT NULL,
+                    UNIQUE(memory_scope_id, memory_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_project_memories_scope_key
+                    ON project_memories(memory_scope_id, memory_key);
+                CREATE INDEX IF NOT EXISTS idx_project_memories_scope_bootstrap
+                    ON project_memories(memory_scope_id, bootstrap, priority, memory_key);
+                ",
+            )
+            .context("apply project Memory schema migration")?;
+        transaction
+            .commit()
+            .context("commit project Memory schema migration")?;
         Ok(())
     }
 

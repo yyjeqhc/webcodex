@@ -1533,6 +1533,82 @@ impl ToolRuntime {
                 .await
             }
 
+            ToolCall::MemorySearch {
+                query,
+                tags,
+                offset,
+                limit,
+                expected_catalog_revision,
+                ..
+            } => {
+                let project = match project_resolution {
+                    Some(Ok(project)) => project,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => return ToolResult::err("memory_search requires a resolved Project"),
+                };
+                self.memory_search(
+                    &project,
+                    query,
+                    tags,
+                    offset,
+                    limit,
+                    expected_catalog_revision,
+                )
+            }
+
+            ToolCall::MemoryRead {
+                memory_key,
+                expected_revision,
+                ..
+            } => {
+                let project = match project_resolution {
+                    Some(Ok(project)) => project,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => return ToolResult::err("memory_read requires a resolved Project"),
+                };
+                self.memory_read(&project, memory_key, expected_revision)
+            }
+
+            ToolCall::MemorySet {
+                memory_key,
+                summary,
+                body,
+                priority,
+                bootstrap,
+                tags,
+                expected_revision,
+                ..
+            } => {
+                let project = match project_resolution {
+                    Some(Ok(project)) => project,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => return ToolResult::err("memory_set requires a resolved Project"),
+                };
+                self.memory_set(
+                    &project,
+                    memory_key,
+                    summary,
+                    body,
+                    priority,
+                    bootstrap,
+                    tags,
+                    expected_revision,
+                )
+            }
+
+            ToolCall::MemoryDelete {
+                memory_key,
+                expected_revision,
+                ..
+            } => {
+                let project = match project_resolution {
+                    Some(Ok(project)) => project,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => return ToolResult::err("memory_delete requires a resolved Project"),
+                };
+                self.memory_delete(&project, memory_key, expected_revision)
+            }
+
             call @ ToolCall::ImportConversationFilesToProject { .. } => {
                 self.dispatch_conversation_import_tool(call, auth, transport)
                     .await

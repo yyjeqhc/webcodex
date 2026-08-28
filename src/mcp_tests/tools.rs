@@ -56,6 +56,11 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             .into_iter()
             .map(|spec| spec.name),
     );
+    stateless_runtime_names.extend(
+        crate::tool_runtime::memory_runtime_tool_specs()
+            .into_iter()
+            .map(|spec| spec.name),
+    );
 
     for compact in [false, true] {
         if compact {
@@ -105,7 +110,7 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             .collect();
         assert_eq!(
             stateless_names, stateless_runtime_names,
-            "stateless-2026 tools/list must equal the full runtime registry plus the two fixed Skill runtime tools (compact={compact})"
+            "stateless-2026 tools/list must equal the full runtime registry plus fixed Skill and Memory runtime tools (compact={compact})"
         );
         for tool in stateless_value["result"]["tools"].as_array().unwrap() {
             let properties = tool["inputSchema"]["properties"].as_object().unwrap();
@@ -161,6 +166,162 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             }
         }
     }
+}
+
+#[test]
+fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_static() {
+    let generic_names = registered_tool_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect::<Vec<_>>();
+    for name in [
+        "memory_search",
+        "memory_read",
+        "memory_set",
+        "memory_delete",
+    ] {
+        assert!(!generic_names.iter().any(|generic| generic == name));
+    }
+
+    let render = |auth: Option<&crate::auth::AuthContext>| {
+        let mut payload = mcp_tools_list_payload_with_compact_and_app(
+            ModelSurface::FullOperatorRuntime,
+            false,
+            false,
+        );
+        add_stateless_memory_tools(
+            &mut payload,
+            ModelSurface::FullOperatorRuntime,
+            false,
+            false,
+            auth,
+        );
+        add_stateless_workflow_recorder_metadata(&mut payload, ModelSurface::FullOperatorRuntime);
+        payload
+    };
+
+    let anonymous = render(None);
+    let names = anonymous["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .filter(|name| name.starts_with("memory_"))
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["memory_search", "memory_read"]);
+    let memory_search = anonymous["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "memory_search")
+        .unwrap();
+    let context_request = &memory_search["inputSchema"]["properties"]["context_request"];
+    assert_eq!(context_request["items"]["type"], "string");
+    assert!(context_request["items"].get("enum").is_none());
+    assert!(context_request["description"]
+        .as_str()
+        .unwrap()
+        .contains("after this tool's main effect/observation is already complete"));
+    assert!(
+        memory_search["outputSchema"]["properties"]["output"]["properties"]["memories"].is_object()
+    );
+
+    let read_oauth = crate::auth::AuthContext {
+        scopes: vec![crate::auth::SCOPE_PROJECT_READ.to_string()],
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::OAuth2Token)
+    };
+    let read_only = render(Some(&read_oauth));
+    let read_names = read_only["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .filter(|name| name.starts_with("memory_"))
+        .collect::<Vec<_>>();
+    assert_eq!(read_names, vec!["memory_search", "memory_read"]);
+
+    let write_oauth = crate::auth::AuthContext {
+        scopes: vec![
+            crate::auth::SCOPE_PROJECT_READ.to_string(),
+            crate::auth::SCOPE_PROJECT_WRITE.to_string(),
+        ],
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::OAuth2Token)
+    };
+    let writable = render(Some(&write_oauth));
+    let write_names = writable["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .filter(|name| name.starts_with("memory_"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        write_names,
+        vec![
+            "memory_search",
+            "memory_read",
+            "memory_set",
+            "memory_delete"
+        ]
+    );
+    let set_description = writable["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "memory_set")
+        .and_then(|tool| tool["description"].as_str())
+        .unwrap();
+    for required in [
+        "project:write",
+        "permission",
+        "credentials",
+        "execution authority",
+    ] {
+        assert!(
+            set_description.contains(required),
+            "memory_set: {set_description}"
+        );
+    }
+
+    assert_eq!(
+        anonymous,
+        render(None),
+        "Memory schemas are record-content independent"
+    );
+    assert_eq!(
+        crate::tool_runtime::memory_runtime_tool_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>(),
+        vec!["memory_search", "memory_read"]
+    );
+    assert_eq!(
+        crate::tool_runtime::memory_management_tool_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>(),
+        vec!["memory_set", "memory_delete"]
+    );
+
+    for surface in [ModelSurface::CanonicalConnector, ModelSurface::LocalCoding] {
+        let mut payload = mcp_tools_list_payload_with_compact(surface, false);
+        add_stateless_memory_tools(&mut payload, surface, false, false, None);
+        assert!(payload["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|tool| !tool["name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("memory_"))));
+    }
+    let legacy_full = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
+    assert!(legacy_full["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|tool| !tool["name"]
+            .as_str()
+            .is_some_and(|name| name.starts_with("memory_"))));
 }
 
 #[test]

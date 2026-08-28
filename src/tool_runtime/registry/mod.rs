@@ -11,5 +11,6 @@ pub(crate) use output_schemas::output_schema_for_tool;
 #[cfg(test)]
 pub(crate) use tool_specs::start_coding_task_compatibility_spec;
 pub(crate) use tool_specs::{
-    registered_tool_specs, skill_management_tool_specs, skill_runtime_tool_specs,
+    memory_management_tool_specs, memory_runtime_tool_specs, registered_tool_specs,
+    skill_management_tool_specs, skill_runtime_tool_specs,
 };

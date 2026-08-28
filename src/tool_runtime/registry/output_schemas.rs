@@ -13,6 +13,7 @@ mod git;
 mod hygiene;
 mod jobs;
 mod lsp;
+mod memory;
 mod projects;
 mod sessions;
 mod skills;
@@ -52,6 +53,9 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
         return schema;
     }
     if let Some(schema) = sessions::output_schema_for_tool(name) {
+        return schema;
+    }
+    if let Some(schema) = memory::output_schema_for_tool(name) {
         return schema;
     }
     if let Some(schema) = skills::output_schema_for_tool(name) {

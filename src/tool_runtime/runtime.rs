@@ -152,6 +152,10 @@ pub struct ToolRuntime {
     /// last successful meaningful tool call). Shared with the connector
     /// runtime; never stores payloads or secrets.
     pub(crate) observations: Arc<RuntimeObservations>,
+    /// Optional Control-owned durable project Memory store. It is injected by
+    /// the server from the existing webcodex.db handle; Runner-native project
+    /// filesystems never own Memory v1 persistence.
+    pub(crate) memory_db: Option<Arc<crate::Database>>,
 }
 
 impl ToolRuntime {
@@ -187,6 +191,7 @@ impl ToolRuntime {
             permission_evaluator: PermissionEvaluator::from_env(),
             activity: Arc::new(NoopActivityRecorder),
             observations: Arc::new(RuntimeObservations::default()),
+            memory_db: None,
         }
     }
 
@@ -205,6 +210,11 @@ impl ToolRuntime {
     /// Attach a durable workspace-activity recorder (server wiring).
     pub fn with_activity_recorder(mut self, recorder: Arc<dyn ActivityRecorder>) -> Self {
         self.activity = recorder;
+        self
+    }
+
+    pub(crate) fn with_memory_database(mut self, db: Arc<crate::Database>) -> Self {
+        self.memory_db = Some(db);
         self
     }
 

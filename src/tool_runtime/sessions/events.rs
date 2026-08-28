@@ -838,6 +838,54 @@ pub(super) fn context_result_summary_for_tool_result(
                 "kind",
             ],
         ),
+        "memory_search" => selected(
+            output,
+            &[
+                "catalog_revision",
+                "total_count",
+                "returned_count",
+                "offset",
+                "next_offset",
+                "truncated",
+                "error_kind",
+                "state_changed",
+            ],
+        ),
+        "memory_read" => output.as_object().map(|source| {
+            json!({
+                "memory_id": source.get("memory_id").cloned().unwrap_or(Value::Null),
+                "memory_key": source.get("memory_key").cloned().unwrap_or(Value::Null),
+                "revision": source.get("revision").cloned().unwrap_or(Value::Null),
+                "bootstrap": source.get("bootstrap").cloned().unwrap_or(Value::Null),
+                "priority": source.get("priority").cloned().unwrap_or(Value::Null),
+                "returned_body_bytes": source.get("body").and_then(Value::as_str).map(str::len),
+                "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
+                "state_changed": source.get("state_changed").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "memory_set" => selected(
+            output,
+            &[
+                "memory_id",
+                "memory_key",
+                "old_revision",
+                "revision",
+                "created",
+                "error_kind",
+                "state_changed",
+            ],
+        ),
+        "memory_delete" => selected(
+            output,
+            &[
+                "memory_id",
+                "memory_key",
+                "revision",
+                "deleted",
+                "error_kind",
+                "state_changed",
+            ],
+        ),
         "skill_list" => selected(
             output,
             &[

@@ -36,6 +36,7 @@ mod jobs;
 pub(crate) mod kernel;
 mod local_jobs;
 mod lsp_tools;
+pub(crate) mod memory;
 pub(crate) mod metadata;
 pub(crate) mod model_ergonomics_telemetry;
 pub(crate) mod observations;
@@ -133,8 +134,8 @@ pub(crate) use project_resolution::{agent_project_runtime_id, ProjectResolverErr
 #[cfg(test)]
 pub(crate) use registry::start_coding_task_compatibility_spec;
 pub(crate) use registry::{
-    accepted_flattened_args_for_spec, registered_tool_specs, skill_management_tool_specs,
-    skill_runtime_tool_specs,
+    accepted_flattened_args_for_spec, memory_management_tool_specs, memory_runtime_tool_specs,
+    registered_tool_specs, skill_management_tool_specs, skill_runtime_tool_specs,
 };
 pub(crate) use session_context::{add_session_telemetry_hint, unknown_session_result};
 pub(crate) use session_shell::SessionShellRegistry;

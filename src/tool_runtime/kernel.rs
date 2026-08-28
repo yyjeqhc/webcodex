@@ -65,6 +65,8 @@ pub(crate) struct ToolProtocolCapabilities {
     pub(crate) context_sidecar: bool,
     pub(crate) skill_runtime: bool,
     pub(crate) skill_management: bool,
+    pub(crate) memory_runtime: bool,
+    pub(crate) memory_management: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,6 +193,8 @@ impl ToolRuntime {
                 context_sidecar: context_sidecar_capable,
                 skill_runtime: context_sidecar_capable,
                 skill_management: false,
+                memory_runtime: false,
+                memory_management: false,
             },
         )
         .await
@@ -225,6 +229,54 @@ impl ToolRuntime {
                 &request.arguments,
                 capabilities.context_continuity,
             );
+        // Project Memory tools are kernel-known but globally model-hidden. The
+        // explicit protocol capability is authoritative; REST, legacy MCP,
+        // Connector/Local surfaces, and private wrapper markers cannot enable
+        // Memory execution.
+        if super::memory::is_memory_runtime_tool_name(&request.tool_name)
+            && !capabilities.memory_runtime
+        {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments {
+                    message: "Memory runtime tools are available only on Stateless MCP 2026 Full Operator"
+                        .to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+            };
+        }
+        if super::memory::is_memory_management_tool_name(&request.tool_name)
+            && !capabilities.memory_management
+        {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments {
+                    message: "Memory management tools are available only on Stateless MCP 2026 Full Operator"
+                        .to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+            };
+        }
+        if super::memory::is_memory_management_tool_name(&request.tool_name)
+            && !context
+                .auth
+                .is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_PROJECT_WRITE))
+        {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InsufficientScope {
+                    required_scope: Some(crate::auth::SCOPE_PROJECT_WRITE),
+                    description: "missing required scope: project:write".to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+            };
+        }
         // Phase-3 Skill tools are kernel-known only so ToolCall parsing stays
         // typed, but execution is authoritative-surface-gated. A private tool
         // name from REST, legacy MCP, Local Coding, or Connector cannot enable

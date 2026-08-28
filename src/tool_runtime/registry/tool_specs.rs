@@ -10,6 +10,7 @@ mod git;
 mod hygiene;
 mod jobs;
 mod lsp;
+mod memory;
 mod sessions;
 mod skills;
 mod testing;
@@ -27,6 +28,26 @@ pub(crate) fn registered_tool_specs() -> Vec<ToolSpec> {
         model_visible_tool_definitions(),
         separate_tool_spec_declarations_by_name(),
     )
+}
+
+/// Fixed read-only project Memory runtime contract. Definitions remain hidden
+/// from generic/GPT Action registries and are projected only by capable
+/// Stateless MCP Full Operator adapters.
+pub(crate) fn memory_runtime_tool_specs() -> Vec<ToolSpec> {
+    memory::tool_specs()
+        .into_iter()
+        .filter(|spec| matches!(spec.name.as_str(), "memory_search" | "memory_read"))
+        .collect()
+}
+
+/// Fixed project Memory management contract. Durable Memory cardinality never
+/// changes this schema set; execution additionally requires the independent
+/// management capability, project:write scope, and permission evaluator.
+pub(crate) fn memory_management_tool_specs() -> Vec<ToolSpec> {
+    memory::tool_specs()
+        .into_iter()
+        .filter(|spec| matches!(spec.name.as_str(), "memory_set" | "memory_delete"))
+        .collect()
 }
 
 /// Fixed read-only Skill runtime contract. These definitions are deliberately

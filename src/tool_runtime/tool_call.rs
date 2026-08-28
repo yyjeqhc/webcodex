@@ -1006,6 +1006,62 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Search/list explicit durable project Memory. Model-hidden globally and
+    /// exposed only by the capable Stateless MCP Full Operator surface.
+    MemorySearch {
+        project: String,
+        #[serde(default)]
+        query: Option<String>,
+        #[serde(default)]
+        tags: Option<Vec<String>>,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        expected_catalog_revision: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Read one explicit durable project Memory body.
+    MemoryRead {
+        project: String,
+        memory_key: String,
+        #[serde(default)]
+        expected_revision: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Create or CAS-update explicit durable project Memory guidance.
+    MemorySet {
+        project: String,
+        memory_key: String,
+        summary: String,
+        #[serde(default)]
+        body: Option<String>,
+        #[serde(default)]
+        priority: Option<String>,
+        #[serde(default)]
+        bootstrap: Option<bool>,
+        #[serde(default)]
+        tags: Option<Vec<String>>,
+        #[serde(default)]
+        expected_revision: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// CAS-delete explicit durable project Memory guidance.
+    MemoryDelete {
+        project: String,
+        memory_key: String,
+        expected_revision: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Start an async background job (long-running commands, codex CLI, etc.).
     RunJob {
         project: String,
@@ -2219,6 +2275,10 @@ impl ToolCall {
             Self::SkillInstall { .. } => "skill_install",
             Self::SkillActivate { .. } => "skill_activate",
             Self::SkillRemoveRevision { .. } => "skill_remove_revision",
+            Self::MemorySearch { .. } => "memory_search",
+            Self::MemoryRead { .. } => "memory_read",
+            Self::MemorySet { .. } => "memory_set",
+            Self::MemoryDelete { .. } => "memory_delete",
             Self::RunJob { .. } => "run_job",
             Self::StopJob { .. } => "stop_job",
             Self::JobStatus { .. } => "job_status",
@@ -2313,6 +2373,10 @@ impl ToolCall {
             | Self::SkillInstall { session_id, .. }
             | Self::SkillActivate { session_id, .. }
             | Self::SkillRemoveRevision { session_id, .. }
+            | Self::MemorySearch { session_id, .. }
+            | Self::MemoryRead { session_id, .. }
+            | Self::MemorySet { session_id, .. }
+            | Self::MemoryDelete { session_id, .. }
             | Self::RunJob { session_id, .. }
             | Self::StopJob { session_id, .. }
             | Self::ListProjectFiles { session_id, .. }
@@ -2442,6 +2506,10 @@ impl ToolCall {
             | Self::SkillInstall { project, .. }
             | Self::SkillActivate { project, .. }
             | Self::SkillRemoveRevision { project, .. }
+            | Self::MemorySearch { project, .. }
+            | Self::MemoryRead { project, .. }
+            | Self::MemorySet { project, .. }
+            | Self::MemoryDelete { project, .. }
             | Self::RunJob { project, .. }
             | Self::StopJob { project, .. }
             | Self::ListProjectFiles { project, .. }

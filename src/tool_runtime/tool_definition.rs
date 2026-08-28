@@ -16,6 +16,7 @@ mod git;
 mod hygiene;
 mod jobs;
 mod lsp;
+mod memory;
 mod patches;
 mod sessions;
 mod skills;
@@ -489,6 +490,7 @@ pub(crate) fn tool_definitions() -> impl Iterator<Item = &'static ToolDefinition
 const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     TOOL_DEFINITION_HEAD,
     sessions::DEFINITIONS,
+    memory::DEFINITIONS,
     skills::DEFINITIONS,
     hygiene::DEFINITIONS,
     checkpoints::DEFINITIONS,

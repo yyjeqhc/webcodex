@@ -218,7 +218,7 @@ impl ToolRuntime {
             )
             .unwrap_or_else(|| summary.clone());
         let mut events = refreshed.events.clone();
-        self.append_terminal_run_job_validation_events(&refreshed, &mut events, auth)
+        self.append_terminal_generic_job_validation_events(&refreshed, &mut events, auth)
             .await;
         events.sort_by_key(|event| {
             (
@@ -229,12 +229,12 @@ impl ToolRuntime {
         validation_summary_from_events(&events, limit)
     }
 
-    /// Preserve the pre-existing `run_job(purpose=validation|test|build|format|release)`
-    /// projection without mixing those generic Jobs into the durable structured-validation
-    /// marker ledger. Structured validation Jobs carry explicit validation metadata and are
-    /// materialized above; ordinary run_job evidence remains a read-time projection from the
-    /// retained acceptance event plus the authoritative terminal Job state.
-    async fn append_terminal_run_job_validation_events(
+    /// Preserve generic `run_job` and promoted `run_shell` validation evidence without mixing
+    /// those shell Jobs into the durable structured-validation marker ledger. Structured
+    /// validation Jobs carry explicit validation metadata and are materialized above; these
+    /// generic executions remain a read-time projection from the retained acceptance event plus
+    /// the authoritative terminal Job state.
+    async fn append_terminal_generic_job_validation_events(
         &self,
         summary: &SessionSummary,
         events: &mut Vec<SessionEvent>,
@@ -246,7 +246,7 @@ impl ToolRuntime {
         let accepted = canonical_tool_call_finished_events(&summary.events)
             .into_iter()
             .filter(|event| {
-                event.tool_name == "run_job"
+                matches!(event.tool_name.as_str(), "run_job" | "run_shell")
                     && event.job_id.is_some()
                     && execution_purpose(event).is_some()
                     && job_acceptance_only(event)
@@ -269,7 +269,7 @@ impl ToolRuntime {
             {
                 continue;
             }
-            // A run_job carrying structured validation metadata belongs to the durable
+            // A generic execution carrying structured validation metadata belongs to the durable
             // materialization path and must not be synthesized a second time here.
             if status
                 .output
@@ -336,7 +336,10 @@ impl ToolRuntime {
                 .cloned()
                 .unwrap_or(Value::Null);
             observed.validation_output_summary =
-                super::sessions::execution_output_summary_for_tool_result("run_job", &output);
+                super::sessions::execution_output_summary_for_tool_result(
+                    &observed.tool_name,
+                    &output,
+                );
             if observed.validation_output_summary.is_some() {
                 events.push(observed);
             }

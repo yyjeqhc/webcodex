@@ -65,6 +65,135 @@ fn record_run_process(
     );
 }
 
+#[tokio::test]
+async fn promoted_run_shell_preserves_assertion_identity_in_terminal_validation_projection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime =
+        test_runtime().with_structured_execution_sync_wait(std::time::Duration::from_millis(40));
+    let auth = open_auth_context();
+    register_agent_projects_for_auth(
+        &runtime,
+        "validation-shell-job",
+        &auth,
+        crate::shell_protocol::ShellClientCapabilities {
+            shell: true,
+            async_shell_jobs: true,
+            ..Default::default()
+        },
+        vec![registered_project("demo", &tmp.path().to_string_lossy())],
+    )
+    .await;
+    let project = "agent:validation-shell-job:demo".to_string();
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
+    let assertion_name = "promoted shell validation";
+    let expected_identity =
+        crate::tool_runtime::tool_audit::assertion_validation_identity(assertion_name);
+    let (call, recorder_metadata) = ToolCall::from_tool_name_with_recorder_metadata(
+        "run_shell",
+        json!({
+            "project": project,
+            "command": "printf validation-shell; sleep 30",
+            "session_id": session_id,
+            "timeout_secs": 120,
+            "cwd": ".",
+            "purpose": "test",
+            "shell": "bash",
+            "assertion_name": assertion_name,
+        }),
+    )
+    .unwrap();
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth_transport_options_and_metadata(
+                    call,
+                    Some(&auth),
+                    SessionTransport::Mcp,
+                    recorder_metadata,
+                )
+                .await
+        }
+    });
+    let request = wait_for_agent_request_for_client(&runtime, "validation-shell-job").await;
+    assert_eq!(request.kind, "start_job");
+    let job_id = request.job_id.clone().expect("promoted shell Job id");
+    runtime
+        .shell_clients
+        .update_job(crate::shell_protocol::ShellAgentJobUpdateRequest {
+            client_id: "validation-shell-job".to_string(),
+            agent_instance_id: "inst-validation-shell-job".to_string(),
+            update_seq: None,
+            job_id: job_id.clone(),
+            request_id: Some(request.request_id.clone()),
+            status: "running".to_string(),
+            stdout_chunk: Some("validation-shell\n".to_string()),
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code: None,
+            duration_ms: None,
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            finished: false,
+        })
+        .await
+        .unwrap();
+    let handoff = task.await.unwrap();
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["promoted_to_job"], true);
+    assert_eq!(handoff.output["job_id"], job_id);
+
+    runtime
+        .shell_clients
+        .update_job(crate::shell_protocol::ShellAgentJobUpdateRequest {
+            client_id: "validation-shell-job".to_string(),
+            agent_instance_id: "inst-validation-shell-job".to_string(),
+            update_seq: None,
+            job_id,
+            request_id: Some(request.request_id),
+            status: "completed".to_string(),
+            stdout_chunk: None,
+            stderr_chunk: None,
+            stdout_tail: Some("validation-shell passed\n".to_string()),
+            stderr_tail: Some(String::new()),
+            log_snapshot: None,
+            exit_code: Some(0),
+            duration_ms: Some(12),
+            error: None,
+            command_execution_state: Some(
+                crate::shell_protocol::ShellCommandExecutionState::Completed,
+            ),
+            validation_progress: None,
+            finished: true,
+        })
+        .await
+        .unwrap();
+
+    let summary = runtime
+        .dispatch_with_auth(
+            ToolCall::ValidationSummary {
+                project,
+                session_id,
+                limit: Some(20),
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(summary.success, "{:?}", summary.error);
+    let validation = &summary.output["validation"];
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+    let latest = &validation["latest"];
+    assert_eq!(latest["execution_source"], "run_shell");
+    assert_eq!(latest["validation_kind"], "test");
+    assert_eq!(latest["identity"], expected_identity);
+}
+
 #[test]
 fn model_facing_generic_execution_accepts_bounded_assertion_name_and_rejects_malformed_values() {
     for tool_name in ["run_process", "run_script", "run_shell", "run_job"] {

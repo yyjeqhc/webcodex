@@ -212,7 +212,6 @@ pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
         .keys()
         .map(String::as_str)
         .filter(|field| !ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER.contains(field))
-        .filter(|field| !is_tool_call_expectation_metadata_field(field))
         .collect();
     remaining.sort_unstable();
     names.extend(remaining.into_iter().map(str::to_string));
@@ -221,6 +220,13 @@ pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
     }
     push_unique_flattened_arg(&mut names, TOOL_CALL_RECORDING_SESSION_ID_FIELD);
     names
+}
+
+pub(crate) fn generic_tool_call_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
+    accepted_flattened_args_for_spec(spec)
+        .into_iter()
+        .filter(|field| !is_tool_call_expectation_metadata_field(field))
+        .collect()
 }
 
 fn push_unique_flattened_arg(names: &mut Vec<String>, field: &str) {

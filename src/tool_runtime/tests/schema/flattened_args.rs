@@ -67,8 +67,9 @@ fn accepted_flattened_args_appends_recorder_field_once() {
 fn call_runtime_tool_flattened_args_exclude_testing_and_debug_metadata() {
     let mut accepted_fields = BTreeSet::new();
     for spec in flattened_compatibility_specs() {
-        accepted_fields
-            .extend(crate::tool_runtime::registry::accepted_flattened_args_for_spec(&spec));
+        accepted_fields.extend(
+            crate::tool_runtime::registry::generic_tool_call_flattened_args_for_spec(&spec),
+        );
     }
 
     for field in [
@@ -112,31 +113,26 @@ fn accepted_flattened_args_cover_each_tool_spec_input_property() {
             .collect::<BTreeSet<_>>();
 
         for field in input_properties.keys() {
+            assert!(
+                accepted.contains(field),
+                "{} input_schema.properties.{field} must be accepted by the concrete tool/manifest contract",
+                spec.name
+            );
             if crate::tool_runtime::sessions::TOOL_CALL_EXPECTATION_METADATA_FIELDS
                 .contains(&field.as_str())
             {
-                assert!(
-                    !accepted.contains(field),
-                    "{} recorder metadata input {field} must stay out of generic flattened GPT Action args",
-                    spec.name
-                );
                 assert!(
                     !tool_call_properties.contains_key(field),
                     "generic ToolCallRequest must not publish {} recorder metadata input {field}",
                     spec.name
                 );
-                continue;
+            } else {
+                assert!(
+                    tool_call_properties.contains_key(field),
+                    "model-visible {} input_schema.properties.{field} must appear in ToolCallRequest.properties",
+                    spec.name
+                );
             }
-            assert!(
-                accepted.contains(field),
-                "{} input_schema.properties.{field} must be accepted as a flattened GPT Action arg",
-                spec.name
-            );
-            assert!(
-                tool_call_properties.contains_key(field),
-                "model-visible {} input_schema.properties.{field} must appear in ToolCallRequest.properties",
-                spec.name
-            );
         }
     }
 
@@ -289,7 +285,9 @@ fn openapi_generic_call_runtime_tool_schema_remains_strict_model_visible_surface
 fn accepted_flattened_action_fields() -> BTreeSet<String> {
     let mut fields = BTreeSet::new();
     for spec in registered_tool_specs() {
-        fields.extend(crate::tool_runtime::registry::accepted_flattened_args_for_spec(&spec));
+        fields.extend(
+            crate::tool_runtime::registry::generic_tool_call_flattened_args_for_spec(&spec),
+        );
     }
     fields
 }

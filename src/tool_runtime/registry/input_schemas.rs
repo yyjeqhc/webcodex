@@ -55,9 +55,11 @@ pub(super) use computer::{
     computer_snapshot_display_input_schema, computer_snapshot_input_schema,
     computer_write_clipboard_input_schema,
 };
-pub(crate) use discovery::accepted_flattened_args_for_spec;
 #[cfg(test)]
 pub(crate) use discovery::ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER;
+pub(crate) use discovery::{
+    accepted_flattened_args_for_spec, generic_tool_call_flattened_args_for_spec,
+};
 pub(crate) use discovery::{
     empty_input_schema, list_agents_input_schema, list_projects_input_schema,
     list_tools_input_schema, runtime_status_input_schema, tool_manifest_input_schema,

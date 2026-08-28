@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::{
-    accepted_flattened_args_for_spec, registered_tool_specs, TOOL_CALL_ARGUMENTS_FIELD,
+    generic_tool_call_flattened_args_for_spec, registered_tool_specs, TOOL_CALL_ARGUMENTS_FIELD,
     TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
 };
 
@@ -1985,7 +1985,7 @@ fn insert_tool_call_request_flattened_arg_properties_for_specs(
     let mut schemas_by_field = BTreeMap::<String, BTreeMap<String, (String, Value)>>::new();
     for spec in specs {
         let input_properties = spec.input_schema["properties"].as_object();
-        for field in accepted_flattened_args_for_spec(&spec) {
+        for field in generic_tool_call_flattened_args_for_spec(&spec) {
             if properties.contains_key(&field) {
                 continue;
             }

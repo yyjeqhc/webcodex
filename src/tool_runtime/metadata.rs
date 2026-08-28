@@ -152,10 +152,11 @@ mod tests {
     use super::*;
     use crate::auth::scopes::{oauth_scope_policy_for_runtime_tool, OAuthToolScopePolicy};
     use crate::auth::scopes::{
-        SCOPE_CODING_AGENT_RUN, SCOPE_COMPUTER_CLIPBOARD_READ, SCOPE_COMPUTER_CLIPBOARD_WRITE,
-        SCOPE_COMPUTER_CONTROL, SCOPE_COMPUTER_DISPLAY_READ, SCOPE_COMPUTER_POINTER_CONTROL,
-        SCOPE_COMPUTER_READ, SCOPE_JOB_DETACH, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
-        SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
+        MEMORY_MANAGE_SCOPES, MEMORY_READ_SCOPES, SCOPE_CODING_AGENT_RUN,
+        SCOPE_COMPUTER_CLIPBOARD_READ, SCOPE_COMPUTER_CLIPBOARD_WRITE, SCOPE_COMPUTER_CONTROL,
+        SCOPE_COMPUTER_DISPLAY_READ, SCOPE_COMPUTER_POINTER_CONTROL, SCOPE_COMPUTER_READ,
+        SCOPE_JOB_DETACH, SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE,
+        SCOPE_RUNTIME_READ,
     };
     use crate::tool_runtime::{is_known_tool_name, known_tool_names};
 
@@ -175,7 +176,11 @@ mod tests {
             let Some(scope) = metadata.oauth_scope else {
                 continue;
             };
-            let expected = if metadata.name == "run_detached_process" {
+            let expected = if matches!(metadata.name, "memory_search" | "memory_read") {
+                OAuthToolScopePolicy::RequireAll(MEMORY_READ_SCOPES)
+            } else if matches!(metadata.name, "memory_set" | "memory_delete") {
+                OAuthToolScopePolicy::RequireAll(MEMORY_MANAGE_SCOPES)
+            } else if metadata.name == "run_detached_process" {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_JOB_RUN, SCOPE_JOB_DETACH])
             } else if metadata.name == "coding_agent_start" {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_CODING_AGENT_RUN, SCOPE_PROJECT_WRITE])

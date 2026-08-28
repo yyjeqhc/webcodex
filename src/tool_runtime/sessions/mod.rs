@@ -36,8 +36,9 @@ pub(crate) use console::{
 };
 pub(crate) use events::{
     canonical_tool_call_finished_events, exploration_tool_kind, is_valid_session_id,
-    normalize_observed_project_path, strip_tool_call_expectation_metadata,
-    tool_failure_summary_from_events, validate_model_facing_assertion_name,
+    normalize_observed_project_path, safe_model_facing_assertion_name,
+    strip_tool_call_expectation_metadata, tool_failure_summary_from_events,
+    validate_model_facing_assertion_name,
     validation_output_summary_for_tool_result as execution_output_summary_for_tool_result,
     ExplorationToolKind, EXPLORATION_TOOL_NAMES,
 };

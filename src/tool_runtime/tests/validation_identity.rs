@@ -192,6 +192,7 @@ async fn promoted_run_shell_preserves_assertion_identity_in_terminal_validation_
     assert_eq!(latest["execution_source"], "run_shell");
     assert_eq!(latest["validation_kind"], "test");
     assert_eq!(latest["identity"], expected_identity);
+    assert_eq!(latest["assertion_name"], assertion_name);
 }
 
 #[test]
@@ -274,7 +275,40 @@ fn same_model_assertion_resolves_changed_generic_command_without_rewriting_raw_h
     assert_eq!(validation["unresolved_failures"]["count"], 0);
     assert_eq!(validation["latest_status"], "passed");
     assert_eq!(validation["latest"]["identity"], expected_identity);
+    assert_eq!(validation["latest"]["assertion_name"], assertion);
     assert!(validation["latest"]["identity"]
+        .as_str()
+        .is_some_and(
+            |identity| identity.starts_with("assertion:") && !identity.contains(assertion)
+        ));
+}
+
+#[test]
+fn unresolved_generic_failure_exposes_recoverable_assertion_label() {
+    let store = SessionStore::default();
+    let project = "agent:validation-identity:unresolved";
+    let session = store.start_session(Some(project.to_string()), None);
+    let assertion = "websocket reconnect unresolved";
+    record_run_process(
+        &store,
+        &session.session_id,
+        project,
+        "test",
+        "failing-command",
+        Some(assertion),
+        false,
+    );
+
+    let validation =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(20)).unwrap());
+    let unresolved = &validation["unresolved_failures"]["events"][0];
+    assert_eq!(validation["unresolved_failures"]["count"], 1);
+    assert_eq!(
+        unresolved["identity"],
+        assertion_validation_identity(assertion)
+    );
+    assert_eq!(unresolved["assertion_name"], assertion);
+    assert!(unresolved["identity"]
         .as_str()
         .is_some_and(
             |identity| identity.starts_with("assertion:") && !identity.contains(assertion)
@@ -308,6 +342,29 @@ fn changed_generic_command_without_assertion_keeps_legacy_identity_isolation() {
         validation_summary_for_session(&store.summary(&session.session_id, Some(20)).unwrap());
     assert_eq!(validation["resolved_failures"]["count"], 0);
     assert_eq!(validation["unresolved_failures"]["count"], 1);
+}
+
+#[test]
+fn validation_without_assertion_omits_recovery_label() {
+    let store = SessionStore::default();
+    let project = "agent:validation-identity:no-label";
+    let session = store.start_session(Some(project.to_string()), None);
+    record_run_process(
+        &store,
+        &session.session_id,
+        project,
+        "test",
+        "legacy-command",
+        None,
+        false,
+    );
+    let validation =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(20)).unwrap());
+    let event = &validation["unresolved_failures"]["events"][0];
+    assert!(event.get("assertion_name").is_none());
+    assert!(event["identity"].as_str().is_some_and(|identity| {
+        identity.starts_with("command:") || identity.starts_with("target:")
+    }));
 }
 
 #[test]

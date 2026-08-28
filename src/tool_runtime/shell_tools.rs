@@ -9,7 +9,7 @@ impl ToolRuntime {
         call: ToolCall,
         sandbox: Option<&str>,
         ssh_resource: Option<&str>,
-        validation_assertion_identity: Option<&str>,
+        validation_assertion_name: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         match call {
@@ -34,7 +34,7 @@ impl ToolRuntime {
                     sandbox,
                     ssh_resource,
                     session_id,
-                    validation_assertion_identity,
+                    validation_assertion_name,
                     auth,
                 )
                 .await
@@ -89,7 +89,7 @@ impl ToolRuntime {
                     sandbox,
                     ssh_resource,
                     session_id,
-                    validation_assertion_identity,
+                    validation_assertion_name,
                     auth,
                 )
                 .await

@@ -1484,6 +1484,7 @@ async fn stale_validation_terminal_snapshot_cannot_evict_newer_materialization_m
             "cargo_check",
             Some(project.clone()),
             &job.validation_target_id,
+            None,
             "completed",
             Some(0),
             Some(true),

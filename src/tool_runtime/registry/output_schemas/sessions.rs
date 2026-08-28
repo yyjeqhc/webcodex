@@ -1,3 +1,4 @@
+use crate::tool_runtime::sessions::MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS;
 use serde_json::{json, Value};
 
 use super::super::input_schemas::{
@@ -715,6 +716,7 @@ fn validation_event_schema() -> Value {
             "tool_name": { "type": "string", "enum": ["cargo_fmt", "cargo_check", "cargo_test", "go_test", "validate_patch", "apply_patch_checked", "run_process", "run_script", "run_shell", "run_job"] },
             "execution_source": { "type": "string" },
             "identity": { "type": "string", "maxLength": 256 },
+            "assertion_name": { "type": "string", "minLength": 1, "maxLength": MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS },
             "purpose": { "type": "string", "enum": ["validation", "test", "build", "format", "release"] },
             "validation_kind": { "type": "string", "enum": ["format", "check", "test", "build", "release", "validation", "patch_preflight", "patch_apply_checked"] },
             "success": { "type": "boolean" },

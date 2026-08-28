@@ -13,7 +13,10 @@ use std::collections::HashMap;
 use super::session_context::{
     session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
 };
-use super::sessions::{canonical_tool_call_finished_events, SessionEvent, SessionSummary};
+use super::sessions::{
+    canonical_tool_call_finished_events, safe_model_facing_assertion_name, SessionEvent,
+    SessionSummary,
+};
 use super::tool_audit::{
     assertion_validation_identity, is_structured_validation_target_identity,
     is_validation_execution_identity, structured_validation_target_identity,
@@ -41,6 +44,8 @@ pub(crate) struct ValidationEvent {
     pub(crate) tool_name: String,
     pub(crate) execution_source: String,
     pub(crate) identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) assertion_name: Option<String>,
     pub(crate) purpose: String,
     pub(crate) validation_kind: String,
     pub(crate) success: bool,
@@ -451,52 +456,63 @@ impl ToolRuntime {
                 .get("status")
                 .and_then(Value::as_str)
                 .unwrap_or(status_name);
-            let (tool_name, validation_target_id, validation_tool, validation_passed) =
-                if let Some(validation) = validation {
-                    let Some(tool_name) = validation
-                        .get("tool")
-                        .and_then(Value::as_str)
-                        .filter(|tool| validation_adapter_for_tool(tool).is_some())
-                    else {
-                        continue;
-                    };
-                    let Some(identity) = validation
-                        .get("validation_target_id")
-                        .and_then(Value::as_str)
-                        .filter(|value| is_structured_validation_target_identity(value))
-                    else {
-                        continue;
-                    };
-                    (
-                        tool_name,
-                        identity,
-                        Some(tool_name),
-                        validation.get("passed").and_then(Value::as_bool),
-                    )
-                } else {
-                    let Some(metadata) = structured_execution else {
-                        continue;
-                    };
-                    let Some(source) = metadata
-                        .get("execution_source")
-                        .and_then(Value::as_str)
-                        .filter(|source| matches!(*source, "run_process" | "run_script"))
-                    else {
-                        continue;
-                    };
-                    let Some(identity) = metadata
-                        .get("validation_identity")
-                        .and_then(Value::as_str)
-                        .filter(|identity| is_validation_execution_identity(identity))
-                    else {
-                        continue;
-                    };
-                    let validation_tool = metadata
-                        .get("validation_tool")
-                        .and_then(Value::as_str)
-                        .filter(|tool| validation_adapter_for_tool(tool).is_some());
-                    (source, identity, validation_tool, None)
+            let (
+                tool_name,
+                validation_target_id,
+                validation_tool,
+                validation_passed,
+                assertion_name,
+            ) = if let Some(validation) = validation {
+                let Some(tool_name) = validation
+                    .get("tool")
+                    .and_then(Value::as_str)
+                    .filter(|tool| validation_adapter_for_tool(tool).is_some())
+                else {
+                    continue;
                 };
+                let Some(identity) = validation
+                    .get("validation_target_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| is_structured_validation_target_identity(value))
+                else {
+                    continue;
+                };
+                (
+                    tool_name,
+                    identity,
+                    Some(tool_name),
+                    validation.get("passed").and_then(Value::as_bool),
+                    None,
+                )
+            } else {
+                let Some(metadata) = structured_execution else {
+                    continue;
+                };
+                let Some(source) = metadata
+                    .get("execution_source")
+                    .and_then(Value::as_str)
+                    .filter(|source| matches!(*source, "run_process" | "run_script"))
+                else {
+                    continue;
+                };
+                let Some(identity) = metadata
+                    .get("validation_identity")
+                    .and_then(Value::as_str)
+                    .filter(|identity| is_validation_execution_identity(identity))
+                else {
+                    continue;
+                };
+                let validation_tool = metadata
+                    .get("validation_tool")
+                    .and_then(Value::as_str)
+                    .filter(|tool| validation_adapter_for_tool(tool).is_some());
+                let assertion_name = metadata
+                    .get("assertion_name")
+                    .and_then(Value::as_str)
+                    .and_then(|value| safe_model_facing_assertion_name(source, value))
+                    .filter(|value| assertion_validation_identity(value) == identity);
+                (source, identity, validation_tool, None, assertion_name)
+            };
             let log = self
                 .job_log_for_auth(job_id.to_string(), None, Some(200), auth, None, None)
                 .await;
@@ -585,6 +601,7 @@ impl ToolRuntime {
                 tool_name,
                 Some(project.to_string()),
                 validation_target_id,
+                assertion_name.as_deref(),
                 terminal_status,
                 status.output.get("exit_code").and_then(Value::as_i64),
                 validation_passed,
@@ -998,6 +1015,7 @@ fn validation_event_from_finished(
         command_summary.as_deref(),
         &finished.tool_name,
     );
+    let assertion_name = public_validation_assertion_name(started, finished, &identity);
     let (
         stdout_evidence,
         stderr_evidence,
@@ -1030,6 +1048,7 @@ fn validation_event_from_finished(
         tool_name: finished.tool_name.clone(),
         execution_source: finished.tool_name.clone(),
         identity,
+        assertion_name,
         purpose,
         validation_kind,
         success,
@@ -1134,6 +1153,29 @@ fn execution_string(
                 .and_then(Value::as_str)
         })
         .map(str::to_string)
+}
+
+fn public_validation_assertion_name(
+    started: Option<&SessionEvent>,
+    finished: &SessionEvent,
+    identity: &str,
+) -> Option<String> {
+    for raw in [
+        started.and_then(|event| event.assertion_name.as_deref()),
+        finished.assertion_name.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let Some(assertion_name) = safe_model_facing_assertion_name(&finished.tool_name, raw)
+        else {
+            continue;
+        };
+        if assertion_validation_identity(&assertion_name) == identity {
+            return Some(assertion_name);
+        }
+    }
+    None
 }
 
 fn execution_identity(

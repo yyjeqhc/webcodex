@@ -443,6 +443,7 @@ pub(crate) struct ShellJobStartMetadata {
     pub(crate) sandbox: Option<String>,
     pub(crate) validation_identity: Option<String>,
     pub(crate) validation_tool: Option<String>,
+    pub(crate) assertion_name: Option<String>,
     pub(crate) structured_execution: Option<StructuredJobExecution>,
     pub(crate) stdin: Option<String>,
     /// Detached-only caller replay key. Consumed to derive the logical Job
@@ -605,6 +606,7 @@ impl ShellClientRegistry {
         let validation = metadata.validation;
         let validation_identity = metadata.validation_identity.clone();
         let validation_tool = metadata.validation_tool.clone();
+        let assertion_name = metadata.assertion_name.clone();
         let structured_execution = metadata.structured_execution;
         let structured_stdin = metadata.stdin;
         if validation_steps.len() > 3
@@ -659,6 +661,7 @@ impl ShellClientRegistry {
                     stdin_present: structured_stdin.is_some(),
                     validation_identity: validation_identity.clone(),
                     validation_tool: validation_tool.clone(),
+                    assertion_name: assertion_name.clone(),
                 };
                 (
                     "start_process_job",
@@ -687,6 +690,7 @@ impl ShellClientRegistry {
                     stdin_present: structured_stdin.is_some(),
                     validation_identity: validation_identity.clone(),
                     validation_tool: validation_tool.clone(),
+                    assertion_name: None,
                 };
                 (
                     "start_detached_process_job",
@@ -719,6 +723,7 @@ impl ShellClientRegistry {
                     stdin_present: structured_stdin.is_some(),
                     validation_identity: validation_identity.clone(),
                     validation_tool: validation_tool.clone(),
+                    assertion_name: assertion_name.clone(),
                 };
                 (
                     "start_script_job",

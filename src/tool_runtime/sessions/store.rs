@@ -1612,6 +1612,7 @@ impl SessionStore {
         tool_name: &str,
         project: Option<String>,
         validation_target_id: &str,
+        assertion_name: Option<&str>,
         job_status: &str,
         exit_code: Option<i64>,
         validation_passed: Option<bool>,
@@ -1624,6 +1625,12 @@ impl SessionStore {
         let job_id = job_id.trim();
         let valid_target =
             super::super::tool_audit::is_validation_execution_identity(validation_target_id);
+        let assertion_name = assertion_name
+            .and_then(|value| super::events::safe_model_facing_assertion_name(tool_name, value))
+            .filter(|value| {
+                super::super::tool_audit::assertion_validation_identity(value)
+                    == validation_target_id
+            });
         let Some(timestamp) = finished_at else {
             // Reconciliation must never substitute wall-clock read time for
             // authoritative execution activity.
@@ -1711,7 +1718,7 @@ impl SessionStore {
             error_kind: None,
             expected_failure: None,
             expected_failure_kind: None,
-            assertion_name: None,
+            assertion_name,
             actual_failure_kind: None,
             failure_expectation_result: None,
             warning_kind: None,

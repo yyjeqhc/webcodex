@@ -2395,6 +2395,8 @@ impl ShellJobValidationMetadata {
     }
 }
 
+pub const VALIDATION_ASSERTION_NAME_MAX_CHARS: usize = 120;
+
 /// Safe bounded metadata for a structured execution Job. Raw executable argv,
 /// script bodies, script argv, and stdin are intentionally absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2406,10 +2408,14 @@ pub struct ShellJobStructuredExecutionMetadata {
     pub script_bytes: Option<usize>,
     pub arg_count: usize,
     pub stdin_present: bool,
-    /// Admission-derived opaque validation identity. It is either a proven
-    /// structured `target:` identity or a generic body-free `command:` identity.
+    /// Admission-derived opaque validation identity. It is a proven structured
+    /// `target:`, generic body-free `command:`, or model assertion `assertion:` identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validation_identity: Option<String>,
+    /// Safe human-readable correlation label paired with an `assertion:` identity.
+    /// It is recovery metadata only and never grants execution or validation authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assertion_name: Option<String>,
     /// Present only when admission proved exact equivalence to one canonical
     /// structured validation tool. Parser output never populates this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2421,22 +2427,43 @@ impl ShellJobStructuredExecutionMetadata {
         let identity_valid = self.validation_identity.as_deref().is_none_or(|value| {
             let suffix = value
                 .strip_prefix("target:")
-                .or_else(|| value.strip_prefix("command:"));
+                .or_else(|| value.strip_prefix("command:"))
+                .or_else(|| value.strip_prefix("assertion:"));
             suffix.is_some_and(|suffix| {
                 suffix.len() == 24 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
             })
         });
+        let assertion_identity_source_valid =
+            self.validation_identity.as_deref().is_none_or(|value| {
+                !value.starts_with("assertion:")
+                    || matches!(self.execution_source.as_str(), "run_process" | "run_script")
+            });
         let validation_tool_valid = match self.validation_tool.as_deref() {
             None => true,
             Some(tool) => {
                 matches!(tool, "cargo_fmt" | "cargo_check" | "cargo_test")
-                    && self
-                        .validation_identity
-                        .as_deref()
-                        .is_some_and(|identity| identity.starts_with("target:"))
+                    && self.validation_identity.as_deref().is_some_and(|identity| {
+                        identity.starts_with("target:") || identity.starts_with("assertion:")
+                    })
             }
         };
-        if !identity_valid || !validation_tool_valid {
+        let assertion_name_valid = self.assertion_name.as_deref().is_none_or(|value| {
+            let trimmed = value.trim();
+            value == trimmed
+                && !trimmed.is_empty()
+                && trimmed.chars().count() <= VALIDATION_ASSERTION_NAME_MAX_CHARS
+                && !trimmed.chars().any(char::is_control)
+                && self
+                    .validation_identity
+                    .as_deref()
+                    .is_some_and(|identity| identity.starts_with("assertion:"))
+                && matches!(self.execution_source.as_str(), "run_process" | "run_script")
+        });
+        if !identity_valid
+            || !assertion_identity_source_valid
+            || !validation_tool_valid
+            || !assertion_name_valid
+        {
             return false;
         }
         match self.execution_source.as_str() {
@@ -3191,6 +3218,7 @@ mod envelope_tests {
                 stdin_present: true,
                 validation_identity: None,
                 validation_tool: None,
+                assertion_name: None,
             }),
         });
         request
@@ -3255,6 +3283,7 @@ mod envelope_tests {
                 stdin_present: true,
                 validation_identity: None,
                 validation_tool: None,
+                assertion_name: None,
             }),
         });
         request

@@ -14,7 +14,9 @@ use super::tool_result::{RecoveryKind, RecoveryTool, ToolResult};
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_client::{command_preview, ShellJobStartMetadata, COMMAND_PREVIEW_MAX_CHARS};
-use crate::shell_protocol::{ShellJobInfo, ShellJobOpRequest, ShellJobValidationStep};
+use crate::shell_protocol::{
+    ShellJobInfo, ShellJobOpRequest, ShellJobStructuredExecutionMetadata, ShellJobValidationStep,
+};
 
 pub(crate) fn is_blocking_active_job_status(status: &str) -> bool {
     matches!(
@@ -422,6 +424,21 @@ fn agent_log_stream_incomplete(
         || returned_lines < next_line.saturating_sub(1)
 }
 
+fn model_facing_structured_execution_metadata(
+    metadata: Option<&ShellJobStructuredExecutionMetadata>,
+) -> Value {
+    let Some(metadata) = metadata else {
+        return Value::Null;
+    };
+    json!({
+        "execution_source": metadata.execution_source,
+        "language": metadata.language,
+        "script_bytes": metadata.script_bytes,
+        "arg_count": metadata.arg_count,
+        "stdin_present": metadata.stdin_present,
+    })
+}
+
 /// Build a bounded job summary `Value` for an agent-known job. Never includes
 /// stdout/stderr bodies.
 pub(crate) fn agent_job_summary_value(job: &ShellJobInfo) -> Value {
@@ -441,7 +458,7 @@ pub(crate) fn agent_job_summary_value(job: &ShellJobInfo) -> Value {
         "elapsed_secs": job.elapsed_secs,
         "exit_code": job.exit_code,
         "command_execution_state": job.command_execution_state,
-        "structured_execution": job.structured_execution,
+        "structured_execution": model_facing_structured_execution_metadata(job.structured_execution.as_ref()),
         "recovery_state": job.recovery_state,
         "recovered_after_server_restart": job.recovered_after_server_restart,
         "reconciled_at": job.reconciled_at,
@@ -1526,6 +1543,7 @@ impl ToolRuntime {
                         sandbox,
                         validation_identity: None,
                         validation_tool: None,
+                        assertion_name: None,
                         structured_execution: None,
                         stdin: None,
                         detached_idempotency_key: None,
@@ -1780,7 +1798,7 @@ impl ToolRuntime {
                     "client_id": job.client_id,
                     "error": job.error,
                     "command_execution_state": job.command_execution_state,
-                    "structured_execution": job.structured_execution,
+                    "structured_execution": model_facing_structured_execution_metadata(job.structured_execution.as_ref()),
                     "recovery_state": job.recovery_state,
                     "recovered_after_server_restart": job.recovered_after_server_restart,
                     "reconciled_at": job.reconciled_at,
@@ -1995,7 +2013,7 @@ impl ToolRuntime {
                     "status": job.status,
                     "exit_code": job.exit_code,
                     "command_execution_state": job.command_execution_state,
-                    "structured_execution": job.structured_execution,
+                    "structured_execution": model_facing_structured_execution_metadata(job.structured_execution.as_ref()),
                     "stdout_tail": stdout,
                     "stderr_tail": stderr,
                     "stdout_lines": next_stdout_line.saturating_sub(1),
@@ -2207,6 +2225,10 @@ impl ToolRuntime {
                 && (job.validation.is_some() || generic_validation)
             {
                 let mut summary = agent_job_summary_value(job);
+                // Internal validation reconciliation needs the admission-derived correlation
+                // metadata; ordinary Job model-facing projections intentionally expose only
+                // the execution-shape subset above.
+                summary["structured_execution"] = json!(job.structured_execution);
                 summary["purpose"] = json!(job.purpose);
                 summary["cwd"] = json!(job.project_cwd);
                 summary["shell"] = json!(job.shell);
@@ -3022,6 +3044,65 @@ mod recovery_projection_tests {
             assert!(value["tests_passed"].is_null());
             assert!(value["tests_failed"].is_null());
         }
+    }
+
+    #[test]
+    fn agent_job_summary_hides_internal_validation_correlation_metadata() {
+        use crate::shell_protocol::{ShellJobInfo, ShellJobStructuredExecutionMetadata};
+        let job = ShellJobInfo {
+            job_id: "job-validation-summary".to_string(),
+            request_id: Some("req-validation-summary".to_string()),
+            client_id: "oe".to_string(),
+            kind: "run_process".to_string(),
+            project_id: Some("agent:demo".to_string()),
+            session_id: Some("wc_sess_demo".to_string()),
+            ssh_resource: None,
+            cwd: Some(".".to_string()),
+            project_cwd: Some(".".to_string()),
+            purpose: Some("test".to_string()),
+            shell: Some("direct_argv".to_string()),
+            command_preview: "validation".to_string(),
+            status: "running".to_string(),
+            created_at: 1,
+            started_at: Some(1),
+            ended_at: None,
+            exit_code: None,
+            duration_ms: None,
+            elapsed_secs: Some(0),
+            error: None,
+            command_execution_state: None,
+            structured_execution: Some(ShellJobStructuredExecutionMetadata {
+                execution_source: "run_process".to_string(),
+                language: None,
+                script_bytes: None,
+                arg_count: 2,
+                stdin_present: false,
+                validation_identity: Some("assertion:0123456789abcdef01234567".to_string()),
+                assertion_name: Some("Bearer historical-validation-secret".to_string()),
+                validation_tool: Some("cargo_test".to_string()),
+            }),
+            codex: None,
+            result: None,
+            validation_progress: None,
+            validation: None,
+            recovery_state: None,
+            recovered_after_server_restart: false,
+            reconciled_at: None,
+            recovery_reason_code: None,
+            observation_token: None,
+            last_update_seq: None,
+            stdout_retained_from_line: Some(1),
+            stderr_retained_from_line: Some(1),
+            stdout_log_truncated: false,
+            stderr_log_truncated: false,
+        };
+        let value = super::agent_job_summary_value(&job);
+        let structured = &value["structured_execution"];
+        assert_eq!(structured["execution_source"], "run_process");
+        assert!(structured.get("validation_identity").is_none());
+        assert!(structured.get("validation_tool").is_none());
+        assert!(structured.get("assertion_name").is_none());
+        assert!(!value.to_string().contains("historical-validation-secret"));
     }
 
     #[test]

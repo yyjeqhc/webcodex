@@ -1376,6 +1376,7 @@ fn generic_job_failure_identity_survives_restart_and_resolves_with_structured_su
         "run_process",
         Some("agent:eval:demo".to_string()),
         &target,
+        None,
         "failed",
         Some(101),
         Some(false),
@@ -1473,6 +1474,7 @@ fn validation_job_terminal_identity_survives_event_eviction_and_restart_without_
         "cargo_check",
         Some("agent:eval:demo".to_string()),
         target,
+        None,
         "completed",
         Some(0),
         Some(true),
@@ -1525,6 +1527,7 @@ fn validation_job_terminal_identity_survives_event_eviction_and_restart_without_
             "cargo_check",
             Some("agent:eval:demo".to_string()),
             target,
+            None,
             "completed",
             Some(0),
             Some(true),
@@ -1559,6 +1562,7 @@ fn validation_job_terminal_identity_survives_event_eviction_and_restart_without_
             "cargo_check",
             Some("agent:eval:demo".to_string()),
             target,
+            None,
             "completed",
             Some(0),
             Some(true),
@@ -1884,6 +1888,105 @@ fn same_assertion_identity_resolves_only_its_own_failure() {
     );
 }
 
+#[test]
+fn public_validation_assertion_label_hides_structured_and_unsafe_historical_metadata() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:label-safety".to_string()), None);
+    let hidden_structured = "internal structured assertion";
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_check",
+        json!({
+            "project": "agent:eval:label-safety",
+            "assertion_name": hidden_structured,
+        }),
+        true,
+        json!({"exit_code": 0}),
+    );
+    let unsafe_legacy = "Bearer historical-validation-secret";
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_process",
+        json!({
+            "project": "agent:eval:label-safety",
+            "purpose": "test",
+            "command": "legacy validation",
+            "assertion_name": unsafe_legacy,
+        }),
+        false,
+        json!({
+            "exit_code": 1,
+            "purpose": "test",
+            "execution_state": "completed",
+        }),
+    );
+
+    let validation =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(50)).unwrap());
+    let events = validation["events"].as_array().unwrap();
+    let structured = events
+        .iter()
+        .find(|event| event["tool_name"] == "cargo_check")
+        .unwrap();
+    let generic = events
+        .iter()
+        .find(|event| event["tool_name"] == "run_process")
+        .unwrap();
+    assert!(structured.get("assertion_name").is_none());
+    assert!(generic.get("assertion_name").is_none());
+    let serialized = validation.to_string();
+    assert!(!serialized.contains(hidden_structured));
+    assert!(!serialized.contains(unsafe_legacy));
+}
+
+#[test]
+fn materialized_run_script_terminal_preserves_recoverable_assertion_label() {
+    let store = SessionStore::default();
+    let project = "agent:eval:script-terminal";
+    let session = store.start_session(Some(project.to_string()), None);
+    let assertion_name = "promoted script validation";
+    let identity = crate::tool_runtime::tool_audit::assertion_validation_identity(assertion_name);
+    let terminal_output = json!({
+        "exit_code": 0,
+        "purpose": "test",
+        "execution_state": "completed",
+        "language": "bash",
+        "stdout_tail": "script validation passed\n",
+        "stderr_tail": "",
+        "stdout_truncated": false,
+        "stderr_truncated": false,
+    });
+    let terminal_summary = crate::tool_runtime::sessions::execution_output_summary_for_tool_result(
+        "run_script",
+        &terminal_output,
+    );
+    assert!(store.record_validation_job_terminal(
+        &session.session_id,
+        "job_script_assertion",
+        &["job_script_assertion"],
+        "run_script",
+        Some(project.to_string()),
+        &identity,
+        Some(assertion_name),
+        "completed",
+        Some(0),
+        Some(true),
+        Some(100),
+        Some(110),
+        Some(10_000),
+        terminal_summary,
+    ));
+
+    let validation =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(20)).unwrap());
+    let latest = &validation["latest"];
+    assert_eq!(latest["execution_source"], "run_script");
+    assert_eq!(latest["identity"], identity);
+    assert_eq!(latest["assertion_name"], assertion_name);
+}
+
 #[tokio::test]
 async fn run_shell_declared_validation_enters_unified_summary_with_shell_and_root_cwd() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2056,6 +2159,7 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
     assert_eq!(event["execution_state"], "completed");
     assert_eq!(event["exit_code"], 0);
     assert_eq!(event["identity"], expected_identity);
+    assert_eq!(event["assertion_name"], assertion_name);
     assert_eq!(
         handoff.output["facts"]["executions"][0]["identity"],
         event["identity"]
@@ -2131,6 +2235,7 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
     let metadata = admitted.structured_execution.as_ref().unwrap();
     assert_eq!(metadata.execution_source, "run_process");
     assert_eq!(metadata.validation_tool.as_deref(), Some("cargo_test"));
+    assert_eq!(metadata.assertion_name.as_deref(), Some(assertion_name));
     let target = metadata
         .validation_identity
         .as_deref()
@@ -2184,6 +2289,7 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
     assert_eq!(latest["execution_source"], "run_process");
     assert_eq!(latest["validation_kind"], "test");
     assert_eq!(latest["identity"], target);
+    assert_eq!(latest["assertion_name"], assertion_name);
     assert_eq!(latest["tests_run_count"], 1);
     assert_eq!(latest["tests_passed"], 1);
     assert_eq!(latest["tests_failed"], 0);

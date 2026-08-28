@@ -1066,6 +1066,46 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
                 .unwrap();
         }
     }
+    let assertion_name = "recovery websocket validation";
+    let validation_request = json!({
+        "project": project,
+        "executable": "cargo",
+        "args": ["test", "before-recovery"],
+        "cwd": ".",
+        "purpose": "test",
+        "assertion_name": assertion_name,
+    });
+    let (_, recorder_metadata) =
+        ToolCall::from_tool_name_with_recorder_metadata("run_process", validation_request.clone())
+            .unwrap();
+    let audited = crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
+        "run_process",
+        &validation_request,
+    );
+    let validation_start = runtime.sessions.record_tool_call_started_with_metadata(
+        Some(&session.session_id),
+        crate::tool_runtime::sessions::SessionTransport::Mcp,
+        "run_process",
+        &audited,
+        Some(project.clone()),
+        recorder_metadata,
+    );
+    runtime.sessions.record_tool_call_finished(
+        validation_start,
+        false,
+        &json!({
+            "exit_code": 101,
+            "purpose": "test",
+            "execution_state": "completed",
+            "stdout_tail": "validation failed\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+        }),
+        Some("validation failed"),
+        None,
+    );
+
     let auth = auth_context(None, true);
     let mut arguments = json!({
         "project": project,
@@ -1108,6 +1148,23 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
     assert_eq!(result.output["session_continuity"]["status"], "behind");
     assert_eq!(result.output["session_recovery"]["truncated"], true);
     assert!(result.output["session_recovery"]["current_handoff"].is_object());
+    let recovery_validation = &result.output["session_recovery"]["current_handoff"]["validation"];
+    assert_eq!(recovery_validation["unresolved_failures"]["count"], 1);
+    let unresolved = &recovery_validation["unresolved_failures"]["events"][0];
+    assert_eq!(unresolved["assertion_name"], assertion_name);
+    assert_eq!(
+        unresolved["identity"],
+        crate::tool_runtime::tool_audit::assertion_validation_identity(assertion_name)
+    );
+    assert!(
+        result.output["session_recovery"]["current_handoff"]["suggested_next_actions"]
+            .as_array()
+            .is_some_and(|actions| actions.iter().any(|action| {
+                action
+                    .as_str()
+                    .is_some_and(|action| action.contains("reuse the original assertion_name"))
+            }))
+    );
     let recovery_events = result.output["session_recovery"]["model_facing_events"]
         .as_array()
         .unwrap();

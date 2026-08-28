@@ -208,14 +208,33 @@ pub(crate) fn extract_project(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+pub(crate) fn tool_supports_model_facing_assertion_name(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "run_process" | "run_script" | "run_shell" | "run_job"
+    )
+}
+
+pub(crate) fn safe_model_facing_assertion_name(
+    tool_name: &str,
+    assertion_name: &str,
+) -> Option<String> {
+    if !tool_supports_model_facing_assertion_name(tool_name) {
+        return None;
+    }
+    let trimmed = assertion_name.trim();
+    (!trimmed.is_empty()
+        && trimmed.chars().count() <= MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS
+        && !trimmed.chars().any(char::is_control)
+        && !looks_like_secret_string(trimmed))
+    .then(|| trimmed.to_string())
+}
+
 pub(crate) fn validate_model_facing_assertion_name(
     tool_name: &str,
     arguments: &Value,
 ) -> Result<(), String> {
-    if !matches!(
-        tool_name,
-        "run_process" | "run_script" | "run_shell" | "run_job"
-    ) {
+    if !tool_supports_model_facing_assertion_name(tool_name) {
         return Ok(());
     }
     let Some(value) = arguments

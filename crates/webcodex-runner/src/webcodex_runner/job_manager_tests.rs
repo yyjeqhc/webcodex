@@ -387,6 +387,7 @@ fn detached_job_request(
                 stdin_present: false,
                 validation_identity: None,
                 validation_tool: None,
+                assertion_name: None,
             }),
         },
         launch: DetachedLaunchSpec {
@@ -1017,6 +1018,7 @@ fn structured_process_context(
         stdin_present,
         validation_identity: None,
         validation_tool: None,
+        assertion_name: None,
     });
     context
 }
@@ -1054,6 +1056,7 @@ fn structured_script_context(
         stdin_present,
         validation_identity: None,
         validation_tool: None,
+        assertion_name: None,
     });
     context
 }
@@ -3163,6 +3166,7 @@ fn structured_job_snapshot_preserves_post_spawn_outcome_unknown() {
             stdin_present: false,
             validation_identity: None,
             validation_tool: None,
+            assertion_name: None,
         });
     lock_unpoison(&manager.jobs).insert(
         snapshot.job_id.clone(),

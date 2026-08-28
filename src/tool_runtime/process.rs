@@ -13,7 +13,7 @@ use super::shell::{
 use super::structured_execution::{
     await_hidden_structured_job, HiddenStructuredJobWait, StructuredExecutionBudget,
 };
-use super::tool_audit::run_process_validation_identity;
+use super::tool_audit::{assertion_validation_identity, run_process_validation_identity};
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_client::{
@@ -329,7 +329,7 @@ impl ToolRuntime {
         sandbox: Option<&str>,
         ssh_resource: Option<&str>,
         session_id: Option<String>,
-        validation_assertion_identity: Option<&str>,
+        validation_assertion_name: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         self.run_process_with_contract_mode(
@@ -344,7 +344,7 @@ impl ToolRuntime {
             ssh_resource,
             session_id,
             auth,
-            validation_assertion_identity,
+            validation_assertion_name,
             true,
         )
         .await
@@ -628,7 +628,7 @@ impl ToolRuntime {
         ssh_resource: Option<&str>,
         session_id: Option<String>,
         auth: Option<&AuthContext>,
-        validation_assertion_identity: Option<&str>,
+        validation_assertion_name: Option<&str>,
         allow_async_handoff: bool,
     ) -> ToolResult {
         let budget = match StructuredExecutionBudget::resolve(timeout_secs) {
@@ -676,8 +676,8 @@ impl ToolRuntime {
             Some(declared_purpose.as_str()),
         )
         .map(|mut identity| {
-            if let Some(assertion_identity) = validation_assertion_identity {
-                identity.identity = assertion_identity.to_string();
+            if let Some(assertion_name) = validation_assertion_name {
+                identity.identity = assertion_validation_identity(assertion_name);
             }
             identity
         });
@@ -812,6 +812,10 @@ impl ToolRuntime {
                             validation_tool: validation_identity
                                 .as_ref()
                                 .and_then(|identity| identity.validation_tool.map(str::to_string)),
+                            assertion_name: validation_identity
+                                .as_ref()
+                                .filter(|identity| identity.identity.starts_with("assertion:"))
+                                .and_then(|_| validation_assertion_name.map(str::to_string)),
                             stdin,
                             ..Default::default()
                         },

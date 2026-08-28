@@ -3204,20 +3204,21 @@ fn validate_runner_job_context(
     {
         return Err("job recovery context structured execution metadata is invalid".to_string());
     }
-    // validation_identity / validation_tool are server-admission-derived opaque
-    // metadata. The Runner validates their closed shape above, then preserves
-    // them while checking the execution fields it can authoritatively derive
-    // from the typed request.
-    let (validation_identity, validation_tool) = context
+    // validation_identity / validation_tool / assertion_name are server-admission-derived
+    // validation correlation metadata. The Runner validates their closed shape above,
+    // then preserves them while checking the execution fields it can authoritatively
+    // derive from the typed request. None of them grant execution authority.
+    let (validation_identity, validation_tool, assertion_name) = context
         .structured_execution
         .as_ref()
         .map(|metadata| {
             (
                 metadata.validation_identity.clone(),
                 metadata.validation_tool.clone(),
+                metadata.assertion_name.clone(),
             )
         })
-        .unwrap_or((None, None));
+        .unwrap_or((None, None, None));
     let expected_structured = match request.kind.as_str() {
         "start_process_job" => {
             if !request.command.is_empty()
@@ -3238,6 +3239,7 @@ fn validate_runner_job_context(
                 stdin_present: request.stdin.is_some(),
                 validation_identity: validation_identity.clone(),
                 validation_tool: validation_tool.clone(),
+                assertion_name: assertion_name.clone(),
             })
         }
         "start_detached_process_job" => {
@@ -3263,6 +3265,7 @@ fn validate_runner_job_context(
                 stdin_present: request.stdin.is_some(),
                 validation_identity: validation_identity.clone(),
                 validation_tool: validation_tool.clone(),
+                assertion_name: None,
             })
         }
         "start_script_job" => {
@@ -3288,6 +3291,7 @@ fn validate_runner_job_context(
                 stdin_present: request.stdin.is_some(),
                 validation_identity: validation_identity.clone(),
                 validation_tool: validation_tool.clone(),
+                assertion_name: assertion_name.clone(),
             })
         }
         _ => None,

@@ -1152,6 +1152,7 @@ impl ToolRuntime {
                     sandbox: sandbox.map(str::to_string),
                     validation_identity: None,
                     validation_tool: None,
+                    assertion_name: None,
                     structured_execution: None,
                     stdin: None,
                     detached_idempotency_key: None,

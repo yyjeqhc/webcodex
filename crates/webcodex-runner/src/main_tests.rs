@@ -513,14 +513,15 @@ fn runner_recovery_context_accepts_server_validation_identity_metadata() {
         script_bytes: None,
         arg_count: 2,
         stdin_present: false,
-        validation_identity: Some("target:0123456789abcdef01234567".to_string()),
+        validation_identity: Some("assertion:0123456789abcdef01234567".to_string()),
         validation_tool: Some("cargo_test".to_string()),
+        assertion_name: Some("runner restart assertion".to_string()),
     });
     let context = context.clone();
 
     validate_runner_job_context(&context, &request, "ws-client").unwrap();
 
-    let mut invalid = context;
+    let mut invalid = context.clone();
     invalid
         .structured_execution
         .as_mut()
@@ -530,6 +531,16 @@ fn runner_recovery_context_accepts_server_validation_identity_metadata() {
     assert!(
         error.contains("structured execution metadata is invalid"),
         "{error}"
+    );
+
+    let mut detached_assertion = context.clone();
+    let structured = detached_assertion.structured_execution.as_mut().unwrap();
+    structured.execution_source = "run_detached_process".to_string();
+    structured.validation_tool = None;
+    structured.assertion_name = None;
+    assert!(
+        !structured.is_valid(),
+        "assertion identities must remain closed to model-facing process/script Jobs"
     );
 }
 

@@ -15,7 +15,7 @@ use super::shell::{agent_command_lifecycle, dispatch_uncertainty_lifecycle};
 use super::structured_execution::{
     await_hidden_structured_job, HiddenStructuredJobWait, StructuredExecutionBudget,
 };
-use super::tool_audit::run_script_validation_identity;
+use super::tool_audit::{assertion_validation_identity, run_script_validation_identity};
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_client::{
@@ -58,7 +58,7 @@ impl ToolRuntime {
         sandbox: Option<&str>,
         ssh_resource: Option<&str>,
         session_id: Option<String>,
-        validation_assertion_identity: Option<&str>,
+        validation_assertion_name: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         let budget = match StructuredExecutionBudget::resolve(timeout_secs) {
@@ -113,8 +113,8 @@ impl ToolRuntime {
             Some(declared_purpose.as_str()),
         )
         .map(|mut identity| {
-            if let Some(assertion_identity) = validation_assertion_identity {
-                identity.identity = assertion_identity.to_string();
+            if let Some(assertion_name) = validation_assertion_name {
+                identity.identity = assertion_validation_identity(assertion_name);
             }
             identity
         });
@@ -250,6 +250,10 @@ impl ToolRuntime {
                             validation_tool: validation_identity
                                 .as_ref()
                                 .and_then(|identity| identity.validation_tool.map(str::to_string)),
+                            assertion_name: validation_identity
+                                .as_ref()
+                                .filter(|identity| identity.identity.starts_with("assertion:"))
+                                .and_then(|_| validation_assertion_name.map(str::to_string)),
                             stdin,
                             ..Default::default()
                         },

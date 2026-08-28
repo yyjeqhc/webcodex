@@ -1707,6 +1707,29 @@ fn output_schema_description_text(props: &serde_json::Map<String, Value>) -> Str
 }
 
 #[test]
+fn validation_summary_schema_exposes_optional_recoverable_assertion_label_only() {
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("validation_summary");
+    let event = &schema["properties"]["output"]["properties"]["validation"]["properties"]["events"]
+        ["items"];
+    let properties = event["properties"].as_object().unwrap();
+    let assertion = &properties["assertion_name"];
+    assert_eq!(assertion["type"], "string");
+    assert_eq!(assertion["minLength"], 1);
+    assert_eq!(
+        assertion["maxLength"],
+        crate::tool_runtime::sessions::MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS
+    );
+    let required = event["required"].as_array().unwrap();
+    assert!(!required.iter().any(|field| field == "assertion_name"));
+    for hidden in ["expected_failure", "expected_failure_kind"] {
+        assert!(
+            !properties.contains_key(hidden),
+            "validation event schema must not expose internal expectation field {hidden}"
+        );
+    }
+}
+
+#[test]
 fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
     let schema = crate::tool_runtime::registry::output_schema_for_tool("finish_coding_task");
     let output_props = schema["properties"]["output"]["properties"]

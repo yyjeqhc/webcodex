@@ -1,13 +1,13 @@
 # Runner
 
 Runner 是真正执行工作的组件。可执行文件是 `webcodex-runner`；管理它的 CLI 命名
-空间是 `webcodex runner ...`。"Agent" 与 "Runner" 指同一个执行组件，但它们不是
-同一个程序：`webcodex`（包含 `agent` 命名空间）与 `webcodex-runner` 是两个独立
-可执行文件——"agent" 是历史遗留的 CLI 名称。本页说明 Runner 做什么、如何连接、
+空间是 `webcodex runner ...`。`webcodex` 与 `webcodex-runner` 是两个独立可执行
+文件。运维生命周期统一使用 `runner` 命名空间；历史 `agent` 术语只保留在兼容性所需
+的令牌、存储、身份、项目 id 与 wire contract 中。本页说明 Runner 做什么、如何连接、
 如何注册项目、如何以服务方式运维，以及它的主要运行时概念。
 
 安装与服务设置见[部署指南](DEPLOYMENT.zh-CN.md)；管理 Runner 的命令见
-[CLI](CLI.zh-CN.md#runneragent-命名空间)。
+[CLI](CLI.zh-CN.md#runner-生命周期)。
 
 ## Runner 做什么
 
@@ -18,7 +18,7 @@ Runner 运行在持有仓库的机器上。它主动连接 WebCodex Server，注
 Runner 是最接近你仓库的信任边界。请用窄的 allowed roots 与显式 shell profile
 配置它，而不是继承宽泛的交互式 shell 状态。
 
-## Server、CLI、Runner、Agent
+## Server、CLI、Runner 与兼容标识
 
 | 术语 | 含义 |
 | --- | --- |

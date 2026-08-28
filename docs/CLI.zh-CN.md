@@ -74,11 +74,10 @@ Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS
 | `webcodex client enroll` | 高级客户端接入，可显式指定 `--client-id` | 高级入口；普通用户应使用 `login`，它会自动派生 client id 并一步写入规范的 server/user 本地连接布局。 |
 | `webcodex logout <server-url>` | 移除本机对某 Server 的凭据 | |
 
-### Runner（`agent` 命名空间）
+### Runner 生命周期
 
-Runner 可执行文件是 `webcodex-runner`。对应 CLI 命名空间叫 `agent`（历史原因）：
-`webcodex runner ...` 管理的就是 `webcodex-runner` 进程与服务。"Agent" 与 "Runner"
-指同一个执行组件，但它们不是同一个程序：`webcodex`（包含 `agent` 命名空间）与
+Runner 可执行文件是 `webcodex-runner`。其规范 CLI 生命周期命名空间是 `runner`：
+`webcodex runner ...` 管理 `webcodex-runner` 进程与服务。`webcodex` 与
 `webcodex-runner` 是两个独立可执行文件。
 
 | 命令 | 用途 |

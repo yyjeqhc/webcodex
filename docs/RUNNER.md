@@ -2,15 +2,15 @@
 
 The Runner is the component that executes the actual work. The executable is
 `webcodex-runner`; the CLI namespace that manages it is `webcodex runner ...`.
-"Agent" and "Runner" refer to the same execution component, but they are not
-the same program: `webcodex` (which contains the `agent` namespace) and
-`webcodex-runner` are separate executables — "agent" is the historical CLI
-name. This page explains what the Runner does, how it connects, how it
+`webcodex` and `webcodex-runner` are separate executables. Operator lifecycle
+commands use the `runner` namespace; historical `agent` terminology remains only
+where it is part of a compatibility-facing token, storage, identity, project-id,
+or wire contract. This page explains what the Runner does, how it connects, how it
 registers projects, how to operate it as a service, and its main runtime
 concepts.
 
 For installation and service setup, see [Deployment](DEPLOYMENT.md). For the
-commands that manage the Runner, see [CLI](CLI.md#runner-the-agent-namespace).
+commands that manage the Runner, see [CLI](CLI.md#runner-lifecycle).
 
 ## What the Runner does
 
@@ -24,7 +24,7 @@ The Runner is the trust boundary closest to your repository. Configure it with
 narrow allowed roots and explicit shell profiles rather than broad interactive
 shell state.
 
-## Server, CLI, Runner, Agent
+## Server, CLI, Runner, and compatibility identities
 
 | Term | Meaning |
 | --- | --- |

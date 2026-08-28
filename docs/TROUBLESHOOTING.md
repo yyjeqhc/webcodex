@@ -48,7 +48,7 @@ The hosted log is
 `$XDG_STATE_HOME/webcodex/clients/<profile>/runner.log` (or the equivalent
 default under `~/.local/state`). It rotates while the Runner is alive and keeps
 only the current file plus `.1` and `.2`, at approximately 10 MiB each.
-`agent logs --lines` reads only bounded file tails and can span those archives;
+`runner logs --lines` reads only bounded file tails and can span those archives;
 `--follow` follows the new current filename after rotation. Do not search or
 edit internal Runner state to repair registration.
 

@@ -44,7 +44,7 @@ webcodex runner logs --profile <connect 输出的 profile> --lines 100
 Hosted 日志位于
 `$XDG_STATE_HOME/webcodex/clients/<profile>/runner.log`（或
 `~/.local/state` 下的对应默认路径）。Runner 运行期间会轮转日志，只保留当前文件和
-`.1`、`.2`，每个约 10 MiB。`agent logs --lines` 只做有界尾部读取，并可按需跨这些
+`.1`、`.2`，每个约 10 MiB。`runner logs --lines` 只做有界尾部读取，并可按需跨这些
 归档补齐；`--follow` 会在轮转后跟随新的当前文件。不要通过编辑内部 Runner state
 来修复注册问题。
 

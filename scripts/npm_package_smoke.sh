@@ -172,6 +172,6 @@ test ! -e "$PREFIX/bin/webcodex-runner"
 "$PREFIX/bin/webcodex" --help >/dev/null
 "$PREFIX/bin/webcodex" --version >/dev/null
 "$PREFIX/bin/webcodex" server run --version >/dev/null
-"$PREFIX/bin/webcodex" agent run --version >/dev/null
+"$PREFIX/bin/webcodex" runner run --version >/dev/null
 
 echo "[npm-smoke] local npm package smoke passed for $VERSION"

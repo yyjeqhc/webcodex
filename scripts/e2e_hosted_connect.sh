@@ -30,7 +30,7 @@ cleanup() {
         HOME="$TMP_ROOT/home" \
         XDG_CONFIG_HOME="$TMP_ROOT/config" \
         XDG_STATE_HOME="$TMP_ROOT/state" \
-        "$REPO_DIR/target/debug/webcodex" agent stop --profile "$PROFILE" >/dev/null 2>&1 || true
+        "$REPO_DIR/target/debug/webcodex" runner stop --profile "$PROFILE" >/dev/null 2>&1 || true
     fi
     if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
         kill "$SERVER_PID" 2>/dev/null || true
@@ -159,12 +159,12 @@ ROTATION_TOTAL="$(du -cb "$ROTATION_STATE"/runner.log* | tail -1 | awk '{print $
 HOME="$TMP_ROOT/home" \
 XDG_CONFIG_HOME="$TMP_ROOT/config" \
 XDG_STATE_HOME="$TMP_ROOT/state" \
-"$REPO_DIR/target/debug/webcodex" agent logs --profile "$ROTATION_PROFILE" --lines 100 \
+"$REPO_DIR/target/debug/webcodex" runner logs --profile "$ROTATION_PROFILE" --lines 100 \
     >"$TMP_ROOT/rotation-tail.out"
 [ "$(head -1 "$TMP_ROOT/rotation-tail.out" | cut -d' ' -f1)" = "349900" ] \
-    || die "bounded agent logs did not return the expected first tail line"
+    || die "bounded runner logs did not return the expected first tail line"
 [ "$(tail -1 "$TMP_ROOT/rotation-tail.out" | cut -d' ' -f1)" = "349999" ] \
-    || die "bounded agent logs did not return the expected final tail line"
+    || die "bounded runner logs did not return the expected final tail line"
 
 log "starting temporary shared-key-enabled Server"
 WEBCODEX_ADDR="127.0.0.1:${PORT}" \
@@ -196,7 +196,7 @@ XDG_STATE_HOME="$TMP_ROOT/state" \
 
 PROFILE="$(awk -F': *' '$1 == "Profile" {print $2}' "$TMP_ROOT/connect-first.out")"
 CLIENT_ID="$(awk -F': *' '$1 == "Client" {print $2}' "$TMP_ROOT/connect-first.out")"
-RUNTIME_PROJECT="$(awk -F': *' '$1 == "Project" {sub(/^Project:[[:space:]]*/, ""); print}' "$TMP_ROOT/connect-first.out")"
+RUNTIME_PROJECT="$(awk '$0 ~ /^Runtime project:/ {sub(/^Runtime project:[[:space:]]*/, ""); print}' "$TMP_ROOT/connect-first.out")"
 [ -n "$PROFILE" ] && [ -n "$CLIENT_ID" ] && [ -n "$RUNTIME_PROJECT" ] \
     || die "connect output did not include profile, client, and project"
 [ "$RUNTIME_PROJECT" = "agent:${CLIENT_ID}:project" ] \
@@ -299,12 +299,12 @@ raise SystemExit(0 if ids == expected else 1)
 HOME="$TMP_ROOT/home" \
 XDG_CONFIG_HOME="$TMP_ROOT/config" \
 XDG_STATE_HOME="$TMP_ROOT/state" \
-"$REPO_DIR/target/debug/webcodex" agent status --profile "$PROFILE" \
+"$REPO_DIR/target/debug/webcodex" runner status --profile "$PROFILE" \
     >"$TMP_ROOT/status.out"
 grep -q 'runner mode:.*hosted local process' "$TMP_ROOT/status.out" \
-    || die "agent status did not recognize the hosted Runner"
+    || die "runner status did not recognize the hosted Runner"
 grep -q 'client online:.*yes' "$TMP_ROOT/status.out" \
-    || die "agent status did not confirm Server visibility"
+    || die "runner status did not confirm Server visibility"
 
 for safe_output in "$TMP_ROOT/connect-first.out" "$TMP_ROOT/connect-second.out" \
     "$TMP_ROOT/connect-third.out" "$TMP_ROOT/status.out" \
@@ -319,9 +319,9 @@ done
 HOME="$TMP_ROOT/home" \
 XDG_CONFIG_HOME="$TMP_ROOT/config" \
 XDG_STATE_HOME="$TMP_ROOT/state" \
-"$REPO_DIR/target/debug/webcodex" agent stop --profile "$PROFILE" \
+"$REPO_DIR/target/debug/webcodex" runner stop --profile "$PROFILE" \
     >"$TMP_ROOT/stop.out"
-[ ! -f "$STATE_DIR/runner.toml" ] || die "agent stop left active Runner state"
+[ ! -f "$STATE_DIR/runner.toml" ] || die "runner stop left active Runner state"
 for _ in $(seq 1 40); do
     if ! process_active "$LOG_WRITER_PID"; then
         break
@@ -329,14 +329,14 @@ for _ in $(seq 1 40); do
     sleep 0.05
 done
 if process_active "$LOG_WRITER_PID"; then
-    die "agent stop left the hosted log writer running"
+    die "runner stop left the hosted log writer running"
 fi
 HOME="$TMP_ROOT/home" \
 XDG_CONFIG_HOME="$TMP_ROOT/config" \
 XDG_STATE_HOME="$TMP_ROOT/state" \
-"$REPO_DIR/target/debug/webcodex" agent status --profile "$PROFILE" \
+"$REPO_DIR/target/debug/webcodex" runner status --profile "$PROFILE" \
     >"$TMP_ROOT/status-stopped.out"
 grep -q 'runner active:.*false' "$TMP_ROOT/status-stopped.out" \
-    || die "agent status did not report the stopped Runner"
+    || die "runner status did not report the stopped Runner"
 PROFILE=""
 log "PASS"

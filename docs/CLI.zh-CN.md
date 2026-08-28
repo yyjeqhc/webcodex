@@ -12,7 +12,7 @@ Server API 完成。
 - `webcodex` —— 本文档介绍的统一命令。
 - `webcodex-server` —— Server 进程（用 `webcodex server ...` 启动与托管）。
 - `webcodex-runner` —— 实际执行项目工作的 Runner 进程（用
-  `webcodex agent ...` 启动与托管）。
+  `webcodex runner ...` 启动与托管）。
 
 `webcodex --help` 会列出顶层命名空间。下面按命名空间说明各自的用途。
 
@@ -77,21 +77,21 @@ Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS
 ### Runner（`agent` 命名空间）
 
 Runner 可执行文件是 `webcodex-runner`。对应 CLI 命名空间叫 `agent`（历史原因）：
-`webcodex agent ...` 管理的就是 `webcodex-runner` 进程与服务。"Agent" 与 "Runner"
+`webcodex runner ...` 管理的就是 `webcodex-runner` 进程与服务。"Agent" 与 "Runner"
 指同一个执行组件，但它们不是同一个程序：`webcodex`（包含 `agent` 命名空间）与
 `webcodex-runner` 是两个独立可执行文件。
 
 | 命令 | 用途 |
 | --- | --- |
-| `webcodex agent init` | 手动生成 `agent.toml` 配置 |
-| `webcodex agent install` | 安装、启用并启动 Runner 服务 |
-| `webcodex agent run` | 前台运行 `webcodex-runner` |
-| `webcodex agent start` | 启动 hosted 后台 Runner 或已安装的 profile 服务 |
-| `webcodex agent stop` | 停止 |
-| `webcodex agent restart` | 重启 |
-| `webcodex agent status` | 检查 Runner 生命周期、配置与连通性 |
-| `webcodex agent logs` | 读取 Runner 日志（有界） |
-| `webcodex agent uninstall` | 移除服务单元（需要 `--confirm`） |
+| `webcodex runner init` | 手动生成 `agent.toml` 配置 |
+| `webcodex runner install` | 安装、启用并启动 Runner 服务 |
+| `webcodex runner run` | 前台运行 `webcodex-runner` |
+| `webcodex runner start` | 启动 hosted 后台 Runner 或已安装的 profile 服务 |
+| `webcodex runner stop` | 停止 |
+| `webcodex runner restart` | 重启 |
+| `webcodex runner status` | 检查 Runner 生命周期、配置与连通性 |
+| `webcodex runner logs` | 读取 Runner 日志（有界） |
+| `webcodex runner uninstall` | 移除服务单元（需要 `--confirm`） |
 
 服务命令接受 `--scope user|system`。非 root 用户默认 user scope；root 默认
 system scope。`webcodex connect` 创建的 profile 在不传 `--scope` 时保持其
@@ -190,7 +190,7 @@ Admin 用户/令牌操作由 Server API 支撑；`auth status` 读取本机连�
 - **Runner** —— 运行在持有仓库机器上的 `webcodex-runner` 进程，执行实际工作。
 - **profile** —— 用户 WebCodex 配置目录下的一个命名客户端配置（路径、
   `agent.toml`、令牌）。`webcodex connect` 会创建一个；
-  `webcodex agent ... --profile <name>` 指向它。
+  `webcodex runner ... --profile <name>` 指向它。
 - **client_id** —— 一个 Runner/设备的稳定逻辑标识（如 `workstation` 或
   `alice-macbook`）。它是 runtime project id 的一部分，也是 Runner 令牌所绑定
   的对象。
@@ -322,8 +322,8 @@ webcodex task accept <task-id>
 
 ```bash
 webcodex connect https://your-server.example
-webcodex agent status --profile <profile>
-webcodex agent logs --profile <profile> --lines 100
+webcodex runner status --profile <profile>
+webcodex runner logs --profile <profile> --lines 100
 ```
 
 Managed 接入：
@@ -331,8 +331,8 @@ Managed 接入：
 ```bash
 webcodex login https://your-server.example --code <wc_pair_...> \
   --allowed-root "$HOME/git"
-webcodex agent install --scope user --config <login-reported-agent-config>
-webcodex agent status --scope user --config <login-reported-agent-config>
+webcodex runner install --scope user --config <login-reported-agent-config>
+webcodex runner status --scope user --config <login-reported-agent-config>
 webcodex ops status --server-url https://your-server.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```

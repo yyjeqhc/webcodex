@@ -624,7 +624,7 @@ async function api(path, body, signal = null) {
         if (signal && signal.aborted) {
             return null;
         }
-        showError("WebCodex is not reachable. Run webcodex agent start.");
+        showError("WebCodex is not reachable. Run webcodex runner start.");
         return null;
     }
     let data = null;

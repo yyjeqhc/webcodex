@@ -552,7 +552,7 @@ pub(crate) fn stage_connection(
         true,
     )?;
 
-    crate::agent_init::run_agent_init(crate::agent_init::AgentInitOptions {
+    crate::runner_config::run_runner_init(crate::runner_config::RunnerInitOptions {
         server_url: server_url.to_string(),
         token: Some(identity.agent_token.clone()),
         token_file: None,
@@ -560,7 +560,7 @@ pub(crate) fn stage_connection(
         owner: identity.username.clone(),
         display_name: None,
         transport: opts.transport.clone(),
-        poll_interval_ms: crate::agent_init::DEFAULT_POLL_INTERVAL_MS,
+        poll_interval_ms: crate::runner_config::DEFAULT_POLL_INTERVAL_MS,
         // The directory is created inside staging above so it is published
         // atomically with the rest of the connection, but agent.toml must
         // point at its final path after that staging directory is renamed.
@@ -575,9 +575,9 @@ pub(crate) fn stage_connection(
     write_descriptor(&paths, server_url, &identity.username, device, now)
 }
 
-const ROOT_AGENT_INSTALL_REASON: &str = "login ran as root; no safe systemd installation argv can be generated without explicitly selecting a non-root Runner user and validating access to the agent config, working directory, projects directory, and allowed roots";
+const ROOT_RUNNER_INSTALL_REASON: &str = "login ran as root; no safe systemd installation argv can be generated without explicitly selecting a non-root Runner user and validating access to the agent config, working directory, projects directory, and allowed roots";
 const ROOT_FOREGROUND_REASON: &str = "login ran as root; no foreground Runner argv is emitted because it would execute project commands as root";
-const WINDOWS_AGENT_INSTALL_REASON: &str = "automatic Windows Runner service installation is not supported in this release; start the foreground Runner shown above instead";
+const WINDOWS_RUNNER_INSTALL_REASON: &str = "automatic Windows Runner service installation is not supported in this release; start the foreground Runner shown above instead";
 
 pub(crate) fn render_login_result(
     paths: &ConnectionPaths,
@@ -595,12 +595,12 @@ pub(crate) fn render_login_result(
             paths.agent_config.to_string_lossy().into_owned(),
         ]
     });
-    let agent_install_argv = if effective_root || cfg!(windows) {
+    let runner_install_argv = if effective_root || cfg!(windows) {
         None
     } else {
         Some(vec![
             "webcodex".to_string(),
-            "agent".to_string(),
+            "runner".to_string(),
             "install".to_string(),
             "--scope".to_string(),
             "user".to_string(),
@@ -608,15 +608,15 @@ pub(crate) fn render_login_result(
             paths.agent_config.to_string_lossy().into_owned(),
         ])
     };
-    let agent_install_reason = if effective_root {
-        Some(ROOT_AGENT_INSTALL_REASON)
+    let runner_install_reason = if effective_root {
+        Some(ROOT_RUNNER_INSTALL_REASON)
     } else if cfg!(windows) {
-        Some(WINDOWS_AGENT_INSTALL_REASON)
+        Some(WINDOWS_RUNNER_INSTALL_REASON)
     } else {
         None
     };
     let foreground_command = foreground_argv.as_ref().map(|argv| shell_command(argv));
-    let agent_install_command = agent_install_argv.as_ref().map(|argv| shell_command(argv));
+    let runner_install_command = runner_install_argv.as_ref().map(|argv| shell_command(argv));
 
     // JSON output carries only safe metadata; never a full token. The
     // `--print-mcp-config` path is text-only and mutually exclusive with `--json`
@@ -626,7 +626,7 @@ pub(crate) fn render_login_result(
         if let Some(command) = &foreground_command {
             next_steps.push(command.clone());
         }
-        if let Some(command) = &agent_install_command {
+        if let Some(command) = &runner_install_command {
             next_steps.push(command.clone());
         }
         let summary = serde_json::json!({
@@ -639,14 +639,14 @@ pub(crate) fn render_login_result(
             "agent_config": paths.agent_config.to_string_lossy(),
             "credential_usage": {
                 "webcodex-user-token": "GPT Actions, MCP, and REST/project APIs",
-                "agent_config_token": "Runner/Agent transport only",
+                "agent_config_token": "Runner transport only",
             },
             "foreground_available": foreground_argv.is_some(),
             "foreground_argv": &foreground_argv,
             "foreground_reason": effective_root.then_some(ROOT_FOREGROUND_REASON),
-            "agent_install_available": agent_install_argv.is_some(),
-            "agent_install_argv": &agent_install_argv,
-            "agent_install_reason": agent_install_reason,
+            "runner_install_available": runner_install_argv.is_some(),
+            "runner_install_argv": &runner_install_argv,
+            "runner_install_reason": runner_install_reason,
             "next_steps": next_steps,
         });
         return serde_json::to_string_pretty(&summary).map_err(|error| error.to_string());
@@ -672,18 +672,18 @@ pub(crate) fn render_login_result(
         ));
     }
 
-    let next_step_guidance = match (foreground_command, agent_install_command) {
+    let next_step_guidance = match (foreground_command, runner_install_command) {
         (Some(foreground_command), Some(command)) => format!(
-            "Start the agent in the foreground:\n  {foreground_command}\n\n\
+            "Start the Runner in the foreground:\n  {foreground_command}\n\n\
              Or install it as a non-root user service (run as the same ordinary user):\n  {command}\n"
         ),
         (Some(foreground_command), None) => format!(
-            "Start the agent in the foreground:\n  {foreground_command}\n\n{}\n",
-            agent_install_reason.unwrap_or("automatic Runner service installation is unavailable")
+            "Start the Runner in the foreground:\n  {foreground_command}\n\n{}\n",
+            runner_install_reason.unwrap_or("automatic Runner service installation is unavailable")
         ),
         (None, None) => "Login ran as root, so no command to start a root Runner is recommended.\n\
                         Recommended: have the ordinary local user who will run the Runner use a fresh pairing code to execute `webcodex login`, then install the user service as that same user.\n\
-                        Advanced system service deployment requires an administrator to explicitly select a non-root account with `--scope system --user`, verify that account can read the agent config and access the working directory, and ensure the config, projects directory, and allowed roots have suitable permissions.\n"
+                        Advanced system service deployment requires an administrator to explicitly select a non-root account with `--scope system --user`, verify that account can read the Runner config and access the working directory, and ensure the config, projects directory, and allowed roots have suitable permissions.\n"
             .to_string(),
         _ => return Err("inconsistent login Runner guidance state".to_string()),
     };
@@ -692,7 +692,7 @@ pub(crate) fn render_login_result(
         "Logged in to {server_url} as {username} ({device}).\n\n  \
          MCP endpoint: {server_url}/mcp\n  \
          user token file: {} (GPT Actions, MCP, and REST/project APIs)\n  \
-         agent config:   {} (contains Runner/Agent transport credentials only)\n\n\
+         agent config:   {} (contains Runner transport credentials only)\n\n\
          {}",
         paths.user_token.display(),
         paths.agent_config.display(),
@@ -2171,13 +2171,10 @@ mod tests {
             text.contains("GPT Actions, MCP, and REST/project APIs"),
             "{text}"
         );
+        assert!(text.contains("Runner transport credentials only"), "{text}");
         assert!(
-            text.contains("Runner/Agent transport credentials only"),
-            "{text}"
-        );
-        assert!(
-            (!cfg!(windows) && text.contains("webcodex agent install --scope user --config"))
-                || (cfg!(windows) && !text.contains("webcodex agent install")),
+            (!cfg!(windows) && text.contains("webcodex runner install --scope user --config"))
+                || (cfg!(windows) && !text.contains("webcodex runner install")),
             "{text}"
         );
         assert!(
@@ -2185,7 +2182,7 @@ mod tests {
             "non-root guidance was not explicit: {text}"
         );
         assert!(
-            !cfg!(windows) || text.contains(WINDOWS_AGENT_INSTALL_REASON),
+            !cfg!(windows) || text.contains(WINDOWS_RUNNER_INSTALL_REASON),
             "Windows login did not explain the service-install boundary: {text}"
         );
         assert!(!text.contains(USER_TOKEN), "default text leaked a token");
@@ -2217,13 +2214,13 @@ mod tests {
         );
         if cfg!(windows) {
             assert_eq!(
-                json_value["agent_install_available"],
+                json_value["runner_install_available"],
                 serde_json::json!(false)
             );
-            assert!(json_value["agent_install_argv"].is_null());
+            assert!(json_value["runner_install_argv"].is_null());
             assert_eq!(
-                json_value["agent_install_reason"],
-                serde_json::json!(WINDOWS_AGENT_INSTALL_REASON)
+                json_value["runner_install_reason"],
+                serde_json::json!(WINDOWS_RUNNER_INSTALL_REASON)
             );
             assert_eq!(json_value["next_steps"].as_array().unwrap().len(), 1);
         }
@@ -2241,7 +2238,7 @@ mod tests {
         ];
         let install_argv = vec![
             "webcodex".to_string(),
-            "agent".to_string(),
+            "runner".to_string(),
             "install".to_string(),
             "--scope".to_string(),
             "user".to_string(),
@@ -2266,7 +2263,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            !cfg!(windows) || text.contains(WINDOWS_AGENT_INSTALL_REASON),
+            !cfg!(windows) || text.contains(WINDOWS_RUNNER_INSTALL_REASON),
             "{text}"
         );
 
@@ -2285,7 +2282,7 @@ mod tests {
         assert_eq!(value["foreground_argv"], serde_json::json!(foreground_argv));
         assert!(value["foreground_reason"].is_null());
         assert_eq!(
-            value["agent_install_argv"],
+            value["runner_install_argv"],
             if cfg!(windows) {
                 serde_json::Value::Null
             } else {
@@ -2293,16 +2290,16 @@ mod tests {
             }
         );
         assert_eq!(
-            value["agent_install_available"],
+            value["runner_install_available"],
             serde_json::json!(!cfg!(windows))
         );
         if cfg!(windows) {
             assert_eq!(
-                value["agent_install_reason"],
-                serde_json::json!(WINDOWS_AGENT_INSTALL_REASON)
+                value["runner_install_reason"],
+                serde_json::json!(WINDOWS_RUNNER_INSTALL_REASON)
             );
         } else {
-            assert!(value["agent_install_reason"].is_null());
+            assert!(value["runner_install_reason"].is_null());
         }
         assert_eq!(
             value["next_steps"][0].as_str().unwrap(),
@@ -2325,7 +2322,7 @@ mod tests {
         let recommended_argv: Vec<String> = if cfg!(windows) {
             install_argv.clone()
         } else {
-            serde_json::from_value(value["agent_install_argv"].clone()).unwrap()
+            serde_json::from_value(value["runner_install_argv"].clone()).unwrap()
         };
         let parser_env = tempfile::TempDir::new().unwrap();
         std::fs::write(parser_env.path().join("webcodex-runner"), "").unwrap();
@@ -2337,7 +2334,7 @@ mod tests {
             .set_os("XDG_CONFIG_HOME", parser_env.path().as_os_str().to_owned())
             .set_os("PATH", parser_env.path().as_os_str().to_owned());
         let parsed =
-            crate::parse_agent_install_service_with_identity(&recommended_argv[3..], false);
+            crate::parse_runner_install_service_with_identity(&recommended_argv[3..], false);
         assert!(
             parsed.is_ok(),
             "non-root recommendation was rejected by the install parser: {parsed:?}"
@@ -2364,12 +2361,12 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !text.contains("webcodex agent install --scope user"),
+            !text.contains("webcodex runner install --scope user"),
             "{text}"
         );
         assert!(!text.contains("--allow-root-runner"), "{text}");
         assert!(
-            !text.contains("Start the agent in the foreground"),
+            !text.contains("Start the Runner in the foreground"),
             "{text}"
         );
         assert!(!text.contains(&shell_command(&foreground_argv)), "{text}");
@@ -2388,7 +2385,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("--scope system --user"), "{text}");
-        assert!(text.contains("read the agent config"), "{text}");
+        assert!(text.contains("read the Runner config"), "{text}");
         assert!(text.contains("working directory"), "{text}");
         assert!(text.contains("projects directory"), "{text}");
         assert!(text.contains("allowed roots"), "{text}");
@@ -2406,9 +2403,9 @@ mod tests {
         )
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
-        assert_eq!(value["agent_install_available"], serde_json::json!(false));
-        assert!(value["agent_install_argv"].is_null());
-        let reason = value["agent_install_reason"].as_str().unwrap();
+        assert_eq!(value["runner_install_available"], serde_json::json!(false));
+        assert!(value["runner_install_argv"].is_null());
+        let reason = value["runner_install_reason"].as_str().unwrap();
         assert!(reason.contains("login ran as root"), "{reason}");
         assert!(reason.contains("non-root Runner user"), "{reason}");
         assert!(!reason.contains("--allow-root-runner"), "{reason}");
@@ -2419,7 +2416,7 @@ mod tests {
         assert!(foreground_reason.contains("project commands as root"));
         assert_eq!(value["next_steps"], serde_json::json!([]));
         assert!(!json_text.contains("--allow-root-runner"));
-        assert!(!json_text.contains("webcodex agent install --scope user"));
+        assert!(!json_text.contains("webcodex runner install --scope user"));
         assert!(!json_text.contains(USER_TOKEN), "root json leaked a token");
         assert!(!json_text.contains(AGENT_TOKEN), "root json leaked a token");
     }

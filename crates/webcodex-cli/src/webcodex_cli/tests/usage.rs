@@ -116,7 +116,7 @@ fn webcodex_cli_help_mentions_management_commands() {
             assert!(stdout.contains("tokens create|"));
             assert!(stdout.contains("agent-tokens create|"));
             assert!(
-                stdout.contains("agent init|install|run|start|stop|restart|status|logs|uninstall")
+                stdout.contains("runner init|install|run|start|stop|restart|status|logs|uninstall")
             );
         }
         other => panic!("expected help exit, got {other:?}"),
@@ -173,7 +173,7 @@ fn top_level_help_prioritizes_first_run_without_hiding_advanced_commands() {
     assert!(out.contains("(no command)"));
     assert!(out.contains("run `webcodex` inside a Git repo"));
     assert!(out.contains("Windows -> use `webcodex connect <server-url>`"));
-    assert!(out.contains("historical `agent` namespace"));
+    assert!(!out.contains("historical `agent` namespace"));
     assert!(out.contains("agent-tokens create|"));
 }
 
@@ -202,8 +202,8 @@ fn unified_project_and_auth_commands_dispatch() {
 }
 
 #[test]
-fn webcodex_cli_agent_help_mentions_new_subcommands() {
-    match cli_action(["agent", "--help"]) {
+fn webcodex_cli_runner_help_mentions_lifecycle_subcommands() {
+    match cli_action(["runner", "--help"]) {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);
             for command in [
@@ -219,14 +219,24 @@ fn webcodex_cli_agent_help_mentions_new_subcommands() {
             ] {
                 assert!(
                     stdout.contains(command),
-                    "agent help missing {command}: {stdout}"
+                    "runner help missing {command}: {stdout}"
                 );
             }
             assert!(stdout.contains("webcodex run"));
         }
         other => panic!("expected help exit, got {other:?}"),
     }
-    match cli_action(["agent", "install", "--help"]) {
+    match cli_action(["runner", "init", "--help"]) {
+        CliAction::Exit { code, stdout, .. } => {
+            assert_eq!(code, 0);
+            assert!(stdout.contains("Usage: webcodex runner init"));
+            assert!(stdout.contains("Stable Runner client id"));
+            assert!(stdout.contains("Human-readable Runner name"));
+            assert!(stdout.contains("agent.toml"));
+        }
+        other => panic!("expected Runner init help exit, got {other:?}"),
+    }
+    match cli_action(["runner", "install", "--help"]) {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);
             assert!(stdout.contains("--config PATH"));
@@ -238,7 +248,7 @@ fn webcodex_cli_agent_help_mentions_new_subcommands() {
         }
         other => panic!("expected help exit, got {other:?}"),
     }
-    match cli_action(["agent", "restart", "--help"]) {
+    match cli_action(["runner", "restart", "--help"]) {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);
             assert!(stdout.contains("--bin PATH"));
@@ -247,16 +257,64 @@ fn webcodex_cli_agent_help_mentions_new_subcommands() {
         }
         other => panic!("expected help exit, got {other:?}"),
     }
-    match cli_action(["agent", "status", "--help"]) {
+    match cli_action(["runner", "status", "--help"]) {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);
             assert!(stdout.contains("--user-token-file PATH"));
             assert!(stdout.contains("--agent-token-file PATH"));
             assert!(stdout.contains("--scope user|system"));
             assert!(stdout.contains("--service-file PATH"));
+            assert!(stdout.contains("Runner config path"));
+            assert!(stdout.contains("agent.toml"));
             assert!(stdout.contains("no tokens"));
         }
         other => panic!("expected help exit, got {other:?}"),
+    }
+}
+
+#[test]
+fn runner_namespace_owns_all_lifecycle_commands_and_agent_is_unknown() {
+    let top_help = cli_exit(["--help"]).unwrap();
+    assert!(top_help.contains("runner init|install|run|start|stop|restart|status|logs|uninstall"));
+    assert!(!top_help.contains("  agent init|install|run|start|stop|restart|status|logs|uninstall"));
+
+    for command in [
+        "init",
+        "install",
+        "run",
+        "start",
+        "stop",
+        "restart",
+        "status",
+        "logs",
+        "uninstall",
+    ] {
+        match cli_action(["runner", command, "--help"]) {
+            CliAction::Exit { code, stdout, .. } => {
+                assert_eq!(code, 0, "runner {command} help must dispatch");
+                assert!(
+                    stdout.contains("webcodex runner"),
+                    "runner {command} help did not stay in Runner namespace: {stdout}"
+                );
+            }
+            other => panic!("runner {command} did not dispatch to lifecycle help: {other:?}"),
+        }
+
+        match cli_action(["agent", command]) {
+            CliAction::Exit {
+                code,
+                stdout,
+                stderr,
+            } => {
+                assert_eq!(code, 2);
+                assert!(stdout.is_empty());
+                assert!(
+                    stderr.starts_with("unknown command: agent\n"),
+                    "legacy agent namespace was still recognized for {command}: {stderr}"
+                );
+            }
+            other => panic!("legacy agent {command} produced a lifecycle action: {other:?}"),
+        }
     }
 }
 

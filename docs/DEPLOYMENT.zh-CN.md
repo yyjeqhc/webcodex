@@ -48,7 +48,7 @@ webcodex connect https://your-server.example --key-file /private/path/shared-key
 
 `connect` 把当前目录作为项目，写入 owner-only profile，启动 detached Runner，并等待
 Server 同时看到 Runner 与项目。把输出的 `/mcp` URL 与 credential 填入 MCP client。
-机器重启后，重新运行同一条 `connect` 或使用 `webcodex agent start --profile <profile>`。
+机器重启后，重新运行同一条 `connect` 或使用 `webcodex runner start --profile <profile>`。
 
 这不是刚完成 bootstrap 的自托管 Server 的首次 enrollment。那种情况应把 bootstrap
 administrator token 留在 Server，并按下文 pairing / `webcodex login` 流程接入仓库机器。
@@ -179,9 +179,9 @@ named Cloudflare Tunnel 也是有效入口。同一 hostname 必须承载普通 
 ```bash
 webcodex login https://your-domain.example --code <wc_pair_...> \
   --allowed-root "$HOME/git"
-webcodex agent install --scope user \
+webcodex runner install --scope user \
   --config <login-reported-agent-config>
-webcodex agent status --scope user \
+webcodex runner status --scope user \
   --config <login-reported-agent-config>
 webcodex ops status --server-url https://your-domain.example \
   --token-file <login-reported-webcodex-user-token> --strict
@@ -207,7 +207,7 @@ token、agent token、env 文件或完整 `agent.toml`。每个用户使用唯�
 
 ## Runner 服务 scope
 
-`webcodex agent install` 支持 user 或 system scope。非 root 用户默认 user scope；
+`webcodex runner install` 支持 user 或 system scope。非 root 用户默认 user scope；
 root 默认 system scope。
 
 **User scope** 使用 `systemctl --user`，unit 写入
@@ -215,9 +215,9 @@ root 默认 system scope。
 `sudo`：
 
 ```bash
-webcodex agent install --scope user --profile workstation
-webcodex agent status --scope user --profile workstation
-webcodex agent logs --scope user --profile workstation --lines 100
+webcodex runner install --scope user --profile workstation
+webcodex runner status --scope user --profile workstation
+webcodex runner logs --scope user --profile workstation --lines 100
 ```
 
 已启用的 user unit 跟随该账号的 user manager。如需无人值守的开机持久化，管理员
@@ -227,13 +227,13 @@ lingering。
 **System scope** 使用 `/etc/systemd/system`，需要指定非 root `--user`：
 
 ```bash
-sudo webcodex agent install \
+sudo webcodex runner install \
   --scope system \
   --profile workstation \
   --user <runner-user> \
   --working-directory /home/<runner-user> \
   --config /etc/webcodex/clients/workstation/agent.toml
-sudo webcodex agent status --scope system --profile workstation
+sudo webcodex runner status --scope system --profile workstation
 ```
 
 除非显式 `--allow-root-runner`，否则拒绝以 root 运行 Runner（不推荐）。所有
@@ -338,7 +338,7 @@ max_output_bytes = 262144
 身份、server/auth、项目来源、并发、能力与传输变更需要重启。
 
 前台测试可运行 `webcodex-runner --profile workstation`。高级手动生成配置用
-`webcodex agent init`。
+`webcodex runner init`。
 
 ## OAuth2
 

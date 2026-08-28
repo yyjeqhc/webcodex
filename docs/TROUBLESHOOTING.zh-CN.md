@@ -17,10 +17,10 @@ Client：
 
 - `webcodex-runner --version` 能打印版本。
 - Hosted quick-start 使用
-  `webcodex agent status --profile <connect 输出的 profile>`，应显示
+  `webcodex runner status --profile <connect 输出的 profile>`，应显示
   `runner mode: hosted local process`、`runner active: true` 和
   `client online: yes`。
-- `webcodex agent status --profile workstation` 能读取本地 agent config。
+- `webcodex runner status --profile workstation` 能读取本地 Runner config（`agent.toml`）。
 - canonical project 的 `webcodex doctor` 通过；managed deployment 则使用
   `webcodex ops status --strict --server-url https://your-domain.example`。
 - `listAgents` / `runtime_status` 显示 agent online。
@@ -33,8 +33,8 @@ Client：
 同 key 能看到目标项目。错误信息会给出该 profile 的 Runner 日志路径。先检查：
 
 ```bash
-webcodex agent status --profile <connect 输出的 profile>
-webcodex agent logs --profile <connect 输出的 profile> --lines 100
+webcodex runner status --profile <connect 输出的 profile>
+webcodex runner logs --profile <connect 输出的 profile> --lines 100
 ```
 
 确认 Server URL 指向 origin 根路径、Server 已启用 shared-key，并且 MCP 与 Runner
@@ -69,7 +69,7 @@ credential，因此不要把其输出当成 hosted shared key。
 丢弃，再启动唯一的替代 Runner。显式停止：
 
 ```bash
-webcodex agent stop --profile <connect 输出的 profile>
+webcodex runner stop --profile <connect 输出的 profile>
 ```
 
 Key 只保存在受保护的 profile 配置中，status 不会打印，也不会写入项目 checkout。
@@ -165,12 +165,12 @@ systemd-managed deployment 则检查 agent service 和连接详情：
 
 ```bash
 # 普通 user service
-webcodex agent status --scope user
-webcodex agent logs --scope user --lines 100
+webcodex runner status --scope user
+webcodex runner logs --scope user --lines 100
 
 # 管理员管理的 system service
-sudo webcodex agent status --scope system
-sudo webcodex agent logs --scope system --lines 100
+sudo webcodex runner status --scope system
+sudo webcodex runner logs --scope system --lines 100
 ```
 
 同时确认 server URL、本地 token files 和 agent `allowed_roots`。缺失或为空的 `allowed_roots` 默认使用 `$HOME`；显式 `allowed_roots` 会覆盖该默认值。
@@ -201,8 +201,8 @@ schema；artifact upload tools 应继续作为 runtime-only tools 通过
 先运行 `runtime_status` 或 `listAgents`，再在 agent host 上检查：
 
 ```bash
-webcodex agent status --scope user
-webcodex agent logs --scope user --lines 100
+webcodex runner status --scope user
+webcodex runner logs --scope user --lines 100
 # 管理员管理的 system service 使用 `sudo ... --scope system`。
 ```
 
@@ -213,7 +213,7 @@ webcodex agent logs --scope user --lines 100
 Hosted quick-start 中，MCP 与 Runner 使用同一个非 `wc_` shared key。Managed
 mode 中，GPT Actions、MCP 和普通 REST/project API 使用
 `webcodex-user-token`（`wc_pat_*`）；Runner 令牌（`wc_agent_*`）只给
-Runner/Agent transport 使用——`webcodex login` 之后它内联在 `agent.toml` 中，
+Runner transport 使用——`webcodex login` 之后它内联在 `agent.toml` 中，
 没有单独的 `webcodex-runner-token` 文件（高级的 `webcodex client enroll`
 流程会写入一个）。把 `wc_agent_*` 放入
 `--token` 或 `--token-file` 后得到 403，正是预期安全边界；应改用生成的

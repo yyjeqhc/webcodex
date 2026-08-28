@@ -165,7 +165,7 @@ pub(crate) async fn run_setup_single_user(opts: SetupSingleUserOptions) -> Resul
             user_token_path.display()
         ));
         out.push_str(&format!(
-            "  - Agent: run `webcodex agent init --server-url {} --token <wc_agent_token> --client-id {} --owner {} ...` using the agent token in {}.\n",
+            "  - Runner: run `webcodex runner init --server-url {} --token <wc_agent_token> --client-id {} --owner {} ...` using the agent token in {}.\n",
             server_url, opts.client_id, opts.username, agent_token_path.display()
         ));
         Ok(out)

@@ -1,10 +1,10 @@
 use super::super::support::*;
 
 #[test]
-fn agent_init_writes_valid_toml_and_refuses_overwrite() {
+fn runner_init_writes_valid_toml_and_refuses_overwrite() {
     let tmp = tempfile::tempdir().unwrap();
     let output = tmp.path().join("agent.toml");
-    let opts = parse_cli_agent_init(&args(&[
+    let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://v4.example.test/",
         "--token",
@@ -21,11 +21,11 @@ fn agent_init_writes_valid_toml_and_refuses_overwrite() {
         output.to_str().unwrap(),
     ]))
     .unwrap();
-    let msg = run_agent_init(opts).unwrap();
+    let msg = run_runner_init(opts).unwrap();
     assert!(msg.contains("agent.toml"));
 
     // Refuse overwrite without --overwrite.
-    let opts2 = parse_cli_agent_init(&args(&[
+    let opts2 = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://v4.example.test/",
         "--token",
@@ -40,13 +40,13 @@ fn agent_init_writes_valid_toml_and_refuses_overwrite() {
         output.to_str().unwrap(),
     ]))
     .unwrap();
-    let err = run_agent_init(opts2).unwrap_err();
+    let err = run_runner_init(opts2).unwrap_err();
     assert!(err.contains("already exists"));
 }
 
 #[test]
-fn agent_init_stdout_output_contains_token_only_once() {
-    let opts = parse_cli_agent_init(&args(&[
+fn runner_init_stdout_output_contains_token_only_once() {
+    let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://v4.example.test",
         "--token",
@@ -61,17 +61,17 @@ fn agent_init_stdout_output_contains_token_only_once() {
         "-",
     ]))
     .unwrap();
-    let content = run_agent_init(opts).unwrap();
+    let content = run_runner_init(opts).unwrap();
     assert_eq!(content.matches("agent_fake_stdout_token").count(), 1);
 }
 
 #[cfg(unix)]
 #[test]
-fn agent_init_writes_0600_permissions() {
+fn runner_init_writes_0600_permissions() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let output = tmp.path().join("agent.toml");
-    let opts = parse_cli_agent_init(&args(&[
+    let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://v4.example.test",
         "--token",
@@ -86,17 +86,17 @@ fn agent_init_writes_0600_permissions() {
         output.to_str().unwrap(),
     ]))
     .unwrap();
-    run_agent_init(opts).unwrap();
+    run_runner_init(opts).unwrap();
     let mode = std::fs::metadata(&output).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 }
 
 #[test]
-fn agent_init_token_file_and_env_fallback() {
+fn runner_init_token_file_and_env_fallback() {
     let tmp = tempfile::tempdir().unwrap();
     let token_file = tmp.path().join("agent.token");
     std::fs::write(&token_file, "agent_fake_file_token\n").unwrap();
-    let opts = parse_cli_agent_init(&args(&[
+    let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://v4.example.test",
         "--token-file",
@@ -111,12 +111,12 @@ fn agent_init_token_file_and_env_fallback() {
         "-",
     ]))
     .unwrap();
-    let content = run_agent_init(opts).unwrap();
+    let content = run_runner_init(opts).unwrap();
     assert!(content.contains("agent_fake_file_token"));
 
     let _guard = env_test_guard();
     let _env = EnvGuard::new().set("WEBCODEX_AGENT_TOKEN", "agent_fake_env_token");
-    let opts = parse_cli_agent_init(&args(&[
+    let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://v4.example.test",
         "--client-id",
@@ -129,13 +129,13 @@ fn agent_init_token_file_and_env_fallback() {
         "-",
     ]))
     .unwrap();
-    let content = run_agent_init(opts).unwrap();
+    let content = run_runner_init(opts).unwrap();
     assert!(content.contains("agent_fake_env_token"));
 }
 
 #[test]
-fn agent_init_empty_tokens_are_rejected() {
-    let opts = parse_cli_agent_init(&args(&[
+fn runner_init_empty_tokens_are_rejected() {
+    let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://v4.example.test",
         "--token",
@@ -150,7 +150,7 @@ fn agent_init_empty_tokens_are_rejected() {
         "-",
     ]))
     .unwrap();
-    let err = run_agent_init(opts).unwrap_err();
+    let err = run_runner_init(opts).unwrap_err();
     assert!(err.contains("--token cannot be empty"), "{err}");
 }
 
@@ -158,11 +158,11 @@ fn agent_init_empty_tokens_are_rejected() {
 /// Windows uses `USERPROFILE` instead (see `webcodex_agent_config::paths`).
 #[cfg(unix)]
 #[test]
-fn agent_init_allows_empty_allowed_roots_with_home_default() {
+fn runner_init_allows_empty_allowed_roots_with_home_default() {
     let _guard = env_test_guard();
     let home = std::env::var_os("HOME");
     if home.is_some() {
-        let opts = parse_cli_agent_init(&args(&[
+        let opts = parse_cli_runner_init(&args(&[
             "--server-url",
             "https://v4.example.test",
             "--token",
@@ -175,7 +175,7 @@ fn agent_init_allows_empty_allowed_roots_with_home_default() {
             "-",
         ]))
         .unwrap();
-        let content = run_agent_init(opts).unwrap();
+        let content = run_runner_init(opts).unwrap();
         let home = std::env::var_os("HOME").unwrap();
         assert!(content.contains(&home.to_string_lossy().to_string()));
     }

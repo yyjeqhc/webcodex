@@ -642,7 +642,7 @@ If that code expires, create another with:
 On each repository machine, redeem only the short-lived pairing code as the
 ordinary user who will run project commands:
   webcodex login "$PUBLIC_URL" --code <wc_pair_...> --allowed-root "\$HOME/git"
-  webcodex agent install --scope user --config <login-reported-agent-config>
+  webcodex runner install --scope user --config <login-reported-agent-config>
 
 Keep $ENV_FILE private. It contains the bootstrap administrator token. Do not copy
 that token to a repository machine or pass it to webcodex connect; connect is

@@ -8,7 +8,7 @@ use crate::ServiceScope;
 pub(crate) const SERVER_SERVICE_FILE: &str = "/etc/systemd/system/webcodex.service";
 pub(crate) const SERVER_SERVICE_UNIT: &str = "webcodex.service";
 pub(crate) const SERVER_SOCKET_UNIT: &str = "webcodex.socket";
-pub(crate) const AGENT_SERVICE_UNIT: &str = "webcodex-runner.service";
+pub(crate) const RUNNER_SERVICE_UNIT: &str = "webcodex-runner.service";
 pub(crate) const DEFAULT_LOG_LINES: u32 = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1803,11 +1803,11 @@ mod tests {
         assert_eq!(start[1].args, ["enable", "--now", SERVER_SERVICE_UNIT]);
         assert_eq!(start[2].args, ["is-active", "--quiet", SERVER_SERVICE_UNIT]);
 
-        let no_start = plan_install(systemctl, AGENT_SERVICE_UNIT, true);
-        assert_eq!(no_start[1].args, ["enable", AGENT_SERVICE_UNIT]);
+        let no_start = plan_install(systemctl, RUNNER_SERVICE_UNIT, true);
+        assert_eq!(no_start[1].args, ["enable", RUNNER_SERVICE_UNIT]);
         assert_eq!(
             no_start[2].args,
-            ["is-enabled", "--quiet", AGENT_SERVICE_UNIT]
+            ["is-enabled", "--quiet", RUNNER_SERVICE_UNIT]
         );
     }
 
@@ -2904,7 +2904,7 @@ mod tests {
         assert_eq!(
             service_unit_name(
                 Path::new("/etc/systemd/system/webcodex-runner-special.service"),
-                AGENT_SERVICE_UNIT
+                RUNNER_SERVICE_UNIT
             ),
             "webcodex-runner-special.service"
         );

@@ -1,14 +1,14 @@
 //! `webcodex` — standalone management/setup binary for WebCodex.
 //!
 //! Provides users / tokens / agent-tokens management (reusing the
-//! shared `admin_cli` module), low-level `agent init` (reusing the shared
-//! `agent_init` module), and `setup single-user`, which creates a user,
+//! shared `admin_cli` module), low-level `runner init` (reusing the shared
+//! `runner_config` module), and `setup single-user`, which creates a user,
 //! a personal API token, and an agent token, then writes the plaintext tokens
 //! to 0600 files.
 //!
 //! This binary intentionally does NOT start a server and does NOT print real
 //! tokens, Authorization headers, or full agent.toml contents with secrets
-//! (except explicit stdout materialization paths such as `agent init --output -`,
+//! (except explicit stdout materialization paths such as `runner init --output -`,
 //! which the user requests deliberately). Server initialization never prints the
 //! full bootstrap token.
 //!
@@ -22,39 +22,39 @@ use std::path::{Path, PathBuf};
 mod webcodex_cli;
 
 use webcodex_admin as admin_cli;
-use webcodex_agent_config as agent_init;
+use webcodex_agent_config as runner_config;
 use webcodex_core::build_info;
 
 use admin_cli::{
     parse_admin_cli, run_admin_command, AdminCliCommand, AdminOptions, ServerHttpOptions,
 };
-use agent_init::{
-    run_agent_init, AgentInitOptions, DEFAULT_INIT_PROJECTS_DIR, DEFAULT_POLL_INTERVAL_MS,
+use runner_config::{
+    run_runner_init, RunnerInitOptions, DEFAULT_INIT_PROJECTS_DIR, DEFAULT_POLL_INTERVAL_MS,
     TRANSPORT_WEBSOCKET,
 };
 use webcodex_cli::ops::ops_exit_code;
 use webcodex_cli::{
-    agent_config_for_scope, agent_init_usage, agent_install_service_usage,
-    agent_service_file_for_scope, agent_status_usage, agent_usage, base_dir_or_default,
-    client_enroll_usage, client_profile_agent_config, client_profile_agent_token_file,
-    client_profile_agent_token_file_for_scope, client_profile_projects_dir,
-    client_profile_state_dir, client_profile_user_token_file,
+    agent_config_for_scope, base_dir_or_default, client_enroll_usage, client_profile_agent_config,
+    client_profile_agent_token_file, client_profile_agent_token_file_for_scope,
+    client_profile_projects_dir, client_profile_state_dir, client_profile_user_token_file,
     client_profile_user_token_file_for_scope, client_usage, connect_usage, current_user_home,
     default_client_output_dir_for_profile, default_device_name, default_server_paths,
     disconnect_usage, discover_internal_binary, is_effective_root, login_usage, logout_usage,
     ops_agents_usage, ops_projects_usage, ops_runner_usage, ops_smoke_preflight_usage,
     ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, render_token_generate,
-    run_agent_install_service, run_agent_service, run_agent_status, run_agent_token_create_local,
-    run_client_enroll, run_connect, run_disconnect, run_hosted_log_writer, run_internal_binary,
-    run_login, run_logout, run_ops_command, run_pairing_create, run_server_init,
-    run_server_install_service, run_server_service, run_server_status, run_setup_single_user,
-    run_status, run_token_create_local, server_init_usage, server_install_service_usage,
-    server_status_usage, server_usage, service_unit_name, status_usage, system_user_home,
-    system_user_is_root, usage, validate_client_profile, validate_service_file_scope,
-    write_connect_result, write_secret_file, write_text_file, ConnectAuth, ConnectOptions,
-    DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand, OpsCommonOptions, OpsRunnerOptions,
-    OpsSmokePreflightOptions, ServerStatusOptions, ServiceControl, StatusOptions,
-    AGENT_SERVICE_UNIT, DEFAULT_LOG_LINES, SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
+    run_agent_token_create_local, run_client_enroll, run_connect, run_disconnect,
+    run_hosted_log_writer, run_internal_binary, run_login, run_logout, run_ops_command,
+    run_pairing_create, run_runner_install_service, run_runner_service, run_runner_status,
+    run_server_init, run_server_install_service, run_server_service, run_server_status,
+    run_setup_single_user, run_status, run_token_create_local, runner_init_usage,
+    runner_install_service_usage, runner_service_file_for_scope, runner_status_usage, runner_usage,
+    server_init_usage, server_install_service_usage, server_status_usage, server_usage,
+    service_unit_name, status_usage, system_user_home, system_user_is_root, usage,
+    validate_client_profile, validate_service_file_scope, write_connect_result, write_secret_file,
+    write_text_file, ConnectAuth, ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions,
+    OpsCommand, OpsCommonOptions, OpsRunnerOptions, OpsSmokePreflightOptions, ServerStatusOptions,
+    ServiceControl, StatusOptions, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT, SERVER_SERVICE_FILE,
+    SERVER_SERVICE_UNIT,
 };
 const SETUP_GPT_SCOPES: &[&str] = &[
     "runtime:read",
@@ -93,7 +93,7 @@ impl ServiceScope {
     }
 }
 
-fn default_agent_service_scope(effective_root: bool) -> ServiceScope {
+fn default_runner_service_scope(effective_root: bool) -> ServiceScope {
     if effective_root {
         ServiceScope::System
     } else {
@@ -111,7 +111,7 @@ enum CliAction {
     TokenGenerate(TokenGenerateOptions),
     TokenCreateLocal(TokenCreateLocalOptions),
     AgentTokenCreateLocal(AgentTokenCreateLocalOptions),
-    AgentInit(AgentInitOptions),
+    RunnerInit(RunnerInitOptions),
     SetupSingleUser(SetupSingleUserOptions),
     PairingCreate(PairingCreateOptions),
     ClientEnroll(ClientEnrollOptions),
@@ -119,10 +119,10 @@ enum CliAction {
     Logout(LogoutOptions),
     Status(StatusOptions),
     Ops(OpsCommand),
-    AgentInstall(AgentInstallServiceOptions),
-    AgentStatus(AgentStatusOptions),
-    AgentRun(InternalRunOptions),
-    AgentService(ServiceActionOptions),
+    RunnerInstall(RunnerInstallServiceOptions),
+    RunnerStatus(RunnerStatusOptions),
+    RunnerRun(InternalRunOptions),
+    RunnerService(ServiceActionOptions),
     ServerInit(ServerInitOptions),
     ServerInstall(ServerInstallServiceOptions),
     ServerStatus(ServerStatusOptions),
@@ -237,7 +237,7 @@ struct ServerInstallServiceOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct AgentInstallServiceOptions {
+struct RunnerInstallServiceOptions {
     scope: ServiceScope,
     config: PathBuf,
     bin: PathBuf,
@@ -290,7 +290,7 @@ struct LocalProfileOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct AgentStatusOptions {
+struct RunnerStatusOptions {
     scope: ServiceScope,
     config: PathBuf,
     service_file: PathBuf,
@@ -369,7 +369,7 @@ where
         "logout" => parse_logout(&args[1..]),
         "auth" => parse_auth_subcommand(&args[1..]),
         "ops" => parse_ops_subcommand(&args[1..]),
-        "agent" => parse_agent_subcommand(&args[1..]),
+        "runner" => parse_runner_subcommand(&args[1..]),
         "agent-token" | "agent-tokens" => {
             parse_agent_token_subcommand(args[0].as_str(), &args[1..])
         }
@@ -1097,12 +1097,12 @@ fn result_action<T>(result: Result<T, String>, action: impl FnOnce(T) -> CliActi
     }
 }
 
-fn parse_agent_subcommand(args: &[String]) -> CliAction {
+fn parse_runner_subcommand(args: &[String]) -> CliAction {
     let Some(command) = args.first().map(String::as_str) else {
-        return exit_error(agent_usage());
+        return exit_error(runner_usage());
     };
     if matches!(command, "--help" | "-h") {
-        return exit_help(agent_usage());
+        return exit_help(runner_usage());
     }
     if command == "run" && args.len() == 2 && matches!(args[1].as_str(), "--version" | "-V") {
         return exit_help(&build_info::version_output("webcodex-runner"));
@@ -1112,37 +1112,37 @@ fn parse_agent_subcommand(args: &[String]) -> CliAction {
         .is_some_and(|arg| matches!(arg.as_str(), "--help" | "-h"))
     {
         let help = match command {
-            "init" => agent_init_usage(),
-            "install" => agent_install_service_usage(),
-            "run" => "Usage: webcodex agent run [--profile NAME|--config PATH]\n\nRun webcodex-runner directly in the foreground.\n",
-            "restart" => "Usage: webcodex agent restart [--profile NAME] [--bin PATH] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webcodex connect`, omitting --scope manages its user-level background Runner; --bin selects an explicit Runner binary for that hosted profile. An explicit scope manages the matching systemd service and does not accept --bin.\n",
-            "start" | "stop" => "Usage: webcodex agent <start|stop> [--profile NAME] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webcodex connect`, omitting --scope manages its user-level background Runner. An explicit scope manages the matching systemd service.\n",
-            "status" => agent_status_usage(),
-            "logs" => "Usage: webcodex agent logs [--profile NAME] [--scope user|system] [--service-file PATH] [--lines N] [--since VALUE] [--follow]\n",
-            "uninstall" => "Usage: webcodex agent uninstall [--profile NAME] [--scope user|system] [--service-file PATH] --confirm\n",
-            "install-service" => "`webcodex agent install-service` was removed; use `webcodex agent install`.\n",
-            _ => agent_usage(),
+            "init" => runner_init_usage(),
+            "install" => runner_install_service_usage(),
+            "run" => "Usage: webcodex runner run [--profile NAME|--config PATH]\n\nRun webcodex-runner directly in the foreground.\n",
+            "restart" => "Usage: webcodex runner restart [--profile NAME] [--bin PATH] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webcodex connect`, omitting --scope manages its user-level background Runner; --bin selects an explicit Runner binary for that hosted profile. An explicit scope manages the matching systemd service and does not accept --bin.\n",
+            "start" | "stop" => "Usage: webcodex runner <start|stop> [--profile NAME] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webcodex connect`, omitting --scope manages its user-level background Runner. An explicit scope manages the matching systemd service.\n",
+            "status" => runner_status_usage(),
+            "logs" => "Usage: webcodex runner logs [--profile NAME] [--scope user|system] [--service-file PATH] [--lines N] [--since VALUE] [--follow]\n",
+            "uninstall" => "Usage: webcodex runner uninstall [--profile NAME] [--scope user|system] [--service-file PATH] --confirm\n",
+            "install-service" => "`webcodex runner install-service` was removed; use `webcodex runner install`.\n",
+            _ => runner_usage(),
         };
         return exit_help(help);
     }
     match command {
-        "init" => result_action(parse_cli_agent_init(&args[1..]), CliAction::AgentInit),
+        "init" => result_action(parse_cli_runner_init(&args[1..]), CliAction::RunnerInit),
         "install" => result_action(
-            parse_agent_install_service(&args[1..]),
-            CliAction::AgentInstall,
+            parse_runner_install_service(&args[1..]),
+            CliAction::RunnerInstall,
         ),
-        "run" => result_action(parse_agent_run(&args[1..]), CliAction::AgentRun),
-        "status" => result_action(parse_agent_status(&args[1..]), CliAction::AgentStatus),
+        "run" => result_action(parse_runner_run(&args[1..]), CliAction::RunnerRun),
+        "status" => result_action(parse_runner_status(&args[1..]), CliAction::RunnerStatus),
         "start" | "stop" | "restart" | "logs" | "uninstall" => result_action(
-            parse_agent_service_action(command, &args[1..]),
-            CliAction::AgentService,
+            parse_runner_service_action(command, &args[1..]),
+            CliAction::RunnerService,
         ),
         "install-service" => exit_error(
-            "`webcodex agent install-service` was removed; use `webcodex agent install`.\n",
+            "`webcodex runner install-service` was removed; use `webcodex runner install`.\n",
         ),
         other => exit_error(&format!(
-            "unknown agent subcommand: {other}\n\n{}",
-            agent_usage()
+            "unknown runner subcommand: {other}\n\n{}",
+            runner_usage()
         )),
     }
 }
@@ -1509,7 +1509,7 @@ fn parse_server_run(args: &[String]) -> Result<InternalRunOptions, String> {
     })
 }
 
-fn parse_agent_run(args: &[String]) -> Result<InternalRunOptions, String> {
+fn parse_runner_run(args: &[String]) -> Result<InternalRunOptions, String> {
     let mut profile: Option<String> = None;
     let mut config: Option<PathBuf> = None;
     let mut iter = args.iter();
@@ -1517,7 +1517,7 @@ fn parse_agent_run(args: &[String]) -> Result<InternalRunOptions, String> {
         match arg.as_str() {
             "--profile" => profile = Some(next_value(&mut iter, arg)?),
             "--config" => config = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            other => return Err(format!("unknown agent run option: {other}")),
+            other => return Err(format!("unknown runner run option: {other}")),
         }
     }
     let profile = profile
@@ -1554,7 +1554,7 @@ fn parse_service_kind(command: &str, args: &[String]) -> Result<ServiceActionKin
         if let Some(flag) = args.first() {
             if flag == "--root" || flag == "--state-dir" || flag == "--console-assets-dir" {
                 return Err(format!(
-                    "`webcodex agent {command}` manages the installed service; use `webcodex run` for project runtime options"
+                    "`webcodex runner {command}` manages the installed service; use `webcodex run` for project runtime options"
                 ));
             }
             return Err(format!("unknown {command} option: {flag}"));
@@ -1632,7 +1632,7 @@ fn parse_server_service_action(
     })
 }
 
-fn parse_agent_service_action(
+fn parse_runner_service_action(
     command: &str,
     args: &[String],
 ) -> Result<ServiceActionOptions, String> {
@@ -1671,23 +1671,23 @@ fn parse_agent_service_action(
         }
         if command != "restart" {
             return Err(
-                "--bin is valid only with `webcodex agent restart --profile <name>`".to_string(),
+                "--bin is valid only with `webcodex runner restart --profile <name>`".to_string(),
             );
         }
     }
-    let scope = scope.unwrap_or_else(|| default_agent_service_scope(is_effective_root()));
+    let scope = scope.unwrap_or_else(|| default_runner_service_scope(is_effective_root()));
     let profile = profile
         .as_deref()
         .map(validate_client_profile)
         .transpose()?;
     let service_file = service_file
         .map(Ok)
-        .unwrap_or_else(|| agent_service_file_for_scope(scope, profile.as_deref()))?;
+        .unwrap_or_else(|| runner_service_file_for_scope(scope, profile.as_deref()))?;
     validate_service_file_scope(scope, &service_file)?;
     let unit = service_file
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or(AGENT_SERVICE_UNIT)
+        .unwrap_or(RUNNER_SERVICE_UNIT)
         .to_string();
     let local_profile = if scope_explicit {
         None
@@ -1751,14 +1751,14 @@ fn parse_server_init(args: &[String]) -> Result<ServerInitOptions, String> {
     Ok(opts)
 }
 
-fn parse_agent_install_service(args: &[String]) -> Result<AgentInstallServiceOptions, String> {
-    parse_agent_install_service_with_identity(args, is_effective_root())
+fn parse_runner_install_service(args: &[String]) -> Result<RunnerInstallServiceOptions, String> {
+    parse_runner_install_service_with_identity(args, is_effective_root())
 }
 
-fn parse_agent_install_service_with_identity(
+fn parse_runner_install_service_with_identity(
     args: &[String],
     effective_root: bool,
-) -> Result<AgentInstallServiceOptions, String> {
+) -> Result<RunnerInstallServiceOptions, String> {
     let mut profile: Option<String> = None;
     let mut scope: Option<ServiceScope> = None;
     let mut config: Option<PathBuf> = None;
@@ -1803,20 +1803,20 @@ fn parse_agent_install_service_with_identity(
                 output_stdout = true;
             }
             "--json" => json = true,
-            _ => return Err(format!("unknown agent install flag: {}", arg)),
+            _ => return Err(format!("unknown runner install flag: {}", arg)),
         }
     }
     let profile = profile
         .as_deref()
         .map(validate_client_profile)
         .transpose()?;
-    let scope = scope.unwrap_or_else(|| default_agent_service_scope(effective_root));
+    let scope = scope.unwrap_or_else(|| default_runner_service_scope(effective_root));
     let config = config
         .map(Ok)
         .unwrap_or_else(|| agent_config_for_scope(scope, profile.as_deref()))?;
     let service_file = service_file
         .map(Ok)
-        .unwrap_or_else(|| agent_service_file_for_scope(scope, profile.as_deref()))?;
+        .unwrap_or_else(|| runner_service_file_for_scope(scope, profile.as_deref()))?;
     validate_service_file_scope(scope, &service_file)?;
     let bin = match bin.or_else(|| discover_internal_binary("webcodex-runner")) {
         Some(path) => path,
@@ -1889,7 +1889,7 @@ fn parse_agent_install_service_with_identity(
                 .to_string(),
         );
     }
-    Ok(AgentInstallServiceOptions {
+    Ok(RunnerInstallServiceOptions {
         scope,
         config,
         bin,
@@ -1907,19 +1907,19 @@ fn parse_agent_install_service_with_identity(
     })
 }
 
-fn parse_agent_status(args: &[String]) -> Result<AgentStatusOptions, String> {
-    parse_agent_status_with_identity(args, is_effective_root())
+fn parse_runner_status(args: &[String]) -> Result<RunnerStatusOptions, String> {
+    parse_runner_status_with_identity(args, is_effective_root())
 }
 
-fn parse_agent_status_with_identity(
+fn parse_runner_status_with_identity(
     args: &[String],
     effective_root: bool,
-) -> Result<AgentStatusOptions, String> {
+) -> Result<RunnerStatusOptions, String> {
     let mut profile: Option<String> = None;
     let mut scope: Option<ServiceScope> = None;
     let mut config: Option<PathBuf> = None;
     let mut service_file: Option<PathBuf> = None;
-    let mut opts = AgentStatusOptions {
+    let mut opts = RunnerStatusOptions {
         scope: ServiceScope::System,
         config: PathBuf::new(),
         service_file: PathBuf::new(),
@@ -1952,12 +1952,12 @@ fn parse_agent_status_with_identity(
                 opts.agent_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
             }
             "--json" => opts.json = true,
-            _ => return Err(format!("unknown agent status flag: {}", arg)),
+            _ => return Err(format!("unknown runner status flag: {}", arg)),
         }
     }
     opts.server_http.validate()?;
     let scope_explicit = scope.is_some();
-    let scope = scope.unwrap_or_else(|| default_agent_service_scope(effective_root));
+    let scope = scope.unwrap_or_else(|| default_runner_service_scope(effective_root));
     opts.scope = scope;
     let profile = profile
         .as_deref()
@@ -1970,7 +1970,7 @@ fn parse_agent_status_with_identity(
     };
     opts.service_file = service_file
         .map(Ok)
-        .unwrap_or_else(|| agent_service_file_for_scope(scope, profile.as_deref()))?;
+        .unwrap_or_else(|| runner_service_file_for_scope(scope, profile.as_deref()))?;
     validate_service_file_scope(scope, &opts.service_file)?;
     if let Some(profile) = profile {
         if !scope_explicit {
@@ -2184,7 +2184,7 @@ fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
             "--projects-dir" => projects_dir = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--allowed-root" => allowed_roots.push(PathBuf::from(next_value(&mut iter, arg)?)),
             "--allow-cwd-anywhere" => {
-                allow_cwd_anywhere = agent_init::parse_bool(&next_value(&mut iter, arg)?)?;
+                allow_cwd_anywhere = runner_config::parse_bool(&next_value(&mut iter, arg)?)?;
             }
             "--overwrite" => overwrite = true,
             "--json" => json = true,
@@ -2203,10 +2203,10 @@ fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
     }
     if !matches!(
         transport.as_str(),
-        agent_init::TRANSPORT_WEBSOCKET
-            | agent_init::TRANSPORT_POLLING
-            | agent_init::TRANSPORT_QUIC
-            | agent_init::TRANSPORT_AUTO
+        runner_config::TRANSPORT_WEBSOCKET
+            | runner_config::TRANSPORT_POLLING
+            | runner_config::TRANSPORT_QUIC
+            | runner_config::TRANSPORT_AUTO
     ) {
         return Err("--transport must be websocket, polling, quic, or auto".to_string());
     }
@@ -2250,10 +2250,10 @@ fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
     })
 }
 
-/// Small flag parser for `webcodex agent init`. Produces an
-/// `AgentInitOptions` consumed by the shared `agent_init::run_agent_init`.
-fn parse_cli_agent_init(args: &[String]) -> Result<AgentInitOptions, String> {
-    let mut opts = AgentInitOptions {
+/// Small flag parser for `webcodex runner init`. Produces an
+/// `RunnerInitOptions` consumed by the shared `runner_config::run_runner_init`.
+fn parse_cli_runner_init(args: &[String]) -> Result<RunnerInitOptions, String> {
+    let mut opts = RunnerInitOptions {
         server_url: String::new(),
         token: None,
         token_file: None,
@@ -2296,7 +2296,7 @@ fn parse_cli_agent_init(args: &[String]) -> Result<AgentInitOptions, String> {
                 .allowed_roots
                 .push(PathBuf::from(next_value(&mut iter, arg)?)),
             "--allow-cwd-anywhere" => {
-                opts.allow_cwd_anywhere = agent_init::parse_bool(&next_value(&mut iter, arg)?)?;
+                opts.allow_cwd_anywhere = runner_config::parse_bool(&next_value(&mut iter, arg)?)?;
             }
             "--output" => {
                 opts.output = PathBuf::from(next_value(&mut iter, arg)?);
@@ -2304,7 +2304,7 @@ fn parse_cli_agent_init(args: &[String]) -> Result<AgentInitOptions, String> {
             }
             "--overwrite" => opts.overwrite = true,
             "--help" | "-h" => return Err(usage().to_string()),
-            _ => return Err(format!("unknown agent init flag: {}", arg)),
+            _ => return Err(format!("unknown runner init flag: {}", arg)),
         }
     }
     if let Some(profile) = profile
@@ -2329,7 +2329,7 @@ fn parse_cli_agent_init(args: &[String]) -> Result<AgentInitOptions, String> {
             opts.projects_dir = PathBuf::from(DEFAULT_INIT_PROJECTS_DIR);
         }
     }
-    agent_init::validate_agent_init_options(&opts)?;
+    runner_config::validate_runner_init_options(&opts)?;
     Ok(opts)
 }
 
@@ -2436,7 +2436,7 @@ where
 /// The supported Windows surface is the CLI + hosted/local-profile Runner
 /// talking to a remote Linux WebCodex Server. Operations that require a
 /// long-running local Windows Server (`webcodex server ...`, `webcodex
-/// share`) or a systemd-style service install (`webcodex agent install`)
+/// share`) or a systemd-style service install (`webcodex runner install`)
 /// fail here with a clear platform message instead of reaching server or
 /// service logic that cannot work on Windows. `--help` is exempt so help
 /// output still renders normally; only real execution is blocked.
@@ -2450,9 +2450,9 @@ fn windows_unsupported_platform_action(args: &[String]) -> Option<&'static str> 
             "Windows Server runtime is not supported in this release.\n\
              Use `webcodex connect` with a remote WebCodex Server.",
         ),
-        Some("agent") if args.get(1).map(String::as_str) == Some("install") => Some(
+        Some("runner") if args.get(1).map(String::as_str) == Some("install") => Some(
             "Automatic Windows Runner startup is not supported yet.\n\
-             Use `webcodex connect` or `webcodex agent start --profile <name>.",
+             Use `webcodex connect` or `webcodex runner start --profile <name>.",
         ),
         _ => None,
     }
@@ -2554,7 +2554,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
-        CliAction::AgentInit(opts) => match run_agent_init(opts) {
+        CliAction::RunnerInit(opts) => match run_runner_init(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);
                 std::process::exit(0);
@@ -2646,7 +2646,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        CliAction::AgentInstall(opts) => match run_agent_install_service(opts) {
+        CliAction::RunnerInstall(opts) => match run_runner_install_service(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);
                 if !stdout.ends_with('\n') {
@@ -2659,7 +2659,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
-        CliAction::AgentRun(opts) | CliAction::ServerRun(opts) => {
+        CliAction::RunnerRun(opts) | CliAction::ServerRun(opts) => {
             match run_internal_binary(&opts.bin, &opts.args) {
                 Ok(code) => std::process::exit(code),
                 Err(stderr) => {
@@ -2668,7 +2668,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        CliAction::AgentService(opts) => match run_agent_service(opts) {
+        CliAction::RunnerService(opts) => match run_runner_service(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);
                 if !stdout.ends_with('\n') {
@@ -2681,7 +2681,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
-        CliAction::AgentStatus(opts) => match run_agent_status(opts).await {
+        CliAction::RunnerStatus(opts) => match run_runner_status(opts).await {
             Ok(stdout) => {
                 print!("{}", stdout);
                 if !stdout.ends_with('\n') {

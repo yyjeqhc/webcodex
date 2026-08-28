@@ -19,8 +19,8 @@ Account / identity (advanced):\n\
 Operator / service management:\n\
   server init|install|run|start|stop|restart|status|logs|uninstall\n\
                                 Configure and manage the Server service\n\
-  agent init|install|run|start|stop|restart|status|logs|uninstall\n\
-                                Manage the Runner service (historical `agent` namespace)\n\
+  runner init|install|run|start|stop|restart|status|logs|uninstall\n\
+                                Manage the Runner lifecycle and service\n\
   ops status|agents|runner|projects|smoke-preflight\n\
                                 Read-only operator workflow checks\n\n\
 Advanced / compatibility:\n\
@@ -140,11 +140,11 @@ pub(crate) fn client_enroll_usage() -> &'static str {
        --no-system-proxy            Ignore proxy environment and connect directly\n\
        --pairing-code CODE           Temporary one-time pairing code\n\
        --client-id CLIENT_ID         Client id matching the pairing record\n\
-       --display-name NAME           Optional agent display name\n\
-       --transport websocket|polling|quic|auto Agent transport [default: websocket]\n\
+       --display-name NAME           Optional Runner display name\n\
+       --transport websocket|polling|quic|auto Runner transport [default: websocket]\n\
        --profile NAME                Client config profile [default: client-id]\n\
        --output-dir DIR              Output dir [default: root /etc/webcodex/clients/<profile>; user ~/.config/webcodex/clients/<profile>]\n\
-       --agent-config PATH           Agent config path [default: <output-dir>/agent.toml]\n\
+       --agent-config PATH           Runner config path [default: <output-dir>/agent.toml]\n\
        --projects-dir PATH           Projects registry dir [default: <output-dir>/projects.d]\n\
        --allowed-root PATH           Repeatable allowed project root\n\
        --allow-cwd-anywhere BOOL     Allow cwd outside allowed roots [default: false]\n\
@@ -326,10 +326,10 @@ pub(crate) fn server_status_usage() -> &'static str {
      WEBCODEX_TOKEN, then no token for auth-disabled servers.\n"
 }
 
-pub(crate) fn agent_usage() -> &'static str {
-    "Usage: webcodex agent <COMMAND>\n\n\
+pub(crate) fn runner_usage() -> &'static str {
+    "Usage: webcodex runner <COMMAND>\n\n\
 Commands:\n\
-  init        Generate an agent.toml config\n\
+  init        Generate a Runner config (`agent.toml`)\n\
   install     Install, enable, and start the webcodex-runner service\n\
   run         Run webcodex-runner directly in the foreground\n\
   start       Start a hosted background Runner or installed profile service\n\
@@ -340,18 +340,18 @@ Commands:\n\
   uninstall   Remove only the systemd unit; requires --confirm\n\n\
 Service commands accept --scope user|system. Non-root users default to user; root defaults to system.\n\
 Profiles created by `connect` keep their detached-process behavior when --scope is omitted.\n\n\
-`webcodex run` is the current-project runtime coordinator. `webcodex agent run` directly executes the standalone Runner.\n"
+`webcodex run` is the current-project runtime coordinator. `webcodex runner run` directly executes the standalone Runner.\n"
 }
-pub(crate) fn agent_init_usage() -> &'static str {
-    "Usage: webcodex agent init --server-url URL [--token TOKEN|--token-file PATH] --client-id ID --owner USER [OPTIONS]\n\n\
+pub(crate) fn runner_init_usage() -> &'static str {
+    "Usage: webcodex runner init --server-url URL [--token TOKEN|--token-file PATH] --client-id ID --owner USER [OPTIONS]\n\n\
      Options:\n\
        --server-url URL           WebCodex server URL\n\
        --token TOKEN              Agent token for generated config\n\
        --token-file PATH          Read agent token from file\n\
-       --client-id ID             Stable agent client id\n\
+       --client-id ID             Stable Runner client id\n\
        --profile NAME             Client config profile [default: client-id when deriving defaults]\n\
        --owner USER               Owner username\n\
-       --display-name NAME        Human-readable agent name\n\
+       --display-name NAME        Human-readable Runner name\n\
        --transport NAME           websocket (default), polling, quic, or auto\n\
        --poll-interval-ms N       Polling interval, default 1000\n\
        --projects-dir PATH        Project config directory [default: profile projects.d]\n\
@@ -366,12 +366,12 @@ pub(crate) fn agent_init_usage() -> &'static str {
      flags override profile-derived defaults.\n"
 }
 
-pub(crate) fn agent_install_service_usage() -> &'static str {
-    "Usage: webcodex agent install [--profile NAME] [--config PATH] [OPTIONS]\n\n\
+pub(crate) fn runner_install_service_usage() -> &'static str {
+    "Usage: webcodex runner install [--profile NAME] [--config PATH] [OPTIONS]\n\n\
 Options:\n\
   --profile NAME             Profile for config and unit defaults\n\
   --scope user|system        Service manager scope [default: user for non-root; system for root]\n\
-  --config PATH              Agent config path\n\
+  --config PATH              Runner config path\n\
   --bin PATH                 webcodex-runner path; sibling then absolute PATH by default\n\
   --service-file PATH        Unit path [default: webcodex-runner[-<profile>].service]\n\
   --working-directory PATH   WorkingDirectory= [default: selected user's home]\n\
@@ -389,12 +389,12 @@ and never writes User= or Group=. System scope uses /etc/systemd/system,\n\
 multi-user.target, and requires --user unless --allow-root-runner is explicit.\n\
 The unit runs webcodex-runner --config <config>. Tokens are never inlined.\n"
 }
-pub(crate) fn agent_status_usage() -> &'static str {
-    "Usage: webcodex agent status [OPTIONS]\n\n\
+pub(crate) fn runner_status_usage() -> &'static str {
+    "Usage: webcodex runner status [OPTIONS]\n\n\
      Options:\n\
        --profile NAME             Client config profile for config/token defaults\n\
        --scope user|system        Service manager scope [default: user for non-root; system for root]\n\
-       --config PATH              Agent config path [default: scope-specific agent.toml]\n\
+       --config PATH              Runner config path [default: scope-specific agent.toml]\n\
        --service-file PATH        Override the scope-specific systemd unit path\n\
        --server-url URL           Override server URL for runtime checks\n\
        --proxy http://HOST:PORT  Explicit proxy override for Server checks\n\

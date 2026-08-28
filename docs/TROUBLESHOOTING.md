@@ -16,10 +16,10 @@ Server:
 Client:
 
 - `webcodex-runner --version` prints a version.
-- For hosted quick-start, `webcodex agent status --profile <profile-from-connect>`
+- For hosted quick-start, `webcodex runner status --profile <profile-from-connect>`
   reports `runner mode: hosted local process`, `runner active: true`, and
   `client online: yes`.
-- `webcodex agent status --profile workstation` can read the local agent config.
+- `webcodex runner status --profile workstation` can read the local Runner config (`agent.toml`).
 - `webcodex doctor` passes for a canonical project, or advanced
   `webcodex ops status --strict --server-url https://your-domain.example`
   passes for a managed deployment.
@@ -34,8 +34,8 @@ Runner visible, and target project visible to the same key. Its error includes
 the profile Runner log path. Check:
 
 ```bash
-webcodex agent status --profile <profile-from-connect>
-webcodex agent logs --profile <profile-from-connect> --lines 100
+webcodex runner status --profile <profile-from-connect>
+webcodex runner logs --profile <profile-from-connect> --lines 100
 ```
 
 Confirm that the Server URL points to the root origin, the Server enables
@@ -77,7 +77,7 @@ non-Runner PID state is discarded before one replacement Runner starts. To
 stop it explicitly:
 
 ```bash
-webcodex agent stop --profile <profile-from-connect>
+webcodex runner stop --profile <profile-from-connect>
 ```
 
 The key is stored only in the protected profile config and is not printed by
@@ -180,12 +180,12 @@ Use the same scope that installed the service:
 
 ```bash
 # Ordinary user service
-webcodex agent status --scope user
-webcodex agent logs --scope user --lines 100
+webcodex runner status --scope user
+webcodex runner logs --scope user --lines 100
 
 # Administrator-managed system service
-sudo webcodex agent status --scope system
-sudo webcodex agent logs --scope system --lines 100
+sudo webcodex runner status --scope system
+sudo webcodex runner logs --scope system --lines 100
 ```
 
 Also verify the server URL, local token files, and agent `allowed_roots`. Missing or empty `allowed_roots` defaults to `$HOME`; explicit `allowed_roots` replaces that default.
@@ -216,8 +216,8 @@ new service and check `journalctl -u webcodex` for startup or auth errors.
 Run `runtime_status` or `listAgents`, then check the agent host:
 
 ```bash
-webcodex agent status --scope user
-webcodex agent logs --scope user --lines 100
+webcodex runner status --scope user
+webcodex runner logs --scope user --lines 100
 # Use `sudo ... --scope system` for an administrator-managed system service.
 ```
 
@@ -228,7 +228,7 @@ Confirm the agent server URL, token file, service user, and `allowed_roots`.
 In the hosted quick-start, MCP and Runner use the same non-`wc_` shared key.
 In managed mode, GPT Actions, MCP, and ordinary REST/project APIs use
 `webcodex-user-token` (`wc_pat_*`), while the Runner token (`wc_agent_*`) is
-only for Runner/Agent transport — after `webcodex login` it lives inline in
+only for Runner transport — after `webcodex login` it lives inline in
 `agent.toml`, with no separate `webcodex-runner-token` file (the advanced
 `webcodex client enroll` flow writes one). A 403 after putting a `wc_agent_*`
 value in `--token` or `--token-file` is the expected security boundary: select

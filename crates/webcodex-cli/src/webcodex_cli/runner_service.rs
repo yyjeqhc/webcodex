@@ -10,15 +10,15 @@ use super::{
     query_systemd_service_status_for_scope, read_optional_token, read_optional_user_api_token,
     run_local_runner_logs, run_local_runner_service, run_logs_for_scope, service_unit_name,
     uninstall_unit_for_scope, validate_systemd_identity, LocalRunnerServiceAction,
-    AGENT_SERVICE_UNIT,
+    RUNNER_SERVICE_UNIT,
 };
 use crate::{
-    AgentInstallServiceOptions, AgentStatusOptions, ServiceActionKind, ServiceActionOptions,
+    RunnerInstallServiceOptions, RunnerStatusOptions, ServiceActionKind, ServiceActionOptions,
     ServiceScope,
 };
 
-pub(crate) fn render_agent_systemd_unit(
-    opts: &AgentInstallServiceOptions,
+pub(crate) fn render_runner_systemd_unit(
+    opts: &RunnerInstallServiceOptions,
 ) -> Result<String, String> {
     match opts.scope {
         ServiceScope::User if opts.user.is_some() || opts.group.is_some() => {
@@ -85,11 +85,11 @@ pub(crate) fn render_agent_systemd_unit(
     Ok(unit)
 }
 
-pub(crate) fn run_agent_install_service(
-    opts: AgentInstallServiceOptions,
+pub(crate) fn run_runner_install_service(
+    opts: RunnerInstallServiceOptions,
 ) -> Result<String, String> {
-    let rendered = render_agent_systemd_unit(&opts)?;
-    let unit = service_unit_name(&opts.service_file, AGENT_SERVICE_UNIT);
+    let rendered = render_runner_systemd_unit(&opts)?;
+    let unit = service_unit_name(&opts.service_file, RUNNER_SERVICE_UNIT);
     if opts.output_stdout || opts.dry_run {
         if opts.json {
             return serde_json::to_string_pretty(&json!({
@@ -137,7 +137,7 @@ pub(crate) fn run_agent_install_service(
         ""
     };
     Ok(format!(
-        "Agent service installed.\n\n  scope:        {}\n  service file: {}\n  unit:         {}\n  config:       {}\n  binary:       {}\n  enabled:      yes\n  started:      {}\n{}",
+        "Runner service installed.\n\n  scope:        {}\n  service file: {}\n  unit:         {}\n  config:       {}\n  binary:       {}\n  enabled:      yes\n  started:      {}\n{}",
         opts.scope.as_str(),
         opts.service_file.display(),
         result.unit,
@@ -148,7 +148,7 @@ pub(crate) fn run_agent_install_service(
     ))
 }
 
-pub(crate) fn run_agent_service(opts: ServiceActionOptions) -> Result<String, String> {
+pub(crate) fn run_runner_service(opts: ServiceActionOptions) -> Result<String, String> {
     if let Some(local) = &opts.local_profile {
         if local_runner_profile_marker(&local.state_dir).is_file() {
             return match &opts.kind {
@@ -173,7 +173,7 @@ pub(crate) fn run_agent_service(opts: ServiceActionOptions) -> Result<String, St
                     *follow,
                 ),
                 ServiceActionKind::Uninstall { .. } => Err(
-                    "hosted connect profiles are not system services; use `webcodex agent stop --profile <name>` and remove local profile files explicitly if desired"
+                    "hosted connect profiles are not system services; use `webcodex runner stop --profile <name>` and remove local profile files explicitly if desired"
                         .to_string(),
                 ),
             };
@@ -193,7 +193,7 @@ pub(crate) fn run_agent_service(opts: ServiceActionOptions) -> Result<String, St
         ServiceActionKind::Control(control) => {
             control_service_for_scope(opts.scope, &opts.unit, control)?;
             Ok(format!(
-                "Agent service {} completed for {}.\n",
+                "Runner service {} completed for {}.\n",
                 control.as_str(),
                 opts.unit
             ))
@@ -205,11 +205,11 @@ pub(crate) fn run_agent_service(opts: ServiceActionOptions) -> Result<String, St
         } => run_logs_for_scope(opts.scope, &opts.unit, lines, since.as_deref(), follow),
         ServiceActionKind::Uninstall { confirm } => {
             if !confirm {
-                return Err("agent uninstall requires --confirm; no changes were made".to_string());
+                return Err("runner uninstall requires --confirm; no changes were made".to_string());
             }
             let result = uninstall_unit_for_scope(opts.scope, &opts.service_file, &opts.unit)?;
             Ok(format!(
-                "Agent service {}. Agent config, tokens, profile data and binaries were not deleted.\n",
+                "Runner service {}. Runner config, tokens, profile data and binaries were not deleted.\n",
                 if result.removed { "uninstalled" } else { "was already absent" }
             ))
         }
@@ -217,7 +217,7 @@ pub(crate) fn run_agent_service(opts: ServiceActionOptions) -> Result<String, St
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct AgentStatusConfig {
+struct RunnerStatusConfig {
     #[serde(default)]
     server_url: String,
     #[serde(default)]
@@ -233,17 +233,17 @@ struct AgentStatusConfig {
     #[serde(default)]
     projects_dir: Option<PathBuf>,
     #[serde(default)]
-    policy: AgentStatusPolicy,
+    policy: RunnerStatusPolicy,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-struct AgentStatusPolicy {
+struct RunnerStatusPolicy {
     #[serde(default)]
     allowed_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
-struct AgentConfigMetadata {
+struct RunnerConfigMetadata {
     path: PathBuf,
     client_id: String,
     owner: Option<String>,
@@ -255,12 +255,12 @@ struct AgentConfigMetadata {
     token: String,
 }
 
-fn read_agent_config_metadata(path: &Path) -> Result<AgentConfigMetadata, String> {
+fn read_runner_config_metadata(path: &Path) -> Result<RunnerConfigMetadata, String> {
     let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read agent config {}: {}", path.display(), e))?;
-    let cfg: AgentStatusConfig = toml::from_str(&content)
-        .map_err(|e| format!("failed to parse agent config {}: {}", path.display(), e))?;
-    Ok(AgentConfigMetadata {
+        .map_err(|e| format!("failed to read Runner config {}: {}", path.display(), e))?;
+    let cfg: RunnerStatusConfig = toml::from_str(&content)
+        .map_err(|e| format!("failed to parse Runner config {}: {}", path.display(), e))?;
+    Ok(RunnerConfigMetadata {
         path: path.to_path_buf(),
         client_id: cfg.client_id,
         owner: cfg.owner,
@@ -275,7 +275,7 @@ fn read_agent_config_metadata(path: &Path) -> Result<AgentConfigMetadata, String
 
 fn allowed_roots_summary(roots: &[PathBuf]) -> String {
     if roots.is_empty() {
-        "0 configured; agent runtime defaults to $HOME when allowed_roots is omitted".to_string()
+        "0 configured; Runner runtime defaults to $HOME when allowed_roots is omitted".to_string()
     } else {
         format!(
             "{} configured: {}",
@@ -310,8 +310,8 @@ fn runtime_client_online(output: &Value, client_id: &str) -> Option<bool> {
     })
 }
 
-pub(crate) async fn run_agent_status(opts: AgentStatusOptions) -> Result<String, String> {
-    let service_unit = service_unit_name(&opts.service_file, AGENT_SERVICE_UNIT);
+pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<String, String> {
+    let service_unit = service_unit_name(&opts.service_file, RUNNER_SERVICE_UNIT);
     let local = opts
         .local_state_dir
         .as_ref()
@@ -321,7 +321,7 @@ pub(crate) async fn run_agent_status(opts: AgentStatusOptions) -> Result<String,
     let systemd = local
         .is_none()
         .then(|| query_systemd_service_status_for_scope(opts.scope, &service_unit));
-    let metadata = read_agent_config_metadata(&opts.config)?;
+    let metadata = read_runner_config_metadata(&opts.config)?;
     let effective_server_url = opts.server_url.clone().or_else(|| {
         let url = metadata.server_url.trim().to_string();
         if url.is_empty() {
@@ -442,7 +442,7 @@ pub(crate) async fn run_agent_status(opts: AgentStatusOptions) -> Result<String,
     }
 
     let mut out = String::new();
-    out.push_str("Agent status:\n\n");
+    out.push_str("Runner status:\n\n");
     if let Some(local) = &local {
         out.push_str("  runner mode:          hosted local process\n");
         out.push_str(&format!("  runner active:        {}\n", local.running));
@@ -561,16 +561,16 @@ mod tests {
         assert_eq!(
             service_unit_name(
                 Path::new("/etc/systemd/system/webcodex-runner-workstation.service"),
-                AGENT_SERVICE_UNIT,
+                RUNNER_SERVICE_UNIT,
             ),
             "webcodex-runner-workstation.service"
         );
         assert_eq!(
             service_unit_name(
                 Path::new("/etc/systemd/system/webcodex-runner.service"),
-                AGENT_SERVICE_UNIT,
+                RUNNER_SERVICE_UNIT,
             ),
-            AGENT_SERVICE_UNIT
+            RUNNER_SERVICE_UNIT
         );
     }
 }

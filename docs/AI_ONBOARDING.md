@@ -102,7 +102,7 @@ ordinary user that will run project commands:
 ```bash
 webcodex login https://webcodex.example --code <wc_pair_...> \
   --allowed-root "$HOME/git"
-webcodex agent install --scope user \
+webcodex runner install --scope user \
   --config <login-reported-agent-config>
 ```
 
@@ -123,7 +123,7 @@ Safe non-secret observations include:
 - repository path and Git status;
 - Server URL;
 - profile/state/log **paths**;
-- service status via `webcodex agent status` / `webcodex server status`;
+- service status via `webcodex runner status` / `webcodex server status`;
 - `webcodex status` and `webcodex doctor` output;
 - the location of a token file, but not its contents.
 
@@ -159,8 +159,8 @@ minimum non-secret diagnostics needed:
 ```bash
 webcodex status
 webcodex doctor
-webcodex agent status --profile <profile>
-webcodex agent logs --profile <profile> --lines 100
+webcodex runner status --profile <profile>
+webcodex runner logs --profile <profile> --lines 100
 ```
 
 See [Troubleshooting](TROUBLESHOOTING.md) for stable failure codes and operator

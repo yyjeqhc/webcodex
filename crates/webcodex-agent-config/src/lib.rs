@@ -1,7 +1,7 @@
-//! Shared agent-config initialization logic used by the server,
+//! Shared Runner-config initialization logic used by the server,
 //! `webcodex-runner`, and `webcodex-cli`.
 //!
-//! It owns the `AgentInitOptions` type, validation, token resolution, TOML
+//! It owns the `RunnerInitOptions` type, validation, token resolution, TOML
 //! generation, and atomic 0600 file writing. Each binary keeps its own small
 //! flag parser and help text.
 //!
@@ -17,7 +17,7 @@ use webcodex_core::shell_protocol::ShellClientCapabilities;
 
 pub mod paths;
 
-/// Default projects directory written into generated agent configs.
+/// Default projects directory written into generated Runner configs.
 pub const DEFAULT_INIT_PROJECTS_DIR: &str = "/etc/webcodex/projects.d";
 pub const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
 pub const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
@@ -34,7 +34,7 @@ pub const TRANSPORT_QUIC: &str = "quic";
 pub const TRANSPORT_AUTO: &str = "auto";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentInitOptions {
+pub struct RunnerInitOptions {
     pub server_url: String,
     pub token: Option<String>,
     pub token_file: Option<PathBuf>,
@@ -56,7 +56,7 @@ pub fn home_allowed_root() -> Option<PathBuf> {
     paths::home_dir().filter(|p| !p.as_os_str().is_empty())
 }
 
-/// Resolve the effective `allowed_roots` for an agent policy.
+/// Resolve the effective `allowed_roots` for a Runner policy.
 ///
 /// - If `configured` is non-empty, the configured value is used as-is
 ///   (overrides the HOME default).
@@ -89,7 +89,7 @@ pub fn effective_allowed_roots(
     )
 }
 
-pub fn validate_agent_init_options(opts: &AgentInitOptions) -> Result<(), String> {
+pub fn validate_runner_init_options(opts: &RunnerInitOptions) -> Result<(), String> {
     if opts.server_url.trim().is_empty() {
         return Err("--server-url is required".to_string());
     }
@@ -130,7 +130,7 @@ pub fn validate_agent_init_options(opts: &AgentInitOptions) -> Result<(), String
     Ok(())
 }
 
-pub fn resolve_agent_init_token(opts: &AgentInitOptions) -> Result<String, String> {
+pub fn resolve_runner_init_token(opts: &RunnerInitOptions) -> Result<String, String> {
     if let Some(token) = &opts.token {
         let token = token.trim().to_string();
         if token.is_empty() {
@@ -159,7 +159,7 @@ pub fn resolve_agent_init_token(opts: &AgentInitOptions) -> Result<String, Strin
 }
 
 #[derive(Debug, Serialize)]
-struct GeneratedAgentConfig {
+struct GeneratedRunnerConfig {
     server_url: String,
     token: String,
     client_id: String,
@@ -169,11 +169,11 @@ struct GeneratedAgentConfig {
     poll_interval_ms: u64,
     projects_dir: PathBuf,
     capabilities: ShellClientCapabilities,
-    policy: GeneratedAgentPolicy,
+    policy: GeneratedRunnerPolicy,
 }
 
 #[derive(Debug, Serialize)]
-struct GeneratedAgentPolicy {
+struct GeneratedRunnerPolicy {
     allow_raw_shell: bool,
     allow_cwd_anywhere: bool,
     allowed_roots: Vec<PathBuf>,
@@ -181,11 +181,11 @@ struct GeneratedAgentPolicy {
     max_output_bytes: usize,
 }
 
-pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, String> {
+pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, String> {
     let effective_roots = effective_allowed_roots(&opts.allowed_roots, opts.allow_cwd_anywhere)?;
-    let cfg = GeneratedAgentConfig {
+    let cfg = GeneratedRunnerConfig {
         server_url: opts.server_url.trim_end_matches('/').to_string(),
-        token: resolve_agent_init_token(opts)?,
+        token: resolve_runner_init_token(opts)?,
         client_id: opts.client_id.clone(),
         display_name: opts.display_name.clone(),
         owner: opts.owner.clone(),
@@ -295,7 +295,7 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             // static generated-config capability.
             agent_protocol_generation: None,
         },
-        policy: GeneratedAgentPolicy {
+        policy: GeneratedRunnerPolicy {
             allow_raw_shell: true,
             allow_cwd_anywhere: opts.allow_cwd_anywhere,
             allowed_roots: effective_roots,
@@ -303,18 +303,18 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
         },
     };
-    toml::to_string_pretty(&cfg).map_err(|e| format!("failed to serialize agent config: {}", e))
+    toml::to_string_pretty(&cfg).map_err(|e| format!("failed to serialize Runner config: {}", e))
 }
 
-/// Generate the agent config TOML and write it to `opts.output`.
+/// Generate the Runner config TOML and write it to `opts.output`.
 ///
 /// - `--output -` writes the TOML to stdout (returned as a string). The caller
 ///   is responsible for printing it; this is the only path that returns the
 ///   token-bearing content, and only when the user explicitly asks for stdout.
 /// - Refuses to overwrite an existing file unless `--overwrite` is set.
 /// - Writes 0600 permissions on Unix.
-pub fn run_agent_init(opts: AgentInitOptions) -> Result<String, String> {
-    let content = generated_agent_config_toml(&opts)?;
+pub fn run_runner_init(opts: RunnerInitOptions) -> Result<String, String> {
+    let content = generated_runner_config_toml(&opts)?;
     if opts.output.as_os_str() == "-" {
         return Ok(content);
     }
@@ -413,8 +413,8 @@ mod tests {
         }
     }
 
-    fn init_opts(output: PathBuf) -> AgentInitOptions {
-        AgentInitOptions {
+    fn init_opts(output: PathBuf) -> RunnerInitOptions {
+        RunnerInitOptions {
             server_url: "https://v4.example.test/".to_string(),
             token: Some("wc_agent_fake_test_token".to_string()),
             token_file: None,
@@ -472,7 +472,7 @@ mod tests {
         if let Some(home) = home {
             let mut opts = init_opts(PathBuf::from("-"));
             opts.allowed_roots.clear();
-            let content = generated_agent_config_toml(&opts).unwrap();
+            let content = generated_runner_config_toml(&opts).unwrap();
             // Parse the output back rather than matching the serializer's
             // quoting: Windows paths contain backslashes and the TOML encoder
             // may pick basic- or literal-string forms.

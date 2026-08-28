@@ -10,7 +10,7 @@ pub(super) use crate::webcodex_cli::{
 };
 // Only the Unix systemd service tests consume these re-exports.
 #[cfg(unix)]
-pub(super) use crate::webcodex_cli::render_agent_systemd_unit;
+pub(super) use crate::webcodex_cli::render_runner_systemd_unit;
 pub(super) use crate::*;
 pub(super) use serde_json::{json, Value};
 #[cfg(unix)]

@@ -226,7 +226,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("WebCodex server is healthy", result.stdout)
         self.assertNotIn("server container started", result.stdout.lower())
         self.assertIn("webcodex login", result.stdout)
-        self.assertIn("webcodex agent install --scope user", result.stdout)
+        self.assertIn("webcodex runner install --scope user", result.stdout)
         self.assertIn("Do not copy", result.stdout)
         self.assertIn("webcodex connect", result.stdout)
 

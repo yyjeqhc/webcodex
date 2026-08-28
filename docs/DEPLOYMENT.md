@@ -55,7 +55,7 @@ webcodex connect https://your-server.example --key-file /private/path/shared-key
 profile, starts a detached Runner, and waits until the Server sees both the
 Runner and the project. Use the printed `/mcp` URL and credential in your MCP
 client. After a machine reboot, rerun the same `connect` or use
-`webcodex agent start --profile <profile>`.
+`webcodex runner start --profile <profile>`.
 
 This is not first enrollment for a freshly self-hosted Server. For that case,
 keep the bootstrap administrator token on the Server and follow the pairing /
@@ -208,9 +208,9 @@ project commands (do not use `sudo`):
 ```bash
 webcodex login https://your-domain.example --code <wc_pair_...> \
   --allowed-root "$HOME/git"
-webcodex agent install --scope user \
+webcodex runner install --scope user \
   --config <login-reported-agent-config>
-webcodex agent status --scope user \
+webcodex runner status --scope user \
   --config <login-reported-agent-config>
 webcodex ops status --server-url https://your-domain.example \
   --token-file <login-reported-webcodex-user-token> --strict
@@ -239,7 +239,7 @@ Copy only the short-lived `wc_pair_*` code to the client. Do not copy
 
 ## Runner service scopes
 
-`webcodex agent install` supports user or system scope. Non-root users default
+`webcodex runner install` supports user or system scope. Non-root users default
 to user scope; root defaults to system scope.
 
 **User scope** uses `systemctl --user`, writes the unit under
@@ -247,9 +247,9 @@ to user scope; root defaults to system scope.
 and needs no `sudo`:
 
 ```bash
-webcodex agent install --scope user --profile workstation
-webcodex agent status --scope user --profile workstation
-webcodex agent logs --scope user --profile workstation --lines 100
+webcodex runner install --scope user --profile workstation
+webcodex runner status --scope user --profile workstation
+webcodex runner logs --scope user --profile workstation --lines 100
 ```
 
 An enabled user unit follows that account's user manager. For unattended boot
@@ -261,13 +261,13 @@ automatically.
 `--user`:
 
 ```bash
-sudo webcodex agent install \
+sudo webcodex runner install \
   --scope system \
   --profile workstation \
   --user <runner-user> \
   --working-directory /home/<runner-user> \
   --config /etc/webcodex/clients/workstation/agent.toml
-sudo webcodex agent status --scope system --profile workstation
+sudo webcodex runner status --scope system --profile workstation
 ```
 
 A root Runner is refused unless `--allow-root-runner` is explicit (discouraged).
@@ -388,7 +388,7 @@ shell, and SSH-resource settings. Identity, server/auth, project source,
 concurrency, capabilities, and transport changes require a restart.
 
 For a foreground test, run `webcodex-runner --profile workstation`. Advanced
-manual config generation uses `webcodex agent init`.
+manual config generation uses `webcodex runner init`.
 
 ## OAuth2
 

@@ -93,7 +93,7 @@ webcodex disconnect
 ```bash
 webcodex login https://webcodex.example --code <wc_pair_...> \
   --allowed-root "$HOME/git"
-webcodex agent install --scope user \
+webcodex runner install --scope user \
   --config <login-reported-agent-config>
 ```
 
@@ -112,7 +112,7 @@ Runner token 或 bootstrap administrator token 合并成一个概念。
 - 仓库路径和 Git 状态；
 - Server URL；
 - profile/state/log **路径**；
-- `webcodex agent status` / `webcodex server status`；
+- `webcodex runner status` / `webcodex server status`；
 - `webcodex status` 与 `webcodex doctor` 输出；
 - token 文件的位置，但不是其内容。
 
@@ -144,8 +144,8 @@ ChatGPT 的前置条件；第一次 hosted-chat 路径用 `share`。
 ```bash
 webcodex status
 webcodex doctor
-webcodex agent status --profile <profile>
-webcodex agent logs --profile <profile> --lines 100
+webcodex runner status --profile <profile>
+webcodex runner logs --profile <profile> --lines 100
 ```
 
 稳定错误码与 operator 检查见[故障排查](TROUBLESHOOTING.zh-CN.md)。

@@ -1,6 +1,6 @@
 # Example config for webcodex-runner.
 # Copy to /etc/webcodex/clients/workstation/agent.toml and edit token/client_id/server_url.
-# Prefer generating this file with: webcodex agent init --profile workstation
+# Prefer generating this file with: webcodex runner init --profile workstation
 
 server_url = "https://webcodex.example.com"
 token = "replace-with-agent-token"

@@ -60,8 +60,8 @@ fn install_service_generates_expected_unit_without_tokens() {
 /// rules. On Windows the systemd service feature fails closed.
 #[cfg(unix)]
 #[test]
-fn user_agent_unit_uses_user_target_without_identity_directives_or_root_workdir() {
-    let opts = parse_agent_install_service_with_identity(
+fn user_runner_unit_uses_user_target_without_identity_directives_or_root_workdir() {
+    let opts = parse_runner_install_service_with_identity(
         &args(&[
             "--scope",
             "user",
@@ -78,7 +78,7 @@ fn user_agent_unit_uses_user_target_without_identity_directives_or_root_workdir(
         false,
     )
     .unwrap();
-    let unit = run_agent_install_service(opts).unwrap();
+    let unit = run_runner_install_service(opts).unwrap();
     assert!(unit.contains("WantedBy=default.target\n"));
     assert!(!unit.contains("network-online.target"));
     assert!(unit.contains("WorkingDirectory=/home/alice\n"));
@@ -92,7 +92,7 @@ fn user_agent_unit_uses_user_target_without_identity_directives_or_root_workdir(
 #[cfg(unix)]
 #[test]
 fn explicitly_allowed_root_runner_is_visibly_marked() {
-    let opts = parse_agent_install_service_with_identity(
+    let opts = parse_runner_install_service_with_identity(
         &args(&[
             "--scope",
             "system",
@@ -106,7 +106,7 @@ fn explicitly_allowed_root_runner_is_visibly_marked() {
         true,
     )
     .unwrap();
-    let unit = run_agent_install_service(opts).unwrap();
+    let unit = run_runner_install_service(opts).unwrap();
     assert!(unit.contains("WARNING: --allow-root-runner was explicitly accepted"));
     assert!(unit.contains("WorkingDirectory=/root\n"));
 }
@@ -290,11 +290,11 @@ fn server_socket_rendering_fails_closed_on_missing_or_malformed_address() {
 /// rules. On Windows the systemd service feature fails closed.
 #[cfg(unix)]
 #[test]
-fn agent_install_service_generates_expected_unit_without_tokens() {
+fn runner_install_service_generates_expected_unit_without_tokens() {
     let tmp = tempfile::tempdir().unwrap();
     let config = tmp.path().join("agent.toml");
     std::fs::write(&config, "token = \"agent_secret_should_not_print\"\n").unwrap();
-    let opts = parse_agent_install_service(&args(&[
+    let opts = parse_runner_install_service(&args(&[
         "--scope",
         "system",
         "--config",
@@ -310,7 +310,7 @@ fn agent_install_service_generates_expected_unit_without_tokens() {
         "--dry-run",
     ]))
     .unwrap();
-    let unit = run_agent_install_service(opts).unwrap();
+    let unit = run_runner_install_service(opts).unwrap();
     assert!(unit.contains("[Unit]\nDescription=WebCodex Runner\n"));
     assert!(unit.contains("After=network-online.target\n"));
     assert!(unit.contains("Wants=network-online.target\n"));
@@ -336,11 +336,11 @@ fn agent_install_service_generates_expected_unit_without_tokens() {
 /// rules. On Windows the systemd service feature fails closed.
 #[cfg(unix)]
 #[test]
-fn agent_install_service_refuses_overwrite_unless_requested() {
+fn runner_install_service_refuses_overwrite_unless_requested() {
     let tmp = tempfile::tempdir().unwrap();
     let service_file = tmp.path().join("webcodex-runner.service");
     std::fs::write(&service_file, "old").unwrap();
-    let opts = parse_agent_install_service(&args(&[
+    let opts = parse_runner_install_service(&args(&[
         "--scope",
         "system",
         "--user",
@@ -355,7 +355,7 @@ fn agent_install_service_refuses_overwrite_unless_requested() {
         service_file.to_str().unwrap(),
     ]))
     .unwrap();
-    let err = run_agent_install_service(opts).unwrap_err();
+    let err = run_runner_install_service(opts).unwrap_err();
     assert!(err.contains("already exists"));
 }
 
@@ -363,8 +363,8 @@ fn agent_install_service_refuses_overwrite_unless_requested() {
 /// rules. On Windows the systemd service feature fails closed.
 #[cfg(unix)]
 #[test]
-fn agent_install_service_dry_run_and_output_work_without_systemd() {
-    let dry = parse_agent_install_service(&args(&[
+fn runner_install_service_dry_run_and_output_work_without_systemd() {
+    let dry = parse_runner_install_service(&args(&[
         "--scope",
         "system",
         "--user",
@@ -378,11 +378,11 @@ fn agent_install_service_dry_run_and_output_work_without_systemd() {
         "--dry-run",
     ]))
     .unwrap();
-    assert!(run_agent_install_service(dry).unwrap().contains(
+    assert!(run_runner_install_service(dry).unwrap().contains(
         "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"/etc/webcodex/agent.toml\""
     ));
 
-    let out = parse_agent_install_service(&args(&[
+    let out = parse_runner_install_service(&args(&[
         "--scope",
         "system",
         "--user",
@@ -398,7 +398,7 @@ fn agent_install_service_dry_run_and_output_work_without_systemd() {
         "--json",
     ]))
     .unwrap();
-    let json: Value = serde_json::from_str(&run_agent_install_service(out).unwrap()).unwrap();
+    let json: Value = serde_json::from_str(&run_runner_install_service(out).unwrap()).unwrap();
     assert_eq!(json["dry_run"], true);
     assert!(json["unit"].as_str().unwrap().contains(
         "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"/etc/webcodex/agent.toml\""
@@ -507,7 +507,7 @@ fn make_executable(path: &std::path::Path) {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn generated_server_and_agent_units_pass_systemd_analyze_verify() {
+fn generated_server_and_runner_units_pass_systemd_analyze_verify() {
     let tmp = tempfile::tempdir().unwrap();
     let server_bin = tmp.path().join("webcodex-server");
     let runner_bin = tmp.path().join("webcodex-runner");
@@ -541,7 +541,7 @@ fn generated_server_and_agent_units_pass_systemd_analyze_verify() {
 
     let config = tmp.path().join("agent.toml");
     std::fs::write(&config, "server_url = \"http://127.0.0.1\"\n").unwrap();
-    let agent = parse_agent_install_service(&args(&[
+    let agent = parse_runner_install_service(&args(&[
         "--scope",
         "system",
         "--user",
@@ -555,7 +555,7 @@ fn generated_server_and_agent_units_pass_systemd_analyze_verify() {
         "--dry-run",
     ]))
     .unwrap();
-    let agent_unit = run_agent_install_service(agent).unwrap();
+    let agent_unit = run_runner_install_service(agent).unwrap();
     assert!(agent_unit.contains("webcodex-runner\" \"--config\""));
     assert!(agent_unit.contains("WorkingDirectory=/var/lib/webcodex\n"));
     verify_systemd_units(&[("webcodex-runner-default.service", &agent_unit)]);
@@ -601,7 +601,7 @@ fn special_supported_paths_pass_systemd_analyze_verify() {
     assert!(server_unit.contains("%%p"));
     verify_systemd_units(&[(service_name, server_unit), (socket_name, socket_unit)]);
 
-    let agent = parse_agent_install_service(&args(&[
+    let agent = parse_runner_install_service(&args(&[
         "--scope",
         "system",
         "--user",
@@ -615,7 +615,7 @@ fn special_supported_paths_pass_systemd_analyze_verify() {
         "--dry-run",
     ]))
     .unwrap();
-    let agent_unit = run_agent_install_service(agent).unwrap();
+    let agent_unit = run_runner_install_service(agent).unwrap();
     assert!(agent_unit.contains("\\\"slash\\\\percent%%p.toml"));
     verify_systemd_units(&[("webcodex-runner-special.service", &agent_unit)]);
 }
@@ -639,8 +639,8 @@ fn executable_program_rejects_quote_and_backslash_in_dry_run() {
 /// rules. On Windows the systemd service feature fails closed.
 #[cfg(unix)]
 #[test]
-fn agent_output_mode_rejects_invalid_unit_fields() {
-    let opts = parse_agent_install_service(&args(&[
+fn runner_output_mode_rejects_invalid_unit_fields() {
+    let opts = parse_runner_install_service(&args(&[
         "--scope",
         "system",
         "--user",
@@ -655,7 +655,7 @@ fn agent_output_mode_rejects_invalid_unit_fields() {
         "-",
     ]))
     .unwrap();
-    let error = run_agent_install_service(opts).unwrap_err();
+    let error = run_runner_install_service(opts).unwrap_err();
     assert!(error.contains("ExecStart --config"));
     assert!(!error.contains("Environment=BAD=1"));
 }
@@ -664,7 +664,7 @@ fn agent_output_mode_rejects_invalid_unit_fields() {
 /// rules. On Windows the systemd service feature fails closed.
 #[cfg(unix)]
 #[test]
-fn agent_status_parses_agent_toml_without_printing_token_and_systemd_unknown() {
+fn runner_status_parses_agent_toml_without_printing_token_and_systemd_unknown() {
     let _guard = env_test_guard();
     let _env = EnvGuard::new().set_os("PATH", OsString::new());
     let tmp = tempfile::tempdir().unwrap();
@@ -688,7 +688,7 @@ allowed_roots = ["/srv/projects"]
         ),
     )
     .unwrap();
-    let opts = parse_agent_status(&args(&[
+    let opts = parse_runner_status(&args(&[
         "--scope",
         "system",
         "--config",
@@ -700,7 +700,7 @@ allowed_roots = ["/srv/projects"]
         .enable_all()
         .build()
         .unwrap();
-    let output = rt.block_on(run_agent_status(opts)).unwrap();
+    let output = rt.block_on(run_runner_status(opts)).unwrap();
     assert!(!output.contains(secret));
     let json: Value = serde_json::from_str(&output).unwrap();
     assert_eq!(json["service"]["unit"], "webcodex-runner.service");
@@ -718,7 +718,7 @@ allowed_roots = ["/srv/projects"]
 /// rules. On Windows the systemd service feature fails closed.
 #[cfg(unix)]
 #[test]
-fn agent_status_rejects_agent_token_in_user_runtime_token_file_without_leaking_it() {
+fn runner_status_rejects_agent_token_in_user_runtime_token_file_without_leaking_it() {
     let _guard = env_test_guard();
     let _env = EnvGuard::new().set_os("PATH", OsString::new());
     let tmp = tempfile::tempdir().unwrap();
@@ -731,7 +731,7 @@ fn agent_status_rejects_agent_token_in_user_runtime_token_file_without_leaking_i
     let token_file = tmp.path().join("webcodex-user-token");
     let secret = "wc_agent_do_not_echo_status_0123456789";
     std::fs::write(&token_file, format!("{secret}\n")).unwrap();
-    let opts = parse_agent_status(&args(&[
+    let opts = parse_runner_status(&args(&[
         "--scope",
         "system",
         "--config",
@@ -744,7 +744,7 @@ fn agent_status_rejects_agent_token_in_user_runtime_token_file_without_leaking_i
         .enable_all()
         .build()
         .unwrap();
-    let error = runtime.block_on(run_agent_status(opts)).unwrap_err();
+    let error = runtime.block_on(run_runner_status(opts)).unwrap_err();
     assert!(error.contains("Agent transport token"), "{error}");
     assert!(error.contains("webcodex-user-token"), "{error}");
     assert!(!error.contains(secret));
@@ -776,12 +776,12 @@ fn hosted_profile_runner_bin_never_falls_back_to_systemd_without_marker() {
         .set_os("XDG_CONFIG_HOME", config_home.into_os_string())
         .set_os("XDG_STATE_HOME", state_home.into_os_string())
         .set_os("PATH", fake_bin.into_os_string());
-    let opts = parse_agent_service_action(
+    let opts = parse_runner_service_action(
         "restart",
         &args(&["--profile", "hosted", "--bin", "/tmp/webcodex-dev-runner"]),
     )
     .unwrap();
-    let error = run_agent_service(opts).unwrap_err();
+    let error = run_runner_service(opts).unwrap_err();
     assert!(error.contains("existing hosted connect profile"), "{error}");
     assert!(!systemctl_called.exists());
 }
@@ -829,12 +829,12 @@ fn hosted_profile_status_uses_xdg_config_and_never_invokes_systemctl() {
         .set_os("XDG_CONFIG_HOME", config_home.into_os_string())
         .set_os("XDG_STATE_HOME", state_home.into_os_string())
         .set_os("PATH", fake_bin.into_os_string());
-    let opts = parse_agent_status_with_identity(&args(&["--profile", "hosted"]), true).unwrap();
+    let opts = parse_runner_status_with_identity(&args(&["--profile", "hosted"]), true).unwrap();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    let output = runtime.block_on(run_agent_status(opts));
+    let output = runtime.block_on(run_runner_status(opts));
 
     let output = output.unwrap();
     assert!(output.contains("runner mode:          hosted local process"));
@@ -845,7 +845,7 @@ fn hosted_profile_status_uses_xdg_config_and_never_invokes_systemctl() {
 /// service feature fails closed.
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_status_detects_current_client_online_and_agent_boundary() {
+async fn runner_status_detects_current_client_online_and_agent_boundary() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -894,7 +894,7 @@ transport = "websocket"
     let agent_token_file = tmp.path().join("webcodex-runner-token");
     std::fs::write(&user_token_file, "pat_online_secret_1234567890\n").unwrap();
     std::fs::write(&agent_token_file, "agent_boundary_secret_1234567890\n").unwrap();
-    let opts = parse_agent_status(&args(&[
+    let opts = parse_runner_status(&args(&[
         "--scope",
         "system",
         "--config",
@@ -908,7 +908,7 @@ transport = "websocket"
         agent_token_file.to_str().unwrap(),
     ]))
     .unwrap();
-    let output = run_agent_status(opts).await.unwrap();
+    let output = run_runner_status(opts).await.unwrap();
     handle.join().unwrap();
     let first_request = rx.recv().unwrap();
     let second_request = rx.recv().unwrap();

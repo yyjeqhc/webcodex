@@ -15,7 +15,7 @@ The CLI produces three binaries when built from source:
 - `webcodex-server` — the Server process (started and supervised with
   `webcodex server ...`).
 - `webcodex-runner` — the Runner process that executes project work (started
-  and supervised with `webcodex agent ...`).
+  and supervised with `webcodex runner ...`).
 
 `webcodex --help` lists the top-level namespaces. The sections below explain
 what each namespace is for.
@@ -81,26 +81,23 @@ not advertised by ordinary MCP/GPT Actions model discovery.
 | `webcodex client enroll` | Advanced client enrollment with explicit `--client-id` | Advanced; ordinary users should use `login`, which derives the client id and publishes the canonical per-server/user connection layout in one step. |
 | `webcodex logout <server-url>` | Remove this device's credentials for a Server | |
 
-### Runner (the `agent` namespace)
+### Runner lifecycle
 
-The Runner executable is `webcodex-runner`. The CLI namespace for it is called
-`agent` (for historical reasons): `webcodex agent ...` manages the
-`webcodex-runner` process and service. "Agent" and "Runner" refer to the same
-execution component, but they are not the same program: `webcodex` (which
-contains the `agent` namespace) and `webcodex-runner` are separate
-executables.
+The Runner executable is `webcodex-runner`. Its canonical CLI lifecycle namespace
+is `runner`: `webcodex runner ...` manages the `webcodex-runner` process and
+service. `webcodex` and `webcodex-runner` remain separate executables.
 
 | Command | Purpose |
 | --- | --- |
-| `webcodex agent init` | Generate an `agent.toml` config manually |
-| `webcodex agent install` | Install, enable, and start the Runner service |
-| `webcodex agent run` | Run `webcodex-runner` in the foreground |
-| `webcodex agent start` | Start a hosted background Runner or installed profile service |
-| `webcodex agent stop` | Stop it |
-| `webcodex agent restart` | Restart it |
-| `webcodex agent status` | Check Runner lifecycle, config, and connectivity |
-| `webcodex agent logs` | Read Runner logs (bounded) |
-| `webcodex agent uninstall` | Remove the service unit (requires `--confirm`) |
+| `webcodex runner init` | Generate an `agent.toml` config manually |
+| `webcodex runner install` | Install, enable, and start the Runner service |
+| `webcodex runner run` | Run `webcodex-runner` in the foreground |
+| `webcodex runner start` | Start a hosted background Runner or installed profile service |
+| `webcodex runner stop` | Stop it |
+| `webcodex runner restart` | Restart it |
+| `webcodex runner status` | Check Runner lifecycle, config, and connectivity |
+| `webcodex runner logs` | Read Runner logs (bounded) |
+| `webcodex runner uninstall` | Remove the service unit (requires `--confirm`) |
 
 Service commands accept `--scope user|system`. Non-root users default to user
 scope; root defaults to system scope. Profiles created by `webcodex connect`
@@ -205,7 +202,7 @@ normal entry points.
   repositories. It executes the actual work.
 - **profile** — a named local client configuration (paths, `agent.toml`,
   tokens) under the user's WebCodex config directory. `webcodex connect`
-  creates one; `webcodex agent ... --profile <name>` targets it.
+  creates one; `webcodex runner ... --profile <name>` targets it.
 - **client_id** — a stable logical identifier for one Runner/device (for
   example `workstation` or `alice-macbook`). A Runner's `client_id` is part of
   its runtime project ids and is what Runner tokens are bound to.
@@ -357,8 +354,8 @@ Existing hosted Server:
 
 ```bash
 webcodex connect https://your-server.example
-webcodex agent status --profile <profile>
-webcodex agent logs --profile <profile> --lines 100
+webcodex runner status --profile <profile>
+webcodex runner logs --profile <profile> --lines 100
 ```
 
 Managed enrollment:
@@ -366,8 +363,8 @@ Managed enrollment:
 ```bash
 webcodex login https://your-server.example --code <wc_pair_...> \
   --allowed-root "$HOME/git"
-webcodex agent install --scope user --config <login-reported-agent-config>
-webcodex agent status --scope user --config <login-reported-agent-config>
+webcodex runner install --scope user --config <login-reported-agent-config>
+webcodex runner status --scope user --config <login-reported-agent-config>
 webcodex ops status --server-url https://your-server.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```

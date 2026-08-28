@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::{
-    agent_init::{run_agent_init, AgentInitOptions, DEFAULT_POLL_INTERVAL_MS},
+    runner_config::{run_runner_init, RunnerInitOptions, DEFAULT_POLL_INTERVAL_MS},
     write_text_file, ClientEnrollOptions, PairingCreateOptions,
 };
 
@@ -232,7 +232,7 @@ pub(crate) async fn run_client_enroll(opts: ClientEnrollOptions) -> Result<Strin
         opts.overwrite,
         true,
     )?;
-    let agent_opts = AgentInitOptions {
+    let runner_opts = RunnerInitOptions {
         server_url: opts.server_url.clone(),
         token: Some(agent_token.clone()),
         token_file: None,
@@ -247,7 +247,7 @@ pub(crate) async fn run_client_enroll(opts: ClientEnrollOptions) -> Result<Strin
         allow_cwd_anywhere: opts.allow_cwd_anywhere,
         overwrite: opts.overwrite,
     };
-    run_agent_init(agent_opts)?;
+    run_runner_init(runner_opts)?;
 
     if opts.json {
         let summary = json!({
@@ -265,7 +265,7 @@ pub(crate) async fn run_client_enroll(opts: ClientEnrollOptions) -> Result<Strin
             ],
             "credential_usage": {
                 "webcodex-user-token": "GPT Actions, MCP, and REST/project APIs",
-                "webcodex-runner-token": "Runner/Agent transport only"
+                "webcodex-runner-token": "Runner transport only"
             }
         });
         serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
@@ -290,7 +290,7 @@ pub(crate) async fn run_client_enroll(opts: ClientEnrollOptions) -> Result<Strin
         ));
         out.push_str("\nCredential usage:\n");
         out.push_str("  - webcodex-user-token: GPT Actions, MCP, and REST/project APIs\n");
-        out.push_str("  - webcodex-runner-token: Runner/Agent transport only\n");
+        out.push_str("  - webcodex-runner-token: Runner transport only\n");
         out.push_str("\nNext steps:\n");
         let foreground_command = shell_command(&[
             "webcodex-runner".to_string(),

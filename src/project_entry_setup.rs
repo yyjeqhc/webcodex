@@ -5,7 +5,7 @@ use super::{
     SetupReport,
 };
 use crate::agent_init::{
-    generated_agent_config_toml, AgentInitOptions, DEFAULT_POLL_INTERVAL_MS, TRANSPORT_WEBSOCKET,
+    generated_runner_config_toml, RunnerInitOptions, DEFAULT_POLL_INTERVAL_MS, TRANSPORT_WEBSOCKET,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -279,7 +279,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
     };
 
     if !paths.agent_config.is_file() {
-        let content = generated_agent_config_toml(&AgentInitOptions {
+        let content = generated_runner_config_toml(&RunnerInitOptions {
             server_url: config.server_url(),
             token: Some(agent_token),
             token_file: None,

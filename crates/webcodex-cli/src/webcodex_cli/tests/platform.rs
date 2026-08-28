@@ -44,19 +44,19 @@ mod windows_guard {
     }
 
     #[test]
-    fn agent_install_fails_closed_on_windows() {
+    fn runner_install_fails_closed_on_windows() {
         for command in [
-            vec!["agent", "install"],
-            vec!["agent", "install", "--scope", "user"],
+            vec!["runner", "install"],
+            vec!["runner", "install", "--scope", "user"],
         ] {
             let message = windows_unsupported_platform_action(&args(&command))
-                .expect("agent install must be blocked on Windows");
+                .expect("runner install must be blocked on Windows");
             assert!(
                 message.contains("Automatic Windows Runner startup is not supported"),
                 "{command:?}: {message}"
             );
             assert!(
-                message.contains("webcodex agent start --profile"),
+                message.contains("webcodex runner start --profile"),
                 "{command:?}: {message}"
             );
         }
@@ -68,7 +68,7 @@ mod windows_guard {
             vec!["server", "--help"],
             vec!["server", "run", "-h"],
             vec!["share", "--help"],
-            vec!["agent", "install", "--help"],
+            vec!["runner", "install", "--help"],
         ] {
             assert!(
                 windows_unsupported_platform_action(&args(&command)).is_none(),
@@ -82,11 +82,11 @@ mod windows_guard {
         for command in [
             vec!["connect", "https://server.example.com"],
             vec!["login", "https://server.example.com", "--code", "wc_pair_x"],
-            vec!["agent", "status"],
-            vec!["agent", "start", "--profile", "demo"],
-            vec!["agent", "stop", "--profile", "demo"],
-            vec!["agent", "restart", "--profile", "demo"],
-            vec!["agent", "logs", "--profile", "demo"],
+            vec!["runner", "status"],
+            vec!["runner", "start", "--profile", "demo"],
+            vec!["runner", "stop", "--profile", "demo"],
+            vec!["runner", "restart", "--profile", "demo"],
+            vec!["runner", "logs", "--profile", "demo"],
             vec!["agent-tokens"],
             vec!["status"],
             vec!["doctor"],

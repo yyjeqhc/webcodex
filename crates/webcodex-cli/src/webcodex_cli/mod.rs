@@ -1,4 +1,3 @@
-pub(crate) mod agent_service;
 pub(crate) mod connect;
 pub(crate) mod connections;
 pub(crate) mod env;
@@ -8,6 +7,7 @@ pub(crate) mod ops;
 pub(crate) mod output;
 pub(crate) mod pairing;
 pub(crate) mod profiles;
+pub(crate) mod runner_service;
 pub(crate) mod server;
 pub(crate) mod service;
 pub(crate) mod setup;
@@ -47,9 +47,6 @@ pub(crate) fn shell_command(args: &[String]) -> String {
 }
 
 // Only the Unix systemd service tests consume this re-export.
-#[cfg(all(test, unix))]
-pub(crate) use agent_service::render_agent_systemd_unit;
-pub(crate) use agent_service::{run_agent_install_service, run_agent_service, run_agent_status};
 pub(crate) use connect::{
     local_runner_profile_marker, local_runner_state_summary, run_connect, run_disconnect,
     run_hosted_log_writer, run_local_runner_logs, run_local_runner_service, write_connect_result,
@@ -82,14 +79,20 @@ pub(crate) use output::{
 };
 pub(crate) use pairing::{run_client_enroll, run_pairing_create};
 pub(crate) use profiles::{
-    agent_config_for_scope, agent_service_file_for_scope, client_profile_agent_config,
-    client_profile_agent_token_file, client_profile_agent_token_file_for_scope,
-    client_profile_projects_dir, client_profile_state_dir, client_profile_user_token_file,
+    agent_config_for_scope, client_profile_agent_config, client_profile_agent_token_file,
+    client_profile_agent_token_file_for_scope, client_profile_projects_dir,
+    client_profile_state_dir, client_profile_user_token_file,
     client_profile_user_token_file_for_scope, current_user_home,
-    default_client_output_dir_for_profile, validate_client_profile, validate_service_file_scope,
+    default_client_output_dir_for_profile, runner_service_file_for_scope, validate_client_profile,
+    validate_service_file_scope,
 };
 #[cfg(test)]
 pub(crate) use profiles::{client_output_dir_for_profile, CLIENT_PROFILE_ERROR};
+#[cfg(all(test, unix))]
+pub(crate) use runner_service::render_runner_systemd_unit;
+pub(crate) use runner_service::{
+    run_runner_install_service, run_runner_service, run_runner_status,
+};
 pub(crate) use server::{
     run_server_init, run_server_install_service, run_server_service, run_server_status,
     ServerStatusOptions,
@@ -101,7 +104,7 @@ pub(crate) use service::{
     query_systemd_service_status, query_systemd_service_status_for_scope,
     query_systemd_socket_status, run_internal_binary, run_logs, run_logs_for_scope,
     service_unit_name, uninstall_server_unit_pair, uninstall_unit_for_scope,
-    validate_systemd_identity, ServiceControl, AGENT_SERVICE_UNIT, DEFAULT_LOG_LINES,
+    validate_systemd_identity, ServiceControl, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT,
     SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT, SERVER_SOCKET_UNIT,
 };
 pub(crate) use setup::run_setup_single_user;
@@ -117,10 +120,10 @@ pub(crate) use tokens::{
     hash_local_token, local_token_prefix, render_token_generate, resolve_token, token_prefix,
 };
 pub(crate) use usage::{
-    agent_init_usage, agent_install_service_usage, agent_status_usage, agent_usage,
     client_enroll_usage, client_usage, connect_usage, disconnect_usage, login_usage, logout_usage,
     ops_agents_usage, ops_projects_usage, ops_runner_usage, ops_smoke_preflight_usage,
-    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, server_init_usage,
+    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, runner_init_usage,
+    runner_install_service_usage, runner_status_usage, runner_usage, server_init_usage,
     server_install_service_usage, server_status_usage, server_usage, status_usage, usage,
 };
 

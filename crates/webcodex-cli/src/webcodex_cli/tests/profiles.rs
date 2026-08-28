@@ -175,10 +175,10 @@ fn client_enroll_rejects_unsafe_default_client_id_profile() {
 }
 
 #[test]
-fn agent_init_defaults_to_client_id_profile_paths() {
+fn runner_init_defaults_to_client_id_profile_paths() {
     let _guard = env_test_guard();
     let _env = deterministic_user_env();
-    let opts = parse_cli_agent_init(&args(&[
+    let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://example.test",
         "--token",
@@ -200,10 +200,10 @@ fn agent_init_defaults_to_client_id_profile_paths() {
 }
 
 #[test]
-fn agent_init_profile_overrides_client_id_profile_paths() {
+fn runner_init_profile_overrides_client_id_profile_paths() {
     let _guard = env_test_guard();
     let _env = deterministic_user_env();
-    let opts = parse_cli_agent_init(&args(&[
+    let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://example.test",
         "--token",
@@ -224,8 +224,8 @@ fn agent_init_profile_overrides_client_id_profile_paths() {
 }
 
 #[test]
-fn agent_init_explicit_output_and_projects_dir_win() {
-    let opts = parse_cli_agent_init(&args(&[
+fn runner_init_explicit_output_and_projects_dir_win() {
+    let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://example.test",
         "--token",
@@ -247,8 +247,8 @@ fn agent_init_explicit_output_and_projects_dir_win() {
 }
 
 #[test]
-fn agent_init_explicit_output_without_profile_preserves_legacy_projects_dir() {
-    let opts = parse_cli_agent_init(&args(&[
+fn runner_init_explicit_output_without_profile_preserves_legacy_projects_dir() {
+    let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://example.test",
         "--token",
@@ -266,8 +266,8 @@ fn agent_init_explicit_output_without_profile_preserves_legacy_projects_dir() {
 }
 
 #[test]
-fn agent_init_rejects_unsafe_profile() {
-    let err = parse_cli_agent_init(&args(&[
+fn runner_init_rejects_unsafe_profile() {
+    let err = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://example.test",
         "--token",
@@ -285,11 +285,11 @@ fn agent_init_rejects_unsafe_profile() {
 
 /// Unix-only: derives systemd service paths, which require Unix
 /// absolute-path semantics (`/etc/systemd/system/...`). On Windows the
-/// agent service feature fails closed instead.
+/// Runner service feature fails closed instead.
 #[cfg(unix)]
 #[test]
-fn agent_status_profile_derives_config_and_token_paths() {
-    let opts = parse_agent_status(&args(&["--profile", "special", "--scope", "system"])).unwrap();
+fn runner_status_profile_derives_config_and_token_paths() {
+    let opts = parse_runner_status(&args(&["--profile", "special", "--scope", "system"])).unwrap();
     assert_eq!(opts.scope, ServiceScope::System);
     assert_eq!(
         opts.config,
@@ -297,7 +297,7 @@ fn agent_status_profile_derives_config_and_token_paths() {
     );
     assert_eq!(
         opts.service_file,
-        agent_service_file_for_scope(ServiceScope::System, Some("special")).unwrap()
+        runner_service_file_for_scope(ServiceScope::System, Some("special")).unwrap()
     );
     assert_eq!(
         opts.user_token_file,
@@ -312,11 +312,11 @@ fn agent_status_profile_derives_config_and_token_paths() {
 
 /// Unix-only: derives systemd service paths, which require Unix
 /// absolute-path semantics (`/etc/systemd/system/...`). On Windows the
-/// agent service feature fails closed instead.
+/// Runner service feature fails closed instead.
 #[cfg(unix)]
 #[test]
-fn agent_status_explicit_paths_win_and_no_profile_keeps_legacy_default() {
-    let opts = parse_agent_status(&args(&[
+fn runner_status_explicit_paths_win_and_no_profile_keeps_legacy_default() {
+    let opts = parse_runner_status(&args(&[
         "--profile",
         "special",
         "--scope",
@@ -336,7 +336,7 @@ fn agent_status_explicit_paths_win_and_no_profile_keeps_legacy_default() {
         Some(PathBuf::from("/tmp/agent-token"))
     );
 
-    let legacy = parse_agent_status(&args(&["--scope", "system"])).unwrap();
+    let legacy = parse_runner_status(&args(&["--scope", "system"])).unwrap();
     assert_eq!(legacy.config, PathBuf::from("/etc/webcodex/agent.toml"));
     assert_eq!(
         legacy.service_file,
@@ -348,11 +348,11 @@ fn agent_status_explicit_paths_win_and_no_profile_keeps_legacy_default() {
 
 /// Unix-only: derives systemd service paths, which require Unix
 /// absolute-path semantics (`/etc/systemd/system/...`). On Windows the
-/// agent service feature fails closed instead.
+/// Runner service feature fails closed instead.
 #[cfg(unix)]
 #[test]
-fn agent_install_service_profile_derives_config_and_service_file() {
-    let opts = parse_agent_install_service(&args(&[
+fn runner_install_service_profile_derives_config_and_service_file() {
+    let opts = parse_runner_install_service(&args(&[
         "--profile",
         "special",
         "--scope",
@@ -372,9 +372,9 @@ fn agent_install_service_profile_derives_config_and_service_file() {
     );
     assert_eq!(
         opts.service_file,
-        agent_service_file_for_scope(ServiceScope::System, Some("special")).unwrap()
+        runner_service_file_for_scope(ServiceScope::System, Some("special")).unwrap()
     );
-    let unit = render_agent_systemd_unit(&opts).unwrap();
+    let unit = render_runner_systemd_unit(&opts).unwrap();
     assert!(unit.contains(
         "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"/etc/webcodex/clients/special/agent.toml\""
     ));
@@ -382,11 +382,11 @@ fn agent_install_service_profile_derives_config_and_service_file() {
 
 /// Unix-only: derives systemd service paths, which require Unix
 /// absolute-path semantics (`/etc/systemd/system/...`). On Windows the
-/// agent service feature fails closed instead.
+/// Runner service feature fails closed instead.
 #[cfg(unix)]
 #[test]
-fn agent_install_service_explicit_paths_win_and_rejects_unsafe_profile() {
-    let opts = parse_agent_install_service(&args(&[
+fn runner_install_service_explicit_paths_win_and_rejects_unsafe_profile() {
+    let opts = parse_runner_install_service(&args(&[
         "--profile",
         "special",
         "--scope",
@@ -409,7 +409,7 @@ fn agent_install_service_explicit_paths_win_and_rejects_unsafe_profile() {
         PathBuf::from("/tmp/webcodex-runner.service")
     );
 
-    let err = parse_agent_install_service(&args(&[
+    let err = parse_runner_install_service(&args(&[
         "--profile",
         "../x",
         "--scope",
@@ -431,13 +431,13 @@ fn agent_install_service_explicit_paths_win_and_rejects_unsafe_profile() {
 /// `webcodex_agent_config::paths` tests.
 #[cfg(unix)]
 #[test]
-fn agent_service_scope_parsing_defaults_and_paths_are_deterministic() {
+fn runner_service_scope_parsing_defaults_and_paths_are_deterministic() {
     let _guard = env_test_guard();
     let _env = EnvGuard::new()
         .set("HOME", "/home/alice")
         .set("XDG_CONFIG_HOME", "/tmp/alice-config");
 
-    let user = parse_agent_install_service_with_identity(
+    let user = parse_runner_install_service_with_identity(
         &args(&["--bin", "/opt/webcodex/bin/webcodex-runner", "--dry-run"]),
         false,
     )
@@ -454,14 +454,14 @@ fn agent_service_scope_parsing_defaults_and_paths_are_deterministic() {
     assert_eq!(user.working_directory, PathBuf::from("/home/alice"));
     assert!(!user.root_runner);
 
-    let root_error = parse_agent_install_service_with_identity(
+    let root_error = parse_runner_install_service_with_identity(
         &args(&["--bin", "/opt/webcodex/bin/webcodex-runner", "--dry-run"]),
         true,
     )
     .unwrap_err();
     assert!(root_error.contains("would run as root"), "{root_error}");
 
-    let root = parse_agent_install_service_with_identity(
+    let root = parse_runner_install_service_with_identity(
         &args(&[
             "--bin",
             "/opt/webcodex/bin/webcodex-runner",
@@ -479,7 +479,7 @@ fn agent_service_scope_parsing_defaults_and_paths_are_deterministic() {
     );
     assert!(root.root_runner);
 
-    let root_user_error = parse_agent_install_service_with_identity(
+    let root_user_error = parse_runner_install_service_with_identity(
         &args(&[
             "--scope",
             "user",
@@ -505,7 +505,7 @@ fn user_scope_falls_back_to_home_and_profile_paths() {
         .set("HOME", "/home/bob")
         .remove("XDG_CONFIG_HOME");
 
-    let opts = parse_agent_install_service_with_identity(
+    let opts = parse_runner_install_service_with_identity(
         &args(&[
             "--scope",
             "user",
@@ -530,12 +530,12 @@ fn user_scope_falls_back_to_home_and_profile_paths() {
 
 /// Unix-only: derives systemd service paths, which require Unix
 /// absolute-path semantics (`/etc/systemd/system/...`). On Windows the
-/// agent service feature fails closed instead.
+/// Runner service feature fails closed instead.
 #[cfg(unix)]
 #[test]
-fn agent_service_scope_rejects_invalid_and_conflicting_flags() {
+fn runner_service_scope_rejects_invalid_and_conflicting_flags() {
     let bin = "/opt/webcodex/bin/webcodex-runner";
-    let invalid = parse_agent_install_service_with_identity(
+    let invalid = parse_runner_install_service_with_identity(
         &args(&["--scope", "session", "--bin", bin]),
         false,
     )
@@ -548,18 +548,18 @@ fn agent_service_scope_rejects_invalid_and_conflicting_flags() {
     ] {
         let mut values = flags;
         values.extend(["--bin", bin]);
-        let error = parse_agent_install_service_with_identity(&args(&values), false).unwrap_err();
+        let error = parse_runner_install_service_with_identity(&args(&values), false).unwrap_err();
         assert!(error.contains("valid only with --scope system"), "{error}");
     }
 
-    let system_root = parse_agent_install_service_with_identity(
+    let system_root = parse_runner_install_service_with_identity(
         &args(&["--scope", "system", "--bin", bin]),
         false,
     )
     .unwrap_err();
     assert!(system_root.contains("would run as root"), "{system_root}");
 
-    let unnecessary_opt_in = parse_agent_install_service_with_identity(
+    let unnecessary_opt_in = parse_runner_install_service_with_identity(
         &args(&[
             "--scope",
             "system",
@@ -582,11 +582,11 @@ fn agent_service_scope_rejects_invalid_and_conflicting_flags() {
 
 /// Unix-only: derives systemd service paths, which require Unix
 /// absolute-path semantics (`/etc/systemd/system/...`). On Windows the
-/// agent service feature fails closed instead.
+/// Runner service feature fails closed instead.
 #[cfg(unix)]
 #[test]
 fn explicit_service_paths_override_defaults_but_wrong_scope_paths_are_rejected() {
-    let user = parse_agent_install_service_with_identity(
+    let user = parse_runner_install_service_with_identity(
         &args(&[
             "--scope",
             "user",
@@ -608,7 +608,7 @@ fn explicit_service_paths_override_defaults_but_wrong_scope_paths_are_rejected()
         PathBuf::from("/tmp/webcodex-runner-custom.service")
     );
 
-    let error = parse_agent_install_service_with_identity(
+    let error = parse_runner_install_service_with_identity(
         &args(&[
             "--scope",
             "user",
@@ -622,7 +622,7 @@ fn explicit_service_paths_override_defaults_but_wrong_scope_paths_are_rejected()
     .unwrap_err();
     assert!(error.contains("user scope cannot write"), "{error}");
 
-    let error = parse_agent_install_service_with_identity(
+    let error = parse_runner_install_service_with_identity(
         &args(&[
             "--scope",
             "user",
@@ -636,7 +636,7 @@ fn explicit_service_paths_override_defaults_but_wrong_scope_paths_are_rejected()
     .unwrap_err();
     assert!(error.contains("user scope cannot write"), "{error}");
 
-    let error = parse_agent_service_action(
+    let error = parse_runner_service_action(
         "start",
         &args(&[
             "--scope",
@@ -648,7 +648,7 @@ fn explicit_service_paths_override_defaults_but_wrong_scope_paths_are_rejected()
     .unwrap_err();
     assert!(error.contains("system scope cannot write"), "{error}");
 
-    let error = parse_agent_service_action(
+    let error = parse_runner_service_action(
         "start",
         &args(&[
             "--scope",
@@ -663,16 +663,16 @@ fn explicit_service_paths_override_defaults_but_wrong_scope_paths_are_rejected()
 
 /// Unix-only: derives systemd service paths, which require Unix
 /// absolute-path semantics (`/etc/systemd/system/...`). On Windows the
-/// agent service feature fails closed instead.
+/// Runner service feature fails closed instead.
 #[cfg(unix)]
 #[test]
 fn explicit_scope_selects_systemd_while_omitted_scope_preserves_hosted_profile() {
     let _guard = env_test_guard();
     let _env = deterministic_user_env();
-    let implicit = parse_agent_service_action("start", &args(&["--profile", "hosted"])).unwrap();
+    let implicit = parse_runner_service_action("start", &args(&["--profile", "hosted"])).unwrap();
     assert!(implicit.local_profile.is_some());
 
-    let explicit = parse_agent_service_action(
+    let explicit = parse_runner_service_action(
         "start",
         &args(&["--profile", "hosted", "--scope", "system"]),
     )
@@ -689,7 +689,7 @@ fn hosted_profile_runner_bin_override_is_narrow_and_explicit() {
     let bin = "/tmp/webcodex-dev-runner";
 
     let restart =
-        parse_agent_service_action("restart", &args(&["--profile", "hosted", "--bin", bin]))
+        parse_runner_service_action("restart", &args(&["--profile", "hosted", "--bin", bin]))
             .unwrap();
     assert_eq!(
         restart
@@ -709,24 +709,24 @@ fn hosted_profile_runner_bin_override_is_narrow_and_explicit() {
         (
             "start",
             vec!["--profile", "hosted", "--bin", bin],
-            "valid only with `webcodex agent restart",
+            "valid only with `webcodex runner restart",
         ),
     ] {
-        let error = parse_agent_service_action(command, &args(&values)).unwrap_err();
+        let error = parse_runner_service_action(command, &args(&values)).unwrap_err();
         assert!(error.contains(expected), "{command}: {error}");
     }
 }
 
 /// Unix-only: derives systemd service paths, which require Unix
 /// absolute-path semantics (`/etc/systemd/system/...`). On Windows the
-/// agent service feature fails closed instead.
+/// Runner service feature fails closed instead.
 #[cfg(unix)]
 #[test]
 fn omitted_scope_hosted_status_keeps_xdg_profile_paths_for_root() {
     let _guard = env_test_guard();
     let _env = deterministic_user_env();
 
-    let opts = parse_agent_status_with_identity(&args(&["--profile", "hosted"]), true).unwrap();
+    let opts = parse_runner_status_with_identity(&args(&["--profile", "hosted"]), true).unwrap();
     assert_eq!(opts.scope, ServiceScope::System);
     assert_eq!(
         opts.config,
@@ -749,13 +749,13 @@ fn omitted_scope_hosted_status_keeps_xdg_profile_paths_for_root() {
 
 /// Unix-only: derives systemd service paths, which require Unix
 /// absolute-path semantics (`/etc/systemd/system/...`). On Windows the
-/// agent service feature fails closed instead.
+/// Runner service feature fails closed instead.
 #[cfg(unix)]
 #[test]
-fn every_agent_service_action_accepts_scope_and_service_file() {
+fn every_runner_service_action_accepts_scope_and_service_file() {
     let service_file = "/home/alice/.config/systemd/user/webcodex-runner-work.service";
     for command in ["start", "stop", "restart"] {
-        let parsed = parse_agent_service_action(
+        let parsed = parse_runner_service_action(
             command,
             &args(&["--scope", "user", "--service-file", service_file]),
         )
@@ -765,7 +765,7 @@ fn every_agent_service_action_accepts_scope_and_service_file() {
         assert_eq!(parsed.unit, "webcodex-runner-work.service");
     }
 
-    let logs = parse_agent_service_action(
+    let logs = parse_runner_service_action(
         "logs",
         &args(&[
             "--scope",
@@ -782,7 +782,7 @@ fn every_agent_service_action_accepts_scope_and_service_file() {
         ServiceActionKind::Logs { lines: 25, .. }
     ));
 
-    let uninstall = parse_agent_service_action(
+    let uninstall = parse_runner_service_action(
         "uninstall",
         &args(&[
             "--scope",

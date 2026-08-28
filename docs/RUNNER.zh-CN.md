@@ -1,7 +1,7 @@
 # Runner
 
 Runner 是真正执行工作的组件。可执行文件是 `webcodex-runner`；管理它的 CLI 命名
-空间是 `webcodex agent ...`。"Agent" 与 "Runner" 指同一个执行组件，但它们不是
+空间是 `webcodex runner ...`。"Agent" 与 "Runner" 指同一个执行组件，但它们不是
 同一个程序：`webcodex`（包含 `agent` 命名空间）与 `webcodex-runner` 是两个独立
 可执行文件——"agent" 是历史遗留的 CLI 名称。本页说明 Runner 做什么、如何连接、
 如何注册项目、如何以服务方式运维，以及它的主要运行时概念。
@@ -25,7 +25,7 @@ Runner 是最接近你仓库的信任边界。请用窄的 allowed roots 与显�
 | **Server** | `webcodex-server` 进程：认证、路由、持久化。 |
 | **CLI** | 运维与开发者使用的 `webcodex` 命令。 |
 | **Runner** | 在仓库机器上执行工作的 `webcodex-runner` 进程。 |
-| **Agent / agent CLI 命名空间** | 管理 Runner 的 CLI 命名空间 `webcodex agent ...`。与 Runner 是同一执行组件，但是独立的可执行文件。 |
+| **Runner CLI 命名空间** | `webcodex runner ...`，管理 `webcodex-runner` 的生命周期和服务。 |
 | **profile** | 一个命名的本地客户端配置（`agent.toml`、令牌、路径）。 |
 | **client_id** | 一个 Runner/设备的稳定逻辑标识。 |
 | **agent_instance_id** | `webcodex-runner` 启动时生成的进程级身份；Server 把它当作活跃租约身份（见「重连与恢复」）。 |
@@ -285,11 +285,11 @@ Runner 断连是 liveness 事实，不等于工作丢失。已接受的活跃 Jo
 ## 关停与重启
 
 `webcodex-runner` 在 `SIGINT`/`SIGTERM` 时干净关停。它不会自行 daemonize。
-托管部署请用 `webcodex agent install --scope user|system` 把它安装并托管为
+托管部署请用 `webcodex runner install --scope user|system` 把它安装并托管为
 user 或 system 服务，并把令牌放进服务环境。
 
 机器重启后，hosted `connect` profile 通过重新运行 `webcodex connect` 或
-`webcodex agent start --profile <profile>` 来恢复。hosted profile 暂不支持开机自动
+`webcodex runner start --profile <profile>` 来恢复。hosted profile 暂不支持开机自动
 启动。
 
 ## macOS 本地 dogfood 签名
@@ -312,7 +312,7 @@ binary；下面的 helper 不接入公开 release 打包流程。
 ```bash
 cargo build --release --bin webcodex --bin webcodex-runner
 scripts/macos_sign_local_runner.sh
-target/release/webcodex agent restart --profile <profile> \
+target/release/webcodex runner restart --profile <profile> \
   --bin "$HOME/.local/lib/webcodex-dev/webcodex-runner"
 ```
 
@@ -379,24 +379,24 @@ Call hierarchy 必须由独立的 `lsp_call_hierarchy` capability 声明，且�
 最简命令：
 
 ```bash
-webcodex agent status --profile <profile>
-webcodex agent logs --profile <profile> --lines 100
-webcodex agent restart --profile <profile>
+webcodex runner status --profile <profile>
+webcodex runner logs --profile <profile> --lines 100
+webcodex runner restart --profile <profile>
 ```
 
 用户服务：
 
 ```bash
-webcodex agent install --scope user --config <login-reported-agent-config>
-webcodex agent status --scope user --config <login-reported-agent-config>
+webcodex runner install --scope user --config <login-reported-agent-config>
+webcodex runner status --scope user --config <login-reported-agent-config>
 ```
 
 管理员管理的系统服务：
 
 ```bash
-sudo webcodex agent install --scope system --profile <profile> \
+sudo webcodex runner install --scope system --profile <profile> \
   --user <runner-user> --working-directory /home/<runner-user>
-sudo webcodex agent status --scope system --profile <profile>
+sudo webcodex runner status --scope system --profile <profile>
 ```
 
 install、status、start、stop、restart、logs、uninstall 请使用相同的 `--scope`。

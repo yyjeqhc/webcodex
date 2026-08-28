@@ -162,7 +162,7 @@ async function api(path: string, body: any, signal: any = null): Promise<any> {
     if (signal && signal.aborted) {
       return null;
     }
-    showError("WebCodex is not reachable. Run webcodex agent start.");
+    showError("WebCodex is not reachable. Run webcodex runner start.");
     return null;
   }
   let data: any = null;

@@ -61,7 +61,7 @@ pub(crate) fn user_systemd_unit_dir() -> Result<PathBuf, String> {
     Ok(user_config_home()?.join("systemd/user"))
 }
 
-pub(crate) fn agent_service_file_for_scope(
+pub(crate) fn runner_service_file_for_scope(
     scope: ServiceScope,
     profile: Option<&str>,
 ) -> Result<PathBuf, String> {

@@ -56,11 +56,9 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             .into_iter()
             .map(|spec| spec.name),
     );
-    stateless_runtime_names.extend(
-        crate::tool_runtime::memory_runtime_tool_specs()
-            .into_iter()
-            .map(|spec| spec.name),
-    );
+    // Memory tools are intentionally credential-authority filtered, including
+    // auth=None, and their exact scope matrix is covered by the dedicated
+    // Memory surface tests below rather than this registry-parity test.
 
     for compact in [false, true] {
         if compact {
@@ -110,7 +108,7 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             .collect();
         assert_eq!(
             stateless_names, stateless_runtime_names,
-            "stateless-2026 tools/list must equal the full runtime registry plus fixed Skill and Memory runtime tools (compact={compact})"
+            "stateless-2026 unauthenticated tools/list must equal the full runtime registry plus fixed Skill runtime tools; Memory tools require explicit authority (compact={compact})"
         );
         for tool in stateless_value["result"]["tools"].as_array().unwrap() {
             let properties = tool["inputSchema"]["properties"].as_object().unwrap();

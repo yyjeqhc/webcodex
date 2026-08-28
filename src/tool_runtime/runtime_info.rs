@@ -759,7 +759,6 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
             "server_registration": {"status": "not_observed"},
             "project_registry": {"status": "not_observed"},
             "connector_endpoint": {"status": "not_observed"},
-            "session_binding": {"status": "not_observed"},
             "last_successful_tool_call": {"status": "not_observed"},
         })),
         "version_compatibility": {
@@ -1090,25 +1089,8 @@ fn connection_layers(
         }
     };
 
-    // -- session_binding: exact durable identity + process-local cache ----------
-    let session_binding = layer_observation(
-        "not_observed",
-        None,
-        "session_store",
-        None,
-        Some("exact_binding_requires_window_and_project_observation"),
-        now,
-        json!({
-            "process_local_cache": true,
-            "durable_exact_binding": true,
-            "restored_after_restart": true,
-            "requires_stable_window_identity": true,
-            "missing_identity_fallback": false,
-        }),
-    );
-
     // -- last_successful_tool_call: scoped meaningful activity ----------------
-    let principal = super::session_context::current_session_principal(auth).ok();
+    let principal = super::session_context::runtime_observation_principal(auth).ok();
     let observation = principal
         .as_ref()
         .and_then(|(kind, id)| observations.latest_tool_call_for_principal(kind, id))
@@ -1152,7 +1134,6 @@ fn connection_layers(
         "server_registration": server_registration,
         "project_registry": project_registry,
         "connector_endpoint": connector_endpoint,
-        "session_binding": session_binding,
         "last_successful_tool_call": last_successful_tool_call,
     })
 }

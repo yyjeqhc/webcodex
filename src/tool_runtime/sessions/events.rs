@@ -45,6 +45,8 @@ impl ToolCallRecorderMetadata {
             .map(str::to_string);
         Self {
             recording_session_id,
+            recording_session_project: None,
+            recording_session_authorized: false,
             expectation: tool_call_expectation_from_arguments(arguments),
             ack_session_message_ids: arguments
                 .as_object()

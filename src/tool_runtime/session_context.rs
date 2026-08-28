@@ -1,15 +1,11 @@
 use super::sessions;
-use super::tool_definition::{
-    runtime_tool_allows_current_session_fallback, runtime_tool_is_shell_like,
-    runtime_tool_requires_session_project_escape,
-};
-use super::{RecoveryKind, ToolCall, ToolResult, ToolRuntime};
+use super::tool_definition::runtime_tool_is_shell_like;
+use super::{RecoveryKind, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 pub(crate) const SESSION_PROJECT_MISMATCH_KIND: &str = "session_project_mismatch";
-pub(crate) const ALLOW_CROSS_PROJECT_SESSION_FIELD: &str = "allow_cross_project_session";
 const SESSION_ATTENTION_MAX_MESSAGES: usize = 3;
 const SESSION_ATTENTION_MAX_BODY_BYTES: usize = 3072;
 const SESSION_CONTINUITY_RECOVERY_EVENT_LIMIT: usize = 20;
@@ -66,99 +62,10 @@ pub(crate) fn session_project_mismatch_result(
             "session_project": mismatch.session_project,
             "request_project": mismatch.request_project,
             "command_started": false,
-        }),
-    )
-    .with_recovery(RecoveryKind::FixInput, None)
-}
-
-/// Project mismatch for a tool whose contract never permits cross-project
-/// Session escape. Keep this distinct from the generic mismatch response so
-/// callers are not told to supply an unsupported argument.
-pub(crate) fn session_project_mismatch_no_escape_result(
-    session_id: &str,
-    tool_name: &str,
-    mismatch: &SessionProjectMismatch,
-) -> ToolResult {
-    ToolResult::err_with_output(
-        format!(
-            "session_project_mismatch: session {} is scoped to project {} but {} requested project {}; cross-project escape is not supported",
-            session_id, mismatch.session_project, tool_name, mismatch.request_project
-        ),
-        json!({
-            "error_kind": SESSION_PROJECT_MISMATCH_KIND,
-            "failure_kind": SESSION_PROJECT_MISMATCH_KIND,
-            "session_id": session_id,
-            "tool_name": tool_name,
-            "session_project": mismatch.session_project,
-            "request_project": mismatch.request_project,
-            "cross_project_escape_supported": false,
-            "command_started": false,
             "state_changed": false,
         }),
     )
     .with_recovery(RecoveryKind::FixInput, None)
-}
-
-pub(crate) fn session_project_mismatch_warning(
-    mismatch: &SessionProjectMismatch,
-    allow_cross_project_session: bool,
-) -> Value {
-    let mut warning = json!({
-        "kind": SESSION_PROJECT_MISMATCH_KIND,
-        "warning_kind": SESSION_PROJECT_MISMATCH_KIND,
-        "session_project": mismatch.session_project,
-        "request_project": mismatch.request_project,
-    });
-    if allow_cross_project_session {
-        warning[ALLOW_CROSS_PROJECT_SESSION_FIELD] = Value::Bool(true);
-    }
-    warning
-}
-
-pub(crate) fn add_session_project_mismatch_warning(
-    result: &mut ToolResult,
-    mismatch: &SessionProjectMismatch,
-    allow_cross_project_session: bool,
-) {
-    let warning = session_project_mismatch_warning(mismatch, allow_cross_project_session);
-    let mut output = match std::mem::take(&mut result.output) {
-        Value::Object(map) => map,
-        other => {
-            let mut map = serde_json::Map::new();
-            map.insert("value".to_string(), other);
-            map
-        }
-    };
-
-    output.insert(
-        "warning_kind".to_string(),
-        Value::String(SESSION_PROJECT_MISMATCH_KIND.to_string()),
-    );
-    output.insert(
-        "session_project".to_string(),
-        Value::String(mismatch.session_project.clone()),
-    );
-    output.insert(
-        "request_project".to_string(),
-        Value::String(mismatch.request_project.clone()),
-    );
-    if allow_cross_project_session {
-        output.insert(
-            ALLOW_CROSS_PROJECT_SESSION_FIELD.to_string(),
-            Value::Bool(true),
-        );
-    }
-    match output.get_mut("warnings") {
-        Some(Value::Array(warnings)) => warnings.push(warning),
-        _ => {
-            output.insert("warnings".to_string(), Value::Array(vec![warning]));
-        }
-    }
-    result.output = Value::Object(output);
-}
-
-pub(crate) fn session_project_mismatch_requires_escape(tool_name: &str) -> bool {
-    runtime_tool_requires_session_project_escape(tool_name)
 }
 
 pub(crate) fn session_guard_denied_result(
@@ -386,16 +293,6 @@ pub(crate) fn session_message_error_result(
         )
         .with_recovery(RecoveryKind::FixInput, None),
     }
-}
-
-pub(crate) fn current_session_unavailable_result(message: impl Into<String>) -> ToolResult {
-    ToolResult::err_with_output(
-        message.into(),
-        json!({
-            "error_kind": "current_session_unavailable",
-        }),
-    )
-    .with_recovery(RecoveryKind::FixInput, None)
 }
 
 #[cfg(test)]
@@ -780,10 +677,6 @@ fn bound_utf8_bytes(value: &str, max_bytes: usize) -> (String, bool) {
     (value[..end].to_string(), true)
 }
 
-pub(crate) fn is_current_session_eligible(call: &ToolCall) -> bool {
-    call.project().is_some() && runtime_tool_allows_current_session_fallback(call.tool_name())
-}
-
 pub(crate) fn workflow_session_authority_fingerprint(
     auth: Option<&AuthContext>,
 ) -> Result<String, String> {
@@ -863,29 +756,6 @@ fn hash_workflow_session_authority(domain: &[u8], kind: &str, id: &str) -> Strin
     format!("{:x}", hasher.finalize())
 }
 
-pub(crate) fn current_session_key(
-    auth: Option<&AuthContext>,
-    transport: sessions::SessionTransport,
-    resolved_project: &str,
-    repository_root: &str,
-    window: Option<&crate::client_window::ClientWindow>,
-) -> Result<sessions::CurrentSessionKey, String> {
-    let (principal_kind, principal_id) = current_session_principal(auth)?;
-    let Some(window) = window else {
-        return Err(
-            "current_session_unavailable: caller has no stable chat-window identity".to_string(),
-        );
-    };
-    Ok(sessions::CurrentSessionKey {
-        principal_kind,
-        principal_id,
-        transport: transport.as_str().to_string(),
-        window_key: window.key().to_string(),
-        resolved_project: resolved_project.to_string(),
-        repository_root_key: canonical_repository_key(repository_root),
-    })
-}
-
 pub(crate) fn canonical_repository_key(repository_root: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"webcodex.workflow-repository-root.v1\0");
@@ -893,7 +763,7 @@ pub(crate) fn canonical_repository_key(repository_root: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub(crate) fn current_session_principal(
+pub(crate) fn runtime_observation_principal(
     auth: Option<&AuthContext>,
 ) -> Result<(String, String), String> {
     let Some(auth) = auth else {
@@ -923,7 +793,7 @@ pub(crate) fn current_session_principal(
     };
     let Some(principal_id) = id else {
         return Err(
-            "current_session_unavailable: authenticated caller has no stable principal id"
+            "runtime_observation_unavailable: authenticated caller has no stable principal id"
                 .to_string(),
         );
     };

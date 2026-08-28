@@ -26,8 +26,7 @@ use super::project_instructions::{ProjectInstructionFile, ProjectInstructionsSna
 use super::project_resolution::ResolvedProject;
 use super::runtime_info::compact_runtime_status;
 use super::session_context::{
-    session_project_mismatch_warning, workflow_session_authority_fingerprint,
-    SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
+    session_project_mismatch_result, workflow_session_authority_fingerprint, SessionProjectMismatch,
 };
 use super::sessions::tool_failure_summary_from_events;
 use super::sessions::{self, SessionTransport, TOOL_CALL_RECORDING_SESSION_ID_FIELD};
@@ -38,8 +37,8 @@ use super::startup_brief::{
 use super::tool_catalog::TOOL_RECOMMENDED_FLOWS;
 use super::tool_inputs::{SessionMode, StartupDetail};
 use super::tool_result::{RecoveryKind, ToolResult};
+use super::unknown_session_result;
 use super::validation_events::skipped_validation_summary;
-use super::{current_session_key, unknown_session_result};
 use super::{ToolCall, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
@@ -85,6 +84,7 @@ enum CodingProjectSource {
 
 #[derive(Debug, Clone, Copy)]
 struct CodingStartupOptions {
+    tool_name: &'static str,
     detail: StartupDetail,
     include_repository_overview: bool,
     include_project_instructions: bool,
@@ -95,6 +95,7 @@ impl CodingStartupOptions {
     fn start_coding_task(detail: StartupDetail) -> Self {
         Self {
             detail,
+            tool_name: "start_coding_task",
             include_repository_overview: true,
             include_project_instructions: true,
             include_reused_instruction_content: false,
@@ -104,6 +105,7 @@ impl CodingStartupOptions {
     fn work_on_project(include_project_instructions: bool) -> Self {
         Self {
             detail: StartupDetail::Standard,
+            tool_name: "work_on_project",
             include_repository_overview: false,
             include_project_instructions,
             include_reused_instruction_content: include_project_instructions,
@@ -329,12 +331,11 @@ impl ToolRuntime {
         deny_shell_tools: bool,
         detail: StartupDetail,
         resume_session_id: Option<String>,
-        bind_current: bool,
-        new_session: bool,
         execution_context: Option<sessions::SessionExecutionContext>,
         auth: Option<&AuthContext>,
+        trusted_recording_session_id: Option<&str>,
+        trusted_recording_session_project: Option<&str>,
         transport: SessionTransport,
-        window: Option<&crate::client_window::ClientWindow>,
     ) -> ToolResult {
         self.start_coding_task_with_options(
             project,
@@ -347,14 +348,69 @@ impl ToolRuntime {
             deny_shell_tools,
             CodingStartupOptions::start_coding_task(detail),
             resume_session_id,
-            bind_current,
-            new_session,
             execution_context,
             auth,
+            trusted_recording_session_id,
+            trusted_recording_session_project,
             transport,
-            window,
         )
         .await
+    }
+
+    async fn explicit_coding_session_project(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        auth: Option<&AuthContext>,
+    ) -> Result<Option<ResolvedProject>, ToolResult> {
+        if let Some(resolved) = self
+            .authorize_session_target(session_id, tool_name, auth)
+            .await?
+        {
+            return Ok(Some(resolved));
+        }
+        let Some(project) = self
+            .sessions
+            .session_project(session_id)
+            .expect("authorized Workflow Session must still exist")
+        else {
+            return Ok(None);
+        };
+        self.resolve_project_input_for_auth(&project, auth)
+            .await
+            .map(Some)
+            .map_err(|error| error.into_tool_result())
+    }
+
+    fn path_source_session_mismatch(
+        session_id: &str,
+        tool_name: &str,
+        session_project: Option<&ResolvedProject>,
+        client_id: &str,
+        path: &str,
+    ) -> Option<ToolResult> {
+        let request_project = format!("path:{client_id}:{path}");
+        let Some(session_project) = session_project else {
+            return Some(session_project_mismatch_result(
+                session_id,
+                tool_name,
+                &SessionProjectMismatch {
+                    session_project: "<unscoped>".to_string(),
+                    request_project,
+                },
+            ));
+        };
+        if session_project.config.client_id != client_id || session_project.config.path != path {
+            return Some(session_project_mismatch_result(
+                session_id,
+                tool_name,
+                &SessionProjectMismatch {
+                    session_project: session_project.resolved_id.clone(),
+                    request_project,
+                },
+            ));
+        }
+        None
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -370,12 +426,11 @@ impl ToolRuntime {
         deny_shell_tools: bool,
         startup: CodingStartupOptions,
         resume_session_id: Option<String>,
-        bind_current: bool,
-        new_session: bool,
         execution_context: Option<sessions::SessionExecutionContext>,
         auth: Option<&AuthContext>,
+        trusted_recording_session_id: Option<&str>,
+        trusted_recording_session_project: Option<&str>,
         transport: SessionTransport,
-        window: Option<&crate::client_window::ClientWindow>,
     ) -> ToolResult {
         let detail = startup.detail;
         let project_source =
@@ -384,18 +439,6 @@ impl ToolRuntime {
                 Err(result) => return result,
             };
         let resume_requested = resume_session_id.is_some();
-        if resume_requested && new_session {
-            return ToolResult::err_with_output(
-                "resume_session_id and new_session=true are mutually exclusive",
-                json!({
-                    "error_kind": "invalid_arguments",
-                    "failure_kind": "invalid_arguments",
-                    "conflicting_fields": ["resume_session_id", "new_session"],
-                    "constraint": "resume_session_id_mutually_exclusive_with_new_session",
-                    "state_changed": false,
-                }),
-            );
-        }
         let execution_context = match execution_context
             .map(sessions::SessionExecutionContext::validated)
             .transpose()
@@ -432,6 +475,28 @@ impl ToolRuntime {
             Some(session_id) => Some(session_id),
             None => None,
         };
+        let resume_session_project = match resume_session_id.as_deref() {
+            Some(session_id) => match self
+                .explicit_coding_session_project(session_id, startup.tool_name, auth)
+                .await
+            {
+                Ok(project) => project,
+                Err(result) => return result,
+            },
+            None => None,
+        };
+        let trusted_recording_session_resolved_project = match (
+            trusted_recording_session_id,
+            trusted_recording_session_project,
+        ) {
+            (Some(_), Some(project)) => {
+                match self.resolve_project_input_for_auth(project, auth).await {
+                    Ok(resolved) => Some(resolved),
+                    Err(error) => return error.into_tool_result(),
+                }
+            }
+            _ => None,
+        };
         let title = match title {
             Some(title) => {
                 let title = title.trim().to_string();
@@ -466,6 +531,21 @@ impl ToolRuntime {
                 (project, resolution)
             }
             CodingProjectSource::ManagedTemporary { client_id, name } => {
+                if let Some(recording_session_id) = trusted_recording_session_id {
+                    return session_project_mismatch_result(
+                        recording_session_id,
+                        startup.tool_name,
+                        &SessionProjectMismatch {
+                            session_project: trusted_recording_session_project
+                                .unwrap_or("<unscoped>")
+                                .to_string(),
+                            request_project: format!(
+                                "managed_temporary:{client_id}:{}",
+                                name.as_deref().unwrap_or("<generated>")
+                            ),
+                        },
+                    );
+                }
                 if resume_session_id.is_some() {
                     return ToolResult::err_with_output(
                         "resume_session_id requires an existing project",
@@ -533,6 +613,28 @@ impl ToolRuntime {
                 (project, resolution)
             }
             CodingProjectSource::RunnerPath { client_id, path } => {
+                if let Some(session_id) = resume_session_id.as_deref() {
+                    if let Some(result) = Self::path_source_session_mismatch(
+                        session_id,
+                        startup.tool_name,
+                        resume_session_project.as_ref(),
+                        &client_id,
+                        &path,
+                    ) {
+                        return result;
+                    }
+                }
+                if let Some(recording_session_id) = trusted_recording_session_id {
+                    if let Some(result) = Self::path_source_session_mismatch(
+                        recording_session_id,
+                        startup.tool_name,
+                        trusted_recording_session_resolved_project.as_ref(),
+                        &client_id,
+                        &path,
+                    ) {
+                        return result;
+                    }
+                }
                 if let Some(result) = registration_scope_denied(auth, "project path registration") {
                     return result;
                 }
@@ -647,6 +749,45 @@ impl ToolRuntime {
             }
         };
         project_resolution.resolved_project = resolved.resolved_id.clone();
+        if let Some(session_id) = resume_session_id.as_deref() {
+            if resume_session_project
+                .as_ref()
+                .map(|project| project.resolved_id.as_str())
+                != Some(resolved.resolved_id.as_str())
+            {
+                return attach_project_resolution(
+                    session_project_mismatch_result(
+                        session_id,
+                        startup.tool_name,
+                        &SessionProjectMismatch {
+                            session_project: resume_session_project
+                                .as_ref()
+                                .map(|project| project.resolved_id.clone())
+                                .unwrap_or_else(|| "<unscoped>".to_string()),
+                            request_project: resolved.resolved_id.clone(),
+                        },
+                    ),
+                    &project_resolution,
+                );
+            }
+        }
+        if let Some(recording_session_id) = trusted_recording_session_id {
+            if trusted_recording_session_project != Some(resolved.resolved_id.as_str()) {
+                return attach_project_resolution(
+                    session_project_mismatch_result(
+                        recording_session_id,
+                        startup.tool_name,
+                        &SessionProjectMismatch {
+                            session_project: trusted_recording_session_project
+                                .unwrap_or("<unscoped>")
+                                .to_string(),
+                            request_project: resolved.resolved_id.clone(),
+                        },
+                    ),
+                    &project_resolution,
+                );
+            }
+        }
         // Semantic-navigation and fixed project-instruction observation remain
         // mandatory startup probes. The advanced start_coding_task entry also
         // runs the independent repository overview concurrently. The ordinary
@@ -694,40 +835,6 @@ impl ToolRuntime {
                 "message": "repository structure overview was unavailable during startup",
             }));
         }
-        // Current-session identity is only needed when this request intends to
-        // bind a Session as current. Explicit resume is authorized independently
-        // by project equality plus the Session's canonical creation-time authority.
-        let continuity_key = if bind_current {
-            match current_session_key(
-                auth,
-                transport,
-                &resolved.resolved_id,
-                &resolved.config.path,
-                window,
-            ) {
-                Ok(key) => Some(key),
-                Err(message) => {
-                    if bind_current {
-                        warnings.push(if resume_requested {
-                            json!({
-                                "kind": "current_binding_unavailable",
-                                "reason_code": "stable_window_identity_unavailable",
-                                "message": "explicit Workflow Session resume continued without a current binding because stable chat-window identity was unavailable",
-                            })
-                        } else {
-                            json!({
-                                "kind": "current_binding_unavailable",
-                                "message": message,
-                            })
-                        });
-                    }
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
         let mut runtime_status_call_failed = false;
         let (runtime_status, runtime_status_for_brief) = {
             let result = self.runtime_status(auth).await;
@@ -763,7 +870,6 @@ impl ToolRuntime {
         if !git.is_null() {
             append_workspace_warnings(&workspace_payload_from_git_summary(&git), &mut warnings);
         }
-        let binding_available = bind_current && continuity_key.is_some();
         let write_scope_verified =
             auth.is_none_or(|auth| auth.has_scope(crate::auth::SCOPE_PROJECT_WRITE));
         let authority_fingerprint = match workflow_session_authority_fingerprint(auth) {
@@ -784,7 +890,6 @@ impl ToolRuntime {
         };
         let session_outcome = match self.sessions.ensure_coding_session(
             sessions::CodingSessionRequest {
-                key: continuity_key.clone(),
                 project: resolved.resolved_id.clone(),
                 authority_fingerprint,
                 resume_session_id: resume_session_id.clone(),
@@ -797,8 +902,6 @@ impl ToolRuntime {
                 execution_context,
                 project_instructions: Some(project_instructions.clone()),
                 transport,
-                bind_current: binding_available,
-                new_session,
                 // Startup always re-reads bounded current Git state and the
                 // fixed project-instruction candidates.
                 context_refreshed: true,
@@ -889,21 +992,6 @@ impl ToolRuntime {
                     &project_resolution,
                 );
             }
-            Err(sessions::CodingSessionError::ResumeNewSessionConflict) => {
-                return attach_project_resolution(
-                    ToolResult::err_with_output(
-                        "resume_session_id and new_session=true are mutually exclusive",
-                        json!({
-                            "error_kind": "invalid_arguments",
-                            "failure_kind": "invalid_arguments",
-                            "conflicting_fields": ["resume_session_id", "new_session"],
-                            "constraint": "resume_session_id_mutually_exclusive_with_new_session",
-                            "state_changed": false,
-                        }),
-                    ),
-                    &project_resolution,
-                );
-            }
             Err(sessions::CodingSessionError::WriteScopeRequired) => {
                 return attach_project_resolution(
                     ToolResult::err_with_output(
@@ -946,34 +1034,6 @@ impl ToolRuntime {
             }
         };
         let session_summary = &session_outcome.summary;
-        let current_binding = if binding_available {
-            json!({
-                "bound": true,
-                "session_id": session_summary.session_id,
-                "process_local_cache": true,
-                "durable_exact_binding": true,
-                "restored_after_restart": true,
-                "transport": transport.as_str(),
-                "resolved_project": resolved.resolved_id.clone(),
-            })
-        } else {
-            json!({
-                "bound": false,
-                "process_local_cache": true,
-                "durable_exact_binding": true,
-                "restored_after_restart": true,
-                "transport": transport.as_str(),
-                "reason_code": if bind_current {
-                    if resume_requested {
-                        "stable_window_identity_unavailable"
-                    } else {
-                        "window_identity_unavailable"
-                    }
-                } else {
-                    "binding_disabled"
-                },
-            })
-        };
         let mut connection_state = runtime_status
             .get("connection_layers")
             .cloned()
@@ -984,35 +1044,10 @@ impl ToolRuntime {
                     "server_registration": {"status": "not_observed"},
                     "project_registry": {"status": "resolved", "resolved_project": resolved.resolved_id},
                     "connector_endpoint": {"status": "not_observed"},
-                    "session_binding": {"status": "not_observed"},
                     "last_successful_tool_call": {"status": "not_observed"},
                 })
             });
         connection_state["project_registry"]["resolved_project"] = json!(resolved.resolved_id);
-        connection_state["session_binding"] = json!({
-            "status": if binding_available { "bound" } else { "not_bound" },
-            "observed_at": chrono::Utc::now().timestamp(),
-            "source": "session_store",
-            "age_secs": 0,
-            "stale_after_secs": Value::Null,
-            "reason_code": if binding_available {
-                Value::Null
-            } else if bind_current {
-                if resume_requested {
-                    json!("stable_window_identity_unavailable")
-                } else {
-                    json!("window_identity_unavailable")
-                }
-            } else {
-                json!("binding_disabled")
-            },
-            "process_local_cache": true,
-            "durable_exact_binding": true,
-            "restored_after_restart": true,
-            "requires_stable_window_identity": true,
-            "transport": transport.as_str(),
-            "durable_resume": "the same exact principal, transport, stable window, project, and canonical repository root resumes the durable wc_sess_* session",
-        });
         let recommended_flow = match &tool_manifest {
             Some(manifest) => recommended_flow_payload_for_manifest_tools(manifest),
             None => recommended_flow_payload(),
@@ -1025,8 +1060,6 @@ impl ToolRuntime {
         // session) surfaces a compact `not_applicable` verdict.
         let continuation_kind = if resume_requested {
             "resumed_explicitly"
-        } else if session_outcome.reused {
-            "continued"
         } else {
             "created"
         };
@@ -1059,16 +1092,9 @@ impl ToolRuntime {
                 "guards": session_summary.guards,
                 "execution_context": session_summary.execution_context,
                 "lifecycle": session_summary.lifecycle,
-                "continuation": if resume_requested {
-                    "resumed_explicitly"
-                } else if session_outcome.reused {
-                    "continued"
-                } else {
-                    "created"
-                },
+                "continuation": if resume_requested { "resumed_explicitly" } else { "created" },
                 "reused": session_outcome.reused,
                 "resume_requested": resume_requested,
-                "new_session_requested": new_session,
                 "instruction_appended": title.is_some(),
                 "root_title": session_summary.title,
                 "capability": {
@@ -1086,13 +1112,11 @@ impl ToolRuntime {
                     "rules_recaptured": true,
                     "execution_context_changed": session_outcome.execution_context_changed,
                 },
-                "explicit_session_id_required_for_continuity": !binding_available,
-                "explicit_session_id_recommended": !binding_available,
+                "explicit_resume_required_for_continuation": true,
                 "explicit_session_id_fields": {
                     "tool_business_input": "session_id",
                     "generic_wrapper_recorder": TOOL_CALL_RECORDING_SESSION_ID_FIELD
                 },
-                "current_binding": current_binding,
             },
             "runtime_status": runtime_status.clone(),
             "connection_state": connection_state,
@@ -1128,23 +1152,10 @@ impl ToolRuntime {
         // start_coding_task stays incremental, while work_on_project follows
         // its caller-explicit include_project_instructions preference.
         let force_instruction_load = previous_instructions.is_none();
-        let binding_reason_code = if binding_available {
-            None
-        } else if bind_current {
-            Some(if resume_requested {
-                "stable_window_identity_unavailable"
-            } else {
-                "window_identity_unavailable"
-            })
-        } else {
-            Some("binding_disabled")
-        };
         let canonical_repository_root_matches = if resume_requested {
             None
         } else {
-            // A fresh Session starts at the resolved root. Automatic reuse can
-            // only come from the exact current binding, whose identity includes
-            // the canonical repository-root key.
+            // A fresh Session starts at the currently resolved canonical root.
             Some(true)
         };
         let project_resolution_value =
@@ -1158,8 +1169,6 @@ impl ToolRuntime {
             continuation_kind,
             reused: session_outcome.reused,
             resume_requested,
-            binding_available,
-            binding_reason_code,
             instructions: &project_instructions,
             previous_instructions,
             force_instruction_load,
@@ -1185,14 +1194,11 @@ impl ToolRuntime {
 
     /// Thin `start_coding_task` wrapper for the daily model coding loop.
     ///
-    /// The wrapper validates only its three simple inputs, maps them onto
-    /// normal coding-task defaults, delegates the entire business implementation
-    /// to `start_coding_task`, and projects a compact startup result. It never
-    /// reads the current window, binds a current Session, guesses a recent
-    /// Session, or falls back to a credential-wide Session. With `session_id`
-    /// present, it exactly resumes that one Workflow Session after the existing
-    /// project/lifecycle/access/capability checks and never creates or falls
-    /// back on failure.
+    /// The wrapper validates its simple inputs, maps them onto normal coding-task
+    /// defaults, delegates the business implementation to `start_coding_task`,
+    /// and projects a compact startup result. With `session_id` present, it
+    /// exactly resumes that one Workflow Session after project/lifecycle/access/
+    /// capability checks; without it, it always creates a fresh Session.
     pub(crate) async fn work_on_project(
         &self,
         project: String,
@@ -1203,8 +1209,9 @@ impl ToolRuntime {
         include_project_instructions: bool,
         include_workflow_guidance: bool,
         auth: Option<&AuthContext>,
+        trusted_recording_session_id: Option<&str>,
+        trusted_recording_session_project: Option<&str>,
         transport: SessionTransport,
-        window: Option<&crate::client_window::ClientWindow>,
     ) -> ToolResult {
         let project_source = match resolve_project_source(project, client_id, path, None, false) {
             Ok(source) => source,
@@ -1258,10 +1265,8 @@ impl ToolRuntime {
         // Map onto the existing coding-task business implementation. The
         // internal work-on-project profile keeps the standard shared brief,
         // including rules, semantic navigation, workspace, and job metadata,
-        // while deliberately skipping the optional repository overview.
-        // bind_current=false keeps the wrapper window-agnostic; it never
-        // establishes a current-window binding or guesses an old Session.
-        let new_session = session_id.is_none();
+        // while deliberately skipping the optional repository overview. Without
+        // an explicit session_id this always creates a fresh Workflow Session.
         let result = self
             .start_coding_task_with_options(
                 project.clone(),
@@ -1274,12 +1279,11 @@ impl ToolRuntime {
                 false,
                 CodingStartupOptions::work_on_project(include_project_instructions),
                 session_id.clone(),
-                false,
-                new_session,
                 None,
                 auth,
+                trusted_recording_session_id,
+                trusted_recording_session_project,
                 transport,
-                window,
             )
             .await;
         if !result.success {
@@ -1340,26 +1344,21 @@ impl ToolRuntime {
             Some(summary) => summary,
             None => return unknown_session_result(&session_id),
         };
+        let session_project = session_summary
+            .project
+            .clone()
+            .unwrap_or_else(|| "<projectless>".to_string());
+        if session_summary.project.as_deref() != Some(resolved.resolved_id.as_str()) {
+            return session_project_mismatch_result(
+                &session_id,
+                "finish_coding_task",
+                &SessionProjectMismatch {
+                    session_project,
+                    request_project: resolved.resolved_id.clone(),
+                },
+            );
+        }
         let mut final_warnings = Vec::new();
-        let session_project_mismatch =
-            session_summary
-                .project
-                .as_ref()
-                .and_then(|session_project| {
-                    (session_project != &resolved.resolved_id).then(|| SessionProjectMismatch {
-                        session_project: session_project.clone(),
-                        request_project: resolved.resolved_id.clone(),
-                    })
-                });
-        if let Some(mismatch) = session_project_mismatch.as_ref() {
-            final_warnings.push(session_project_mismatch_warning(mismatch, false));
-        }
-        if session_summary.project.is_none() {
-            final_warnings.push(json!({
-                "kind": "session_has_no_project",
-                "message": "session was not created with a project association",
-            }));
-        }
 
         let show_changes_call = ToolCall::ShowChanges {
             project: resolved.resolved_id.clone(),
@@ -1559,11 +1558,6 @@ impl ToolRuntime {
             "llm_summary": false,
             "final_warnings": final_warnings,
         });
-        if let Some(mismatch) = session_project_mismatch.as_ref() {
-            output["warning_kind"] = json!(SESSION_PROJECT_MISMATCH_KIND);
-            output["session_project"] = json!(mismatch.session_project);
-            output["request_project"] = json!(mismatch.request_project);
-        }
         let reconciliation = reconcile_closeout_evidence(
             output.get("tool_failures").unwrap_or(&Value::Null),
             &closeout_session_summary.events,

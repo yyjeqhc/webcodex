@@ -879,13 +879,11 @@ fn explicit_resume_advanced_compatibility_schema_and_metadata_are_retained() {
     assert_eq!(property["type"], "string");
     assert_eq!(property["pattern"], "^wc_sess_[A-Za-z0-9_]+$");
     let description = property["description"].as_str().unwrap();
-    assert!(description.contains("failure never falls back"));
-    assert!(description.contains("no current binding"));
+    assert!(description.contains("failure never creates a replacement"));
     assert!(description.contains("recording_session_id"));
-    assert_eq!(
-        spec.input_schema["not"]["required"],
-        json!(["resume_session_id", "new_session"])
-    );
+    let properties = spec.input_schema["properties"].as_object().unwrap();
+    assert!(!properties.contains_key("bind_current"));
+    assert!(!properties.contains_key("new_session"));
     assert!(spec.description.contains("resume_session_id"));
     assert!(spec
         .description
@@ -983,15 +981,17 @@ async fn session_tools_exposed_in_registry_and_mcp() {
     assert!(registry_names.contains(&"session_summary"));
     assert!(registry_names.contains(&"update_session_context"));
     assert!(registry_names.contains(&"validation_summary"));
-    assert!(registry_names.contains(&"current_session"));
-    assert!(registry_names.contains(&"unbind_current_session"));
-    // `start_session` and `bind_current_session` are ModelHidden: the
-    // model coding line is covered by `start_coding_task` (resume_session_id
-    // + bind_current), and `current_session` is the query-only view. They
-    // keep no public ToolSpec, so they must be absent from both the
-    // registry and the MCP tools/list surface.
+    for removed in [
+        "bind_current_session",
+        "current_session",
+        "unbind_current_session",
+    ] {
+        assert!(
+            !registry_names.contains(&removed),
+            "removed Session tool leaked into registry: {removed}"
+        );
+    }
     assert!(!registry_names.contains(&"start_session"));
-    assert!(!registry_names.contains(&"bind_current_session"));
 
     let outcome = handle_mcp_request(
         &runtime,
@@ -1012,10 +1012,17 @@ async fn session_tools_exposed_in_registry_and_mcp() {
     assert!(names.iter().any(|name| name == "session_summary"));
     assert!(names.iter().any(|name| name == "update_session_context"));
     assert!(names.iter().any(|name| name == "validation_summary"));
-    assert!(names.iter().any(|name| name == "current_session"));
-    assert!(names.iter().any(|name| name == "unbind_current_session"));
     assert!(!names.iter().any(|name| name == "start_session"));
-    assert!(!names.iter().any(|name| name == "bind_current_session"));
+    for removed in [
+        "bind_current_session",
+        "current_session",
+        "unbind_current_session",
+    ] {
+        assert!(
+            !names.iter().any(|name| name == removed),
+            "removed Session tool leaked into MCP: {removed}"
+        );
+    }
     let tools = value["result"]["tools"].as_array().unwrap();
     let tool_description = |name: &str| {
         tools
@@ -1031,16 +1038,7 @@ async fn session_tools_exposed_in_registry_and_mcp() {
     assert!(tool_description("update_session_context").contains("background writer"));
     assert!(tool_description("update_session_context").contains("success does not mean"));
     assert!(tool_description("validation_summary").contains("does not run cargo"));
-    assert!(tool_description("session_handoff_summary")
-        .contains("does not depend on current-session binding"));
-    for name in ["current_session", "unbind_current_session"] {
-        let description = tool_description(name);
-        assert!(
-                description.contains("process-local")
-                    && description.contains("hashed durable"),
-                "MCP {name} description should distinguish the exact cache and hashed durable projection: {description}"
-            );
-    }
+    assert!(tool_description("session_handoff_summary").contains("explicit session_id"));
     let validation_summary = tools
         .iter()
         .find(|tool| tool["name"] == "validation_summary")

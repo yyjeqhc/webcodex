@@ -930,8 +930,7 @@ async fn http_hidden_start_coding_task_keeps_params_and_arguments_advanced_compa
         let advanced = json!({
             "project": "agent:importer:demo",
             "mode": "read_only",
-            "detail": "minimal",
-            "bind_current": false
+            "detail": "minimal"
         });
         let body = if wrapper == "params" {
             json!({"tool": "start_coding_task", "params": advanced})
@@ -2269,12 +2268,18 @@ async fn http_tools_list_includes_phase4_edit_tools() {
     assert_eq!(effective_status(&resp), StatusCode::OK);
     let body: Value = resp.take_json().await.unwrap();
     let names = body["names"].as_array().unwrap();
-    // `replace_in_file` was removed and `start_session` is ModelHidden: both
-    // are withheld from the model-facing tools/list surface. Only the visible
-    // canonical tools appear here.
+    // `replace_in_file` was removed and `start_session` is ModelHidden; removed
+    // Workflow current-session controls must likewise stay absent. Only the
+    // visible canonical tools appear here.
     assert!(!names.iter().any(|n| n == "replace_in_file"));
     assert!(!names.iter().any(|n| n == "start_session"));
-    assert!(!names.iter().any(|n| n == "bind_current_session"));
+    for removed in [
+        "bind_current_session",
+        "current_session",
+        "unbind_current_session",
+    ] {
+        assert!(!names.iter().any(|n| n == removed));
+    }
     assert!(names.iter().any(|n| n == "write_project_file"));
     assert_eq!(body["count"], names.len());
     let tools = body["tools"].as_array().unwrap();

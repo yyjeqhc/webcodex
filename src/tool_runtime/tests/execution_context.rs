@@ -855,7 +855,10 @@ async fn update_session_context_requires_authorized_exact_project_and_preserves_
     assert_eq!(mismatch.output["failure_kind"], "session_project_mismatch");
     assert_eq!(mismatch.output["command_started"], false);
     assert_eq!(mismatch.output["state_changed"], false);
-    assert_eq!(mismatch.output["cross_project_escape_supported"], false);
+    assert!(mismatch
+        .output
+        .get("cross_project_escape_supported")
+        .is_none());
     assert!(mismatch
         .output
         .get("allow_cross_project_session_required")

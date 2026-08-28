@@ -23,11 +23,11 @@ Full naming, lifecycle, compatibility, and non-goals:
 | ID form | `wc_sess_*` |
 | Purpose | Coding-task workflow: start/finish coding task, tool events, validation evidence, handoff |
 | Storage | In-memory ledger with durable JSON-oriented session records (product surface for MCP / runtime tools) |
-| Identity rules | Explicit `session_id` always wins; unknown id → `unknown_session_id`; no silent current-session fallback |
+| Identity rules | Existing Workflow Session effects require an explicit business `session_id` or authorized wrapper `recording_session_id`; unknown ids fail closed and omission never infers a Session |
 | Mutation policy | `inspect` denies structured writes and Landlocks shell/jobs; `read_only` denies write-like and shell/job-like tools; guard denial before mutation |
 
 Do **not** change `wc_sess_*` ID format, ledger event shape, or lifecycle
-semantics casually. Session / guard / current-session work must preserve the
+semantics casually. Session / guard / explicit-targeting work must preserve the
 invariants listed in `AGENTS.md` §6 (Architecture) and the session section.
 
 ### Collaboration boundary (standing)
@@ -48,7 +48,7 @@ rules are:
 - Room/Discussion state never proves model-context retention or message delivery.
   Membership, presence, transport/window identity, or a referenced Workflow
   Session cannot be used as a receipt that a model has seen prior messages, nor
-  as hidden current-session/context fallback. Models explicitly observe the
+  as hidden Workflow Session/context inference. Models explicitly observe the
   bounded collaboration state they need;
 - Room/Discussion membership or roles may govern only that collaboration
   container's own visibility/posting contract; they never confer Project,
@@ -119,7 +119,7 @@ correlation only:
 | Direction | Action Audit → `workflow_session_id: Option<String>` (`wc_sess_*`) |
 | Authority | Store on the audit side (prefer event/record); Workflow Session does not own an Action Audit id list |
 | Lifecycle | Independent; audit never drives Workflow create/close/guards |
-| Inference | Forbidden from current Action Session, time, thread, connection, or current-session fallback |
+| Inference | Forbidden from current Action Session, time, thread, connection, window identity, or other implicit Workflow Session selection |
 | Missing field | Keep unlinked behavior |
 | Bad format | Parameter error; never silent remap |
 
@@ -293,8 +293,8 @@ it never infers readiness from configuration.
 |---|---|
 | Layer envelope | Every layer carries `{status, observed_at, source, age_secs, stale_after_secs, reason_code}` plus layer facts |
 | No config-inferred readiness | `connector_endpoint` readiness comes only from readiness probes or successful connector requests; configuration presence never implies `ready`. `runner_process` never fakes "running"; a stale registration is never presented as callable |
-| Exact binding durability | Full-runtime current-session bindings are exact window+principal+transport+project+canonical-root mappings with a process-local cache and bounded hashed durable projection. `runtime_status` reports `not_observed` with `exact_binding_requires_window_and_project_observation`, `process_local_cache=true`, `durable_exact_binding=true`, `restored_after_restart=true`, and `missing_identity_fallback=false`; `start_coding_task` reports `bound`/`not_bound`. This remains separate from the durable Connector window/project/task map. The same stable full-runtime window restores after a server restart; explicit `wc_sess_*` recovery remains the fallback when transport identity is unavailable |
-| Full-runtime start/continue | With a stable window, `start_coding_task` defaults to ensuring one active Workflow Session for principal+transport+window+resolved-project+canonical-root hash. Every accepted call appends a `task_instruction` event; mode/guard changes and binding update atomically with that event. `new_session=true` is the only startup isolation request; title differences never imply isolation |
+| Explicit Workflow targeting | Full-runtime Workflow Sessions have no process-local or durable window binding. `runtime_status` exposes no Workflow binding layer. Ordinary project tools without an explicit business Session or authorized wrapper recorder execute unlinked to Workflow Session state. This remains separate from Connector-owned window/project/task continuity |
+| Full-runtime start/continue | `start_coding_task(resume_session_id=<id>)` continues exactly that authorized Active same-project Session; omission always creates a fresh Workflow Session. `work_on_project(session_id=<id>)` follows the same exact-resume rule, while omission creates fresh. Stable window or credential identity never selects a Workflow Session |
 | Canonical model coding bootstrap | `work_on_project` is the only ordinary model-discovered coding bootstrap. `registered_tool_specs`, MCP `tools/list`, `tool_manifest`, and GPT Actions `ToolCallRequest` share the same model-visible universe. Hidden direct/API compatibility specs such as the advanced coding start may validate parser/dispatch calls but never contribute generic Action selector names or flattened model fields |
 | Model surface selection | Complete `WEBCODEX_CONNECTOR_SURFACE=task-v1` configuration selects `canonical_connector`. Without it, an unset `WEBCODEX_MCP_MODEL_SURFACE` selects the focused `local_coding` surface; `local-coding-v1` / `full-operator-v1` select `local_coding` / `full_operator_runtime` explicitly. A Connector + `WEBCODEX_MCP_MODEL_SURFACE` conflict, an unsupported value, or partial Connector configuration fails startup. MCP GET/initialize, `runtime_status.model_surface`, and the startup log all report the same selection |
 | Meaningful-activity rule | `last_successful_tool_call` records only successful meaningful calls, scoped by principal/project/surface/session/tool. `runtime_status`, `list_tools`, `list_agents`, `list_projects`, and `tool_manifest` never refresh it. Bounded in-memory store; no arguments, outputs, or secrets |

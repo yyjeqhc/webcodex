@@ -908,8 +908,6 @@ async fn read_files_direct_session_overlay_pressure_keeps_final_response_under_h
                     },
                     Some(&auth),
                     SessionTransport::Mcp,
-                    true,
-                    false,
                     ToolCallRecorderMetadata {
                         ack_session_context_revision: SessionContextRevisionAck::Revision(0),
                         ..Default::default()

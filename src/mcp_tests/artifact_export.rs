@@ -521,7 +521,7 @@ async fn mcp_artifact_export_surface_is_stateless_full_operator_only() {
         .get("session_id")
         .is_some());
     assert!(spec["inputSchema"]["properties"]
-        .get(crate::tool_runtime::ALLOW_CROSS_PROJECT_SESSION_FIELD)
+        .get("allow_cross_project_session")
         .is_none());
 
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);

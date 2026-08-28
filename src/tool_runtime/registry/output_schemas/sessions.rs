@@ -593,64 +593,6 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 handoff_brief_schema("Compact deterministic task handoff for a new window, new Agent, or human receiver. It is a read-only projection over already-obtained Session, continuation, workspace, validation, Job, and guidance evidence; it is not Session replay and never restores hidden model context."),
             ),
         ])),
-        "bind_current_session" => Some(wrapped_output_schema(vec![
-            ("bound", schema_type("boolean", "True when the binding was stored.")),
-            ("session_id", schema_type("string", "Bound session id.")),
-            ("project", schema_type("string", "Project input from the request.")),
-            (
-                "resolved_project",
-                schema_type("string", "Canonical runtime project id used in the binding key."),
-            ),
-            ("mode", session_mode_schema("Bound session mode.")),
-            (
-                "guards",
-                session_guards_schema("Effective guards for the bound session."),
-            ),
-            (
-                "execution_context",
-                session_execution_context_schema(
-                    "Persistent execution defaults for the bound Workflow Session.",
-                ),
-            ),
-        ])),
-        "current_session" => Some(wrapped_output_schema(vec![
-            ("found", schema_type("boolean", "True when a live binding exists.")),
-            (
-                "session_id",
-                schema_type("string", "Bound session id, when found."),
-            ),
-            ("project", schema_type("string", "Project input from the request.")),
-            (
-                "resolved_project",
-                schema_type("string", "Canonical runtime project id used in the binding key."),
-            ),
-            ("mode", session_mode_schema("Bound session mode, when found.")),
-            (
-                "guards",
-                session_guards_schema("Effective guards for the bound session."),
-            ),
-            (
-                "execution_context",
-                session_execution_context_schema(
-                    "Persistent execution defaults for the bound Workflow Session, when found.",
-                ),
-            ),
-        ])),
-        "unbind_current_session" => Some(wrapped_output_schema(vec![
-            (
-                "unbound",
-                schema_type("boolean", "True when the unbind request succeeded."),
-            ),
-            (
-                "had_binding",
-                schema_type("boolean", "True when a binding existed before this call."),
-            ),
-            ("project", schema_type("string", "Project input from the request.")),
-            (
-                "resolved_project",
-                schema_type("string", "Canonical runtime project id used in the binding key."),
-            ),
-        ])),
         _ => None,
     }
 }

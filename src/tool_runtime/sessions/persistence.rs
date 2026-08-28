@@ -17,11 +17,11 @@ use super::events::{
     sanitize_tool_execution_state, session_input_summary_for_tool,
 };
 use super::model::{
-    ColdSessionRecord, DurableCurrentBinding, PersistedCurrentBindings, PersistedSessionLedger,
-    PersistedSessionRecord, SessionEvent, SessionGuards, SessionLifecycle, SessionMessage,
-    SessionRecord, StoredSession, DEFAULT_MAX_MESSAGES_PER_SESSION, EVENT_ID_PREFIX,
-    MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS, MAX_MATERIALIZED_VALIDATION_JOB_IDS,
-    MAX_MESSAGE_CHARS, MAX_MESSAGE_RESOLUTION_CHARS, MESSAGE_ID_PREFIX, SESSION_LEDGER_VERSION,
+    ColdSessionRecord, PersistedSessionLedger, PersistedSessionRecord, SessionEvent, SessionGuards,
+    SessionMessage, SessionRecord, StoredSession, DEFAULT_MAX_MESSAGES_PER_SESSION,
+    EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS,
+    MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_MESSAGE_CHARS, MAX_MESSAGE_RESOLUTION_CHARS,
+    MESSAGE_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::query::{is_valid_completion_id, validate_message_tags};
 use super::util::{
@@ -32,8 +32,6 @@ use super::util::{
 struct LoadedSessionLedger {
     version: u32,
     sessions: Vec<PersistedSessionRecord>,
-    #[serde(default)]
-    durable_current_bindings: PersistedCurrentBindings,
 }
 
 impl PersistedSessionRecord {
@@ -451,11 +449,8 @@ pub(super) fn materialize_cold_session(
 
 pub(super) struct RestoredSessionLedger {
     pub(super) sessions: HashMap<String, StoredSession>,
-    pub(super) durable_current_bindings: HashMap<String, DurableCurrentBinding>,
     pub(super) lru: VecDeque<String>,
     pub(super) restored_sessions: usize,
-    pub(super) restored_binding_count: usize,
-    pub(super) discarded_binding_count: usize,
     pub(super) last_persist_error: Option<String>,
 }
 
@@ -463,11 +458,8 @@ impl RestoredSessionLedger {
     fn empty(last_persist_error: Option<String>) -> Self {
         Self {
             sessions: HashMap::new(),
-            durable_current_bindings: HashMap::new(),
             lru: VecDeque::new(),
             restored_sessions: 0,
-            restored_binding_count: 0,
-            discarded_binding_count: 0,
             last_persist_error,
         }
     }
@@ -477,7 +469,6 @@ pub(super) fn load_persisted_ledger(
     path: &PathBuf,
     max_sessions: usize,
     max_events_per_session: usize,
-    max_durable_bindings: usize,
 ) -> RestoredSessionLedger {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
@@ -508,7 +499,6 @@ pub(super) fn load_persisted_ledger(
         tracing::warn!("session ledger restore failed: {}", error);
         return RestoredSessionLedger::empty(Some(error));
     }
-    let mut discarded_binding_count = ledger.durable_current_bindings.malformed_count;
     let mut records: Vec<StoredSession> = ledger
         .sessions
         .into_iter()
@@ -540,64 +530,10 @@ pub(super) fn load_persisted_ledger(
     }
     let restored_sessions = sessions.len();
 
-    let mut durable_current_bindings = HashMap::<String, DurableCurrentBinding>::new();
-    for binding in ledger.durable_current_bindings.records {
-        let session_id = binding.session_id.trim();
-        let Some(session) = sessions.get(session_id) else {
-            discarded_binding_count = discarded_binding_count.saturating_add(1);
-            continue;
-        };
-        if !is_lower_hex_sha256(&binding.binding_key_sha256)
-            || !is_valid_session_id(session_id)
-            || binding.updated_at < 0
-            || session.lifecycle() != SessionLifecycle::Active
-        {
-            discarded_binding_count = discarded_binding_count.saturating_add(1);
-            continue;
-        }
-
-        let candidate = DurableCurrentBinding {
-            session_id: session_id.to_string(),
-            updated_at: binding.updated_at,
-        };
-        match durable_current_bindings.entry(binding.binding_key_sha256) {
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(candidate);
-            }
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                discarded_binding_count = discarded_binding_count.saturating_add(1);
-                if candidate.updated_at >= entry.get().updated_at {
-                    entry.insert(candidate);
-                }
-            }
-        }
-    }
-
-    if durable_current_bindings.len() > max_durable_bindings {
-        let remove_count = durable_current_bindings.len() - max_durable_bindings;
-        let mut oldest: Vec<(String, i64)> = durable_current_bindings
-            .iter()
-            .map(|(key, binding)| (key.clone(), binding.updated_at))
-            .collect();
-        oldest.sort_by(|(left_key, left_updated), (right_key, right_updated)| {
-            left_updated
-                .cmp(right_updated)
-                .then_with(|| left_key.cmp(right_key))
-        });
-        for (binding_key, _) in oldest.into_iter().take(remove_count) {
-            durable_current_bindings.remove(&binding_key);
-            discarded_binding_count = discarded_binding_count.saturating_add(1);
-        }
-    }
-    let restored_binding_count = durable_current_bindings.len();
-
     RestoredSessionLedger {
         sessions,
-        durable_current_bindings,
         lru,
         restored_sessions,
-        restored_binding_count,
-        discarded_binding_count,
         last_persist_error: None,
     }
 }

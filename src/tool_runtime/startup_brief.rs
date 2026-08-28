@@ -56,7 +56,7 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
         "role_selection": "Apply a named role only when the task says so; role guidance creates no Session mode or authority.",
         "model_protocol": {
             "session_context_ack": "Schema has ack_session_context_revision: copy latest returned session_context_revision exactly; never increment/derive. No returned revision: keep ACK. If unavailable/unknown, omit. Missing/stale ACK is nonblocking.",
-            "session_recording": "When work_on_project creates or continues a Workflow Session, pass it as recording_session_id. It is recorder provenance/context only: business session_id may target a different Session; recording_session_id grants no business authority.",
+            "session_recording": "When work_on_project creates or explicitly resumes a Workflow Session, pass that exact Session as recording_session_id on subsequent calls. It is recorder provenance/context only: business session_id may target a different Session; recording_session_id grants no business authority.",
             "session_message_ack": "When session_attention shows open requires_ack guidance still in context, echo ids in ack_session_message_ids. This is request-scoped model-context proof only: it does not resolve messages, grant authority, or gate execution; missing/stale ACK remains nonblocking.",
             "session_message_resolution": "For a handled non-todo message, put session_message_resolution {message_id,resolution} on the next ordinary WebCodex call with recording_session_id; for requires_ack also echo ack_session_message_ids. It targets only that Session. Do not use it to predict the main call. Todos use complete_session_message.",
             "normal_closeout": "Normal success: finish_coding_task(summary_only=true); full closeout only for unresolved validation/evidence or handoff/debug detail."
@@ -109,8 +109,6 @@ pub(crate) struct StartupBriefInput<'a> {
     pub(crate) continuation_kind: &'a str,
     pub(crate) reused: bool,
     pub(crate) resume_requested: bool,
-    pub(crate) binding_available: bool,
-    pub(crate) binding_reason_code: Option<&'a str>,
     pub(crate) instructions: &'a ProjectInstructionsSnapshot,
     pub(crate) previous_instructions: Option<&'a ProjectInstructionsSummarySnapshot>,
     pub(crate) force_instruction_load: bool,
@@ -157,12 +155,6 @@ pub(crate) fn build_startup_brief(input: StartupBriefInput<'_>) -> Value {
         "repository:v1:{}",
         canonical_repository_key(&input.resolved.config.path)
     );
-    let current_binding_status = if input.binding_available {
-        "bound"
-    } else {
-        "not_bound"
-    };
-
     let mut brief = json!({
         "detail": input.detail.as_str(),
         "session": {
@@ -172,11 +164,7 @@ pub(crate) fn build_startup_brief(input: StartupBriefInput<'_>) -> Value {
             "continuation": input.continuation_kind,
             "reused": input.reused,
             "resume_requested": input.resume_requested,
-            "current_binding": {
-                "status": current_binding_status,
-                "reason_code": input.binding_reason_code,
-            },
-            "explicit_session_id_required_for_continuity": !input.binding_available,
+            "explicit_resume_required_for_continuation": true,
         },
         "project": {
             "requested": input.requested_project,
@@ -1060,9 +1048,6 @@ fn startup_issues(
     if workspace.get("git_available").and_then(Value::as_bool) == Some(false) {
         push_unique(&mut warnings, "git_unavailable");
     }
-    if !input.binding_available && input.binding_reason_code != Some("binding_disabled") {
-        push_unique(&mut warnings, "current_binding_unavailable");
-    }
     if instructions.get("status").and_then(Value::as_str) == Some("unavailable") {
         push_unique(&mut warnings, "rules_unavailable");
     }
@@ -1159,15 +1144,6 @@ fn startup_verdict(
         push_unique(
             &mut actions,
             "read the fixed repository instruction files before making changes",
-        );
-    }
-    if warnings
-        .iter()
-        .any(|item| item == "current_binding_unavailable")
-    {
-        push_unique(
-            &mut actions,
-            "pass the explicit Workflow Session id on subsequent project tools",
         );
     }
     if continuation_actions.contains(&EXPLORATION_CONTINUITY_ACTION) {
@@ -2121,8 +2097,6 @@ mod tests {
                 continuation_kind: "continued",
                 reused: true,
                 resume_requested: false,
-                binding_available: true,
-                binding_reason_code: None,
                 instructions: &instructions,
                 previous_instructions: None,
                 force_instruction_load: true,

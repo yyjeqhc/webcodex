@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-pub(super) const OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by work_on_project or another compatible Session bootstrap. When provided, this tool call is recorded in that session ledger and wins over any current-session binding.";
+pub(super) const OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by work_on_project or another compatible Session bootstrap. When provided, this tool call is recorded in that exact Session ledger; omission leaves the call unlinked to Workflow Session state.";
 
 pub(super) const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
 

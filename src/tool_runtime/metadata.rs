@@ -262,24 +262,6 @@ mod tests {
     }
 
     #[test]
-    fn current_session_tools_are_project_read_control_tools() {
-        for name in [
-            "bind_current_session",
-            "current_session",
-            "unbind_current_session",
-        ] {
-            let metadata = lookup_tool_metadata(name).unwrap();
-            assert_eq!(metadata.provider_id, TOOL_PROVIDER_CONTROL, "{name}");
-            assert_eq!(metadata.risk, ToolRisk::ReadOnly, "{name}");
-            assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_READ), "{name}");
-            assert!(metadata.requires_project, "{name}");
-            assert!(metadata.read_only, "{name}");
-            assert!(!metadata.destructive, "{name}");
-            assert!(!metadata.shell_like, "{name}");
-        }
-    }
-
-    #[test]
     fn checkpoint_metadata_uses_project_read_and_write_scopes() {
         for name in [
             "workspace_checkpoint_create",

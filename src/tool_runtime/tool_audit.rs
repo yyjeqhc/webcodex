@@ -455,8 +455,6 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                     "deny_shell_tools",
                     "detail",
                     "resume_session_id",
-                    "bind_current",
-                    "new_session",
                     "session_id",
                 ],
             );
@@ -3471,8 +3469,6 @@ impl ToolCall {
                 deny_shell_tools,
                 detail,
                 resume_session_id,
-                bind_current,
-                new_session,
                 execution_context,
             } => serde_json::json!({
                 "project": project,
@@ -3485,8 +3481,6 @@ impl ToolCall {
                 "deny_shell_tools": deny_shell_tools,
                 "detail": detail,
                 "resume_session_id": resume_session_id,
-                "bind_current": bind_current,
-                "new_session": new_session,
                 "execution_context": execution_context
                     .as_ref()
                     .map(super::sessions::SessionExecutionContext::audit_summary),

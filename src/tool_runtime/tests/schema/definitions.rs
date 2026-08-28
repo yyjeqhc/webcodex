@@ -192,14 +192,9 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
     // intentionally fixed and documented here so an accidental hide is caught.
     // The legacy single-purpose edit tools are no longer ToolDefinitions at
     // all, so they are absent here.
-    let expected_hidden: BTreeSet<&str> = [
-        "start_session",
-        "start_coding_task",
-        "bind_current_session",
-        "job_tail",
-    ]
-    .into_iter()
-    .collect();
+    let expected_hidden: BTreeSet<&str> = ["start_session", "start_coding_task", "job_tail"]
+        .into_iter()
+        .collect();
     assert_eq!(
         model_hidden_tool_names().collect::<BTreeSet<_>>(),
         expected_hidden,

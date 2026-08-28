@@ -1,8 +1,8 @@
 use super::AgentCapability::CodingAgentRuns;
 use super::ToolVisibility::ModelVisible;
 use super::{
-    def, disable_current_session_fallback, effect_annotations, model_spec, permission_risk,
-    ToolDefinition, ToolEffectAnnotations, PERMISSION_RISK_JOB, TOOL_CATEGORY_CODING_AGENT,
+    def, effect_annotations, model_spec, permission_risk, ToolDefinition, ToolEffectAnnotations,
+    PERMISSION_RISK_JOB, TOOL_CATEGORY_CODING_AGENT,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
@@ -16,7 +16,7 @@ use crate::tool_runtime::registry::input_schemas::{
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     permission_risk(
-        disable_current_session_fallback(model_spec(
+        model_spec(
             def(
                 "coding_agent_start",
                 ModelVisible,
@@ -25,9 +25,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 TOOL_PROVIDER_AGENT,
                 JobRun,
                 Some(CODING_AGENT_RUN),
-                // The start is Project-bound; Workflow current-session fallback
-                // remains independently disabled by the Session policy helpers and
-                // must never synthesize recording_session_id or Run authority.
                 true,
                 NoPath,
                 true,
@@ -35,7 +32,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ),
             "Start one idempotent delegated ACP coding-agent Run on an exact registered Project and logical Runner provider. Autonomous execution may outlive this request; after any uncertain start, reuse the same idempotency key and observe the same Run rather than dispatching a replacement.",
             coding_agent_start_input_schema,
-        )),
+        ),
         PERMISSION_RISK_JOB,
     ),
     model_spec(

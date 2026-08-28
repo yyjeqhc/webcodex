@@ -1017,9 +1017,8 @@ fn openapi_call_runtime_tool_params_is_explicit_object() {
             "ToolCallRequest should document GPT Action flattened fields and recorder metadata: {description}"
         );
     for phrase in [
-        "record this wrapper call in the session ledger",
-        "Explicit business ids win over current-session lookup",
-        "missing window identity never falls back",
+        "record this wrapper call in an explicitly selected existing Workflow Session",
+        "Omitted Session identifiers never infer a Workflow Session",
     ] {
         assert!(
             description.contains(phrase),
@@ -1031,16 +1030,17 @@ fn openapi_call_runtime_tool_params_is_explicit_object() {
         .as_str()
         .unwrap_or("");
     assert!(
-        recording_desc.contains("session ledger"),
-        "recording_session_id should mention session ledger: {recording_desc}"
+        recording_desc.contains("exact Session ledger"),
+        "recording_session_id should mention exact Session ledger: {recording_desc}"
     );
+    assert!(recording_desc.contains("never supplies business Session guards or execution_context"));
     let session_desc = properties["session_id"]["description"]
         .as_str()
         .unwrap_or("");
     assert!(
-        session_desc.contains("explicit tool session")
-            && session_desc.contains("wins over current-session binding"),
-        "session_id should describe explicit session priority: {session_desc}"
+        session_desc.contains("explicitly selects the Workflow Session")
+            && session_desc.contains("Omission leaves ordinary project calls unrecorded"),
+        "session_id should describe explicit Session selection: {session_desc}"
     );
     let work_example = &spec["paths"]["/api/tools/call"]["post"]["requestBody"]["content"]
         ["application/json"]["examples"]["workOnAbsolutePath"]["value"];

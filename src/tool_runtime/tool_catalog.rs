@@ -199,8 +199,6 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "complete_session_message",
             "session_discussion_summary",
             "session_handoff_summary",
-            "current_session",
-            "unbind_current_session",
             "workspace_checkpoint_create",
             "workspace_checkpoint_list",
             "workspace_checkpoint_show",

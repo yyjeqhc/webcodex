@@ -19,7 +19,6 @@ fn start_call(
     detail: StartupDetail,
     title: &str,
     resume_session_id: Option<&str>,
-    new_session: bool,
 ) -> ToolCall {
     ToolCall::StartCodingTask {
         project: project.to_string(),
@@ -32,8 +31,6 @@ fn start_call(
         deny_write_tools: false,
         deny_shell_tools: false,
         resume_session_id: resume_session_id.map(str::to_string),
-        bind_current: true,
-        new_session,
         execution_context: None,
     }
 }
@@ -46,12 +43,11 @@ async fn start(
     detail: StartupDetail,
     title: &str,
     resume_session_id: Option<&str>,
-    new_session: bool,
 ) -> ToolResult {
     dispatch_start_coding_task_in_window(
         runtime,
         client_id,
-        start_call(project, detail, title, resume_session_id, new_session),
+        start_call(project, detail, title, resume_session_id),
         Some(&auth_context(None, true)),
         window,
     )
@@ -104,7 +100,7 @@ fn assert_builtin_workflow(output: &Value) {
     let recording_guidance = workflow["model_protocol"]["session_recording"]
         .as_str()
         .expect("Session recording guidance");
-    assert!(recording_guidance.contains("work_on_project creates or continues"));
+    assert!(recording_guidance.contains("work_on_project creates or explicitly resumes"));
     assert!(recording_guidance.contains("recording_session_id"));
     assert!(recording_guidance.contains("recorder provenance/context only"));
     assert!(recording_guidance.contains("business session_id may target a different Session"));
@@ -181,7 +177,6 @@ async fn fresh_coding_task_session_loads_all_bounded_repository_rules() {
         StartupDetail::Standard,
         "start work",
         None,
-        false,
     )
     .await;
 
@@ -244,7 +239,6 @@ async fn repository_without_project_instructions_still_receives_builtin_workflow
         StartupDetail::Standard,
         "implementation task",
         None,
-        false,
     )
     .await;
 
@@ -258,7 +252,7 @@ async fn repository_without_project_instructions_still_receives_builtin_workflow
 }
 
 #[tokio::test]
-async fn ordinary_coding_task_continuation_reuses_rules_without_repeating_content() {
+async fn explicit_coding_task_resume_reuses_rules_without_repeating_content() {
     let root = tempfile::tempdir().unwrap();
     seed_rules(root.path());
     let runtime = ToolRuntime::new_for_tests();
@@ -273,9 +267,12 @@ async fn ordinary_coding_task_continuation_reuses_rules_without_repeating_conten
         StartupDetail::Standard,
         "first instruction",
         None,
-        false,
     )
     .await;
+    let session_id = first.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let second = start(
         &runtime,
         "rules-reuse",
@@ -283,8 +280,7 @@ async fn ordinary_coding_task_continuation_reuses_rules_without_repeating_conten
         "rules-reuse-window",
         StartupDetail::Standard,
         "continue",
-        None,
-        false,
+        Some(&session_id),
     )
     .await;
 
@@ -293,13 +289,16 @@ async fn ordinary_coding_task_continuation_reuses_rules_without_repeating_conten
         second.output["session"]["session_id"],
         first.output["session"]["session_id"]
     );
-    assert_eq!(second.output["session"]["continuation"], "continued");
+    assert_eq!(
+        second.output["session"]["continuation"],
+        "resumed_explicitly"
+    );
     assert_eq!(first.output["workflow"], second.output["workflow"]);
     assert_builtin_workflow(&second.output);
     assert!(second.output["session"].get("workflow").is_none());
     assert_eq!(
         second.output["project"]["canonical_repository_root_matches"],
-        true
+        Value::Null
     );
     assert_eq!(second.output["instructions"]["status"], "reused");
     assert_eq!(second.output["instructions"]["content_included"], false);
@@ -338,11 +337,14 @@ async fn changed_and_deleted_repository_rule_sources_are_reported_incrementally(
         StartupDetail::Standard,
         "first",
         None,
-        false,
     )
     .await;
     let first_agents_fingerprint =
         instruction_source(&first.output, "AGENTS.md")["fingerprint"].clone();
+    let session_id = first.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     fs::create_dir_all(root.path().join(".codex")).unwrap();
     fs::write(
@@ -357,8 +359,7 @@ async fn changed_and_deleted_repository_rule_sources_are_reported_incrementally(
         "rules-change-window",
         StartupDetail::Standard,
         "after rule addition",
-        None,
-        false,
+        Some(&session_id),
     )
     .await;
     assert_eq!(added.output["instructions"]["status"], "changed");
@@ -386,8 +387,7 @@ async fn changed_and_deleted_repository_rule_sources_are_reported_incrementally(
         "rules-change-window",
         StartupDetail::Standard,
         "after rule edit",
-        None,
-        false,
+        Some(&session_id),
     )
     .await;
     assert_eq!(changed.output["instructions"]["status"], "changed");
@@ -413,8 +413,7 @@ async fn changed_and_deleted_repository_rule_sources_are_reported_incrementally(
         "rules-change-window",
         StartupDetail::Standard,
         "after rule deletion",
-        None,
-        false,
+        Some(&session_id),
     )
     .await;
     assert_eq!(deleted.output["instructions"]["status"], "changed");
@@ -450,13 +449,16 @@ async fn repository_rule_truncation_state_change_invalidates_the_snapshot() {
         StartupDetail::Standard,
         "first",
         None,
-        false,
     )
     .await;
     assert_eq!(
         instruction_source(&first.output, "AGENTS.md")["truncated"],
         false
     );
+    let session_id = first.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     fs::write(
         root.path().join("AGENTS.md"),
@@ -470,8 +472,7 @@ async fn repository_rule_truncation_state_change_invalidates_the_snapshot() {
         "rules-truncate-window",
         StartupDetail::Standard,
         "after truncation boundary",
-        None,
-        false,
+        Some(&session_id),
     )
     .await;
     assert_eq!(changed.output["instructions"]["status"], "changed");
@@ -501,7 +502,6 @@ async fn explicit_resume_reuses_unchanged_rules_without_repeating_body() {
         StartupDetail::Standard,
         "first",
         None,
-        false,
     )
     .await;
     let session_id = first.output["session"]["session_id"]
@@ -517,7 +517,6 @@ async fn explicit_resume_reuses_unchanged_rules_without_repeating_body() {
         StartupDetail::Standard,
         "resume",
         Some(&session_id),
-        false,
     )
     .await;
 
@@ -563,7 +562,6 @@ async fn explicit_resume_reports_changed_rules_with_new_bounded_body() {
         StartupDetail::Standard,
         "first",
         None,
-        false,
     )
     .await;
     let session_id = first.output["session"]["session_id"]
@@ -586,7 +584,6 @@ async fn explicit_resume_reports_changed_rules_with_new_bounded_body() {
         StartupDetail::Standard,
         "resume after rule change",
         Some(&session_id),
-        false,
     )
     .await;
 
@@ -654,9 +651,12 @@ async fn coding_task_project_switching_keeps_rule_snapshots_isolated() {
         StartupDetail::Standard,
         "A",
         None,
-        false,
     )
     .await;
+    let session_a = first_a.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let first_b = start(
         &runtime,
         "rules-switch",
@@ -665,7 +665,6 @@ async fn coding_task_project_switching_keeps_rule_snapshots_isolated() {
         StartupDetail::Standard,
         "B",
         None,
-        false,
     )
     .await;
     let again_a = start(
@@ -675,8 +674,7 @@ async fn coding_task_project_switching_keeps_rule_snapshots_isolated() {
         "rules-switch-window",
         StartupDetail::Standard,
         "A again",
-        None,
-        false,
+        Some(&session_a),
     )
     .await;
 
@@ -730,13 +728,7 @@ async fn restart_restored_coding_task_session_reloads_rules_without_persisting_b
     let first = dispatch_start_coding_task_in_window(
         &runtime1,
         "rules-restart",
-        start_call(
-            &project,
-            StartupDetail::Standard,
-            "before restart",
-            None,
-            false,
-        ),
+        start_call(&project, StartupDetail::Standard, "before restart", None),
         Some(&auth),
         "rules-restart-window",
     )
@@ -778,8 +770,7 @@ async fn restart_restored_coding_task_session_reloads_rules_without_persisting_b
             &project,
             StartupDetail::Standard,
             "after restart",
-            None,
-            false,
+            Some(&session_id),
         ),
         Some(&auth),
         "rules-restart-window",
@@ -788,7 +779,10 @@ async fn restart_restored_coding_task_session_reloads_rules_without_persisting_b
 
     assert!(restored.success, "{:?}", restored.error);
     assert_eq!(restored.output["session"]["session_id"], session_id);
-    assert_eq!(restored.output["session"]["continuation"], "continued");
+    assert_eq!(
+        restored.output["session"]["continuation"],
+        "resumed_explicitly"
+    );
     assert_eq!(restored.output["instructions"]["status"], "loaded");
     assert_eq!(restored.output["instructions"]["content_included"], true);
     assert_eq!(
@@ -853,7 +847,6 @@ async fn unavailable_repository_rules_fail_conservatively_without_leaking_errors
         StartupDetail::Standard,
         "start",
         None,
-        false,
     )
     .await;
 
@@ -957,7 +950,6 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
         StartupDetail::Full,
         "inspect running job",
         None,
-        true,
     )
     .await;
     assert!(running.success, "{:?}", running.error);
@@ -1006,7 +998,6 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
         StartupDetail::Standard,
         "inspect other project",
         None,
-        true,
     )
     .await;
     assert!(other_project.success, "{:?}", other_project.error);
@@ -1040,7 +1031,6 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
         StartupDetail::Standard,
         "inspect terminal pending job",
         None,
-        true,
     )
     .await;
     assert!(terminal_pending.success, "{:?}", terminal_pending.error);
@@ -1153,7 +1143,6 @@ async fn startup_runner_health_uses_the_exact_project_client() {
                 StartupDetail::Full,
                 "inspect unavailable target runner",
                 None,
-                true,
             ),
             Some(&auth),
         )
@@ -1202,7 +1191,6 @@ async fn startup_runner_health_uses_the_exact_project_client() {
         StartupDetail::Full,
         "inspect available target runner",
         None,
-        true,
     )
     .await;
     assert!(available.success, "{:?}", available.error);
@@ -1251,7 +1239,6 @@ async fn minimal_standard_and_full_coding_task_outputs_validate_against_strict_s
             detail,
             label,
             None,
-            true,
         )
         .await;
         assert!(result.success, "{label}: {:?}", result.error);
@@ -1312,7 +1299,6 @@ async fn minimal_standard_and_full_coding_task_outputs_validate_against_strict_s
         StartupDetail::Standard,
         "unknown field",
         None,
-        true,
     )
     .await;
     let mut unknown = json!({
@@ -1384,7 +1370,6 @@ async fn worst_case_startup_with_huge_repository_stays_below_hard_limit() {
         StartupDetail::Standard,
         "worst case",
         None,
-        false,
     )
     .await;
     assert!(result.success, "{:?}", result.error);

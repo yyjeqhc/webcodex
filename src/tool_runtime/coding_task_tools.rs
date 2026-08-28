@@ -9,7 +9,8 @@ impl ToolRuntime {
         call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
-        window: Option<&crate::client_window::ClientWindow>,
+        trusted_recording_session_id: Option<&str>,
+        trusted_recording_session_project: Option<&str>,
     ) -> ToolResult {
         match call {
             ToolCall::StartCodingTask {
@@ -23,8 +24,6 @@ impl ToolRuntime {
                 deny_shell_tools,
                 detail,
                 resume_session_id,
-                bind_current,
-                new_session,
                 execution_context,
             } => {
                 self.start_coding_task(
@@ -38,12 +37,11 @@ impl ToolRuntime {
                     deny_shell_tools,
                     detail,
                     resume_session_id,
-                    bind_current,
-                    new_session,
                     execution_context,
                     auth,
+                    trusted_recording_session_id,
+                    trusted_recording_session_project,
                     transport,
-                    window,
                 )
                 .await
             }
@@ -65,8 +63,9 @@ impl ToolRuntime {
                     include_project_instructions,
                     include_workflow_guidance,
                     auth,
+                    trusted_recording_session_id,
+                    trusted_recording_session_project,
                     transport,
-                    window,
                 )
                 .await
             }

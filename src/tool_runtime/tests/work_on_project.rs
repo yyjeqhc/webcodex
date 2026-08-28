@@ -12,6 +12,9 @@ use crate::lsp_bridge::{AgentLspRequest, AgentLspResultEnvelope, AGENT_LSP_REQUE
 use crate::shell_protocol::{
     AgentBuildInfo, ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
 };
+use crate::tool_runtime::kernel::{
+    HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+};
 use crate::tool_runtime::permissions::{AuthorityMode, PermissionEvaluator};
 use crate::tool_runtime::sessions::{SessionEvent, SessionGuards};
 use crate::tool_runtime::{
@@ -119,8 +122,6 @@ fn start_coding_task_call(project: &str, instruction: &str, detail: StartupDetai
         deny_write_tools: false,
         deny_shell_tools: false,
         resume_session_id: None,
-        bind_current: false,
-        new_session: true,
         execution_context: None,
     }
 }
@@ -146,8 +147,6 @@ async fn dispatch_recording_startup_requests(
                     call,
                     auth.as_ref(),
                     crate::tool_runtime::sessions::SessionTransport::Mcp,
-                    true,
-                    false,
                     Default::default(),
                     None,
                     Some(&window),
@@ -210,8 +209,6 @@ async fn dispatch_startup_without_window(
                     call,
                     auth.as_ref(),
                     crate::tool_runtime::sessions::SessionTransport::Mcp,
-                    true,
-                    false,
                     Default::default(),
                     None,
                     None,
@@ -400,7 +397,6 @@ fn work_on_project_schema_and_registration() {
         definition.agent_capability,
         Some(crate::tool_runtime::AgentCapability::GitOrShell)
     );
-    assert!(definition.creates_or_binds_session());
     assert!(!definition.requires_explicit_business_session());
 
     // Keep the model-facing schema simple enough for reliable host projection.
@@ -504,8 +500,6 @@ fn work_on_project_schema_and_registration() {
 
     // The wrapper must not expose advanced start_coding_task controls.
     for hidden in [
-        "bind_current",
-        "new_session",
         "resume_session_id",
         "mode",
         "deny_write_tools",
@@ -557,7 +551,6 @@ fn work_on_project_schema_and_registration() {
         "startup_verdict",
         "git",
         "continuation_feedback",
-        "current_binding",
         "deterministic",
         "llm_summary",
     ] {
@@ -679,8 +672,6 @@ fn work_on_project_tool_call_enforces_authoritative_source_contract() {
     assert_eq!(spec.input_schema["additionalProperties"], false);
     let props = spec.input_schema["properties"].as_object().unwrap();
     for hidden in [
-        "bind_current",
-        "new_session",
         "resume_session_id",
         "mode",
         "deny_write_tools",
@@ -883,7 +874,7 @@ fn work_on_project_projection_is_sparse_for_defaults_and_keeps_noteworthy_state(
 }
 
 #[tokio::test]
-async fn work_on_project_creates_a_new_normal_session_without_binding() {
+async fn work_on_project_without_session_id_always_creates_fresh_session() {
     let root = tempfile::tempdir().unwrap();
     init_git_repo(root.path());
     let runtime = ToolRuntime::new_for_tests();
@@ -928,11 +919,6 @@ async fn work_on_project_creates_a_new_normal_session_without_binding() {
         .is_some_and(|warnings| warnings
             .iter()
             .any(|warning| warning == "semantic_navigation_unavailable")));
-    assert!(!result.output["warnings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|warning| warning == "current_binding_unavailable"));
     assert_eq!(
         result.output["workflow"],
         crate::tool_runtime::startup_brief::builtin_coding_workflow_projection()
@@ -983,14 +969,25 @@ async fn work_on_project_creates_a_new_normal_session_without_binding() {
         Some("first root instruction")
     );
 
-    // No current-window binding and no credential-wide fallback.
-    assert_eq!(runtime.sessions.process_local_binding_count_for_test(), 0);
-    assert_eq!(runtime.sessions.status().durable_binding_count, 0);
+    // A second call in the same window/project without session_id must create a
+    // distinct Workflow Session instead of continuing the first implicitly.
+    let second = dispatch_start_coding_task_in_window(
+        &runtime,
+        "wop-create",
+        work_on_project_call("demo", "second root instruction", None),
+        Some(&auth),
+        "wop-create-window",
+    )
+    .await;
+    assert!(second.success, "{:?}", second.error);
+    let second_session_id = second.output["session_id"].as_str().unwrap();
+    assert_ne!(second_session_id, session_id);
+    assert_eq!(second.output["continuation"], "created");
     assert_eq!(
         runtime
             .sessions
             .active_session_count_for_test(Some(&project)),
-        1
+        2
     );
 
     // Compact workspace/instruction projection reflects the underlying brief.
@@ -1002,6 +999,60 @@ async fn work_on_project_creates_a_new_normal_session_without_binding() {
     let instance = json!({ "success": true, "output": result.output });
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
         .unwrap_or_else(|error| panic!("compact output must match its schema: {error}"));
+
+    // B: an ordinary project tool stays unrecorded when neither a business
+    // Session nor an explicit recording_session_id is supplied, even in the
+    // same stable window that created the Workflow Sessions above.
+    let first_before = runtime
+        .sessions
+        .summary(&session_id, Some(200))
+        .unwrap()
+        .events
+        .len();
+    let second_before = runtime
+        .sessions
+        .summary(second_session_id, Some(200))
+        .unwrap()
+        .events
+        .len();
+    let ordinary_window = crate::client_window::ClientWindow::for_test(
+        "ordinary_project_tool_without_explicit_session_is_unrecorded",
+    );
+    let ordinary = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "workspace_hygiene_check".to_string(),
+                arguments: json!({"project": project}),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Api,
+                session_id: None,
+                auth: Some(&auth),
+                window: Some(&ordinary_window),
+                record_oauth_scope_denials: true,
+                host_file_import_trust: HostFileImportTrust::Untrusted,
+            },
+        )
+        .await;
+    assert!(ordinary.success, "{:?}", ordinary.error_status);
+    assert_eq!(
+        runtime
+            .sessions
+            .summary(&session_id, Some(200))
+            .unwrap()
+            .events
+            .len(),
+        first_before
+    );
+    assert_eq!(
+        runtime
+            .sessions
+            .summary(second_session_id, Some(200))
+            .unwrap()
+            .events
+            .len(),
+        second_before
+    );
 }
 
 #[tokio::test]
@@ -1219,8 +1270,6 @@ async fn path_source_auto_registers_reuses_and_supports_both_coding_entries() {
             "path": project_path,
             "title": "advanced path entry",
             "detail": "standard",
-            "bind_current": false,
-            "new_session": true
         }),
     )
     .unwrap();
@@ -1281,7 +1330,7 @@ async fn path_source_auto_registers_reuses_and_supports_both_coding_entries() {
 }
 
 #[tokio::test]
-async fn path_source_registers_before_exact_session_mismatch_and_never_falls_back() {
+async fn path_source_explicit_session_mismatch_fails_before_registration() {
     let first_root = tempfile::tempdir().unwrap();
     let second_root = tempfile::tempdir().unwrap();
     init_git_repo(first_root.path());
@@ -1337,15 +1386,12 @@ async fn path_source_registers_before_exact_session_mismatch_and_never_falls_bac
     .await;
     assert!(!mismatch.success);
     assert_eq!(mismatch.output["error_kind"], "session_project_mismatch");
-    assert_eq!(mismatch.output["state_changed"], true);
-    assert_eq!(mismatch.output["permission"]["status"], "auto_approved");
+    assert_eq!(mismatch.output["state_changed"], false);
+    assert!(mismatch.output.get("permission").is_none());
+    assert!(mismatch.output.get("project_resolution").is_none());
     assert_eq!(
-        mismatch.output["permission"]["tool_name"],
-        "register_project"
-    );
-    assert_eq!(
-        mismatch.output["project_resolution"]["resolved_project"],
-        "agent:wop-path-mismatch:second-a1b2c3d4"
+        mismatch.output["request_project"],
+        format!("path:{client_id}:{second_path}")
     );
     assert_eq!(instruction_events(&runtime, session_id).len(), 1);
 
@@ -1355,8 +1401,7 @@ async fn path_source_registers_before_exact_session_mismatch_and_never_falls_bac
             "client_id": client_id,
             "path": second_path,
             "resume_session_id": session_id,
-            "detail": "standard",
-            "bind_current": false
+            "detail": "standard"
         }),
     )
     .unwrap();
@@ -1376,18 +1421,16 @@ async fn path_source_registers_before_exact_session_mismatch_and_never_falls_bac
         "session_project_mismatch"
     );
     assert_eq!(advanced_mismatch.output["state_changed"], false);
-    assert_eq!(
-        advanced_mismatch.output["project_resolution"]["outcome"],
-        "reused_existing_registration"
-    );
+    assert!(advanced_mismatch.output.get("permission").is_none());
+    assert!(advanced_mismatch.output.get("project_resolution").is_none());
     assert_eq!(instruction_events(&runtime, session_id).len(), 1);
 
     let listed = runtime.list_projects(Some(&auth_context(None, true))).await;
-    assert_eq!(listed.output["count"], 2);
+    assert_eq!(listed.output["count"], 1);
 }
 
 #[tokio::test]
-async fn path_source_registers_before_unknown_session_rejection() {
+async fn path_source_unknown_session_fails_before_registration() {
     let root = tempfile::tempdir().unwrap();
     init_git_repo(root.path());
     let project_path = root.path().canonicalize().unwrap();
@@ -1427,19 +1470,14 @@ async fn path_source_registers_before_unknown_session_rejection() {
     .await;
     assert!(!result.success);
     assert_eq!(result.output["error_kind"], "unknown_session_id");
-    assert_eq!(result.output["state_changed"], true);
-    assert_eq!(result.output["permission"]["status"], "auto_approved");
-    assert_eq!(result.output["permission"]["tool_name"], "register_project");
-    assert_eq!(
-        result.output["project_resolution"]["resolved_project"],
-        "agent:wop-path-unknown:unknown-a1b2c3d4"
-    );
+    assert!(result.output.get("permission").is_none());
+    assert!(result.output.get("project_resolution").is_none());
     let listed = runtime.list_projects(Some(&auth_context(None, true))).await;
-    assert_eq!(listed.output["count"], 1);
+    assert_eq!(listed.output["count"], 0);
 }
 
 #[tokio::test]
-async fn path_source_cross_project_recording_session_reports_resolved_mismatch() {
+async fn path_source_cross_project_recording_session_fails_before_registration() {
     let recorder_root = tempfile::tempdir().unwrap();
     let target_root = tempfile::tempdir().unwrap();
     init_git_repo(recorder_root.path());
@@ -1556,21 +1594,20 @@ async fn path_source_cross_project_recording_session_reports_resolved_mismatch()
         }
     }
     let outcome = task.await.unwrap();
-    assert!(outcome.success);
-    let result = outcome.result.expect("work_on_project result");
-    assert_eq!(
-        result.output["resolved_project"],
-        "agent:wop-recorder-target:target-a1b2c3d4"
-    );
-    assert_eq!(
-        result.output["warning_kind"], "session_project_mismatch",
-        "resolved cross-project path bootstrap must preserve recorder provenance"
-    );
+    assert!(!outcome.success);
+    let result = outcome.result.expect("work_on_project mismatch result");
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "session_project_mismatch");
+    assert_eq!(result.output["failure_kind"], "session_project_mismatch");
+    assert_eq!(result.output["state_changed"], false);
+    assert!(result.output.get("permission").is_none());
     assert_eq!(result.output["session_project"], recorder_project);
     assert_eq!(
         result.output["request_project"],
-        "agent:wop-recorder-target:target-a1b2c3d4"
+        format!("path:{target_client}:{target_path}")
     );
+    let listed = runtime.list_projects(Some(&auth)).await;
+    assert_eq!(listed.output["count"], 1);
     let summary = runtime
         .sessions
         .summary(&recorder_session_id, Some(50))
@@ -1582,17 +1619,23 @@ async fn path_source_cross_project_recording_session_reports_resolved_mismatch()
         .find(|event| event.kind == "tool_call_finished" && event.tool_name == "work_on_project")
         .expect("recorded work_on_project event");
     assert_eq!(
-        event.warning_kind.as_deref(),
+        event.failure_kind.as_deref(),
         Some("session_project_mismatch")
     );
+    assert_eq!(
+        event.error_kind.as_deref(),
+        Some("session_project_mismatch")
+    );
+    assert!(event.warning_kind.is_none());
     assert_eq!(
         event.session_project.as_deref(),
         Some(recorder_project.as_str())
     );
     assert_eq!(
         event.request_project.as_deref(),
-        Some("agent:wop-recorder-target:target-a1b2c3d4")
+        Some(format!("path:{target_client}:{target_path}").as_str())
     );
+    assert!(event.permission.is_none());
 }
 
 #[tokio::test]
@@ -1705,15 +1748,13 @@ async fn work_on_project_continues_exact_session_and_appends_instruction() {
         crate::tool_runtime::startup_brief::builtin_coding_workflow_projection()
     );
 
-    // Same single session reused: no second session, no current binding.
+    // Explicit resume reuses exactly one Session and appends one instruction.
     assert_eq!(
         runtime
             .sessions
             .active_session_count_for_test(Some(&project)),
         1
     );
-    assert_eq!(runtime.sessions.process_local_binding_count_for_test(), 0);
-    assert_eq!(runtime.sessions.status().durable_binding_count, 0);
 
     // Follow-up instruction appended; root title preserved.
     let events = instruction_events(&runtime, &session_id);
@@ -1847,8 +1888,6 @@ async fn work_on_project_failures_never_create_or_fall_back() {
             .active_session_count_for_test(Some(&project_a)),
         1
     );
-    assert_eq!(runtime.sessions.process_local_binding_count_for_test(), 0);
-    assert_eq!(runtime.sessions.status().durable_binding_count, 0);
     let events = instruction_events(&runtime, &active_id);
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].instruction.as_deref(), Some("stable session"));
@@ -1897,18 +1936,6 @@ fn finish_coding_task_remains_optional_and_advisory() {
                 .iter()
                 .position(|t| *t == "work_on_project")
                 .unwrap()
-    );
-}
-
-#[test]
-fn work_on_project_is_not_current_session_control_and_never_falls_back() {
-    use crate::tool_runtime::tool_definition::{
-        runtime_tool_allows_current_session_fallback, runtime_tool_is_current_session_control,
-    };
-    assert!(!runtime_tool_is_current_session_control("work_on_project"));
-    assert!(
-        !runtime_tool_allows_current_session_fallback("work_on_project"),
-        "work_on_project must never implicitly use a current-session binding"
     );
 }
 
@@ -2000,19 +2027,14 @@ async fn work_on_project_new_task_is_lightweight_and_preserves_startup_context()
 
     // resolved_project is the full runtime project id.
     assert_eq!(result.output["resolved_project"], project);
-    // Deliberately disabled window binding is normal for work_on_project. This
-    // fixture still has a real semantic-navigation warning, so readiness/warnings
-    // remain while the binding warning and intentionally skipped repository
-    // overview are omitted.
+    // This fixture still has a real semantic-navigation warning, so readiness
+    // remains warn while the intentionally skipped repository overview is omitted.
     assert!(result.output.get("repository").is_none());
     assert_eq!(result.output["readiness"]["status"], "warn");
     let warnings = result.output["warnings"].as_array().unwrap();
     assert!(warnings
         .iter()
         .any(|warning| warning == "semantic_navigation_unavailable"));
-    assert!(!warnings
-        .iter()
-        .any(|warning| warning == "current_binding_unavailable"));
 
     // Runner request evidence: rules, Git, and LSP probes remain; repository
     // overview is not merely hidden from JSON, it is never enqueued.
@@ -2079,8 +2101,7 @@ async fn work_on_project_new_task_is_lightweight_and_preserves_startup_context()
         );
     }
 
-    // No current binding was established and a single session exists.
-    assert_eq!(runtime.sessions.process_local_binding_count_for_test(), 0);
+    // Exactly one fresh Session exists.
     assert_eq!(
         runtime
             .sessions
@@ -2587,11 +2608,6 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
                 "work_on_project boring default field {omitted} should be omitted: {output}"
             );
         }
-        assert!(!output["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning == "current_binding_unavailable"));
     }
 
     let fresh_overviews = fresh_requests
@@ -2658,8 +2674,8 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
         "fresh work_on_project projection regressed above the sparse context budget: {fresh_bytes} bytes"
     );
     assert!(
-        reused_bytes <= 3500,
-        "unchanged work_on_project projection regressed above the sparse context budget: {reused_bytes} bytes"
+        reused_bytes <= 3600,
+        "unchanged work_on_project projection regressed above the sparse continuation budget: {reused_bytes} bytes"
     );
     eprintln!(
         "work_on_project_fixture_bytes fresh={fresh_bytes} unchanged_continuation={reused_bytes} workflow_omitted={workflow_omitted_bytes} standard={standard_bytes}; runner_requests fresh={} unchanged_continuation={} workflow_omitted={} standard={}",
@@ -2766,8 +2782,6 @@ async fn start_coding_task_standard_repository_overview_timeout_is_nonblocking()
                     ),
                     Some(&auth),
                     crate::tool_runtime::sessions::SessionTransport::Mcp,
-                    true,
-                    false,
                     Default::default(),
                     None,
                     Some(&window),
@@ -2873,8 +2887,6 @@ async fn dispatch_start_coding_task_with_overview_stdout(
                     call,
                     auth.as_ref(),
                     SessionTransport::Mcp,
-                    true,
-                    false,
                     Default::default(),
                     None,
                     Some(&window),

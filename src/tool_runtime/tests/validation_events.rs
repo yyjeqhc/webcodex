@@ -2161,8 +2161,6 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                 deny_write_tools: false,
                 deny_shell_tools: false,
                 resume_session_id: None,
-                bind_current: false,
-                new_session: false,
                 execution_context: None,
             },
             Some(&auth),
@@ -2319,15 +2317,18 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     assert_no_raw_validation_output_fields(validation, "finish validation summary");
 
     let handoff = runtime
-        .dispatch(ToolCall::SessionHandoffSummary {
-            session_id: session_id.clone(),
-            project: None,
-            include_workspace: Some(false),
-            include_checkpoints: Some(false),
-            include_validation: Some(true),
-            summary_only: false,
-            limit: None,
-        })
+        .dispatch_with_auth(
+            ToolCall::SessionHandoffSummary {
+                session_id: session_id.clone(),
+                project: None,
+                include_workspace: Some(false),
+                include_checkpoints: Some(false),
+                include_validation: Some(true),
+                summary_only: false,
+                limit: None,
+            },
+            Some(&auth),
+        )
         .await;
     assert!(handoff.success, "{:?}", handoff.error);
     assert_eq!(
@@ -2340,15 +2341,18 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     );
 
     let handoff_compact = runtime
-        .dispatch(ToolCall::SessionHandoffSummary {
-            session_id: session_id.clone(),
-            project: None,
-            include_workspace: Some(false),
-            include_checkpoints: Some(false),
-            include_validation: Some(true),
-            summary_only: true,
-            limit: None,
-        })
+        .dispatch_with_auth(
+            ToolCall::SessionHandoffSummary {
+                session_id: session_id.clone(),
+                project: None,
+                include_workspace: Some(false),
+                include_checkpoints: Some(false),
+                include_validation: Some(true),
+                summary_only: true,
+                limit: None,
+            },
+            Some(&auth),
+        )
         .await;
     assert!(handoff_compact.success, "{:?}", handoff_compact.error);
     assert_eq!(

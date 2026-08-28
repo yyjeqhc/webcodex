@@ -131,11 +131,8 @@ pub(crate) use project_resolution::{agent_project_runtime_id, ProjectResolverErr
 #[cfg(test)]
 pub(crate) use registry::start_coding_task_compatibility_spec;
 pub(crate) use registry::{accepted_flattened_args_for_spec, registered_tool_specs};
-#[cfg(test)]
-pub(crate) use session_context::current_session_principal;
 pub(crate) use session_context::{
-    add_session_telemetry_hint, current_session_key, session_guard_denied_result,
-    unknown_session_result, ALLOW_CROSS_PROJECT_SESSION_FIELD,
+    add_session_telemetry_hint, session_guard_denied_result, unknown_session_result,
 };
 pub(crate) use session_shell::SessionShellRegistry;
 #[cfg(test)]

@@ -6,7 +6,6 @@ use super::super::project_instructions::{
 use super::super::tool_inputs::{ExecutionShell, SessionMode};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{value::RawValue, Value};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
@@ -35,7 +34,6 @@ pub(super) const MAX_INPUT_OBJECT_KEYS: usize = 16;
 pub(super) const MAX_INPUT_ARRAY_ITEMS: usize = 8;
 pub(crate) const MAX_VALIDATION_EXCERPT_CHARS: usize = 800;
 pub(super) const SESSION_LEDGER_VERSION: u32 = 1;
-pub(super) const DURABLE_CURRENT_BINDINGS_PER_SESSION: usize = 8;
 pub(crate) const MESSAGE_ID_PREFIX: &str = "wc_msg_";
 pub(crate) const DEFAULT_MAX_MESSAGES_PER_SESSION: usize = 200;
 pub(crate) const MAX_CODING_INSTRUCTION_CHARS: usize = 4000;
@@ -205,45 +203,6 @@ impl SessionExecutionContext {
             "resource_present": self.resource.is_some(),
             "resource_valid": self.resource.is_none() || resource.is_some(),
         })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct CurrentSessionKey {
-    pub(crate) principal_kind: String,
-    pub(crate) principal_id: String,
-    pub(crate) transport: String,
-    pub(crate) window_key: String,
-    pub(crate) resolved_project: String,
-    /// Domain-separated hash of the agent-reported canonical repository root.
-    /// A project registration that moves to another root must not inherit the
-    /// old root's current-session binding.
-    pub(crate) repository_root_key: String,
-}
-
-impl CurrentSessionKey {
-    /// Return the only form of the exact current-session key that may enter the
-    /// durable Workflow Session ledger.
-    ///
-    /// Components use a fixed order and u64 length prefixes so distinct tuples
-    /// cannot collide through separator ambiguity. The principal id, transport
-    /// window key, resolved project, and repository-root key remain available
-    /// only to the process-local cache.
-    pub(super) fn durable_binding_key(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(b"webcodex.workflow-current-binding.v1\0");
-        for component in [
-            self.principal_kind.as_str(),
-            self.principal_id.as_str(),
-            self.transport.as_str(),
-            self.window_key.as_str(),
-            self.resolved_project.as_str(),
-            self.repository_root_key.as_str(),
-        ] {
-            hasher.update((component.len() as u64).to_be_bytes());
-            hasher.update(component.as_bytes());
-        }
-        format!("{:x}", hasher.finalize())
     }
 }
 
@@ -523,15 +482,13 @@ impl SessionCreateOptions {
     }
 }
 
-/// Atomic start-or-continue request used by `start_coding_task`.
+/// Atomic create-or-explicit-resume request used by `start_coding_task`.
 ///
-/// The workflow session, instruction event, capability transition, and
-/// process-local/durable exact current binding are committed under one store
-/// lock. This is deliberately an internal Workflow Session primitive, not
-/// another public task model.
+/// The Workflow Session, instruction event, and capability transition are
+/// committed under one store lock. This is deliberately an internal Workflow
+/// Session primitive, not another public task model.
 #[derive(Debug, Clone)]
 pub(crate) struct CodingSessionRequest {
-    pub(crate) key: Option<CurrentSessionKey>,
     pub(crate) project: String,
     /// Canonical creation-time authority fence for every caller, including the
     /// canonical local/dev authority group.
@@ -545,8 +502,6 @@ pub(crate) struct CodingSessionRequest {
     pub(crate) execution_context: Option<SessionExecutionContext>,
     pub(crate) project_instructions: Option<ProjectInstructionsSnapshot>,
     pub(crate) transport: SessionTransport,
-    pub(crate) bind_current: bool,
-    pub(crate) new_session: bool,
     pub(crate) context_refreshed: bool,
     pub(crate) write_scope_verified: bool,
 }
@@ -584,7 +539,6 @@ pub(crate) enum CodingSessionError {
     ResumeAuthorityMismatch {
         session_id: String,
     },
-    ResumeNewSessionConflict,
     WriteScopeRequired,
     InvalidExecutionContext(String),
     CommitFailed,
@@ -609,10 +563,6 @@ pub(crate) enum SessionExecutionContextUpdateError {
 pub(crate) struct SessionStoreStatus {
     pub(crate) persistence: String,
     pub(crate) restored_sessions: usize,
-    pub(crate) durable_binding_count: usize,
-    pub(crate) restored_binding_count: usize,
-    pub(crate) discarded_binding_count: usize,
-    pub(crate) max_durable_bindings: usize,
     pub(crate) max_sessions: usize,
     pub(crate) max_events_per_session: usize,
     pub(crate) max_messages_per_session: usize,
@@ -623,11 +573,6 @@ pub(crate) struct SessionStoreStatus {
 pub(super) struct PersistedSessionLedger {
     pub(super) version: u32,
     pub(super) sessions: Vec<PersistedSessionSnapshot>,
-    /// Additive v1 field. Old ledgers omit it and deserialize to an empty map.
-    /// The lossy wrapper prevents one malformed binding entry from rejecting
-    /// otherwise valid Workflow Session records and events.
-    #[serde(default)]
-    pub(super) durable_current_bindings: PersistedCurrentBindings,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -645,61 +590,6 @@ impl PersistedSessionSnapshot {
             Self::Cold(_) => None,
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct PersistedCurrentBinding {
-    pub(super) binding_key_sha256: String,
-    pub(super) session_id: String,
-    pub(super) updated_at: i64,
-}
-
-#[derive(Debug, Default)]
-pub(super) struct PersistedCurrentBindings {
-    pub(super) records: Vec<PersistedCurrentBinding>,
-    pub(super) malformed_count: usize,
-}
-
-impl Serialize for PersistedCurrentBindings {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.records.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for PersistedCurrentBindings {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-        let Value::Array(values) = value else {
-            return Ok(Self {
-                records: Vec::new(),
-                malformed_count: usize::from(!value.is_null()),
-            });
-        };
-        let mut records = Vec::with_capacity(values.len());
-        let mut malformed_count = 0usize;
-        for value in values {
-            match serde_json::from_value(value) {
-                Ok(record) => records.push(record),
-                Err(_) => malformed_count = malformed_count.saturating_add(1),
-            }
-        }
-        Ok(Self {
-            records,
-            malformed_count,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct DurableCurrentBinding {
-    pub(super) session_id: String,
-    pub(super) updated_at: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -845,6 +735,13 @@ pub(crate) struct ToolCallRecorderMetadata {
     /// Explicit generic wrapper recorder provenance. It is internal metadata,
     /// never concrete tool business input or execution authority.
     pub(crate) recording_session_id: Option<String>,
+    /// Canonical project of an already-authorized explicit recorder. Populated
+    /// only by the kernel after Session authorization; never parsed from public
+    /// tool arguments and never persisted as independent authority.
+    pub(crate) recording_session_project: Option<String>,
+    /// True only when the kernel has authorized recording_session_id for the
+    /// current caller before dispatch.
+    pub(crate) recording_session_authorized: bool,
     pub(crate) expectation: ToolCallExpectation,
     pub(crate) ack_session_message_ids: Vec<String>,
     pub(crate) session_message_resolution: Option<ToolCallSessionMessageResolution>,
@@ -987,10 +884,6 @@ pub(crate) struct SessionEvent {
     pub(crate) session_project: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) request_project: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) allow_cross_project_session_required: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) allow_cross_project_session: Option<bool>,
     pub(crate) error_message_summary: Option<String>,
     pub(crate) changed_paths: Vec<String>,
     /// Additive ledger-v1 field. Only validated project-relative paths are

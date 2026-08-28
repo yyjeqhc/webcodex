@@ -91,19 +91,18 @@ handoff, and finish can reason about the same unit of work.
 
 ### Storage and ownership
 
-| Aspect | Contract |
-|---|---|
-| Module | `tool_runtime::sessions` (model, store, events, JSON persistence) |
-| Primary store | In-memory session store |
-| Durability | JSON-oriented session ledger (bounded events/messages per session) |
-| Current-session binding | In-memory exact-key cache plus a bounded durable projection in the same JSON ledger; isolated by client window, principal, transport, resolved project, and canonical repository-root hash |
-
 Stateless MCP 2026 does not have a reliable Workflow Session or ChatGPT-window transport identity. Its `tools/list` schema therefore projects `recording_session_id` as explicit wrapper metadata for runtime tools. A call may carry `recording_session_id=W` while the concrete tool body carries business `session_id=C`; the MCP adapter removes the recorder field before concrete parsing and the kernel independently authorizes `W` before it can record evidence or supply trusted collaboration provenance. This does not revive legacy `mcp-session-id`, grant target authority, or infer a recorder from credentials, project identity, or connection state.
 
 Stateless MCP 2026 also projects optional `ack_session_message_ids` wrapper metadata, bounded to eight opaque `wc_msg_*` ids. An ACK is request-scoped evidence that the current model context still remembers an unresolved message in the exact authorized recording Workflow Session. The adapter removes ACK metadata before concrete tool parsing; it never grants authority, resolves a message, or gates the concrete tool effect. In the first version only open high-priority Guidance can require ACK. Accepted ids suppress that Guidance body only in the current response; if a later request omits the id, the unresolved Guidance is eligible for bounded redelivery again. Historical ACK state is never used to infer current model-context retention.
 
 A required Guidance message may persist `first_ack_observed_at` for observability. Only the first accepted ACK advances message-observation revision; repeated echoes do not create revision churn. This field means only that the Server once observed an explicit ACK echo. It is not a delivery/read receipt and does not change `status=open`. `resolve_session_message` remains the durable processed-state transition; resolved messages no longer participate in hints or urgent redelivery.
 
+
+Workflow Session targeting is explicit in 0.4. `start_coding_task` and `work_on_project` create a fresh Workflow Session when no resume id is supplied; continuation requires the exact existing `wc_sess_*` id. Ordinary project tools do not infer a Workflow Session from caller identity, window identity, project identity, or prior calls. To record a call in a Workflow Session, pass an explicitly authorized `recording_session_id`; when a tool has its own Session business input, that explicit id is authorized independently.
+
+Project scope is fail-closed. An explicit project-scoped business Session or recorder must match the canonical resolved request project before business execution or Session mutation. There is no cross-project warning/escape mode. `complete_session_message` records an answer author only from an explicitly authorized recorder; without one, author Session provenance is absent rather than inferred.
+
+The JSON ledger persists canonical Session rows only. Historical additive fields from releases before explicit targeting are ignored by restore and are not reconstructed, counted, migrated, or written by current code. General `ClientWindow` support remains available to non-Workflow subsystems such as Connector task continuity; Workflow Sessions do not use it for selection or authority.
 ### Model-facing context continuity revision
 
 Each Workflow Session also keeps a durable monotonic `context_revision` for finished model-facing tool results. Allocation is Session-local and atomic with annotating the finished event, so concurrent model-facing results receive unique revisions; generic background/system/Job bookkeeping does not advance this watermark. Retention may evict older annotated events without decreasing the durable high-water, and a capable caller whose ACK predates retained history receives `history_lost=true` rather than invented history.
@@ -127,8 +126,6 @@ Waiting uses process-local notification only as a wake signal; durable revision 
 Message observation is not a delivery receipt, not model-context retention, not a subscription/stream, and not an orchestrator wake-up. Room/Discussion, Participant, presence, typing, scheduler/worker-pool, automatic worker spawning, and routing remain future additive capabilities rather than reinterpretations of this cursor.
 
 Every Workflow Session admitted to the in-memory store carries one canonical creation-time authority-group fingerprint. The ledger keeps only that domain-separated SHA-256 fingerprint under the historical `owner_authority_fingerprint` field; raw user, shared-key, project-grant, credential, or window identity material is never persisted as Session authority. Project authorization and creation-time Session authority are separate checks: access to a project does not authorize another authority group's Session, and a matching Session fingerprint does not bypass project authorization or project equality.
-
-Persisted rows without an exact lowercase canonical fingerprint, or without an explicit canonical `active`/`closed` lifecycle, are discarded row-locally during restore. A process-local or durable `CurrentSessionKey` binding may select an existing active same-project Session for continuity, but it never grants, repairs, migrates, or upgrades Session authority. After selection, execution/mutation/resume still compares the caller's canonical fingerprint before changing Session state. Direct shared-key and its OAuth shared-key bridge share a Session only because they derive the same canonical authority-group fingerprint, not because a binding bridges their presentation identities.
 
 ### Persistent execution defaults
 
@@ -159,20 +156,6 @@ execution path and fail closed there without retrying from the project root.
 With `resource`, `default_cwd` is instead a bounded remote path; it is not
 checked against the Runner project root, and the remote shell reports an
 unenterable cwd explicitly.
-
-`start_session` can set the initial context. `start_coding_task` also sets it
-when creating a Session; on automatic continuation or explicit resume,
-omitting `execution_context` preserves the stored value, while an explicit
-object commits with the instruction/capability/binding update under the
-in-memory store lock. An explicit `{}` clears all execution defaults.
-`update_session_context` requires a project input that the caller may access and
-that resolves exactly to the explicit known active Session project. It never
-uses current-session fallback, never creates an unknown Session, rejects closed,
-project-less, unauthorized, and mismatched Sessions, and has no
-cross-project escape. The context and event commit together in memory; the JSON
-ledger is then queued to the existing background writer. Persistence failures
-are reported through existing status and logs, and success does not mean a
-synchronous disk flush or promise rollback on a later writer failure.
 
 Inheritance is intentionally closed and per field:
 
@@ -333,53 +316,9 @@ the caller's current model context already retains the corresponding content.
 Repository instruction files are still re-observed and Session metadata/delta
 status still update when instruction bodies are suppressed.
 
-- no valid binding creates and binds one active Workflow Session;
-- an exact repository binding reuses that Session and appends the accepted
-  instruction as a `task_instruction` event;
-- switching repositories preserves independent bindings, and switching back
-  restores the earlier Session;
-- `inspect`/`read_only` to `normal` rechecks project-write scope and changes
-  mode/guards without changing Session identity;
-- `new_session=true` explicitly creates an isolated Session without closing or
-  rewriting the previous one.
-
 Startup selection is strict and ordered:
 
-1. `resume_session_id` resumes only that existing Workflow Session. A malformed
-   or unknown id, non-active lifecycle, project mismatch, access denial, or
-   unsafe capability change fails without consulting a current binding or
-   creating a replacement.
-2. Without an explicit resume, `new_session=true` creates an isolated Session.
-   The two fields are mutually exclusive.
-3. With neither field, the stable-window exact binding keeps the default
-   get-or-create/continue behavior above.
-
-Explicit resume preserves both the `wc_sess_*` id and root title, then appends
-exactly one new `task_instruction`. With a stable window and
-`bind_current=true`, it atomically replaces that exact window/repository
-binding; a previously bound Session remains active and available by explicit
-id. `bind_current=false` leaves both binding layers unchanged. Without a stable
-window identity, explicit resume still succeeds but creates neither a
-process-local nor durable binding. The result reports that state, and later
-project tools must continue to pass the resumed `session_id` explicitly.
-
-The first instruction remains the root title. Later instructions record their
-timestamp, requested mode/guards, capability-change result, context-refresh
-fact, explicit-resume fact, and whether the current binding was established,
-without overwriting that root. Target validation, Session create/update,
-instruction event, process-local cache replacement, and durable binding
-replacement are decided under one store lock and enter one ledger snapshot
-generation; a failed validation, permission check, or injected pre-commit
-failure leaves them unchanged. Retrying after such a failure appends the
-instruction only once. A title change is never an isolation signal.
-
 The durable projection stores only:
-
-```text
-domain-separated SHA-256(exact CurrentSessionKey)
-→ wc_sess_* session_id
-→ updated_at
-```
 
 The canonical hash input is the principal kind/id, transport, already-hashed
 stable window identity, resolved project, and already-hashed canonical
@@ -388,24 +327,6 @@ repository root. It uses fixed field order and length prefixes under
 conversation ids, cookies, credentials, authorization headers, and repository
 paths never enter this projection, and neither binding hashes nor component
 hashes are returned to the model.
-
-After restart, a request with the same complete exact key may restore only an
-existing active Workflow Session whose project still matches, repopulate the
-process-local cache, and continue it. Missing stable window identity never
-falls back to a principal-, credential-, project-, or repository-wide binding.
-Changed principal, transport, window, resolved project, or canonical root
-derives a different durable key. `new_session=true` atomically repoints only
-that exact binding and preserves the previous Session for explicit-id access.
-Explicit bind and unbind update both layers; close and LRU eviction remove all
-bindings to the affected Session.
-
-When the complete exact key cannot be formed, `resume_session_id` is the
-intentional recovery path. It validates the Session against the currently
-resolved project and derives any binding key from that project's current
-canonical repository root, never a client-supplied path. It never derives a
-Workflow Session from a Connector Task or Action Audit Session. Missing window
-identity does not manufacture a key, create a credential-wide projection, or
-write a durable binding.
 
 The binding field is an additive, serde-defaulted field in ledger version 1, so
 older ledgers load it as empty without migration and keep their existing
@@ -422,26 +343,6 @@ window/repository continuity semantics. Connector Task continuation and resume
 remain their own model and do not infer or mutate Workflow Sessions.
 
 ### Current lifecycle contract
-
-- New Workflow Sessions are `active`. Persisted Sessions must carry an explicit
-  canonical `active` or `closed` lifecycle; rows with missing or unknown lifecycle
-  values are discarded during restore and never gain mutation authority.
-- `close_session` is the only explicit `active → closed` transition. It requires
-  an explicit `session_id`, never uses current-session fallback, and returns
-  `unknown_session_id` for malformed or unknown IDs without creating a session.
-- Re-closing a closed session is idempotent. Only a real transition records one
-  `session_closed` event.
-- Closing removes process-local and durable current bindings that point at the
-  Session; it does not delete the Workflow Session ledger.
-- Closed sessions still allow queries and pure reads. They reject write-like
-  tools, shell/job tools, session-message mutation, and session-scoped
-  checkpoint create/restore/delete with `session_closed`.
-- `finish_coding_task`, `session_handoff_summary`, and other summary/query tools
-  produce closeout information but do not close the session.
-- LRU eviction is capacity management, not a lifecycle transition, and removes
-  bindings to the evicted Session.
-- Session modes (`normal`, `inspect`, `read_only`) are execution policy, not
-  lifecycle state.
 
 This is **not** the same state machine as Action Audit Sessions. Lifecycle
 tools and error kinds (`unknown_session_id`, `session_closed`, mode denials,
@@ -618,27 +519,6 @@ see [Manual Multi-Window Collaboration](manual-window-collaboration.md).
 
 These are also summarized in `AGENTS.md` §7, **Sessions**:
 
-1. **ID format:** Workflow Session IDs use `wc_sess_*`. Do not change the
-   prefix, ledger event schema, or lifecycle semantics without an explicit
-   design task.
-2. **Explicit wins:** An explicit `session_id` always wins over current session.
-3. **Unknown rejects:** Unknown explicit `session_id` → `unknown_session_id`.
-   Never silently fall back to current session.
-4. **Mode guards:** `inspect` denies structured write-like tools and permits
-   shell/job-like tools only through the fail-closed Landlock inspect sandbox;
-   `read_only` denies both write-like and shell/job-like tools.
-5. **Guards first:** Guard denial happens before mutation or agent enqueue;
-   record a failed session event when the session id is valid.
-6. **Business vs recorder:** `session_summary` (and similar) required
-   `session_id` is business input; do not replace it with current session or
-   with `recording_session_id`.
-7. **No inference from HTTP audit:** Never derive a `wc_sess_*` id from an
-   Action Audit Session id (or from `x-action-session-id` / audit SQLite rows).
-8. **Window isolation:** Current-session lookup and mutation require a stable
-   transport window identity. Missing identity skips generic fallback and
-   fails explicit current-binding operations; it never falls back to a
-   credential-wide binding.
-
 ---
 
 ## 2. Action Audit Session
@@ -809,16 +689,6 @@ identity rules, and blur security/guard boundaries. Keep two implementations.
 
 The standing optional-correlation contract is:
 
-- **Direction:** Action Audit side holds optional `workflow_session_id`
-  (`wc_sess_*`); prefer **event/record** level first.
-- **Optional & explicit:** absence is normal; no inference from current Action
-  Audit Session, time, thread, connection, or current-session bindings.
-- **Independent lifecycle:** audit must not create/close/transition Workflow
-  Sessions; correlation is not ownership.
-- **Validation sketch:** missing → unlinked; malformed → parameter error;
-  well-formed but unknown → store without create or fallback.
-- **Named migration** required before SQLite / OpenAPI / external JSON change.
-
 Until that design is implemented, code must treat the systems as unlinked.
 
 ---
@@ -886,16 +756,6 @@ Renaming tables, routes, or serialized field names does.
 ---
 
 ## 8. Quick decision guide
-
-| Question | Answer with… |
-|---|---|
-| Coding task, guards, validation ledger, handoff? | **Workflow Session** (`wc_sess_*`) |
-| HTTP Action audit trail, `/api/audit/*`, SQLite action events? | **Action Audit Session** |
-| Tool argument `session_id` on runtime/MCP tools? | Workflow Session (business input) |
-| Wrapper field `recording_session_id`? | Workflow Session (recorder metadata only) |
-| Header `x-action-session-id`? | Action Audit Session |
-| Should these share one store or state machine? | **No** |
-| Need a link later? | Optional explicit `workflow_session_id`; never infer it from transport or current bindings |
 
 ---
 

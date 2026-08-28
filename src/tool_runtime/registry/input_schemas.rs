@@ -90,13 +90,12 @@ pub(crate) use projects::{
 };
 pub(super) use sessions::{
     close_session_input_schema, complete_session_message_input_schema,
-    current_session_input_schema, get_session_assignment_input_schema,
-    list_session_messages_input_schema, observe_session_messages_input_schema,
-    post_session_message_input_schema, resolve_session_message_input_schema,
-    session_discussion_summary_input_schema, session_execution_context_schema,
-    session_guards_schema, session_handoff_summary_input_schema, session_lifecycle_schema,
-    session_mode_schema, session_summary_input_schema, update_session_context_input_schema,
-    validation_summary_input_schema,
+    get_session_assignment_input_schema, list_session_messages_input_schema,
+    observe_session_messages_input_schema, post_session_message_input_schema,
+    resolve_session_message_input_schema, session_discussion_summary_input_schema,
+    session_execution_context_schema, session_guards_schema, session_handoff_summary_input_schema,
+    session_lifecycle_schema, session_mode_schema, session_summary_input_schema,
+    update_session_context_input_schema, validation_summary_input_schema,
 };
 pub(super) use text_edits::write_project_file_input_schema;
 pub(super) use validation::{

@@ -9,7 +9,7 @@ use crate::tool_runtime::{
 };
 
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
-const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional explicit existing wc_sess_* id. When provided, records this dedicated action in that session ledger and wins over any current-session binding.";
+const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional explicit existing wc_sess_* id. When provided, records this dedicated action in that exact Workflow Session; omission does not infer a Session.";
 const FLATTENED_TOOL_ARG_DESCRIPTION: &str =
     "Flattened tool-specific argument. Used only when `params` and `arguments` are absent.";
 
@@ -1066,11 +1066,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": [TOOL_CALL_TOOL_FIELD],
-            "description": "Generic GPT Actions runtime tool call. The model-facing `tool` selector and flattened top-level fields cover only model-visible runtime tools and match registered_tool_specs, MCP discovery, and tool_manifest. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted direct/non-Action compatibility envelopes; non-null `params` takes precedence, and null wrappers do not suppress flattened arguments. Top-level `session_id` is ordinary tool business input when declared by the selected visible tool; use `recording_session_id` only to record this wrapper call in the session ledger for an existing Workflow Session. Explicit business ids win over current-session lookup, and missing window identity never falls back to a credential-wide binding. For daily discovery prefer tool_manifest; it exposes accepted_flattened_args for model-facing top-level calls. Use list_tools with summary_only/category/features/limit only for focused discovery.",
+            "description": "Generic GPT Actions runtime tool call. The model-facing `tool` selector and flattened top-level fields cover only model-visible runtime tools and match registered_tool_specs, MCP discovery, and tool_manifest. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted direct/non-Action compatibility envelopes; non-null `params` takes precedence, and null wrappers do not suppress flattened arguments. Top-level `session_id` is ordinary explicit tool business input when declared by the selected visible tool; use `recording_session_id` only to record this wrapper call in an explicitly selected existing Workflow Session. Omitted Session identifiers never infer a Workflow Session from window, credential, project, or prior calls. For daily discovery prefer tool_manifest; it exposes accepted_flattened_args for model-facing top-level calls. Use list_tools with summary_only/category/features/limit only for focused discovery.",
             "properties": {
                 "session_id": {
                     "type": "string",
-                    "description": "Flattened tool-specific argument. For session_summary and message-board tools this is the required business session id to read or update in the session ledger; for project tools it is the explicit tool session that wins over current-session binding. Use recording_session_id to record the wrapper call itself."
+                    "description": "Flattened tool-specific argument. For session_summary and message-board tools this is the required business session id to read or update in the session ledger; for project tools it explicitly selects the Workflow Session whose policy/evidence applies. Omission leaves ordinary project calls unrecorded. Use recording_session_id to record the wrapper call itself in an explicitly authorized Session."
                 },
                 "kind": {
                     "type": "string",
@@ -2068,7 +2068,7 @@ fn insert_tool_call_request_reserved_properties(schemas: &mut Value) {
         TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string(),
         json!({
             "type": "string",
-            "description": "Optional recorder metadata for the generic wrapper call. Pass an existing explicit wc_sess_* id to record this call in that session ledger and enforce the recorder session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id only when the selected model-visible tool declares it as business input."
+            "description": "Optional recorder metadata for the generic wrapper call. Pass an existing explicit wc_sess_* id to record this call in that exact Session ledger and preserve trusted provenance/project-boundary checks. This field is stripped before concrete tool parsing and never supplies business Session guards or execution_context. Use top-level session_id only when the selected model-visible tool declares it as business input."
         }),
     );
 }

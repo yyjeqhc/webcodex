@@ -2,7 +2,6 @@
 
 use super::super::*;
 use super::support::*;
-use crate::client_window::ClientWindow;
 use crate::shell_protocol::ShellClientCapabilities;
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;
@@ -132,7 +131,7 @@ async fn same_project_session_records_without_project_mismatch_warning() {
 }
 
 #[tokio::test]
-async fn read_only_cross_project_session_succeeds_with_structured_warning() {
+async fn read_only_cross_project_session_is_blocked_before_execution() {
     let tmp_a = tempfile::tempdir().unwrap();
     let tmp_b = tempfile::tempdir().unwrap();
     fs::write(tmp_a.path().join("README.md"), "alpha\n").unwrap();
@@ -143,75 +142,34 @@ async fn read_only_cross_project_session_succeeds_with_structured_warning() {
         .sessions
         .start_session(Some(alpha.clone()), Some("read mismatch".to_string()));
 
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let bravo = bravo.clone();
-        let session_id = session.session_id.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    ToolCall::ReadFile {
-                        project: bravo,
-                        path: "README.md".to_string(),
-                        session_id: Some(session_id),
-                        start_line: None,
-                        limit: None,
-                        with_line_numbers: None,
-                    },
-                    Some(&auth),
-                )
-                .await
-        }
-    });
-    let req = wait_for_patch_agent_request(&runtime, "bravo-client").await;
-    complete_patch_agent_request(
-        &runtime,
-        "bravo-client",
-        &req.request_id,
-        0,
-        &canonical_agent_file_read_output("bravo\n", 1),
-        "",
-    )
-    .await;
-    let result = task.await.unwrap();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ReadFile {
+                project: bravo.clone(),
+                path: "README.md".to_string(),
+                session_id: Some(session.session_id.clone()),
+                start_line: None,
+                limit: None,
+                with_line_numbers: None,
+            },
+            Some(&auth),
+        )
+        .await;
 
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["warning_kind"], "session_project_mismatch");
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "session_project_mismatch");
+    assert_eq!(result.output["failure_kind"], "session_project_mismatch");
     assert_eq!(result.output["session_project"], alpha);
     assert_eq!(result.output["request_project"], bravo);
-    for hidden in [
-        "allow_cross_project_session_required",
-        "allow_cross_project_session",
-    ] {
-        assert!(
-            result.output.get(hidden).is_none(),
-            "ordinary mismatch output must not advertise {hidden}: {}",
-            result.output
-        );
-    }
-    let warning = result.output["warnings"]
-        .as_array()
-        .unwrap()
-        .last()
-        .unwrap();
-    assert_eq!(warning["warning_kind"], "session_project_mismatch");
-    assert!(warning
-        .get("allow_cross_project_session_required")
-        .is_none());
-    assert!(warning.get("allow_cross_project_session").is_none());
-
-    let summary = runtime
-        .sessions
-        .summary(&session.session_id, Some(20))
-        .unwrap();
-    let event = latest_finished_event(&summary, "read_file");
-    assert_eq!(
-        event.warning_kind.as_deref(),
-        Some("session_project_mismatch")
+    assert_eq!(result.output["command_started"], false);
+    assert_eq!(result.output["state_changed"], false);
+    assert!(result.output.get("permission").is_none());
+    assert!(
+        probe_agent_request_for_instance(&runtime, "bravo-client", "inst")
+            .await
+            .is_none(),
+        "read mismatch must fail before an agent request is enqueued"
     );
-    assert_eq!(event.session_project.as_deref(), Some(alpha.as_str()));
-    assert_eq!(event.request_project.as_deref(), Some(bravo.as_str()));
 }
 
 #[tokio::test]
@@ -269,85 +227,6 @@ async fn mutation_cross_project_session_fails_before_write() {
 }
 
 #[tokio::test]
-async fn allow_cross_project_session_allows_mutation_and_records_warning() {
-    let tmp_a = tempfile::tempdir().unwrap();
-    let tmp_b = tempfile::tempdir().unwrap();
-    let (runtime, alpha, bravo) = runtime_with_two_agent_projects(tmp_a.path(), tmp_b.path()).await;
-    let auth = auth_context(None, true);
-    let session = runtime
-        .sessions
-        .start_session(Some(alpha.clone()), Some("allow mismatch".to_string()));
-
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let bravo = bravo.clone();
-        let session_id = session.session_id.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .call_tool_with_context(
-                    ToolCallRequest {
-                        tool_name: "write_project_file".to_string(),
-                        arguments: json!({
-                            "project": bravo,
-                            "path": "allowed.txt",
-                            "content": "allowed\n",
-                            "session_id": session_id,
-                            "allow_cross_project_session": true
-                        }),
-                    },
-                    ToolCallContext {
-                        transport: ToolTransport::Api,
-                        session_id: None,
-                        auth: Some(&auth),
-                        window: None,
-                        record_oauth_scope_denials: true,
-                        host_file_import_trust:
-                            crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
-                    },
-                )
-                .await
-        }
-    });
-    let req = wait_for_patch_agent_request(&runtime, "bravo-client").await;
-    assert_eq!(req.kind, "file_write_project_file");
-    let payload: serde_json::Value =
-        serde_json::from_str(req.content.as_deref().expect("file-op payload")).unwrap();
-    assert_eq!(payload["path"], "allowed.txt");
-    assert_eq!(payload["content"], "allowed\n");
-    complete_patch_agent_request(
-        &runtime,
-        "bravo-client",
-        &req.request_id,
-        0,
-        r#"{"path":"allowed.txt","bytes_written":8,"sha256":"abc","changed":true}"#,
-        "",
-    )
-    .await;
-    let outcome = task.await.unwrap();
-
-    assert!(outcome.success);
-    let result = outcome.result.expect("tool result");
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["warning_kind"], "session_project_mismatch");
-    assert!(result
-        .output
-        .get("allow_cross_project_session_required")
-        .is_none());
-    assert_eq!(result.output["allow_cross_project_session"], true);
-    let summary = runtime
-        .sessions
-        .summary(&session.session_id, Some(20))
-        .unwrap();
-    let event = latest_finished_event(&summary, "write_project_file");
-    assert_eq!(
-        event.warning_kind.as_deref(),
-        Some("session_project_mismatch")
-    );
-    assert_eq!(event.allow_cross_project_session, Some(true));
-}
-
-#[tokio::test]
 async fn recording_session_id_obeys_project_boundary() {
     let tmp_a = tempfile::tempdir().unwrap();
     let tmp_b = tempfile::tempdir().unwrap();
@@ -395,134 +274,6 @@ async fn recording_session_id_obeys_project_boundary() {
     );
     assert_eq!(event.request_project.as_deref(), Some(bravo.as_str()));
     assert!(event.permission.is_none());
-}
-
-#[tokio::test]
-async fn current_session_binding_cannot_cross_project_boundary() {
-    let tmp_a = tempfile::tempdir().unwrap();
-    let tmp_b = tempfile::tempdir().unwrap();
-    fs::write(tmp_b.path().join("README.md"), "bravo\n").unwrap();
-    let (runtime, alpha, bravo) = runtime_with_two_agent_projects(tmp_a.path(), tmp_b.path()).await;
-    let auth = auth_context(None, true);
-    let session = runtime
-        .sessions
-        .start_session(Some(alpha.clone()), Some("current mismatch".to_string()));
-
-    let bind = runtime
-        .dispatch_with_auth(
-            ToolCall::from_tool_name(
-                "bind_current_session",
-                json!({"project": bravo.clone(), "session_id": session.session_id}),
-            )
-            .unwrap(),
-            Some(&auth),
-        )
-        .await;
-    assert!(!bind.success);
-    assert_eq!(bind.output["failure_kind"], "session_project_mismatch");
-    assert_eq!(bind.output["session_project"], alpha);
-    assert_eq!(bind.output["request_project"], bravo);
-
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let bravo = bravo.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    ToolCall::ReadFile {
-                        project: bravo,
-                        path: "README.md".to_string(),
-                        session_id: None,
-                        start_line: None,
-                        limit: None,
-                        with_line_numbers: None,
-                    },
-                    Some(&auth),
-                )
-                .await
-        }
-    });
-    let req = wait_for_patch_agent_request(&runtime, "bravo-client").await;
-    complete_patch_agent_request(
-        &runtime,
-        "bravo-client",
-        &req.request_id,
-        0,
-        &canonical_agent_file_read_output("bravo\n", 1),
-        "",
-    )
-    .await;
-    let read = task.await.unwrap();
-    assert!(read.success, "{:?}", read.error);
-    assert!(read.output.get("session_recorded").is_none());
-}
-
-#[tokio::test]
-async fn read_only_current_session_guard_blocks_write_before_enqueue() {
-    let runtime = runtime_with_agent_project("current-guard");
-    let window = ClientWindow::for_test("current-guard-window");
-    let caps = ShellClientCapabilities {
-        shell: true,
-        file_write: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, "current-guard", None, caps).await;
-    let project = agent_test_project_id("current-guard");
-    let session = runtime.sessions.start_session_with_guards(
-        Some(project.clone()),
-        Some("readonly current".to_string()),
-        SessionMode::ReadOnly,
-        sessions::SessionGuards::default(),
-    );
-    let bind = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
-            ToolCall::from_tool_name(
-                "bind_current_session",
-                json!({"project": project, "session_id": session.session_id}),
-            )
-            .unwrap(),
-            None,
-            sessions::SessionTransport::Api,
-            true,
-            false,
-            Default::default(),
-            None,
-            Some(&window),
-        )
-        .await;
-    assert!(bind.success, "{:?}", bind.error);
-
-    let result = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
-            ToolCall::WriteProjectFile {
-                project: project.clone(),
-                path: "blocked.txt".to_string(),
-                content: "nope".to_string(),
-                session_id: None,
-                overwrite: None,
-                expected_sha256: None,
-                expected_content_prefix: None,
-            },
-            None,
-            sessions::SessionTransport::Api,
-            true,
-            false,
-            Default::default(),
-            None,
-            Some(&window),
-        )
-        .await;
-    assert!(!result.success);
-    assert_eq!(result.output["error_kind"], "session_guard_denied");
-    assert_eq!(result.output["session_id"], session.session_id);
-    assert_eq!(result.output["session_recorded"], true);
-    assert!(
-        probe_agent_request_for_instance(&runtime, "current-guard", "inst")
-            .await
-            .is_none(),
-        "guard denial must happen before an agent request is enqueued"
-    );
 }
 
 #[tokio::test]

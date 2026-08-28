@@ -1,6 +1,6 @@
-//! Cross-process continuity tests: runner disconnect/reconnect, durable exact
-//! Workflow Session binding recovery, stale registration semantics,
-//! meaningful-activity scoping, and mixed-version diagnostics.
+//! Cross-process continuity tests: runner disconnect/reconnect, explicit Workflow
+//! Session recovery, stale registration semantics, meaningful-activity scoping,
+//! and mixed-version diagnostics.
 
 use super::support::*;
 use crate::auth::AuthContext;
@@ -17,29 +17,6 @@ use crate::tool_runtime::{ToolCall, ToolRuntime};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Notify;
-
-fn rewrite_persisted_session_as_legacy(
-    ledger: &std::path::Path,
-    session_id: &str,
-    keep_durable_bindings: bool,
-) {
-    let mut value: Value = serde_json::from_str(&std::fs::read_to_string(ledger).unwrap()).unwrap();
-    let session = value["sessions"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|session| session["session_id"] == session_id)
-        .expect("persisted Session");
-    assert!(session
-        .as_object_mut()
-        .unwrap()
-        .remove("owner_authority_fingerprint")
-        .is_some());
-    if !keep_durable_bindings {
-        value["durable_current_bindings"] = Value::Array(Vec::new());
-    }
-    std::fs::write(ledger, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
-}
 
 fn persisted_session_authority_fingerprint(
     ledger: &std::path::Path,
@@ -148,7 +125,6 @@ async fn runner_disconnect_and_reconnect_change_layers_independently() {
         "server_registration",
         "project_registry",
         "connector_endpoint",
-        "session_binding",
         "last_successful_tool_call",
     ] {
         assert_layer_contract(&connected[name], name);
@@ -300,18 +276,10 @@ async fn no_runner_layers_are_not_observed_with_reason_codes() {
     assert_eq!(empty["server_transport"]["status"], "not_observed");
     assert_eq!(empty["server_registration"]["status"], "not_observed");
     assert_eq!(empty["project_registry"]["status"], "not_configured");
-    assert_eq!(
-        empty["session_binding"]["reason_code"],
-        "exact_binding_requires_window_and_project_observation"
+    assert!(
+        empty.get("session_binding").is_none(),
+        "removed Workflow binding layer must not be projected"
     );
-    assert_eq!(empty["session_binding"]["process_local_cache"], true);
-    assert_eq!(empty["session_binding"]["durable_exact_binding"], true);
-    assert_eq!(empty["session_binding"]["restored_after_restart"], true);
-    assert_eq!(
-        empty["session_binding"]["requires_stable_window_identity"],
-        true
-    );
-    assert_eq!(empty["session_binding"]["missing_identity_fallback"], false);
     assert_eq!(empty["last_successful_tool_call"]["status"], "not_observed");
     assert_eq!(
         empty["last_successful_tool_call"]["reason_code"],
@@ -391,124 +359,6 @@ async fn meaningful_activity_is_scoped_and_not_refreshed_by_status_calls() {
         observed_at
     );
 }
-
-#[tokio::test]
-async fn durable_current_binding_restores_same_window_after_restart() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("sessions.json");
-    let project_root = dir.path().join("proj");
-    std::fs::create_dir_all(&project_root).unwrap();
-    init_git_repo(&project_root);
-
-    // "First server process": start a coding task with a current binding.
-    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let project =
-        register_agent_project_at_path(&runtime1, "restart-agent", "proj", &project_root).await;
-    let start = dispatch_start_coding_task_with_local_agent(
-        &runtime1,
-        "restart-agent",
-        ToolCall::StartCodingTask {
-            project: project.clone(),
-            client_id: None,
-            path: None,
-            temporary_project_name: None,
-            title: Some("restart continuity".to_string()),
-            mode: SessionMode::Normal,
-            deny_write_tools: false,
-            deny_shell_tools: false,
-            detail: StartupDetail::Full,
-            resume_session_id: None,
-            bind_current: true,
-            new_session: false,
-            execution_context: None,
-        },
-    )
-    .await;
-    assert!(start.success, "{:?}", start.error);
-    let session_id = start.output["session"]["session_id"]
-        .as_str()
-        .expect("session id")
-        .to_string();
-    assert_eq!(start.output["session"]["current_binding"]["bound"], true);
-    assert_eq!(
-        start.output["connection_state"]["session_binding"]["status"],
-        "bound"
-    );
-    assert_eq!(runtime1.sessions.status().durable_binding_count, 1);
-    runtime1.sessions.flush_persistence();
-    drop(runtime1);
-
-    // "Restarted server process": same ledger and exact transport window,
-    // initially with an empty process-local cache.
-    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    register_agent_project_at_path(&runtime2, "restart-agent", "proj", &project_root).await;
-    assert_eq!(runtime2.sessions.process_local_binding_count_for_test(), 0);
-    let restored_status = runtime2.sessions.status();
-    assert_eq!(restored_status.restored_sessions, 1);
-    assert_eq!(restored_status.restored_binding_count, 1);
-    assert_eq!(restored_status.durable_binding_count, 1);
-
-    // Startup resolves the durable exact binding, restores the local
-    // cache, and appends a new instruction to the original Workflow Session.
-    let restarted = dispatch_start_coding_task_with_local_agent(
-        &runtime2,
-        "restart-agent",
-        ToolCall::StartCodingTask {
-            project: project.clone(),
-            client_id: None,
-            path: None,
-            temporary_project_name: None,
-            title: Some("new post-restart context".to_string()),
-            mode: SessionMode::Normal,
-            deny_write_tools: false,
-            deny_shell_tools: false,
-            detail: StartupDetail::Full,
-            resume_session_id: None,
-            bind_current: true,
-            new_session: false,
-            execution_context: None,
-        },
-    )
-    .await;
-    assert!(restarted.success, "{:?}", restarted.error);
-    assert_eq!(restarted.output["session"]["session_id"], session_id);
-    assert_eq!(restarted.output["session"]["continuation"], "continued");
-    assert_eq!(restarted.output["session"]["reused"], true);
-    assert_eq!(
-        runtime2
-            .sessions
-            .active_session_count_for_test(Some(&project)),
-        1
-    );
-    assert_eq!(runtime2.sessions.process_local_binding_count_for_test(), 1);
-    let binding = &restarted.output["connection_state"]["session_binding"];
-    assert_eq!(binding["status"], "bound");
-    assert_eq!(binding["process_local_cache"], true);
-    assert_eq!(binding["durable_exact_binding"], true);
-    assert_eq!(binding["restored_after_restart"], true);
-    assert!(binding["durable_resume"]
-        .as_str()
-        .unwrap()
-        .contains("same exact principal"));
-
-    let summary = runtime2.sessions.summary(&session_id, Some(10)).unwrap();
-    assert_eq!(summary.title.as_deref(), Some("restart continuity"));
-    let instructions: Vec<_> = summary
-        .events
-        .iter()
-        .filter(|event| event.kind == "task_instruction")
-        .collect();
-    assert_eq!(instructions.len(), 2);
-    assert_eq!(
-        instructions[0].instruction.as_deref(),
-        Some("restart continuity")
-    );
-    assert_eq!(
-        instructions[1].instruction.as_deref(),
-        Some("new post-restart context")
-    );
-}
-
 #[tokio::test]
 async fn canonical_project_session_explicit_resume_survives_restart() {
     let dir = tempfile::tempdir().unwrap();
@@ -533,7 +383,7 @@ async fn canonical_project_session_explicit_resume_survives_restart() {
     let started = dispatch_start_coding_task_in_window(
         &runtime1,
         "canonical-restart-agent",
-        coding_start_call(&project, "canonical root", SessionMode::Normal, false),
+        coding_start_call(&project, "canonical root", SessionMode::Normal),
         Some(&alice),
         "canonical-restart-window",
     )
@@ -563,7 +413,7 @@ async fn canonical_project_session_explicit_resume_survives_restart() {
     let resumed = dispatch_start_coding_task_in_window(
         &runtime2,
         "canonical-restart-agent",
-        coding_resume_call(&project, "explicit canonical resume", &session_id, false),
+        coding_resume_call(&project, "explicit canonical resume", &session_id),
         Some(&alice),
         "canonical-restart-window",
     )
@@ -579,82 +429,6 @@ async fn canonical_project_session_explicit_resume_survives_restart() {
         expected_fingerprint
     );
 }
-
-#[tokio::test]
-async fn missing_authority_with_exact_durable_binding_is_discarded_without_upgrade() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("sessions.json");
-    let project_root = dir.path().join("proj");
-    std::fs::create_dir_all(&project_root).unwrap();
-    init_git_repo(&project_root);
-    let alice = shared_key_auth_context("missing-authority-alice");
-
-    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let project = register_agent_project_at_path_with_auth(
-        &runtime1,
-        "missing-authority-agent",
-        "proj",
-        &project_root,
-        &alice,
-    )
-    .await;
-    let started = dispatch_start_coding_task_in_window(
-        &runtime1,
-        "missing-authority-agent",
-        coding_start_call(&project, "canonical root", SessionMode::Normal, false),
-        Some(&alice),
-        "missing-authority-window",
-    )
-    .await;
-    assert!(started.success, "{:?}", started.error);
-    let session_id = started.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    runtime1.sessions.flush_persistence();
-    drop(runtime1);
-
-    rewrite_persisted_session_as_legacy(&ledger, &session_id, true);
-    let legacy_bytes = std::fs::read(&ledger).unwrap();
-    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    register_agent_project_at_path_with_auth(
-        &runtime2,
-        "missing-authority-agent",
-        "proj",
-        &project_root,
-        &alice,
-    )
-    .await;
-    let status = runtime2.sessions.status();
-    assert_eq!(status.restored_sessions, 0);
-    assert_eq!(status.restored_binding_count, 0);
-    assert!(status.discarded_binding_count >= 1);
-    assert!(runtime2.sessions.summary(&session_id, None).is_none());
-    assert!(runtime2
-        .sessions
-        .session_target_authority(&session_id)
-        .is_none());
-
-    let denied = dispatch_start_coding_task_in_window(
-        &runtime2,
-        "missing-authority-agent",
-        coding_resume_call(&project, "must not upgrade", &session_id, false),
-        Some(&alice),
-        "missing-authority-window",
-    )
-    .await;
-    assert!(!denied.success);
-    assert_eq!(denied.output["error_kind"], "unknown_session_id");
-    assert_eq!(
-        runtime2
-            .sessions
-            .active_session_count_for_test(Some(&project)),
-        0
-    );
-    runtime2.sessions.flush_persistence();
-    assert_eq!(std::fs::read(&ledger).unwrap(), legacy_bytes);
-}
-
 #[tokio::test]
 async fn malformed_persisted_authority_is_discarded_fail_closed() {
     let dir = tempfile::tempdir().unwrap();
@@ -676,7 +450,7 @@ async fn malformed_persisted_authority_is_discarded_fail_closed() {
     let started = dispatch_start_coding_task_in_window(
         &runtime1,
         "malformed-authority-agent",
-        coding_start_call(&project, "canonical root", SessionMode::Normal, false),
+        coding_start_call(&project, "canonical root", SessionMode::Normal),
         Some(&alice),
         "malformed-authority-window",
     )
@@ -698,288 +472,6 @@ async fn malformed_persisted_authority_is_discarded_fail_closed() {
         .session_target_authority(&session_id)
         .is_none());
 }
-
-#[tokio::test]
-async fn durable_current_binding_does_not_cross_windows_after_restart() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("sessions.json");
-    let project_root = dir.path().join("proj");
-    std::fs::create_dir_all(&project_root).unwrap();
-    init_git_repo(&project_root);
-    let auth = auth_context(None, true);
-
-    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let project =
-        register_agent_project_at_path(&runtime1, "window-restart-agent", "proj", &project_root)
-            .await;
-    let first = dispatch_start_coding_task_in_window(
-        &runtime1,
-        "window-restart-agent",
-        coding_start_call(&project, "window A root", SessionMode::Normal, false),
-        Some(&auth),
-        "durable-window-a",
-    )
-    .await;
-    assert!(first.success, "{:?}", first.error);
-    let first_id = first.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    runtime1.sessions.flush_persistence();
-    drop(runtime1);
-
-    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    register_agent_project_at_path(&runtime2, "window-restart-agent", "proj", &project_root).await;
-    let other_window = dispatch_start_coding_task_in_window(
-        &runtime2,
-        "window-restart-agent",
-        coding_start_call(&project, "window B root", SessionMode::Normal, false),
-        Some(&auth),
-        "durable-window-b",
-    )
-    .await;
-    assert!(other_window.success, "{:?}", other_window.error);
-    assert_ne!(other_window.output["session"]["session_id"], first_id);
-    assert_eq!(other_window.output["session"]["continuation"], "created");
-    assert_eq!(
-        runtime2
-            .sessions
-            .active_session_count_for_test(Some(&project)),
-        2
-    );
-}
-
-#[tokio::test]
-async fn durable_current_binding_does_not_cross_changed_canonical_root_after_restart() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("sessions.json");
-    let first_root = dir.path().join("first");
-    let second_root = dir.path().join("second");
-    std::fs::create_dir_all(&first_root).unwrap();
-    std::fs::create_dir_all(&second_root).unwrap();
-    init_git_repo(&first_root);
-    init_git_repo(&second_root);
-    let auth = auth_context(None, true);
-
-    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let project =
-        register_agent_project_at_path(&runtime1, "moving-restart-agent", "demo", &first_root)
-            .await;
-    let first = dispatch_start_coding_task_in_window(
-        &runtime1,
-        "moving-restart-agent",
-        coding_start_call(&project, "first root", SessionMode::Normal, false),
-        Some(&auth),
-        "durable-moving-window",
-    )
-    .await;
-    assert!(first.success, "{:?}", first.error);
-    let first_id = first.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    runtime1.sessions.flush_persistence();
-    drop(runtime1);
-
-    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let moved_project =
-        register_agent_project_at_path(&runtime2, "moving-restart-agent", "demo", &second_root)
-            .await;
-    assert_eq!(moved_project, project);
-    let moved = dispatch_start_coding_task_in_window(
-        &runtime2,
-        "moving-restart-agent",
-        coding_start_call(&project, "second root", SessionMode::Normal, false),
-        Some(&auth),
-        "durable-moving-window",
-    )
-    .await;
-    assert!(moved.success, "{:?}", moved.error);
-    assert_ne!(moved.output["session"]["session_id"], first_id);
-    assert_eq!(moved.output["session"]["continuation"], "created");
-}
-
-#[tokio::test]
-async fn durable_current_binding_new_session_rebinds_across_restart() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("sessions.json");
-    let project_root = dir.path().join("proj");
-    std::fs::create_dir_all(&project_root).unwrap();
-    init_git_repo(&project_root);
-    let auth = auth_context(None, true);
-
-    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let project =
-        register_agent_project_at_path(&runtime1, "new-session-agent", "proj", &project_root).await;
-    let first = dispatch_start_coding_task_in_window(
-        &runtime1,
-        "new-session-agent",
-        coding_start_call(&project, "old root", SessionMode::Normal, false),
-        Some(&auth),
-        "durable-new-session-window",
-    )
-    .await;
-    let isolated = dispatch_start_coding_task_in_window(
-        &runtime1,
-        "new-session-agent",
-        coding_start_call(&project, "new root", SessionMode::Normal, true),
-        Some(&auth),
-        "durable-new-session-window",
-    )
-    .await;
-    assert!(first.success && isolated.success);
-    let old_id = first.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let new_id = isolated.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert_ne!(old_id, new_id);
-    assert!(runtime1.sessions.summary(&old_id, None).is_some());
-    runtime1.sessions.flush_persistence();
-    drop(runtime1);
-
-    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    register_agent_project_at_path(&runtime2, "new-session-agent", "proj", &project_root).await;
-    let continued = dispatch_start_coding_task_in_window(
-        &runtime2,
-        "new-session-agent",
-        coding_start_call(&project, "continue new root", SessionMode::Normal, false),
-        Some(&auth),
-        "durable-new-session-window",
-    )
-    .await;
-    assert!(continued.success, "{:?}", continued.error);
-    assert_eq!(continued.output["session"]["session_id"], new_id);
-    assert_eq!(continued.output["session"]["continuation"], "continued");
-    assert!(runtime2.sessions.summary(&old_id, None).is_some());
-    assert_eq!(
-        runtime2
-            .sessions
-            .active_session_count_for_test(Some(&project)),
-        2
-    );
-}
-
-#[tokio::test]
-async fn durable_current_binding_explicit_unbind_prevents_restart_recovery() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("sessions.json");
-    let project_root = dir.path().join("proj");
-    std::fs::create_dir_all(&project_root).unwrap();
-    init_git_repo(&project_root);
-    let auth = auth_context(None, true);
-    let window = ClientWindow::for_test("durable-unbind-window");
-
-    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let project =
-        register_agent_project_at_path(&runtime1, "unbind-agent", "proj", &project_root).await;
-    let first = dispatch_start_coding_task_in_window(
-        &runtime1,
-        "unbind-agent",
-        coding_start_call(&project, "bound root", SessionMode::Normal, false),
-        Some(&auth),
-        "durable-unbind-window",
-    )
-    .await;
-    assert!(first.success, "{:?}", first.error);
-    let old_id = first.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let unbound = runtime1
-        .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
-            ToolCall::UnbindCurrentSession {
-                project: project.clone(),
-            },
-            Some(&auth),
-            crate::tool_runtime::sessions::SessionTransport::Mcp,
-            true,
-            false,
-            Default::default(),
-            None,
-            Some(&window),
-        )
-        .await;
-    assert!(unbound.success, "{:?}", unbound.error);
-    assert_eq!(unbound.output["had_binding"], true);
-    assert_eq!(runtime1.sessions.status().durable_binding_count, 0);
-    runtime1.sessions.flush_persistence();
-    drop(runtime1);
-
-    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    register_agent_project_at_path(&runtime2, "unbind-agent", "proj", &project_root).await;
-    let restarted = dispatch_start_coding_task_in_window(
-        &runtime2,
-        "unbind-agent",
-        coding_start_call(&project, "fresh after unbind", SessionMode::Normal, false),
-        Some(&auth),
-        "durable-unbind-window",
-    )
-    .await;
-    assert!(restarted.success, "{:?}", restarted.error);
-    assert_ne!(restarted.output["session"]["session_id"], old_id);
-    assert!(runtime2.sessions.summary(&old_id, None).is_some());
-}
-
-#[tokio::test]
-async fn durable_current_binding_close_prevents_restart_recovery() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("sessions.json");
-    let project_root = dir.path().join("proj");
-    std::fs::create_dir_all(&project_root).unwrap();
-    init_git_repo(&project_root);
-    let auth = auth_context(None, true);
-
-    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let project =
-        register_agent_project_at_path(&runtime1, "close-agent", "proj", &project_root).await;
-    let first = dispatch_start_coding_task_in_window(
-        &runtime1,
-        "close-agent",
-        coding_start_call(&project, "closable root", SessionMode::Normal, false),
-        Some(&auth),
-        "durable-close-window",
-    )
-    .await;
-    assert!(first.success, "{:?}", first.error);
-    let closed_id = first.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let closed = runtime1
-        .dispatch_with_auth(
-            ToolCall::CloseSession {
-                session_id: closed_id.clone(),
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(closed.success, "{:?}", closed.error);
-    assert_eq!(runtime1.sessions.status().durable_binding_count, 0);
-    runtime1.sessions.flush_persistence();
-    drop(runtime1);
-
-    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    register_agent_project_at_path(&runtime2, "close-agent", "proj", &project_root).await;
-    let restarted = dispatch_start_coding_task_in_window(
-        &runtime2,
-        "close-agent",
-        coding_start_call(&project, "fresh after close", SessionMode::Normal, false),
-        Some(&auth),
-        "durable-close-window",
-    )
-    .await;
-    assert!(restarted.success, "{:?}", restarted.error);
-    assert_ne!(restarted.output["session"]["session_id"], closed_id);
-    assert_eq!(
-        runtime2.sessions.lifecycle_state(&closed_id),
-        Some(crate::tool_runtime::sessions::SessionLifecycle::Closed)
-    );
-}
-
 #[tokio::test]
 async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
     let runtime = test_runtime();
@@ -1352,24 +844,6 @@ async fn runner_host_context_is_revalidated_at_server_registration() {
         .is_none());
 }
 
-/// Drive a `start_coding_task` dispatch while servicing the fake agent's git
-/// inspection requests locally.
-pub(in crate::tool_runtime::tests) async fn dispatch_start_coding_task_with_local_agent(
-    runtime: &ToolRuntime,
-    client_id: &str,
-    call: ToolCall,
-) -> crate::tool_runtime::ToolResult {
-    let bootstrap = auth_context(None, true);
-    dispatch_start_coding_task_in_window(
-        runtime,
-        client_id,
-        call,
-        Some(&bootstrap),
-        "reconnect-window",
-    )
-    .await
-}
-
 pub(in crate::tool_runtime::tests) async fn dispatch_start_coding_task_in_window(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -1407,8 +881,6 @@ async fn dispatch_start_coding_task_in_window_with_transport(
                     call,
                     auth.as_ref(),
                     transport,
-                    true,
-                    false,
                     Default::default(),
                     None,
                     Some(&window),
@@ -1449,12 +921,7 @@ async fn dispatch_start_coding_task_in_window_with_transport(
     task.await.unwrap()
 }
 
-fn coding_start_call(
-    project: &str,
-    instruction: &str,
-    mode: SessionMode,
-    new_session: bool,
-) -> ToolCall {
+fn coding_start_call(project: &str, instruction: &str, mode: SessionMode) -> ToolCall {
     ToolCall::StartCodingTask {
         project: project.to_string(),
         client_id: None,
@@ -1466,18 +933,11 @@ fn coding_start_call(
         deny_shell_tools: false,
         detail: StartupDetail::Standard,
         resume_session_id: None,
-        bind_current: true,
-        new_session,
         execution_context: None,
     }
 }
 
-fn coding_resume_call(
-    project: &str,
-    instruction: &str,
-    session_id: &str,
-    bind_current: bool,
-) -> ToolCall {
+fn coding_resume_call(project: &str, instruction: &str, session_id: &str) -> ToolCall {
     ToolCall::StartCodingTask {
         project: project.to_string(),
         client_id: None,
@@ -1489,14 +949,12 @@ fn coding_resume_call(
         deny_shell_tools: false,
         detail: StartupDetail::Standard,
         resume_session_id: Some(session_id.to_string()),
-        bind_current,
-        new_session: false,
         execution_context: None,
     }
 }
 
 #[tokio::test]
-async fn start_coding_task_reuses_same_window_project_and_appends_instruction() {
+async fn start_coding_task_without_resume_always_creates_fresh_session() {
     let dir = tempfile::tempdir().unwrap();
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
@@ -1507,7 +965,7 @@ async fn start_coding_task_reuses_same_window_project_and_appends_instruction() 
     let first = dispatch_start_coding_task_in_window(
         &runtime,
         "continuity-agent",
-        coding_start_call(&project, "root objective", SessionMode::Normal, false),
+        coding_start_call(&project, "root objective", SessionMode::Normal),
         Some(&auth),
         "continuity-window",
     )
@@ -1515,7 +973,7 @@ async fn start_coding_task_reuses_same_window_project_and_appends_instruction() 
     let second = dispatch_start_coding_task_in_window(
         &runtime,
         "continuity-agent",
-        coding_start_call(&project, "follow-up objective", SessionMode::Normal, false),
+        coding_start_call(&project, "follow-up objective", SessionMode::Normal),
         Some(&auth),
         "continuity-window",
     )
@@ -1525,33 +983,39 @@ async fn start_coding_task_reuses_same_window_project_and_appends_instruction() 
     assert!(second.success, "{:?}", second.error);
     let first_id = first.output["session"]["session_id"].as_str().unwrap();
     let second_id = second.output["session"]["session_id"].as_str().unwrap();
-    assert_eq!(second_id, first_id);
-    assert_eq!(second.output["session"]["continuation"], "continued");
+    assert_ne!(second_id, first_id);
+    assert_eq!(first.output["session"]["continuation"], "created");
+    assert_eq!(second.output["session"]["continuation"], "created");
     assert_eq!(
         runtime
             .sessions
             .active_session_count_for_test(Some(&project)),
+        2
+    );
+    let first_summary = runtime.sessions.summary(first_id, Some(20)).unwrap();
+    let second_summary = runtime.sessions.summary(second_id, Some(20)).unwrap();
+    assert_eq!(first_summary.title.as_deref(), Some("root objective"));
+    assert_eq!(second_summary.title.as_deref(), Some("follow-up objective"));
+    assert_eq!(
+        first_summary
+            .events
+            .iter()
+            .filter(|event| event.kind == "task_instruction")
+            .count(),
         1
     );
-    let summary = runtime.sessions.summary(first_id, Some(20)).unwrap();
-    assert_eq!(summary.title.as_deref(), Some("root objective"));
-    let instructions: Vec<_> = summary
-        .events
-        .iter()
-        .filter(|event| event.kind == "task_instruction")
-        .collect();
-    assert_eq!(instructions.len(), 2);
     assert_eq!(
-        instructions[1].instruction.as_deref(),
-        Some("follow-up objective")
+        second_summary
+            .events
+            .iter()
+            .filter(|event| event.kind == "task_instruction")
+            .count(),
+        1
     );
-    assert_eq!(instructions[1].requested_mode.as_deref(), Some("normal"));
-    assert_eq!(instructions[1].capability_changed, Some(false));
-    assert_eq!(instructions[1].context_refreshed, Some(true));
 }
 
 #[tokio::test]
-async fn start_coding_task_explicit_new_session_preserves_previous_session() {
+async fn start_coding_task_second_fresh_start_preserves_previous_session() {
     let dir = tempfile::tempdir().unwrap();
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
@@ -1561,7 +1025,7 @@ async fn start_coding_task_explicit_new_session_preserves_previous_session() {
     let first = dispatch_start_coding_task_in_window(
         &runtime,
         "isolation-agent",
-        coding_start_call(&project, "first root", SessionMode::Normal, false),
+        coding_start_call(&project, "first root", SessionMode::Normal),
         Some(&auth),
         "isolation-window",
     )
@@ -1569,7 +1033,7 @@ async fn start_coding_task_explicit_new_session_preserves_previous_session() {
     let isolated = dispatch_start_coding_task_in_window(
         &runtime,
         "isolation-agent",
-        coding_start_call(&project, "isolated root", SessionMode::Normal, true),
+        coding_start_call(&project, "second root", SessionMode::Normal),
         Some(&auth),
         "isolation-window",
     )
@@ -1591,100 +1055,8 @@ async fn start_coding_task_explicit_new_session_preserves_previous_session() {
         crate::tool_runtime::sessions::SessionLifecycle::Active
     );
 }
-
 #[tokio::test]
-async fn start_coding_task_bindings_are_isolated_by_window() {
-    let dir = tempfile::tempdir().unwrap();
-    init_git_repo(dir.path());
-    let runtime = ToolRuntime::new_for_tests();
-    let project =
-        register_agent_project_at_path(&runtime, "window-agent", "demo", dir.path()).await;
-    let auth = auth_context(None, true);
-    let first_a = dispatch_start_coding_task_in_window(
-        &runtime,
-        "window-agent",
-        coding_start_call(&project, "window A", SessionMode::Normal, false),
-        Some(&auth),
-        "window-a",
-    )
-    .await;
-    let first_b = dispatch_start_coding_task_in_window(
-        &runtime,
-        "window-agent",
-        coding_start_call(&project, "window B", SessionMode::Normal, false),
-        Some(&auth),
-        "window-b",
-    )
-    .await;
-    let again_a = dispatch_start_coding_task_in_window(
-        &runtime,
-        "window-agent",
-        coding_start_call(&project, "window A again", SessionMode::Normal, false),
-        Some(&auth),
-        "window-a",
-    )
-    .await;
-    assert!(first_a.success && first_b.success && again_a.success);
-    assert_ne!(
-        first_a.output["session"]["session_id"],
-        first_b.output["session"]["session_id"]
-    );
-    assert_eq!(
-        first_a.output["session"]["session_id"],
-        again_a.output["session"]["session_id"]
-    );
-}
-
-#[tokio::test]
-async fn start_coding_task_switches_projects_and_restores_each_binding() {
-    let dir_a = tempfile::tempdir().unwrap();
-    let dir_b = tempfile::tempdir().unwrap();
-    init_git_repo(dir_a.path());
-    init_git_repo(dir_b.path());
-    let runtime = ToolRuntime::new_for_tests();
-    let project_a =
-        register_agent_project_at_path(&runtime, "project-a-agent", "a", dir_a.path()).await;
-    let project_b =
-        register_agent_project_at_path(&runtime, "project-b-agent", "b", dir_b.path()).await;
-    let auth = auth_context(None, true);
-
-    let first_a = dispatch_start_coding_task_in_window(
-        &runtime,
-        "project-a-agent",
-        coding_start_call(&project_a, "work on A", SessionMode::Normal, false),
-        Some(&auth),
-        "project-switch-window",
-    )
-    .await;
-    let first_b = dispatch_start_coding_task_in_window(
-        &runtime,
-        "project-b-agent",
-        coding_start_call(&project_b, "work on B", SessionMode::Normal, false),
-        Some(&auth),
-        "project-switch-window",
-    )
-    .await;
-    let again_a = dispatch_start_coding_task_in_window(
-        &runtime,
-        "project-a-agent",
-        coding_start_call(&project_a, "return to A", SessionMode::Normal, false),
-        Some(&auth),
-        "project-switch-window",
-    )
-    .await;
-    assert!(first_a.success && first_b.success && again_a.success);
-    assert_ne!(
-        first_a.output["session"]["session_id"],
-        first_b.output["session"]["session_id"]
-    );
-    assert_eq!(
-        first_a.output["session"]["session_id"],
-        again_a.output["session"]["session_id"]
-    );
-}
-
-#[tokio::test]
-async fn failed_project_start_does_not_pollute_full_runtime_binding() {
+async fn failed_project_start_does_not_create_or_mutate_workflow_session() {
     let dir = tempfile::tempdir().unwrap();
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
@@ -1693,7 +1065,7 @@ async fn failed_project_start_does_not_pollute_full_runtime_binding() {
     let first = dispatch_start_coding_task_in_window(
         &runtime,
         "stable-agent",
-        coding_start_call(&project, "stable A", SessionMode::Normal, false),
+        coding_start_call(&project, "stable A", SessionMode::Normal),
         Some(&auth),
         "failed-switch-window",
     )
@@ -1703,31 +1075,38 @@ async fn failed_project_start_does_not_pollute_full_runtime_binding() {
     let failed = dispatch_start_coding_task_in_window(
         &runtime,
         "stable-agent",
-        coding_start_call(
-            "agent:missing-agent:b",
-            "failed B",
-            SessionMode::Normal,
-            false,
-        ),
+        coding_start_call("agent:missing-agent:b", "failed B", SessionMode::Normal),
         Some(&auth),
         "failed-switch-window",
     )
     .await;
     assert!(!failed.success);
     assert_eq!(failed.output["error_kind"], "unknown_project");
+    assert_eq!(
+        runtime
+            .sessions
+            .active_session_count_for_test(Some(&project)),
+        1
+    );
 
     let again = dispatch_start_coding_task_in_window(
         &runtime,
         "stable-agent",
-        coding_start_call(&project, "continue A", SessionMode::Normal, false),
+        coding_start_call(&project, "fresh A", SessionMode::Normal),
         Some(&auth),
         "failed-switch-window",
     )
     .await;
     assert!(again.success);
-    assert_eq!(
+    assert_ne!(
         first.output["session"]["session_id"],
         again.output["session"]["session_id"]
+    );
+    assert_eq!(
+        runtime
+            .sessions
+            .active_session_count_for_test(Some(&project)),
+        2
     );
 }
 
@@ -1775,7 +1154,7 @@ async fn start_coding_task_mode_upgrade_is_atomic_and_permission_checked() {
     let inspected = dispatch_start_coding_task_in_window(
         &runtime,
         "oauth-client",
-        coding_start_call(&project, "inspect first", SessionMode::Inspect, false),
+        coding_start_call(&project, "inspect first", SessionMode::Inspect),
         Some(&read_auth),
         "upgrade-window",
     )
@@ -1805,7 +1184,7 @@ async fn start_coding_task_mode_upgrade_is_atomic_and_permission_checked() {
     let denied = dispatch_start_coding_task_in_window(
         &runtime,
         "oauth-client",
-        coding_start_call(&project, "request writes", SessionMode::Normal, false),
+        coding_resume_call(&project, "request writes", &session_id),
         Some(&read_auth),
         "upgrade-window",
     )
@@ -1831,7 +1210,7 @@ async fn start_coding_task_mode_upgrade_is_atomic_and_permission_checked() {
     let upgraded = dispatch_start_coding_task_in_window(
         &runtime,
         "oauth-client",
-        coding_start_call(&project, "enable writes", SessionMode::Normal, false),
+        coding_resume_call(&project, "enable writes", &session_id),
         Some(&write_auth),
         "upgrade-window",
     )
@@ -1878,128 +1257,4 @@ async fn start_coding_task_mode_upgrade_is_atomic_and_permission_checked() {
         1,
         "start_coding_task must not reread ordinary explored source files"
     );
-}
-
-#[tokio::test]
-async fn durable_current_binding_failed_continuity_commit_is_fully_atomic() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("sessions.json");
-    let project_root = dir.path().join("proj");
-    std::fs::create_dir_all(&project_root).unwrap();
-    init_git_repo(&project_root);
-    let runtime = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let project =
-        register_agent_project_at_path(&runtime, "fault-agent", "demo", &project_root).await;
-    let auth = auth_context(None, true);
-    let first = dispatch_start_coding_task_in_window(
-        &runtime,
-        "fault-agent",
-        coding_start_call(&project, "stable root", SessionMode::ReadOnly, false),
-        Some(&auth),
-        "fault-window",
-    )
-    .await;
-    assert!(first.success);
-    let session_id = first.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    runtime.sessions.flush_persistence();
-    let ledger_before_failure = std::fs::read(&ledger).unwrap();
-    assert_eq!(runtime.sessions.process_local_binding_count_for_test(), 1);
-    assert_eq!(runtime.sessions.status().durable_binding_count, 1);
-
-    runtime
-        .sessions
-        .fail_next_coding_continuity_precommit_for_test();
-    let failed = dispatch_start_coding_task_in_window(
-        &runtime,
-        "fault-agent",
-        coding_start_call(&project, "must roll back", SessionMode::Normal, false),
-        Some(&auth),
-        "fault-window",
-    )
-    .await;
-    assert!(!failed.success);
-    assert_eq!(
-        failed.output["error_kind"],
-        "coding_continuity_commit_failed"
-    );
-    let unchanged = runtime.sessions.summary(&session_id, Some(20)).unwrap();
-    assert_eq!(unchanged.mode, SessionMode::ReadOnly);
-    assert_eq!(
-        unchanged
-            .events
-            .iter()
-            .filter(|event| event.kind == "task_instruction")
-            .count(),
-        1
-    );
-    assert_eq!(runtime.sessions.process_local_binding_count_for_test(), 1);
-    assert_eq!(runtime.sessions.status().durable_binding_count, 1);
-    runtime.sessions.flush_persistence();
-    assert_eq!(std::fs::read(&ledger).unwrap(), ledger_before_failure);
-    drop(runtime);
-
-    // A restart after the failed attempt still resolves the original binding;
-    // retrying appends exactly one copy of the rejected instruction.
-    let restarted = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    register_agent_project_at_path(&restarted, "fault-agent", "demo", &project_root).await;
-    assert_eq!(restarted.sessions.process_local_binding_count_for_test(), 0);
-    assert_eq!(restarted.sessions.status().restored_binding_count, 1);
-    let retried = dispatch_start_coding_task_in_window(
-        &restarted,
-        "fault-agent",
-        coding_start_call(&project, "must roll back", SessionMode::Normal, false),
-        Some(&auth),
-        "fault-window",
-    )
-    .await;
-    assert!(retried.success, "{:?}", retried.error);
-    assert_eq!(retried.output["session"]["session_id"], session_id);
-    assert_eq!(restarted.sessions.process_local_binding_count_for_test(), 1);
-    let summary = restarted.sessions.summary(&session_id, Some(20)).unwrap();
-    assert_eq!(
-        summary
-            .events
-            .iter()
-            .filter(|event| event.instruction.as_deref() == Some("must roll back"))
-            .count(),
-        1
-    );
-}
-
-#[tokio::test]
-async fn changed_repository_root_does_not_reuse_project_id_binding() {
-    let first_root = tempfile::tempdir().unwrap();
-    let second_root = tempfile::tempdir().unwrap();
-    init_git_repo(first_root.path());
-    init_git_repo(second_root.path());
-    let runtime = ToolRuntime::new_for_tests();
-    let project =
-        register_agent_project_at_path(&runtime, "moving-agent", "demo", first_root.path()).await;
-    let auth = auth_context(None, true);
-    let first = dispatch_start_coding_task_in_window(
-        &runtime,
-        "moving-agent",
-        coding_start_call(&project, "first root", SessionMode::Normal, false),
-        Some(&auth),
-        "moving-window",
-    )
-    .await;
-    register_agent_project_at_path(&runtime, "moving-agent", "demo", second_root.path()).await;
-    let moved = dispatch_start_coding_task_in_window(
-        &runtime,
-        "moving-agent",
-        coding_start_call(&project, "second root", SessionMode::Normal, false),
-        Some(&auth),
-        "moving-window",
-    )
-    .await;
-    assert!(first.success && moved.success);
-    assert_ne!(
-        first.output["session"]["session_id"],
-        moved.output["session"]["session_id"]
-    );
-    assert_eq!(moved.output["session"]["continuation"], "created");
 }

@@ -10,7 +10,7 @@ use crate::tool_runtime::tool_spec::ToolSpec;
 pub(super) fn start_coding_task_compatibility_spec() -> ToolSpec {
     tool_spec(
         "start_coding_task",
-        "Advanced coding-session bootstrap for direct/API compatibility. Prefer work_on_project for ordinary model coding/review; use this entry for managed temporary projects, mode/guards, execution context, startup detail, exact resume_session_id, current binding, or new-session controls.",
+        "Advanced coding-session bootstrap for direct/API compatibility. Prefer work_on_project for ordinary model coding/review; use this entry for managed temporary projects, mode/guards, execution context, startup detail, or exact resume_session_id.",
         start_coding_task_input_schema(),
     )
 }

@@ -89,7 +89,7 @@ pub(crate) fn export_project_artifact_input_schema() -> Value {
         (
             "session_id",
             "string",
-            "Optional explicit wc_sess_* id returned by work_on_project or another compatible Session bootstrap. When provided, this tool call is recorded in that session ledger and wins over any current-session binding.",
+            "Optional explicit wc_sess_* id returned by work_on_project or another compatible Session bootstrap. When provided, this tool call is recorded in that exact Session ledger; omission leaves the call unlinked to Workflow Session state.",
             false,
         ),
     ])

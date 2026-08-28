@@ -54,16 +54,9 @@ impl ToolDefinition {
         self.policy.captures_validation_output
     }
 
-    pub(crate) fn is_current_session_control(self) -> bool {
-        self.policy.current_session_control
-    }
-
+    #[cfg(test)]
     pub(crate) fn requires_explicit_business_session(self) -> bool {
         self.policy.requires_explicit_business_session
-    }
-
-    pub(crate) fn creates_or_binds_session(self) -> bool {
-        self.policy.creates_or_binds_session
     }
 
     pub(crate) fn disabled_message(self) -> Option<&'static str> {
@@ -80,18 +73,6 @@ impl ToolDefinition {
 
     pub(crate) fn requires_artifact_upload_path_binding(self) -> bool {
         self.policy.requires_artifact_upload_path_binding
-    }
-
-    pub(crate) fn allows_current_session_fallback(self) -> bool {
-        self.metadata.requires_project
-            && !self.policy.current_session_fallback_disabled
-            && !self.is_current_session_control()
-            && !self.requires_explicit_business_session()
-            && !self.creates_or_binds_session()
-    }
-
-    pub(crate) fn requires_session_project_escape(self) -> bool {
-        metadata_requires_write_or_shell_boundary(self.metadata)
     }
 
     pub(crate) fn requires_permission(self) -> bool {
@@ -243,19 +224,9 @@ pub(crate) fn runtime_tool_captures_validation_output(name: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) fn runtime_tool_is_current_session_control(name: &str) -> bool {
-    lookup_tool_definition(name).is_some_and(|definition| definition.is_current_session_control())
-}
-
-#[cfg(test)]
 pub(crate) fn runtime_tool_requires_explicit_business_session(name: &str) -> bool {
     lookup_tool_definition(name)
         .is_some_and(|definition| definition.requires_explicit_business_session())
-}
-
-#[cfg(test)]
-pub(crate) fn runtime_tool_creates_or_binds_session(name: &str) -> bool {
-    lookup_tool_definition(name).is_some_and(|definition| definition.creates_or_binds_session())
 }
 
 pub(crate) fn runtime_tool_disabled_message(name: &str) -> Option<&'static str> {
@@ -265,18 +236,6 @@ pub(crate) fn runtime_tool_disabled_message(name: &str) -> Option<&'static str> 
 pub(crate) fn runtime_tool_extra_accepted_flattened_args(name: &str) -> &'static [&'static str] {
     lookup_tool_definition(name)
         .map_or(&[], |definition| definition.extra_accepted_flattened_args())
-}
-
-pub(crate) fn runtime_tool_allows_current_session_fallback(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .is_some_and(|definition| definition.allows_current_session_fallback())
-}
-
-pub(crate) fn runtime_tool_requires_session_project_escape(name: &str) -> bool {
-    match definition_or_metadata_facade(name) {
-        Ok(definition) => definition.requires_session_project_escape(),
-        Err(metadata) => metadata_requires_write_or_shell_boundary(metadata),
-    }
 }
 
 pub(crate) fn runtime_tool_requires_permission(name: &str) -> bool {

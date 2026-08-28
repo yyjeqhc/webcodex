@@ -4,13 +4,11 @@ use super::*;
 fn tool_definitions_drive_session_and_permission_policy() {
     use crate::tool_runtime::metadata::ToolRisk;
     use crate::tool_runtime::tool_definition::{
-        runtime_tool_allows_current_session_fallback, runtime_tool_captures_validation_output,
-        runtime_tool_creates_or_binds_session, runtime_tool_disabled_message,
+        runtime_tool_captures_validation_output, runtime_tool_disabled_message,
         runtime_tool_extra_accepted_flattened_args, runtime_tool_is_change_summary_like,
-        runtime_tool_is_current_session_control, runtime_tool_is_git_like,
-        runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
-        runtime_tool_permission_risk, runtime_tool_requires_explicit_business_session,
-        runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
+        runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
+        runtime_tool_is_write_like, runtime_tool_permission_risk,
+        runtime_tool_requires_explicit_business_session, runtime_tool_requires_permission,
         runtime_tool_session_risk_class, tool_definitions, PERMISSION_RISK_ARTIFACT_WRITE,
         PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_JOB, PERMISSION_RISK_PATCH,
         PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION, PERMISSION_RISK_WRITE,
@@ -77,12 +75,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
             definition.name
         );
         assert_eq!(
-            definition.requires_session_project_escape(),
-            !metadata.read_only || metadata.destructive || metadata.shell_like,
-            "{} cross-project session policy must derive from metadata risk flags",
-            definition.name
-        );
-        assert_eq!(
             definition.requires_permission(),
             !metadata.read_only || metadata.destructive || metadata.shell_like,
             "{} permission requirement must derive from metadata risk flags",
@@ -131,21 +123,9 @@ fn tool_definitions_drive_session_and_permission_policy() {
             definition.name
         );
         assert_eq!(
-            runtime_tool_is_current_session_control(definition.name),
-            definition.is_current_session_control(),
-            "{} current-session control facade must use ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
             runtime_tool_requires_explicit_business_session(definition.name),
             definition.requires_explicit_business_session(),
             "{} business-session facade must use ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_creates_or_binds_session(definition.name),
-            definition.creates_or_binds_session(),
-            "{} session creation/bind facade must use ToolDefinition",
             definition.name
         );
         assert_eq!(
@@ -158,18 +138,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
             runtime_tool_extra_accepted_flattened_args(definition.name),
             definition.extra_accepted_flattened_args(),
             "{} extra accepted flattened args facade must use ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_allows_current_session_fallback(definition.name),
-            definition.allows_current_session_fallback(),
-            "{} current-session fallback facade must use ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_requires_session_project_escape(definition.name),
-            definition.requires_session_project_escape(),
-            "{} session-project escape facade must use ToolDefinition",
             definition.name
         );
         assert_eq!(
@@ -209,19 +177,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
         vec!["cargo_fmt", "cargo_check", "cargo_test", "go_test"]
     );
 
-    let current_session_control_tools = tool_definitions()
-        .filter(|definition| definition.is_current_session_control())
-        .map(|definition| definition.name)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        current_session_control_tools,
-        vec![
-            "bind_current_session",
-            "current_session",
-            "unbind_current_session"
-        ]
-    );
-
     let explicit_business_session_tools = tool_definitions()
         .filter(|definition| definition.requires_explicit_business_session())
         .map(|definition| definition.name)
@@ -246,20 +201,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
             "session_shell_exec",
             "session_shell_status",
             "close_session_shell"
-        ]
-    );
-
-    let creates_or_binds_session_tools = tool_definitions()
-        .filter(|definition| definition.creates_or_binds_session())
-        .map(|definition| definition.name)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        creates_or_binds_session_tools,
-        vec![
-            "start_session",
-            "start_coding_task",
-            "work_on_project",
-            "bind_current_session"
         ]
     );
 
@@ -302,32 +243,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ]
     );
 
-    let current_session_fallback_tools = tool_definitions()
-        .filter(|definition| definition.allows_current_session_fallback())
-        .map(|definition| definition.name)
-        .collect::<BTreeSet<_>>();
-    assert!(current_session_fallback_tools.contains("read_file"));
-    assert!(current_session_fallback_tools.contains("run_process"));
-    assert!(current_session_fallback_tools.contains("run_script"));
-    assert!(current_session_fallback_tools.contains("run_shell"));
-    assert!(current_session_fallback_tools.contains("workspace_hygiene_check"));
-    assert!(current_session_fallback_tools.contains("computer_save_snapshot"));
-    for name in [
-        "start_session",
-        "start_coding_task",
-        "finish_coding_task",
-        "session_summary",
-        "session_handoff_summary",
-        "bind_current_session",
-        "current_session",
-        "unbind_current_session",
-    ] {
-        assert!(
-            !current_session_fallback_tools.contains(name),
-            "{name} must not implicitly use the current-session binding"
-        );
-    }
-
     for (tool, risk) in [
         ("cargo_check", PERMISSION_RISK_VALIDATION),
         ("run_process", PERMISSION_RISK_SHELL),
@@ -351,9 +266,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
     );
     assert!(!runtime_tool_is_write_like("__unknown__"));
     assert!(!runtime_tool_is_shell_like("__unknown__"));
-    assert!(!runtime_tool_allows_current_session_fallback("__unknown__"));
     assert!(runtime_tool_requires_permission("__unknown__"));
-    assert!(runtime_tool_requires_session_project_escape("__unknown__"));
     assert_eq!(
         runtime_tool_permission_risk("__unknown__"),
         PERMISSION_RISK_WRITE
@@ -679,10 +592,9 @@ fn policy_helpers_keep_non_runtime_names_on_fallback_boundary() {
     };
     use crate::tool_runtime::tool_definition::{
         is_model_hidden_tool_name, is_model_visible_tool_name, lookup_tool_definition,
-        runtime_tool_allows_current_session_fallback, runtime_tool_category,
-        runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
-        runtime_tool_metadata, runtime_tool_permission_risk, runtime_tool_requires_permission,
-        runtime_tool_requires_session_project_escape, runtime_tool_session_risk_class,
+        runtime_tool_category, runtime_tool_is_read_like, runtime_tool_is_shell_like,
+        runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
+        runtime_tool_requires_permission, runtime_tool_session_risk_class,
         PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_WRITE,
     };
 
@@ -712,11 +624,7 @@ fn policy_helpers_keep_non_runtime_names_on_fallback_boundary() {
     assert!(!runtime_tool_is_read_like("delete_files"));
     assert!(runtime_tool_is_write_like("delete_files"));
     assert!(!runtime_tool_is_shell_like("delete_files"));
-    assert!(!runtime_tool_allows_current_session_fallback(
-        "delete_files"
-    ));
     assert!(runtime_tool_requires_permission("delete_files"));
-    assert!(runtime_tool_requires_session_project_escape("delete_files"));
     assert_eq!(
         runtime_tool_permission_risk("delete_files"),
         PERMISSION_RISK_DESTRUCTIVE
@@ -756,12 +664,7 @@ fn policy_helpers_keep_non_runtime_names_on_fallback_boundary() {
         assert!(!runtime_tool_is_read_like(name), "{name}");
         assert!(!runtime_tool_is_write_like(name), "{name}");
         assert!(!runtime_tool_is_shell_like(name), "{name}");
-        assert!(
-            !runtime_tool_allows_current_session_fallback(name),
-            "{name}"
-        );
         assert!(runtime_tool_requires_permission(name), "{name}");
-        assert!(runtime_tool_requires_session_project_escape(name), "{name}");
         assert_eq!(
             runtime_tool_permission_risk(name),
             PERMISSION_RISK_WRITE,

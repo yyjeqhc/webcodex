@@ -737,18 +737,6 @@ mod tests {
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
             (
-                "bind_current_session",
-                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
-            ),
-            (
-                "current_session",
-                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
-            ),
-            (
-                "unbind_current_session",
-                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
-            ),
-            (
                 "runtime_status",
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
@@ -848,9 +836,6 @@ mod tests {
             "resolve_session_message",
             "complete_session_message",
             "session_discussion_summary",
-            "bind_current_session",
-            "current_session",
-            "unbind_current_session",
             "workspace_checkpoint_create",
             "workspace_checkpoint_restore",
             "show_changes",

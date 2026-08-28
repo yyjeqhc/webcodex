@@ -1,9 +1,8 @@
 use super::AgentCapability::{GitOrShell, OwnerOnly};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    creates_or_binds_session, def, extra_accepted_flattened_args,
-    requires_explicit_business_session, ToolDefinition, TOOL_CATEGORY_SESSION,
-    TOOL_CATEGORY_VALIDATION,
+    def, extra_accepted_flattened_args, requires_explicit_business_session, ToolDefinition,
+    TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::ReadOnly, PROJECT_READ, PROJECT_WRITE, RUNTIME_READ,
@@ -11,7 +10,7 @@ use crate::tool_runtime::metadata::{
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
-    creates_or_binds_session(def(
+    def(
         "start_session",
         ModelHidden,
         TOOL_CATEGORY_SESSION,
@@ -23,9 +22,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    )),
+    ),
     extra_accepted_flattened_args(
-        creates_or_binds_session(def(
+        def(
             "start_coding_task",
             ModelHidden,
             "workflow",
@@ -37,10 +36,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             NoPath,
             false,
             false,
-        )),
+        ),
         &["session_id"],
     ),
-    creates_or_binds_session(def(
+    def(
         "work_on_project",
         ModelVisible,
         "workflow",
@@ -52,7 +51,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    )),
+    ),
     requires_explicit_business_session(def(
         "finish_coding_task",
         ModelVisible,

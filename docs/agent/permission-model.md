@@ -135,9 +135,9 @@ Authoritative gate is ToolRuntime dispatch, evaluated **once** per
 permission-bearing request, before mutation:
 
 ```text
-request / project resolution / current-session binding
-  → session existence + project-mismatch guards
-  → session guard (e.g. read_only) before mutation
+request / project resolution / explicit Session + recorder authorization
+  → business/recorder Session existence + project-mismatch guards
+  → explicit business Session guard (e.g. read_only) before mutation
   → agent authorization / scopes
   → authority evaluation (exactly once)
         trusted_agent → auto_approved (reason trusted_agent_authority)

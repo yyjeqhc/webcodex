@@ -3107,8 +3107,6 @@ async fn call_typed_tool_with_metadata(
             call,
             auth,
             SessionTransport::Mcp,
-            true,
-            false,
             metadata,
         )
         .await

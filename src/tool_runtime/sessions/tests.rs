@@ -5,9 +5,8 @@ use super::events::{
     session_input_summary_for_tool, SessionToolClassification,
 };
 use super::model::{
-    PersistedCurrentBindings, PersistedSessionLedger, PersistedSessionRecord, SessionLifecycle,
-    MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS, MESSAGE_ID_PREFIX,
-    SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
+    PersistedSessionLedger, PersistedSessionRecord, SessionLifecycle, MAX_OBSERVED_PATHS_PER_EVENT,
+    MAX_VALIDATION_EXCERPT_CHARS, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::persistence::write_ledger_atomic;
 use super::*;
@@ -618,7 +617,6 @@ fn write_ledger_atomic_cleans_up_temp_file_when_rename_fails() {
     let ledger = PersistedSessionLedger {
         version: SESSION_LEDGER_VERSION,
         sessions: Vec::new(),
-        durable_current_bindings: PersistedCurrentBindings::default(),
     };
 
     let err = write_ledger_atomic(&ledger_path, &ledger).unwrap_err();
@@ -733,7 +731,6 @@ fn coding_session_context_precommit_failure_leaves_memory_unchanged() {
         execution_context: Option<SessionExecutionContext>,
     ) -> CodingSessionRequest {
         CodingSessionRequest {
-            key: None,
             project: "agent:oe:private-drop".to_string(),
             authority_fingerprint: TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.to_string(),
             resume_session_id,
@@ -743,8 +740,6 @@ fn coding_session_context_precommit_failure_leaves_memory_unchanged() {
             execution_context,
             project_instructions: None,
             transport: SessionTransport::Api,
-            bind_current: false,
-            new_session: false,
             context_refreshed: true,
             write_scope_verified: true,
         }
@@ -1766,9 +1761,11 @@ fn console_list_orders_recent_activity_first_with_deterministic_session_id_ties(
         json!({
             "session_id": session_id,
             "project": project,
+            "owner_authority_fingerprint": TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT,
             "title": session_id,
             "mode": "normal",
             "guards": {"deny_write_tools": false, "deny_shell_tools": false},
+            "lifecycle": "active",
             "created_at": created_at,
             "updated_at": updated_at,
             "events": [],
@@ -3141,160 +3138,6 @@ fn session_summary_includes_bounded_message_summary() {
         .is_some());
 }
 
-fn test_binding_key(project: &str) -> CurrentSessionKey {
-    CurrentSessionKey {
-        principal_kind: "test".to_string(),
-        principal_id: "principal-1".to_string(),
-        transport: SessionTransport::Api.as_str().to_string(),
-        window_key: "window-1".to_string(),
-        resolved_project: project.to_string(),
-        repository_root_key: format!("root:{project}"),
-    }
-}
-
-#[test]
-fn durable_current_binding_key_is_exact_domain_separated_sha256() {
-    let base = test_binding_key("proj");
-    let digest = base.durable_binding_key();
-    assert_eq!(digest.len(), 64);
-    assert!(digest
-        .as_bytes()
-        .iter()
-        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)));
-
-    let variants = [
-        CurrentSessionKey {
-            principal_kind: "other-kind".to_string(),
-            ..base.clone()
-        },
-        CurrentSessionKey {
-            principal_id: "other-principal".to_string(),
-            ..base.clone()
-        },
-        CurrentSessionKey {
-            transport: SessionTransport::Mcp.as_str().to_string(),
-            ..base.clone()
-        },
-        CurrentSessionKey {
-            window_key: "other-window".to_string(),
-            ..base.clone()
-        },
-        CurrentSessionKey {
-            resolved_project: "other-project".to_string(),
-            ..base.clone()
-        },
-        CurrentSessionKey {
-            repository_root_key: "other-root".to_string(),
-            ..base.clone()
-        },
-    ];
-    for variant in variants {
-        assert_ne!(variant.durable_binding_key(), digest);
-    }
-}
-
-#[test]
-fn durable_current_binding_explicit_bind_restores_without_raw_key_material() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger.clone());
-    let session = store.start_session(Some("proj".to_string()), None);
-    let key = test_binding_key("proj");
-
-    store
-        .bind_current_session(key.clone(), &session.session_id)
-        .expect("bind known active session");
-    assert_eq!(store.status().durable_binding_count, 1);
-    store.flush_persistence();
-    let persisted = std::fs::read_to_string(&ledger).unwrap();
-    assert!(persisted.contains(&key.durable_binding_key()));
-    assert!(!persisted.contains(&key.principal_id));
-    assert!(!persisted.contains(&key.window_key));
-    assert!(!persisted.contains(&key.repository_root_key));
-
-    drop(store);
-    let restored = persistent_store(ledger);
-    let status = restored.status();
-    assert_eq!(status.restored_binding_count, 1);
-    assert_eq!(status.durable_binding_count, 1);
-    assert_eq!(status.discarded_binding_count, 0);
-    assert_eq!(restored.process_local_binding_count_for_test(), 0);
-    assert_eq!(
-        restored.current_session_id(&key).as_deref(),
-        Some(session.session_id.as_str())
-    );
-    assert_eq!(restored.process_local_binding_count_for_test(), 1);
-}
-
-#[test]
-fn durable_current_binding_unbind_survives_restart() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger.clone());
-    let session = store.start_session(Some("proj".to_string()), None);
-    let key = test_binding_key("proj");
-    store
-        .bind_current_session(key.clone(), &session.session_id)
-        .unwrap();
-
-    assert!(store.unbind_current_session(&key));
-    assert_eq!(store.status().durable_binding_count, 0);
-    let restored = flush_and_restore(&store, ledger);
-    assert!(restored.current_session(&key).is_none());
-    assert_eq!(restored.status().restored_binding_count, 0);
-}
-
-#[test]
-fn durable_current_binding_close_removes_all_session_bindings() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger.clone());
-    let session = store.start_session(Some("proj".to_string()), None);
-    let first_key = test_binding_key("proj");
-    let mut second_key = first_key.clone();
-    second_key.window_key = "window-2".to_string();
-    store
-        .bind_current_session(first_key.clone(), &session.session_id)
-        .unwrap();
-    store
-        .bind_current_session(second_key.clone(), &session.session_id)
-        .unwrap();
-    assert_eq!(store.status().durable_binding_count, 2);
-
-    store.close_session(&session.session_id).unwrap();
-    assert_eq!(store.status().durable_binding_count, 0);
-    assert_eq!(store.process_local_binding_count_for_test(), 0);
-    let restored = flush_and_restore(&store, ledger);
-    assert!(restored.current_session(&first_key).is_none());
-    assert!(restored.current_session(&second_key).is_none());
-    assert_eq!(
-        restored.lifecycle_state(&session.session_id),
-        Some(SessionLifecycle::Closed)
-    );
-}
-
-#[test]
-fn durable_current_binding_eviction_removes_stale_target() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = SessionStore::with_persistence(&ledger, 1, 10);
-    let first = store.start_session(Some("proj".to_string()), None);
-    let key = test_binding_key("proj");
-    store
-        .bind_current_session(key.clone(), &first.session_id)
-        .unwrap();
-
-    let second = store.start_session(Some("proj".to_string()), None);
-    assert!(!store.contains_session(&first.session_id));
-    assert!(store.contains_session(&second.session_id));
-    assert_eq!(store.status().durable_binding_count, 0);
-
-    store.flush_persistence();
-    let restored = SessionStore::with_persistence(ledger, 1, 10);
-    assert!(restored.current_session(&key).is_none());
-    assert_eq!(restored.status().restored_binding_count, 0);
-}
-
 /// Create-entry funnel: convenience wrappers must produce the same shape as
 /// the authoritative `start_session_with_options` path.
 #[test]
@@ -3406,51 +3249,6 @@ fn evicted_session_is_not_reactivated_by_events_or_messages() {
     });
     assert!(matches!(post, Err(SessionMessageError::UnknownSession)));
     assert!(!store.contains_session(&first.session_id));
-}
-
-#[test]
-fn bind_unbind_current_session_is_consistent() {
-    let store = SessionStore::default();
-    let session = store.start_session(Some("proj".to_string()), None);
-    let key = test_binding_key("proj");
-
-    assert!(store.current_session(&key).is_none());
-    let bound = store
-        .bind_current_session(key.clone(), &session.session_id)
-        .expect("bind known session");
-    assert_eq!(bound.session_id, session.session_id);
-    assert_eq!(
-        store.current_session_id(&key).as_deref(),
-        Some(session.session_id.as_str())
-    );
-
-    assert!(store.unbind_current_session(&key));
-    assert!(!store.unbind_current_session(&key));
-    assert!(store.current_session(&key).is_none());
-
-    // Unknown session cannot be bound.
-    assert!(store
-        .bind_current_session(key.clone(), "wc_sess_missing")
-        .is_none());
-    assert!(store.current_session(&key).is_none());
-}
-
-#[test]
-fn stale_binding_is_cleared_when_session_missing() {
-    let store = SessionStore::new(1, 10);
-    let first = store.start_session(Some("proj".to_string()), None);
-    let key = test_binding_key("proj");
-    store
-        .bind_current_session(key.clone(), &first.session_id)
-        .unwrap();
-
-    // Evict first by creating a second session (max_sessions = 1).
-    let _second = store.start_session(Some("proj".to_string()), None);
-    assert!(!store.contains_session(&first.session_id));
-
-    // Lookup must clear the stale binding rather than returning a ghost id.
-    assert!(store.current_session(&key).is_none());
-    assert!(store.current_session_id(&key).is_none());
 }
 
 #[test]
@@ -3753,10 +3551,6 @@ fn ledger_round_trip_preserves_session_state_events_and_messages() {
     assert_eq!(discussion.counts.total, 2);
     assert_eq!(discussion.counts.guidance, 1);
     assert_eq!(discussion.counts.progress, 1);
-
-    // This session was never bound, so the additive ledger field stays empty.
-    let key = test_binding_key("proj");
-    assert!(restored.current_session(&key).is_none());
 }
 
 // --- Workflow Session lifecycle: explicit Active/Closed authority ---
@@ -3796,7 +3590,40 @@ fn persisted_ledger_writes_and_reads_lifecycle_active() {
 }
 
 #[test]
-fn durable_current_binding_legacy_ledger_without_lifecycle_is_discarded() {
+fn obsolete_durable_current_bindings_member_is_ignored_and_not_repersisted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger_path = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger_path.clone());
+    let session = store.start_session(Some("proj".to_string()), Some("canonical".to_string()));
+    store.flush_persistence();
+    drop(store);
+
+    let mut ledger: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+    ledger["durable_current_bindings"] = json!([{
+        "binding_key_sha256": "a".repeat(64),
+        "session_id": session.session_id,
+        "updated_at": 1_700_000_000
+    }]);
+    std::fs::write(&ledger_path, serde_json::to_vec(&ledger).unwrap()).unwrap();
+
+    let restored = persistent_store(ledger_path.clone());
+    assert_eq!(restored.status().restored_sessions, 1);
+    assert!(restored.summary(&session.session_id, None).is_some());
+    restored.close_session(&session.session_id).unwrap();
+    restored.flush_persistence();
+
+    let rewritten: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+    assert!(rewritten.get("durable_current_bindings").is_none());
+    assert_eq!(
+        rewritten["sessions"][0]["session_id"].as_str(),
+        Some(session.session_id.as_str())
+    );
+}
+
+#[test]
+fn legacy_ledger_without_lifecycle_is_discarded() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("sessions.json");
     // Pre-lifecycle JSON shape: no `lifecycle` key on the session record.
@@ -3824,134 +3651,10 @@ fn durable_current_binding_legacy_ledger_without_lifecycle_is_discarded() {
     let restored = persistent_store(ledger_path);
     let status = restored.status();
     assert_eq!(status.restored_sessions, 0);
-    assert_eq!(status.durable_binding_count, 0);
-    assert_eq!(status.restored_binding_count, 0);
     assert_eq!(status.last_persist_error, None);
     assert!(restored
         .summary("wc_sess_legacylifecycle01", Some(10))
         .is_none());
-}
-
-#[test]
-fn durable_current_binding_corruption_is_discarded_without_losing_sessions() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger_path = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger_path.clone());
-    let active = store.start_session(Some("proj-a".to_string()), Some("active".to_string()));
-    let other_project = store.start_session(Some("proj-b".to_string()), Some("other".to_string()));
-    let closed = store.start_session(Some("proj-a".to_string()), Some("closed".to_string()));
-    store.close_session(&closed.session_id).unwrap();
-    let valid_key = test_binding_key("proj-a");
-    store
-        .bind_current_session(valid_key.clone(), &active.session_id)
-        .unwrap();
-    store.flush_persistence();
-    drop(store);
-
-    let mut ledger: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
-    let bindings = ledger["durable_current_bindings"]
-        .as_array_mut()
-        .expect("durable binding array");
-    let original = bindings[0].clone();
-    let original_updated_at = original["updated_at"].as_i64().unwrap();
-    bindings.push(json!({
-        "binding_key_sha256": "not-a-sha256",
-        "session_id": active.session_id,
-        "updated_at": original_updated_at,
-    }));
-    bindings.push(json!({
-        "binding_key_sha256": "a".repeat(64),
-        "session_id": "not-a-workflow-session",
-        "updated_at": original_updated_at,
-    }));
-    bindings.push(json!({
-        "binding_key_sha256": "b".repeat(64),
-        "session_id": "wc_sess_missing",
-        "updated_at": original_updated_at,
-    }));
-    bindings.push(json!({
-        "binding_key_sha256": "c".repeat(64),
-        "session_id": closed.session_id,
-        "updated_at": original_updated_at,
-    }));
-    bindings.push(json!({
-        "binding_key_sha256": 7,
-        "session_id": active.session_id,
-        "updated_at": original_updated_at,
-    }));
-    let mut duplicate = original;
-    duplicate["updated_at"] = json!(original_updated_at.saturating_add(1));
-    bindings.push(duplicate);
-    let mut mismatched_key = valid_key.clone();
-    mismatched_key.window_key = "mismatched-project-window".to_string();
-    bindings.push(json!({
-        "binding_key_sha256": mismatched_key.durable_binding_key(),
-        "session_id": other_project.session_id,
-        "updated_at": original_updated_at,
-    }));
-    std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
-
-    let restored = persistent_store(ledger_path);
-    let status = restored.status();
-    assert_eq!(status.restored_sessions, 3);
-    assert_eq!(status.restored_binding_count, 2);
-    assert_eq!(status.durable_binding_count, 2);
-    assert_eq!(status.discarded_binding_count, 6);
-    assert_eq!(status.last_persist_error, None);
-    assert!(restored.summary(&active.session_id, None).is_some());
-    assert!(restored.summary(&other_project.session_id, None).is_some());
-    assert_eq!(
-        restored.lifecycle_state(&closed.session_id),
-        Some(SessionLifecycle::Closed)
-    );
-
-    // The composite key resolves project A, so a corrupt reference to an
-    // otherwise active project-B Session is rejected lazily without exposing
-    // the binding digest.
-    assert!(restored.current_session(&mismatched_key).is_none());
-    let after_lookup = restored.status();
-    assert_eq!(after_lookup.durable_binding_count, 1);
-    assert_eq!(after_lookup.discarded_binding_count, 7);
-    let status_json = serde_json::to_string(&after_lookup).unwrap();
-    assert!(!status_json.contains(&mismatched_key.durable_binding_key()));
-    assert_eq!(
-        restored.current_session_id(&valid_key).as_deref(),
-        Some(active.session_id.as_str())
-    );
-}
-
-#[test]
-fn durable_current_binding_restore_enforces_bounded_count() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger_path = tmp.path().join("sessions.json");
-    let store = SessionStore::with_persistence(&ledger_path, 1, 10);
-    let session = store.start_session(Some("proj".to_string()), None);
-    store.flush_persistence();
-    drop(store);
-
-    let mut ledger: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
-    ledger["durable_current_bindings"] = Value::Array(
-        (0..12)
-            .map(|index| {
-                json!({
-                    "binding_key_sha256": format!("{index:064x}"),
-                    "session_id": session.session_id,
-                    "updated_at": index,
-                })
-            })
-            .collect(),
-    );
-    std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
-
-    let restored = SessionStore::with_persistence(ledger_path, 1, 10);
-    let status = restored.status();
-    assert_eq!(status.max_durable_bindings, 8);
-    assert_eq!(status.restored_binding_count, 8);
-    assert_eq!(status.durable_binding_count, 8);
-    assert_eq!(status.discarded_binding_count, 4);
-    assert!(restored.summary(&session.session_id, None).is_some());
 }
 
 #[test]
@@ -4001,8 +3704,6 @@ fn persisted_session_record_missing_lifecycle_is_fail_closed() {
     assert_eq!(ledger.version, SESSION_LEDGER_VERSION);
     assert_eq!(ledger.sessions.len(), 1);
     assert_eq!(ledger.sessions[0].hot().unwrap().lifecycle, None);
-    assert!(ledger.durable_current_bindings.records.is_empty());
-    assert_eq!(ledger.durable_current_bindings.malformed_count, 0);
 
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("missing-lifecycle.json");

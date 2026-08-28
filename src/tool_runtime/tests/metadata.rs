@@ -1696,8 +1696,6 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
         "execution_context",
         "detail",
         "resume_session_id",
-        "bind_current",
-        "new_session",
         "session_id",
         TOOL_CALL_RECORDING_SESSION_ID_FIELD,
     ] {
@@ -1705,6 +1703,9 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
             start_accepted.contains(&field.to_string()),
             "advanced start_coding_task compatibility spec missing {field}"
         );
+    }
+    for removed in ["bind_current", "new_session"] {
+        assert!(!start_accepted.contains(&removed.to_string()));
     }
     for field in [
         "project",
@@ -1840,8 +1841,6 @@ async fn tool_manifest_model_fields_and_hidden_start_compatibility_stay_separate
         "deny_shell_tools",
         "detail",
         "resume_session_id",
-        "bind_current",
-        "new_session",
     ] {
         assert!(compatibility_fields.contains(field));
         assert!(
@@ -1852,6 +1851,11 @@ async fn tool_manifest_model_fields_and_hidden_start_compatibility_stay_separate
             !properties.contains_key(field),
             "start-only flattened arg {field} must remain direct/API-only"
         );
+    }
+    for removed in ["bind_current", "new_session"] {
+        assert!(!compatibility_fields.contains(removed));
+        assert!(!accepted_fields.contains(removed));
+        assert!(!properties.contains_key(removed));
     }
     assert!(compatibility_fields.contains("execution_context"));
     assert!(accepted_fields.contains("execution_context"));
@@ -2183,7 +2187,6 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
             "/connection_layers/server_registration/status",
             "/connection_layers/project_registry/status",
             "/connection_layers/connector_endpoint/status",
-            "/connection_layers/session_binding/status",
             "/connection_layers/last_successful_tool_call/status",
         ] {
             assert!(
@@ -3025,7 +3028,7 @@ async fn runtime_status_distinguishes_stale_registration_from_transport_connecti
         layers["connector_endpoint"]["reason_code"],
         "connector_runtime_disabled"
     );
-    assert_eq!(layers["session_binding"]["status"], "not_observed");
+    assert!(layers.get("session_binding").is_none());
 }
 
 #[tokio::test]

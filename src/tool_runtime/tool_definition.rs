@@ -9,7 +9,6 @@ mod artifacts;
 mod checkpoints;
 mod coding_agents;
 mod computer;
-mod current_sessions;
 mod discovery;
 mod edits;
 mod files;
@@ -44,18 +43,16 @@ pub use super::tool_policy::is_known_tool_name;
 #[cfg(test)]
 pub(crate) use super::tool_policy::{
     is_model_hidden_tool_name, known_tool_names, model_hidden_tool_names,
-    runtime_tool_creates_or_binds_session, runtime_tool_is_current_session_control,
     runtime_tool_requires_explicit_business_session,
 };
 pub(crate) use super::tool_policy::{
     is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
     model_visible_tool_names_csv, runtime_tool_agent_capability,
-    runtime_tool_allows_current_session_fallback, runtime_tool_captures_validation_output,
-    runtime_tool_category, runtime_tool_disabled_message, runtime_tool_effect_annotations,
-    runtime_tool_extra_accepted_flattened_args, runtime_tool_is_change_summary_like,
-    runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
-    runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
-    runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
+    runtime_tool_captures_validation_output, runtime_tool_category, runtime_tool_disabled_message,
+    runtime_tool_effect_annotations, runtime_tool_extra_accepted_flattened_args,
+    runtime_tool_is_change_summary_like, runtime_tool_is_git_like, runtime_tool_is_read_like,
+    runtime_tool_is_shell_like, runtime_tool_is_write_like, runtime_tool_metadata,
+    runtime_tool_permission_risk, runtime_tool_requires_permission,
     runtime_tool_session_risk_class,
 };
 use crate::shell_protocol::{
@@ -308,9 +305,6 @@ pub(crate) struct ToolEffectAnnotations {
 pub(crate) struct ToolDefinitionPolicy {
     pub(crate) change_summary_like: bool,
     pub(crate) captures_validation_output: bool,
-    pub(crate) current_session_control: bool,
-    pub(crate) creates_or_binds_session: bool,
-    pub(crate) current_session_fallback_disabled: bool,
     pub(crate) disabled_message: Option<&'static str>,
     pub(crate) extra_accepted_flattened_args: &'static [&'static str],
     pub(crate) git_like: bool,
@@ -325,9 +319,6 @@ impl ToolDefinitionPolicy {
     const DEFAULT: Self = Self {
         change_summary_like: false,
         captures_validation_output: false,
-        current_session_control: false,
-        creates_or_binds_session: false,
-        current_session_fallback_disabled: false,
         disabled_message: None,
         extra_accepted_flattened_args: &[],
         git_like: false,
@@ -440,16 +431,7 @@ bool_policy_modifier!(captures_validation_output, captures_validation_output);
 
 bool_policy_modifier!(change_summary_like, change_summary_like);
 
-bool_policy_modifier!(current_session_control, current_session_control);
-
 bool_policy_modifier!(git_like, git_like);
-
-bool_policy_modifier!(creates_or_binds_session, creates_or_binds_session);
-
-bool_policy_modifier!(
-    disable_current_session_fallback,
-    current_session_fallback_disabled
-);
 
 const fn extra_accepted_flattened_args(
     definition: ToolDefinition,
@@ -503,7 +485,6 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     TOOL_DEFINITION_HEAD,
     sessions::DEFINITIONS,
     hygiene::DEFINITIONS,
-    current_sessions::DEFINITIONS,
     checkpoints::DEFINITIONS,
     coding_agents::DEFINITIONS,
     computer::DEFINITIONS,

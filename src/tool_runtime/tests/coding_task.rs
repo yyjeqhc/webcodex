@@ -1,6 +1,5 @@
 use super::support::*;
 use crate::auth::AuthContext;
-use crate::client_window::ClientWindow;
 use crate::shell_protocol::{AgentPolicySummary, ShellClientCapabilities};
 use crate::tool_runtime::metadata::lookup_tool_metadata;
 use crate::tool_runtime::sessions::SessionTransport;
@@ -86,14 +85,16 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "execution_context",
         "detail",
         "resume_session_id",
-        "bind_current",
-        "new_session",
     ] {
         assert!(start_props.contains_key(field), "missing {field}");
     }
     assert_eq!(start_schema["oneOf"].as_array().unwrap().len(), 3);
-    assert_eq!(start_props["bind_current"]["default"], true);
-    assert_eq!(start_props["new_session"]["default"], false);
+    for removed in ["bind_current", "new_session"] {
+        assert!(
+            !start_props.contains_key(removed),
+            "removed field leaked into start schema: {removed}"
+        );
+    }
     let work = spec_named(&specs, "work_on_project");
     let work_props = work.input_schema["properties"].as_object().unwrap();
     for advanced in [
@@ -292,22 +293,23 @@ async fn hidden_start_coding_task_keeps_direct_advanced_parse_and_dispatch() {
         "project": project,
         "title": "advanced hidden compatibility",
         "mode": "read_only",
-        "detail": "minimal",
-        "bind_current": false
+        "detail": "minimal"
     });
 
     let parsed = ToolCall::from_tool_name("start_coding_task", params.clone())
         .expect("hidden advanced bootstrap must remain parser-known");
+    for removed_field in ["bind_current", "new_session"] {
+        let mut removed = params.clone();
+        removed[removed_field] = json!(true);
+        assert!(
+            ToolCall::from_tool_name("start_coding_task", removed).is_err(),
+            "removed {removed_field} must be rejected"
+        );
+    }
     match parsed {
-        ToolCall::StartCodingTask {
-            mode,
-            detail,
-            bind_current,
-            ..
-        } => {
+        ToolCall::StartCodingTask { mode, detail, .. } => {
             assert_eq!(mode, SessionMode::ReadOnly);
             assert_eq!(detail, crate::tool_runtime::StartupDetail::Minimal);
-            assert!(!bind_current);
         }
         other => panic!("expected StartCodingTask, got {}", other.tool_name()),
     }
@@ -366,8 +368,6 @@ async fn start_coding_task_creates_managed_temporary_project_then_restores_it_as
                         deny_write_tools: false,
                         deny_shell_tools: false,
                         resume_session_id: None,
-                        bind_current: false,
-                        new_session: false,
                         execution_context: None,
                     },
                     Some(&auth),
@@ -504,7 +504,7 @@ async fn start_coding_task_creates_managed_temporary_project_then_restores_it_as
 }
 
 #[tokio::test]
-async fn start_coding_task_can_explicitly_disable_current_binding() {
+async fn start_coding_task_full_brief_has_no_binding_projection() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
     commit_file(
@@ -537,8 +537,6 @@ async fn start_coding_task_can_explicitly_disable_current_binding() {
                         deny_write_tools: false,
                         deny_shell_tools: false,
                         resume_session_id: None,
-                        bind_current: false,
-                        new_session: false,
                         execution_context: None,
                     },
                     Some(&auth),
@@ -555,24 +553,12 @@ async fn start_coding_task_can_explicitly_disable_current_binding() {
     let session_id = result.output["session"]["session_id"].as_str().unwrap();
     assert!(session_id.starts_with("wc_sess_"));
     assert_eq!(
-        result.output["session"]["explicit_session_id_recommended"],
+        result.output["session"]["explicit_resume_required_for_continuation"],
         true
     );
-    assert_eq!(
-        result.output["session"]["current_binding"]["bound"], false,
-        "bind_current=false must disable the current binding"
-    );
-    assert_eq!(
-        result.output["session"]["current_binding"]["process_local_cache"],
-        true
-    );
-    assert_eq!(
-        result.output["session"]["current_binding"]["durable_exact_binding"],
-        true
-    );
-    assert_eq!(
-        result.output["session"]["current_binding"]["restored_after_restart"],
-        true
+    assert!(
+        result.output["session"].get("current_binding").is_none(),
+        "removed binding state must not be projected"
     );
     for field in [
         "session",
@@ -592,24 +578,6 @@ async fn start_coding_task_can_explicitly_disable_current_binding() {
     }
     assert_eq!(result.output["authority"]["mode"], "trusted_agent");
     assert_eq!(result.output["authority"]["human_approval_required"], false);
-
-    let window = ClientWindow::for_test("coding-task-window");
-    let current = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
-            ToolCall::CurrentSession {
-                project: project.clone(),
-            },
-            None,
-            SessionTransport::Api,
-            true,
-            false,
-            Default::default(),
-            None,
-            Some(&window),
-        )
-        .await;
-    assert!(current.success, "{:?}", current.error);
-    assert_eq!(current.output["found"], false);
 
     let inspect = result.output["recommended_flow"]["inspect"]
         .as_array()
@@ -698,8 +666,6 @@ async fn start_coding_task_can_omit_compact_tool_manifest() {
                 deny_write_tools: false,
                 deny_shell_tools: false,
                 resume_session_id: None,
-                bind_current: false,
-                new_session: false,
                 execution_context: None,
             },
             Some(&auth),
@@ -1366,8 +1332,6 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
                 deny_write_tools: false,
                 deny_shell_tools: false,
                 resume_session_id: None,
-                bind_current: false,
-                new_session: false,
                 execution_context: None,
             },
             Some(&auth),

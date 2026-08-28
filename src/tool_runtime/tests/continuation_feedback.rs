@@ -1682,12 +1682,7 @@ fn jobs_block_recovering_hidden_beyond_truncated_recent_still_reported() {
 use crate::tool_runtime::tests::reconnect::dispatch_start_coding_task_in_window;
 use crate::tool_runtime::{StartupDetail, ToolCall};
 
-fn coding_call(
-    project: &str,
-    instruction: &str,
-    resume: Option<&str>,
-    bind_current: bool,
-) -> ToolCall {
+fn coding_call(project: &str, instruction: &str, resume: Option<&str>) -> ToolCall {
     ToolCall::StartCodingTask {
         project: project.to_string(),
         client_id: None,
@@ -1702,8 +1697,6 @@ fn coding_call(
         // uses the separately tested bounded model-facing projection.
         detail: StartupDetail::Full,
         resume_session_id: resume.map(str::to_string),
-        bind_current,
-        new_session: false,
         execution_context: None,
     }
 }
@@ -1721,7 +1714,7 @@ async fn start_coding_task_continuation_describes_previous_attempt_not_empty_new
     let first = dispatch_start_coding_task_in_window(
         &runtime,
         "continuation-agent",
-        coding_call(&project, "instruction A", None, true),
+        coding_call(&project, "instruction A", None),
         Some(&auth),
         "continuation-window",
     )
@@ -1754,7 +1747,7 @@ async fn start_coding_task_continuation_describes_previous_attempt_not_empty_new
     let second = dispatch_start_coding_task_in_window(
         &runtime,
         "continuation-agent",
-        coding_call(&project, "instruction B", Some(&session_id), false),
+        coding_call(&project, "instruction B", Some(&session_id)),
         Some(&auth),
         "continuation-window",
     )
@@ -1824,7 +1817,7 @@ async fn start_coding_task_fresh_session_continuation_is_not_applicable() {
     let first = dispatch_start_coding_task_in_window(
         &runtime,
         "fresh-agent",
-        coding_call(&project, "fresh start", None, true),
+        coding_call(&project, "fresh start", None),
         Some(&auth),
         "fresh-window",
     )
@@ -2276,7 +2269,6 @@ fn add_instruction(runtime: &ToolRuntime, session_id: &str, instruction: &str, m
     runtime
         .sessions
         .ensure_coding_session(sessions::CodingSessionRequest {
-            key: None,
             project: "test-project".to_string(),
             authority_fingerprint: sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT
                 .to_string(),
@@ -2287,8 +2279,6 @@ fn add_instruction(runtime: &ToolRuntime, session_id: &str, instruction: &str, m
             execution_context: None,
             project_instructions: None,
             transport: SessionTransport::Api,
-            bind_current: false,
-            new_session: false,
             context_refreshed: true,
             write_scope_verified: true,
         })
@@ -2403,7 +2393,6 @@ fn add_instruction_for(
     runtime
         .sessions
         .ensure_coding_session(sessions::CodingSessionRequest {
-            key: None,
             project: project.to_string(),
             authority_fingerprint: sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT
                 .to_string(),
@@ -2414,8 +2403,6 @@ fn add_instruction_for(
             execution_context: None,
             project_instructions: None,
             transport: SessionTransport::Api,
-            bind_current: false,
-            new_session: false,
             context_refreshed: true,
             write_scope_verified: true,
         })

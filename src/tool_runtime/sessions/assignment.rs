@@ -2,8 +2,8 @@
 //!
 //! The fence is conflict-detection metadata only. It is a Session/todo-bound
 //! semantic snapshot fingerprint of the retained todo thread. It is never
-//! authority, a completion key, a message-observation token, or a current-session
-//! credential.
+//! authority, a completion key, a message-observation token, or credential
+//! identity.
 
 use super::model::{
     SessionAssignmentCurrentState, SessionAssignmentSnapshot, SessionMessage, SessionMessageError,

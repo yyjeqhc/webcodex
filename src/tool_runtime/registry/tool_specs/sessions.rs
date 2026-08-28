@@ -1,11 +1,10 @@
 use super::super::input_schemas::{
     close_session_input_schema, complete_session_message_input_schema,
-    current_session_input_schema, get_session_assignment_input_schema,
-    list_session_messages_input_schema, observe_session_messages_input_schema,
-    post_session_message_input_schema, resolve_session_message_input_schema,
-    session_discussion_summary_input_schema, session_handoff_summary_input_schema,
-    session_summary_input_schema, update_session_context_input_schema,
-    validation_summary_input_schema,
+    get_session_assignment_input_schema, list_session_messages_input_schema,
+    observe_session_messages_input_schema, post_session_message_input_schema,
+    resolve_session_message_input_schema, session_discussion_summary_input_schema,
+    session_handoff_summary_input_schema, session_summary_input_schema,
+    update_session_context_input_schema, validation_summary_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -14,7 +13,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "session_summary",
-            "Return a bounded structured summary from the session ledger for an explicit session_id: recorded events, message-board summary, task mode, guards, and lifecycle. Uses durable ledger data where session persistence is configured; does not rely on current-session binding.",
+            "Return a bounded structured summary from the session ledger for an explicit session_id: recorded events, message-board summary, task mode, guards, and lifecycle. Uses durable ledger data where session persistence is configured.",
             session_summary_input_schema(),
         ),
         tool_spec(
@@ -24,7 +23,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "close_session",
-            "Explicitly close a workflow session (Active to Closed) for a required session_id. Query remains available; write/shell/mutation tools are denied. Idempotent when already closed. Never uses current-session; unknown ids fail without create. finish_coding_task does not close.",
+            "Explicitly close a workflow session (Active to Closed) for a required session_id. Query remains available; write/shell/mutation tools are denied. Idempotent when already closed; unknown ids fail without create. finish_coding_task does not close.",
             close_session_input_schema(),
         ),
         tool_spec(
@@ -69,18 +68,8 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "session_handoff_summary",
-            "Read-only handoff for multi-step tasks, explicit session_id. Reads session ledger collaboration and ledger-derived validation. Diagnostics use bounded tails or safe result metadata; validation.parser.available is false if absent. Worker/coordinator read; does not depend on current-session binding.",
+            "Read-only handoff for multi-step tasks, explicit session_id. Reads session ledger collaboration and ledger-derived validation. Diagnostics use bounded tails or safe result metadata; validation.parser.available is false if absent. Worker/coordinator read.",
             session_handoff_summary_input_schema(),
-        ),
-        tool_spec(
-            "current_session",
-            "Return this exact caller/transport/stable-window/project/canonical-root binding when it targets an active matching Session. Restores the process-local cache from the hashed durable projection after restart; missing window identity never falls back to a credential.",
-            current_session_input_schema(false),
-        ),
-        tool_spec(
-            "unbind_current_session",
-            "Remove the exact current-session binding for this client window, caller, transport, project, and canonical repository root from both the process-local cache and hashed durable projection. Keeps Workflow Session history intact. Idempotent and read-only.",
-            current_session_input_schema(false),
         ),
     ]
 }

@@ -160,8 +160,6 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
             deny_shell_tools: false,
             detail: StartupDetail::Standard,
             resume_session_id: None,
-            bind_current: true,
-            new_session: false,
             execution_context: None,
         },
         &poll_calls,

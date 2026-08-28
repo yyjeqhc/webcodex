@@ -2,9 +2,7 @@
 
 use super::edit_tool_telemetry;
 use super::session_context::{
-    add_session_project_mismatch_warning, add_session_telemetry_hint, current_session_key,
-    current_session_unavailable_result, is_current_session_eligible, session_guard_denied_result,
-    session_lifecycle_denied_result, session_project_mismatch_requires_escape,
+    add_session_telemetry_hint, session_guard_denied_result, session_lifecycle_denied_result,
     session_project_mismatch_result, SessionProjectMismatch,
 };
 use super::{
@@ -565,7 +563,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
     ) -> ToolResult {
-        self.dispatch_with_auth_transport_options(call, auth, transport, true, false)
+        self.dispatch_with_auth_transport_options(call, auth, transport)
             .await
     }
 
@@ -574,15 +572,11 @@ impl ToolRuntime {
         call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
-        use_current_session: bool,
-        allow_cross_project_session: bool,
     ) -> ToolResult {
         self.dispatch_with_auth_transport_options_and_metadata(
             call,
             auth,
             transport,
-            use_current_session,
-            allow_cross_project_session,
             sessions::ToolCallRecorderMetadata::default(),
         )
         .await
@@ -593,16 +587,12 @@ impl ToolRuntime {
         call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
-        use_current_session: bool,
-        allow_cross_project_session: bool,
         recorder_metadata: sessions::ToolCallRecorderMetadata,
     ) -> ToolResult {
         self.dispatch_with_auth_transport_options_and_metadata_with_sandbox(
             call,
             auth,
             transport,
-            use_current_session,
-            allow_cross_project_session,
             recorder_metadata,
             None,
             None,
@@ -610,14 +600,11 @@ impl ToolRuntime {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_sandbox(
         &self,
         call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
-        use_current_session: bool,
-        allow_cross_project_session: bool,
         recorder_metadata: sessions::ToolCallRecorderMetadata,
         inherited_sandbox: Option<&'static str>,
         window: Option<&crate::client_window::ClientWindow>,
@@ -626,8 +613,6 @@ impl ToolRuntime {
             call,
             auth,
             transport,
-            use_current_session,
-            allow_cross_project_session,
             recorder_metadata,
             inherited_sandbox,
             window,
@@ -642,8 +627,6 @@ impl ToolRuntime {
         call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
-        use_current_session: bool,
-        allow_cross_project_session: bool,
         recorder_metadata: sessions::ToolCallRecorderMetadata,
         inherited_sandbox: Option<&'static str>,
         window: Option<&crate::client_window::ClientWindow>,
@@ -657,9 +640,7 @@ impl ToolRuntime {
                 call,
                 auth,
                 transport,
-                use_current_session,
-                allow_cross_project_session,
-                recorder_metadata,
+                recorder_metadata.clone(),
                 inherited_sandbox,
                 window,
                 inner_model_facing_recording,
@@ -780,11 +761,9 @@ impl ToolRuntime {
         mut call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
-        use_current_session: bool,
-        allow_cross_project_session: bool,
         recorder_metadata: sessions::ToolCallRecorderMetadata,
         inherited_sandbox: Option<&'static str>,
-        window: Option<&crate::client_window::ClientWindow>,
+        _window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
     ) -> ToolResult {
         call = call
@@ -802,59 +781,26 @@ impl ToolRuntime {
         let activity_project = resolved_project
             .as_ref()
             .map(|resolved| resolved.resolved_id.clone());
-        if use_current_session && call.session_id().is_none() && is_current_session_eligible(&call)
-        {
-            if let (Some(resolved), Some(window)) = (resolved_project.as_ref(), window) {
-                match current_session_key(
-                    auth,
-                    transport,
-                    &resolved.resolved_id,
-                    &resolved.config.path,
-                    Some(window),
-                ) {
-                    Ok(key) => {
-                        if let Some(session_id) = self.sessions.current_session_id(&key) {
-                            call = call.with_effective_session_id(session_id);
-                        }
-                    }
-                    Err(message) => {
-                        let mut result = current_session_unavailable_result(message);
-                        decorate_structured_execution_prestart_denial(
-                            call.tool_name(),
-                            &mut result,
-                            "current_session_unavailable",
-                        );
-                        return result;
-                    }
-                }
-            }
-        }
         // work_on_project.session_id is explicit coding-resume business input,
-        // never a generic tool recorder. Its implementation delegates all exact
-        // Session/project/lifecycle/authority handling to start_coding_task. This
-        // is also the only safe place where a legacy project Session may prove a
-        // pre-existing durable current binding and atomically acquire the new
-        // canonical authority fence. Path-backed calls additionally need Runner
-        // project resolution before those checks, but both forms must bypass the
-        // generic business-session recorder path here.
+        // never a generic tool recorder. Its implementation delegates exact
+        // Session/project/lifecycle/authority handling to start_coding_task.
         let defer_work_session = matches!(&call, ToolCall::WorkOnProject { .. });
-        // session_handoff_summary.session_id is business input and remains the
-        // legacy recorder fallback for direct/internal dispatch. When the
-        // generic kernel already has an explicit outer recording Session (it
-        // passes use_current_session=false), suppress this inner fallback so a
-        // worker W reading coordinator C records the tool execution only in W.
-        let suppress_handoff_business_recorder =
-            !use_current_session && matches!(&call, ToolCall::SessionHandoffSummary { .. });
+        // session_handoff_summary.session_id remains business input for direct
+        // internal dispatch. When the kernel already has an explicit outer
+        // recording Session, suppress this inner recorder so worker W reading
+        // coordinator C records the tool execution only in W.
+        let suppress_handoff_business_recorder = !inner_model_facing_recording
+            && matches!(&call, ToolCall::SessionHandoffSummary { .. });
         let session_id = if defer_work_session || suppress_handoff_business_recorder {
             None
         } else {
             call.session_id().map(str::to_string)
         };
         if let Some(session_id) = session_id.as_deref() {
-            // Direct/internal dispatch may derive a recorder from business
-            // session_id (notably the handoff compatibility path) or current
-            // binding. Fence that exact Session before lifecycle/guard
-            // inheritance, project mismatch logic, or any ledger mutation.
+            // Direct/internal dispatch may derive a recorder from explicit
+            // business session_id (notably the handoff compatibility path).
+            // Fence that exact Session before lifecycle/guard inheritance,
+            // project mismatch logic, or any ledger mutation.
             if let Err(mut result) = self
                 .authorize_session_target(session_id, call.tool_name(), auth)
                 .await
@@ -906,42 +852,37 @@ impl ToolRuntime {
         if let (Some(session_id), Some(mismatch)) =
             (session_id.as_deref(), session_project_mismatch.as_ref())
         {
-            if !allow_cross_project_session
-                && session_project_mismatch_requires_escape(call.tool_name())
-            {
-                let session_start = self.sessions.record_tool_call_started_with_metadata(
-                    Some(session_id),
-                    transport,
-                    call.tool_name(),
-                    &call.session_log_arguments(),
-                    Some(mismatch.request_project.clone()),
-                    recorder_metadata.clone(),
-                );
-                let mut result =
-                    session_project_mismatch_result(session_id, call.tool_name(), mismatch);
-                decorate_structured_execution_prestart_denial(
-                    call.tool_name(),
-                    &mut result,
-                    session_context::SESSION_PROJECT_MISMATCH_KIND,
-                );
-                self.record_dispatch_session_result(
-                    &mut result,
-                    session_id,
-                    session_start,
-                    call.tool_name(),
-                    Some(session_context::SESSION_PROJECT_MISMATCH_KIND),
-                    auth,
-                    inner_model_facing_recording,
-                    inner_ack_observation.as_ref(),
-                    inner_ack_requested,
-                )
-                .await;
-                return result;
-            }
+            let session_start = self.sessions.record_tool_call_started_with_metadata(
+                Some(session_id),
+                transport,
+                call.tool_name(),
+                &call.session_log_arguments(),
+                Some(mismatch.request_project.clone()),
+                recorder_metadata.clone(),
+            );
+            let mut result =
+                session_project_mismatch_result(session_id, call.tool_name(), mismatch);
+            decorate_structured_execution_prestart_denial(
+                call.tool_name(),
+                &mut result,
+                session_context::SESSION_PROJECT_MISMATCH_KIND,
+            );
+            self.record_dispatch_session_result(
+                &mut result,
+                session_id,
+                session_start,
+                call.tool_name(),
+                Some(session_context::SESSION_PROJECT_MISMATCH_KIND),
+                auth,
+                inner_model_facing_recording,
+                inner_ack_observation.as_ref(),
+                inner_ack_requested,
+            )
+            .await;
+            return result;
         }
         // Inherit execution defaults only after exact project matching has
-        // been established. Explicit per-call cwd/shell fields remain
-        // authoritative; cross-project escape never carries Session context.
+        // been established. Explicit per-call cwd/shell fields remain authoritative.
         let mut ssh_resource = None;
         if session_project_mismatch.is_none() {
             if let (Some(session_id), Some(resolved)) =
@@ -1076,7 +1017,7 @@ impl ToolRuntime {
                 call.tool_name(),
                 &call.session_log_arguments(),
                 resolved_project,
-                recorder_metadata,
+                recorder_metadata.clone(),
             )
         } else {
             None
@@ -1131,13 +1072,6 @@ impl ToolRuntime {
                 }
                 permissions::add_permission_to_result(&mut result, decision);
                 if let Some(session_id) = session_id.as_deref() {
-                    if let Some(mismatch) = session_project_mismatch.as_ref() {
-                        add_session_project_mismatch_warning(
-                            &mut result,
-                            mismatch,
-                            allow_cross_project_session,
-                        );
-                    }
                     self.record_dispatch_session_result(
                         &mut result,
                         session_id,
@@ -1159,15 +1093,24 @@ impl ToolRuntime {
         let search_projection = SearchModelProjection::capture(&call);
         let batch_budget_projection = BatchResponseBudgetProjection::capture(&call);
         let tool_name = call.tool_name();
+        let trusted_recording_session_id = recorder_metadata
+            .recording_session_authorized
+            .then(|| recorder_metadata.recording_session_id.as_deref())
+            .flatten();
+        let trusted_recording_session_project = recorder_metadata
+            .recording_session_authorized
+            .then(|| recorder_metadata.recording_session_project.as_deref())
+            .flatten();
         let mut result = self
             .dispatch_authorized_inner(
                 call,
                 auth,
                 transport,
                 execution_sandbox,
-                window,
                 ssh_resource.as_deref(),
                 project_resolution,
+                trusted_recording_session_id,
+                trusted_recording_session_project,
             )
             .await;
         let permission = permission.filter(|_| {
@@ -1181,13 +1124,6 @@ impl ToolRuntime {
             permissions::add_permission_to_result(&mut result, permission);
         }
         if let Some(session_id) = session_id.as_deref() {
-            if let Some(mismatch) = session_project_mismatch.as_ref() {
-                add_session_project_mismatch_warning(
-                    &mut result,
-                    mismatch,
-                    allow_cross_project_session,
-                );
-            }
             self.record_dispatch_session_result(
                 &mut result,
                 session_id,
@@ -1219,7 +1155,7 @@ impl ToolRuntime {
         }
         if result.success && super::observations::is_meaningful_activity_tool(tool_name) {
             if let Ok((principal_kind, principal_id)) =
-                super::session_context::current_session_principal(auth)
+                super::session_context::runtime_observation_principal(auth)
             {
                 self.observations.record_successful_tool_call(
                     super::observations::ToolCallObservation {
@@ -1280,9 +1216,10 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
         execution_sandbox: Option<&'static str>,
-        window: Option<&crate::client_window::ClientWindow>,
         ssh_resource: Option<&str>,
         project_resolution: Option<Result<ResolvedProject, ProjectResolverError>>,
+        trusted_recording_session_id: Option<&str>,
+        trusted_recording_session_project: Option<&str>,
     ) -> ToolResult {
         match call {
             call @ (ToolCall::ListTools { .. }
@@ -1301,19 +1238,21 @@ impl ToolRuntime {
             | ToolCall::ObserveSessionMessages { .. }
             | ToolCall::ResolveSessionMessage { .. }
             | ToolCall::CompleteSessionMessage { .. }
-            | ToolCall::SessionDiscussionSummary { .. }
-            | ToolCall::BindCurrentSession { .. }
-            | ToolCall::CurrentSession { .. }
-            | ToolCall::UnbindCurrentSession { .. }) => {
-                self.dispatch_session_tool(call, auth, transport, window)
-                    .await
+            | ToolCall::SessionDiscussionSummary { .. }) => {
+                self.dispatch_session_tool(call, auth, transport).await
             }
 
             call @ (ToolCall::StartCodingTask { .. }
             | ToolCall::WorkOnProject { .. }
             | ToolCall::FinishCodingTask { .. }) => {
-                self.dispatch_coding_task_tool(call, auth, transport, window)
-                    .await
+                self.dispatch_coding_task_tool(
+                    call,
+                    auth,
+                    transport,
+                    trusted_recording_session_id,
+                    trusted_recording_session_project,
+                )
+                .await
             }
 
             call @ ToolCall::SessionHandoffSummary { .. } => {

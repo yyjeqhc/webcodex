@@ -633,39 +633,6 @@ fn from_tool_name_parses_runtime_status() {
 }
 
 #[test]
-fn start_coding_task_defaults_to_continuation_and_requires_explicit_isolation() {
-    let call =
-        ToolCall::from_tool_name("start_coding_task", json!({"project": "agent:oe:demo"})).unwrap();
-    assert!(matches!(
-        call,
-        ToolCall::StartCodingTask {
-            bind_current: true,
-            new_session: false,
-            ..
-        }
-    ));
-    assert_eq!(call.project(), Some("agent:oe:demo"));
-
-    let isolated = ToolCall::from_tool_name(
-        "start_coding_task",
-        json!({
-            "project": "agent:oe:demo",
-            "bind_current": true,
-            "new_session": true
-        }),
-    )
-    .unwrap();
-    assert!(matches!(
-        isolated,
-        ToolCall::StartCodingTask {
-            bind_current: true,
-            new_session: true,
-            ..
-        }
-    ));
-}
-
-#[test]
 fn start_coding_task_parses_managed_temporary_project_request_without_project() {
     let call = ToolCall::from_tool_name(
         "start_coding_task",
@@ -1332,4 +1299,15 @@ fn from_tool_name_parses_project_management_tools() {
             && path == "/root/git/hello" && template.as_deref() == Some("basic")
             && git_init
     ));
+}
+
+#[test]
+fn start_coding_task_defaults_to_fresh_create_without_resume() {
+    let call = ToolCall::from_tool_name("start_coding_task", json!({"project": "demo"})).unwrap();
+    match call {
+        ToolCall::StartCodingTask {
+            resume_session_id, ..
+        } => assert!(resume_session_id.is_none()),
+        other => panic!("unexpected tool call: {other:?}"),
+    }
 }

@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::continuation_feedback::{continuation_feedback_value, ContinuationFeedbackInput};
 use super::handoff_brief::{build_handoff_brief, HandoffBriefInput};
 use super::permissions::permission_summary_from_events;
-use super::session_context::{session_project_mismatch_no_escape_result, SessionProjectMismatch};
+use super::session_context::{session_project_mismatch_result, SessionProjectMismatch};
 use super::sessions::{
     tool_failure_summary_from_events, SessionEvent, SessionSummary,
     TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
@@ -86,7 +86,7 @@ impl ToolRuntime {
             };
             if let Some(target) = authorized_target.as_ref() {
                 if target.resolved_id != requested.resolved_id {
-                    return session_project_mismatch_no_escape_result(
+                    return session_project_mismatch_result(
                         &session_id,
                         "session_handoff_summary",
                         &SessionProjectMismatch {

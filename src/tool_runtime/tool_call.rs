@@ -282,8 +282,8 @@ pub enum ToolCall {
     },
 
     /// Create a task session and return deterministic startup context: project
-    /// resolution, runtime/git summaries scaled by `detail`, recommended flow,
-    /// and explicit current-session binding state. Never calls an LLM.
+    /// resolution, runtime/git summaries scaled by `detail`, and recommended
+    /// flow. Never calls an LLM.
     ///
     /// `detail` is the only projection control. The removed legacy startup
     /// flags (`compact_startup`, `include_*`, `tool_manifest_*`) are rejected
@@ -317,15 +317,10 @@ pub enum ToolCall {
         detail: StartupDetail,
         /// Explicitly continue one existing Workflow Session. This business
         /// input is distinct from project-tool `session_id` and wrapper-level
-        /// `recording_session_id` metadata.
+        /// `recording_session_id` metadata. Omission always creates a fresh
+        /// Workflow Session.
         #[serde(default)]
         resume_session_id: Option<String>,
-        #[serde(default = "default_true")]
-        bind_current: bool,
-        /// Explicitly create and bind an isolated Workflow Session instead of
-        /// continuing the current window/project/repository context.
-        #[serde(default)]
-        new_session: bool,
         /// Optional complete replacement. Omission preserves the current value
         /// on continuation; `{}` explicitly clears it.
         #[serde(default)]
@@ -333,11 +328,10 @@ pub enum ToolCall {
     },
 
     /// Start a normal coding task with practical defaults, or continue one by
-    /// `session_id`. Thin wrapper over `start_coding_task` that never binds a
-    /// current window, never creates a temporary project, and returns only a
-    /// compact startup projection. `session_id` is explicit business input for
-    /// the exact Workflow Session to continue; it is distinct from wrapper
-    /// `recording_session_id` metadata and never a current-session fallback.
+    /// `session_id`. Thin wrapper over `start_coding_task` that never creates a
+    /// temporary project and returns only a compact startup projection.
+    /// `session_id` is explicit business input for the exact Workflow Session
+    /// to continue; omission always creates a fresh Session.
     WorkOnProject {
         #[serde(default)]
         project: String,
@@ -392,9 +386,8 @@ pub enum ToolCall {
     },
 
     /// Explicitly close a workflow session (`Active → Closed`). Requires an
-    /// explicit `session_id` (never current-session fallback). Idempotent when
-    /// already closed. Does not archive or evict; clears bindings to the closed
-    /// Session.
+    /// explicit `session_id`. Idempotent when already closed. Does not archive
+    /// or evict the Session.
     CloseSession {
         session_id: String,
     },
@@ -515,25 +508,6 @@ pub enum ToolCall {
         summary_only: bool,
         #[serde(default)]
         limit: Option<usize>,
-    },
-
-    /// Explicitly bind an existing project-scoped session as current for the
-    /// client window, caller, transport, and project.
-    BindCurrentSession {
-        project: String,
-        session_id: String,
-    },
-
-    /// Return this window/caller/transport's exact current session binding for
-    /// a project, restoring its process-local cache from the ledger if needed.
-    CurrentSession {
-        project: String,
-    },
-
-    /// Remove this window/caller/transport's exact current session binding from
-    /// both the process-local cache and durable ledger projection. Idempotent.
-    UnbindCurrentSession {
-        project: String,
     },
 
     /// Create a bounded last-known-good workspace checkpoint outside the
@@ -1740,8 +1714,6 @@ fn reject_unknown_start_coding_task_fields(arguments: &Value) -> Result<(), Stri
         "deny_shell_tools",
         "detail",
         "resume_session_id",
-        "bind_current",
-        "new_session",
         "execution_context",
         // Wrapper/session metadata that transports may leave in params.
         "session_id",
@@ -1860,7 +1832,6 @@ fn reject_unknown_read_files_fields(arguments: &Value) -> Result<(), String> {
         "with_line_numbers",
         "max_result_bytes",
         // Wrapper/session metadata that transports may leave in params.
-        "allow_cross_project_session",
         "recording_session_id",
         "_session_id",
     ];
@@ -1915,7 +1886,6 @@ fn reject_unknown_search_project_texts_fields(arguments: &Value) -> Result<(), S
         "session_id",
         "max_result_bytes",
         // Wrapper/session metadata that transports may leave in params.
-        "allow_cross_project_session",
         "recording_session_id",
         "_session_id",
     ];
@@ -2131,9 +2101,6 @@ impl ToolCall {
             Self::CompleteSessionMessage { .. } => "complete_session_message",
             Self::SessionDiscussionSummary { .. } => "session_discussion_summary",
             Self::SessionHandoffSummary { .. } => "session_handoff_summary",
-            Self::BindCurrentSession { .. } => "bind_current_session",
-            Self::CurrentSession { .. } => "current_session",
-            Self::UnbindCurrentSession { .. } => "unbind_current_session",
             Self::WorkspaceCheckpointCreate { .. } => "workspace_checkpoint_create",
             Self::WorkspaceCheckpointList { .. } => "workspace_checkpoint_list",
             Self::WorkspaceCheckpointShow { .. } => "workspace_checkpoint_show",
@@ -2300,77 +2267,6 @@ impl ToolCall {
         }
     }
 
-    pub(crate) fn with_effective_session_id(mut self, effective_session_id: String) -> Self {
-        // CodingAgentRun recorder provenance is intentionally not a business
-        // Session id and never participates in current-Session inheritance.
-        match &mut self {
-            Self::RunProcess { session_id, .. }
-            | Self::RunDetachedProcess { session_id, .. }
-            | Self::RunScript { session_id, .. }
-            | Self::RunShell { session_id, .. }
-            | Self::ApplyPatch { session_id, .. }
-            | Self::ApplyPatchChecked { session_id, .. }
-            | Self::DeleteProjectFiles { session_id, .. }
-            | Self::GitRestorePaths { session_id, .. }
-            | Self::DiscardUntracked { session_id, .. }
-            | Self::ValidatePatch { session_id, .. }
-            | Self::GitStatus { session_id, .. }
-            | Self::GitDiff { session_id, .. }
-            | Self::GitDiffHunks { session_id, .. }
-            | Self::GitReviewSummary { session_id, .. }
-            | Self::GitLog { session_id, .. }
-            | Self::CargoFmt { session_id, .. }
-            | Self::CargoCheck { session_id, .. }
-            | Self::CargoTest { session_id, .. }
-            | Self::GoTest { session_id, .. }
-            | Self::ReadFile { session_id, .. }
-            | Self::ReadFiles { session_id, .. }
-            | Self::RunJob { session_id, .. }
-            | Self::StopJob { session_id, .. }
-            | Self::ListProjectFiles { session_id, .. }
-            | Self::ListProjectTrackedFiles { session_id, .. }
-            | Self::ProjectOverview { session_id, .. }
-            | Self::SearchProjectText { session_id, .. }
-            | Self::SearchProjectTexts { session_id, .. }
-            | Self::GitDiffSummary { session_id, .. }
-            | Self::ShowChanges { session_id, .. }
-            | Self::WriteProjectFile { session_id, .. }
-            | Self::SaveProjectArtifact { session_id, .. }
-            | Self::ComputerSaveSnapshot { session_id, .. }
-            | Self::ExportProjectArtifact { session_id, .. }
-            | Self::ReadProjectArtifactMetadata { session_id, .. }
-            | Self::ReadProjectArtifact { session_id, .. }
-            | Self::ArtifactUploadBegin { session_id, .. }
-            | Self::ArtifactUploadChunk { session_id, .. }
-            | Self::ArtifactUploadFinish { session_id, .. }
-            | Self::ArtifactUploadAbort { session_id, .. }
-            | Self::ApplyTextEdits { session_id, .. }
-            | Self::WorkspaceCheckpointCreate { session_id, .. }
-            | Self::WorkspaceCheckpointList { session_id, .. }
-            | Self::WorkspaceCheckpointShow { session_id, .. }
-            | Self::WorkspaceCheckpointRestore { session_id, .. }
-            | Self::WorkspaceCheckpointDelete { session_id, .. }
-            | Self::WorkspaceHygieneCheck { session_id, .. }
-            | Self::LspStatus { session_id, .. }
-            | Self::DocumentSymbols { session_id, .. }
-            | Self::DocumentDiagnostics { session_id, .. }
-            | Self::Hover { session_id, .. }
-            | Self::WorkspaceSymbols { session_id, .. }
-            | Self::GotoDefinition { session_id, .. }
-            | Self::FindReferences { session_id, .. }
-            | Self::CallHierarchy { session_id, .. }
-                if session_id.is_none() =>
-            {
-                *session_id = Some(effective_session_id);
-            }
-            Self::ImportConversationFilesToProject { session_id, .. } if session_id.is_none() => {
-                *session_id = Some(effective_session_id);
-            }
-            _ => {}
-        }
-        self
-    }
-
     /// Attach explicit generic recorder provenance to a CodingAgentStart only.
     /// This never makes the recorder a business Session or Run authority.
     pub(crate) fn with_coding_agent_recording_session_id(
@@ -2470,9 +2366,6 @@ impl ToolCall {
             | Self::ArtifactUploadFinish { project, .. }
             | Self::ArtifactUploadAbort { project, .. }
             | Self::ApplyTextEdits { project, .. }
-            | Self::BindCurrentSession { project, .. }
-            | Self::CurrentSession { project }
-            | Self::UnbindCurrentSession { project }
             | Self::WorkspaceCheckpointCreate { project, .. }
             | Self::WorkspaceCheckpointList { project, .. }
             | Self::WorkspaceCheckpointShow { project, .. }

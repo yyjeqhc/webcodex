@@ -39,9 +39,10 @@ role selector.
   Job state remain explicit.
 - `start_coding_task` remains an advanced/direct compatibility bootstrap for callers
   that explicitly need managed temporary projects, Session mode/guards, execution
-  context, startup detail, exact resume, current binding, or new-session isolation.
-  It is intentionally absent from ordinary MCP/OpenAPI model discovery and generic
-  Action flattened fields. Ordinary model coding/review should use `work_on_project`.
+  context, startup detail, or exact resume. `resume_session_id` continues exactly
+  that Session; omission always creates a fresh Workflow Session. It is intentionally
+  absent from ordinary MCP/OpenAPI model discovery and generic Action flattened fields.
+  Ordinary model coding/review should use `work_on_project`.
 - Choose behavioral roles in the **task instruction**. For implementation work,
   explicitly say to use `implementation_owner` guidance. For a separate review,
   explicitly say to use `independent_review` guidance.

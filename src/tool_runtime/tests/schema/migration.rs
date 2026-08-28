@@ -20,292 +20,6 @@ const KNOWN_LEGACY_METADATA_FALLBACKS: &[LegacyMetadataFallback] = &[LegacyMetad
 }];
 
 #[test]
-fn tool_definition_runtime_tool_policy_inventory_is_stable() {
-    use crate::tool_runtime::tool_definition::{
-        lookup_tool_definition, runtime_tool_allows_current_session_fallback,
-        runtime_tool_creates_or_binds_session, runtime_tool_is_current_session_control,
-        runtime_tool_requires_explicit_business_session, tool_definitions,
-    };
-
-    // Compact inventory: (name, category, session policy label). The other
-    // columns of the old twelve-line-per-tool golden table (risk class,
-    // read/write/shell/git classification, permission requirement, agent
-    // capability) are derived from metadata by the invariants in `policy.rs`
-    // and pinned per tool by
-    // `required_agent_capability_matches_metadata_risk_table`. The session
-    // policy label stays: it is hand-set per definition and pinned nowhere
-    // else.
-    let expected: &[(&str, &str, &str)] = &[
-        ("list_tools", "runtime", "none"),
-        ("start_session", "session", "creates_or_binds"),
-        ("start_coding_task", "workflow", "creates_or_binds"),
-        ("work_on_project", "workflow", "creates_or_binds"),
-        (
-            "finish_coding_task",
-            "workflow",
-            "explicit_business_session",
-        ),
-        ("session_summary", "session", "explicit_business_session"),
-        (
-            "update_session_context",
-            "session",
-            "explicit_business_session",
-        ),
-        ("close_session", "session", "explicit_business_session"),
-        (
-            "validation_summary",
-            "validation",
-            "explicit_business_session",
-        ),
-        (
-            "post_session_message",
-            "session",
-            "explicit_business_session",
-        ),
-        (
-            "list_session_messages",
-            "session",
-            "explicit_business_session",
-        ),
-        (
-            "get_session_assignment",
-            "session",
-            "explicit_business_session",
-        ),
-        (
-            "observe_session_messages",
-            "session",
-            "explicit_business_session",
-        ),
-        (
-            "resolve_session_message",
-            "session",
-            "explicit_business_session",
-        ),
-        (
-            "complete_session_message",
-            "session",
-            "explicit_business_session",
-        ),
-        (
-            "session_discussion_summary",
-            "session",
-            "explicit_business_session",
-        ),
-        (
-            "session_handoff_summary",
-            "session",
-            "explicit_business_session",
-        ),
-        (
-            "bind_current_session",
-            "session",
-            "creates_or_binds+current_session_control",
-        ),
-        ("current_session", "session", "current_session_control"),
-        (
-            "unbind_current_session",
-            "session",
-            "current_session_control",
-        ),
-        (
-            "workspace_checkpoint_create",
-            "checkpoint",
-            "current_session_fallback",
-        ),
-        (
-            "workspace_checkpoint_list",
-            "checkpoint",
-            "current_session_fallback",
-        ),
-        (
-            "workspace_checkpoint_show",
-            "checkpoint",
-            "current_session_fallback",
-        ),
-        (
-            "workspace_checkpoint_restore",
-            "checkpoint",
-            "current_session_fallback",
-        ),
-        (
-            "workspace_checkpoint_delete",
-            "checkpoint",
-            "current_session_fallback",
-        ),
-        ("run_process", "job", "current_session_fallback"),
-        ("run_detached_process", "job", "current_session_fallback"),
-        ("run_script", "job", "current_session_fallback"),
-        ("run_shell", "job", "current_session_fallback"),
-        ("open_session_shell", "job", "explicit_business_session"),
-        ("session_shell_exec", "job", "explicit_business_session"),
-        ("session_shell_status", "job", "explicit_business_session"),
-        ("close_session_shell", "job", "explicit_business_session"),
-        ("apply_patch", "patch", "current_session_fallback"),
-        ("apply_patch_checked", "patch", "current_session_fallback"),
-        (
-            "delete_project_files",
-            "cleanup",
-            "current_session_fallback",
-        ),
-        ("git_restore_paths", "cleanup", "current_session_fallback"),
-        ("discard_untracked", "cleanup", "current_session_fallback"),
-        ("validate_patch", "patch", "current_session_fallback"),
-        ("git_status", "git", "current_session_fallback"),
-        ("git_diff", "git", "current_session_fallback"),
-        ("git_diff_hunks", "git", "current_session_fallback"),
-        ("git_log", "git", "current_session_fallback"),
-        ("cargo_fmt", "validation", "current_session_fallback"),
-        ("cargo_check", "validation", "current_session_fallback"),
-        ("cargo_test", "validation", "current_session_fallback"),
-        ("go_test", "validation", "current_session_fallback"),
-        ("read_file", "file", "current_session_fallback"),
-        ("read_files", "file", "current_session_fallback"),
-        ("lsp_status", "lsp", "current_session_fallback"),
-        ("document_symbols", "lsp", "current_session_fallback"),
-        ("document_diagnostics", "lsp", "current_session_fallback"),
-        ("hover", "lsp", "current_session_fallback"),
-        ("workspace_symbols", "lsp", "current_session_fallback"),
-        ("goto_definition", "lsp", "current_session_fallback"),
-        ("find_references", "lsp", "current_session_fallback"),
-        ("call_hierarchy", "lsp", "current_session_fallback"),
-        ("run_job", "job", "current_session_fallback"),
-        ("stop_job", "job", "current_session_fallback"),
-        ("job_status", "job", "none"),
-        ("job_log", "job", "none"),
-        ("observe_jobs", "job", "none"),
-        ("project_overview", "project", "current_session_fallback"),
-        ("list_project_files", "file", "current_session_fallback"),
-        (
-            "list_project_tracked_files",
-            "file",
-            "current_session_fallback",
-        ),
-        ("search_project_text", "file", "current_session_fallback"),
-        ("search_project_texts", "file", "current_session_fallback"),
-        ("git_diff_summary", "git", "current_session_fallback"),
-        ("git_review_summary", "git", "current_session_fallback"),
-        ("show_changes", "git", "current_session_fallback"),
-        (
-            "workspace_hygiene_check",
-            "cleanup",
-            "current_session_fallback",
-        ),
-        ("list_jobs", "job", "none"),
-        ("job_tail", "job", "none"),
-        ("write_project_file", "edit", "current_session_fallback"),
-        (
-            "import_conversation_files_to_project",
-            "artifact",
-            "current_session_fallback",
-        ),
-        (
-            "export_project_artifact",
-            "artifact",
-            "current_session_fallback",
-        ),
-        (
-            "save_project_artifact",
-            "artifact",
-            "current_session_fallback",
-        ),
-        (
-            "read_project_artifact_metadata",
-            "artifact",
-            "current_session_fallback",
-        ),
-        (
-            "read_project_artifact",
-            "artifact",
-            "current_session_fallback",
-        ),
-        (
-            "artifact_upload_begin",
-            "artifact",
-            "current_session_fallback",
-        ),
-        (
-            "artifact_upload_chunk",
-            "artifact",
-            "current_session_fallback",
-        ),
-        (
-            "artifact_upload_finish",
-            "artifact",
-            "current_session_fallback",
-        ),
-        (
-            "artifact_upload_abort",
-            "artifact",
-            "current_session_fallback",
-        ),
-        ("apply_text_edits", "edit", "current_session_fallback"),
-        ("coding_agent_start", "coding_agent", "none"),
-        ("coding_agent_observe", "coding_agent", "none"),
-        ("coding_agent_cancel", "coding_agent", "none"),
-        ("computer_list_targets", "computer", "none"),
-        ("computer_list_windows", "computer", "none"),
-        ("computer_list_displays", "computer", "none"),
-        ("computer_list_applications", "computer", "none"),
-        ("computer_launch_application", "computer", "none"),
-        ("computer_accessibility_status", "computer", "none"),
-        ("computer_accessibility_tree", "computer", "none"),
-        ("computer_find_elements", "computer", "none"),
-        ("computer_element_state", "computer", "none"),
-        ("computer_activate_window", "computer", "none"),
-        ("computer_control", "computer", "none"),
-        ("computer_scroll_to_element", "computer", "none"),
-        ("computer_key_input", "computer", "none"),
-        ("computer_read_clipboard", "computer", "none"),
-        ("computer_write_clipboard", "computer", "none"),
-        ("computer_pointer_move", "computer", "none"),
-        ("computer_pointer_click", "computer", "none"),
-        ("computer_input_text", "computer", "none"),
-        ("computer_snapshot", "computer", "none"),
-        ("computer_snapshot_display", "computer", "none"),
-        (
-            "computer_save_snapshot",
-            "computer",
-            "current_session_fallback",
-        ),
-        ("list_projects", "project", "none"),
-        ("register_project", "project", "none"),
-        ("unregister_project", "project", "none"),
-        ("create_project", "project", "none"),
-        ("list_agents", "runtime", "none"),
-        ("runtime_status", "runtime", "none"),
-        ("tool_manifest", "runtime", "none"),
-    ];
-
-    let expected_names = expected
-        .iter()
-        .map(|(name, _, _)| *name)
-        .collect::<BTreeSet<_>>();
-    let definition_names = tool_definitions()
-        .map(|definition| definition.name)
-        .collect::<Vec<_>>();
-    let definition_name_set = definition_names.iter().copied().collect::<BTreeSet<_>>();
-    assert_eq!(definition_name_set, expected_names);
-    assert_eq!(definition_names, known_tool_names().collect::<Vec<_>>());
-
-    for (name, category, session_policy) in expected {
-        let definition =
-            lookup_tool_definition(name).unwrap_or_else(|| panic!("{name} missing ToolDefinition"));
-        assert_eq!(definition.category, *category, "{name} category");
-        assert_eq!(
-            session_policy_label(
-                runtime_tool_creates_or_binds_session(name),
-                runtime_tool_is_current_session_control(name),
-                runtime_tool_requires_explicit_business_session(name),
-                runtime_tool_allows_current_session_fallback(name),
-            ),
-            *session_policy,
-            "{name} session policy"
-        );
-    }
-}
-
-#[test]
 fn tool_definition_explains_all_tool_call_runtime_names() {
     use crate::tool_runtime::tool_definition::{
         is_model_visible_tool_name, lookup_tool_definition, tool_definitions,
@@ -369,12 +83,10 @@ fn tool_definition_explains_all_tool_call_runtime_names() {
 fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
     use crate::tool_runtime::metadata::lookup_tool_metadata;
     use crate::tool_runtime::tool_definition::{
-        lookup_tool_definition, runtime_tool_agent_capability,
-        runtime_tool_allows_current_session_fallback, runtime_tool_category,
+        lookup_tool_definition, runtime_tool_agent_capability, runtime_tool_category,
         runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
         runtime_tool_metadata, runtime_tool_permission_risk, runtime_tool_requires_permission,
-        runtime_tool_requires_session_project_escape, runtime_tool_session_risk_class,
-        tool_definitions,
+        runtime_tool_session_risk_class, tool_definitions,
     };
 
     for definition in tool_definitions() {
@@ -427,21 +139,9 @@ fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
             definition.name
         );
         assert_eq!(
-            runtime_tool_allows_current_session_fallback(definition.name),
-            definition.allows_current_session_fallback(),
-            "{} current-session fallback helper must match ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
             runtime_tool_requires_permission(definition.name),
             definition.requires_permission(),
             "{} permission helper must match ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_requires_session_project_escape(definition.name),
-            definition.requires_session_project_escape(),
-            "{} session-project escape helper must match ToolDefinition",
             definition.name
         );
         assert_eq!(
@@ -484,12 +184,10 @@ fn tool_definition_strict_agent_capability_lookup_has_no_metadata_fallback() {
 fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
     use crate::tool_runtime::metadata::{lookup_tool_metadata, tool_metadata};
     use crate::tool_runtime::tool_definition::{
-        is_model_visible_tool_name, lookup_tool_definition,
-        runtime_tool_allows_current_session_fallback, runtime_tool_category,
+        is_model_visible_tool_name, lookup_tool_definition, runtime_tool_category,
         runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
         runtime_tool_metadata, runtime_tool_permission_risk, runtime_tool_requires_permission,
-        runtime_tool_requires_session_project_escape, runtime_tool_session_risk_class,
-        PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_WRITE,
+        runtime_tool_session_risk_class, PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_WRITE,
     };
 
     let delete_files = lookup_tool_metadata("delete_files")
@@ -526,11 +224,7 @@ fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
     assert!(!runtime_tool_is_read_like("delete_files"));
     assert!(runtime_tool_is_write_like("delete_files"));
     assert!(!runtime_tool_is_shell_like("delete_files"));
-    assert!(!runtime_tool_allows_current_session_fallback(
-        "delete_files"
-    ));
     assert!(runtime_tool_requires_permission("delete_files"));
-    assert!(runtime_tool_requires_session_project_escape("delete_files"));
     assert_eq!(
         runtime_tool_permission_risk("delete_files"),
         PERMISSION_RISK_DESTRUCTIVE
@@ -571,12 +265,7 @@ fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
         assert!(!runtime_tool_is_read_like(name), "{name}");
         assert!(!runtime_tool_is_write_like(name), "{name}");
         assert!(!runtime_tool_is_shell_like(name), "{name}");
-        assert!(
-            !runtime_tool_allows_current_session_fallback(name),
-            "{name}"
-        );
         assert!(runtime_tool_requires_permission(name), "{name}");
-        assert!(runtime_tool_requires_session_project_escape(name), "{name}");
         assert_eq!(
             runtime_tool_permission_risk(name),
             PERMISSION_RISK_WRITE,
@@ -742,38 +431,30 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
 }
 
 #[test]
+fn current_session_tools_are_absent_from_all_discovery_surfaces() {
+    use crate::tool_runtime::tool_definition::lookup_tool_definition;
+
+    for name in [
+        "bind_current_session",
+        "current_session",
+        "unbind_current_session",
+    ] {
+        assert!(
+            lookup_tool_definition(name).is_none(),
+            "{name} must not have a ToolDefinition"
+        );
+        assert!(ToolCall::from_tool_name(name, json!({"project": SAMPLE_PROJECT})).is_err());
+        assert_model_facing_surfaces_do_not_list_name(name);
+    }
+}
+
+#[test]
 fn tool_definition_dead_code_residue_is_narrow_and_documented() {
     let source = include_str!("../../tool_definition.rs");
     assert!(
         !source.contains("#![allow(dead_code)]"),
         "tool_definition.rs must not use a module-wide dead_code allowance"
     );
-}
-
-fn session_policy_label(
-    creates_or_binds_session: bool,
-    current_session_control: bool,
-    requires_explicit_business_session: bool,
-    allows_current_session_fallback: bool,
-) -> String {
-    let mut labels = Vec::new();
-    if creates_or_binds_session {
-        labels.push("creates_or_binds");
-    }
-    if current_session_control {
-        labels.push("current_session_control");
-    }
-    if requires_explicit_business_session {
-        labels.push("explicit_business_session");
-    }
-    if allows_current_session_fallback {
-        labels.push("current_session_fallback");
-    }
-    if labels.is_empty() {
-        "none".to_string()
-    } else {
-        labels.join("+")
-    }
 }
 
 fn assert_model_facing_surfaces_do_not_list_name(name: &str) {

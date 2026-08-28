@@ -53,17 +53,7 @@ pub(crate) fn start_coding_task_input_schema() -> Value {
             "resume_session_id": {
                 "type": "string",
                 "pattern": "^wc_sess_[A-Za-z0-9_]+$",
-                "description": "Optional explicit Workflow Session recovery id. When present, start_coding_task only resumes that known active Session after exact project, lifecycle, access, and capability checks; failure never falls back to a current binding or creates a Session. Without a stable window, resume still succeeds but no current binding is created and later project tools must pass session_id explicitly. Distinct from project-tool session_id and wrapper recording_session_id. Mutually exclusive with new_session=true."
-            },
-            "bind_current": {
-                "type": "boolean",
-                "default": true,
-                "description": "Ensure and bind the exact window/caller/transport/project/canonical-root current session. Defaults to true. A stable transport window is required; the process-local cache and hashed durable ledger projection support automatic reuse across restart without credential-wide fallback."
-            },
-            "new_session": {
-                "type": "boolean",
-                "default": false,
-                "description": "Explicit advanced isolation request. When true, create and bind a new Workflow Session without closing or rewriting the previous one. Title differences never imply a new session. Mutually exclusive with resume_session_id."
+                "description": "Optional explicit Workflow Session id. When present, start_coding_task resumes only that known active Session after exact project, lifecycle, access, authority, and capability checks; failure never creates a replacement. When omitted, start_coding_task always creates a fresh Workflow Session. Distinct from project-tool session_id and wrapper recording_session_id."
             }
         },
         "required": [],
@@ -98,12 +88,6 @@ pub(crate) fn start_coding_task_input_schema() -> Value {
             }
         ],
         "additionalProperties": false,
-        "not": {
-            "required": ["resume_session_id", "new_session"],
-            "properties": {
-                "new_session": {"const": true}
-            }
-        },
     })
 }
 
@@ -145,7 +129,7 @@ pub(crate) fn work_on_project_input_schema() -> Value {
             "session_id": {
                 "type": "string",
                 "pattern": "^wc_sess_[A-Za-z0-9_]+$",
-                "description": "Optional explicit Workflow Session to continue exactly. It must match the project and be active and accessible; failure never falls back, guesses, or creates a new Session. This is explicit business input, distinct from wrapper recording_session_id and never a current-session fallback."
+                "description": "Optional explicit Workflow Session to continue exactly. It must match the project and be active and accessible; failure never guesses or creates a replacement Session. This business input is distinct from wrapper recording_session_id."
             }
         },
         "required": ["instruction"],
@@ -163,7 +147,7 @@ pub(crate) fn finish_coding_task_input_schema() -> Value {
             },
             "session_id": {
                 "type": "string",
-                "description": "Required explicit wc_sess_* id returned by work_on_project. Advanced/internal callers may also obtain it from compatible Session bootstrap APIs. This is business input, not current-session fallback."
+                "description": "Required explicit wc_sess_* business Session id returned by work_on_project. Advanced/internal callers may also obtain it from compatible Session bootstrap APIs."
             },
             "include_diff": {
                 "type": "boolean",

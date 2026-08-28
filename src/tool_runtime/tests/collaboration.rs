@@ -1,7 +1,6 @@
 //! Workflow Session collaboration tests: coordinator/worker isolation, provenance, and authority.
 
 use super::super::kernel::{HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport};
-use super::super::session_context::current_session_key;
 use super::super::sessions::{
     self, PostSessionMessageInput, SessionMessageKind, SessionMessagePriority,
 };
@@ -44,28 +43,6 @@ async fn call_with_recorder(
         outcome.error_status
     );
     outcome.result.expect("tool result")
-}
-
-fn bind_worker_window(
-    runtime: &ToolRuntime,
-    auth: &AuthContext,
-    project: &str,
-    repository_root: &str,
-    window: &ClientWindow,
-    session_id: &str,
-) {
-    let key = current_session_key(
-        Some(auth),
-        sessions::SessionTransport::Api,
-        project,
-        repository_root,
-        Some(window),
-    )
-    .unwrap();
-    runtime
-        .sessions
-        .bind_current_session(key, session_id)
-        .expect("bind current worker session");
 }
 
 fn tool_names(runtime: &ToolRuntime, session_id: &str) -> Vec<String> {
@@ -799,7 +776,7 @@ async fn observe_session_messages_collaboration_projectless_owner_and_foreign_re
 }
 
 #[tokio::test]
-async fn collaboration_two_sessions_keep_execution_history_independent_and_bind_provenance() {
+async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenance_independent() {
     let client_id = "collaboration-runtime";
     let runtime = runtime_with_agent_project(client_id);
     register_agent(
@@ -818,23 +795,6 @@ async fn collaboration_two_sessions_keep_execution_history_independent_and_bind_
 
     let coordinator_window = ClientWindow::for_test("collaboration-coordinator-window");
     let worker_window = ClientWindow::for_test("collaboration-worker-window");
-    bind_worker_window(
-        &runtime,
-        &auth,
-        &project,
-        "/tmp/agent-proj",
-        &coordinator_window,
-        &coordinator.session_id,
-    );
-    bind_worker_window(
-        &runtime,
-        &auth,
-        &project,
-        "/tmp/agent-proj",
-        &worker_window,
-        &worker.session_id,
-    );
-
     let posted = call_with_recorder(
         &runtime,
         "post_session_message",
@@ -1042,7 +1002,7 @@ async fn collaboration_two_sessions_keep_execution_history_independent_and_bind_
 }
 
 #[tokio::test]
-async fn collaboration_completion_without_recording_or_current_binding_has_null_author() {
+async fn collaboration_completion_without_recording_session_has_null_author_even_with_window() {
     let client_id = "collaboration-null-author";
     let runtime = runtime_with_agent_project(client_id);
     register_agent(
@@ -1060,13 +1020,14 @@ async fn collaboration_completion_without_recording_or_current_binding_has_null_
         .post_message(PostSessionMessageInput {
             session_id: coordinator.session_id.clone(),
             kind: SessionMessageKind::Todo,
-            message: "no stable window".to_string(),
+            message: "window must not infer author Session".to_string(),
             tags: Vec::new(),
             reply_to: None,
             priority: SessionMessagePriority::Normal,
         })
         .unwrap();
 
+    let window = ClientWindow::for_test("no-recorder-author-window");
     let result = call_with_recorder(
         &runtime,
         "complete_session_message",
@@ -1078,7 +1039,7 @@ async fn collaboration_completion_without_recording_or_current_binding_has_null_
         }),
         None,
         &auth,
-        None,
+        Some(&window),
     )
     .await;
     assert!(result.success, "{:?}", result.error);
@@ -1086,66 +1047,7 @@ async fn collaboration_completion_without_recording_or_current_binding_has_null_
 }
 
 #[tokio::test]
-async fn collaboration_current_binding_remains_author_fallback_without_recording_session() {
-    let client_id = "collaboration-current-author-fallback";
-    let runtime = runtime_with_agent_project(client_id);
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        ShellClientCapabilities::default(),
-    )
-    .await;
-    let project = agent_test_project_id(client_id);
-    let auth = auth_context(None, true);
-    let coordinator =
-        start_authorized_project_session(&runtime, &project, Some("coordinator"), &auth);
-    let worker_current =
-        start_authorized_project_session(&runtime, &project, Some("current worker"), &auth);
-    let todo = runtime
-        .sessions
-        .post_message(PostSessionMessageInput {
-            session_id: coordinator.session_id.clone(),
-            kind: SessionMessageKind::Todo,
-            message: "exercise current binding fallback".to_string(),
-            tags: Vec::new(),
-            reply_to: None,
-            priority: SessionMessagePriority::Normal,
-        })
-        .unwrap();
-    let window = ClientWindow::for_test("current-author-fallback-window");
-    bind_worker_window(
-        &runtime,
-        &auth,
-        &project,
-        "/tmp/agent-proj",
-        &window,
-        &worker_current.session_id,
-    );
-
-    let completed = call_with_recorder(
-        &runtime,
-        "complete_session_message",
-        json!({
-            "session_id": coordinator.session_id,
-            "message_id": todo.message_id,
-            "answer": "done by current fallback",
-            "completion_key": "current-fallback-v1"
-        }),
-        None,
-        &auth,
-        Some(&window),
-    )
-    .await;
-    assert!(completed.success, "{:?}", completed.error);
-    assert_eq!(
-        completed.output["answer"]["author_session_id"],
-        worker_current.session_id
-    );
-}
-
-#[tokio::test]
-async fn collaboration_recording_session_wins_over_different_current_window_binding() {
+async fn collaboration_explicit_recording_session_is_completion_author() {
     let client_id = "collaboration-recorder-author";
     let runtime = runtime_with_agent_project(client_id);
     register_agent(
@@ -1161,8 +1063,6 @@ async fn collaboration_recording_session_wins_over_different_current_window_bind
         start_authorized_project_session(&runtime, &project, Some("coordinator"), &auth);
     let worker_recording =
         start_authorized_project_session(&runtime, &project, Some("worker W1"), &auth);
-    let worker_current =
-        start_authorized_project_session(&runtime, &project, Some("worker W2"), &auth);
     let todo = runtime
         .sessions
         .post_message(PostSessionMessageInput {
@@ -1175,15 +1075,6 @@ async fn collaboration_recording_session_wins_over_different_current_window_bind
         })
         .unwrap();
     let window = ClientWindow::for_test("recorder-vs-current-window");
-    bind_worker_window(
-        &runtime,
-        &auth,
-        &project,
-        "/tmp/agent-proj",
-        &window,
-        &worker_current.session_id,
-    );
-
     let completed = call_with_recorder(
         &runtime,
         "complete_session_message",
@@ -1203,17 +1094,8 @@ async fn collaboration_recording_session_wins_over_different_current_window_bind
         completed.output["answer"]["author_session_id"],
         worker_recording.session_id
     );
-    assert_ne!(
-        completed.output["answer"]["author_session_id"],
-        worker_current.session_id
-    );
-
     let recording_tools = tool_names(&runtime, &worker_recording.session_id);
     assert!(recording_tools
-        .iter()
-        .any(|tool| tool == "complete_session_message"));
-    let current_tools = tool_names(&runtime, &worker_current.session_id);
-    assert!(!current_tools
         .iter()
         .any(|tool| tool == "complete_session_message"));
     let coordinator_tools = tool_names(&runtime, &coordinator.session_id);
@@ -1258,15 +1140,6 @@ async fn collaboration_cross_project_recorder_fails_closed_before_completion() {
         })
         .unwrap();
     let window = ClientWindow::for_test("cross-project-worker");
-    bind_worker_window(
-        &runtime,
-        &auth,
-        "agent:workstation:other-repo",
-        "/root/git/workstation-other-repo",
-        &window,
-        &worker.session_id,
-    );
-
     let result = call_with_recorder(
         &runtime,
         "complete_session_message",

@@ -4,12 +4,10 @@
 //!
 //! Module layout:
 //! - `store` — create/lifecycle, event recording, guards, persistence
-//! - `bindings` — current-session bind/unbind/lookup
 //! - `messages` — message board post/list/resolve and discussion aggregates
 //! - `model` / `events` / `query` / `persistence` / `util` — supporting pieces
 
 mod assignment;
-mod bindings;
 mod console;
 mod events;
 mod messages;
@@ -43,7 +41,7 @@ pub(crate) use events::{
     ExplorationToolKind, EXPLORATION_TOOL_NAMES,
 };
 pub(crate) use model::{
-    CodingSessionError, CodingSessionRequest, CompleteSessionMessageInput, CurrentSessionKey,
+    CodingSessionError, CodingSessionRequest, CompleteSessionMessageInput,
     ListSessionMessagesFilter, PostSessionMessageInput, RecordedModelFacingToolCall,
     ReplaceSessionMessageInput, SessionAckObservation, SessionCloseError,
     SessionContextRevisionAck, SessionCreateOptions, SessionDiscussionCounts,

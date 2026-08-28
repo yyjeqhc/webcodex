@@ -172,7 +172,7 @@ pub(crate) fn get_session_assignment_input_schema() -> Value {
             "message_id": {
                 "type": "string",
                 "pattern": "^wc_msg_[A-Za-z0-9_]+$",
-                "description": "Required exact open todo id. No current-session or recent-message fallback is used."
+                "description": "Required exact open todo id. No implicit or recent-message inference is used."
             }
         },
         "required": ["session_id", "message_id"],
@@ -300,7 +300,7 @@ pub(crate) fn close_session_input_schema() -> Value {
     object_schema(vec![(
         "session_id",
         "string",
-        "Required explicit wc_sess_* id to close. Never falls back to current-session. Unknown ids fail without creating a session. Idempotent when already closed. finish_coding_task does not close.",
+        "Required explicit wc_sess_* id to close. Unknown ids fail without creating a Session. Idempotent when already closed. finish_coding_task does not close.",
         true,
     )])
 }
@@ -317,7 +317,7 @@ pub(crate) fn update_session_context_input_schema() -> Value {
             "session_id": {
                 "type": "string",
                 "pattern": "^wc_sess_[A-Za-z0-9_]+$",
-                "description": "Required explicit active, project-scoped Workflow Session id. Never falls back to a current binding and never creates an unknown Session."
+                "description": "Required explicit active, project-scoped Workflow Session id. Unknown ids fail without creating a Session."
             },
             "execution_context": session_execution_context_schema(
                 "Complete replacement execution context. `{}` clears all defaults. The context cannot store environment variables, credentials, SSH host/configuration, keys, passwords, connections, or arbitrary options."
@@ -340,7 +340,7 @@ pub(crate) fn validation_summary_input_schema() -> Value {
             "session_id": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Required explicit wc_sess_* business session id. The tool never falls back to current session."
+                "description": "Required explicit wc_sess_* business Session id."
             },
             "limit": {
                 "type": "integer",
@@ -380,7 +380,7 @@ pub(crate) fn session_handoff_summary_input_schema() -> Value {
         "properties": {
             "session_id": {
                 "type": "string",
-                "description": "Required wc_sess_* id to summarize. This is business input; the tool never implicitly uses the current session."
+                "description": "Required explicit wc_sess_* business Session id to summarize."
             },
             "project": {
                 "type": "string",
@@ -412,22 +412,4 @@ pub(crate) fn session_handoff_summary_input_schema() -> Value {
         "required": ["session_id"],
         "additionalProperties": false,
     })
-}
-
-pub(crate) fn current_session_input_schema(require_session_id: bool) -> Value {
-    let mut fields = vec![(
-        "project",
-        "string",
-        "Runtime project id whose exact window/caller/transport/project/canonical-root current-session binding should be inspected or updated.",
-        true,
-    )];
-    if require_session_id {
-        fields.push((
-            "session_id",
-            "string",
-            "Existing active project-scoped wc_sess_* id returned by work_on_project or another compatible Session bootstrap. Binding updates the process-local cache and hashed durable ledger projection without changing Session history.",
-            true,
-        ));
-    }
-    object_schema(fields)
 }

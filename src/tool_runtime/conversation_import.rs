@@ -409,8 +409,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: SessionTransport,
     ) -> ToolResult {
-        Box::pin(self.dispatch_with_auth_transport_options(call, auth, transport, false, false))
-            .await
+        Box::pin(self.dispatch_with_auth_transport_options(call, auth, transport)).await
     }
 
     async fn abort_import_upload(

@@ -8,7 +8,7 @@ Assume coordinator Session `C` and worker Session `W`.
 
 `C` owns the collaboration todo and bounded answers. `W` owns the worker's tool calls, validation, review evidence, and workspace activity. They are always independent Sessions: the worker does not resume `C`, and WebCodex does not copy `W` execution history into `C`.
 
-Knowing a `session_id`, `message_id`, worker Session id, Job id, checkpoint id, artifact ref, commit SHA, or PR number is not authority. Every read or mutation still passes the normal caller/project/owner authorization checks. A `recording_session_id` is authorized before it can affect ledger recording, lifecycle/guard inheritance, provenance, or project-mismatch logic. Project-scoped Session targets require both current authorization to the stored project and an immutable creation-time canonical authority-group fingerprint; project-less Sessions use the same internal durable fence. Direct shared-key access and its OAuth shared-key bridge normalize to the same authority group. A legacy project-scoped record that predates the fingerprint remains fail-closed to ordinary Session tools; a coding continuation may upgrade it only when the current caller's unchanged historical `CurrentSessionKey` exactly matches a pre-existing durable binding to that Session, and the fingerprint upgrade commits atomically with the continuation. Project authorization, `session_id` knowledge, or a process-local binding alone is never migration proof. Authenticated legacy records without that proof remain denied, while the trusted local/dev path retains its compatibility behavior. Collaboration never grants filesystem, shell, Computer, artifact, credential, or other project authority.
+Knowing a `session_id`, `message_id`, worker Session id, Job id, checkpoint id, artifact ref, commit SHA, or PR number is not authority. Every read or mutation still passes the normal caller/project/owner authorization checks. A `recording_session_id` is authorized before it can affect ledger recording, provenance, or project-mismatch logic; it does not become business execution context. Project-scoped Session targets require both current authorization to the stored project and an immutable creation-time canonical authority-group fingerprint; project-less Sessions use the same internal durable fence. Direct shared-key access and its OAuth shared-key bridge normalize to the same authority group. Workflow Session selection is always explicit: neither window identity, credentials, project identity, nor recorder provenance selects another business Session implicitly. Collaboration never grants filesystem, shell, Computer, artifact, credential, or other project authority.
 
 ## Canonical coordinator -> worker flow
 
@@ -73,7 +73,7 @@ All supplied filters use deterministic AND semantics. `message_id` therefore giv
 
 `observe_session_messages(session_id=C)` establishes a current message-board baseline and returns an opaque observation token without replaying existing history. Keep using `session_handoff_summary` and `list_session_messages` when existing todos/history are needed. A later call with `after_observation_token=<token>` returns retained messages whose current state changed after that baseline; an optional `wait_secs=1..60` performs one bounded wait only. Existing backlog returns immediately, a relevant update returns `wait_outcome=updated`, and a deadline returns successful `wait_outcome=timeout` with `changed=false`.
 
-The token is bounded, opaque, bound to the exact Workflow Session, and backed by a durable Session-local monotonic message-observation revision. It is observation state only: it is not authority, an idempotency key, execution identity, current-Session binding, or message-delivery receipt. The same recorder/target authorization fence used by the other collaboration tools applies before any observation result is returned. Token issuance fences the ledger generation containing its revision so a valid token remains usable after Server restart when that Workflow Session can be restored.
+The token is bounded, opaque, bound to the exact Workflow Session, and backed by a durable Session-local monotonic message-observation revision. It is observation state only: it is not authority, an idempotency key, execution identity, an implicit Workflow Session selector, or message-delivery receipt. The same recorder/target authorization fence used by the other collaboration tools applies before any observation result is returned. Token issuance fences the ledger generation containing its revision so a valid token remains usable after Server restart when that Workflow Session can be restored.
 
 Observation tracks real message-state mutation, not deque length. Posts advance it; a resolve advances it only when status/resolution really changes; a new atomic completion advances for the todo resolution and answer creation; exact completion replay and no-op resolve do not advance it. If one retained message changes multiple times between observations, the observer may receive only its latest current state because this primitive is not an event/audit log.
 
@@ -89,7 +89,7 @@ The collaboration panel establishes an observation baseline before reading the r
 
 ## Provenance is metadata, not authority
 
-A completed answer can identify the independent worker with `author_session_id`. That value is derived first from the trusted recording Session that owns the completion tool evidence, then from the trusted current-Session binding only when no recording Session exists. It is not a caller-authored claim. In stateless MCP 2026, `recording_session_id` is explicit wrapper provenance metadata, not a transport Session and not an authority grant; the legacy `mcp-session-id` header remains irrelevant.
+A completed answer can identify the independent worker with `author_session_id` only when the completion carries an already-authorized explicit `recording_session_id`; without that recorder, no author Session is inferred from caller auth, client window, or other ambient state. It is not a caller-authored claim. In stateless MCP 2026, `recording_session_id` is explicit wrapper provenance metadata, not a transport Session and not an authority grant; the legacy `mcp-session-id` header remains irrelevant.
 
 The coordinator may then explicitly inspect `session_handoff_summary(worker_session_id)` if it has authority to that Session. WebCodex does not copy the worker's transcript, validation, diff review, Job logs, or workspace evidence into the coordinator Session merely because the answer references `W`.
 
@@ -166,8 +166,8 @@ Room/Discussion state is durable application collaboration state, not model-cont
 continuity or delivery proof. Membership, presence, a transport/window identity,
 or a referenced Workflow Session never proves that a model still retains or has
 ever read any room message. Models must explicitly observe the bounded messages
-or deltas they need; Room identity must not become a hidden current-session or
-context-retention fallback.
+or deltas they need; Room identity must not become hidden Workflow Session selection
+or a context-retention fallback.
 
 Room/Discussion identifiers and participant claims are not bearer capabilities:
 every Room read or post still requires the authenticated caller to satisfy that

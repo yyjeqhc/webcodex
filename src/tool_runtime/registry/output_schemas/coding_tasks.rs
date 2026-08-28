@@ -331,28 +331,7 @@ fn startup_session_schema() -> Value {
             "continuation": {"type": "string", "enum": ["created", "continued", "resumed_explicitly"]},
             "reused": {"type": "boolean"},
             "resume_requested": {"type": "boolean"},
-            "current_binding": {
-                "type": "object",
-                "properties": {
-                    "status": {"type": "string", "enum": ["bound", "not_bound"]},
-                    "reason_code": {
-                        "anyOf": [
-                            {
-                                "type": "string",
-                                "enum": [
-                                    "stable_window_identity_unavailable",
-                                    "window_identity_unavailable",
-                                    "binding_disabled"
-                                ]
-                            },
-                            {"type": "null"}
-                        ]
-                    }
-                },
-                "required": ["status", "reason_code"],
-                "additionalProperties": false
-            },
-            "explicit_session_id_required_for_continuity": {"type": "boolean"}
+            "explicit_resume_required_for_continuation": {"type": "boolean"}
         },
         "required": [
             "session_id",
@@ -361,8 +340,7 @@ fn startup_session_schema() -> Value {
             "continuation",
             "reused",
             "resume_requested",
-            "current_binding",
-            "explicit_session_id_required_for_continuity"
+            "explicit_resume_required_for_continuation"
         ],
         "additionalProperties": false
     })
@@ -892,7 +870,6 @@ fn startup_issue_list_schema(blockers: bool) -> Value {
             "dirty_worktree",
             "git_unavailable",
             "semantic_navigation_unavailable",
-            "current_binding_unavailable",
             "rules_unavailable",
             "repository_overview_unavailable",
             "runtime_status_unavailable",
@@ -1135,7 +1112,7 @@ fn work_on_project_output_schema() -> Value {
     let output_properties = vec![
         (
             "session_id",
-            schema_type("string", "Workflow Session id to use for later project tools when no current binding exists."),
+            schema_type("string", "Explicit Workflow Session id for exact continuation or recording on later calls."),
         ),
         (
             "project",

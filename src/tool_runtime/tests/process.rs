@@ -2098,12 +2098,13 @@ async fn model_facing_session_denials_keep_run_process_prestart_lifecycle() {
                     arguments: json!({
                         "project": project.clone(),
                         "executable": "argv-helper",
-                        "args": []
+                        "args": [],
+                        "session_id": session_id
                     }),
                 },
                 ToolCallContext {
                     transport: ToolTransport::Api,
-                    session_id: Some(session_id),
+                    session_id: None,
                     auth: Some(&auth),
                     window: None,
                     record_oauth_scope_denials: true,

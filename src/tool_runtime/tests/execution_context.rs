@@ -175,6 +175,103 @@ async fn run_shell_inherits_session_context_and_explicit_arguments_override_it()
 }
 
 #[tokio::test]
+async fn outer_recorder_does_not_override_business_session_execution_context() {
+    use crate::tool_runtime::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+    };
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    let recorder_dir = root.join("recorder");
+    let business_dir = root.join("business");
+    std::fs::create_dir_all(&recorder_dir).unwrap();
+    std::fs::create_dir_all(&business_dir).unwrap();
+
+    let runtime = test_runtime();
+    let project = register_agent_project_at_path(&runtime, "context-recorder", "demo", &root).await;
+    let auth = auth_context(None, true);
+    let recorder = runtime
+        .sessions
+        .start_session_with_options(
+            sessions::SessionCreateOptions::new(
+                Some(project.clone()),
+                Some("outer recorder".to_string()),
+                SessionMode::ReadOnly,
+                sessions::SessionGuards::default(),
+            )
+            .with_execution_context(context(Some("recorder"), Some(ExecutionShell::Sh))),
+        )
+        .unwrap();
+    let business = runtime
+        .sessions
+        .start_session_with_options(
+            sessions::SessionCreateOptions::new(
+                Some(project.clone()),
+                Some("business session".to_string()),
+                SessionMode::Normal,
+                sessions::SessionGuards::default(),
+            )
+            .with_execution_context(context(Some("business"), Some(ExecutionShell::Bash))),
+        )
+        .unwrap();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let recorder_id = recorder.session_id.clone();
+        let business_id = business.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .call_tool_with_context(
+                    ToolCallRequest {
+                        tool_name: "run_shell".to_string(),
+                        arguments: serde_json::json!({
+                            "project": project,
+                            "command": "pwd",
+                            "session_id": business_id,
+                            "timeout_secs": 30
+                        }),
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Api,
+                        session_id: Some(&recorder_id),
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: true,
+                        host_file_import_trust: HostFileImportTrust::Untrusted,
+                    },
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, "context-recorder").await;
+    assert_eq!(
+        request.cwd.as_deref(),
+        Some(business_dir.to_string_lossy().as_ref()),
+        "business Session cwd must win over recorder context"
+    );
+    assert!(
+        request.command.starts_with("exec bash -c "),
+        "business Session shell must win over recorder context: {}",
+        request.command
+    );
+    assert!(
+        request.sandbox.is_none(),
+        "read_only recorder must not inject sandbox"
+    );
+    complete_patch_agent_request(&runtime, "context-recorder", &request.request_id, 0, "", "")
+        .await;
+    let outcome = task.await.unwrap();
+    assert!(outcome.success, "{:?}", outcome.result);
+    let result = outcome.result.unwrap();
+    assert_eq!(result.output["cwd"], "business");
+    assert_eq!(result.output["shell"], "bash");
+    assert!(result.output.get("recording_session_project").is_none());
+    assert!(result.output.get("recording_session_authorized").is_none());
+}
+
+#[tokio::test]
 async fn run_job_inherits_session_cwd_and_shell() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("project");

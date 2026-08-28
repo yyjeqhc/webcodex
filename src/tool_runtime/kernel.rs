@@ -4,8 +4,7 @@ use super::sessions::{
 };
 use super::tool_audit::{session_log_arguments_for_tool_request, session_log_result_for_tool};
 use super::{
-    session_context, session_guard_denied_result, tool_disabled_result_from_definition, ToolCall,
-    ToolResult, ToolRuntime,
+    session_context, tool_disabled_result_from_definition, ToolCall, ToolResult, ToolRuntime,
 };
 use crate::auth::scopes::OAuthToolScopePolicy;
 use crate::auth::AuthContext;
@@ -429,131 +428,11 @@ impl ToolRuntime {
                 model_ergonomics: None,
             };
         }
-        if let Some(session_id) = context.session_id {
-            // Lifecycle denial wins before mode/guards: Closed is orthogonal to
-            // read_only and must not be confused with session_guard_denied.
-            if let Some(denial) = self
-                .sessions
-                .lifecycle_denial(session_id, &request.tool_name)
-            {
-                let session_event = self.sessions.record_tool_call_started_with_metadata(
-                    Some(session_id),
-                    context.transport.into(),
-                    &request.tool_name,
-                    &session_log_arguments_for_tool_request(
-                        &request.tool_name,
-                        &concrete_arguments,
-                    ),
-                    None,
-                    recorder_metadata.clone(),
-                );
-                let mut result = session_context::session_lifecycle_denied_result(
-                    session_id,
-                    &request.tool_name,
-                    denial,
-                );
-                super::dispatch::decorate_structured_execution_prestart_denial(
-                    &request.tool_name,
-                    &mut result,
-                    "session_lifecycle_denied",
-                );
-                let error_kind = result
-                    .output
-                    .get("error_kind")
-                    .and_then(Value::as_str)
-                    .unwrap_or("session_closed");
-                let recording = self.sessions.record_model_facing_tool_call_finished(
-                    session_event,
-                    false,
-                    &result.output,
-                    result.error.as_deref(),
-                    Some(error_kind),
-                );
-                super::add_session_telemetry_hint(
-                    &mut result,
-                    &self.sessions,
-                    session_id,
-                    recording.as_ref().map(|recorded| recorded.event_id.clone()),
-                );
-                if let Some(recorded) = recording.as_ref() {
-                    if session_context::add_session_context_continuity(&mut result, recorded) {
-                        self.add_session_history_recovery(&mut result, recorded, context.auth)
-                            .await;
-                    }
-                }
-                session_context::add_session_attention_projection(
-                    &mut result,
-                    &self.sessions,
-                    session_id,
-                    outer_ack_observation
-                        .as_ref()
-                        .expect("authorized outer recorder must have ACK observation"),
-                    recorder_ack_requested,
-                );
-                return ToolCallOutcome {
-                    success: false,
-                    result: Some(result),
-                    error_status: None,
-                    project: None,
-                    model_ergonomics: None,
-                };
-            }
-            if let Some(denial) = self.sessions.guard_denial(session_id, &request.tool_name) {
-                let session_event = self.sessions.record_tool_call_started_with_metadata(
-                    Some(session_id),
-                    context.transport.into(),
-                    &request.tool_name,
-                    &session_log_arguments_for_tool_request(
-                        &request.tool_name,
-                        &concrete_arguments,
-                    ),
-                    None,
-                    recorder_metadata.clone(),
-                );
-                let mut result =
-                    session_guard_denied_result(session_id, &request.tool_name, denial);
-                super::dispatch::decorate_structured_execution_prestart_denial(
-                    &request.tool_name,
-                    &mut result,
-                    "session_guard_denied",
-                );
-                let recording = self.sessions.record_model_facing_tool_call_finished(
-                    session_event,
-                    false,
-                    &result.output,
-                    result.error.as_deref(),
-                    Some("session_guard_denied"),
-                );
-                super::add_session_telemetry_hint(
-                    &mut result,
-                    &self.sessions,
-                    session_id,
-                    recording.as_ref().map(|recorded| recorded.event_id.clone()),
-                );
-                if let Some(recorded) = recording.as_ref() {
-                    if session_context::add_session_context_continuity(&mut result, recorded) {
-                        self.add_session_history_recovery(&mut result, recorded, context.auth)
-                            .await;
-                    }
-                }
-                session_context::add_session_attention_projection(
-                    &mut result,
-                    &self.sessions,
-                    session_id,
-                    outer_ack_observation
-                        .as_ref()
-                        .expect("authorized outer recorder must have ACK observation"),
-                    recorder_ack_requested,
-                );
-                return ToolCallOutcome {
-                    success: false,
-                    result: Some(result),
-                    error_status: None,
-                    project: None,
-                    model_ergonomics: None,
-                };
-            }
-        }
+        // The outer recording Session is provenance/context only. Its lifecycle,
+        // mode, and guards never become business execution policy. In particular,
+        // closed recorders remain valid evidence sinks (the Session store supports
+        // append-only recorder events on cold closed records). Concrete business
+        // Session lifecycle/guards are enforced later from ToolCall::session_id().
 
         if !context.record_oauth_scope_denials {
             if let Err(error_status) = check_runtime_tool_scope(context.auth, &request.tool_name) {
@@ -708,18 +587,16 @@ impl ToolRuntime {
         // Permission is evaluated once inside dispatch (pre-exec gate). Kernel
         // only reuses the attached decision for the outer recording session —
         // never re-evaluate (no second request id / inconsistent outcome).
-        let inherited_sandbox = context
-            .session_id
-            .and_then(|session_id| self.sessions.session_mode(session_id))
-            .filter(|mode| matches!(mode, crate::tool_runtime::SessionMode::Inspect))
-            .map(|_| crate::command_sandbox::INSPECT_SANDBOX_MODE);
+        // Do not derive an execution sandbox from the outer recorder. Dispatch
+        // derives inspect sandboxing and execution defaults exclusively from an
+        // explicit concrete business Session id.
         let mut result = self
             .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode(
                 call,
                 context.auth,
                 context.transport.into(),
                 recorder_metadata.clone(),
-                inherited_sandbox,
+                None,
                 context.window,
                 context.session_id.is_none(),
             )
@@ -958,47 +835,6 @@ mod tests {
         let finished = &summary.events[1];
         assert_eq!(finished.transport, "mcp");
         assert_eq!(finished.error_kind.as_deref(), Some("invalid_arguments"));
-    }
-
-    #[tokio::test]
-    async fn tool_kernel_guard_denial_sanitizes_edit_content() {
-        let runtime = test_runtime();
-        let session = runtime.sessions.start_session_with_guards(
-            None,
-            Some("readonly".to_string()),
-            crate::tool_runtime::SessionMode::ReadOnly,
-            crate::tool_runtime::sessions::SessionGuards::default(),
-        );
-        let outcome = runtime
-            .call_tool_with_context(
-                ToolCallRequest {
-                    tool_name: "write_project_file".to_string(),
-                    arguments: json!({
-                        "project": "demo",
-                        "path": "README.md",
-                        "content": "secret-content"
-                    }),
-                },
-                ToolCallContext {
-                    transport: ToolTransport::Api,
-                    session_id: Some(&session.session_id),
-                    auth: None,
-                    window: None,
-                    record_oauth_scope_denials: true,
-                    host_file_import_trust:
-                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
-                },
-            )
-            .await;
-
-        assert!(!outcome.success);
-        let summary = runtime
-            .sessions
-            .summary(&session.session_id, Some(10))
-            .unwrap();
-        let serialized = serde_json::to_string(&summary.events).unwrap();
-        assert!(serialized.contains("\"content_present\":true"));
-        assert!(!serialized.contains("secret-content"));
     }
 
     #[tokio::test]

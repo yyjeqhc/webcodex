@@ -1316,12 +1316,13 @@ async fn model_facing_run_script_session_denials_keep_phase_a_tuple() {
                 arguments: json!({
                     "project": project,
                     "language": "sh",
-                    "script": "true"
+                    "script": "true",
+                    "session_id": read_only.session_id
                 }),
             },
             ToolCallContext {
                 transport: ToolTransport::Api,
-                session_id: Some(&read_only.session_id),
+                session_id: None,
                 auth: Some(&auth),
                 window: None,
                 record_oauth_scope_denials: true,

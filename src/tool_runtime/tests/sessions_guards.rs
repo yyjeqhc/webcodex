@@ -227,6 +227,156 @@ async fn mutation_cross_project_session_fails_before_write() {
 }
 
 #[tokio::test]
+async fn read_only_recording_session_does_not_guard_same_project_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "guard-recorder", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+    let recorder = runtime.sessions.start_session_with_guards(
+        Some(project.clone()),
+        Some("read only recorder".to_string()),
+        SessionMode::ReadOnly,
+        sessions::SessionGuards::default(),
+    );
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let recorder_id = recorder.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .call_tool_with_context(
+                    ToolCallRequest {
+                        tool_name: "write_project_file".to_string(),
+                        arguments: json!({
+                            "project": project,
+                            "path": "recorder-does-not-guard.txt",
+                            "content": "allowed\n"
+                        }),
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Api,
+                        session_id: Some(&recorder_id),
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: true,
+                        host_file_import_trust:
+                            crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
+                    },
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, "guard-recorder").await;
+    assert_eq!(request.kind, "file_write_project_file");
+    let payload: serde_json::Value =
+        serde_json::from_str(request.content.as_deref().expect("file-op payload")).unwrap();
+    assert_eq!(payload["path"], "recorder-does-not-guard.txt");
+    assert_eq!(payload["content"], "allowed\n");
+    complete_patch_agent_request(
+        &runtime,
+        "guard-recorder",
+        &request.request_id,
+        0,
+        r#"{"path":"recorder-does-not-guard.txt","bytes_written":8,"sha256":"abc","changed":true}"#,
+        "",
+    )
+    .await;
+    let outcome = task.await.unwrap();
+
+    assert!(outcome.success, "{:?}", outcome.result);
+    let output = &outcome.result.as_ref().unwrap().output;
+    assert_ne!(output["error_kind"], "session_guard_denied");
+    let serialized_output = serde_json::to_string(output).unwrap();
+    assert!(!serialized_output.contains("recording_session_project"));
+    assert!(!serialized_output.contains("recording_session_authorized"));
+
+    let summary = runtime
+        .sessions
+        .summary(&recorder.session_id, Some(20))
+        .unwrap();
+    let event = latest_finished_event(&summary, "write_project_file");
+    assert_eq!(event.status.as_deref(), Some("succeeded"));
+    assert_ne!(event.error_kind.as_deref(), Some("session_guard_denied"));
+    let serialized_events = serde_json::to_string(&summary.events).unwrap();
+    assert!(!serialized_events.contains("recording_session_project"));
+    assert!(!serialized_events.contains("recording_session_authorized"));
+}
+
+#[tokio::test]
+async fn closed_recording_session_remains_provenance_only_for_business_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "guard-closed-recorder", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+    let recorder = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("closed recorder".to_string()));
+    runtime
+        .sessions
+        .close_session(&recorder.session_id)
+        .unwrap();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let recorder_id = recorder.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .call_tool_with_context(
+                    ToolCallRequest {
+                        tool_name: "write_project_file".to_string(),
+                        arguments: json!({
+                            "project": project,
+                            "path": "closed-recorder-write.txt",
+                            "content": "allowed\n"
+                        }),
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Api,
+                        session_id: Some(&recorder_id),
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: true,
+                        host_file_import_trust:
+                            crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
+                    },
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, "guard-closed-recorder").await;
+    assert_eq!(request.kind, "file_write_project_file");
+    complete_patch_agent_request(
+        &runtime,
+        "guard-closed-recorder",
+        &request.request_id,
+        0,
+        r#"{"path":"closed-recorder-write.txt","bytes_written":8,"sha256":"abc","changed":true}"#,
+        "",
+    )
+    .await;
+    let outcome = task.await.unwrap();
+
+    assert!(outcome.success, "{:?}", outcome.result);
+    let summary = runtime
+        .sessions
+        .summary(&recorder.session_id, Some(50))
+        .unwrap();
+    assert_eq!(summary.lifecycle, sessions::SessionLifecycle::Closed);
+    assert_eq!(
+        latest_finished_event(&summary, "write_project_file")
+            .status
+            .as_deref(),
+        Some("succeeded")
+    );
+}
+
+#[tokio::test]
 async fn recording_session_id_obeys_project_boundary() {
     let tmp_a = tempfile::tempdir().unwrap();
     let tmp_b = tempfile::tempdir().unwrap();

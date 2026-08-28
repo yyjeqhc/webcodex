@@ -1119,6 +1119,40 @@ impl SkillStore {
             .map_err(|_| "skill_store_state_write_failed".to_string())
     }
 
+    fn atomic_write_replay_record<T: Serialize>(
+        &self,
+        path: &Path,
+        value: &T,
+    ) -> Result<(), String> {
+        let replay_root = self.root.join(REPLAY_DIR);
+        if path.parent() != Some(replay_root.as_path())
+            || !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(valid_replay_file_name)
+        {
+            return Err("skill_store_replay_path_invalid".to_string());
+        }
+        reject_symlink_or_non_file_if_exists(path, "Skill store replay record")?;
+
+        // Keep atomic-write crash debris out of replay/. New-key GC treats every
+        // non-record entry there as corruption, so a temp file left beside the
+        // authoritative records could otherwise make a Runner crash permanently
+        // block future Skill-management admission. staging/ is already cleaned
+        // under the same store lock on the next operation.
+        let staging = self
+            .root
+            .join(STAGING_DIR)
+            .join(format!("replay-{}", uuid::Uuid::new_v4().simple()));
+        ensure_dir(&staging)?;
+        let staged = staging.join("record.json");
+        write_new_json(&staged, value, MAX_SKILL_STORE_REPLAY_RECORD_BYTES)?;
+        replace_file_atomic(&staged, path)?;
+        sync_parent(path)?;
+        let _ = fs::remove_dir(&staging);
+        Ok(())
+    }
+
     fn begin_replay(
         &self,
         lock: &StoreLock,
@@ -1186,7 +1220,7 @@ impl SkillStore {
             updated_at_unix_ms: Some(now_unix_ms),
             result: None,
         };
-        atomic_write_json(&path, &record, MAX_SKILL_STORE_REPLAY_RECORD_BYTES)
+        self.atomic_write_replay_record(&path, &record)
             .map_err(|_| "skill_store_replay_write_failed".to_string())?;
         Ok(ReplayState::First)
     }
@@ -1281,7 +1315,7 @@ impl SkillStore {
                 }
                 record.status = "prepared".to_string();
                 advance_replay_timestamp(&mut record, now_unix_ms);
-                atomic_write_json(&path, &record, MAX_SKILL_STORE_REPLAY_RECORD_BYTES)
+                self.atomic_write_replay_record(&path, &record)
                     .map_err(|_| "skill_store_replay_write_failed".to_string())
             }
             "prepared" => {
@@ -1293,7 +1327,7 @@ impl SkillStore {
                     return Err("skill_store_replay_time_unavailable".to_string());
                 }
                 advance_replay_timestamp(&mut record, now_unix_ms);
-                atomic_write_json(&path, &record, MAX_SKILL_STORE_REPLAY_RECORD_BYTES)
+                self.atomic_write_replay_record(&path, &record)
                     .map_err(|_| "skill_store_replay_write_failed".to_string())
             }
             _ => Err("skill_store_replay_invalid".to_string()),
@@ -1342,7 +1376,7 @@ impl SkillStore {
         {
             return Err("skill_store_replay_commit_failed".to_string());
         }
-        atomic_write_json(&path, &record, MAX_SKILL_STORE_REPLAY_RECORD_BYTES)
+        self.atomic_write_replay_record(&path, &record)
             .map_err(|_| "skill_store_replay_commit_failed".to_string())
     }
 
@@ -2177,6 +2211,57 @@ mod tests {
                     .is_some_and(valid_replay_file_name)
             })
             .count()
+    }
+
+    #[test]
+    fn replay_atomic_writes_keep_crash_debris_out_of_gc_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let store = SkillStore::for_test(root.path().join("store"), "runner");
+        let now = 2_000_000_000_000i64;
+        let intent = "a".repeat(64);
+
+        let lock = store.lock().unwrap();
+        assert!(matches!(
+            store
+                .begin_replay_at(&lock, "atomic-key", "activate", &intent, now)
+                .unwrap(),
+            ReplayState::First
+        ));
+        store
+            .prepare_replay_at(&lock, "atomic-key", now + 1)
+            .unwrap();
+        store
+            .complete_replay_at(
+                &lock,
+                "atomic-key",
+                &serde_json::json!({"ok": true}),
+                now + 2,
+            )
+            .unwrap();
+        drop(lock);
+
+        let replay_names = fs::read_dir(store.root.join(REPLAY_DIR))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(replay_names.len(), 1);
+        assert!(replay_names.iter().all(|name| valid_replay_file_name(name)));
+
+        // A crash may leave the staging subdirectory used by replay atomic
+        // writes. Existing store-lock cleanup owns this debris and removes it
+        // before a later operation; replay/ itself stays schema-clean for GC.
+        let orphan = store.root.join(STAGING_DIR).join("replay-interrupted");
+        fs::create_dir_all(&orphan).unwrap();
+        fs::write(orphan.join("record.json"), b"partial").unwrap();
+        let lock = store.lock().unwrap();
+        assert!(!orphan.exists());
+        assert!(matches!(
+            store
+                .begin_replay_at(&lock, "after-crash", "activate", &"b".repeat(64), now + 3)
+                .unwrap(),
+            ReplayState::First
+        ));
+        drop(lock);
     }
 
     #[test]

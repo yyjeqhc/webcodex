@@ -1198,6 +1198,8 @@ impl SessionStore {
         let start = ToolCallStart {
             event_id: event_id.clone(),
             call_id: call_id.clone(),
+            logical_invocation_id: metadata.logical_invocation_id.clone(),
+            logical_invocation_role: metadata.logical_invocation_role.clone(),
             session_id: session_id.to_string(),
             transport,
             tool_name: tool_name.to_string(),
@@ -1226,6 +1228,8 @@ impl SessionStore {
             context_revision: None,
             context_result_summary: None,
             call_id: Some(call_id),
+            logical_invocation_id: metadata.logical_invocation_id,
+            logical_invocation_role: metadata.logical_invocation_role,
             timestamp: now,
             transport: transport.as_str().to_string(),
             tool_name: tool_name.to_string(),
@@ -1543,6 +1547,8 @@ impl SessionStore {
                 output,
             ),
             call_id: Some(start.call_id),
+            logical_invocation_id: start.logical_invocation_id,
+            logical_invocation_role: start.logical_invocation_role,
             timestamp: finished_at,
             transport: start.transport.as_str().to_string(),
             tool_name: start.tool_name,
@@ -1680,6 +1686,8 @@ impl SessionStore {
             call_id: None,
             session_id: session_id.to_string(),
             kind: "validation_job_terminal".to_string(),
+            logical_invocation_id: None,
+            logical_invocation_role: None,
             context_revision: None,
             context_result_summary: None,
             timestamp,
@@ -2193,6 +2201,8 @@ fn coding_instruction_event(
         context_result_summary: None,
         call_id: None,
         timestamp: now,
+        logical_invocation_id: None,
+        logical_invocation_role: None,
         transport: transport.as_str().to_string(),
         tool_name: "start_coding_task".to_string(),
         project: Some(project.to_string()),
@@ -2280,6 +2290,8 @@ fn coding_agent_lifecycle_event(
         context_result_summary: None,
         call_id: None,
         timestamp: now,
+        logical_invocation_id: None,
+        logical_invocation_role: None,
         transport: "system".to_string(),
         tool_name: "coding_agent_start".to_string(),
         project: Some(project.to_string()),
@@ -2337,6 +2349,8 @@ fn session_closed_system_event(session_id: &str, now: i64) -> SessionEvent {
         context_result_summary: None,
         call_id: None,
         timestamp: now,
+        logical_invocation_id: None,
+        logical_invocation_role: None,
         transport: "system".to_string(),
         tool_name: "close_session".to_string(),
         project: None,
@@ -2402,6 +2416,8 @@ fn session_execution_context_updated_event(
         context_result_summary: None,
         call_id: None,
         timestamp: now,
+        logical_invocation_id: None,
+        logical_invocation_role: None,
         transport: transport.as_str().to_string(),
         tool_name: "update_session_context".to_string(),
         project: Some(project.to_string()),
@@ -2462,12 +2478,12 @@ fn summarize_record(
     let limit = limit
         .unwrap_or(DEFAULT_SUMMARY_LIMIT)
         .clamp(0, MAX_SUMMARY_LIMIT);
-    let finished_events: Vec<&SessionEvent> = record
+    let retained_events = record
         .events
         .iter()
-        .map(Arc::as_ref)
-        .filter(|event| event.kind == "tool_call_finished")
-        .collect();
+        .map(|event| event.as_ref().clone())
+        .collect::<Vec<_>>();
+    let finished_events = super::events::canonical_tool_call_finished_events(&retained_events);
     let counts = SessionCounts {
         tool_calls: finished_events.len(),
         succeeded: finished_events

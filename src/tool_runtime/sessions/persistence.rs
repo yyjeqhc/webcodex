@@ -590,6 +590,18 @@ pub(super) fn sanitize_persisted_event(
         return None;
     }
     event.kind = bound_summary_string(event.kind.trim());
+    let logical_id = event
+        .logical_invocation_id
+        .take()
+        .filter(|value| super::events::is_valid_logical_invocation_id(value));
+    let logical_role = event
+        .logical_invocation_role
+        .take()
+        .filter(|value| super::events::is_valid_logical_invocation_role(value));
+    if logical_id.is_some() && logical_role.is_some() {
+        event.logical_invocation_id = logical_id;
+        event.logical_invocation_role = logical_role;
+    }
     event.transport = bound_summary_string(event.transport.trim());
     event.tool_name = bound_summary_string(event.tool_name.trim());
     event.project = event

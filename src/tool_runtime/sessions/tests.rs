@@ -1465,6 +1465,64 @@ fn legacy_session_events_without_call_id_restore() {
     assert!(!detail.running_call);
 }
 
+#[test]
+fn legacy_session_events_without_logical_invocation_correlation_restore_without_invention() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger.clone());
+    let session = store.start_session(
+        Some("agent:eval:demo".to_string()),
+        Some("legacy logical invocation".to_string()),
+    );
+    let arguments = json!({"project": "agent:eval:demo", "path": "src/legacy-logical.rs"});
+    let mut metadata = ToolCallRecorderMetadata::default();
+    metadata.assign_logical_invocation();
+    let start = store.record_tool_call_started_with_metadata(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "read_file",
+        &arguments,
+        Some("agent:eval:demo".to_string()),
+        metadata,
+    );
+    store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
+    store.flush_persistence();
+
+    let mut ledger_value: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let events = ledger_value["sessions"][0]["events"]
+        .as_array_mut()
+        .unwrap();
+    assert!(events
+        .iter()
+        .any(|event| event.get("logical_invocation_id").is_some()));
+    for event in events.iter_mut() {
+        let object = event.as_object_mut().unwrap();
+        object.remove("logical_invocation_id");
+        object.remove("logical_invocation_role");
+    }
+    std::fs::write(&ledger, serde_json::to_vec_pretty(&ledger_value).unwrap()).unwrap();
+    drop(store);
+
+    let restored = SessionStore::with_persistence(ledger, 10, 20);
+    let summary = restored.summary(&session.session_id, Some(20)).unwrap();
+    assert_eq!(summary.counts.tool_calls, 1);
+    assert!(summary
+        .events
+        .iter()
+        .all(|event| event.logical_invocation_id.is_none()));
+    assert!(summary
+        .events
+        .iter()
+        .all(|event| event.logical_invocation_role.is_none()));
+    let canonical = super::events::canonical_tool_call_finished_events(&summary.events);
+    assert_eq!(
+        canonical.len(),
+        1,
+        "legacy uncorrelated facts remain conservative per-event evidence"
+    );
+}
+
 fn record_console_tool(
     store: &SessionStore,
     session_id: &str,

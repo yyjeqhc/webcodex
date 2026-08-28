@@ -32,9 +32,12 @@ use std::collections::BTreeSet;
 
 use super::handoff::closeout_work_projection;
 use super::sessions::{
+    canonical_tool_call_finished_events, SessionDiscussionSummary, SessionEvent, SessionMessage,
+    SessionSummary,
+};
+use super::sessions::{
     exploration_tool_kind, normalize_observed_project_path, ExplorationToolKind,
 };
-use super::sessions::{SessionDiscussionSummary, SessionEvent, SessionMessage, SessionSummary};
 use super::tool_definition::{
     runtime_tool_captures_validation_output, runtime_tool_is_git_like, runtime_tool_is_shell_like,
     runtime_tool_is_write_like,
@@ -546,9 +549,11 @@ fn build_attempt_summary(
     };
 
     // --- activity (meaningful tool calls only) ---
-    let meaningful: Vec<&SessionEvent> = attempt_events
+    let canonical_finished = canonical_tool_call_finished_events(attempt_events);
+    let meaningful: Vec<&SessionEvent> = canonical_finished
         .iter()
-        .filter(|event| event.kind == "tool_call_finished" && is_meaningful_tool(&event.tool_name))
+        .copied()
+        .filter(|event| is_meaningful_tool(&event.tool_name))
         .collect();
     let successful_tool_calls = meaningful
         .iter()
@@ -560,15 +565,14 @@ fn build_attempt_summary(
         .count();
     // expected failures = finished tool calls flagged as expected-failure that
     // matched (the ledger's `failure_expectation_result == matched_expected_failure`).
-    let expected_failures = attempt_events
+    let expected_failures = canonical_finished
         .iter()
         .filter(|event| {
-            event.kind == "tool_call_finished"
-                && event
-                    .failure_expectation_result
-                    .as_deref()
-                    .unwrap_or("none")
-                    == "matched_expected_failure"
+            event
+                .failure_expectation_result
+                .as_deref()
+                .unwrap_or("none")
+                == "matched_expected_failure"
         })
         .count();
     // The session-wide resolved/unresolved counts span every prior attempt,
@@ -675,9 +679,11 @@ fn build_attempt_exploration(
     let mut seen = BTreeSet::new();
     let mut observed_paths = Vec::new();
 
-    for event in attempt_events.iter().rev().filter(|event| {
-        event.kind == "tool_call_finished" && event.status.as_deref() == Some("succeeded")
-    }) {
+    for event in canonical_tool_call_finished_events(attempt_events)
+        .into_iter()
+        .rev()
+        .filter(|event| event.status.as_deref() == Some("succeeded"))
+    {
         let Some(kind) = exploration_tool_kind(&event.tool_name) else {
             continue;
         };

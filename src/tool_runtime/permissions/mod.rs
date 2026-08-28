@@ -38,7 +38,7 @@ pub(crate) use policy::{resolve_authority_mode, RESTRICTED_DENY_REASON};
 
 use serde_json::{json, Value};
 
-use super::sessions::SessionEvent;
+use super::sessions::{canonical_tool_call_finished_events, SessionEvent};
 use super::tool_result::{RecoveryKind, ToolResult};
 
 /// Canonical authority profile (runtime_status / coding-task startup).
@@ -146,10 +146,9 @@ pub(crate) fn permission_summary_from_events(events: &[SessionEvent], limit: usi
     let mut hard_denied_count = 0usize;
     let mut recent = Vec::new();
 
-    for event in events
-        .iter()
+    for event in canonical_tool_call_finished_events(events)
+        .into_iter()
         .rev()
-        .filter(|event| event.kind == "tool_call_finished")
     {
         let Some(permission) = event.permission.as_ref() else {
             continue;

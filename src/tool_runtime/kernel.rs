@@ -256,6 +256,9 @@ impl ToolRuntime {
                 &request.arguments,
                 capabilities.context_continuity,
             );
+        // One trusted identity per real kernel request. The outer recorder and
+        // inner business ledger pairs inherit it, but it never affects execution.
+        recorder_metadata.assign_logical_invocation();
         // Project Memory tools are kernel-known but globally model-hidden. One
         // explicit protocol-surface capability gates all four tools; canonical
         // memory:read/manage + project scopes below decide caller authority.

@@ -4,10 +4,53 @@ use crate::auth::SCOPE_PROJECT_READ;
 use crate::shell_protocol::ShellClientCapabilities;
 use crate::tool_runtime::metadata::{lookup_tool_metadata, ToolRisk};
 use crate::tool_runtime::registry::output_schema_for_tool;
-use crate::tool_runtime::sessions::{SessionCreateOptions, SessionGuards, SessionTransport};
+use crate::tool_runtime::sessions::{
+    SessionCreateOptions, SessionGuards, SessionTransport, ToolCallRecorderMetadata,
+};
 use crate::tool_runtime::tool_definition::{known_tool_names, model_hidden_tool_names};
 use crate::tool_runtime::{registered_tool_specs, SessionMode, ToolCall, ToolRuntime};
 use serde_json::{json, Value};
+
+fn record_correlated_validation_invocation(
+    runtime: &ToolRuntime,
+    session_id: &str,
+    project: &str,
+    success: bool,
+    exit_code: i64,
+) {
+    let arguments = json!({"project": project});
+    let mut recorder = ToolCallRecorderMetadata::default();
+    recorder.assign_logical_invocation();
+    let mut business = recorder.clone();
+    business.mark_business_execution();
+    let output = json!({
+        "exit_code": exit_code,
+        "stdout_tail": if success { "Finished dev profile\n" } else { "" },
+        "stderr_tail": if success { "" } else { "error: compile failed\n" },
+        "stdout_truncated": false,
+        "stderr_truncated": false,
+        "passed": success,
+        "errors_count": if success { 0 } else { 1 },
+        "warnings_count": 0
+    });
+    for metadata in [recorder, business] {
+        let start = runtime.sessions.record_tool_call_started_with_metadata(
+            Some(session_id),
+            SessionTransport::Api,
+            "cargo_check",
+            &arguments,
+            Some(project.to_string()),
+            metadata,
+        );
+        runtime.sessions.record_tool_call_finished(
+            start,
+            success,
+            &output,
+            (!success).then_some("validation failed"),
+            None,
+        );
+    }
+}
 
 #[test]
 fn validation_summary_registration_schema_metadata_and_openapi_are_synchronized() {
@@ -282,6 +325,42 @@ async fn validation_summary_preserves_history_bounds_and_safe_diagnostics() {
             .len(),
         100
     );
+}
+
+#[test]
+fn correlated_outer_and_business_validation_events_count_once_per_logical_invocation() {
+    let runtime = test_runtime();
+    let project = "agent:logical-validation:project".to_string();
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("logical validation".to_string()),
+    );
+
+    record_correlated_validation_invocation(&runtime, &session.session_id, &project, false, 101);
+    record_correlated_validation_invocation(&runtime, &session.session_id, &project, true, 0);
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let raw_finished = summary
+        .events
+        .iter()
+        .filter(|event| event.kind == "tool_call_finished")
+        .count();
+    assert_eq!(
+        raw_finished, 4,
+        "raw recorder/business validation facts remain"
+    );
+    let validation =
+        crate::tool_runtime::validation_events::validation_summary_from_events(&summary.events, 20);
+    assert_eq!(validation["events_total"], 2);
+    assert_eq!(validation["successes"], 1);
+    assert_eq!(validation["failures"], 1);
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["historical_failures"]["resolved"], true);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
 }
 
 #[test]

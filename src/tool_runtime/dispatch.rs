@@ -804,7 +804,7 @@ impl ToolRuntime {
         mut call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
-        recorder_metadata: sessions::ToolCallRecorderMetadata,
+        mut recorder_metadata: sessions::ToolCallRecorderMetadata,
         inherited_sandbox: Option<&'static str>,
         _window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
@@ -813,6 +813,11 @@ impl ToolRuntime {
     ) -> ToolResult {
         call = call
             .with_coding_agent_recording_session_id(recorder_metadata.recording_session_id.clone());
+        // Kernel requests arrive with the same trusted logical identity already
+        // used by the outer recorder. Mark only this concrete ledger path as the
+        // authoritative business role; direct/internal dispatch without a kernel
+        // identity remains uncorrelated legacy-style evidence.
+        recorder_metadata.mark_business_execution();
         let project_resolution = match call.project() {
             Some(project) => Some(self.resolve_project_input_for_auth(project, auth).await),
             None => None,

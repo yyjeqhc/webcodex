@@ -11,12 +11,14 @@ use crate::lsp_bridge::{
     LocationsResult, WorkspaceSymbolsResult,
 };
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 use super::model::{
     PersistentShellEventEvidence, SessionContextRevisionAck, SessionEvent, ToolCallExpectation,
-    ToolCallRecorderMetadata, ToolCallSessionMessageResolution, MAX_OBSERVED_PATHS_PER_EVENT,
-    MAX_VALIDATION_EXCERPT_CHARS, SESSION_ID_PREFIX, TOOL_ASSERTION_NAME_FIELD,
-    TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
+    ToolCallRecorderMetadata, ToolCallSessionMessageResolution, LOGICAL_INVOCATION_ID_PREFIX,
+    LOGICAL_INVOCATION_ROLE_BUSINESS, LOGICAL_INVOCATION_ROLE_RECORDER,
+    MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS, SESSION_ID_PREFIX,
+    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
     TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD, TOOL_CALL_EXPECTATION_METADATA_FIELDS,
     TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD,
     TOOL_EXPECTATION_RESULT_MATCHED, TOOL_EXPECTATION_RESULT_MISMATCH,
@@ -28,6 +30,25 @@ use super::util::redact_and_bound_value;
 use super::util::{bound_summary_string, validation_excerpt};
 
 impl ToolCallRecorderMetadata {
+    /// Allocate one trusted logical request identity at the kernel boundary.
+    /// The value is correlation/accounting metadata only and is never parsed
+    /// from public arguments or consulted for execution authority.
+    pub(crate) fn assign_logical_invocation(&mut self) {
+        self.logical_invocation_id = Some(format!(
+            "{LOGICAL_INVOCATION_ID_PREFIX}{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        self.logical_invocation_role = Some(LOGICAL_INVOCATION_ROLE_RECORDER.to_string());
+    }
+
+    /// The same kernel-generated identity follows the concrete business path,
+    /// but the role changes so semantic projections can prefer its execution facts.
+    pub(crate) fn mark_business_execution(&mut self) {
+        if self.logical_invocation_id.is_some() {
+            self.logical_invocation_role = Some(LOGICAL_INVOCATION_ROLE_BUSINESS.to_string());
+        }
+    }
+
     pub(crate) fn from_arguments(arguments: &Value) -> Self {
         Self::from_arguments_with_context_continuity(arguments, false)
     }
@@ -47,6 +68,8 @@ impl ToolCallRecorderMetadata {
             recording_session_id,
             recording_session_project: None,
             recording_session_authorized: false,
+            logical_invocation_id: None,
+            logical_invocation_role: None,
             expectation: tool_call_expectation_from_arguments(arguments),
             ack_session_message_ids: arguments
                 .as_object()
@@ -91,6 +114,64 @@ pub(crate) fn is_valid_session_id(session_id: &str) -> bool {
             .as_bytes()
             .iter()
             .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
+}
+
+pub(super) fn is_valid_logical_invocation_id(value: &str) -> bool {
+    value
+        .strip_prefix(LOGICAL_INVOCATION_ID_PREFIX)
+        .is_some_and(|suffix| {
+            suffix.len() == 32 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+}
+
+pub(super) fn is_valid_logical_invocation_role(value: &str) -> bool {
+    matches!(
+        value,
+        LOGICAL_INVOCATION_ROLE_RECORDER | LOGICAL_INVOCATION_ROLE_BUSINESS
+    )
+}
+
+fn logical_invocation_role_priority(event: &SessionEvent) -> u8 {
+    match event.logical_invocation_role.as_deref() {
+        Some(LOGICAL_INVOCATION_ROLE_BUSINESS) => 2,
+        Some(LOGICAL_INVOCATION_ROLE_RECORDER) => 1,
+        _ => 0,
+    }
+}
+
+/// Canonical finished-tool evidence for one Workflow Session. Correlated
+/// recorder/business duplicates are collapsed only inside the supplied Session
+/// slice; legacy events without complete correlation remain independent facts.
+pub(crate) fn canonical_tool_call_finished_events(events: &[SessionEvent]) -> Vec<&SessionEvent> {
+    let mut selected = Vec::<(usize, &SessionEvent)>::new();
+    let mut correlated = HashMap::<&str, usize>::new();
+    for (event_index, event) in events.iter().enumerate() {
+        if event.kind != "tool_call_finished" {
+            continue;
+        }
+        let correlated_id = event.logical_invocation_id.as_deref().filter(|_| {
+            event
+                .logical_invocation_role
+                .as_deref()
+                .is_some_and(is_valid_logical_invocation_role)
+        });
+        let Some(logical_id) = correlated_id else {
+            selected.push((event_index, event));
+            continue;
+        };
+        if let Some(selected_index) = correlated.get(logical_id).copied() {
+            let (_, current) = selected[selected_index];
+            if logical_invocation_role_priority(event) >= logical_invocation_role_priority(current)
+            {
+                selected[selected_index] = (event_index, event);
+            }
+        } else {
+            correlated.insert(logical_id, selected.len());
+            selected.push((event_index, event));
+        }
+    }
+    selected.sort_by_key(|(event_index, _)| *event_index);
+    selected.into_iter().map(|(_, event)| event).collect()
 }
 
 pub(crate) fn extract_project(value: &Value) -> Option<String> {
@@ -156,10 +237,9 @@ pub(crate) fn tool_failure_summary_from_events(events: &[SessionEvent], limit: u
     let mut recent_mismatches = Vec::new();
     let mut recent_unexpected_successes = Vec::new();
 
-    for event in events
-        .iter()
+    for event in canonical_tool_call_finished_events(events)
+        .into_iter()
         .rev()
-        .filter(|event| event.kind == "tool_call_finished")
     {
         match event
             .failure_expectation_result

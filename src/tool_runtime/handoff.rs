@@ -18,8 +18,8 @@ use super::handoff_brief::{build_handoff_brief, HandoffBriefInput};
 use super::permissions::permission_summary_from_events;
 use super::session_context::{session_project_mismatch_result, SessionProjectMismatch};
 use super::sessions::{
-    tool_failure_summary_from_events, SessionEvent, SessionSummary,
-    TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
+    canonical_tool_call_finished_events, tool_failure_summary_from_events, SessionEvent,
+    SessionSummary, TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
 };
 use super::sessions::{SessionDiscussionCounts, SessionDiscussionSummary, SessionMessage};
 use super::tool_result::ToolResult;
@@ -152,12 +152,9 @@ impl ToolRuntime {
             };
 
         // --- recent failed tool calls (from finished events) ---
-        let recent_failed_tools: Vec<Value> = summary
-            .events
-            .iter()
-            .filter(|event| {
-                event.kind == "tool_call_finished" && event.status.as_deref() == Some("failed")
-            })
+        let recent_failed_tools: Vec<Value> = canonical_tool_call_finished_events(&summary.events)
+            .into_iter()
+            .filter(|event| event.status.as_deref() == Some("failed"))
             .rev()
             .take(MAX_RECENT_FAILED_TOOLS)
             .map(|event| {
@@ -719,8 +716,8 @@ fn review_evidence_summary_from_events(events: &[SessionEvent]) -> Value {
     let mut total = 0_u64;
     let mut tools: Vec<String> = Vec::new();
 
-    for event in events {
-        if event.kind != "tool_call_finished" || event.status.as_deref() != Some("succeeded") {
+    for event in canonical_tool_call_finished_events(events) {
+        if event.status.as_deref() != Some("succeeded") {
             continue;
         }
         let Some(kind) = review_evidence_kind(event.tool_name.as_str()) else {
@@ -1186,8 +1183,8 @@ pub(crate) fn reconcile_closeout_evidence(
     let validation = reconcile_closeout_validation(validation);
     let mut projected = tool_failures.clone();
     let raw_unexpected = count_field(tool_failures, "unexpected_count");
-    let historical_non_actionable = events
-        .iter()
+    let historical_non_actionable = canonical_tool_call_finished_events(events)
+        .into_iter()
         .filter(|event| unexpected_failure_event(event))
         .filter(|event| {
             is_resolved_unexpected_validation_failure(event, &validation)
@@ -1314,10 +1311,7 @@ fn install_compact_workflow_outcomes(target: &mut Value, outcomes: Value) {
 pub(crate) fn closeout_work_projection(events: &[SessionEvent]) -> (Value, Value) {
     let mut tools = BTreeMap::<String, (u64, u64, u64, Option<i64>)>::new();
     let mut changed_paths = BTreeSet::<String>::new();
-    for event in events
-        .iter()
-        .filter(|event| event.kind == "tool_call_finished")
-    {
+    for event in canonical_tool_call_finished_events(events) {
         let counts = tools.entry(event.tool_name.clone()).or_default();
         counts.0 = counts.0.saturating_add(1);
         match event.status.as_deref() {

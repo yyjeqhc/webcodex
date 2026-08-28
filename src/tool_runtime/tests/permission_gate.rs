@@ -350,6 +350,7 @@ async fn kernel_path_does_not_double_evaluate_or_duplicate_request_id() {
                             "path": "src/kernel-once.txt",
                             "content": "x\n",
                             "overwrite": true,
+                            "session_id": recording_id,
                         }),
                     },
                     ToolCallContext {
@@ -412,4 +413,173 @@ async fn kernel_path_does_not_double_evaluate_or_duplicate_request_id() {
         1,
         "duplicate permission request ids: {seen_ids:?}"
     );
+
+    let tool_events = summary
+        .events
+        .iter()
+        .filter(|event| event.kind.starts_with("tool_call_"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tool_events.len(),
+        4,
+        "raw recorder + business pairs must remain"
+    );
+    let logical_ids = tool_events
+        .iter()
+        .map(|event| {
+            event
+                .logical_invocation_id
+                .as_deref()
+                .expect("logical invocation id")
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        logical_ids.len(),
+        1,
+        "one real kernel request must share one logical id"
+    );
+    let call_ids = tool_events
+        .iter()
+        .map(|event| event.call_id.as_deref().expect("pair call id"))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        call_ids.len(),
+        2,
+        "outer and inner pairs retain distinct call ids"
+    );
+    for call_id in call_ids {
+        assert_eq!(
+            tool_events
+                .iter()
+                .filter(|event| event.call_id.as_deref() == Some(call_id))
+                .count(),
+            2,
+            "each call id must still correlate exactly one start/finish pair"
+        );
+    }
+    let roles = tool_events
+        .iter()
+        .map(|event| {
+            event
+                .logical_invocation_role
+                .as_deref()
+                .expect("logical role")
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        roles,
+        std::collections::BTreeSet::from(["business", "recorder"])
+    );
+    let (work, _) = super::super::handoff::closeout_work_projection(&summary.events);
+    assert_eq!(work.as_array().unwrap().len(), 1);
+    assert_eq!(work[0]["tool_name"], "write_project_file");
+    assert_eq!(work[0]["count"], 1);
+    assert_eq!(summary.counts.tool_calls, 1);
+    let permission_summary =
+        super::super::permissions::permission_summary_from_events(&summary.events, 10);
+    assert_eq!(permission_summary["events_total"], 1);
+    assert_eq!(permission_summary["auto_approved_count"], 1);
+}
+
+#[tokio::test]
+async fn kernel_logical_invocation_correlation_is_session_local_across_recorder_and_business_sessions(
+) {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let client_id = "logical-cross-session";
+    let runtime = runtime_with_agent_project(client_id).with_permission_evaluator(
+        PermissionEvaluator::with_mode(AuthorityMode::TrustedAgent)
+            .with_eval_counter(counter.clone()),
+    );
+    register_write_agent(&runtime, client_id).await;
+    let project = agent_test_project_id(client_id);
+    let recorder = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("recorder".to_string()));
+    let business = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("business".to_string()));
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let recorder_id = recorder.session_id.clone();
+        let business_id = business.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .call_tool_with_context(
+                    ToolCallRequest {
+                        tool_name: "write_project_file".to_string(),
+                        arguments: json!({
+                            "project": project,
+                            "path": "src/logical-cross-session.txt",
+                            "content": "x\n",
+                            "overwrite": true,
+                            "session_id": business_id,
+                        }),
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Api,
+                        session_id: Some(&recorder_id),
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: true,
+                        host_file_import_trust:
+                            crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
+                    },
+                )
+                .await
+        }
+    });
+    complete_write_ok(&runtime, client_id, "src/logical-cross-session.txt").await;
+    let outcome = task.await.unwrap();
+    assert!(
+        outcome.success,
+        "{:?}",
+        outcome.result.as_ref().and_then(|r| r.error.clone())
+    );
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+    let recorder_summary = runtime
+        .sessions
+        .summary(&recorder.session_id, Some(20))
+        .unwrap();
+    let business_summary = runtime
+        .sessions
+        .summary(&business.session_id, Some(20))
+        .unwrap();
+    let recorder_events = recorder_summary
+        .events
+        .iter()
+        .filter(|event| event.kind.starts_with("tool_call_"))
+        .collect::<Vec<_>>();
+    let business_events = business_summary
+        .events
+        .iter()
+        .filter(|event| event.kind.starts_with("tool_call_"))
+        .collect::<Vec<_>>();
+    assert_eq!(recorder_events.len(), 2);
+    assert_eq!(business_events.len(), 2);
+    let logical_id = recorder_events[0].logical_invocation_id.as_deref().unwrap();
+    assert!(recorder_events
+        .iter()
+        .all(|event| event.logical_invocation_id.as_deref() == Some(logical_id)));
+    assert!(business_events
+        .iter()
+        .all(|event| event.logical_invocation_id.as_deref() == Some(logical_id)));
+    assert!(recorder_events
+        .iter()
+        .all(|event| event.logical_invocation_role.as_deref() == Some("recorder")));
+    assert!(business_events
+        .iter()
+        .all(|event| event.logical_invocation_role.as_deref() == Some("business")));
+    let (recorder_work, _) =
+        super::super::handoff::closeout_work_projection(&recorder_summary.events);
+    let (business_work, _) =
+        super::super::handoff::closeout_work_projection(&business_summary.events);
+    assert_eq!(recorder_work[0]["count"], 1);
+    assert_eq!(business_work[0]["count"], 1);
+    assert_eq!(recorder_summary.counts.tool_calls, 1);
+    assert_eq!(business_summary.counts.tool_calls, 1);
 }

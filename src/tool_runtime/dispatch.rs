@@ -641,6 +641,7 @@ impl ToolRuntime {
             window,
             inner_model_facing_recording,
             Vec::new(),
+            false,
         )
         .await
     }
@@ -656,6 +657,7 @@ impl ToolRuntime {
         window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
         context_request: Vec<String>,
+        memory_runtime_capable: bool,
     ) -> ToolResult {
         // Phase-1 edit usage telemetry: argument-free structured log only.
         // Does not alter execution, session ledger, Action Audit, or schemas.
@@ -670,6 +672,7 @@ impl ToolRuntime {
                 window,
                 inner_model_facing_recording,
                 context_request.clone(),
+                memory_runtime_capable,
             )
             .await;
         // Early project/session/auth failures can return before the normal
@@ -677,8 +680,14 @@ impl ToolRuntime {
         // answering the explicit sidecar request conservatively: static material
         // remains available, but project-scoped material must not guess a target.
         if !context_request.is_empty() && result.output.get("context_projection").is_none() {
-            self.add_requested_context_projection(&mut result, &context_request, None, auth)
-                .await;
+            self.add_requested_context_projection(
+                &mut result,
+                &context_request,
+                None,
+                auth,
+                memory_runtime_capable,
+            )
+            .await;
         }
         if let Some(guard) = edit_usage.as_mut() {
             guard.finish_with_result(&result);
@@ -800,6 +809,7 @@ impl ToolRuntime {
         _window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
         context_request: Vec<String>,
+        memory_runtime_capable: bool,
     ) -> ToolResult {
         call = call
             .with_coding_agent_recording_session_id(recorder_metadata.recording_session_id.clone());
@@ -1215,6 +1225,7 @@ impl ToolRuntime {
             &context_request,
             context_projection_project.as_ref(),
             auth,
+            memory_runtime_capable,
         )
         .await;
         let defer_batch_sparsification = !inner_model_facing_recording

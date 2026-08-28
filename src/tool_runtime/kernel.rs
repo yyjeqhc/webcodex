@@ -744,6 +744,7 @@ impl ToolRuntime {
                 context.window,
                 context.session_id.is_none(),
                 context_request,
+                capabilities.memory_runtime,
             )
             .await;
         if let Some(start) = session_event.as_mut() {

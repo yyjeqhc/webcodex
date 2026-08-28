@@ -109,6 +109,7 @@ async fn dispatch_with_context_and_local_agent(
                     None,
                     true,
                     context_request,
+                    false,
                 )
                 .await
         }

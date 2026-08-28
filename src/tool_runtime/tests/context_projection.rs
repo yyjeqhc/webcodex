@@ -34,6 +34,7 @@ async fn dispatch_with_context_and_local_agent(
                     None,
                     true,
                     context_request,
+                    false,
                 )
                 .await
         }
@@ -79,6 +80,7 @@ async fn context_projection_is_explicit_deduped_open_ended_and_nonfatal() {
             None,
             true,
             Vec::new(),
+            false,
         )
         .await;
     assert!(without.success);
@@ -100,6 +102,7 @@ async fn context_projection_is_explicit_deduped_open_ended_and_nonfatal() {
                 "webcodex.workflow".to_string(),
                 "project.instructions".to_string(),
             ],
+            false,
         )
         .await;
     assert!(result.success, "{:?}", result.error);
@@ -240,6 +243,7 @@ async fn project_instructions_context_projection_is_authorized_scoped_and_bounde
             None,
             true,
             vec!["project.instructions".to_string()],
+            false,
         )
         .await;
     assert!(!cross_project.success);
@@ -274,6 +278,7 @@ async fn project_instructions_context_projection_is_authorized_scoped_and_bounde
             None,
             true,
             vec!["project.instructions".to_string()],
+            false,
         )
         .await;
     assert!(!wrong_project.success);
@@ -320,6 +325,7 @@ async fn unavailable_project_instructions_provider_does_not_change_main_success(
                     None,
                     true,
                     vec!["project.instructions".to_string()],
+                    false,
                 )
                 .await
         }
@@ -423,6 +429,7 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
                     None,
                     true,
                     vec!["project.instructions".to_string()],
+                    false,
                 )
                 .await
         }

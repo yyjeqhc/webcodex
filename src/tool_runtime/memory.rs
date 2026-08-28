@@ -265,10 +265,13 @@ impl ToolRuntime {
         };
         let scope = memory_scope_id(project);
         // memory_set is a full canonical definition update for the required
-        // summary, while omitted optional fields preserve their current value
-        // on CAS updates. For new records those fields use v1 defaults. The
+        // summary. Omitted optional fields preserve current values only on an
+        // explicit CAS update; without expected_revision they retain create
+        // defaults even if the key now exists. That keeps a response-lost create
+        // retry from silently absorbing a concurrent optional-field update. The
         // subsequent DB transaction still owns the authoritative CAS, so this
         // pre-read cannot turn a concurrent update into last-write-wins.
+        let preserve_optional_fields = expected_revision.is_some();
         let existing = match db.get_project_memory(&scope, &memory_key) {
             Ok(existing) => existing,
             Err(error) => return memory_error(project, error),
@@ -278,29 +281,36 @@ impl ToolRuntime {
                 Ok(priority) => priority,
                 Err(error) => return memory_error(project, error),
             },
-            None => existing
+            None if preserve_optional_fields => existing
                 .as_ref()
                 .map(|record| record.priority)
                 .unwrap_or(MemoryPriority::Normal),
+            None => MemoryPriority::Normal,
         };
-        let body = body.unwrap_or_else(|| {
-            existing
+        let body = match body {
+            Some(body) => body,
+            None if preserve_optional_fields => existing
                 .as_ref()
                 .map(|record| record.body.clone())
-                .unwrap_or_default()
-        });
-        let bootstrap = bootstrap.unwrap_or_else(|| {
-            existing
+                .unwrap_or_default(),
+            None => String::new(),
+        };
+        let bootstrap = match bootstrap {
+            Some(bootstrap) => bootstrap,
+            None if preserve_optional_fields => existing
                 .as_ref()
                 .map(|record| record.bootstrap)
-                .unwrap_or(false)
-        });
-        let tags = tags.unwrap_or_else(|| {
-            existing
+                .unwrap_or(false),
+            None => false,
+        };
+        let tags = match tags {
+            Some(tags) => tags,
+            None if preserve_optional_fields => existing
                 .as_ref()
                 .map(|record| record.tags.clone())
-                .unwrap_or_default()
-        });
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
         let outcome = match db.set_project_memory(
             &scope,
             MemorySetInput {

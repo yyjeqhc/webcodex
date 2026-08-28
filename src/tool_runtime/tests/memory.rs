@@ -76,6 +76,7 @@ async fn list_files_with_session_context(
                     ToolProtocolCapabilities {
                         context_continuity: true,
                         context_sidecar: true,
+                        memory_runtime: true,
                         ..Default::default()
                     },
                 )
@@ -171,6 +172,63 @@ fn memory_runtime_search_read_cas_pagination_and_project_scope_are_explicit() {
     assert!(identical.success);
     assert_eq!(identical.output["state_changed"], false);
     assert_eq!(identical.output["revision"], revision);
+
+    // A response-lost create retry is interpreted using create defaults, not
+    // whatever optional fields a concurrent writer has since installed. Only an
+    // explicit expected_revision turns omitted optional fields into "preserve".
+    let default_create = runtime.memory_set(
+        &project_a,
+        "create-retry-defaults".to_string(),
+        "Stable create intent.".to_string(),
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(default_create.success);
+    let default_revision = default_create.output["revision"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let intervening = runtime.memory_set(
+        &project_a,
+        "create-retry-defaults".to_string(),
+        "Stable create intent.".to_string(),
+        Some("concurrent body update".to_string()),
+        None,
+        None,
+        None,
+        Some(default_revision),
+    );
+    assert!(intervening.success);
+    let intervening_revision = intervening.output["revision"].as_str().unwrap().to_string();
+    let retried_create = runtime.memory_set(
+        &project_a,
+        "create-retry-defaults".to_string(),
+        "Stable create intent.".to_string(),
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(!retried_create.success);
+    assert_eq!(
+        retried_create.output["error_kind"],
+        "memory_expected_revision_required"
+    );
+    assert_eq!(
+        retried_create.output["current_revision"],
+        intervening_revision
+    );
+    let cleanup_retry_fixture = runtime.memory_delete(
+        &project_a,
+        "create-retry-defaults".to_string(),
+        intervening_revision,
+    );
+    assert!(cleanup_retry_fixture.success);
+    assert_eq!(cleanup_retry_fixture.output["deleted"], true);
 
     let body_match = runtime.memory_search(
         &project_a,
@@ -424,6 +482,7 @@ async fn memory_bootstrap_is_lightweight_explicit_bounded_and_post_tool() {
             ],
             Some(&project),
             None,
+            true,
         )
         .await;
     assert_eq!(result.output["context_projection"]["timing"], "post_tool");
@@ -445,7 +504,7 @@ async fn memory_bootstrap_is_lightweight_explicit_bounded_and_post_tool() {
 
     let mut absent = ToolResult::ok(json!({"observation": true}));
     runtime
-        .add_requested_context_projection(&mut absent, &[], Some(&project), None)
+        .add_requested_context_projection(&mut absent, &[], Some(&project), None, true)
         .await;
     assert!(absent.output.get("context_projection").is_none());
 
@@ -460,6 +519,7 @@ async fn memory_bootstrap_is_lightweight_explicit_bounded_and_post_tool() {
             ],
             Some(&project),
             None,
+            true,
         )
         .await;
     let materials = coexist.output["context_projection"]["materials"]
@@ -718,6 +778,43 @@ async fn memory_kernel_capabilities_project_write_and_permission_are_independent
         allowed_result.output
     );
 
+    // Memory management and context-sidecar capability do not imply Memory read
+    // authority. The mutation may succeed, but its requested bootstrap material
+    // must remain unavailable until memory_runtime is explicitly present.
+    let management_without_read = runtime
+        .call_tool_with_protocol_capabilities(
+            ToolCallRequest {
+                tool_name: "memory_set".to_string(),
+                arguments: json!({
+                    "project": project,
+                    "memory_key": "management-without-read",
+                    "summary": "Management does not imply read capability.",
+                    TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD: ["memory.bootstrap"]
+                }),
+            },
+            context(Some(&writer)),
+            ToolProtocolCapabilities {
+                context_sidecar: true,
+                memory_management: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .result
+        .expect("memory_set result with denied bootstrap sidecar");
+    assert!(management_without_read.success);
+    let denied_bootstrap = management_without_read.output["context_projection"]["materials"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|material| material["key"] == "memory.bootstrap")
+        .unwrap();
+    assert_eq!(denied_bootstrap["status"], "unavailable");
+    assert_eq!(
+        denied_bootstrap["reason_code"],
+        "memory_runtime_capability_unavailable"
+    );
+
     let mutation_with_bootstrap = runtime
         .call_tool_with_protocol_capabilities(
             ToolCallRequest {
@@ -733,6 +830,7 @@ async fn memory_kernel_capabilities_project_write_and_permission_are_independent
             context(Some(&writer)),
             ToolProtocolCapabilities {
                 context_sidecar: true,
+                memory_runtime: true,
                 memory_management: true,
                 ..Default::default()
             },

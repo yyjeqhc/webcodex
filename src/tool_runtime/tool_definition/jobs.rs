@@ -3,9 +3,10 @@ use super::AgentCapability::{
 };
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    def, permission_risk, requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_JOB,
-    TOOL_CATEGORY_JOB,
+    def, permission_risk, require_all_scopes, requires_explicit_business_session, ToolDefinition,
+    PERMISSION_RISK_JOB, TOOL_CATEGORY_JOB,
 };
+use crate::auth::scopes::SCOPE_JOB_DETACH;
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{JobRun, ReadOnly},
@@ -26,18 +27,21 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         true,
         true,
     ),
-    def(
-        "run_detached_process",
-        ModelVisible,
-        TOOL_CATEGORY_JOB,
-        Some(DetachedProcess),
-        TOOL_PROVIDER_AGENT,
-        JobRun,
-        Some(JOB_RUN),
-        true,
-        NoPath,
-        true,
-        true,
+    require_all_scopes(
+        def(
+            "run_detached_process",
+            ModelVisible,
+            TOOL_CATEGORY_JOB,
+            Some(DetachedProcess),
+            TOOL_PROVIDER_AGENT,
+            JobRun,
+            Some(JOB_RUN),
+            true,
+            NoPath,
+            true,
+            true,
+        ),
+        &[JOB_RUN, SCOPE_JOB_DETACH],
     ),
     def(
         "run_script",

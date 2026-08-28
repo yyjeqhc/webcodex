@@ -106,7 +106,7 @@ fn validation_summary_registration_schema_metadata_and_openapi_are_synchronized(
 
     let metadata = lookup_tool_metadata("validation_summary").unwrap();
     assert_eq!(metadata.risk, ToolRisk::ReadOnly);
-    assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_READ));
+    assert_eq!(metadata.legacy_oauth_scope_hint, Some(SCOPE_PROJECT_READ));
     assert!(metadata.requires_project);
     assert!(metadata.read_only);
     assert!(!metadata.destructive);

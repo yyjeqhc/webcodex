@@ -43,18 +43,9 @@ pub(super) fn project_from_tool_call_params(params: &Value) -> Option<String> {
     params["arguments"]["project"].as_str().map(str::to_string)
 }
 
-/// MCP tools/list payload for the immutable startup-selected model surface.
-///
-/// Env adapter: resolves the `WEBCODEX_MCP_COMPACT_SCHEMAS` switch and
-/// delegates to the pure renderer.
-fn mcp_tools_list_payload(model_surface: ModelSurface) -> Value {
-    mcp_tools_list_payload_with_compact(model_surface, crate::config::mcp_compact_schemas_enabled())
-}
-
-/// Pure tools/list rendering with an explicit compact switch; no env access.
-/// Production resolves the switch from the env adapter above; tests pass an
-/// explicit bool so they never need process-global env. The schema shape is
-/// identical to the adapter path: `compact` only omits `outputSchema`.
+/// Test helper for legacy/non-stateless tools/list rendering. Production uses
+/// the canonical auth/surface renderer below directly.
+#[cfg(test)]
 pub(super) fn mcp_tools_list_payload_with_compact(
     model_surface: ModelSurface,
     compact: bool,
@@ -62,6 +53,7 @@ pub(super) fn mcp_tools_list_payload_with_compact(
     mcp_tools_list_payload_with_features(model_surface, compact, false, false)
 }
 
+#[cfg(test)]
 pub(super) fn mcp_tools_list_payload_with_compact_and_app(
     model_surface: ModelSurface,
     compact: bool,
@@ -70,6 +62,7 @@ pub(super) fn mcp_tools_list_payload_with_compact_and_app(
     mcp_tools_list_payload_with_features(model_surface, compact, app_enabled, true)
 }
 
+#[cfg(test)]
 fn mcp_tools_list_payload_with_features(
     model_surface: ModelSurface,
     compact: bool,
@@ -81,31 +74,53 @@ fn mcp_tools_list_payload_with_features(
         compact,
         app_enabled,
         artifact_export_enabled,
+        false,
         None,
     )
 }
 
-fn mcp_tools_list_payload_with_features_for_auth(
+pub(super) fn mcp_tools_list_payload_with_features_for_auth(
     model_surface: ModelSurface,
     compact: bool,
     app_enabled: bool,
     artifact_export_enabled: bool,
+    stateless_2026: bool,
     auth: Option<&AuthContext>,
 ) -> Value {
-    let specs = match model_surface {
+    let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
+    let mut specs = match model_surface {
         ModelSurface::CanonicalConnector => crate::connector_runtime::surface::capability_specs(),
         ModelSurface::LocalCoding => crate::model_surface::local_coding_tool_specs(),
         ModelSurface::FullOperatorRuntime => registered_tool_specs(),
     };
-    let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
-    let tools: Vec<Value> = specs
+    specs.retain(|spec| {
+        !oauth_scope_projection || check_runtime_tool_scope(auth, &spec.name).is_ok()
+    });
+
+    if stateless_2026 && matches!(model_surface, ModelSurface::FullOperatorRuntime) {
+        specs.extend(
+            crate::tool_runtime::skill_runtime_tool_specs()
+                .into_iter()
+                .filter(|spec| {
+                    !oauth_scope_projection || check_runtime_tool_scope(auth, &spec.name).is_ok()
+                }),
+        );
+        if auth.is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_ADMIN)) {
+            specs.extend(crate::tool_runtime::skill_management_tool_specs());
+        }
+        specs.extend(
+            crate::tool_runtime::memory_runtime_tool_specs()
+                .into_iter()
+                .chain(crate::tool_runtime::memory_management_tool_specs())
+                .filter(|spec| check_runtime_tool_scope(auth, &spec.name).is_ok()),
+        );
+    }
+
+    let tools = specs
         .into_iter()
         .filter(|spec| artifact_export_enabled || spec.name != "export_project_artifact")
-        .filter(|spec| {
-            !oauth_scope_projection || check_runtime_tool_scope(auth, &spec.name).is_ok()
-        })
         .map(|spec| mcp_tool_spec_json(spec, compact, app_enabled))
-        .collect();
+        .collect::<Vec<_>>();
     json!({ "tools": tools })
 }
 
@@ -187,60 +202,6 @@ fn add_stateless_context_projection_output_schema(tool: &mut Value) {
                     add_context_projection_to_output_shape(output, &projection_schema);
                 }
             }
-        }
-    }
-}
-
-pub(super) fn add_stateless_memory_tools(
-    payload: &mut Value,
-    model_surface: ModelSurface,
-    compact: bool,
-    app_enabled: bool,
-    auth: Option<&AuthContext>,
-) {
-    if !matches!(model_surface, ModelSurface::FullOperatorRuntime) {
-        return;
-    }
-    let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) else {
-        return;
-    };
-    for spec in crate::tool_runtime::memory_runtime_tool_specs()
-        .into_iter()
-        .chain(crate::tool_runtime::memory_management_tool_specs())
-        .filter(|spec| check_runtime_tool_scope(auth, &spec.name).is_ok())
-    {
-        tools.push(mcp_tool_spec_json(spec, compact, app_enabled));
-    }
-}
-
-pub(super) fn add_stateless_skill_tools(
-    payload: &mut Value,
-    model_surface: ModelSurface,
-    compact: bool,
-    app_enabled: bool,
-    auth: Option<&AuthContext>,
-) {
-    if !matches!(model_surface, ModelSurface::FullOperatorRuntime) {
-        return;
-    }
-    let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) else {
-        return;
-    };
-    let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
-    for spec in crate::tool_runtime::skill_runtime_tool_specs()
-        .into_iter()
-        .filter(|spec| {
-            !oauth_scope_projection || check_runtime_tool_scope(auth, &spec.name).is_ok()
-        })
-    {
-        tools.push(mcp_tool_spec_json(spec, compact, app_enabled));
-    }
-    // Runner-global store management is intentionally narrower than Skill read.
-    // Absence of authentication is never operator authority, and project:write
-    // or direct shared-key access does not imply admin.
-    if auth.is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_ADMIN)) {
-        for spec in crate::tool_runtime::skill_management_tool_specs() {
-            tools.push(mcp_tool_spec_json(spec, compact, app_enabled));
         }
     }
 }
@@ -404,49 +365,15 @@ pub(super) fn handle_list(
     auth: Option<&AuthContext>,
     stateless_2026: bool,
 ) -> McpOutcome {
-    let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
-    let mut result = if stateless_2026 {
-        if oauth_scope_projection {
-            mcp_tools_list_payload_with_features_for_auth(
-                runtime.model_surface(),
-                crate::config::mcp_compact_schemas_enabled(),
-                resources::model_surface_supports_computer_app(runtime.model_surface()),
-                true,
-                auth,
-            )
-        } else {
-            mcp_tools_list_payload_with_compact_and_app(
-                runtime.model_surface(),
-                crate::config::mcp_compact_schemas_enabled(),
-                resources::model_surface_supports_computer_app(runtime.model_surface()),
-            )
-        }
-    } else if oauth_scope_projection {
-        mcp_tools_list_payload_with_features_for_auth(
-            runtime.model_surface(),
-            crate::config::mcp_compact_schemas_enabled(),
-            false,
-            false,
-            auth,
-        )
-    } else {
-        mcp_tools_list_payload(runtime.model_surface())
-    };
+    let mut result = mcp_tools_list_payload_with_features_for_auth(
+        runtime.model_surface(),
+        crate::config::mcp_compact_schemas_enabled(),
+        stateless_2026 && resources::model_surface_supports_computer_app(runtime.model_surface()),
+        stateless_2026,
+        stateless_2026,
+        auth,
+    );
     if stateless_2026 {
-        add_stateless_skill_tools(
-            &mut result,
-            runtime.model_surface(),
-            crate::config::mcp_compact_schemas_enabled(),
-            resources::model_surface_supports_computer_app(runtime.model_surface()),
-            auth,
-        );
-        add_stateless_memory_tools(
-            &mut result,
-            runtime.model_surface(),
-            crate::config::mcp_compact_schemas_enabled(),
-            resources::model_surface_supports_computer_app(runtime.model_surface()),
-            auth,
-        );
         add_stateless_workflow_recorder_metadata(&mut result, runtime.model_surface());
     }
     if crate::mcp_gateway::authorized(auth) {

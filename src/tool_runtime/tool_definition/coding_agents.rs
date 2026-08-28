@@ -1,8 +1,8 @@
 use super::AgentCapability::CodingAgentRuns;
 use super::ToolVisibility::ModelVisible;
 use super::{
-    def, effect_annotations, model_spec, permission_risk, ToolDefinition, ToolEffectAnnotations,
-    PERMISSION_RISK_JOB, TOOL_CATEGORY_CODING_AGENT,
+    def, effect_annotations, model_spec, permission_risk, require_all_scopes, ToolDefinition,
+    ToolEffectAnnotations, PERMISSION_RISK_JOB, TOOL_CATEGORY_CODING_AGENT,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
@@ -17,18 +17,21 @@ use crate::tool_runtime::registry::input_schemas::{
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     permission_risk(
         model_spec(
-            def(
-                "coding_agent_start",
-                ModelVisible,
-                TOOL_CATEGORY_CODING_AGENT,
-                Some(CodingAgentRuns),
-                TOOL_PROVIDER_AGENT,
-                JobRun,
-                Some(CODING_AGENT_RUN),
-                true,
-                NoPath,
-                true,
-                false,
+            require_all_scopes(
+                def(
+                    "coding_agent_start",
+                    ModelVisible,
+                    TOOL_CATEGORY_CODING_AGENT,
+                    Some(CodingAgentRuns),
+                    TOOL_PROVIDER_AGENT,
+                    JobRun,
+                    Some(CODING_AGENT_RUN),
+                    true,
+                    NoPath,
+                    true,
+                    false,
+                ),
+                &[CODING_AGENT_RUN, crate::auth::SCOPE_PROJECT_WRITE],
             ),
             "Start one idempotent delegated ACP coding-agent Run on an exact registered Project and logical Runner provider. Autonomous execution may outlive this request; after any uncertain start, reuse the same idempotency key and observe the same Run rather than dispatching a replacement.",
             coding_agent_start_input_schema,

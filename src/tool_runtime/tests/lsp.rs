@@ -40,7 +40,7 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
             "{name}"
         );
         assert_eq!(
-            def.metadata.oauth_scope,
+            def.metadata.legacy_oauth_scope_hint,
             Some(crate::tool_runtime::metadata::PROJECT_READ),
             "{name}"
         );
@@ -53,7 +53,7 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
         Some(AgentCapability::LspCallHierarchy)
     );
     assert_eq!(
-        hierarchy.metadata.oauth_scope,
+        hierarchy.metadata.legacy_oauth_scope_hint,
         Some(crate::tool_runtime::metadata::PROJECT_READ)
     );
     let names: Vec<_> = model_visible_tool_definitions().map(|d| d.name).collect();

@@ -335,7 +335,7 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
     assert!(definition.visibility.is_model_visible());
     assert_eq!(definition.category, "job");
     assert_eq!(
-        definition.metadata.oauth_scope,
+        definition.metadata.legacy_oauth_scope_hint,
         Some(crate::auth::SCOPE_RUNTIME_READ)
     );
     assert!(definition.metadata.read_only);

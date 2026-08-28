@@ -50,15 +50,19 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
         .filter(|name| name.as_str() != "export_project_artifact")
         .cloned()
         .collect();
-    let mut stateless_runtime_names = runtime_names.clone();
-    stateless_runtime_names.extend(
-        crate::tool_runtime::skill_runtime_tool_specs()
-            .into_iter()
-            .map(|spec| spec.name),
-    );
-    // Memory tools are intentionally credential-authority filtered, including
-    // auth=None, and their exact scope matrix is covered by the dedicated
-    // Memory surface tests below rather than this registry-parity test.
+    let stateless_runtime_names = mcp_tools_list_payload_with_features_for_auth(
+        ModelSurface::FullOperatorRuntime,
+        false,
+        false,
+        true,
+        true,
+        None,
+    )["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
 
     for compact in [false, true] {
         if compact {
@@ -182,16 +186,12 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
     }
 
     let render = |auth: Option<&crate::auth::AuthContext>| {
-        let mut payload = mcp_tools_list_payload_with_compact_and_app(
+        let mut payload = mcp_tools_list_payload_with_features_for_auth(
             ModelSurface::FullOperatorRuntime,
             false,
             false,
-        );
-        add_stateless_memory_tools(
-            &mut payload,
-            ModelSurface::FullOperatorRuntime,
-            false,
-            false,
+            true,
+            true,
             auth,
         );
         add_stateless_workflow_recorder_metadata(&mut payload, ModelSurface::FullOperatorRuntime);
@@ -338,8 +338,14 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
     );
 
     for surface in [ModelSurface::CanonicalConnector, ModelSurface::LocalCoding] {
-        let mut payload = mcp_tools_list_payload_with_compact(surface, false);
-        add_stateless_memory_tools(&mut payload, surface, false, false, Some(&direct));
+        let payload = mcp_tools_list_payload_with_features_for_auth(
+            surface,
+            false,
+            false,
+            true,
+            true,
+            Some(&direct),
+        );
         assert!(memory_names(&payload).is_empty());
     }
     let legacy_full = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
@@ -356,16 +362,12 @@ fn skill_runtime_tools_are_stateless_full_operator_only_and_schema_static() {
     assert!(!generic_names.iter().any(|name| name == "skill_read_file"));
 
     let render_full = || {
-        let mut payload = mcp_tools_list_payload_with_compact_and_app(
+        let mut payload = mcp_tools_list_payload_with_features_for_auth(
             ModelSurface::FullOperatorRuntime,
             false,
             false,
-        );
-        add_stateless_skill_tools(
-            &mut payload,
-            ModelSurface::FullOperatorRuntime,
-            false,
-            false,
+            true,
+            true,
             None,
         );
         add_stateless_workflow_recorder_metadata(&mut payload, ModelSurface::FullOperatorRuntime);
@@ -421,8 +423,8 @@ fn skill_runtime_tools_are_stateless_full_operator_only_and_schema_static() {
     );
 
     for surface in [ModelSurface::CanonicalConnector, ModelSurface::LocalCoding] {
-        let mut payload = mcp_tools_list_payload_with_compact(surface, false);
-        add_stateless_skill_tools(&mut payload, surface, false, false, None);
+        let payload =
+            mcp_tools_list_payload_with_features_for_auth(surface, false, false, true, true, None);
         assert!(payload["tools"]
             .as_array()
             .unwrap()
@@ -446,19 +448,14 @@ fn skill_runtime_tools_are_stateless_full_operator_only_and_schema_static() {
 #[test]
 fn skill_management_tools_require_admin_and_remain_fixed_schema() {
     let render = |auth: Option<&crate::auth::AuthContext>| {
-        let mut payload = mcp_tools_list_payload_with_compact_and_app(
+        mcp_tools_list_payload_with_features_for_auth(
             ModelSurface::FullOperatorRuntime,
             false,
             false,
-        );
-        add_stateless_skill_tools(
-            &mut payload,
-            ModelSurface::FullOperatorRuntime,
-            false,
-            false,
+            true,
+            true,
             auth,
-        );
-        payload
+        )
     };
     let shared = crate::auth::shared_key_context("skill-management-test");
     let shared_payload = render(Some(&shared));

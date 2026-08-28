@@ -104,7 +104,10 @@ fn workspace_hygiene_check_is_known_and_in_specs() {
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
     assert!(metadata.requires_project);
-    assert_eq!(metadata.oauth_scope, Some(crate::auth::SCOPE_PROJECT_READ));
+    assert_eq!(
+        metadata.legacy_oauth_scope_hint,
+        Some(crate::auth::SCOPE_PROJECT_READ)
+    );
 
     // MCP annotations: readOnlyHint=true.
     assert_eq!(spec.annotations["readOnlyHint"], true);

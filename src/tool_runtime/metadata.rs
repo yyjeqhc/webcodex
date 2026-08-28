@@ -50,11 +50,27 @@ impl ToolPathHint {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolAuthorityPolicy {
+    Require(&'static str),
+    RequireAll(&'static [&'static str]),
+    /// Reserved fail-closed policy for tools intentionally restricted to
+    /// first-party credentials.
+    #[allow(dead_code)]
+    FirstPartyOnly,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ToolMetadata {
     pub(crate) name: &'static str,
     pub(crate) provider_id: &'static str,
     pub(crate) risk: ToolRisk,
-    pub(crate) oauth_scope: Option<&'static str>,
+    /// Canonical credential authority for this runtime tool. Discovery and
+    /// execution must both derive from this policy rather than tool-name switches.
+    pub(crate) authority: ToolAuthorityPolicy,
+    /// Compatibility-only manifest hint retained for the existing `oauth_scope`
+    /// field. It is never consulted for authorization.
+    pub(crate) legacy_oauth_scope_hint: Option<&'static str>,
     pub(crate) requires_project: bool,
     pub(crate) path_hint: ToolPathHint,
     pub(crate) read_only: bool,
@@ -96,7 +112,11 @@ pub(crate) const fn metadata(
         name,
         provider_id,
         risk,
-        oauth_scope,
+        authority: match oauth_scope {
+            Some(scope) => ToolAuthorityPolicy::Require(scope),
+            None => ToolAuthorityPolicy::Unknown,
+        },
+        legacy_oauth_scope_hint: oauth_scope,
         requires_project,
         path_hint,
         read_only: matches!(risk, ToolRisk::ReadOnly),
@@ -138,7 +158,8 @@ pub(crate) fn tool_metadata(name: &str) -> ToolMetadata {
         name: "<unknown>",
         provider_id: TOOL_PROVIDER_UNKNOWN,
         risk: ToolRisk::Unknown,
-        oauth_scope: None,
+        authority: ToolAuthorityPolicy::Unknown,
+        legacy_oauth_scope_hint: None,
         requires_project: false,
         path_hint: ToolPathHint::None,
         read_only: false,
@@ -150,14 +171,8 @@ pub(crate) fn tool_metadata(name: &str) -> ToolMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::scopes::{oauth_scope_policy_for_runtime_tool, OAuthToolScopePolicy};
-    use crate::auth::scopes::{
-        MEMORY_MANAGE_SCOPES, MEMORY_READ_SCOPES, SCOPE_CODING_AGENT_RUN,
-        SCOPE_COMPUTER_CLIPBOARD_READ, SCOPE_COMPUTER_CLIPBOARD_WRITE, SCOPE_COMPUTER_CONTROL,
-        SCOPE_COMPUTER_DISPLAY_READ, SCOPE_COMPUTER_POINTER_CONTROL, SCOPE_COMPUTER_READ,
-        SCOPE_JOB_DETACH, SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE,
-        SCOPE_RUNTIME_READ,
-    };
+    use crate::auth::scopes::oauth_scope_policy_for_runtime_tool;
+    use crate::auth::{SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ};
     use crate::tool_runtime::{is_known_tool_name, known_tool_names};
 
     #[test]
@@ -171,56 +186,12 @@ mod tests {
     }
 
     #[test]
-    fn runtime_tool_metadata_oauth_scopes_are_known_to_scope_policy() {
+    fn runtime_tool_metadata_authority_is_the_runtime_scope_policy() {
         for metadata in iter_tool_metadata().filter(|metadata| is_known_tool_name(metadata.name)) {
-            let Some(scope) = metadata.oauth_scope else {
-                continue;
-            };
-            let expected = if matches!(metadata.name, "memory_search" | "memory_read") {
-                OAuthToolScopePolicy::RequireAll(MEMORY_READ_SCOPES)
-            } else if matches!(metadata.name, "memory_set" | "memory_delete") {
-                OAuthToolScopePolicy::RequireAll(MEMORY_MANAGE_SCOPES)
-            } else if metadata.name == "run_detached_process" {
-                OAuthToolScopePolicy::RequireAll(&[SCOPE_JOB_RUN, SCOPE_JOB_DETACH])
-            } else if metadata.name == "coding_agent_start" {
-                OAuthToolScopePolicy::RequireAll(&[SCOPE_CODING_AGENT_RUN, SCOPE_PROJECT_WRITE])
-            } else if metadata.name == "computer_save_snapshot" {
-                OAuthToolScopePolicy::RequireAll(&[SCOPE_PROJECT_WRITE, SCOPE_COMPUTER_READ])
-            } else if metadata.name == "computer_read_clipboard" {
-                OAuthToolScopePolicy::RequireAll(&[
-                    SCOPE_COMPUTER_READ,
-                    SCOPE_COMPUTER_CLIPBOARD_READ,
-                ])
-            } else if metadata.name == "computer_write_clipboard" {
-                OAuthToolScopePolicy::RequireAll(&[
-                    SCOPE_COMPUTER_CONTROL,
-                    SCOPE_COMPUTER_CLIPBOARD_WRITE,
-                ])
-            } else if matches!(
-                metadata.name,
-                "computer_pointer_move" | "computer_pointer_click"
-            ) {
-                OAuthToolScopePolicy::RequireAll(&[
-                    SCOPE_COMPUTER_READ,
-                    SCOPE_COMPUTER_DISPLAY_READ,
-                    SCOPE_COMPUTER_CONTROL,
-                    SCOPE_COMPUTER_POINTER_CONTROL,
-                ])
-            } else if matches!(
-                metadata.name,
-                "computer_list_displays" | "computer_snapshot_display"
-            ) {
-                OAuthToolScopePolicy::RequireAll(&[
-                    SCOPE_COMPUTER_READ,
-                    SCOPE_COMPUTER_DISPLAY_READ,
-                ])
-            } else {
-                OAuthToolScopePolicy::Require(scope)
-            };
             assert_eq!(
                 oauth_scope_policy_for_runtime_tool(metadata.name),
-                expected,
-                "{} metadata scope should drive runtime tool OAuth policy",
+                metadata.authority,
+                "{} ToolMetadata authority must drive runtime authorization",
                 metadata.name
             );
         }
@@ -231,7 +202,7 @@ mod tests {
         assert!(lookup_tool_metadata("not_a_tool").is_none());
         let metadata = tool_metadata("not_a_tool");
         assert_eq!(metadata.risk, ToolRisk::Unknown);
-        assert_eq!(metadata.oauth_scope, None);
+        assert_eq!(metadata.legacy_oauth_scope_hint, None);
         assert!(!metadata.read_only);
         assert!(!metadata.destructive);
         assert!(!metadata.shell_like);
@@ -243,7 +214,7 @@ mod tests {
         let metadata = lookup_tool_metadata("delete_files").unwrap();
         assert_eq!(metadata.provider_id, TOOL_PROVIDER_AGENT);
         assert_eq!(metadata.risk, ToolRisk::ProjectWrite);
-        assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_WRITE));
+        assert_eq!(metadata.legacy_oauth_scope_hint, Some(PROJECT_WRITE));
         assert!(metadata.requires_project);
         assert_eq!(metadata.path_hint, ToolPathHint::PathList);
         assert!(metadata.destructive);
@@ -255,7 +226,7 @@ mod tests {
         let metadata = lookup_tool_metadata("show_changes").unwrap();
         assert_eq!(metadata.provider_id, TOOL_PROVIDER_AGENT);
         assert_eq!(metadata.risk, ToolRisk::ReadOnly);
-        assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_READ));
+        assert_eq!(metadata.legacy_oauth_scope_hint, Some(PROJECT_READ));
         assert!(metadata.requires_project);
         assert!(metadata.read_only);
         assert!(!metadata.destructive);
@@ -266,7 +237,7 @@ mod tests {
         let metadata = lookup_tool_metadata("start_session").unwrap();
         assert_eq!(metadata.provider_id, TOOL_PROVIDER_CONTROL);
         assert_eq!(metadata.risk, ToolRisk::ReadOnly);
-        assert_eq!(metadata.oauth_scope, Some(SCOPE_RUNTIME_READ));
+        assert_eq!(metadata.legacy_oauth_scope_hint, Some(SCOPE_RUNTIME_READ));
         assert!(!metadata.requires_project);
         assert!(metadata.read_only);
     }
@@ -281,7 +252,11 @@ mod tests {
             let metadata = lookup_tool_metadata(name).unwrap();
             assert_eq!(metadata.provider_id, TOOL_PROVIDER_NATIVE, "{name}");
             assert_eq!(metadata.risk, ToolRisk::ReadOnly, "{name}");
-            assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_READ), "{name}");
+            assert_eq!(
+                metadata.legacy_oauth_scope_hint,
+                Some(SCOPE_PROJECT_READ),
+                "{name}"
+            );
             assert!(metadata.requires_project, "{name}");
             assert!(metadata.read_only, "{name}");
         }
@@ -292,7 +267,11 @@ mod tests {
             let metadata = lookup_tool_metadata(name).unwrap();
             assert_eq!(metadata.provider_id, TOOL_PROVIDER_NATIVE, "{name}");
             assert_eq!(metadata.risk, ToolRisk::ProjectWrite, "{name}");
-            assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_WRITE), "{name}");
+            assert_eq!(
+                metadata.legacy_oauth_scope_hint,
+                Some(PROJECT_WRITE),
+                "{name}"
+            );
             assert!(metadata.requires_project, "{name}");
             assert!(!metadata.read_only, "{name}");
         }
@@ -321,7 +300,11 @@ mod tests {
         ] {
             let metadata = lookup_tool_metadata(name).unwrap();
             assert_eq!(metadata.risk, ToolRisk::ProjectWrite, "{name}");
-            assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_WRITE), "{name}");
+            assert_eq!(
+                metadata.legacy_oauth_scope_hint,
+                Some(SCOPE_PROJECT_WRITE),
+                "{name}"
+            );
             assert!(!metadata.read_only, "{name}");
         }
     }
@@ -339,7 +322,11 @@ mod tests {
         ] {
             let metadata = lookup_tool_metadata(name).unwrap();
             assert_eq!(metadata.risk, ToolRisk::JobRun, "{name}");
-            assert_eq!(metadata.oauth_scope, Some(SCOPE_JOB_RUN), "{name}");
+            assert_eq!(
+                metadata.legacy_oauth_scope_hint,
+                Some(SCOPE_JOB_RUN),
+                "{name}"
+            );
         }
     }
 

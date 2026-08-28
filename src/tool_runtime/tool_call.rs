@@ -2041,6 +2041,39 @@ fn reject_unknown_search_project_texts_fields(arguments: &Value) -> Result<(), S
     ))
 }
 
+fn reject_unknown_git_diff_hunks_fields(arguments: &Value) -> Result<(), String> {
+    const ALLOWED: &[&str] = &[
+        "project",
+        "paths",
+        "max_hunks",
+        "max_hunk_lines",
+        "cached",
+        "base_commit",
+        "head_commit",
+        "continuation",
+        "session_id",
+        // Wrapper/session metadata that transports may leave in params.
+        "recording_session_id",
+        "_session_id",
+    ];
+    let Some(object) = arguments.as_object() else {
+        return Ok(());
+    };
+    let unknown = object
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !ALLOWED.contains(key))
+        .collect::<Vec<_>>();
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid arguments for tool 'git_diff_hunks': unknown field(s) {}",
+            unknown.join(", ")
+        ))
+    }
+}
+
 fn reject_unknown_targeted_inventory_fields(
     tool_name: &str,
     arguments: &Value,
@@ -2147,6 +2180,9 @@ impl ToolCall {
         }
         if name == "search_project_texts" {
             reject_unknown_search_project_texts_fields(&arguments)?;
+        }
+        if name == "git_diff_hunks" {
+            reject_unknown_git_diff_hunks_fields(&arguments)?;
         }
         if matches!(
             name,

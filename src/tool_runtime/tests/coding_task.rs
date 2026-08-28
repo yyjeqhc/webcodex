@@ -48,7 +48,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         assert!(metadata.read_only);
         assert!(!metadata.destructive);
         assert!(!metadata.shell_like);
-        assert_eq!(metadata.oauth_scope, Some("runtime:read"));
+        assert_eq!(metadata.legacy_oauth_scope_hint, Some("runtime:read"));
     }
     assert!(!names.contains(&"start_coding_task"));
     assert!(names.contains(&"finish_coding_task"));

@@ -605,7 +605,7 @@ fn policy_helpers_keep_non_runtime_names_on_fallback_boundary() {
     assert_eq!(delete_files.name, "delete_files");
     assert_eq!(delete_files.provider_id, TOOL_PROVIDER_AGENT);
     assert_eq!(delete_files.risk, ToolRisk::ProjectWrite);
-    assert_eq!(delete_files.oauth_scope, Some(PROJECT_WRITE));
+    assert_eq!(delete_files.legacy_oauth_scope_hint, Some(PROJECT_WRITE));
     assert!(delete_files.requires_project);
     assert_eq!(delete_files.path_hint, ToolPathHint::PathList);
     assert!(!delete_files.read_only);
@@ -647,7 +647,7 @@ fn policy_helpers_keep_non_runtime_names_on_fallback_boundary() {
         assert_eq!(unknown.name, "<unknown>", "{name}");
         assert_eq!(unknown.provider_id, TOOL_PROVIDER_UNKNOWN, "{name}");
         assert_eq!(unknown.risk, ToolRisk::Unknown, "{name}");
-        assert_eq!(unknown.oauth_scope, None, "{name}");
+        assert_eq!(unknown.legacy_oauth_scope_hint, None, "{name}");
         assert!(!unknown.requires_project, "{name}");
         assert_eq!(unknown.path_hint, ToolPathHint::None, "{name}");
         assert!(!unknown.read_only, "{name}");

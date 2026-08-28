@@ -4647,11 +4647,14 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
     let definition =
         crate::tool_runtime::tool_definition::lookup_tool_definition("git_review_summary")
             .expect("git_review_summary definition");
-    assert_eq!(definition.metadata.oauth_scope, Some(SCOPE_PROJECT_READ));
+    assert_eq!(
+        definition.metadata.legacy_oauth_scope_hint,
+        Some(SCOPE_PROJECT_READ)
+    );
     assert!(definition.visibility.is_model_visible());
     let metadata = lookup_tool_metadata("git_review_summary").expect("git_review_summary metadata");
     assert_eq!(metadata.risk, ToolRisk::ReadOnly);
-    assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_READ));
+    assert_eq!(metadata.legacy_oauth_scope_hint, Some(SCOPE_PROJECT_READ));
     assert!(metadata.requires_project);
     assert!(metadata.read_only);
     assert!(!metadata.destructive);

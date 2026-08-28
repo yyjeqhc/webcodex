@@ -99,9 +99,9 @@ fn tool_definitions_drive_metadata_visibility_and_categories() {
             definition.name
         );
         assert_eq!(
-            definition.metadata().oauth_scope,
-            metadata.oauth_scope,
-            "{} OAuth scope mirror must match definition ToolMetadata",
+            definition.metadata().authority,
+            metadata.authority,
+            "{} authority mirror must match definition ToolMetadata",
             definition.name
         );
     }
@@ -147,6 +147,30 @@ fn delete_files_remains_legacy_metadata_only_not_runtime_tool() {
     assert!(
         !tool_description.contains("delete_files"),
         "callRuntimeTool accepted-name text must not advertise legacy delete_files"
+    );
+}
+
+#[test]
+fn git_diff_hunks_rejects_unknown_legacy_fields_compactly() {
+    let error = ToolCall::from_tool_name(
+        "git_diff_hunks",
+        json!({
+            "project": SAMPLE_PROJECT,
+            "mode": "worktree",
+            "max_lines_per_hunk": 80
+        }),
+    )
+    .unwrap_err();
+    assert!(error.contains("unknown field(s)"), "{error}");
+    assert!(error.contains("mode"), "{error}");
+    assert!(error.contains("max_lines_per_hunk"), "{error}");
+    assert!(
+        !error.contains("properties"),
+        "must not dump JSON Schema: {error}"
+    );
+    assert!(
+        !error.contains("additionalProperties"),
+        "must stay compact: {error}"
     );
 }
 

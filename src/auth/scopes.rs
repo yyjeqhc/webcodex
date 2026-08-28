@@ -8,6 +8,7 @@ use std::collections::HashSet;
 
 use super::context::AuthContext;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
+pub(crate) use crate::tool_runtime::metadata::ToolAuthorityPolicy as OAuthToolScopePolicy;
 
 // ---------------------------------------------------------------------------
 // Scope constants
@@ -182,17 +183,6 @@ pub(crate) enum OAuthBodyAwarePolicy {
     McpToolCall,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OAuthToolScopePolicy {
-    Require(&'static str),
-    RequireAll(&'static [&'static str]),
-    /// Reserved fail-closed policy for a runtime tool that may be exposed only
-    /// to first-party credentials; no current tool definition selects it.
-    #[allow(dead_code)]
-    FirstPartyOnly,
-    Unknown,
-}
-
 pub(crate) fn oauth_route_scope_policy_for_path_method(
     method: &str,
     path: &str,
@@ -203,56 +193,8 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
 }
 
 pub(crate) fn oauth_scope_policy_for_runtime_tool(tool_name: &str) -> OAuthToolScopePolicy {
-    if matches!(tool_name, "memory_search" | "memory_read") {
-        return OAuthToolScopePolicy::RequireAll(MEMORY_READ_SCOPES);
-    }
-    if matches!(tool_name, "memory_set" | "memory_delete") {
-        return OAuthToolScopePolicy::RequireAll(MEMORY_MANAGE_SCOPES);
-    }
-    if tool_name == "run_detached_process" {
-        return OAuthToolScopePolicy::RequireAll(&[SCOPE_JOB_RUN, SCOPE_JOB_DETACH]);
-    }
-    if tool_name == "coding_agent_start" {
-        return OAuthToolScopePolicy::RequireAll(&[SCOPE_CODING_AGENT_RUN, SCOPE_PROJECT_WRITE]);
-    }
-    if tool_name == "computer_read_clipboard" {
-        return OAuthToolScopePolicy::RequireAll(&[
-            SCOPE_COMPUTER_READ,
-            SCOPE_COMPUTER_CLIPBOARD_READ,
-        ]);
-    }
-    if tool_name == "computer_write_clipboard" {
-        return OAuthToolScopePolicy::RequireAll(&[
-            SCOPE_COMPUTER_CONTROL,
-            SCOPE_COMPUTER_CLIPBOARD_WRITE,
-        ]);
-    }
-    if matches!(
-        tool_name,
-        "computer_pointer_move" | "computer_pointer_click"
-    ) {
-        return OAuthToolScopePolicy::RequireAll(&[
-            SCOPE_COMPUTER_READ,
-            SCOPE_COMPUTER_DISPLAY_READ,
-            SCOPE_COMPUTER_CONTROL,
-            SCOPE_COMPUTER_POINTER_CONTROL,
-        ]);
-    }
-    if matches!(
-        tool_name,
-        "computer_list_displays" | "computer_snapshot_display"
-    ) {
-        return OAuthToolScopePolicy::RequireAll(&[
-            SCOPE_COMPUTER_READ,
-            SCOPE_COMPUTER_DISPLAY_READ,
-        ]);
-    }
-    if tool_name == "computer_save_snapshot" {
-        return OAuthToolScopePolicy::RequireAll(&[SCOPE_PROJECT_WRITE, SCOPE_COMPUTER_READ]);
-    }
     lookup_tool_metadata(tool_name)
-        .and_then(|metadata| metadata.oauth_scope)
-        .map(OAuthToolScopePolicy::Require)
+        .map(|metadata| metadata.authority)
         .unwrap_or(OAuthToolScopePolicy::Unknown)
 }
 
@@ -877,7 +819,7 @@ mod tests {
             let metadata = lookup_tool_metadata(tool).unwrap();
             assert_eq!(
                 oauth_scope_policy_for_runtime_tool(tool),
-                OAuthToolScopePolicy::Require(metadata.oauth_scope.unwrap()),
+                OAuthToolScopePolicy::Require(metadata.legacy_oauth_scope_hint.unwrap()),
                 "{tool}"
             );
         }
@@ -920,7 +862,7 @@ mod tests {
                     SCOPE_COMPUTER_DISPLAY_READ,
                 ])
             } else {
-                OAuthToolScopePolicy::Require(metadata.oauth_scope.unwrap())
+                OAuthToolScopePolicy::Require(metadata.legacy_oauth_scope_hint.unwrap())
             };
             assert_eq!(
                 oauth_scope_policy_for_runtime_tool(tool),

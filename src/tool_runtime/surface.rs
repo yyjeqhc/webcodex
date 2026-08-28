@@ -395,7 +395,7 @@ pub(super) fn compact_manifest_tool_entry(spec: &ToolSpec) -> Value {
         "path_hint": m.path_hint.manifest_label(),
         "destructive": m.destructive,
         "shell_like": m.shell_like,
-        "oauth_scope": m.oauth_scope,
+        "oauth_scope": m.legacy_oauth_scope_hint,
     })
 }
 

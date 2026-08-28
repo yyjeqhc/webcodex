@@ -1566,7 +1566,7 @@ fn session_handoff_validation_exposure_keeps_read_only_metadata() {
     assert!(metadata.read_only);
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
-    assert_eq!(metadata.oauth_scope, Some("runtime:read"));
+    assert_eq!(metadata.legacy_oauth_scope_hint, Some("runtime:read"));
 }
 
 #[test]
@@ -1578,7 +1578,7 @@ fn project_overview_metadata_schema_and_flattened_args_are_read_only() {
     assert!(metadata.read_only);
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
-    assert_eq!(metadata.oauth_scope, Some("project:read"));
+    assert_eq!(metadata.legacy_oauth_scope_hint, Some("project:read"));
     assert_eq!(tool_manifest_category("project_overview"), "project");
 
     let spec = registered_tool_specs()

@@ -386,7 +386,7 @@ fn work_on_project_schema_and_registration() {
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
     assert!(metadata.requires_project);
-    assert_eq!(metadata.oauth_scope, Some("runtime:read"));
+    assert_eq!(metadata.legacy_oauth_scope_hint, Some("runtime:read"));
     assert_eq!(
         crate::tool_runtime::tool_definition::runtime_tool_category("work_on_project"),
         "workflow"

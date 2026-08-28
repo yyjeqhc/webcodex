@@ -2904,7 +2904,7 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
     assert!(metadata.read_only);
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
-    assert_eq!(metadata.oauth_scope, Some("runtime:read"));
+    assert_eq!(metadata.legacy_oauth_scope_hint, Some("runtime:read"));
 
     // OpenAPI operation count must stay 25 after retiring legacy edits.
     let spec = crate::openapi::build_openapi_spec();

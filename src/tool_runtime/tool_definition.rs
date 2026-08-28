@@ -23,8 +23,8 @@ mod skills;
 mod testing;
 
 use super::metadata::{
-    metadata as make_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk, RUNTIME_READ,
-    TOOL_PROVIDER_CONTROL,
+    metadata as make_tool_metadata, ToolAuthorityPolicy, ToolMetadata, ToolPathHint, ToolRisk,
+    RUNTIME_READ, TOOL_PROVIDER_CONTROL,
 };
 use super::registry::input_schemas::list_tools_input_schema;
 #[cfg(test)]
@@ -402,6 +402,19 @@ const fn model_spec(
             description,
             input_schema,
         }),
+        ..definition
+    }
+}
+
+const fn require_all_scopes(
+    definition: ToolDefinition,
+    scopes: &'static [&'static str],
+) -> ToolDefinition {
+    ToolDefinition {
+        metadata: ToolMetadata {
+            authority: ToolAuthorityPolicy::RequireAll(scopes),
+            ..definition.metadata
+        },
         ..definition
     }
 }

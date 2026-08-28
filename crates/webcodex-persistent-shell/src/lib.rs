@@ -3498,7 +3498,11 @@ foreach ($variable in $variables) {
     if ($value -match '^[0-9a-f]{32}$') { $tokenCandidates += $value }
     if ($value -match '(?i)\.frame$') { $controlPathCandidates += $value }
 }
-$visible += @(Get-Command -CommandType Function | ForEach-Object { 'FN|' + $_.Name })
+# Inspect the live function provider directly. `Get-Command -CommandType Function`
+# can trigger module discovery on Windows PowerShell 5.1 and has taken tens of
+# seconds on hosted CI; module discovery is unrelated to whether this command
+# can observe private framing state through functions already in its session.
+$visible += @(Get-ChildItem -LiteralPath 'Function:\' | ForEach-Object { 'FN|' + $_.Name })
 $visible += @([System.Management.Automation.Runspaces.Runspace]::GetRunspaces() | ForEach-Object { 'RUNSPACE|' + $_.InstanceId + '|' + $_.RunspaceAvailability })
 $visible += @([WebCodexPersistentShell.Controller].GetFields([Reflection.BindingFlags]'Public,NonPublic,Static') | ForEach-Object { 'CONTROLLER_FIELD|' + $_.Name + '|' + [string]$_.GetValue($null) })
 $visible += @($Host.GetType().GetFields([Reflection.BindingFlags]'Public,NonPublic,Instance') | ForEach-Object { try { 'HOST_FIELD|' + $_.Name + '|' + [string]$_.GetValue($Host) } catch { 'HOST_FIELD|' + $_.Name + '|<unreadable>' } })

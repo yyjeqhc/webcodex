@@ -2695,6 +2695,11 @@ mod tests {
                 priority: SessionMessagePriority::High,
             })
             .unwrap();
+        let assignment_fence = runtime
+            .sessions
+            .get_assignment(&session.session_id, &todo.message_id)
+            .unwrap()
+            .assignment_fence;
         runtime
             .sessions
             .complete_message(CompleteSessionMessageInput {
@@ -2705,7 +2710,7 @@ mod tests {
                 priority: SessionMessagePriority::Normal,
                 completion_id: "a".repeat(64),
                 author_session_id: Some("wc_sess_worker".to_string()),
-                expected_assignment_fence: None,
+                expected_assignment_fence: assignment_fence,
             })
             .unwrap();
 
@@ -3122,6 +3127,11 @@ mod tests {
                 priority: SessionMessagePriority::Normal,
             })
             .unwrap();
+        let assignment_fence = runtime
+            .sessions
+            .get_assignment(&session.session_id, &todo.message_id)
+            .unwrap()
+            .assignment_fence;
         runtime
             .sessions
             .complete_message(CompleteSessionMessageInput {
@@ -3132,7 +3142,7 @@ mod tests {
                 priority: SessionMessagePriority::Normal,
                 completion_id: "b".repeat(64),
                 author_session_id: None,
-                expected_assignment_fence: None,
+                expected_assignment_fence: assignment_fence,
             })
             .unwrap();
         assert_eq!(

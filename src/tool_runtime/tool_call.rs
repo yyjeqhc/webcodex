@@ -469,8 +469,7 @@ pub enum ToolCall {
         message_id: String,
         answer: String,
         completion_key: String,
-        #[serde(default)]
-        expected_assignment_fence: Option<String>,
+        expected_assignment_fence: String,
         #[serde(default)]
         tags: Vec<String>,
         #[serde(default)]

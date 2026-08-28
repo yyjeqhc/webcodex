@@ -14,21 +14,21 @@ Knowing a `session_id`, `message_id`, worker Session id, Job id, checkpoint id, 
 
 1. **Coordinator posts one bounded todo to `C`.** Use `post_session_message(kind="todo")`. Include the objective, scope, prohibitions, exact stable identifiers, and expected answer shape.
 2. **Worker starts its own Session `W`.** Do not resume `C` just to accept the assignment.
-3. **Worker reads bounded coordinator state.** Use `session_handoff_summary(session_id=C)` and then `list_session_messages(session_id=C, message_id=<todo_id>)`. Exact lookup does not depend on the todo being in a recent-message window.
+3. **Worker atomically reads the executable assignment.** Call `get_session_assignment(session_id=C, message_id=<todo_id>)` once before work. That exact store snapshot contains the open todo, all retained direct replies within the bound, and the opaque `assignment_fence`. `session_handoff_summary` may provide broader background, while `list_session_messages` remains generic browsing; neither substitutes for this executable assignment read.
 4. **Worker performs the task under `W`.** Reads, edits, shell/process calls, validation, review evidence, Jobs, checkpoints, and other authoritative activity stay attached to `W`.
-5. **Worker completes the exact todo atomically.** Use `complete_session_message(session_id=C, message_id=<todo_id>, answer=<bounded answer>, completion_key=<caller key>)`. On stateless MCP 2026, the `tools/call` arguments additionally carry wrapper metadata `recording_session_id=W`; this is distinct from the concrete business `session_id=C` and is stripped before concrete tool parsing. One Session-store mutation creates exactly one `kind=answer` reply, resolves the todo, and records the todo -> answer correlation.
-6. **Coordinator reads the result from `C`.** Use exact todo lookup, `list_session_messages(reply_to=<todo_id>)`, `session_discussion_summary`, or `session_handoff_summary`.
-7. **Coordinator re-observes authoritative state.** A message may reference `W`, a Job, checkpoint, artifact, commit, or PR, but the coordinator explicitly reads/revalidates that source before consequential follow-up.
+5. **Worker completes the exact todo atomically.** Use `complete_session_message(session_id=C, message_id=<todo_id>, answer=<bounded answer>, completion_key=<caller key>, expected_assignment_fence=<exact assignment_fence>)`. On stateless MCP 2026, wrapper metadata `recording_session_id=W` remains separate provenance and is stripped before concrete parsing. One Session-store mutation creates exactly one `kind=answer` reply, resolves the todo, and records the todo -> answer correlation.
+6. **Stale or incomplete assignment state is not a blind retry.** `assignment_stale` returns `state_changed=false` plus the current assignment and a durable `fresh_assignment_fence` only when the exact current state is provable. Re-evaluate that returned assignment before using its fresh fence. `assignment_history_lost` and `assignment_too_large` are non-completable from the stale context.
+7. **Coordinator reads and validates the result from `C`.** Use exact todo/reply browsing, `session_discussion_summary`, or `session_handoff_summary`, then explicitly re-observe any authoritative Project/Git/Job/artifact state referenced by the answer before consequential follow-up.
 
 ```text
 coordinator C
   -> post todo(C)
 
 worker W (independent Session)
-  -> handoff(C)
-  -> exact todo(C, message_id)
+  -> optional broader handoff(C)
+  -> get_assignment(C, todo) -> todo + direct replies + assignment_fence
   -> inspect / edit / validate / review under W
-  -> complete(C, todo, answer, completion_key)
+  -> complete(C, todo, answer, completion_key, exact assignment_fence)
 
 coordinator C
   -> exact todo(C) + replies(todo)
@@ -38,7 +38,7 @@ coordinator C
 
 ## Atomic completion and retries
 
-`complete_session_message` is preferred over separately posting an answer and then resolving a todo.
+`complete_session_message` is the executable-todo completion path. Every current request requires the exact `expected_assignment_fence` returned by `get_session_assignment`; separately posting an answer and resolving a todo is not an equivalent completion contract.
 
 A successful completion records:
 
@@ -46,19 +46,20 @@ A successful completion records:
 - the todo as resolved;
 - `resolved_by_message_id` pointing to that exact answer;
 - a bounded completion identity derived from `completion_key`;
-- `author_session_id` from the trusted recording Session when the tool call is explicitly recorded under one; otherwise from the existing trusted current-window Session binding when available.
+- a persisted fingerprint of the exact accepted assignment fence for replay correlation;
+- `author_session_id` only from an already-authorized explicit recording Session when the tool call is recorded under one.
 
-The recording Session wins when it differs from the current-window binding, so provenance follows the Session that actually records the completion evidence. If neither trusted source exists, `author_session_id` is `null`; callers cannot supply a trusted author identity themselves. Stateless MCP 2026 has no reliable transport/window Session identity, so callers that want worker provenance must pass the explicit `recording_session_id` wrapper metadata returned by WebCodex's 2026 `tools/list` schema. WebCodex does not infer it from `mcp-session-id`, HTTP connection state, credentials, project identity, or a recent Workflow Session.
+Without an explicit trusted recorder, `author_session_id` is `null`; callers cannot supply a trusted author identity themselves. Stateless MCP 2026 has no reliable transport/window Workflow Session identity, so callers that want worker provenance pass explicit `recording_session_id` wrapper metadata. WebCodex does not infer provenance from `mcp-session-id`, HTTP connection state, credentials, project identity, a client window, or a recent Workflow Session.
 
 When a collaboration call has both a recording Session and a target Session, WebCodex authorizes both independently and then requires their stored project scopes to match exactly. `project/project` is allowed only for the same project, `project/project` with different projects is denied, both `project/project-less` directions are denied, and `project-less/project-less` is allowed only after both owner authorities have independently matched. The generic cross-project escape flag never widens this collaboration relationship.
 
-For uncertain responses, retry the same `session_id + message_id + completion_key` with the same answer metadata. WebCodex returns the original completion without creating another answer. Reusing the same key with different answer content/metadata fails with `idempotency_conflict`. A different completion after another completion already resolved the todo returns `already_completed` and bounded existing completion identity.
+For uncertain responses, retry the same `session_id + message_id + completion_key + expected_assignment_fence` with the same answer metadata. WebCodex returns the original canonical completion without creating another answer. Reusing the same key with different answer content, tags, priority, trusted author, or fence fails closed. Historical completed rows that predate assignment-fence metadata remain queryable after restore but cannot be replayed successfully by a current request; WebCodex never invents a historical fence.
 
-A successful completion is fenced through the Session-ledger writer generation that contains that completion before success is returned. If durable persistence cannot be confirmed, the tool returns `completion_persistence_uncertain` with `failure_kind=outcome_unknown`, `retry_same_completion=true`, and `recovery_kind=retry_same`; retry the exact same `session_id + message_id + completion_key + payload` to reconcile the already-possible in-memory mutation instead of posting a second answer. `retry_same` is an exact idempotent replay contract, not general retryability. Correlation and idempotency metadata survive restart/persistence restoration; old records without the new fields load with absent provenance. Malformed partial completion structures fail closed and never silently reopen a resolved todo.
+A successful completion is fenced through the Session-ledger writer generation that contains that completion before success is returned. If durable persistence cannot be confirmed, the tool returns `completion_persistence_uncertain` with `failure_kind=outcome_unknown`, `retry_same_completion=true`, and `recovery_kind=retry_same`; retry the exact same `session_id + message_id + completion_key + expected_assignment_fence + payload` to reconcile the already-possible in-memory mutation instead of posting a second answer. `retry_same` is an exact idempotent replay contract, not general retryability. Correlation and idempotency metadata survive restart/persistence restoration. Malformed partial completion structures fail closed and never silently reopen a resolved todo.
 
 ## Exact assignment and reply lookup
 
-`list_session_messages` supports narrow exact filters:
+`list_session_messages` supports narrow exact filters for browsing and coordinator result lookup. It is not the executable assignment source; workers use `get_session_assignment` for the atomic todo + direct-replies + fence snapshot:
 
 ```text
 message_id=<wc_msg_*>
@@ -71,9 +72,11 @@ All supplied filters use deterministic AND semantics. `message_id` therefore giv
 
 ## Observe message-state delta
 
-`observe_session_messages(session_id=C)` establishes a current message-board baseline and returns an opaque observation token without replaying existing history. Keep using `session_handoff_summary` and `list_session_messages` when existing todos/history are needed. A later call with `after_observation_token=<token>` returns retained messages whose current state changed after that baseline; an optional `wait_secs=1..60` performs one bounded wait only. Existing backlog returns immediately, a relevant update returns `wait_outcome=updated`, and a deadline returns successful `wait_outcome=timeout` with `changed=false`.
+`observe_session_messages(session_id=C)` is an optional generic message-state delta primitive, not the happy-path executable assignment read. A no-token call establishes a current baseline without replaying history; a later `after_observation_token=<token>` call returns retained messages whose current state changed after that baseline, with at most one bounded optional wait. Existing backlog returns immediately, a relevant update returns `wait_outcome=updated`, and a deadline returns successful `wait_outcome=timeout` with `changed=false`.
 
 The token is bounded, opaque, bound to the exact Workflow Session, and backed by a durable Session-local monotonic message-observation revision. It is observation state only: it is not authority, an idempotency key, execution identity, an implicit Workflow Session selector, or message-delivery receipt. The same recorder/target authorization fence used by the other collaboration tools applies before any observation result is returned. Token issuance fences the ledger generation containing its revision so a valid token remains usable after Server restart when that Workflow Session can be restored.
+
+Assignment and continuity identities are intentionally separate domains: `assignment_fence` is a semantic todo snapshot, `completion_key` is caller replay identity, `ack_session_context_revision` is model-result continuity evidence, `ack_session_message_ids` is request-scoped retained-guidance proof, an observation token is a generic message-state cursor, business `session_id` names the authorized target, and `recording_session_id` is provenance only. None substitutes for another or grants authority by possession.
 
 Observation tracks real message-state mutation, not deque length. Posts advance it; a resolve advances it only when status/resolution really changes; a new atomic completion advances for the todo resolution and answer creation; exact completion replay and no-op resolve do not advance it. If one retained message changes multiple times between observations, the observer may receive only its latest current state because this primitive is not an event/audit log.
 

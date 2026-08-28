@@ -117,6 +117,41 @@ async fn e3_assignment_tool_round_trip_stale_projection_and_fresh_fence() {
         .to_string();
     assert!(old_fence.starts_with("wsa1_"));
 
+    let wrong_token_domain = call(
+        &runtime,
+        "complete_session_message",
+        json!({
+            "session_id": session_id,
+            "message_id": todo_id,
+            "answer": "must reject observation-token domain",
+            "completion_key": "e3-tool-wrong-token-domain",
+            "expected_assignment_fence": format!("wsm1_{}", "A".repeat(43))
+        }),
+        &auth,
+    )
+    .await;
+    assert!(!wrong_token_domain.success);
+    assert_eq!(
+        wrong_token_domain.output["error_kind"],
+        "invalid_assignment_fence"
+    );
+    assert_eq!(wrong_token_domain.output["state_changed"], false);
+    assert_eq!(
+        runtime
+            .sessions
+            .list_messages(
+                &session_id,
+                super::super::sessions::ListSessionMessagesFilter {
+                    kind: Some(SessionMessageKind::Answer),
+                    reply_to: Some(todo_id.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .len(),
+        0
+    );
+
     post(
         &runtime,
         &session_id,
@@ -176,7 +211,7 @@ async fn e3_assignment_tool_round_trip_stale_projection_and_fresh_fence() {
             "session_id": session_id,
             "message_id": todo_id,
             "answer": "fresh assignment accepted",
-            "completion_key": "e3-tool-fresh",
+            "completion_key": "e3-tool-stale",
             "expected_assignment_fence": fresh
         }),
         &auth,
@@ -218,7 +253,7 @@ fn e3_assignment_schema_parser_scope_local_coding_and_audit_are_synchronized() {
         complete.input_schema["properties"]["expected_assignment_fence"]["maxLength"],
         48
     );
-    assert!(!complete.input_schema["required"]
+    assert!(complete.input_schema["required"]
         .as_array()
         .unwrap()
         .iter()
@@ -234,6 +269,20 @@ fn e3_assignment_schema_parser_scope_local_coding_and_audit_are_synchronized() {
         ToolCall::GetSessionAssignment { ref session_id, ref message_id }
             if session_id == "wc_sess_demo" && message_id == "wc_msg_demo"
     ));
+    let missing_fence = ToolCall::from_tool_name(
+        "complete_session_message",
+        json!({
+            "session_id": "wc_sess_demo",
+            "message_id": "wc_msg_demo",
+            "answer": "done",
+            "completion_key": "key"
+        }),
+    )
+    .unwrap_err();
+    assert!(missing_fence
+        .to_string()
+        .contains("expected_assignment_fence"));
+
     let raw_fence = "wsa1_PRIVATE_FENCE_MUST_NOT_PERSIST";
     let completion_call = ToolCall::from_tool_name(
         "complete_session_message",
@@ -249,7 +298,7 @@ fn e3_assignment_schema_parser_scope_local_coding_and_audit_are_synchronized() {
     assert!(matches!(
         completion_call,
         ToolCall::CompleteSessionMessage {
-            expected_assignment_fence: Some(ref fence), ..
+            expected_assignment_fence: ref fence, ..
         } if fence == raw_fence
     ));
 

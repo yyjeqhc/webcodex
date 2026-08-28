@@ -286,6 +286,9 @@ impl PersistedSessionRecord {
             observation_floor = 0;
             assignment_history_tracking_complete = legacy_no_eviction_proven;
         }
+        // Completion-fence optionality is historical representation only. Restore
+        // preserves missing/null metadata exactly enough for query compatibility;
+        // live completion never fabricates a fence or accepts a no-fence replay.
         let retained_completed_todo_ids = messages
             .iter()
             .filter(|message| {

@@ -853,6 +853,11 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
     assert!(exact.success, "{:?}", exact.error);
     assert_eq!(exact.output["messages"].as_array().unwrap().len(), 1);
 
+    let assignment_fence = runtime
+        .sessions
+        .get_assignment(&coordinator.session_id, &todo_id)
+        .unwrap()
+        .assignment_fence;
     let completed = call_with_recorder(
         &runtime,
         "complete_session_message",
@@ -861,6 +866,7 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
             "message_id": todo_id,
             "answer": "No findings. Revalidated the authoritative synthetic source after review.",
             "completion_key": "worker-review-v1",
+            "expected_assignment_fence": assignment_fence.clone(),
             "tags": ["review", "done"],
             "priority": "normal",
             "author_session_id": "wc_sess_forged_should_be_ignored"
@@ -889,6 +895,7 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
             "message_id": todo_id,
             "answer": "No findings. Revalidated the authoritative synthetic source after review.",
             "completion_key": "worker-review-v1",
+            "expected_assignment_fence": assignment_fence.clone(),
             "tags": ["review", "done"],
             "priority": "normal"
         }),
@@ -979,6 +986,7 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
         "worker-review-v1",
         "wc_sess_forged_should_be_ignored",
         "collaboration-worker-window",
+        assignment_fence.as_str(),
     ] {
         assert!(
             !audit_text.contains(private),
@@ -1027,6 +1035,11 @@ async fn collaboration_completion_without_recording_session_has_null_author_even
         })
         .unwrap();
 
+    let assignment_fence = runtime
+        .sessions
+        .get_assignment(&coordinator.session_id, &todo.message_id)
+        .unwrap()
+        .assignment_fence;
     let window = ClientWindow::for_test("no-recorder-author-window");
     let result = call_with_recorder(
         &runtime,
@@ -1035,7 +1048,8 @@ async fn collaboration_completion_without_recording_session_has_null_author_even
             "session_id": coordinator.session_id,
             "message_id": todo.message_id,
             "answer": "done",
-            "completion_key": "no-window"
+            "completion_key": "no-window",
+            "expected_assignment_fence": assignment_fence
         }),
         None,
         &auth,
@@ -1074,6 +1088,11 @@ async fn collaboration_explicit_recording_session_is_completion_author() {
             priority: SessionMessagePriority::High,
         })
         .unwrap();
+    let assignment_fence = runtime
+        .sessions
+        .get_assignment(&coordinator.session_id, &todo.message_id)
+        .unwrap()
+        .assignment_fence;
     let window = ClientWindow::for_test("recorder-vs-current-window");
     let completed = call_with_recorder(
         &runtime,
@@ -1082,7 +1101,8 @@ async fn collaboration_explicit_recording_session_is_completion_author() {
             "session_id": coordinator.session_id,
             "message_id": todo.message_id,
             "answer": "completed by the recording Session",
-            "completion_key": "recorder-wins-v1"
+            "completion_key": "recorder-wins-v1",
+            "expected_assignment_fence": assignment_fence
         }),
         Some(&worker_recording.session_id),
         &auth,
@@ -1139,6 +1159,11 @@ async fn collaboration_cross_project_recorder_fails_closed_before_completion() {
             priority: SessionMessagePriority::High,
         })
         .unwrap();
+    let assignment_fence = runtime
+        .sessions
+        .get_assignment(&coordinator.session_id, &todo.message_id)
+        .unwrap()
+        .assignment_fence;
     let window = ClientWindow::for_test("cross-project-worker");
     let result = call_with_recorder(
         &runtime,
@@ -1147,7 +1172,8 @@ async fn collaboration_cross_project_recorder_fails_closed_before_completion() {
             "session_id": coordinator.session_id,
             "message_id": todo.message_id,
             "answer": "should not commit",
-            "completion_key": "cross-project"
+            "completion_key": "cross-project",
+            "expected_assignment_fence": assignment_fence
         }),
         Some(&worker.session_id),
         &auth,
@@ -1272,6 +1298,11 @@ async fn collaboration_mixed_project_scope_fails_closed_in_both_directions() {
             priority: SessionMessagePriority::High,
         })
         .unwrap();
+    let scoped_assignment_fence = runtime
+        .sessions
+        .get_assignment(&scoped_coordinator.session_id, &scoped_todo.message_id)
+        .unwrap()
+        .assignment_fence;
     for (tool_name, arguments) in [
         (
             "list_session_messages",
@@ -1283,7 +1314,8 @@ async fn collaboration_mixed_project_scope_fails_closed_in_both_directions() {
                 "session_id": scoped_coordinator.session_id,
                 "message_id": scoped_todo.message_id,
                 "answer": "must not complete",
-                "completion_key": "mixed-unscoped-to-scoped"
+                "completion_key": "mixed-unscoped-to-scoped",
+                "expected_assignment_fence": scoped_assignment_fence.clone()
             }),
         ),
     ] {
@@ -1349,6 +1381,11 @@ async fn collaboration_mixed_project_scope_fails_closed_in_both_directions() {
             priority: SessionMessagePriority::High,
         })
         .unwrap();
+    let unscoped_assignment_fence = runtime
+        .sessions
+        .get_assignment(&unscoped_coordinator_id, &unscoped_todo.message_id)
+        .unwrap()
+        .assignment_fence;
     for (tool_name, arguments) in [
         (
             "list_session_messages",
@@ -1360,7 +1397,8 @@ async fn collaboration_mixed_project_scope_fails_closed_in_both_directions() {
                 "session_id": unscoped_coordinator_id,
                 "message_id": unscoped_todo.message_id,
                 "answer": "must not complete",
-                "completion_key": "mixed-scoped-to-unscoped"
+                "completion_key": "mixed-scoped-to-unscoped",
+                "expected_assignment_fence": unscoped_assignment_fence.clone()
             }),
         ),
     ] {
@@ -1464,6 +1502,11 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
     .await;
     assert!(posted.success, "{:?}", posted.error);
     let todo_id = posted.output["message_id"].as_str().unwrap().to_string();
+    let assignment_fence = runtime
+        .sessions
+        .get_assignment(&session_id, &todo_id)
+        .unwrap()
+        .assignment_fence;
     runtime.sessions.flush_persistence();
     let persisted = std::fs::read_to_string(&ledger).unwrap();
     assert!(persisted.contains("owner_authority_fingerprint"));
@@ -1515,7 +1558,8 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
                 "session_id": session_id,
                 "message_id": todo_id,
                 "answer": "Bob must not complete",
-                "completion_key": "recycled-bob"
+                "completion_key": "recycled-bob",
+                "expected_assignment_fence": assignment_fence.clone()
             }),
         ),
         (
@@ -1640,6 +1684,11 @@ async fn projectless_session_owner_authority_blocks_known_ids_from_foreign_princ
     .await;
     assert!(posted.success, "{:?}", posted.error);
     let todo_id = posted.output["message_id"].as_str().unwrap().to_string();
+    let assignment_fence = runtime
+        .sessions
+        .get_assignment(&session_id, &todo_id)
+        .unwrap()
+        .assignment_fence;
 
     let denied_calls = [
         ("session_summary", json!({"session_id": session_id})),
@@ -1661,7 +1710,8 @@ async fn projectless_session_owner_authority_blocks_known_ids_from_foreign_princ
                 "session_id": session_id,
                 "message_id": todo_id,
                 "answer": "Bob forged completion",
-                "completion_key": "bob-forged"
+                "completion_key": "bob-forged",
+                "expected_assignment_fence": assignment_fence.clone()
             }),
         ),
         (
@@ -1707,7 +1757,8 @@ async fn projectless_session_owner_authority_blocks_known_ids_from_foreign_princ
             "session_id": session_id,
             "message_id": todo_id,
             "answer": "Alice completion",
-            "completion_key": "alice-complete"
+            "completion_key": "alice-complete",
+            "expected_assignment_fence": assignment_fence
         }),
         None,
         &alice,
@@ -1867,6 +1918,11 @@ async fn collaboration_foreign_owner_cannot_read_or_complete_known_session_and_t
             priority: SessionMessagePriority::Normal,
         })
         .unwrap();
+    let assignment_fence = runtime
+        .sessions
+        .get_assignment(&coordinator.session_id, &todo.message_id)
+        .unwrap()
+        .assignment_fence;
 
     let read = call_with_recorder(
         &runtime,
@@ -1889,7 +1945,8 @@ async fn collaboration_foreign_owner_cannot_read_or_complete_known_session_and_t
             "session_id": coordinator.session_id,
             "message_id": todo.message_id,
             "answer": "forged completion",
-            "completion_key": "foreign"
+            "completion_key": "foreign",
+            "expected_assignment_fence": assignment_fence
         }),
         None,
         &bob,

@@ -84,21 +84,24 @@ on `work_on_project`; advanced `start_coding_task` does not add one either.
 ## Manual multi-window collaboration
 
 For a bounded independent subtask, keep coordinator `C` and worker `W` in
-**separate** Workflow Sessions. The coordinator posts a `todo` to `C`; `W` reads
-`session_handoff_summary(C)` plus that exact `message_id`, performs all tools and
-validation under `W`, then uses `complete_session_message` to atomically create one
-bounded answer and resolve the exact todo. On stateless MCP 2026, send
-`recording_session_id=W` as wrapper metadata while the concrete
-`complete_session_message.session_id=C` remains the coordinator/business target;
-WebCodex strips the recorder metadata before concrete parsing. The answer carries
-trusted `author_session_id` provenance from the recording worker Session first,
-falling back to the current worker Session binding only when no recording Session
-exists; the caller cannot forge that field, and legacy `mcp-session-id` is not used
-as Workflow Session provenance.
+**separate** Workflow Sessions. The coordinator posts a `todo` to `C`; `W` calls
+`get_session_assignment(session_id=C, message_id=<todo_id>)` to atomically obtain the
+exact todo, all retained direct replies within the bound, and its opaque
+`assignment_fence`. After performing tools and validation under `W`, the worker calls
+`complete_session_message` with the same concrete `session_id=C`, exact `message_id`,
+caller `completion_key`, and the unchanged `expected_assignment_fence`. On stateless
+MCP 2026, `recording_session_id=W` is separate wrapper provenance metadata and is
+stripped before concrete parsing. `author_session_id` comes only from that already-
+authorized explicit recorder; without one it is absent, never inferred from a client
+window, credentials, project identity, or legacy `mcp-session-id`.
 
-The coordinator can retrieve the exact todo or its replies with
-`list_session_messages(message_id=...)` / `list_session_messages(reply_to=...)`,
-then re-observe authoritative project/Git/artifact state. Worker execution history
+`list_session_messages(message_id=...)` / `list_session_messages(reply_to=...)` remain
+generic browsing/result lookup rather than executable-assignment input. If completion
+returns `assignment_stale`, re-evaluate the returned current assignment before using
+a durable fresh fence; history-loss/oversize assignment errors are not blind-retry
+signals. `observe_session_messages` is optional generic delta observation, not this
+happy-path assignment protocol. The coordinator then re-observes authoritative
+project/Git/artifact state. Worker execution history
 is never copied into `C`, and Session/message ids never grant authority. Any recording
 Session is authorized before ledger/lifecycle/provenance use. Project-scoped targets
 require both current stored-project authorization and their immutable creation-time

@@ -43,7 +43,7 @@ fn fenced_completion(
     session_id: &str,
     message_id: &str,
     completion_id: &str,
-    fence: Option<String>,
+    fence: String,
 ) -> CompleteSessionMessageInput {
     CompleteSessionMessageInput {
         session_id: session_id.to_string(),
@@ -131,7 +131,7 @@ fn assignment_snapshot_is_atomic_and_unrelated_traffic_and_ack_do_not_stale() {
             &session.session_id,
             &todo.message_id,
             &"a".repeat(64),
-            Some(snapshot.assignment_fence),
+            snapshot.assignment_fence,
         ))
         .unwrap();
     assert!(!completed.replayed);
@@ -191,7 +191,7 @@ fn unrelated_retention_eviction_does_not_invalidate_assignment() {
             &session.session_id,
             &todo.message_id,
             &"b".repeat(64),
-            Some(snapshot.assignment_fence),
+            snapshot.assignment_fence,
         ))
         .unwrap();
 }
@@ -276,7 +276,7 @@ fn direct_reply_append_replace_withdraw_and_resolve_stale_without_completion() {
                 &session.session_id,
                 &todo.message_id,
                 &"c".repeat(64),
-                Some(snapshot.assignment_fence),
+                snapshot.assignment_fence,
             ))
             .unwrap_err();
         let (current, fresh_assignment_fence) = match error {
@@ -353,7 +353,7 @@ fn todo_replace_withdraw_and_resolve_reject_old_fence() {
                 &session.session_id,
                 &todo.message_id,
                 &"d".repeat(64),
-                Some(snapshot.assignment_fence),
+                snapshot.assignment_fence,
             )),
             Err(SessionMessageError::AssignmentStale { .. })
         ));
@@ -385,7 +385,7 @@ fn assignment_fence_is_bound_to_exact_session_and_todo() {
                 session_id,
                 todo_id,
                 &"e".repeat(64),
-                Some(snapshot.assignment_fence.clone()),
+                snapshot.assignment_fence.clone(),
             )),
             Err(SessionMessageError::AssignmentStale { .. })
         ));
@@ -395,7 +395,7 @@ fn assignment_fence_is_bound_to_exact_session_and_todo() {
             &first.session_id,
             &first_todo.message_id,
             &"e".repeat(64),
-            Some("wsm1_not_an_assignment_fence".to_string()),
+            format!("wsm1_{}", "A".repeat(43)),
         )),
         Err(SessionMessageError::InvalidAssignmentFence)
     ));
@@ -443,7 +443,7 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
         &session.session_id,
         &todo.message_id,
         &"f".repeat(64),
-        Some(snapshot.assignment_fence.clone()),
+        snapshot.assignment_fence.clone(),
     );
     let first = store.complete_message(input.clone()).unwrap();
     let replay = store.complete_message(input.clone()).unwrap();
@@ -451,7 +451,7 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
     assert_eq!(replay.answer.message_id, first.answer.message_id);
 
     let mut different_fence = input.clone();
-    different_fence.expected_assignment_fence = Some(different_valid_fence);
+    different_fence.expected_assignment_fence = different_valid_fence;
     assert!(matches!(
         store.complete_message(different_fence),
         Err(SessionMessageError::IdempotencyConflict)
@@ -461,6 +461,20 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
     different_author.author_session_id = Some("wc_sess_other_worker".to_string());
     assert!(matches!(
         store.complete_message(different_author),
+        Err(SessionMessageError::IdempotencyConflict)
+    ));
+
+    let mut different_tags = input.clone();
+    different_tags.tags.push("different-tag".to_string());
+    assert!(matches!(
+        store.complete_message(different_tags),
+        Err(SessionMessageError::IdempotencyConflict)
+    ));
+
+    let mut different_priority = input.clone();
+    different_priority.priority = SessionMessagePriority::High;
+    assert!(matches!(
+        store.complete_message(different_priority),
         Err(SessionMessageError::IdempotencyConflict)
     ));
 
@@ -506,13 +520,13 @@ fn concurrent_workers_with_same_fence_create_at_most_one_answer() {
         &session.session_id,
         &todo.message_id,
         &"1".repeat(64),
-        Some(snapshot.assignment_fence.clone()),
+        snapshot.assignment_fence.clone(),
     );
     let second = fenced_completion(
         &session.session_id,
         &todo.message_id,
         &"2".repeat(64),
-        Some(snapshot.assignment_fence),
+        snapshot.assignment_fence,
     );
     let a = Arc::clone(&store);
     let b = Arc::clone(&store);
@@ -559,7 +573,7 @@ fn assignment_snapshot_and_fenced_replay_survive_restart() {
         &session.session_id,
         &todo.message_id,
         &"3".repeat(64),
-        Some(snapshot.assignment_fence),
+        snapshot.assignment_fence,
     );
 
     let restored = SessionStore::with_persistence(&ledger, 10, 50);
@@ -662,7 +676,7 @@ fn relevant_change_then_sanitization_cannot_look_safe_again() {
             &session.session_id,
             &todo.message_id,
             &"4".repeat(64),
-            Some(snapshot.assignment_fence),
+            snapshot.assignment_fence,
         )),
         Err(SessionMessageError::AssignmentHistoryLost { .. })
     ));
@@ -707,32 +721,73 @@ fn oversized_direct_reply_set_fails_closed_without_partial_fence() {
 }
 
 #[test]
-fn no_fence_completion_preserves_legacy_behavior() {
-    let store = SessionStore::default();
-    let session = store.start_session(None, None);
-    let todo = todo(&store, &session.session_id, "legacy completion");
-    // Assignment-local activity does not opt old callers into fenced semantics.
-    post_message(
-        &store,
-        &session.session_id,
-        SessionMessageKind::Guidance,
-        "legacy caller did not snapshot",
-        Some(&todo.message_id),
-        SessionMessagePriority::Normal,
-        false,
-    );
-    store
-        .complete_message(fenced_completion(
+fn historical_no_fence_completion_restores_for_query_but_cannot_replay() {
+    for explicit_historical_null in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("sessions.json");
+        let store = SessionStore::with_persistence(&ledger, 10, 50);
+        let session = store.start_session(None, None);
+        let todo = todo(&store, &session.session_id, "historical completion");
+        let snapshot = store
+            .get_assignment(&session.session_id, &todo.message_id)
+            .unwrap();
+        let input = fenced_completion(
             &session.session_id,
             &todo.message_id,
             &"5".repeat(64),
-            None,
-        ))
-        .unwrap();
-    assert_eq!(
-        answer_count(&store, &session.session_id, &todo.message_id),
-        1
-    );
+            snapshot.assignment_fence,
+        );
+        let first = store.complete_message(input.clone()).unwrap();
+        store.flush_persistence();
+        drop(store);
+
+        let mut raw: Value =
+            serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+        let record = raw["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|record| record["session_id"] == session.session_id)
+            .unwrap()
+            .as_object_mut()
+            .unwrap();
+        if explicit_historical_null {
+            record.insert(
+                "completion_assignment_fence_fingerprints".to_string(),
+                serde_json::json!({ todo.message_id.clone(): Value::Null }),
+            );
+            record.insert(
+                "completion_assignment_fence_tracking_complete".to_string(),
+                Value::Bool(true),
+            );
+        } else {
+            record.remove("completion_assignment_fence_fingerprints");
+            record.remove("completion_assignment_fence_tracking_complete");
+        }
+        std::fs::write(&ledger, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
+        let before_replay = std::fs::read(&ledger).unwrap();
+
+        let restored = SessionStore::with_persistence(&ledger, 10, 50);
+        let restored_todo = exact(&restored, &session.session_id, &todo.message_id);
+        assert_eq!(restored_todo.status, SessionMessageStatus::Resolved);
+        assert_eq!(
+            restored_todo.resolved_by_message_id.as_deref(),
+            Some(first.answer.message_id.as_str())
+        );
+        assert_eq!(
+            answer_count(&restored, &session.session_id, &todo.message_id),
+            1
+        );
+        assert!(matches!(
+            restored.complete_message(input.clone()),
+            Err(SessionMessageError::IdempotencyConflict)
+        ));
+        assert_eq!(std::fs::read(&ledger).unwrap(), before_replay);
+        assert_eq!(
+            answer_count(&restored, &session.session_id, &todo.message_id),
+            1
+        );
+    }
 }
 
 #[test]
@@ -768,7 +823,7 @@ fn fenced_completion_retains_direct_replies_for_idempotent_replay_at_message_cap
         &session.session_id,
         &todo.message_id,
         &"6".repeat(64),
-        Some(snapshot.assignment_fence),
+        snapshot.assignment_fence,
     );
     let first = store.complete_message(input.clone()).unwrap();
     assert!(!first.replayed);

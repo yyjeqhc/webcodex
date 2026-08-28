@@ -45,7 +45,11 @@ fn replace_input(session_id: &str, message_id: &str, message: &str) -> ReplaceSe
     }
 }
 
-fn completion_input(session_id: &str, message_id: &str) -> CompleteSessionMessageInput {
+fn completion_input(
+    session_id: &str,
+    message_id: &str,
+    expected_assignment_fence: String,
+) -> CompleteSessionMessageInput {
     CompleteSessionMessageInput {
         session_id: session_id.to_string(),
         message_id: message_id.to_string(),
@@ -55,7 +59,7 @@ fn completion_input(session_id: &str, message_id: &str) -> CompleteSessionMessag
         completion_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             .to_string(),
         author_session_id: None,
-        expected_assignment_fence: None,
+        expected_assignment_fence,
     }
 }
 
@@ -566,8 +570,16 @@ fn completion_first_then_replace_fails_without_mutation() {
         "complete first",
         SessionMessagePriority::Normal,
     );
+    let fence = store
+        .get_assignment(&session.session_id, &todo.message_id)
+        .unwrap()
+        .assignment_fence;
     let completion = store
-        .complete_message(completion_input(&session.session_id, &todo.message_id))
+        .complete_message(completion_input(
+            &session.session_id,
+            &todo.message_id,
+            fence,
+        ))
         .unwrap();
     assert!(matches!(
         store.replace_message(replace_input(
@@ -596,6 +608,10 @@ fn replace_first_then_old_completion_fails_without_answer() {
         "replace first",
         SessionMessagePriority::Normal,
     );
+    let old_fence = store
+        .get_assignment(&session.session_id, &todo.message_id)
+        .unwrap()
+        .assignment_fence;
     let replaced = store
         .replace_message(replace_input(
             &session.session_id,
@@ -604,11 +620,12 @@ fn replace_first_then_old_completion_fails_without_answer() {
         ))
         .unwrap();
     assert!(matches!(
-        store.complete_message(completion_input(&session.session_id, &todo.message_id)),
-        Err(SessionMessageError::AlreadyCompleted {
-            answer_message_id: None,
-            completion_id: None,
-        })
+        store.complete_message(completion_input(
+            &session.session_id,
+            &todo.message_id,
+            old_fence,
+        )),
+        Err(SessionMessageError::AssignmentStale { .. })
     ));
     let replies = store
         .list_messages(
@@ -643,8 +660,16 @@ fn completion_first_then_withdraw_does_not_overwrite_completion() {
         "completed",
         SessionMessagePriority::Normal,
     );
+    let fence = store
+        .get_assignment(&session.session_id, &todo.message_id)
+        .unwrap()
+        .assignment_fence;
     let completion = store
-        .complete_message(completion_input(&session.session_id, &todo.message_id))
+        .complete_message(completion_input(
+            &session.session_id,
+            &todo.message_id,
+            fence,
+        ))
         .unwrap();
     assert!(matches!(
         store.withdraw_message(&session.session_id, &todo.message_id),

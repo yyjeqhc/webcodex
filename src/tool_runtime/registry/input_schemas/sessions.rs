@@ -264,7 +264,7 @@ pub(crate) fn complete_session_message_input_schema() -> Value {
                 "minLength": 48,
                 "maxLength": 48,
                 "pattern": "^wsa1_[A-Za-z0-9_-]{43}$",
-                "description": "Optional semantic snapshot fence returned by get_session_assignment for this exact Session/todo. Pass unchanged to reject completion if assignment-local semantics changed. Omission preserves the legacy completion path."
+                "description": "Required semantic snapshot fence returned by get_session_assignment for this exact Session/todo. Pass it unchanged; assignment-local semantic changes fail closed before completion."
             },
             "tags": {
                 "type": "array",
@@ -274,7 +274,7 @@ pub(crate) fn complete_session_message_input_schema() -> Value {
             },
             "priority": session_message_priority_schema("Optional answer priority; defaults to normal.")
         },
-        "required": ["session_id", "message_id", "answer", "completion_key"],
+        "required": ["session_id", "message_id", "answer", "completion_key", "expected_assignment_fence"],
         "additionalProperties": false,
     })
 }

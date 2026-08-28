@@ -43,7 +43,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "get_session_assignment",
-            "Atomically read one exact open todo plus all retained direct replies and return an opaque assignment_fence for optional fenced complete_session_message. Unrelated Session traffic and ACK bookkeeping do not stale it; incomplete retained assignment history fails closed.",
+            "Atomically read one exact open todo plus all retained direct replies and return the opaque assignment_fence required by complete_session_message. Unrelated Session traffic and ACK bookkeeping do not stale it; incomplete retained assignment history fails closed.",
             get_session_assignment_input_schema(),
         ),
         tool_spec(
@@ -58,7 +58,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "complete_session_message",
-            "Atomically answer and resolve one exact open todo. Pass expected_assignment_fence from get_session_assignment to reject stale assignment context; omit it for legacy completion. completion_key keeps uncertain-result retries idempotent.",
+            "Atomically answer and resolve one exact open todo. expected_assignment_fence is required and must be the exact opaque fence from get_session_assignment; completion_key separately keeps uncertain-result retries idempotent.",
             complete_session_message_input_schema(),
         ),
         tool_spec(

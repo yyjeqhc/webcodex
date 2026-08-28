@@ -3112,31 +3112,18 @@ impl SessionStoreInner {
         }
 
         let todo_snapshot = record.messages[todo_index].as_ref().clone();
-        let has_assignment_fence = input
-            .expected_assignment_fence
-            .as_deref()
-            .map(validate_assignment_fence)
-            .transpose()?
-            .is_some();
-        let provided_assignment_fence_fingerprint = input
-            .expected_assignment_fence
-            .as_deref()
-            .map(assignment_fence_fingerprint);
+        validate_assignment_fence(&input.expected_assignment_fence)?;
+        let provided_assignment_fence_fingerprint =
+            assignment_fence_fingerprint(&input.expected_assignment_fence);
         if todo_snapshot.status == SessionMessageStatus::Resolved {
             match (
                 todo_snapshot.completion_id.as_deref(),
                 todo_snapshot.resolved_by_message_id.as_deref(),
             ) {
                 (None, None) => {
-                    if has_assignment_fence {
-                        return Err(SessionMessageError::AssignmentStale {
-                            current: current_assignment_state(record, &input.message_id)?,
-                            fresh_assignment_fence: None,
-                        });
-                    }
-                    return Err(SessionMessageError::AlreadyCompleted {
-                        answer_message_id: None,
-                        completion_id: None,
+                    return Err(SessionMessageError::AssignmentStale {
+                        current: current_assignment_state(record, &input.message_id)?,
+                        fresh_assignment_fence: None,
                     });
                 }
                 (Some(completion_id), Some(answer_message_id)) => {
@@ -3163,28 +3150,26 @@ impl SessionStoreInner {
                         .completion_assignment_fence_fingerprints
                         .get(&input.message_id)
                     {
-                        Some(stored_fingerprint) => {
-                            if stored_fingerprint.as_ref()
-                                != provided_assignment_fence_fingerprint.as_ref()
+                        Some(Some(stored_fingerprint)) => {
+                            if stored_fingerprint != &provided_assignment_fence_fingerprint
+                                || answer.author_session_id != input.author_session_id
                             {
                                 return Err(SessionMessageError::IdempotencyConflict);
                             }
-                            if stored_fingerprint.is_some()
-                                && answer.author_session_id != input.author_session_id
-                            {
-                                return Err(SessionMessageError::IdempotencyConflict);
-                            }
+                        }
+                        Some(None) => {
+                            // Historical completion with known no-fence provenance.
+                            // Current callers must never replay it as if their newly
+                            // supplied fence had been part of the original intent.
+                            return Err(SessionMessageError::IdempotencyConflict);
                         }
                         None if record.completion_assignment_fence_tracking_complete => {
                             return Err(SessionMessageError::InvalidCompletionState);
                         }
                         None => {
-                            // Pre-E3 completion: preserve the original no-fence
-                            // replay behavior, but never let a newly supplied fence
-                            // masquerade as the historical call.
-                            if provided_assignment_fence_fingerprint.is_some() {
-                                return Err(SessionMessageError::IdempotencyConflict);
-                            }
+                            // Historical completion predating fence metadata. Preserve
+                            // it for query/restore, but live replay cannot prove a match.
+                            return Err(SessionMessageError::IdempotencyConflict);
                         }
                     }
                     return Ok(CompleteSessionMessageOutcome {
@@ -3199,20 +3184,15 @@ impl SessionStoreInner {
         if todo_snapshot.completion_id.is_some() || todo_snapshot.resolved_by_message_id.is_some() {
             return Err(SessionMessageError::InvalidCompletionState);
         }
-        if let Some(fence) = input.expected_assignment_fence.as_deref() {
-            let current_assignment = open_assignment_state(record, &input.message_id)?;
-            let fresh_assignment_fence = assignment_fence_from_state(
-                &input.session_id,
-                &input.message_id,
-                &current_assignment,
-            );
-            if fresh_assignment_fence != fence {
-                let current = current_assignment_state(record, &input.message_id)?;
-                return Err(SessionMessageError::AssignmentStale {
-                    current,
-                    fresh_assignment_fence: Some(fresh_assignment_fence),
-                });
-            }
+        let current_assignment = open_assignment_state(record, &input.message_id)?;
+        let fresh_assignment_fence =
+            assignment_fence_from_state(&input.session_id, &input.message_id, &current_assignment);
+        if fresh_assignment_fence != input.expected_assignment_fence {
+            let current = current_assignment_state(record, &input.message_id)?;
+            return Err(SessionMessageError::AssignmentStale {
+                current,
+                fresh_assignment_fence: Some(fresh_assignment_fence),
+            });
         }
 
         let todo_revision = record
@@ -3262,9 +3242,9 @@ impl SessionStoreInner {
             .insert(answer.message_id.clone(), answer_revision);
         record.completion_assignment_fence_fingerprints.insert(
             input.message_id.clone(),
-            provided_assignment_fence_fingerprint,
+            Some(provided_assignment_fence_fingerprint),
         );
-        let protect_fenced_assignment_replies = has_assignment_fence;
+        let protect_fenced_assignment_replies = true;
         while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
             let protected_answer_id = answer.message_id.as_str();
             let protected_todo_id = input.message_id.as_str();

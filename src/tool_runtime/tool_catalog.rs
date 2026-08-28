@@ -345,7 +345,7 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "handoff",
         summary: "Handoff: use session_summary / session_handoff_summary; coordinator posts a todo, worker reads it once with get_session_assignment, then passes its fence to complete_session_message. Use observe_session_messages only for later generic deltas.",
-        manifest_purpose: "Coordinate independent Workflow Sessions through atomic assignment snapshots, optional fenced completions, and explicit generic message-state delta observation without sharing execution history, authority, subscriptions, or automatic wake-up.",
+        manifest_purpose: "Coordinate independent Workflow Sessions through atomic assignment snapshots, required assignment-fenced completions, and explicit generic message-state delta observation without sharing execution history, authority, subscriptions, or automatic wake-up.",
         tools: &[
             "session_summary",
             "post_session_message",

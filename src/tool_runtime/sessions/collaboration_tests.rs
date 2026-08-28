@@ -18,6 +18,13 @@ async fn baseline(store: &SessionStore, session_id: &str) -> SessionMessageObser
         .unwrap()
 }
 
+fn assignment_fence(store: &SessionStore, session_id: &str, todo_id: &str) -> String {
+    store
+        .get_assignment(session_id, todo_id)
+        .unwrap()
+        .assignment_fence
+}
+
 fn post(
     store: &SessionStore,
     session_id: &str,
@@ -144,7 +151,11 @@ async fn observe_session_messages_baseline_append_resolve_completion_and_replay(
         priority: SessionMessagePriority::Normal,
         completion_id: completion_id('a'),
         author_session_id: None,
-        expected_assignment_fence: None,
+        expected_assignment_fence: assignment_fence(
+            &store,
+            &session.session_id,
+            &completion_todo.message_id,
+        ),
     };
     let completion = store.complete_message(input.clone()).unwrap();
     assert!(!completion.replayed);
@@ -265,7 +276,11 @@ async fn observe_session_messages_retention_reports_history_loss_for_protected_t
             priority: SessionMessagePriority::Normal,
             completion_id: completion_id('b'),
             author_session_id: None,
-            expected_assignment_fence: None,
+            expected_assignment_fence: assignment_fence(
+                &store,
+                &session.session_id,
+                &todo.message_id,
+            ),
         })
         .unwrap();
 
@@ -680,7 +695,11 @@ fn collaboration_session_message_atomic_completion_is_correlated_and_idempotent(
         priority: SessionMessagePriority::High,
         completion_id: first_completion_id.clone(),
         author_session_id: Some(worker.session_id.clone()),
-        expected_assignment_fence: None,
+        expected_assignment_fence: assignment_fence(
+            &store,
+            &coordinator.session_id,
+            &todo.message_id,
+        ),
     };
 
     let completed = store.complete_message(input.clone()).unwrap();
@@ -806,6 +825,13 @@ fn collaboration_session_message_completion_rejects_invalid_targets_and_author()
         "question",
         SessionMessagePriority::Normal,
     );
+    let todo = post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Todo,
+        "todo",
+        SessionMessagePriority::Normal,
+    );
     let base = CompleteSessionMessageInput {
         session_id: session.session_id.clone(),
         message_id: question.message_id.clone(),
@@ -814,7 +840,7 @@ fn collaboration_session_message_completion_rejects_invalid_targets_and_author()
         priority: SessionMessagePriority::Normal,
         completion_id: completion_id('c'),
         author_session_id: None,
-        expected_assignment_fence: None,
+        expected_assignment_fence: assignment_fence(&store, &session.session_id, &todo.message_id),
     };
     assert!(matches!(
         store.complete_message(base.clone()),
@@ -828,13 +854,6 @@ fn collaboration_session_message_completion_rejects_invalid_targets_and_author()
         Err(SessionMessageError::UnknownMessage)
     ));
 
-    let todo = post(
-        &store,
-        &session.session_id,
-        SessionMessageKind::Todo,
-        "todo",
-        SessionMessagePriority::Normal,
-    );
     assert!(matches!(
         store.complete_message(CompleteSessionMessageInput {
             message_id: todo.message_id.clone(),
@@ -951,7 +970,11 @@ fn collaboration_session_message_completion_replays_after_restart_and_legacy_def
         priority: SessionMessagePriority::Normal,
         completion_id: completion_id('d'),
         author_session_id: Some(worker.session_id.clone()),
-        expected_assignment_fence: None,
+        expected_assignment_fence: assignment_fence(
+            &store,
+            &coordinator.session_id,
+            &todo.message_id,
+        ),
     };
     let first = store.complete_message(input.clone()).unwrap();
     // Completion success itself fences the async writer, so a fresh store can
@@ -1027,6 +1050,7 @@ fn collaboration_session_message_persistence_failure_is_uncertain_then_same_key_
         "durability failure",
         SessionMessagePriority::Normal,
     );
+    let assignment_fence = assignment_fence(&store, &session.session_id, &todo.message_id);
     store.flush_persistence();
     std::fs::remove_dir_all(&ledger_dir).unwrap();
     std::fs::write(&ledger_dir, b"block directory recreation").unwrap();
@@ -1039,7 +1063,7 @@ fn collaboration_session_message_persistence_failure_is_uncertain_then_same_key_
         priority: SessionMessagePriority::Normal,
         completion_id: completion_id('f'),
         author_session_id: None,
-        expected_assignment_fence: None,
+        expected_assignment_fence: assignment_fence,
     };
     assert!(matches!(
         store.complete_message(input.clone()),
@@ -1100,7 +1124,7 @@ fn collaboration_session_message_partial_persisted_completion_fails_closed() {
         priority: SessionMessagePriority::Normal,
         completion_id: completion_id('e'),
         author_session_id: None,
-        expected_assignment_fence: None,
+        expected_assignment_fence: assignment_fence(&store, &session.session_id, &todo.message_id),
     };
     store.complete_message(input.clone()).unwrap();
     store.flush_persistence();

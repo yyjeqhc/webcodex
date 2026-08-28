@@ -676,7 +676,7 @@ impl ToolRuntime {
         message_id: String,
         answer: String,
         completion_key: String,
-        expected_assignment_fence: Option<String>,
+        expected_assignment_fence: String,
         tags: Vec<String>,
         priority: sessions::SessionMessagePriority,
         trusted_recording_session_id: Option<String>,

@@ -73,15 +73,20 @@ role 名称应写在 instruction 文本中，不要在 `work_on_project` 上寻�
 ## 手动多窗口协作
 
 需要把一个有界独立子任务交给另一个窗口时，coordinator `C` 与 worker `W` 始终保持
-**不同的** Workflow Session。coordinator 在 `C` 发布 `todo`；`W` 读取
-`session_handoff_summary(C)` 与 exact `message_id`，所有工具调用、validation 与 review
-evidence 都保留在 `W`，完成后用 `complete_session_message` 原子创建一条 bounded answer
-并 resolve exact todo。`author_session_id` 优先来自实际记录 completion tool evidence 的 trusted
-recording Session；仅当不存在 recording Session 时才回退到 trusted current worker binding。
-caller 不能自行伪造该 provenance。
+**不同的** Workflow Session。coordinator 在 `C` 发布 `todo`；`W` 调用
+`get_session_assignment(session_id=C, message_id=<todo_id>)`，从同一次原子读取取得 exact
+todo、全部 retained direct replies（受上限约束）和 opaque `assignment_fence`。所有工具调用、
+validation 与 review evidence 都保留在 `W`；完成时调用 `complete_session_message`，同时传入
+exact `session_id=C`、`message_id`、caller `completion_key` 与原样的
+`expected_assignment_fence`，原子创建 bounded answer 并 resolve todo。`author_session_id` 只来自
+已经独立授权的 explicit `recording_session_id=W`；没有 recorder 时保持为空，不从 window、
+credential、project 或 legacy `mcp-session-id` 推断，caller 也不能伪造该 provenance。
 
-coordinator 可用 `list_session_messages(message_id=...)` / `reply_to=...` 精确读取 todo 与
-reply，然后重新观察权威的 project/Git/artifact state。worker execution history 不会复制到
+`list_session_messages(message_id=...)` / `reply_to=...` 仍用于通用浏览和结果读取，不是
+executable todo 的 assignment source。若 completion 返回 `assignment_stale`，必须重新评估
+返回的 current assignment 后才能使用其中 durable fresh fence；history-loss / oversize 不是
+blind retry 信号。`observe_session_messages` 只是可选的 generic delta observation，不属于上述
+happy path。coordinator 随后重新观察权威的 project/Git/artifact state。worker execution history 不会复制到
 `C`，知道 Session/message id 也不会获得 authority。任何 recording Session 都必须先通过
 统一 Session authorization，才能参与 ledger/lifecycle/provenance。project-scoped Session
 既要求当前 stored project authorization，也要求 creation-time immutable canonical authority-group

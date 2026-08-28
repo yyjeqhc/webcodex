@@ -1438,6 +1438,11 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
         .as_str()
         .expect("todo message id")
         .to_string();
+    let assignment_fence = runtime
+        .sessions
+        .get_assignment(&coordinator_id, &todo_id)
+        .unwrap()
+        .assignment_fence;
 
     let completion_arguments = with_mcp_recording_session(
         json!({
@@ -1445,6 +1450,7 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
             "message_id": todo_id,
             "answer": "Reviewed and completed under the explicit worker recorder.",
             "completion_key": "stateless-recorder-v1",
+            "expected_assignment_fence": assignment_fence.clone(),
             "author_session_id": "wc_sess_forged_should_not_win"
         }),
         &worker_id,
@@ -1476,6 +1482,7 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
         "Reviewed and completed under the explicit worker recorder.",
         "stateless-recorder-v1",
         "wc_sess_forged_should_not_win",
+        assignment_fence.as_str(),
     ] {
         assert!(
             !worker_audit.contains(private),
@@ -1490,19 +1497,46 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
         event.kind == "tool_call_finished" && event.tool_name == "complete_session_message"
     }));
 
+    let conflicting_recorder_arguments = with_mcp_recording_session(
+        json!({
+            "session_id": coordinator_id,
+            "message_id": todo_id,
+            "answer": "Reviewed and completed under the explicit worker recorder.",
+            "completion_key": "stateless-recorder-v1",
+            "expected_assignment_fence": assignment_fence.clone()
+        }),
+        &replay_worker_id,
+    );
+    let (status, conflicting_recorder_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        235,
+        "complete_session_message",
+        conflicting_recorder_arguments,
+        Some("legacy-session-must-not-affect-2026"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{conflicting_recorder_body}");
+    assert_eq!(conflicting_recorder_body["result"]["isError"], true);
+    assert_eq!(
+        conflicting_recorder_body["result"]["structuredContent"]["output"]["error_kind"],
+        "idempotency_conflict"
+    );
+
     let replay_arguments = with_mcp_recording_session(
         json!({
             "session_id": coordinator_id,
             "message_id": todo_id,
             "answer": "Reviewed and completed under the explicit worker recorder.",
-            "completion_key": "stateless-recorder-v1"
+            "completion_key": "stateless-recorder-v1",
+            "expected_assignment_fence": assignment_fence.clone()
         }),
-        &replay_worker_id,
+        &worker_id,
     );
     let (status, replay_body) = stateless_2026_tool_call(
         &service,
         "secret",
-        235,
+        240,
         "complete_session_message",
         replay_arguments,
         Some("legacy-session-must-not-affect-2026"),
@@ -1532,6 +1566,11 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
         .as_str()
         .unwrap()
         .to_string();
+    let missing_assignment_fence = runtime
+        .sessions
+        .get_assignment(&coordinator_id, &missing_todo_id)
+        .unwrap()
+        .assignment_fence;
     let (status, missing_body) = stateless_2026_tool_call(
         &service,
         "secret",
@@ -1541,7 +1580,8 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
             "session_id": coordinator_id,
             "message_id": missing_todo_id,
             "answer": "Compatibility completion without recorder.",
-            "completion_key": "stateless-no-recorder-v1"
+            "completion_key": "stateless-no-recorder-v1",
+            "expected_assignment_fence": missing_assignment_fence
         }),
         None,
     )
@@ -1570,6 +1610,11 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
         .as_str()
         .unwrap()
         .to_string();
+    let unknown_assignment_fence = runtime
+        .sessions
+        .get_assignment(&coordinator_id, &unknown_todo_id)
+        .unwrap()
+        .assignment_fence;
     let before_unknown = runtime
         .sessions
         .summary(&coordinator_id, Some(100))
@@ -1579,7 +1624,8 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
             "session_id": coordinator_id,
             "message_id": unknown_todo_id,
             "answer": "must not be written",
-            "completion_key": "unknown-recorder-must-fail"
+            "completion_key": "unknown-recorder-must-fail",
+            "expected_assignment_fence": unknown_assignment_fence
         }),
         "wc_sess_missing_recorder",
     );

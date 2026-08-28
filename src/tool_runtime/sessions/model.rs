@@ -325,13 +325,13 @@ pub(super) struct SessionRecord {
     /// Corrupt/legacy restore paths may clear this; assignment reads then remain
     /// fail-closed for that restored Session rather than guessing at lost history.
     pub(super) assignment_history_tracking_complete: bool,
-    /// Exact-fence replay metadata keyed by completed todo. Values are SHA-256
-    /// fingerprints of the opaque fence; `None` records an E3-era legacy-style
-    /// no-fence completion without exposing the raw fence.
+    /// Exact-fence replay metadata keyed by completed todo. Canonical live
+    /// completions store `Some(SHA-256 fingerprint)`; `None` is retained only to
+    /// represent historical no-fence completion metadata without inventing a fence.
     pub(super) completion_assignment_fence_fingerprints: BTreeMap<String, Option<String>>,
-    /// True when every retained completion in this Session is known to carry an
-    /// explicit E3 completion-fence metadata entry. Legacy restores keep this
-    /// false while preserving exact entries added after upgrade.
+    /// True when every retained completion in this Session has known fence
+    /// metadata. A historical `None` remains known no-fence history and is never
+    /// admissible for live completion replay.
     pub(super) completion_assignment_fence_tracking_complete: bool,
     pub(super) project_instructions: Option<ProjectInstructionsSnapshot>,
 }
@@ -633,12 +633,13 @@ pub(super) struct PersistedSessionRecord {
     /// restore path can independently prove no message was ever evicted.
     #[serde(default)]
     pub(super) assignment_history_tracking_complete: bool,
-    /// Additive E3 completion replay metadata. Raw assignment fences are never
-    /// persisted here; only SHA-256 fingerprints (or null for no-fence calls).
+    /// Additive completion replay metadata. Raw assignment fences are never
+    /// persisted here; canonical live rows store SHA-256 fingerprints, while
+    /// historical null values remain representable only for read-only compatibility.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) completion_assignment_fence_fingerprints: BTreeMap<String, Option<String>>,
-    /// Missing legacy field keeps old no-fence replay compatibility while new
-    /// canonical Sessions can fail closed on missing completion metadata.
+    /// Missing historical metadata remains distinguishable so restore/query can
+    /// preserve old rows without fabricating a fence; live replay still fails closed.
     #[serde(default)]
     pub(super) completion_assignment_fence_tracking_complete: bool,
     /// Additive v1 field. Cumulative number of events ever appended, including
@@ -1084,9 +1085,9 @@ pub(crate) struct CompleteSessionMessageInput {
     pub(crate) priority: SessionMessagePriority,
     pub(crate) completion_id: String,
     pub(crate) author_session_id: Option<String>,
-    /// Optional opaque fence returned by get_session_assignment. Omission keeps
-    /// the pre-E3 completion behavior for compatibility.
-    pub(crate) expected_assignment_fence: Option<String>,
+    /// Required opaque semantic snapshot fence returned by get_session_assignment.
+    /// It is independent of completion idempotency, observation, and context ACKs.
+    pub(crate) expected_assignment_fence: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

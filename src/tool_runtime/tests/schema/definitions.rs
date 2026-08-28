@@ -186,12 +186,12 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
         .is_err(),
         "delete_files must remain legacy route metadata only, not ToolCall parseable"
     );
-    // A ToolDefinition may be `ModelHidden`: dispatched but withheld from the
-    // model-facing surface. These are duplicate-granularity and low-level
-    // plumbing tools the canonical coding surface already covers. The set is
-    // intentionally fixed and documented here so an accidental hide is caught.
-    // The legacy single-purpose edit tools are no longer ToolDefinitions at
-    // all, so they are absent here.
+    // A ToolDefinition may be `ModelHidden`: kernel-known and dispatchable only
+    // through an adapter that explicitly projects it, or retained as compatibility
+    // plumbing outside the ordinary model-facing registry. The set is intentionally
+    // fixed and documented here so an accidental hide/exposure is caught. The
+    // legacy single-purpose edit tools are no longer ToolDefinitions at all, so
+    // they are absent here.
     let expected_hidden: BTreeSet<&str> = [
         "start_session",
         "start_coding_task",
@@ -202,6 +202,10 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
         "skill_install",
         "skill_activate",
         "skill_remove_revision",
+        "memory_search",
+        "memory_read",
+        "memory_set",
+        "memory_delete",
     ]
     .into_iter()
     .collect();

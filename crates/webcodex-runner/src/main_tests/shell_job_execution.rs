@@ -184,10 +184,10 @@ fn shell_job_rejects_cwd_symlink_escape() {
     let project = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     std::os::unix::fs::symlink(outside.path(), project.path().join("outside")).unwrap();
-    let policy = AgentPolicy {
+    let policy = RunnerPolicy {
         allow_cwd_anywhere: false,
         allowed_roots: vec![project.path().to_path_buf()],
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     };
 
     let result = run_shell(

@@ -15,7 +15,7 @@ RUNTIME_PROJECT="agent:${CLIENT_ID}:${PROJECT_ID}"
 TOKEN="webcodex-claude-provider-e2e-only"
 TMP_ROOT=""
 SERVER_PID=""
-AGENT_PID=""
+RUNNER_PID=""
 PASS_COUNT=0
 
 ok() {
@@ -49,7 +49,7 @@ stop_process() {
 }
 
 cleanup() {
-    stop_process "${AGENT_PID:-}"
+    stop_process "${RUNNER_PID:-}"
     stop_process "${SERVER_PID:-}"
     if [ -n "${TMP_ROOT:-}" ]; then
         rm -rf "$TMP_ROOT"
@@ -195,7 +195,7 @@ timeout_secs = 30
 EOF
 }
 
-start_agent() {
+start_runner() {
     HOME="$ISOLATED_HOME" \
     XDG_CONFIG_HOME="$ISOLATED_HOME/.config" \
     XDG_DATA_HOME="$ISOLATED_HOME/.local/share" \
@@ -203,13 +203,13 @@ start_agent() {
     CLAUDE_CONFIG_DIR="$ISOLATED_HOME/.claude-e2e" \
     RUST_LOG=warn \
         "$ROOT/target/debug/webcodex-runner" --config "$AGENT_CONFIG" \
-        >"$AGENT_LOG" 2>&1 &
-    AGENT_PID=$!
+        >"$RUNNER_LOG" 2>&1 &
+    RUNNER_PID=$!
     wait_for_agent || fail "agent did not register"
 }
 
 claude_process_groups() {
-    ps -eo ppid=,pgid= | awk -v parent="$AGENT_PID" '$1 == parent {print $2}' | sort -u
+    ps -eo ppid=,pgid= | awk -v parent="$RUNNER_PID" '$1 == parent {print $2}' | sort -u
 }
 
 assert_groups_gone() {
@@ -249,7 +249,7 @@ FIXTURE="$TMP_ROOT/fixture"
 ISOLATED_HOME="$TMP_ROOT/home"
 AGENT_CONFIG="$TMP_ROOT/agent.toml"
 SERVER_LOG="$TMP_ROOT/server.log"
-AGENT_LOG="$TMP_ROOT/agent.log"
+RUNNER_LOG="$TMP_ROOT/agent.log"
 mkdir -p "$DATA_DIR" "$PROJECTS_DIR" "$FIXTURE" \
     "$ISOLATED_HOME/.config" "$ISOLATED_HOME/.local/share" \
     "$ISOLATED_HOME/.cache" "$ISOLATED_HOME/.claude-e2e"
@@ -277,7 +277,7 @@ wait_for_port "$PORT" || fail "server port did not open"
 ok "isolated server started"
 
 write_agent_config claude_code_then_native
-start_agent
+start_runner
 ok "fallback-strategy agent registered"
 
 TOOLS_BEFORE="$TMP_ROOT/tools-before.json"
@@ -347,13 +347,13 @@ ok "public MCP tool set stayed identical after Claude discovery"
 
 FIRST_GROUPS="$(claude_process_groups)"
 [ -n "$FIRST_GROUPS" ] || fail "running Claude process group was not observable"
-stop_process "$AGENT_PID"
-AGENT_PID=""
+stop_process "$RUNNER_PID"
+RUNNER_PID=""
 assert_groups_gone "$FIRST_GROUPS"
 ok "fallback-strategy Claude process group reaped"
 
 write_agent_config claude_code
-start_agent
+start_runner
 ok "strict Claude agent registered"
 
 # Strict `claude_code` cannot map a compatible search tool (Claude Code builds
@@ -387,8 +387,8 @@ ok "strict search recorded Claude, no fallback, no write, capability error"
 
 SECOND_GROUPS="$(claude_process_groups)"
 [ -n "$SECOND_GROUPS" ] || fail "strict Claude process group was not observable"
-stop_process "$AGENT_PID"
-AGENT_PID=""
+stop_process "$RUNNER_PID"
+RUNNER_PID=""
 assert_groups_gone "$SECOND_GROUPS"
 ok "strict Claude process group reaped"
 

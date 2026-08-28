@@ -23,7 +23,7 @@ fn register_project_writes_valid_toml_into_projects_dir() {
     assert_eq!(value["overwritten"], false);
 
     let content = std::fs::read_to_string(projects_dir.join("demo.toml")).unwrap();
-    let parsed = parse_agent_project_toml(&content).unwrap();
+    let parsed = parse_runner_project_toml(&content).unwrap();
     assert_eq!(parsed.id, "demo");
     assert_eq!(parsed.name.as_deref(), Some("Demo"));
     assert_eq!(parsed.path, project_dir.to_string_lossy());
@@ -60,7 +60,7 @@ fn resolve_or_register_project_persists_and_reuses_canonical_directory_without_t
 
     let config_path = projects_dir.join(format!("{project_id}.toml"));
     let persisted =
-        parse_agent_project_toml(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        parse_runner_project_toml(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
     assert_eq!(persisted.id, project_id);
     assert_eq!(
         Path::new(&persisted.path),
@@ -79,7 +79,7 @@ fn resolve_or_register_project_persists_and_reuses_canonical_directory_without_t
     assert_eq!(target_entries_after, target_entries_before);
     assert!(!project_dir.join(".git").exists());
 
-    let reloaded = load_agent_project_summaries_from_dir(&projects_dir);
+    let reloaded = load_runner_project_summaries_from_dir(&projects_dir);
     assert_eq!(reloaded.len(), 1);
     assert_eq!(reloaded[0].id, project_id);
     let second = project_ok(handle_resolve_or_register_project(
@@ -302,10 +302,10 @@ fn resolve_or_register_project_rejects_invalid_non_directory_and_disallowed_path
     }
     assert!(!projects_dir.exists());
 
-    let unrestricted = AgentPolicy {
+    let unrestricted = RunnerPolicy {
         allow_cwd_anywhere: true,
         allowed_roots: Vec::new(),
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     };
     // Dangerous system roots are platform-specific: `/etc` on Unix,
     // `C:\Windows` on Windows (drive roots are also rejected).
@@ -356,10 +356,10 @@ fn resolve_or_register_project_rejects_unc_and_non_local_disk_paths() {
     assert!(!projects_dir.exists(), "no registration may be attempted");
 
     // An allowed_roots entry naming a UNC share must not bypass the rule.
-    let unc_allowed = AgentPolicy {
+    let unc_allowed = RunnerPolicy {
         allow_cwd_anywhere: false,
         allowed_roots: vec![PathBuf::from(r"\\server\share\repo")],
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     };
     let error = project_error_value(handle_resolve_or_register_project(
         &unc_allowed,
@@ -508,7 +508,7 @@ fn auto_project_id_collision_extends_hash_without_overwriting() {
     // Match the Runner's project identity: raw bytes on Unix, normalized
     // (lowercased, `\\?\` stripped) on Windows.
     #[cfg(windows)]
-    let identity = webcodex_agent_config::paths::normalize_path_identity(&canonical);
+    let identity = webcodex_runner_config::paths::normalize_path_identity(&canonical);
     #[cfg(not(windows))]
     let identity = canonical.to_string_lossy().to_string();
     let digest = format!("{:x}", Sha256::digest(identity.as_bytes()));

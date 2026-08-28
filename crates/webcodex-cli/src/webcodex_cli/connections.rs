@@ -30,7 +30,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use webcodex_agent_config::paths;
+use webcodex_runner_config::paths;
 
 /// Directory-name prefix reserved for in-progress and salvaged state.
 ///

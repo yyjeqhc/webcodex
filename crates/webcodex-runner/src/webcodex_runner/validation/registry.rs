@@ -1,4 +1,4 @@
-//! Agent-side validation adapter registry (execution metadata only).
+//! Runner-side validation adapter registry (execution metadata only).
 //!
 //! Metadata here is intentionally declarative. Parser and command construction
 //! live with each adapter implementation so the server never holds function

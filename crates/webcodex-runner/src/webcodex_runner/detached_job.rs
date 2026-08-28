@@ -288,7 +288,7 @@ impl DetachedJobStore {
         hasher.update(server_url.as_bytes());
         let namespace = format!("{:x}", hasher.finalize());
         Ok(
-            webcodex_agent_config::paths::default_client_state_base_dir()?
+            webcodex_runner_config::paths::default_client_state_base_dir()?
                 .join("runner-detached-jobs-v1")
                 .join(namespace),
         )

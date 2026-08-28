@@ -37,7 +37,7 @@ fn file_request_kind_includes_edit_and_basic_ops() {
 }
 
 #[test]
-fn project_overview_agent_request_returns_metadata_without_contents() {
+fn project_overview_runner_request_returns_metadata_without_contents() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());
     std::fs::write(tmp.path().join("Cargo.toml"), "private manifest content").unwrap();

@@ -301,7 +301,7 @@ impl RunnerExitDiagnostics {
 }
 
 fn default_root_for_runner(client_id: &str, server_url: &str) -> Result<PathBuf, String> {
-    let base = webcodex_agent_config::paths::default_client_state_base_dir()?;
+    let base = webcodex_runner_config::paths::default_client_state_base_dir()?;
     Ok(default_root_for_runner_with_base(
         &base, client_id, server_url,
     ))

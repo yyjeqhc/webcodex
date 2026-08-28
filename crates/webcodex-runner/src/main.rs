@@ -16,11 +16,11 @@ use webcodex_runner::shutdown::{lock_unpoison, ActivityTracker, BackgroundThread
 mod job_manager_tests;
 mod webcodex_runner;
 
-use webcodex_agent_config as agent_init;
 use webcodex_core::{
     apply_edits_shared, artifact_policy, build_info, lsp_bridge, mcp_gateway, shell_protocol,
     validation_bridge,
 };
+use webcodex_runner_config as runner_config;
 use webcodex_sandbox as command_sandbox;
 use webcodex_workspace::{project_overview, workspace_checkpoint};
 
@@ -41,7 +41,7 @@ use shell_protocol::{
 };
 
 #[cfg(test)]
-use agent_init::{TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET};
+use runner_config::{TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET};
 #[cfg(test)]
 use shell_protocol::{
     AgentEnvelope, AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
@@ -61,17 +61,17 @@ use webcodex_runner::output_text::{OutputTextDecoder, OutputTextSource};
 use webcodex_runner::QuicClientConfig;
 #[cfg(test)]
 use webcodex_runner::{
-    agent_project_summary, auto_transport_plan, build_ws_request, default_quic_alpn,
-    default_quic_connect_timeout_secs, default_quic_keepalive_interval_secs,
-    default_websocket_connect_timeout_secs, effective_transport, handle_project_op,
-    load_agent_project_summaries_from_dir, non_empty_token, parse_agent_project_toml,
-    quic_client_bind_addr_for, resolve_quic_config, resolve_quic_server_addrs, run_shell,
-    run_shell_with_profiles, server_url_to_ws, sha256_hex_bytes, validate_project_path_policy,
-    websocket_session, AgentRuntimeState, ShellProfileConfig, CLIENT_PROFILE_ERROR,
-    DEFAULT_MAX_CONCURRENT_JOBS, WS_OUTGOING_CAPACITY,
+    auto_transport_plan, build_ws_request, default_quic_alpn, default_quic_connect_timeout_secs,
+    default_quic_keepalive_interval_secs, default_websocket_connect_timeout_secs,
+    effective_transport, handle_project_op, load_runner_project_summaries_from_dir,
+    non_empty_token, parse_runner_project_toml, quic_client_bind_addr_for, resolve_quic_config,
+    resolve_quic_server_addrs, run_shell, run_shell_with_profiles, runner_project_summary,
+    server_url_to_ws, sha256_hex_bytes, validate_project_path_policy, websocket_session,
+    RunnerRuntimeState, ShellProfileConfig, CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS,
+    WS_OUTGOING_CAPACITY,
 };
 use webcodex_runner::{
-    client_profile_agent_config, configured_prepared_shell_job_command,
+    client_profile_runner_config, configured_prepared_shell_job_command,
     configured_shell_job_command, configured_validation_job_command, cwd_allowed,
     default_config_path, dispatch_request, err_cmd, handle_apply_text_edits_file_request,
     handle_artifact_file_request, handle_basic_file_request, handle_checkpoint_file_request,
@@ -79,10 +79,10 @@ use webcodex_runner::{
     is_basic_file_request_kind, is_checkpoint_request_kind, is_project_op,
     is_structured_edit_request_kind, load_config, max_concurrent_jobs, ok_cmd,
     prepare_detached_process_launch, projects_dir, resolve_prepared_shell_profile,
-    resolve_requested_path, run_agent, validate_client_profile,
-    validate_structured_edit_agent_path, AgentConfig, AgentPolicy, AgentProjectCache, AgentSink,
-    CommandResult, HotAgentConfig, HttpSendConfig, PreparedShellProfile, PreparedShellProfileCache,
-    ReloadableAgentConfig, ShellConfig, SubmitResultError,
+    resolve_requested_path, run_runner, validate_client_profile,
+    validate_structured_edit_runner_path, CommandResult, HotRunnerConfig, HttpSendConfig,
+    PreparedShellProfile, PreparedShellProfileCache, ReloadableRunnerConfig, RunnerConfig,
+    RunnerPolicy, RunnerProjectCache, RunnerSink, ShellConfig, SubmitResultError,
 };
 use webcodex_runner::{is_transport_failure, SshConfig, SshConnectionPool};
 use webcodex_runner::{
@@ -212,7 +212,7 @@ impl Drop for JobManagerOwnerLifetime {
 #[derive(Debug, Clone)]
 struct PendingJobStart {
     generation: u64,
-    policy: AgentPolicy,
+    policy: RunnerPolicy,
     shell: ShellConfig,
     ssh: SshConfig,
     projects_dir: PathBuf,
@@ -230,7 +230,7 @@ struct JobManager {
     lifecycle: Arc<Mutex<()>>,
     shutting_down: Arc<AtomicBool>,
     workers: ActivityTracker,
-    current_sink: Arc<Mutex<Option<AgentSink>>>,
+    current_sink: Arc<Mutex<Option<RunnerSink>>>,
     pending_job_updates: Arc<Mutex<HashMap<String, JobUpdateDeliveryQueue>>>,
     delivery_signal: Arc<JobUpdateDeliverySignal>,
     owner_lifetime: Option<Arc<JobManagerOwnerLifetime>>,
@@ -438,7 +438,7 @@ fn job_update_from_delivery(
 
 fn spawn_job_update_delivery_worker(
     jobs: Weak<Mutex<HashMap<String, RunningJob>>>,
-    current_sink: Weak<Mutex<Option<AgentSink>>>,
+    current_sink: Weak<Mutex<Option<RunnerSink>>>,
     pending_job_updates: Weak<Mutex<HashMap<String, JobUpdateDeliveryQueue>>>,
     signal: Arc<JobUpdateDeliverySignal>,
 ) {
@@ -579,7 +579,7 @@ enum OutputChunk {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum AgentCliAction {
+enum RunnerCliAction {
     Run {
         config_path: PathBuf,
         once: bool,
@@ -596,7 +596,7 @@ fn usage() -> &'static str {
      Options:\n\
        -h, --help                 Print help and exit\n\
        -V, --version              Print version and exit\n\
-       -c, --config PATH          Agent config path for normal runtime\n\
+       -c, --config PATH          Runner config path for normal runtime\n\
        --profile NAME             Client config profile for default config path\n\
        --once                     Complete one successful poll, then exit (polling transport)\n\n\
      With --profile, the default config path is derived under\n\
@@ -621,11 +621,11 @@ fn usage() -> &'static str {
        max_output_bytes = 262144\n"
 }
 
-fn parse_args() -> Result<AgentCliAction, String> {
-    parse_agent_args(std::env::args().skip(1))
+fn parse_args() -> Result<RunnerCliAction, String> {
+    parse_runner_args(std::env::args().skip(1))
 }
 
-fn parse_agent_args<I, S>(args: I) -> Result<AgentCliAction, String>
+fn parse_runner_args<I, S>(args: I) -> Result<RunnerCliAction, String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -637,14 +637,14 @@ where
     if args.len() == 1 {
         match args[0].as_str() {
             "--help" | "-h" => {
-                return Ok(AgentCliAction::Exit {
+                return Ok(RunnerCliAction::Exit {
                     code: 0,
                     stdout: usage().to_string(),
                     stderr: String::new(),
                 });
             }
             "--version" | "-V" => {
-                return Ok(AgentCliAction::Exit {
+                return Ok(RunnerCliAction::Exit {
                     code: 0,
                     stdout: build_info::version_output("webcodex-runner"),
                     stderr: String::new(),
@@ -664,14 +664,14 @@ where
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
-                return Ok(AgentCliAction::Exit {
+                return Ok(RunnerCliAction::Exit {
                     code: 0,
                     stdout: usage().to_string(),
                     stderr: String::new(),
                 });
             }
             "--version" | "-V" => {
-                return Ok(AgentCliAction::Exit {
+                return Ok(RunnerCliAction::Exit {
                     code: 0,
                     stdout: build_info::version_output("webcodex-runner"),
                     stderr: String::new(),
@@ -700,14 +700,14 @@ where
         .transpose()?
     {
         if !config_explicit {
-            config_path = client_profile_agent_config(&profile)?;
+            config_path = client_profile_runner_config(&profile)?;
         }
     }
-    Ok(AgentCliAction::Run { config_path, once })
+    Ok(RunnerCliAction::Run { config_path, once })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AgentHttpErrorKind {
+enum RunnerHttpErrorKind {
     ServerUnavailable,
     Auth,
     NotFound,
@@ -729,8 +729,8 @@ enum AgentHttpErrorKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct AgentHttpError {
-    kind: AgentHttpErrorKind,
+struct RunnerHttpError {
+    kind: RunnerHttpErrorKind,
     path: String,
     summary: String,
     /// Bounded structured server error, when the response contract supplied
@@ -738,21 +738,21 @@ struct AgentHttpError {
     server_error: Option<String>,
 }
 
-impl AgentHttpError {
+impl RunnerHttpError {
     fn status(path: &str, status: reqwest::StatusCode, body: &str) -> Self {
         let kind = match status.as_u16() {
-            401 | 403 => AgentHttpErrorKind::Auth,
-            404 => AgentHttpErrorKind::NotFound,
+            401 | 403 => RunnerHttpErrorKind::Auth,
+            404 => RunnerHttpErrorKind::NotFound,
             // Explicitly retryable request-level statuses.
-            408 | 429 => AgentHttpErrorKind::Status,
-            code if (500..600).contains(&code) => AgentHttpErrorKind::ServerUnavailable,
-            code if (400..500).contains(&code) => AgentHttpErrorKind::ClientRejected,
-            _ if looks_like_proxy_html_error(body) => AgentHttpErrorKind::ServerUnavailable,
-            _ => AgentHttpErrorKind::Status,
+            408 | 429 => RunnerHttpErrorKind::Status,
+            code if (500..600).contains(&code) => RunnerHttpErrorKind::ServerUnavailable,
+            code if (400..500).contains(&code) => RunnerHttpErrorKind::ClientRejected,
+            _ if looks_like_proxy_html_error(body) => RunnerHttpErrorKind::ServerUnavailable,
+            _ => RunnerHttpErrorKind::Status,
         };
         let server_error = structured_body_error(body);
         let mut summary = http_status_summary(status);
-        if kind == AgentHttpErrorKind::ClientRejected {
+        if kind == RunnerHttpErrorKind::ClientRejected {
             if let Some(detail) = server_error.as_deref() {
                 summary = format!("{}: {}", summary, detail);
             }
@@ -768,13 +768,13 @@ impl AgentHttpError {
     fn request(path: &str, error: reqwest::Error) -> Self {
         let chain = error_chain_text(&error);
         let kind = if error.is_builder() || looks_like_fatal_tls_request(&chain) {
-            AgentHttpErrorKind::Config
+            RunnerHttpErrorKind::Config
         } else if looks_like_server_down_request(&error, &chain) {
-            AgentHttpErrorKind::ServerUnavailable
+            RunnerHttpErrorKind::ServerUnavailable
         } else if error.is_timeout() {
-            AgentHttpErrorKind::RequestTimeout
+            RunnerHttpErrorKind::RequestTimeout
         } else {
-            AgentHttpErrorKind::Request
+            RunnerHttpErrorKind::Request
         };
         Self {
             kind,
@@ -786,7 +786,7 @@ impl AgentHttpError {
 
     fn decode_transient(path: &str, summary: String) -> Self {
         Self {
-            kind: AgentHttpErrorKind::DecodeTransient,
+            kind: RunnerHttpErrorKind::DecodeTransient,
             path: bounded_endpoint_path(path),
             summary,
             server_error: None,
@@ -795,7 +795,7 @@ impl AgentHttpError {
 
     fn protocol_decode(path: &str, summary: String) -> Self {
         Self {
-            kind: AgentHttpErrorKind::ProtocolDecode,
+            kind: RunnerHttpErrorKind::ProtocolDecode,
             path: bounded_endpoint_path(path),
             summary,
             server_error: None,
@@ -803,45 +803,45 @@ impl AgentHttpError {
     }
 }
 
-impl std::fmt::Display for AgentHttpError {
+impl std::fmt::Display for RunnerHttpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind {
-            AgentHttpErrorKind::ServerUnavailable => {
+            RunnerHttpErrorKind::ServerUnavailable => {
                 write!(f, "server unavailable for {}: {}", self.path, self.summary)
             }
-            AgentHttpErrorKind::Auth => write!(
+            RunnerHttpErrorKind::Auth => write!(
                 f,
                 "authentication failed for {}: {}; check agent token/config",
                 self.path, self.summary
             ),
-            AgentHttpErrorKind::NotFound => write!(
+            RunnerHttpErrorKind::NotFound => write!(
                 f,
                 "endpoint missing or incompatible server for {}: {}",
                 self.path, self.summary
             ),
-            AgentHttpErrorKind::Config => {
+            RunnerHttpErrorKind::Config => {
                 write!(
                     f,
                     "HTTP/TLS configuration failed for {}: {}",
                     self.path, self.summary
                 )
             }
-            AgentHttpErrorKind::ClientRejected => {
+            RunnerHttpErrorKind::ClientRejected => {
                 write!(f, "server rejected {} request: {}", self.path, self.summary)
             }
-            AgentHttpErrorKind::Status
-            | AgentHttpErrorKind::RequestTimeout
-            | AgentHttpErrorKind::Request => {
+            RunnerHttpErrorKind::Status
+            | RunnerHttpErrorKind::RequestTimeout
+            | RunnerHttpErrorKind::Request => {
                 write!(f, "{} request failed: {}", self.path, self.summary)
             }
-            AgentHttpErrorKind::DecodeTransient => {
+            RunnerHttpErrorKind::DecodeTransient => {
                 write!(
                     f,
                     "transient response corruption for {}: {}",
                     self.path, self.summary
                 )
             }
-            AgentHttpErrorKind::ProtocolDecode => write!(
+            RunnerHttpErrorKind::ProtocolDecode => write!(
                 f,
                 "response from {} incompatible with server protocol: {}",
                 self.path, self.summary
@@ -875,25 +875,25 @@ struct RegisterError {
 }
 
 impl RegisterError {
-    fn from_http(error: AgentHttpError, client_id: &str) -> Self {
+    fn from_http(error: RunnerHttpError, client_id: &str) -> Self {
         let kind = match error.kind {
-            AgentHttpErrorKind::ServerUnavailable
-            | AgentHttpErrorKind::Status
-            | AgentHttpErrorKind::RequestTimeout
-            | AgentHttpErrorKind::Request
-            | AgentHttpErrorKind::DecodeTransient => RegisterErrorKind::Transient,
-            AgentHttpErrorKind::Auth => RegisterErrorKind::Auth,
-            AgentHttpErrorKind::NotFound => RegisterErrorKind::EndpointMissing,
-            AgentHttpErrorKind::Config => RegisterErrorKind::Config,
-            AgentHttpErrorKind::ProtocolDecode => RegisterErrorKind::Protocol,
-            AgentHttpErrorKind::ClientRejected
+            RunnerHttpErrorKind::ServerUnavailable
+            | RunnerHttpErrorKind::Status
+            | RunnerHttpErrorKind::RequestTimeout
+            | RunnerHttpErrorKind::Request
+            | RunnerHttpErrorKind::DecodeTransient => RegisterErrorKind::Transient,
+            RunnerHttpErrorKind::Auth => RegisterErrorKind::Auth,
+            RunnerHttpErrorKind::NotFound => RegisterErrorKind::EndpointMissing,
+            RunnerHttpErrorKind::Config => RegisterErrorKind::Config,
+            RunnerHttpErrorKind::ProtocolDecode => RegisterErrorKind::Protocol,
+            RunnerHttpErrorKind::ClientRejected
                 if is_active_instance_lease_conflict(client_id, error.server_error.as_deref()) =>
             {
                 RegisterErrorKind::LeaseConflict
             }
-            AgentHttpErrorKind::ClientRejected => RegisterErrorKind::Rejected,
+            RunnerHttpErrorKind::ClientRejected => RegisterErrorKind::Rejected,
         };
-        let message = if error.kind == AgentHttpErrorKind::ProtocolDecode {
+        let message = if error.kind == RunnerHttpErrorKind::ProtocolDecode {
             format!(
                 "register response incompatible with server protocol: endpoint={} {}",
                 error.path, error.summary
@@ -977,44 +977,44 @@ impl PollError {
         }
     }
 
-    fn from_http(error: AgentHttpError, client_id: &str) -> Self {
+    fn from_http(error: RunnerHttpError, client_id: &str) -> Self {
         match error.kind {
-            AgentHttpErrorKind::ServerUnavailable => Self::new(
+            RunnerHttpErrorKind::ServerUnavailable => Self::new(
                 PollErrorKind::Transient,
                 format!(
                     "server unavailable while polling {}: {}",
                     error.path, error.summary
                 ),
             ),
-            AgentHttpErrorKind::Auth => Self::new(
+            RunnerHttpErrorKind::Auth => Self::new(
                 PollErrorKind::Auth,
                 format!(
                     "authentication failed while polling {}: {}; check agent token/config",
                     error.path, error.summary
                 ),
             ),
-            AgentHttpErrorKind::NotFound => Self::new(
+            RunnerHttpErrorKind::NotFound => Self::new(
                 PollErrorKind::EndpointMissing,
                 format!(
                     "poll endpoint missing or incompatible server while polling {}: {}",
                     error.path, error.summary
                 ),
             ),
-            AgentHttpErrorKind::Config => Self::new(
+            RunnerHttpErrorKind::Config => Self::new(
                 PollErrorKind::Config,
                 format!(
                     "HTTP/TLS configuration failed while polling {}: {}",
                     error.path, error.summary
                 ),
             ),
-            AgentHttpErrorKind::RequestTimeout => Self::new(
+            RunnerHttpErrorKind::RequestTimeout => Self::new(
                 PollErrorKind::Transient,
                 format!(
                     "poll request timed out while polling {}: {}",
                     error.path, error.summary
                 ),
             ),
-            AgentHttpErrorKind::ClientRejected
+            RunnerHttpErrorKind::ClientRejected
                 if is_unknown_polling_session(client_id, error.server_error.as_deref()) =>
             {
                 Self::new(
@@ -1025,28 +1025,28 @@ impl PollError {
                     ),
                 )
             }
-            AgentHttpErrorKind::ClientRejected => Self::new(
+            RunnerHttpErrorKind::ClientRejected => Self::new(
                 PollErrorKind::Rejected,
                 format!(
                     "server permanently rejected polling {}: {}",
                     error.path, error.summary
                 ),
             ),
-            AgentHttpErrorKind::Status | AgentHttpErrorKind::Request => Self::new(
+            RunnerHttpErrorKind::Status | RunnerHttpErrorKind::Request => Self::new(
                 PollErrorKind::Transient,
                 format!(
                     "poll request failed while polling {}: {}",
                     error.path, error.summary
                 ),
             ),
-            AgentHttpErrorKind::DecodeTransient => Self::new(
+            RunnerHttpErrorKind::DecodeTransient => Self::new(
                 PollErrorKind::Transient,
                 format!(
                     "transient poll response corruption: endpoint={} {}",
                     error.path, error.summary
                 ),
             ),
-            AgentHttpErrorKind::ProtocolDecode => Self::new(
+            RunnerHttpErrorKind::ProtocolDecode => Self::new(
                 PollErrorKind::Protocol,
                 format!(
                     "poll response incompatible with server protocol: endpoint={} {}",
@@ -1145,9 +1145,9 @@ pub(crate) const POLLING_DISPATCH_MAX_IN_FLIGHT: usize = 2;
 struct PollingDispatch {
     request_id: String,
     project_cache_invalidation_required: bool,
-    sink: AgentSink,
-    config: Arc<HotAgentConfig>,
-    runtime: Arc<ReloadableAgentConfig>,
+    sink: RunnerSink,
+    config: Arc<HotRunnerConfig>,
+    runtime: Arc<ReloadableRunnerConfig>,
     jobs: JobManager,
     persistent_shells: webcodex_runner::PersistentShellManager,
     projects_dir: PathBuf,
@@ -1286,7 +1286,7 @@ impl PollingDispatchSupervisor {
 
     fn record_completion(
         &mut self,
-        project_cache: &mut AgentProjectCache,
+        project_cache: &mut RunnerProjectCache,
         completion: PollingDispatchCompletion,
     ) -> Result<bool, SubmitResultError> {
         self.in_flight = self.in_flight.checked_sub(1).unwrap_or_else(|| {
@@ -1305,7 +1305,7 @@ impl PollingDispatchSupervisor {
     /// failure cannot be silently discarded by background dispatch.
     pub(crate) fn drain_completed(
         &mut self,
-        project_cache: &mut AgentProjectCache,
+        project_cache: &mut RunnerProjectCache,
     ) -> Result<(), PollError> {
         loop {
             match self.completion_rx.try_recv() {
@@ -1335,7 +1335,7 @@ impl PollingDispatchSupervisor {
     /// one worker completion (or shutdown) and only then polls again.
     pub(crate) fn wait_for_capacity_or_shutdown(
         &mut self,
-        project_cache: &mut AgentProjectCache,
+        project_cache: &mut RunnerProjectCache,
         shutdown: &AtomicBool,
     ) -> Result<(), PollError> {
         while !self.has_capacity() {
@@ -1370,7 +1370,7 @@ impl PollingDispatchSupervisor {
     /// completions get a short chance to expose a sibling fatal outcome.
     pub(crate) fn wait_for_shutdown_outcome(
         &mut self,
-        project_cache: &mut AgentProjectCache,
+        project_cache: &mut RunnerProjectCache,
         wait: Duration,
     ) -> Result<(), PollError> {
         let deadline = Instant::now() + wait;
@@ -1717,18 +1717,18 @@ fn decode_json_response<R>(
     status: reqwest::StatusCode,
     content_type: &str,
     body: BoundedResponseBody,
-) -> Result<R, AgentHttpError>
+) -> Result<R, RunnerHttpError>
 where
     R: serde::de::DeserializeOwned,
 {
     if body.bytes.iter().all(u8::is_ascii_whitespace) {
-        return Err(AgentHttpError::decode_transient(
+        return Err(RunnerHttpError::decode_transient(
             path,
             response_decode_summary(status, content_type, "empty response body"),
         ));
     }
     if looks_like_transient_proxy_response(content_type, &body.bytes) {
-        return Err(AgentHttpError::decode_transient(
+        return Err(RunnerHttpError::decode_transient(
             path,
             response_decode_summary(
                 status,
@@ -1738,7 +1738,7 @@ where
         ));
     }
     if body.exceeded_limit {
-        return Err(AgentHttpError::protocol_decode(
+        return Err(RunnerHttpError::protocol_decode(
             path,
             response_decode_summary(
                 status,
@@ -1759,19 +1759,19 @@ where
         );
         let summary = response_decode_summary(status, content_type, detail);
         if error.is_eof() {
-            AgentHttpError::decode_transient(path, summary)
+            RunnerHttpError::decode_transient(path, summary)
         } else {
-            AgentHttpError::protocol_decode(path, summary)
+            RunnerHttpError::protocol_decode(path, summary)
         }
     })
 }
 
 fn post_json<T, R>(
     client: &Client,
-    cfg: &AgentConfig,
+    cfg: &RunnerConfig,
     path: &str,
     body: &T,
-) -> Result<R, AgentHttpError>
+) -> Result<R, RunnerHttpError>
 where
     T: serde::Serialize + ?Sized,
     R: serde::de::DeserializeOwned,
@@ -1785,7 +1785,7 @@ fn post_json_with_auth<T, R>(
     token: &str,
     path: &str,
     body: &T,
-) -> Result<R, AgentHttpError>
+) -> Result<R, RunnerHttpError>
 where
     T: serde::Serialize + ?Sized,
     R: serde::de::DeserializeOwned,
@@ -1798,16 +1798,16 @@ where
     let resp = req
         .json(body)
         .send()
-        .map_err(|e| AgentHttpError::request(path, e))?;
+        .map_err(|e| RunnerHttpError::request(path, e))?;
     let status = resp.status();
     let content_type =
         bounded_response_content_type(resp.headers().get(reqwest::header::CONTENT_TYPE), token);
     let content_length = resp.content_length();
     if content_length.is_some_and(|length| length > AGENT_HTTP_RESPONSE_BODY_MAX_BYTES as u64) {
         if !status.is_success() {
-            return Err(AgentHttpError::status(path, status, ""));
+            return Err(RunnerHttpError::status(path, status, ""));
         }
-        return Err(AgentHttpError::protocol_decode(
+        return Err(RunnerHttpError::protocol_decode(
             path,
             response_decode_summary(
                 status,
@@ -1827,7 +1827,7 @@ where
     ) {
         Ok(body) => body,
         Err(error) if status.is_success() => {
-            return Err(AgentHttpError::decode_transient(
+            return Err(RunnerHttpError::decode_transient(
                 path,
                 response_decode_summary(
                     status,
@@ -1836,11 +1836,11 @@ where
                 ),
             ));
         }
-        Err(_) => return Err(AgentHttpError::status(path, status, "")),
+        Err(_) => return Err(RunnerHttpError::status(path, status, "")),
     };
     if !status.is_success() {
         let text = String::from_utf8_lossy(&body.bytes);
-        return Err(AgentHttpError::status(path, status, &text));
+        return Err(RunnerHttpError::status(path, status, &text));
     }
     decode_json_response(path, status, &content_type, body)
 }
@@ -1858,7 +1858,7 @@ fn disable_job_state_reconciliation_for_test() -> bool {
     )
 }
 
-fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
+fn runner_register_capabilities(cfg: &RunnerConfig) -> ShellClientCapabilities {
     let mut capabilities = cfg.capabilities.clone().unwrap_or_default();
     capabilities.jobs = true;
     capabilities.file_read = true;
@@ -2107,13 +2107,13 @@ fn project_registration_bootstrap(
 
 #[cfg(test)]
 fn build_register_request(
-    cfg: &AgentConfig,
+    cfg: &RunnerConfig,
     projects: Vec<ShellAgentProjectSummary>,
     protocol_version: &str,
     agent_instance_id: &str,
     prepared_cache_count: usize,
 ) -> ShellClientRegisterRequest {
-    let runtime = ReloadableAgentConfig::new(cfg.clone(), PathBuf::new());
+    let runtime = ReloadableRunnerConfig::new(cfg.clone(), PathBuf::new());
     build_register_request_with_provider_status(
         cfg,
         &runtime,
@@ -2130,8 +2130,8 @@ fn build_register_request(
 }
 
 fn build_register_request_with_provider_status(
-    cfg: &AgentConfig,
-    runtime: &ReloadableAgentConfig,
+    cfg: &RunnerConfig,
+    runtime: &ReloadableRunnerConfig,
     projects: Option<Vec<ShellAgentProjectSummary>>,
     protocol_version: &str,
     agent_instance_id: &str,
@@ -2143,7 +2143,7 @@ fn build_register_request_with_provider_status(
     u64,
 ) {
     let hot = runtime.snapshot();
-    let mut capabilities = agent_register_capabilities(cfg);
+    let mut capabilities = runner_register_capabilities(cfg);
     capabilities.agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
     let coding_agent_providers = runtime
         .coding_agents()
@@ -2191,7 +2191,7 @@ fn build_register_request_with_provider_status(
 }
 
 /// Unix timestamp when this runner process started. Captured on first call;
-/// `run_agent` initializes it at startup so registration payloads report the
+/// `run_runner` initializes it at startup so registration payloads report the
 /// real process start, not the first register time after a reconnect.
 fn process_started_at() -> i64 {
     static STARTED_AT: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
@@ -2286,13 +2286,14 @@ fn build_shell_profiles_summary(
     }
 }
 
-/// Build the sanitized agent policy summary sent at registration. Mirrors the
-/// local `AgentPolicy` but only carries non-secret fields. The shell env
+/// Build the sanitized Runner policy summary sent at registration. The wire
+/// projection remains unchanged; it mirrors local `RunnerPolicy` but carries
+/// only non-secret fields. The shell env
 /// values and init_script path are intentionally NOT included. The sanitized
 /// shell-profiles summary is attached so observability can show which profile
 /// a project resolves to without exposing env values or init_script bodies.
 fn register_policy_summary(
-    cfg: &HotAgentConfig,
+    cfg: &HotRunnerConfig,
     prepared_cache_count: usize,
     tool_providers: shell_protocol::ToolProvidersStatus,
     mcp_gateway_providers: Vec<crate::mcp_gateway::McpGatewayProvider>,
@@ -2314,9 +2315,9 @@ fn register_policy_summary(
 
 fn register(
     client: &Client,
-    cfg: &AgentConfig,
-    runtime: &ReloadableAgentConfig,
-    project_cache: &mut AgentProjectCache,
+    cfg: &RunnerConfig,
+    runtime: &ReloadableRunnerConfig,
+    project_cache: &mut RunnerProjectCache,
     shutdown: Option<&AtomicBool>,
     agent_instance_id: &str,
     prepared_cache_count: usize,
@@ -2376,7 +2377,7 @@ fn is_file_request_kind(kind: &str) -> bool {
         || is_checkpoint_request_kind(kind)
 }
 
-fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -> CommandResult {
+fn handle_file_request(policy: &RunnerPolicy, request: &ShellAgentShellRequest) -> CommandResult {
     let Some(path) = request.path.as_deref() else {
         return CommandResult {
             exit_code: None,
@@ -2388,7 +2389,7 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
     };
     let start = Instant::now();
     if is_structured_edit_request_kind(&request.kind) {
-        if let Err(e) = validate_structured_edit_agent_path(path) {
+        if let Err(e) = validate_structured_edit_runner_path(path) {
             return CommandResult {
                 exit_code: None,
                 stdout: None,
@@ -3368,12 +3369,12 @@ impl JobManager {
             .map(DetachedJobStore::new)
     }
 
-    fn install_sink(&self, sink: AgentSink) {
+    fn install_sink(&self, sink: RunnerSink) {
         *lock_unpoison(&self.current_sink) = Some(sink);
         self.delivery_signal.notify();
     }
 
-    fn current_sink(&self) -> Option<AgentSink> {
+    fn current_sink(&self) -> Option<RunnerSink> {
         lock_unpoison(&self.current_sink).clone()
     }
 
@@ -4033,7 +4034,7 @@ impl JobManager {
         self.fail_job(request, "runner is shutting down".to_string(), None);
     }
 
-    fn enqueue(&self, sink: AgentSink, start: PendingJobStart) {
+    fn enqueue(&self, sink: RunnerSink, start: PendingJobStart) {
         let Some(job_id) = start.request.job_id.clone() else {
             return;
         };
@@ -4262,7 +4263,7 @@ impl JobManager {
     fn start_detached_process_job(
         &self,
         generation: u64,
-        policy: AgentPolicy,
+        policy: RunnerPolicy,
         shell: ShellConfig,
         projects_dir: PathBuf,
         request: ShellAgentShellRequest,
@@ -4430,7 +4431,7 @@ impl JobManager {
     fn start_structured_job(
         &self,
         generation: u64,
-        policy: AgentPolicy,
+        policy: RunnerPolicy,
         shell: ShellConfig,
         projects_dir: PathBuf,
         request: ShellAgentShellRequest,
@@ -4566,7 +4567,7 @@ impl JobManager {
         if !policy.allow_raw_shell {
             self.fail_job(
                 &request,
-                "raw shell is disabled by local agent policy".to_string(),
+                "raw shell is disabled by local Runner policy".to_string(),
                 None,
             );
             return;
@@ -5155,7 +5156,7 @@ impl JobManager {
     fn start_ssh_shell_job(
         &self,
         generation: u64,
-        policy: AgentPolicy,
+        policy: RunnerPolicy,
         ssh: SshConfig,
         request: ShellAgentShellRequest,
     ) {
@@ -5639,11 +5640,11 @@ impl JobManager {
 }
 fn handle_one_poll(
     client: &Client,
-    cfg: &AgentConfig,
-    runtime: &Arc<ReloadableAgentConfig>,
+    cfg: &RunnerConfig,
+    runtime: &Arc<ReloadableRunnerConfig>,
     jobs: &JobManager,
     persistent_shells: &webcodex_runner::PersistentShellManager,
-    project_cache: &mut AgentProjectCache,
+    project_cache: &mut RunnerProjectCache,
     poll_projects: Option<Vec<ShellAgentProjectSummary>>,
     project_inventory_page: Option<ShellProjectInventoryPage>,
     agent_instance_id: &str,
@@ -5698,7 +5699,7 @@ fn handle_one_poll(
     if let Some((_, provider, revision)) = provider_update {
         provider.mark_status_reported(revision);
     }
-    let sink = AgentSink::Http(HttpSendConfig {
+    let sink = RunnerSink::Http(HttpSendConfig {
         client: client.clone(),
         server_url: cfg.server_url.clone(),
         token: cfg.token.clone(),
@@ -5817,8 +5818,8 @@ fn main() {
         }
     };
     let (config_path, once) = match action {
-        AgentCliAction::Run { config_path, once } => (config_path, once),
-        AgentCliAction::Exit {
+        RunnerCliAction::Run { config_path, once } => (config_path, once),
+        RunnerCliAction::Exit {
             code,
             stdout,
             stderr,
@@ -5844,7 +5845,7 @@ fn main() {
             "webcodex-runner warning: agent token is empty; connecting without Authorization; the server must be started with --open"
         );
     }
-    if let Err(e) = run_agent(cfg, config_path, once) {
+    if let Err(e) = run_runner(cfg, config_path, once) {
         eprintln!("webcodex-runner failed: {}", e);
         std::process::exit(1);
     }

@@ -2,7 +2,7 @@ use super::coding_agent::CodingAgentManager;
 use super::external_tools::ExternalToolRouter;
 use super::mcp_gateway::McpGatewayManager;
 use super::shutdown::lock_unpoison;
-use crate::agent_init::{
+use crate::runner_config::{
     effective_allowed_roots, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_TIMEOUT_SECS,
     DEFAULT_POLL_INTERVAL_MS, TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC,
     TRANSPORT_WEBSOCKET,
@@ -24,7 +24,7 @@ pub(crate) const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
 pub(crate) const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct AgentConfig {
+pub(crate) struct RunnerConfig {
     pub(crate) server_url: String,
     pub(crate) token: String,
     pub(crate) client_id: String,
@@ -52,7 +52,7 @@ pub(crate) struct AgentConfig {
     #[serde(default)]
     pub(crate) max_concurrent_jobs: Option<usize>,
     #[serde(default)]
-    pub(crate) policy: AgentPolicy,
+    pub(crate) policy: RunnerPolicy,
     /// Transport selection: `"websocket"` (default), `"polling"`, `"quic"`,
     /// or explicit `"auto"` fallback mode.
     #[serde(default)]
@@ -217,10 +217,10 @@ impl Default for ClaudeCodeMcpConfig {
     }
 }
 
-/// Agent-side QUIC transport configuration (`[quic]` in `agent.toml`). All
-/// fields are required when `transport = "quic"`; `run_quic_agent` validates
+/// Runner-side QUIC transport configuration (`[quic]` in `agent.toml`). All
+/// fields are required when `transport = "quic"`; `run_quic_runner` validates
 /// them before connecting. The token is NOT stored here — it stays in the
-/// top-level `AgentConfig.token`. QUIC encodes that credential only in its v1
+/// top-level `RunnerConfig.token`. QUIC encodes that credential only in its v1
 /// transport-specific first-register frame; it never enters `AgentEnvelope`.
 /// WebSocket and polling continue to use `Authorization: Bearer`.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -260,7 +260,7 @@ pub(crate) fn default_websocket_connect_timeout_secs() -> u64 {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub(crate) struct AgentPolicy {
+pub(crate) struct RunnerPolicy {
     #[serde(default = "default_true")]
     pub(crate) allow_raw_shell: bool,
     /// Fail closed: an `agent.toml` that omits `[policy]` must not disable the
@@ -276,7 +276,7 @@ pub(crate) struct AgentPolicy {
     pub(crate) max_output_bytes: usize,
 }
 
-impl Default for AgentPolicy {
+impl Default for RunnerPolicy {
     fn default() -> Self {
         Self {
             allow_raw_shell: true,
@@ -416,17 +416,17 @@ pub(crate) struct ShellProfileConfig {
     pub(crate) init_script: Option<String>,
 }
 
-pub(crate) struct HotAgentConfig {
+pub(crate) struct HotRunnerConfig {
     pub(crate) generation: u64,
-    pub(crate) policy: AgentPolicy,
+    pub(crate) policy: RunnerPolicy,
     pub(crate) shell: ShellConfig,
     pub(crate) ssh: SshConfig,
     pub(crate) external_tools: Arc<ExternalToolRouter>,
     reload_status: Mutex<AgentConfigReloadStatus>,
 }
 
-impl HotAgentConfig {
-    fn new(generation: u64, cfg: &AgentConfig, status: AgentConfigReloadStatus) -> Self {
+impl HotRunnerConfig {
+    fn new(generation: u64, cfg: &RunnerConfig, status: AgentConfigReloadStatus) -> Self {
         Self {
             generation,
             policy: cfg.policy.clone(),
@@ -442,8 +442,8 @@ impl HotAgentConfig {
     }
 }
 
-pub(crate) struct ReloadableAgentConfig {
-    startup: AgentConfig,
+pub(crate) struct ReloadableRunnerConfig {
+    startup: RunnerConfig,
     mcp_gateway: Arc<McpGatewayManager>,
     coding_agents: Option<Arc<CodingAgentManager>>,
     /// Config file path used by `reload()`. Config reload is a Unix feature
@@ -451,13 +451,13 @@ pub(crate) struct ReloadableAgentConfig {
     /// the reload logic is exercised by cross-platform tests.
     #[cfg(any(unix, test))]
     path: PathBuf,
-    current: RwLock<Arc<HotAgentConfig>>,
+    current: RwLock<Arc<HotRunnerConfig>>,
     external_routers: Mutex<Vec<Weak<ExternalToolRouter>>>,
     stopping: AtomicBool,
 }
 
-impl ReloadableAgentConfig {
-    pub(crate) fn new(startup: AgentConfig, path: PathBuf) -> Self {
+impl ReloadableRunnerConfig {
+    pub(crate) fn new(startup: RunnerConfig, path: PathBuf) -> Self {
         let mut status = AgentConfigReloadStatus::default();
         if !cfg!(unix) {
             status.last_reload_result = "unsupported".to_string();
@@ -465,7 +465,7 @@ impl ReloadableAgentConfig {
         }
         #[cfg(not(any(unix, test)))]
         let _ = &path;
-        let current = Arc::new(HotAgentConfig::new(1, &startup, status));
+        let current = Arc::new(HotRunnerConfig::new(1, &startup, status));
         let external_routers = vec![Arc::downgrade(&current.external_tools)];
         let coding_agents = if startup.acp.agents.is_empty() {
             None
@@ -490,11 +490,11 @@ impl ReloadableAgentConfig {
         }
     }
 
-    pub(crate) fn snapshot(&self) -> Arc<HotAgentConfig> {
+    pub(crate) fn snapshot(&self) -> Arc<HotRunnerConfig> {
         Arc::clone(&self.current.read().unwrap())
     }
 
-    pub(crate) fn with_active(&self, f: impl FnOnce(&HotAgentConfig)) {
+    pub(crate) fn with_active(&self, f: impl FnOnce(&HotRunnerConfig)) {
         f(&self.current.read().unwrap());
     }
 
@@ -581,7 +581,7 @@ impl ReloadableAgentConfig {
             restart_required: !restart_required_fields.is_empty(),
             restart_required_fields,
         };
-        let next = Arc::new(HotAgentConfig::new(generation, &candidate, status.clone()));
+        let next = Arc::new(HotRunnerConfig::new(generation, &candidate, status.clone()));
         {
             let mut routers = lock_unpoison(&self.external_routers);
             routers.retain(|router| router.strong_count() > 0);
@@ -615,12 +615,12 @@ fn reload_error_code(error: &str) -> &'static str {
 
 #[cfg(any(unix, test))]
 pub(crate) fn restart_required_fields(
-    startup: &AgentConfig,
-    candidate: &AgentConfig,
+    startup: &RunnerConfig,
+    candidate: &RunnerConfig,
 ) -> Vec<String> {
     macro_rules! classify {
         ($($field:ident),+ $(,)?) => {{
-            let AgentConfig {
+            let RunnerConfig {
                 policy: _, shell: _, ssh: _, tool_providers: _, $($field: _),+
             } = candidate;
             [$((stringify!($field), startup.$field != candidate.$field)),+]
@@ -707,14 +707,14 @@ fn default_max_output_bytes() -> usize {
     DEFAULT_MAX_OUTPUT_BYTES
 }
 
-pub(crate) fn max_concurrent_jobs(cfg: &AgentConfig) -> usize {
+pub(crate) fn max_concurrent_jobs(cfg: &RunnerConfig) -> usize {
     cfg.max_concurrent_jobs
         .unwrap_or(DEFAULT_MAX_CONCURRENT_JOBS)
         .clamp(1, JOB_INVENTORY_MAX_ACTIVE_JOBS)
 }
 
 fn default_client_base_dir() -> Result<PathBuf, String> {
-    webcodex_agent_config::paths::default_client_config_base_dir()
+    webcodex_runner_config::paths::default_client_config_base_dir()
 }
 
 pub(crate) fn validate_client_profile(profile: &str) -> Result<String, String> {
@@ -734,7 +734,7 @@ pub(crate) fn validate_client_profile(profile: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-pub(crate) fn client_profile_agent_config(profile: &str) -> Result<PathBuf, String> {
+pub(crate) fn client_profile_runner_config(profile: &str) -> Result<PathBuf, String> {
     Ok(default_client_base_dir()?
         .join("clients")
         .join(profile)
@@ -1042,12 +1042,12 @@ fn validate_shell_profile_toml_shape(content: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn load_config(path: &Path) -> Result<AgentConfig, String> {
+pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read config {}: {}", path.display(), e))?;
     validate_shell_profile_toml_shape(&content)
         .map_err(|e| format!("failed to parse config {}: {}", path.display(), e))?;
-    let mut cfg: AgentConfig = toml::from_str(&content)
+    let mut cfg: RunnerConfig = toml::from_str(&content)
         .map_err(|e| format!("failed to parse config {}: {}", path.display(), e))?;
     if cfg.server_url.trim().is_empty() {
         return Err("server_url cannot be empty".to_string());
@@ -1515,7 +1515,7 @@ fn default_projects_dir() -> Result<PathBuf, String> {
     Ok(default_client_base_dir()?.join("projects.d"))
 }
 
-pub(crate) fn projects_dir(cfg: &AgentConfig) -> Result<PathBuf, String> {
+pub(crate) fn projects_dir(cfg: &RunnerConfig) -> Result<PathBuf, String> {
     match &cfg.projects_dir {
         Some(projects_dir) => Ok(projects_dir.clone()),
         None => default_projects_dir(),

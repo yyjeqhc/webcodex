@@ -1,5 +1,5 @@
-use super::artifacts::validate_artifact_agent_path;
-use super::config::AgentPolicy;
+use super::artifacts::validate_artifact_runner_path;
+use super::config::RunnerPolicy;
 use super::output::CommandResult;
 use super::shell::cwd_allowed;
 use crate::shell_protocol::ShellAgentShellRequest;
@@ -158,7 +158,7 @@ impl SkillStore {
         hasher.update(b"\0");
         hasher.update(server_url.as_bytes());
         let storage_namespace = format!("{:x}", hasher.finalize());
-        let root = webcodex_agent_config::paths::default_client_state_base_dir()?
+        let root = webcodex_runner_config::paths::default_client_state_base_dir()?
             .join(STORE_DIR)
             .join(&storage_namespace);
         let mut store = Self {
@@ -644,7 +644,7 @@ impl SkillStore {
 
     fn install(
         &self,
-        policy: &AgentPolicy,
+        policy: &RunnerPolicy,
         skill_key: &str,
         source_project_id: &str,
         source_project_root: &str,
@@ -663,7 +663,7 @@ impl SkillStore {
         {
             return Err("skill_store_invalid_request".to_string());
         }
-        validate_artifact_agent_path(artifact_path)
+        validate_artifact_runner_path(artifact_path)
             .map_err(|_| "skill_install_artifact_path_invalid".to_string())?;
         let intent_hash = hash_install_intent(
             skill_key,
@@ -1532,7 +1532,7 @@ fn advance_replay_timestamp(record: &mut ReplayRecord, now_unix_ms: i64) {
 pub(crate) fn handle_skill_store_request(
     client_id: &str,
     server_url: &str,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     request: &ShellAgentShellRequest,
 ) -> CommandResult {
     let start = Instant::now();
@@ -2468,9 +2468,9 @@ mod tests {
         let source = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
         let store = SkillStore::for_test(root.path().join("store"), "runner");
-        let policy = AgentPolicy {
+        let policy = RunnerPolicy {
             allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         };
         let archive = zip_bytes(&[(
             "SKILL.md",
@@ -2792,9 +2792,9 @@ mod tests {
         let source = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
         let store = SkillStore::for_test(root.path().join("store"), "runner");
-        let policy = AgentPolicy {
+        let policy = RunnerPolicy {
             allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         };
         let definition = b"---\nname: demo\ndescription: replay failure\n---\n";
         let archive_a = zip_bytes(&[("SKILL.md", definition, None), ("a.txt", b"a", None)]);
@@ -2912,9 +2912,9 @@ mod tests {
         let source = tempfile::tempdir().unwrap();
         let store_root = tempfile::tempdir().unwrap();
         let store = SkillStore::for_test(store_root.path().join("store"), "runner-a");
-        let policy = AgentPolicy {
+        let policy = RunnerPolicy {
             allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         };
         let entries: &[(&str, &[u8], Option<u32>)] = &[
             (
@@ -2974,9 +2974,9 @@ mod tests {
         let source = tempfile::tempdir().unwrap();
         let store_root = tempfile::tempdir().unwrap();
         let store = SkillStore::for_test(store_root.path().join("store"), "runner-a");
-        let policy = AgentPolicy {
+        let policy = RunnerPolicy {
             allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         };
         let entries: &[(&str, &[u8], Option<u32>)] = &[
             (
@@ -3135,9 +3135,9 @@ mod tests {
         let source = tempfile::tempdir().unwrap();
         let store_root = tempfile::tempdir().unwrap();
         let store = SkillStore::for_test(store_root.path().join("store"), "runner-a");
-        let policy = AgentPolicy {
+        let policy = RunnerPolicy {
             allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         };
         let definition = b"---\nname: demo\ndescription: operator demo\n---\nGuidance only.\n";
         let archive_a = zip_bytes(&[
@@ -3352,9 +3352,9 @@ mod tests {
         let store_root = tempfile::tempdir().unwrap();
         let external = tempfile::tempdir().unwrap();
         let store = SkillStore::for_test(store_root.path().join("store"), "runner-a");
-        let policy = AgentPolicy {
+        let policy = RunnerPolicy {
             allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         };
         let archive = zip_bytes(&[
             (
@@ -3406,9 +3406,9 @@ mod tests {
         let source = tempfile::tempdir().unwrap();
         let store_root = tempfile::tempdir().unwrap();
         let store = SkillStore::for_test(store_root.path().join("store"), "runner-a");
-        let policy = AgentPolicy {
+        let policy = RunnerPolicy {
             allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         };
         let archive = zip_bytes(&[
             (

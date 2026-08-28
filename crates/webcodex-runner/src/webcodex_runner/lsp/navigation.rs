@@ -1,12 +1,12 @@
-//! Agent-side read-only LSP navigation operations.
+//! Runner-side read-only LSP navigation operations.
 //!
 //! Resolves project roots under policy, talks to `LspSupervisor`, normalizes
 //! locations to project-relative paths, and never returns absolute paths,
 //! file URIs, or executable paths to the model.
 
-use super::super::config::AgentPolicy;
+use super::super::config::RunnerPolicy;
 use super::super::output::CommandResult;
-use super::super::projects::load_agent_project_summaries_from_dir;
+use super::super::projects::load_runner_project_summaries_from_dir;
 use super::super::shell::cwd_allowed;
 use super::language::{
     detected_profiles, primary_profile, route_extension, supported_extensions_label,
@@ -51,7 +51,7 @@ pub(crate) fn is_lsp_request_kind(kind: &str) -> bool {
 }
 
 pub(crate) fn handle_lsp_request(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     projects_dir: &Path,
     supervisor: &LspSupervisor,
     request: &ShellAgentShellRequest,
@@ -94,13 +94,13 @@ pub(crate) fn handle_lsp_request(
 }
 
 fn execute_lsp(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     projects_dir: &Path,
     supervisor: &LspSupervisor,
     payload: &AgentLspPayload,
     operation_deadline: Instant,
 ) -> Result<AgentLspResultEnvelope, AgentLspResultEnvelope> {
-    let project = resolve_agent_project(projects_dir, &payload.project_id)?;
+    let project = resolve_runner_project(projects_dir, &payload.project_id)?;
     let project_root = validate_project_root(policy, &project.path)?;
     match &payload.request {
         AgentLspRequest::Status => Ok(AgentLspResultEnvelope::ok(lsp_status(
@@ -204,7 +204,7 @@ struct ResolvedProject {
     path: PathBuf,
 }
 
-fn resolve_agent_project(
+fn resolve_runner_project(
     projects_dir: &Path,
     project_id: &str,
 ) -> Result<ResolvedProject, AgentLspResultEnvelope> {
@@ -215,7 +215,7 @@ fn resolve_agent_project(
             "project_id cannot be empty",
         ));
     }
-    let projects = load_agent_project_summaries_from_dir(projects_dir);
+    let projects = load_runner_project_summaries_from_dir(projects_dir);
     let project = projects.into_iter().find(|p| p.id == id).ok_or_else(|| {
         AgentLspResultEnvelope::err(error_codes::UNKNOWN_PROJECT, "unknown agent project")
     })?;
@@ -225,7 +225,7 @@ fn resolve_agent_project(
 }
 
 fn validate_project_root(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     path: &Path,
 ) -> Result<PathBuf, AgentLspResultEnvelope> {
     cwd_allowed(policy, path).map_err(|message| {

@@ -1,4 +1,4 @@
-use super::config::AgentPolicy;
+use super::config::RunnerPolicy;
 use super::files::{resolve_requested_path, sha256_hex_bytes};
 use super::output::{line_edit_stdout, CommandResult};
 use crate::shell_protocol::ShellAgentShellRequest;
@@ -12,7 +12,7 @@ pub(crate) fn is_structured_edit_request_kind(kind: &str) -> bool {
     matches!(kind, "file_write_project_file" | "file_apply_text_edits")
 }
 
-pub(crate) fn validate_structured_edit_agent_path(path: &str) -> Result<(), String> {
+pub(crate) fn validate_structured_edit_runner_path(path: &str) -> Result<(), String> {
     if path.trim().is_empty() {
         return Err("path cannot be empty".to_string());
     }
@@ -256,27 +256,25 @@ pub(crate) fn handle_write_project_file_request(
     )
 }
 
-/// Maximum file size accepted by `file_apply_text_edits` on the agent side.
-/// Host-only limit has no twin here; this per-file cap stays agent-local.
+/// Maximum file size accepted by `file_apply_text_edits` on the Runner side.
+/// Host-only limit has no twin here; this per-file cap stays Runner-local.
 const APPLY_TEXT_EDITS_MAX_FILE_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
 
 // The edit wire types, batch/edit limits, and the sensitive-path guard are
-// shared verbatim with the host write path via `apply_edits_shared`. Aliases
-// keep this module's existing `Agent*` / `APPLY_TEXT_EDITS_MAX_*` names.
+// shared verbatim with the host write path via `apply_edits_shared`; use the
+// neutral shared type names directly rather than preserving Runner-local aliases.
 use crate::apply_edits_shared::{
     canonicalize_apply_text_line_endings, detect_apply_text_line_ending, is_sensitive_edit_path,
-    resolve_apply_text_match, restore_apply_text_line_endings,
-    ApplyFileChangeInput as AgentFileChange, ApplyFileChangeKind as AgentFileChangeKind,
-    ApplyTextEditInput as AgentTextEdit, ApplyTextEditKind as AgentTextEditKind,
-    ApplyTextMatchConflict, ApplyTextMatchConflictKind,
-    MAX_APPLY_FILE_CHANGES as APPLY_TEXT_EDITS_MAX_CHANGES,
+    resolve_apply_text_match, restore_apply_text_line_endings, ApplyFileChangeInput,
+    ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind, ApplyTextMatchConflict,
+    ApplyTextMatchConflictKind, MAX_APPLY_FILE_CHANGES as APPLY_TEXT_EDITS_MAX_CHANGES,
     MAX_APPLY_TEXT_EDITS as APPLY_TEXT_EDITS_MAX_EDITS,
     MAX_APPLY_TEXT_EDIT_FIELD_BYTES as APPLY_TEXT_EDITS_MAX_FIELD_BYTES,
 };
 
 #[derive(Debug, Deserialize)]
-struct AgentApplyTextEditsPayload {
-    changes: Vec<AgentFileChange>,
+struct ApplyTextEditsPayload {
+    changes: Vec<ApplyFileChangeInput>,
     #[serde(default)]
     dry_run: Option<bool>,
     #[serde(default)]
@@ -313,7 +311,7 @@ impl EditPlanError {
 
 struct PlannedFileChange {
     index: usize,
-    kind: AgentFileChangeKind,
+    kind: ApplyFileChangeKind,
     path: String,
     to_path: Option<String>,
     resolved: PathBuf,
@@ -334,7 +332,7 @@ struct AppliedFileChange {
 
 fn edit_plan(
     original: &str,
-    edits: &[AgentTextEdit],
+    edits: &[ApplyTextEditInput],
 ) -> Result<(String, Vec<serde_json::Value>), EditPlanError> {
     if edits.is_empty() || edits.len() > APPLY_TEXT_EDITS_MAX_EDITS {
         return Err(EditPlanError::plain(
@@ -362,7 +360,7 @@ fn edit_plan(
             ));
         }
         let (needle, replacement): (&str, String) = match kind {
-            AgentTextEditKind::ReplaceExact => {
+            ApplyTextEditKind::ReplaceExact => {
                 let old = edit
                     .old_text
                     .as_deref()
@@ -379,7 +377,7 @@ fn edit_plan(
                 }
                 (old, edit.new_text.clone().unwrap_or_default())
             }
-            AgentTextEditKind::DeleteExact => {
+            ApplyTextEditKind::DeleteExact => {
                 let old = edit
                     .old_text
                     .as_deref()
@@ -396,7 +394,7 @@ fn edit_plan(
                 }
                 (old, String::new())
             }
-            AgentTextEditKind::InsertBefore | AgentTextEditKind::InsertAfter => {
+            ApplyTextEditKind::InsertBefore | ApplyTextEditKind::InsertAfter => {
                 let anchor = edit
                     .anchor_text
                     .as_deref()
@@ -466,8 +464,8 @@ fn edit_plan(
                 }
             })?;
         let (range_start, range_end) = match kind {
-            AgentTextEditKind::InsertBefore => (start, start),
-            AgentTextEditKind::InsertAfter => (end, end),
+            ApplyTextEditKind::InsertBefore => (start, start),
+            ApplyTextEditKind::InsertAfter => (end, end),
             _ => (start, end),
         };
         ops.push((range_start, range_end, replacement, index));
@@ -785,24 +783,24 @@ fn write_new_file_atomic(path: &Path, content: &str) -> Result<(), String> {
 
 fn rollback_change(plan: &PlannedFileChange) -> Result<(), String> {
     match plan.kind {
-        AgentFileChangeKind::Edit => {
+        ApplyFileChangeKind::Edit => {
             if plan.would_change {
                 write_file_atomic(&plan.resolved, plan.original.as_deref().unwrap_or_default())?;
             }
         }
-        AgentFileChangeKind::Create => {
+        ApplyFileChangeKind::Create => {
             if plan.resolved.exists() {
                 std::fs::remove_file(&plan.resolved).map_err(|error| error.to_string())?;
             }
         }
-        AgentFileChangeKind::Delete => {
+        ApplyFileChangeKind::Delete => {
             write_new_file_atomic(&plan.resolved, plan.original.as_deref().unwrap_or_default())?;
             if let Some(permissions) = plan.permissions.clone() {
                 std::fs::set_permissions(&plan.resolved, permissions)
                     .map_err(|error| error.to_string())?;
             }
         }
-        AgentFileChangeKind::Rename => {
+        ApplyFileChangeKind::Rename => {
             let destination = plan
                 .resolved_to
                 .as_deref()
@@ -818,7 +816,7 @@ fn rollback_change(plan: &PlannedFileChange) -> Result<(), String> {
 }
 
 fn require_planned_source_unchanged(plan: &PlannedFileChange) -> Result<(), ApplyChangeFailure> {
-    if matches!(plan.kind, AgentFileChangeKind::Create) {
+    if matches!(plan.kind, ApplyFileChangeKind::Create) {
         return Ok(());
     }
     let (_, _, current_sha256) = read_batch_file(&plan.resolved)?;
@@ -834,7 +832,7 @@ fn require_planned_source_unchanged(plan: &PlannedFileChange) -> Result<(), Appl
 fn apply_change(plan: &PlannedFileChange) -> Result<Vec<PathBuf>, ApplyChangeFailure> {
     require_planned_source_unchanged(plan)?;
     match plan.kind {
-        AgentFileChangeKind::Edit => {
+        ApplyFileChangeKind::Edit => {
             if plan.would_change {
                 write_file_atomic(
                     &plan.resolved,
@@ -843,7 +841,7 @@ fn apply_change(plan: &PlannedFileChange) -> Result<Vec<PathBuf>, ApplyChangeFai
             }
             Ok(Vec::new())
         }
-        AgentFileChangeKind::Create => {
+        ApplyFileChangeKind::Create => {
             let created_dirs = create_parent_dirs(&plan.resolved)?;
             if let Err(error) = write_new_file_atomic(
                 &plan.resolved,
@@ -854,11 +852,11 @@ fn apply_change(plan: &PlannedFileChange) -> Result<Vec<PathBuf>, ApplyChangeFai
             }
             Ok(created_dirs)
         }
-        AgentFileChangeKind::Delete => {
+        ApplyFileChangeKind::Delete => {
             std::fs::remove_file(&plan.resolved).map_err(|error| error.to_string())?;
             Ok(Vec::new())
         }
-        AgentFileChangeKind::Rename => {
+        ApplyFileChangeKind::Rename => {
             let destination = plan
                 .resolved_to
                 .as_deref()
@@ -889,11 +887,11 @@ fn apply_change(plan: &PlannedFileChange) -> Result<Vec<PathBuf>, ApplyChangeFai
 }
 
 pub(crate) fn handle_apply_text_edits_file_request(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     request: &ShellAgentShellRequest,
     start: Instant,
 ) -> CommandResult {
-    let payload: AgentApplyTextEditsPayload =
+    let payload: ApplyTextEditsPayload =
         match serde_json::from_str(request.content.as_deref().unwrap_or_default()) {
             Ok(payload) => payload,
             Err(error) => {
@@ -921,7 +919,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
     let mut touched = HashSet::new();
     let mut plans = Vec::with_capacity(payload.changes.len());
     for (index, change) in payload.changes.iter().enumerate() {
-        if let Err(error) = validate_structured_edit_agent_path(&change.path) {
+        if let Err(error) = validate_structured_edit_runner_path(&change.path) {
             return batch_error(
                 Some(index),
                 Some(change.kind.as_str()),
@@ -968,7 +966,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
             );
         }
         let resolved_to = if let Some(to_path) = change.to_path.as_deref() {
-            if let Err(error) = validate_structured_edit_agent_path(to_path) {
+            if let Err(error) = validate_structured_edit_runner_path(to_path) {
                 return batch_error(
                     Some(index),
                     Some(change.kind.as_str()),
@@ -1021,7 +1019,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
         };
 
         let planned = match change.kind {
-            AgentFileChangeKind::Create => {
+            ApplyFileChangeKind::Create => {
                 if change.to_path.is_some()
                     || change.expected_sha256.is_some()
                     || !change.edits.is_empty()
@@ -1090,9 +1088,9 @@ pub(crate) fn handle_apply_text_edits_file_request(
                     would_change: true,
                 }
             }
-            AgentFileChangeKind::Edit
-            | AgentFileChangeKind::Delete
-            | AgentFileChangeKind::Rename => {
+            ApplyFileChangeKind::Edit
+            | ApplyFileChangeKind::Delete
+            | ApplyFileChangeKind::Rename => {
                 let (original, permissions, old_sha256) = match read_batch_file(&resolved) {
                     Ok(file) => file,
                     Err(error) => {
@@ -1130,7 +1128,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
                     return line_edit_stdout(result, start);
                 }
                 match change.kind {
-                    AgentFileChangeKind::Edit => {
+                    ApplyFileChangeKind::Edit => {
                         if change.to_path.is_some() || change.content.is_some() {
                             return batch_error(
                                 Some(index),
@@ -1189,7 +1187,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
                             would_change,
                         }
                     }
-                    AgentFileChangeKind::Delete => {
+                    ApplyFileChangeKind::Delete => {
                         if change.to_path.is_some()
                             || change.content.is_some()
                             || !change.edits.is_empty()
@@ -1219,7 +1217,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
                             would_change: true,
                         }
                     }
-                    AgentFileChangeKind::Rename => {
+                    ApplyFileChangeKind::Rename => {
                         if change.content.is_some() || !change.edits.is_empty() {
                             return batch_error(
                                 Some(index),
@@ -1269,7 +1267,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
                             would_change: true,
                         }
                     }
-                    AgentFileChangeKind::Create => unreachable!(),
+                    ApplyFileChangeKind::Create => unreachable!(),
                 }
             }
         };

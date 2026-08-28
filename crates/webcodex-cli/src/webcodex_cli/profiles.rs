@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use webcodex_agent_config::paths;
+use webcodex_runner_config::paths;
 
 use crate::ServiceScope;
 

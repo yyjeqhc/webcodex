@@ -12,7 +12,7 @@ fn dispatch_request_run_shell_sends_result_over_sink() {
         webcodex_runner::SshConnectionPool::default(),
     );
 
-    type SinkFactory = fn(&str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>);
+    type SinkFactory = fn(&str) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentEnvelope>);
     for (label, make_sink, client_id, expected_stdout) in [
         ("ws", ws_sink as SinkFactory, "ws-client", "wsok"),
         ("quic", quic_sink as SinkFactory, "quic-client", "quic-ok"),

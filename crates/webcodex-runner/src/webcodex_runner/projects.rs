@@ -1,5 +1,5 @@
 use super::config::{
-    default_true, projects_dir, validate_shell_profile_name, AgentConfig, AgentPolicy,
+    default_true, projects_dir, validate_shell_profile_name, RunnerConfig, RunnerPolicy,
 };
 use super::shell::canonicalize_existing;
 use crate::shell_protocol::{ShellAgentProjectSummary, ShellAgentShellRequest};
@@ -16,8 +16,8 @@ use std::sync::mpsc;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
-use webcodex_agent_config::paths::paths_equal;
 use webcodex_process::{GracefulTermination, ManagedChild};
+use webcodex_runner_config::paths::paths_equal;
 
 const PROJECT_SCAN_CACHE_MS: u64 = 5000;
 const PROJECT_GIT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -76,7 +76,7 @@ fn structured_project_error_cmd(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AgentProjectFile {
+pub(crate) struct RunnerProjectFile {
     pub(crate) id: String,
     pub(crate) path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -96,13 +96,13 @@ pub(crate) struct AgentProjectFile {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct AgentProjectCache {
+pub(crate) struct RunnerProjectCache {
     projects: Vec<ShellAgentProjectSummary>,
     refreshed_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct AgentProjectShellContext {
+pub(crate) struct RunnerProjectShellContext {
     pub(crate) id: String,
     pub(crate) path: String,
     pub(crate) shell_profile: Option<String>,
@@ -130,11 +130,11 @@ fn trim_optional(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn agent_project_server_format_hint(content: &str, err: &str) -> Option<String> {
+fn runner_project_server_format_hint(content: &str, err: &str) -> Option<String> {
     let normalized = err.replace('`', "");
     if normalized.contains("missing field id") && content.contains("[projects.") {
         Some(
-            "looks like a server projects.toml entry. Agent projects.d files must use top-level fields:\n\
+            "looks like a server projects.toml entry. Runner projects.d files must use top-level fields:\n\
              id = \"smoke\"\n\
              path = \"/path/to/repo\""
                 .to_string(),
@@ -144,11 +144,11 @@ fn agent_project_server_format_hint(content: &str, err: &str) -> Option<String> 
     }
 }
 
-pub(crate) fn parse_agent_project_toml(content: &str) -> Result<AgentProjectFile, String> {
-    let mut project: AgentProjectFile = toml::from_str(content).map_err(|e| {
+pub(crate) fn parse_runner_project_toml(content: &str) -> Result<RunnerProjectFile, String> {
+    let mut project: RunnerProjectFile = toml::from_str(content).map_err(|e| {
         let err = e.to_string();
         let base = format!("failed to parse project toml: {}", err);
-        match agent_project_server_format_hint(content, &err) {
+        match runner_project_server_format_hint(content, &err) {
             Some(hint) => format!("{}; {}", base, hint),
             None => base,
         }
@@ -177,7 +177,7 @@ pub(crate) fn parse_agent_project_toml(content: &str) -> Result<AgentProjectFile
     Ok(project)
 }
 
-fn load_agent_project_shell_contexts_from_dir(dir: &Path) -> Vec<AgentProjectShellContext> {
+fn load_runner_project_shell_contexts_from_dir(dir: &Path) -> Vec<RunnerProjectShellContext> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return Vec::new(),
@@ -196,13 +196,13 @@ fn load_agent_project_shell_contexts_from_dir(dir: &Path) -> Vec<AgentProjectShe
         let Ok(content) = std::fs::read_to_string(&file) else {
             continue;
         };
-        let Ok(project) = parse_agent_project_toml(&content) else {
+        let Ok(project) = parse_runner_project_toml(&content) else {
             continue;
         };
         if project.disabled || !seen.insert(project.id.clone()) {
             continue;
         }
-        projects.push(AgentProjectShellContext {
+        projects.push(RunnerProjectShellContext {
             id: project.id,
             path: project.path,
             shell_profile: project.shell_profile,
@@ -214,16 +214,16 @@ fn load_agent_project_shell_contexts_from_dir(dir: &Path) -> Vec<AgentProjectShe
 pub(crate) fn find_project_shell_context(
     projects_dir: &Path,
     cwd_path: &Path,
-) -> Option<AgentProjectShellContext> {
+) -> Option<RunnerProjectShellContext> {
     let cwd = cwd_path.canonicalize().ok()?;
-    load_agent_project_shell_contexts_from_dir(projects_dir)
+    load_runner_project_shell_contexts_from_dir(projects_dir)
         .into_iter()
         .filter_map(|project| {
             let project_path = PathBuf::from(&project.path).canonicalize().ok()?;
             // Windows filesystems are case-insensitive and `canonicalize` may
             // return `\\?\`-prefixed paths, so containment uses the shared
             // path identity rules instead of raw `==`/`starts_with`.
-            if webcodex_agent_config::paths::path_is_within(&cwd, &project_path) {
+            if webcodex_runner_config::paths::path_is_within(&cwd, &project_path) {
                 Some((project_path.components().count(), project))
             } else {
                 None
@@ -239,8 +239,8 @@ pub(crate) fn find_project_shell_context(
 pub(crate) fn find_project_shell_context_by_id(
     projects_dir: &Path,
     project_id: &str,
-) -> Option<AgentProjectShellContext> {
-    load_agent_project_shell_contexts_from_dir(projects_dir)
+) -> Option<RunnerProjectShellContext> {
+    load_runner_project_shell_contexts_from_dir(projects_dir)
         .into_iter()
         .find(|project| project.id == project_id)
 }
@@ -502,13 +502,13 @@ fn run_git_capture(path: &str, args: &[&str], shutdown: Option<&AtomicBool>) -> 
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn project_revision(project: &AgentProjectFile) -> String {
+fn project_revision(project: &RunnerProjectFile) -> String {
     let normalized = toml::to_string(project).unwrap_or_default();
     format!("sha256:{:x}", Sha256::digest(normalized.as_bytes()))
 }
 
-fn agent_project_summary_with_shutdown(
-    project: &AgentProjectFile,
+fn runner_project_summary_with_shutdown(
+    project: &RunnerProjectFile,
     updated_at: i64,
     include_git: bool,
     shutdown: Option<&AtomicBool>,
@@ -560,15 +560,15 @@ fn agent_project_summary_with_shutdown(
 }
 
 #[cfg(test)]
-pub(crate) fn agent_project_summary(
-    project: &AgentProjectFile,
+pub(crate) fn runner_project_summary(
+    project: &RunnerProjectFile,
     updated_at: i64,
     include_git: bool,
 ) -> ShellAgentProjectSummary {
-    agent_project_summary_with_shutdown(project, updated_at, include_git, None)
+    runner_project_summary_with_shutdown(project, updated_at, include_git, None)
 }
 
-fn warn_empty_hook_commands(source: &Path, project: &AgentProjectFile) {
+fn warn_empty_hook_commands(source: &Path, project: &RunnerProjectFile) {
     for (hook, commands) in &project.hooks {
         for (idx, command) in commands.iter().enumerate() {
             if command.trim().is_empty() {
@@ -583,7 +583,7 @@ fn warn_empty_hook_commands(source: &Path, project: &AgentProjectFile) {
     }
 }
 
-fn load_agent_project_summaries_from_dir_with_shutdown(
+fn load_runner_project_summaries_from_dir_with_shutdown(
     dir: &Path,
     shutdown: Option<&AtomicBool>,
 ) -> Vec<ShellAgentProjectSummary> {
@@ -626,7 +626,7 @@ fn load_agent_project_summaries_from_dir_with_shutdown(
                 continue;
             }
         };
-        let project = match parse_agent_project_toml(&content) {
+        let project = match parse_runner_project_toml(&content) {
             Ok(project) => project,
             Err(e) => {
                 eprintln!(
@@ -646,7 +646,7 @@ fn load_agent_project_summaries_from_dir_with_shutdown(
             continue;
         }
         warn_empty_hook_commands(&file, &project);
-        projects.push(agent_project_summary_with_shutdown(
+        projects.push(runner_project_summary_with_shutdown(
             &project, updated_at, true, shutdown,
         ));
     }
@@ -654,12 +654,12 @@ fn load_agent_project_summaries_from_dir_with_shutdown(
     projects
 }
 
-pub(crate) fn load_agent_project_summaries_from_dir(dir: &Path) -> Vec<ShellAgentProjectSummary> {
-    load_agent_project_summaries_from_dir_with_shutdown(dir, None)
+pub(crate) fn load_runner_project_summaries_from_dir(dir: &Path) -> Vec<ShellAgentProjectSummary> {
+    load_runner_project_summaries_from_dir_with_shutdown(dir, None)
 }
 
-fn load_agent_project_summaries(
-    cfg: &AgentConfig,
+fn load_runner_project_summaries(
+    cfg: &RunnerConfig,
     shutdown: Option<&AtomicBool>,
 ) -> Vec<ShellAgentProjectSummary> {
     // Loaded configs always carry a materialized projects_dir; a bare
@@ -672,18 +672,18 @@ fn load_agent_project_summaries(
             return Vec::new();
         }
     };
-    load_agent_project_summaries_from_dir_with_shutdown(&dir, shutdown)
+    load_runner_project_summaries_from_dir_with_shutdown(&dir, shutdown)
 }
 
-impl AgentProjectCache {
+impl RunnerProjectCache {
     #[cfg(test)]
-    pub(crate) fn get(&mut self, cfg: &AgentConfig) -> Vec<ShellAgentProjectSummary> {
+    pub(crate) fn get(&mut self, cfg: &RunnerConfig) -> Vec<ShellAgentProjectSummary> {
         self.get_with_shutdown(cfg, None)
     }
 
     pub(crate) fn get_with_shutdown(
         &mut self,
-        cfg: &AgentConfig,
+        cfg: &RunnerConfig,
         shutdown: Option<&AtomicBool>,
     ) -> Vec<ShellAgentProjectSummary> {
         if self.refreshed_at.is_some_and(|refreshed_at| {
@@ -691,7 +691,7 @@ impl AgentProjectCache {
         }) {
             return self.projects.clone();
         }
-        self.projects = load_agent_project_summaries(cfg, shutdown);
+        self.projects = load_runner_project_summaries(cfg, shutdown);
         self.refreshed_at = Some(Instant::now());
         self.projects.clone()
     }
@@ -765,11 +765,11 @@ fn is_windows_drive_root(_canonical_path: &Path) -> bool {
 /// access happens.
 ///
 /// The classification is grammar-based — the shared
-/// `webcodex_agent_config::paths::is_windows_local_disk_path` parses the
+/// `webcodex_runner_config::paths::is_windows_local_disk_path` parses the
 /// Windows path prefix — never a string `starts_with` check.
 #[cfg(windows)]
 fn validate_windows_project_root(path: &Path) -> Result<(), &'static str> {
-    if webcodex_agent_config::paths::is_windows_local_disk_path(path) {
+    if webcodex_runner_config::paths::is_windows_local_disk_path(path) {
         Ok(())
     } else {
         Err("unc_project_path_unsupported")
@@ -795,7 +795,7 @@ fn toml_basic_string(value: &str) -> String {
 }
 
 /// Build a deterministic project TOML string compatible with the existing
-/// `parse_agent_project_toml` parser. The field order is fixed so the output
+/// `parse_runner_project_toml` parser. The field order is fixed so the output
 /// is reproducible.
 fn build_project_toml(
     id: &str,
@@ -897,7 +897,7 @@ fn validate_project_op_description(desc: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Check whether a canonicalized project path is allowed by the agent policy.
+/// Check whether a canonicalized project path is allowed by the Runner policy.
 /// Returns Ok(()) if the path is safe, Err otherwise.
 ///
 /// - If `allow_cwd_anywhere` is false, the path must be under an explicit
@@ -905,7 +905,7 @@ fn validate_project_op_description(desc: &str) -> Result<(), String> {
 /// - If `allow_cwd_anywhere` is true, the path is allowed unless it is one of
 ///   the `DANGEROUS_PROJECT_ROOTS` (and not under an explicit `allowed_roots`).
 pub(crate) fn validate_project_path_policy(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     canonical_path: &Path,
 ) -> Result<(), String> {
     let path_str = canonical_path.to_string_lossy().to_string();
@@ -914,7 +914,7 @@ pub(crate) fn validate_project_path_policy(
     // reached, but the policy check itself must never bless one either (for
     // example through an `allowed_roots` entry that names a UNC share).
     #[cfg(windows)]
-    if !webcodex_agent_config::paths::is_windows_local_disk_path(canonical_path) {
+    if !webcodex_runner_config::paths::is_windows_local_disk_path(canonical_path) {
         return Err(format!(
             "path {} is not on a local disk drive; UNC and other Windows network/device paths are not supported for projects",
             path_str
@@ -925,7 +925,7 @@ pub(crate) fn validate_project_path_policy(
         if let Ok(canonical_root) = canonicalize_existing(root) {
             // Case-insensitive component-wise containment on Windows so
             // `C:\Users\Alice` roots match `c:\users\alice\proj` projects.
-            if webcodex_agent_config::paths::path_is_within(canonical_path, &canonical_root) {
+            if webcodex_runner_config::paths::path_is_within(canonical_path, &canonical_root) {
                 return Ok(());
             }
         }
@@ -942,7 +942,7 @@ pub(crate) fn validate_project_path_policy(
         let is_dangerous = if dangerous_root == Path::new("/") {
             paths_equal(canonical_path, dangerous_root)
         } else {
-            webcodex_agent_config::paths::path_is_within(canonical_path, dangerous_root)
+            webcodex_runner_config::paths::path_is_within(canonical_path, dangerous_root)
         };
         if is_dangerous {
             return Err(format!(
@@ -1097,7 +1097,7 @@ fn write_project_toml_atomic(
 
 fn load_project_files_for_path_resolution(
     projects_dir: &Path,
-) -> Result<Vec<AgentProjectFile>, &'static str> {
+) -> Result<Vec<RunnerProjectFile>, &'static str> {
     let entries = match std::fs::read_dir(projects_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
@@ -1117,16 +1117,16 @@ fn load_project_files_for_path_resolution(
     for file in files {
         let content = std::fs::read_to_string(&file).map_err(|_| "project_registry_unavailable")?;
         let project =
-            parse_agent_project_toml(&content).map_err(|_| "project_registry_unavailable")?;
+            parse_runner_project_toml(&content).map_err(|_| "project_registry_unavailable")?;
         projects.push(project);
     }
     Ok(projects)
 }
 
 fn projects_matching_canonical_path(
-    projects: &[AgentProjectFile],
+    projects: &[RunnerProjectFile],
     canonical_path: &Path,
-) -> Vec<AgentProjectFile> {
+) -> Vec<RunnerProjectFile> {
     projects
         .iter()
         .filter_map(|project| {
@@ -1196,7 +1196,7 @@ fn canonical_project_path_hash(canonical_path: &Path) -> String {
     format!(
         "{:x}",
         Sha256::digest(
-            webcodex_agent_config::paths::normalize_path_identity(canonical_path).as_bytes()
+            webcodex_runner_config::paths::normalize_path_identity(canonical_path).as_bytes()
         )
     )
 }
@@ -1225,7 +1225,7 @@ fn auto_project_id_candidate(
 
 fn choose_auto_project_id(
     projects_dir: &Path,
-    projects: &[AgentProjectFile],
+    projects: &[RunnerProjectFile],
     canonical_path: &Path,
 ) -> Result<String, &'static str> {
     let configured_ids = projects
@@ -1246,7 +1246,7 @@ fn choose_auto_project_id(
 
 fn path_resolution_success(
     request: &ShellAgentShellRequest,
-    project: &AgentProjectFile,
+    project: &RunnerProjectFile,
     canonical_path: &Path,
     outcome: &'static str,
     registered: bool,
@@ -1277,7 +1277,7 @@ fn existing_path_resolution_result(
     start: Instant,
     request: &ShellAgentShellRequest,
     canonical_path: &Path,
-    matches: Vec<AgentProjectFile>,
+    matches: Vec<RunnerProjectFile>,
 ) -> Option<CommandResult> {
     if matches.len() > 1 {
         let mut matching_project_ids = matches
@@ -1319,7 +1319,7 @@ fn existing_path_resolution_result(
 /// persist a new one. This is an internal Server↔Runner operation, not a
 /// model-visible runtime tool.
 pub(crate) fn handle_resolve_or_register_project(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     projects_dir: &Path,
     request: &ShellAgentShellRequest,
 ) -> CommandResult {
@@ -1493,7 +1493,7 @@ pub(crate) fn handle_resolve_or_register_project(
                 )
             }
         };
-    let project = match parse_agent_project_toml(&toml_content) {
+    let project = match parse_runner_project_toml(&toml_content) {
         Ok(project) => project,
         Err(_) => {
             return structured_project_error_cmd(
@@ -1591,7 +1591,7 @@ fn unregister_project_config(path: &Path) -> Result<(), ProjectUnregisterError> 
 /// Structured, non-shell project lifecycle mutation. Unregister only removes
 /// the registry TOML and never touches the project path or Git data.
 pub(crate) fn handle_project_lifecycle_op(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     projects_dir: &Path,
     request: &ShellAgentShellRequest,
 ) -> CommandResult {
@@ -1647,7 +1647,7 @@ pub(crate) fn handle_project_lifecycle_op(
         Ok(v) => v,
         Err(_) => return project_error_cmd(start, "operation_failed"),
     };
-    let mut project = match parse_agent_project_toml(&content) {
+    let mut project = match parse_runner_project_toml(&content) {
         Ok(v) => v,
         Err(_) => return project_error_cmd(start, "operation_failed"),
     };
@@ -1734,13 +1734,13 @@ fn matching_existing_project(
     path: &str,
     description: Option<&str>,
     allow_patch: bool,
-) -> Result<Option<AgentProjectFile>, &'static str> {
+) -> Result<Option<RunnerProjectFile>, &'static str> {
     let config_path = projects_dir.join(format!("{id}.toml"));
     if !config_path.exists() {
         return Ok(None);
     }
     let content = std::fs::read_to_string(&config_path).map_err(|_| "operation_failed")?;
-    let project = parse_agent_project_toml(&content).map_err(|_| "operation_failed")?;
+    let project = parse_runner_project_toml(&content).map_err(|_| "operation_failed")?;
     let matches = project.id == id
         && paths_equal(Path::new(&project.path), Path::new(path))
         && project.name.as_deref() == Some(name)
@@ -1781,7 +1781,7 @@ fn recovered_project_result(
     kind: &str,
     runtime_id: &str,
     client_id: &str,
-    project: &AgentProjectFile,
+    project: &RunnerProjectFile,
     template: Option<&str>,
     git_init: bool,
 ) -> serde_json::Value {
@@ -1804,7 +1804,7 @@ fn recovered_project_result(
 /// TODO: add an explicit retention policy plus a safe managed-project deletion
 /// path that re-verifies this kind and root before removing anything.
 fn handle_managed_temporary_project(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     projects_dir: &Path,
     temporary_projects_root: Option<&Path>,
     request: &ShellAgentShellRequest,
@@ -1902,7 +1902,7 @@ fn handle_managed_temporary_project(
                 return project_error_cmd(start, "operation_indeterminate");
             }
         };
-        let project = parse_agent_project_toml(&toml_content)
+        let project = parse_runner_project_toml(&toml_content)
             .expect("generated managed temporary project TOML must parse");
         return ok_cmd(
             start,
@@ -1941,7 +1941,7 @@ fn handle_managed_temporary_project(
 /// and returns structured JSON in `CommandResult.stdout`.
 #[cfg(test)]
 pub(crate) fn handle_project_op(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     projects_dir: &Path,
     request: &ShellAgentShellRequest,
 ) -> CommandResult {
@@ -1949,7 +1949,7 @@ pub(crate) fn handle_project_op(
 }
 
 pub(crate) fn handle_project_op_with_temporary_projects_root(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     projects_dir: &Path,
     temporary_projects_root: Option<&Path>,
     request: &ShellAgentShellRequest,
@@ -2146,7 +2146,7 @@ pub(crate) fn handle_project_op_with_temporary_projects_root(
             "created_config": write_result.created_config,
             "overwritten": write_result.overwritten,
             "allow_patch": allow_patch,
-            "revision": project_revision(&parse_agent_project_toml(&toml_content).expect("generated project TOML must parse")),
+            "revision": project_revision(&parse_runner_project_toml(&toml_content).expect("generated project TOML must parse")),
             "operation": "register", "outcome": "registered", "changed": true, "recovered": false,
         });
         return ok_cmd(start, result);
@@ -2354,7 +2354,7 @@ pub(crate) fn handle_project_op_with_temporary_projects_root(
         "overwritten": write_result.overwritten,
         "allow_patch": allow_patch,
         "template": template,
-        "revision": project_revision(&parse_agent_project_toml(&toml_content).expect("generated project TOML must parse")),
+        "revision": project_revision(&parse_runner_project_toml(&toml_content).expect("generated project TOML must parse")),
         "git_initialized": git_initialized,
         "operation": "create", "outcome": "created", "changed": true, "recovered": false,
     });
@@ -2393,7 +2393,7 @@ mod durability_tests {
             &content,
         )
         .unwrap();
-        let projects = load_agent_project_summaries_from_dir(&projects_dir);
+        let projects = load_runner_project_summaries_from_dir(&projects_dir);
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].id, "demo");
     }
@@ -2410,7 +2410,7 @@ mod durability_tests {
         std::fs::create_dir(&first).unwrap();
         std::fs::create_dir(&second).unwrap();
         symlink(&first, &link).unwrap();
-        let project = AgentProjectFile {
+        let project = RunnerProjectFile {
             id: "demo".to_string(),
             path: link.to_string_lossy().to_string(),
             shell_profile: None,
@@ -2422,14 +2422,14 @@ mod durability_tests {
             hooks: HashMap::new(),
         };
 
-        let first_summary = agent_project_summary(&project, 1, false);
+        let first_summary = runner_project_summary(&project, 1, false);
         assert_eq!(
             Path::new(&first_summary.path),
             first.canonicalize().unwrap()
         );
         std::fs::remove_file(&link).unwrap();
         symlink(&second, &link).unwrap();
-        let second_summary = agent_project_summary(&project, 2, false);
+        let second_summary = runner_project_summary(&project, 2, false);
         assert_eq!(
             Path::new(&second_summary.path),
             second.canonicalize().unwrap()

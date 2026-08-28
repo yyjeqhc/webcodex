@@ -8,7 +8,7 @@ use super::files::sha256_hex_bytes;
 use super::output::CommandResult;
 use super::shell::cwd_allowed;
 use super::shutdown::{lock_unpoison, SHUTDOWN_POLL_INTERVAL};
-use super::AgentPolicy;
+use super::RunnerPolicy;
 use crate::shell_protocol::{
     ClaudeCodeProviderStatus, ProviderCallSummary, ShellAgentShellRequest, ToolProvidersStatus,
     EXTERNAL_SEARCH_REQUEST_PREFIX,
@@ -225,7 +225,7 @@ impl ExternalToolRouter {
     #[cfg(test)]
     pub(crate) fn route(
         &self,
-        policy: &AgentPolicy,
+        policy: &RunnerPolicy,
         request: &ShellAgentShellRequest,
     ) -> ExternalRoute {
         self.route_with_shutdown(policy, request, None)
@@ -233,7 +233,7 @@ impl ExternalToolRouter {
 
     pub(crate) fn route_with_shutdown(
         &self,
-        policy: &AgentPolicy,
+        policy: &RunnerPolicy,
         request: &ShellAgentShellRequest,
         shutdown: Option<&AtomicBool>,
     ) -> ExternalRoute {
@@ -440,7 +440,7 @@ fn normalized_search_exit_code(stdout: &str) -> i32 {
 }
 
 fn validate_context(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     request: &ShellAgentShellRequest,
     _capability: ProviderCapability,
     payload: &Value,

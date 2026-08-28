@@ -8,8 +8,8 @@
 
 use super::{
     command_result, cwd_allowed, path_error, protocol_error, request_error, sanitize_tool_name,
-    sha256_hex_bytes, AgentPolicy, ClaudeCodeMcpProvider, ExternalToolRouter, ProjectMcpClient,
-    ProviderCallSummary, ProviderError, ShellAgentShellRequest, WriteState,
+    sha256_hex_bytes, ClaudeCodeMcpProvider, ExternalToolRouter, ProjectMcpClient,
+    ProviderCallSummary, ProviderError, RunnerPolicy, ShellAgentShellRequest, WriteState,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -118,7 +118,7 @@ fn elapsed_ms(started: Instant) -> u64 {
 impl ExternalToolRouter {
     pub(super) fn handle_experimental(
         &self,
-        policy: &AgentPolicy,
+        policy: &RunnerPolicy,
         request: &ShellAgentShellRequest,
         shutdown: Option<&AtomicBool>,
     ) -> super::CommandResult {
@@ -175,7 +175,7 @@ impl ClaudeCodeMcpProvider {
     /// Experimental: list/describe/call raw Claude MCP tools for one project root.
     fn experimental_dispatch(
         &self,
-        policy: &AgentPolicy,
+        policy: &RunnerPolicy,
         request: &ShellAgentShellRequest,
         shutdown: Option<&AtomicBool>,
     ) -> Result<ExperimentalDispatchOutcome, ProviderError> {

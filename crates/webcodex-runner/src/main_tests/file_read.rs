@@ -49,7 +49,7 @@ fn file_read_json(result: CommandResult) -> serde_json::Value {
 }
 
 #[test]
-fn agent_file_read_without_range_preserves_plain_text_output() {
+fn runner_file_read_without_range_preserves_plain_text_output() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());
     std::fs::write(tmp.path().join("small.txt"), "one\ntwo\n").unwrap();
@@ -65,7 +65,7 @@ fn agent_file_read_without_range_preserves_plain_text_output() {
 
 #[cfg(unix)]
 #[test]
-fn agent_file_read_rejects_symlink_escape_even_when_policy_allows_target() {
+fn runner_file_read_rejects_symlink_escape_even_when_policy_allows_target() {
     let project = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let secret = outside.path().join("secret.txt");
@@ -85,7 +85,7 @@ fn agent_file_read_rejects_symlink_escape_even_when_policy_allows_target() {
 }
 
 #[test]
-fn agent_file_read_range_reads_large_file_subset_under_max_bytes() {
+fn runner_file_read_range_reads_large_file_subset_under_max_bytes() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());
     let mut content = String::new();
@@ -109,7 +109,7 @@ fn agent_file_read_range_reads_large_file_subset_under_max_bytes() {
 }
 
 #[test]
-fn agent_file_read_range_output_obeys_max_bytes() {
+fn runner_file_read_range_output_obeys_max_bytes() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());
     std::fs::write(tmp.path().join("limited.txt"), "alpha\nbeta\n").unwrap();
@@ -128,7 +128,7 @@ fn agent_file_read_range_output_obeys_max_bytes() {
 }
 
 #[test]
-fn agent_file_read_range_rejects_serialized_envelope_expansion_before_stdout() {
+fn runner_file_read_range_rejects_serialized_envelope_expansion_before_stdout() {
     for (name, byte, len) in [
         ("nul.txt", 0x00, 48 * 1024),
         ("quote.txt", b'\"', 140 * 1024),
@@ -155,7 +155,7 @@ fn agent_file_read_range_rejects_serialized_envelope_expansion_before_stdout() {
 }
 
 #[test]
-fn agent_file_read_precheck_distinguishes_missing_and_non_file() {
+fn runner_file_read_precheck_distinguishes_missing_and_non_file() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());
     std::fs::create_dir(tmp.path().join("directory")).unwrap();
@@ -182,7 +182,7 @@ fn agent_file_read_precheck_distinguishes_missing_and_non_file() {
 }
 
 #[test]
-fn agent_file_read_range_errors_never_include_absolute_path() {
+fn runner_file_read_range_errors_never_include_absolute_path() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());
 

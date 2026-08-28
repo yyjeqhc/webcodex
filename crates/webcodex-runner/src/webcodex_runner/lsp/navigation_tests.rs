@@ -9,7 +9,7 @@ use crate::lsp_bridge::{
     MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY,
 };
 use crate::shell_protocol::{ShellAgentShellRequest, ShellClientCapabilities};
-use crate::webcodex_runner::config::AgentPolicy;
+use crate::webcodex_runner::config::RunnerPolicy;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -57,7 +57,7 @@ struct NavFixture {
     projects_dir: PathBuf,
     marker: PathBuf,
     supervisor: LspSupervisor,
-    policy: AgentPolicy,
+    policy: RunnerPolicy,
 }
 
 impl NavFixture {
@@ -128,10 +128,10 @@ impl NavFixture {
             shutdown_timeout: Duration::from_millis(500),
             ..LspSupervisorConfig::default()
         });
-        let policy = AgentPolicy {
+        let policy = RunnerPolicy {
             allow_cwd_anywhere: true,
             allowed_roots: vec![temp.path().to_path_buf()],
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         };
         Self {
             _temp: temp,
@@ -230,7 +230,7 @@ fn lsp_kind_never_matches_shell() {
 }
 
 #[test]
-fn capability_default_is_false_and_new_agent_sets_true() {
+fn capability_default_is_false_and_new_runner_sets_true() {
     let _serial = super::serialize_fake_lsp_test();
     let old: ShellClientCapabilities = serde_json::from_str(r#"{"shell":true}"#).unwrap();
     assert!(!old.lsp_read_only_navigation);
@@ -627,9 +627,9 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
         )]),
         ..LspSupervisorConfig::default()
     });
-    let policy = AgentPolicy {
+    let policy = RunnerPolicy {
         allow_cwd_anywhere: true,
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     };
     let req = ShellAgentShellRequest {
         request_id: "s".into(),
@@ -861,7 +861,7 @@ fn document_diagnostics_normalizes_sorts_tags_and_omits_private_payloads() {
 }
 
 #[test]
-fn document_diagnostics_deduplicates_and_truncates_on_the_agent() {
+fn document_diagnostics_deduplicates_and_truncates_on_the_runner() {
     let _serial = super::serialize_fake_lsp_test();
     let duplicate = NavFixture::new("diagnostics_duplicates").diagnostics(100);
     assert_eq!(duplicate["result"]["total_count"], 2);
@@ -1932,10 +1932,10 @@ fn real_pyright_document_symbols_end_to_end() {
         shutdown_timeout: Duration::from_secs(3),
         ..LspSupervisorConfig::default()
     });
-    let policy = AgentPolicy {
+    let policy = RunnerPolicy {
         allow_cwd_anywhere: true,
         allowed_roots: vec![temp.path().to_path_buf()],
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     };
 
     let req = shell_lsp_request(AgentLspPayload {
@@ -2069,10 +2069,10 @@ fn real_typescript_document_symbols_end_to_end() {
         shutdown_timeout: Duration::from_secs(3),
         ..LspSupervisorConfig::default()
     });
-    let policy = AgentPolicy {
+    let policy = RunnerPolicy {
         allow_cwd_anywhere: true,
         allowed_roots: vec![temp.path().to_path_buf()],
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     };
 
     let req = shell_lsp_request(AgentLspPayload {
@@ -2154,10 +2154,10 @@ fn real_gopls_navigation_and_call_hierarchy_end_to_end() {
         shutdown_timeout: Duration::from_secs(3),
         ..LspSupervisorConfig::default()
     });
-    let policy = AgentPolicy {
+    let policy = RunnerPolicy {
         allow_cwd_anywhere: true,
         allowed_roots: vec![temp.path().to_path_buf()],
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     };
 
     let request = |request| {

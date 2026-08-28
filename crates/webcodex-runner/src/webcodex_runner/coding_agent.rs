@@ -1,5 +1,5 @@
 use super::config::{AcpAgentConfig, AcpConfig};
-use super::projects::load_agent_project_summaries_from_dir;
+use super::projects::load_runner_project_summaries_from_dir;
 use super::shell::canonicalize_existing;
 use super::shutdown::{ActivityTracker, BackgroundThreads};
 use agent_client_protocol_schema::v1::{
@@ -23,7 +23,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
-use webcodex_agent_config::paths::paths_equal;
 #[cfg(all(test, unix))]
 use webcodex_core::coding_agent::CodingAgentCancelRequest;
 use webcodex_core::coding_agent::{
@@ -38,6 +37,7 @@ use webcodex_core::coding_agent::{
     CODING_AGENT_STOP_REASON_MAX_TURN_REQUESTS, CODING_AGENT_STOP_REASON_REFUSAL,
 };
 use webcodex_process::ManagedChild;
+use webcodex_runner_config::paths::paths_equal;
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
     MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
@@ -183,7 +183,7 @@ impl DurableRunStore {
         hasher.update(server_url.as_bytes());
         let namespace = format!("{:x}", hasher.finalize());
         Ok(
-            webcodex_agent_config::paths::default_client_state_base_dir()?
+            webcodex_runner_config::paths::default_client_state_base_dir()?
                 .join("runner-coding-agent-runs-v1")
                 .join(namespace),
         )
@@ -2643,7 +2643,7 @@ fn project_binding_matches(
     if !requested_root.is_dir() {
         return false;
     }
-    load_agent_project_summaries_from_dir(projects_dir)
+    load_runner_project_summaries_from_dir(projects_dir)
         .into_iter()
         .any(|project| {
             if format!("agent:{client_id}:{}", project.id) != runtime_project_id

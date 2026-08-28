@@ -1,5 +1,5 @@
 [package]
-name = "webcodex-agent-config"
+name = "webcodex-runner-config"
 version.workspace = true
 license.workspace = true
 edition.workspace = true

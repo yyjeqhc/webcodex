@@ -43,7 +43,7 @@ RUNTIME_PROJECT_ID="agent:${CLIENT_ID}:${PROJECT_ID}"
 PASS=0
 FAIL=0
 SERVER_PID=""
-AGENT_PID=""
+RUNNER_PID=""
 TMP_ROOT=""
 COOKIE_JAR=""
 START_EPOCH=$(date +%s)
@@ -131,13 +131,13 @@ assert_nonempty() {
 
 cleanup() {
     trap - INT TERM EXIT
-    for pid in "${AGENT_PID:-}" "${SERVER_PID:-}"; do
+    for pid in "${RUNNER_PID:-}" "${SERVER_PID:-}"; do
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             kill "$pid" 2>/dev/null || true
         fi
     done
     sleep 1
-    for pid in "${AGENT_PID:-}" "${SERVER_PID:-}"; do
+    for pid in "${RUNNER_PID:-}" "${SERVER_PID:-}"; do
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             kill -9 "$pid" 2>/dev/null || true
         fi
@@ -161,7 +161,7 @@ fi
 log "building webcodex + webcodex-runner (release of the current tree, debug profile)"
 "$CARGO_BIN" build --quiet -p webcodex -p webcodex-runner --bins
 SERVER_BIN="$PROJECT_DIR/target/debug/webcodex-server"
-AGENT_BIN="$PROJECT_DIR/target/debug/webcodex-runner"
+RUNNER_BIN="$PROJECT_DIR/target/debug/webcodex-runner"
 
 PORT="${E2E_PORT:-$(find_free_port)}"
 TMP_ROOT="$(mktemp -d -t webcodex-reconnect-e2e-XXXXXX)"
@@ -172,7 +172,7 @@ PROJECTS_DIR="$TMP_ROOT/projects.d"
 AGENT_TOML="$TMP_ROOT/agent.toml"
 TEST_REPO="$TMP_ROOT/reconnect-repo"
 SERVER_LOG="$TMP_ROOT/server.log"
-AGENT_LOG="$TMP_ROOT/agent.log"
+RUNNER_LOG="$TMP_ROOT/agent.log"
 mkdir -p "$DATA_DIR" "$PROJECTS_DIR" "$TEST_REPO"
 log "temp root: $TMP_ROOT (port $PORT)"
 
@@ -220,9 +220,9 @@ start_server() {
     SERVER_PID=$!
 }
 
-start_agent() {
-    "$AGENT_BIN" --config "$AGENT_TOML" >>"$AGENT_LOG" 2>&1 &
-    AGENT_PID=$!
+start_runner() {
+    "$RUNNER_BIN" --config "$AGENT_TOML" >>"$RUNNER_LOG" 2>&1 &
+    RUNNER_PID=$!
 }
 
 wait_for_server() {
@@ -270,7 +270,7 @@ wait_for_agent_offline() {
 log "starting server + runner"
 start_server
 wait_for_server || { fail "server did not listen"; exit 1; }
-start_agent
+start_runner
 BODY="$(wait_for_agent_online)" || { fail "runner did not register"; exit 1; }
 pass "server + runner online"
 
@@ -320,8 +320,8 @@ fi
 assert_nonempty "long-running agent job started" "$JOB_ID"
 
 log "killing runner (simulated crash)"
-kill -9 "$AGENT_PID" 2>/dev/null || true
-AGENT_PID=""
+kill -9 "$RUNNER_PID" 2>/dev/null || true
+RUNNER_PID=""
 BODY="$(wait_for_agent_offline)" || { fail "server never observed runner offline"; exit 1; }
 pass "server observed runner disconnect"
 
@@ -344,7 +344,7 @@ assert_eq "in-flight job has queryable terminal state after crash" "$JOB_STATE" 
 # Phase 3: runner restart — new instance, no server restart
 # ----------------------------------------------------------------------------
 log "restarting runner"
-start_agent
+start_runner
 BODY="$(wait_for_agent_online)" || { fail "runner did not re-register"; exit 1; }
 INSTANCE_B="$(json_get "$BODY" ${LAYERS_PREFIX}.server_transport.connection_instance)"
 assert_nonempty "new connection instance" "$INSTANCE_B"
@@ -397,7 +397,7 @@ log "==============================================="
 log "pass=$PASS fail=$FAIL"
 if [ "$FAIL" -gt 0 ]; then
     log "server log: $SERVER_LOG"
-    log "agent log:  $AGENT_LOG"
+    log "runner log:  $RUNNER_LOG"
     exit 1
 fi
 exit 0

@@ -6,7 +6,7 @@ edition.workspace = true
 
 [dependencies]
 agent-client-protocol-schema = { version = "1.7.0", default-features = false }
-webcodex-agent-config = { path = "../webcodex-agent-config" }
+webcodex-runner-config = { path = "../webcodex-runner-config" }
 webcodex-core = { path = "../webcodex-core" }
 webcodex-persistent-shell = { path = "../webcodex-persistent-shell" }
 webcodex-process = { path = "../webcodex-process" }

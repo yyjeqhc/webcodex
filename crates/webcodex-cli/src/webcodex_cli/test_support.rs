@@ -8,7 +8,7 @@ use crate::{cli_action, CliAction};
 /// Env mutation is process-global: a panic in one test must not corrupt the
 /// next one, so all env-mutating tests in this binary hold this lock for
 /// their whole body. There is deliberately a single lock for the whole CLI
-/// test binary — separate per-crate locks (e.g. `agent_init::TEST_ENV_LOCK`)
+/// test binary — separate per-crate locks (e.g. `runner_config::TEST_ENV_LOCK`)
 /// would let two env-mutating tests run concurrently.
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 

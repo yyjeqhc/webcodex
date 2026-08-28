@@ -16,7 +16,7 @@ REQUIRED_PACKAGES = frozenset(
     {
         "webcodex",
         "webcodex-admin",
-        "webcodex-agent-config",
+        "webcodex-runner-config",
         "webcodex-cli",
         "webcodex-core",
         "webcodex-runner",

@@ -52,11 +52,11 @@ mod users_http;
 
 #[cfg(test)]
 pub(crate) use webcodex_admin as admin_cli;
-pub(crate) use webcodex_agent_config as agent_init;
 pub(crate) use webcodex_core::{
     apply_edits_shared, artifact_policy, build_info, lsp_bridge, sensitive_paths, shell_protocol,
     validation_bridge,
 };
+pub(crate) use webcodex_runner_config as runner_config;
 pub(crate) use webcodex_sandbox as command_sandbox;
 pub(crate) use webcodex_workspace::{project_context, project_overview, workspace_checkpoint};
 

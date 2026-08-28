@@ -1007,7 +1007,7 @@ async fn state_directory_boundary_is_shared_and_has_no_failure_side_effects() {
             resolve_local_task_state(&root, "personal", unsafe_options.state_dir.as_deref())
                 .unwrap_err();
         assert!(task_error.contains("outside"));
-        let start_error = start_agent(&unsafe_options).await.unwrap_err();
+        let start_error = start_runner(&unsafe_options).await.unwrap_err();
         assert_eq!(start_error.code, "state_directory_unsafe");
         assert_no_project_state_artifacts(&root);
     }
@@ -1065,7 +1065,7 @@ fn fresh_setup_is_minimal_idempotent_and_does_not_expose_internal_ids() {
     assert_eq!(first.status, "configured");
     assert_eq!(
         first.changed,
-        ["Connection", "Agent", "Project registration"]
+        ["Connection", "Runner", "Project registration"]
     );
     let agent = fs::read_to_string(state.join("agent/agent.toml")).unwrap();
     let registration = fs::read_to_string(
@@ -1262,7 +1262,7 @@ fn doctor_and_status_share_table_driven_readiness_facts_and_stay_read_only() {
             false,
             "project_credential_rejected",
         ),
-        (RemoteProbe::AgentOffline, false, "agent_offline"),
+        (RemoteProbe::RunnerOffline, false, "agent_offline"),
         (
             RemoteProbe::ProjectMissing,
             false,

@@ -14,7 +14,7 @@ TOKEN="webcodex-runner-reload-e2e-only"
 STARTUP_DISPLAY="Agent Reload E2E"
 TMP_ROOT=""
 SERVER_PID=""
-AGENT_PID=""
+RUNNER_PID=""
 PORT=""
 STATUS_FILE=""
 STAGE="startup"
@@ -50,7 +50,7 @@ stop_group() {
 }
 diagnostics() {
     printf '[agent-reload-e2e][diagnostic] stage=%s agent_alive=%s server_alive=%s\n' \
-        "$STAGE" "$(process_alive "${AGENT_PID:-}" && printf yes || printf no)" \
+        "$STAGE" "$(process_alive "${RUNNER_PID:-}" && printf yes || printf no)" \
         "$(process_alive "${SERVER_PID:-}" && printf yes || printf no)" >&2
     if [ -n "${STATUS_FILE:-}" ] && [ -s "$STATUS_FILE" ]; then
         python3 - "$STATUS_FILE" <<'PY' >&2 || true
@@ -65,7 +65,7 @@ except Exception:
     print("[agent-reload-e2e][diagnostic] last_status=unavailable")
 PY
     fi
-    for log in "${SERVER_LOG:-}" "${AGENT_LOG:-}"; do
+    for log in "${SERVER_LOG:-}" "${RUNNER_LOG:-}"; do
         [ -n "$log" ] && [ -f "$log" ] || continue
         printf '[agent-reload-e2e][diagnostic] bounded_log_tail:\n' >&2
         tail -n 40 "$log" | awk -v token="$TOKEN" -v tmp="${TMP_ROOT:-}" \
@@ -76,7 +76,7 @@ cleanup() {
     local status=$?
     trap - EXIT INT TERM
     [ "$status" -eq 0 ] || diagnostics
-    stop_group "${AGENT_PID:-}"
+    stop_group "${RUNNER_PID:-}"
     stop_group "${SERVER_PID:-}"
     [ -z "${PORT:-}" ] || wait_for_port closed || true
     [ -z "${TMP_ROOT:-}" ] || rm -rf "$TMP_ROOT"
@@ -177,14 +177,14 @@ PY
 }
 wait_for_status() {
     for _ in $(seq 1 200); do
-        process_alive "$AGENT_PID" && process_alive "$SERVER_PID" || return 1
+        process_alive "$RUNNER_PID" && process_alive "$SERVER_PID" || return 1
         status_matches "$@" && return 0
         sleep 0.1
     done
     return 1
 }
-assert_agent_pid() {
-    [ "$AGENT_PID" = "$START_AGENT_PID" ] && process_alive "$AGENT_PID" \
+assert_runner_pid() {
+    [ "$RUNNER_PID" = "$START_RUNNER_PID" ] && process_alive "$RUNNER_PID" \
         || fail "agent PID changed or exited during reload"
 }
 request_body() {
@@ -224,7 +224,7 @@ RUNTIME_TMP="$TMP_ROOT/tmp"
 AGENT_CONFIG="$TMP_ROOT/agent.toml"
 GENERATION_TWO_CONFIG="$TMP_ROOT/generation-2.toml"
 SERVER_LOG="$TMP_ROOT/server.log"
-AGENT_LOG="$TMP_ROOT/agent.log"
+RUNNER_LOG="$TMP_ROOT/agent.log"
 STATUS_FILE="$TMP_ROOT/status.json"
 RESPONSE_FILE="$TMP_ROOT/response.json"
 GATE="$TMP_ROOT/concurrency-gate"
@@ -261,22 +261,22 @@ setsid env -i PATH="$PATH" LANG=C HOME="$ISOLATED_HOME" \
     XDG_CONFIG_HOME="$ISOLATED_HOME/.config" XDG_DATA_HOME="$ISOLATED_HOME/.local/share" \
     XDG_STATE_HOME="$ISOLATED_HOME/.local/state" XDG_CACHE_HOME="$ISOLATED_HOME/.cache" \
     TMPDIR="$RUNTIME_TMP" WEBCODEX_ENV_FILE="$TMP_ROOT/empty.env" RUST_LOG=warn \
-    target/debug/webcodex-runner --config "$AGENT_CONFIG" >"$AGENT_LOG" 2>&1 &
-AGENT_PID=$!
-START_AGENT_PID="$AGENT_PID"
+    target/debug/webcodex-runner --config "$AGENT_CONFIG" >"$RUNNER_LOG" 2>&1 &
+RUNNER_PID=$!
+START_RUNNER_PID="$RUNNER_PID"
 STAGE="generation 1 baseline"
 wait_for_status 1 not_attempted null false - native false || fail "baseline status did not arrive"
 assert_marker generation-1
-assert_agent_pid
+assert_runner_pid
 ok "generation 1 registered and dispatched marker generation-1"
 STAGE="generation 2 valid hot-only reload"
 write_agent_config generation-2 2 32768 claude_code_then_native true 17 "$STARTUP_DISPLAY" 1 \
     project_search_generation_2
 cp "$AGENT_CONFIG" "$GENERATION_TWO_CONFIG"
-kill -HUP "$AGENT_PID"
+kill -HUP "$RUNNER_PID"
 wait_for_status 2 success null false - claude_code_then_native true \
     || fail "valid reload status did not arrive"
-assert_agent_pid
+assert_runner_pid
 assert_marker generation-2
 run_shell_request 'sleep 3; printf unexpected'
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); out=d["output"]; assert not d["success"] and out["failure_kind"]=="timeout" and "unexpected" not in out.get("stdout_tail", "")' \
@@ -287,10 +287,10 @@ ok "generation 2 applied shell, timeout policy, and lazy provider status"
 STAGE="invalid TOML fail-closed"
 printf 'display_name = "unterminated\n' >"$AGENT_CONFIG.next"
 mv "$AGENT_CONFIG.next" "$AGENT_CONFIG"
-kill -HUP "$AGENT_PID"
+kill -HUP "$RUNNER_PID"
 wait_for_status 2 failure config_parse_failed false - claude_code_then_native true \
     || fail "invalid reload failure status did not arrive"
-assert_agent_pid
+assert_runner_pid
 assert_marker generation-2
 cp "$GENERATION_TWO_CONFIG" "$AGENT_CONFIG.next"
 mv "$AGENT_CONFIG.next" "$AGENT_CONFIG"
@@ -299,10 +299,10 @@ ok "invalid TOML kept generation 2 and its active request snapshot"
 STAGE="generation 3 mixed reload"
 write_agent_config generation-3 5 24576 native false 11 'Restart-Only Display' 2 \
     project_search_generation_3
-kill -HUP "$AGENT_PID"
+kill -HUP "$RUNNER_PID"
 wait_for_status 3 partial null true display_name,max_concurrent_jobs native false \
     || fail "mixed reload status did not arrive"
-assert_agent_pid
+assert_runner_pid
 command='sleep 3; printf %s "$WEBCODEX_RELOAD_MARKER"'
 run_shell_request "$command"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["success"] and d["output"]["stdout_tail"]=="generation-3"' \
@@ -331,10 +331,10 @@ ok "generation 3 applied hot fields and retained startup identity/concurrency"
 STAGE="generation 4 recovery"
 write_agent_config generation-4 3 16384 claude_code_then_native true 13 "$STARTUP_DISPLAY" 1 \
     project_search_generation_4
-kill -HUP "$AGENT_PID"
+kill -HUP "$RUNNER_PID"
 wait_for_status 4 success null false - claude_code_then_native true \
     || fail "recovery reload status did not arrive"
-assert_agent_pid
+assert_runner_pid
 assert_marker generation-4
 ok "generation 4 cleared restart-required summary"
 
@@ -342,9 +342,9 @@ STAGE="shutdown and cleanup"
 [ -z "$(git -C "$FIXTURE" status --porcelain)" ] || fail "fixture worktree is dirty"
 status_matches 4 success null false - claude_code_then_native true \
     || fail "final status changed or Claude was started"
-stop_group "$AGENT_PID"
-kill -0 -- "-$AGENT_PID" 2>/dev/null && fail "agent process group remained" || true
-AGENT_PID=""
+stop_group "$RUNNER_PID"
+kill -0 -- "-$RUNNER_PID" 2>/dev/null && fail "agent process group remained" || true
+RUNNER_PID=""
 stop_group "$SERVER_PID"
 kill -0 -- "-$SERVER_PID" 2>/dev/null && fail "server process group remained" || true
 SERVER_PID=""

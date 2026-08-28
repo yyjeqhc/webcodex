@@ -34,9 +34,9 @@ pub(crate) use checkpoints::{handle_checkpoint_file_request, is_checkpoint_reque
 pub(crate) use computer::{handle_computer_request, is_computer_request_kind};
 pub(crate) use config::SshConfig;
 pub(crate) use config::{
-    client_profile_agent_config, default_config_path, hostname, load_config, max_concurrent_jobs,
-    projects_dir, validate_client_profile, AgentConfig, AgentPolicy, HotAgentConfig,
-    ReloadableAgentConfig, ShellConfig,
+    client_profile_runner_config, default_config_path, hostname, load_config, max_concurrent_jobs,
+    projects_dir, validate_client_profile, HotRunnerConfig, ReloadableRunnerConfig, RunnerConfig,
+    RunnerPolicy, ShellConfig,
 };
 #[cfg(test)]
 pub(crate) use config::{
@@ -54,20 +54,20 @@ pub(crate) use lsp::LspSupervisor;
 pub(crate) use output::{err_cmd, ok_cmd, CommandResult, ShellCommandResult};
 pub(crate) use patches::{
     handle_apply_text_edits_file_request, handle_write_project_file_request,
-    is_structured_edit_request_kind, validate_structured_edit_agent_path,
+    is_structured_edit_request_kind, validate_structured_edit_runner_path,
 };
 pub(crate) use persistent_shell::PersistentShellManager;
 #[cfg(test)]
 pub(crate) use projects::handle_project_op;
 #[cfg(test)]
-pub(crate) use projects::load_agent_project_summaries_from_dir;
-#[cfg(test)]
-pub(crate) use projects::{
-    agent_project_summary, parse_agent_project_toml, validate_project_path_policy,
-};
+pub(crate) use projects::load_runner_project_summaries_from_dir;
 pub(crate) use projects::{
     handle_project_lifecycle_op, handle_project_op_with_temporary_projects_root,
-    handle_resolve_or_register_project, AgentProjectCache,
+    handle_resolve_or_register_project, RunnerProjectCache,
+};
+#[cfg(test)]
+pub(crate) use projects::{
+    parse_runner_project_toml, runner_project_summary, validate_project_path_policy,
 };
 pub(crate) use shell::{
     configured_prepared_shell_job_command, configured_shell_job_command,
@@ -94,7 +94,7 @@ pub(crate) use ssh::{is_transport_failure, run_ssh_shell_with_execution_state, S
 pub(crate) use transport::{
     auto_transport_plan, build_ws_request, effective_transport, non_empty_token,
     quic_client_bind_addr_for, resolve_quic_config, resolve_quic_server_addrs, server_url_to_ws,
-    websocket_session, AgentRuntimeState, ResultSubmission, WS_OUTGOING_CAPACITY,
+    websocket_session, ResultSubmission, RunnerRuntimeState, WS_OUTGOING_CAPACITY,
 };
-pub(crate) use transport::{run_agent, AgentSink, HttpSendConfig, SubmitResultError};
+pub(crate) use transport::{run_runner, HttpSendConfig, RunnerSink, SubmitResultError};
 pub(crate) use util::contains_any;

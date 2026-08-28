@@ -26,7 +26,7 @@ fn response_decode_distinguishes_empty_eof_and_complete_syntax_errors() {
             },
         )
         .unwrap_err();
-        assert_eq!(error.kind, AgentHttpErrorKind::DecodeTransient);
+        assert_eq!(error.kind, RunnerHttpErrorKind::DecodeTransient);
     }
 
     let error = decode_json_response::<ShellAgentPollResponse>(
@@ -39,7 +39,7 @@ fn response_decode_distinguishes_empty_eof_and_complete_syntax_errors() {
         },
     )
     .unwrap_err();
-    assert_eq!(error.kind, AgentHttpErrorKind::ProtocolDecode);
+    assert_eq!(error.kind, RunnerHttpErrorKind::ProtocolDecode);
     assert!(error.summary.contains("serde_category=syntax"));
     assert!(!error.to_string().contains("{not-json"));
 }
@@ -61,7 +61,7 @@ fn protocol_decode_diagnostics_omit_queries_credentials_and_response_values() {
     )
     .unwrap_err();
     let message = error.to_string();
-    assert_eq!(error.kind, AgentHttpErrorKind::ProtocolDecode);
+    assert_eq!(error.kind, RunnerHttpErrorKind::ProtocolDecode);
     assert!(
         message.contains("content_type=application/json"),
         "{message}"
@@ -74,12 +74,12 @@ fn protocol_decode_diagnostics_omit_queries_credentials_and_response_values() {
 
 #[test]
 fn result_400_is_classified_permanent_with_bounded_structured_reason() {
-    let error = AgentHttpError::status(
+    let error = RunnerHttpError::status(
         "/api/shell/agent/result",
         reqwest::StatusCode::BAD_REQUEST,
         r#"{"success":false,"error":"unknown or expired shell request: req-1"}"#,
     );
-    assert_eq!(error.kind, AgentHttpErrorKind::ClientRejected);
+    assert_eq!(error.kind, RunnerHttpErrorKind::ClientRejected);
     let message = error.to_string();
     assert!(
         message.contains("server rejected /api/shell/agent/result request"),
@@ -94,32 +94,32 @@ fn result_400_is_classified_permanent_with_bounded_structured_reason() {
 
 #[test]
 fn result_4xx_html_bodies_stay_permanent_and_never_leak_markup() {
-    let bad_request = AgentHttpError::status(
+    let bad_request = RunnerHttpError::status(
         "/api/shell/agent/result",
         reqwest::StatusCode::BAD_REQUEST,
         "<html>\n<body><h1>400 Bad Request</h1><center>nginx</center></body>\n</html>",
     );
-    assert_eq!(bad_request.kind, AgentHttpErrorKind::ClientRejected);
+    assert_eq!(bad_request.kind, RunnerHttpErrorKind::ClientRejected);
     assert!(!bad_request.to_string().contains("<html"), "{bad_request}");
 
-    let too_large = AgentHttpError::status(
+    let too_large = RunnerHttpError::status(
         "/api/shell/agent/result",
         reqwest::StatusCode::PAYLOAD_TOO_LARGE,
         "<html><center>nginx</center><center>413 Request Entity Too Large</center></html>",
     );
-    assert_eq!(too_large.kind, AgentHttpErrorKind::ClientRejected);
+    assert_eq!(too_large.kind, RunnerHttpErrorKind::ClientRejected);
     assert!(!too_large.to_string().contains("nginx"), "{too_large}");
 }
 
 #[test]
 fn result_400_structured_reason_is_bounded_for_large_json_bodies() {
     let huge = format!(r#"{{"success":false,"error":"{}"}}"#, "x".repeat(10_000));
-    let error = AgentHttpError::status(
+    let error = RunnerHttpError::status(
         "/api/shell/agent/result",
         reqwest::StatusCode::BAD_REQUEST,
         &huge,
     );
-    assert_eq!(error.kind, AgentHttpErrorKind::ClientRejected);
+    assert_eq!(error.kind, RunnerHttpErrorKind::ClientRejected);
     let message = error.to_string();
     assert!(
         message.chars().count() < 300,
@@ -131,43 +131,46 @@ fn result_400_structured_reason_is_bounded_for_large_json_bodies() {
 #[test]
 fn http_status_classification_keeps_retryable_auth_and_gateway_kinds() {
     let cases = [
-        (reqwest::StatusCode::UNAUTHORIZED, AgentHttpErrorKind::Auth),
-        (reqwest::StatusCode::FORBIDDEN, AgentHttpErrorKind::Auth),
-        (reqwest::StatusCode::NOT_FOUND, AgentHttpErrorKind::NotFound),
+        (reqwest::StatusCode::UNAUTHORIZED, RunnerHttpErrorKind::Auth),
+        (reqwest::StatusCode::FORBIDDEN, RunnerHttpErrorKind::Auth),
+        (
+            reqwest::StatusCode::NOT_FOUND,
+            RunnerHttpErrorKind::NotFound,
+        ),
         (
             reqwest::StatusCode::REQUEST_TIMEOUT,
-            AgentHttpErrorKind::Status,
+            RunnerHttpErrorKind::Status,
         ),
         (
             reqwest::StatusCode::TOO_MANY_REQUESTS,
-            AgentHttpErrorKind::Status,
+            RunnerHttpErrorKind::Status,
         ),
         (
             reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-            AgentHttpErrorKind::ServerUnavailable,
+            RunnerHttpErrorKind::ServerUnavailable,
         ),
         (
             reqwest::StatusCode::BAD_GATEWAY,
-            AgentHttpErrorKind::ServerUnavailable,
+            RunnerHttpErrorKind::ServerUnavailable,
         ),
         (
             reqwest::StatusCode::SERVICE_UNAVAILABLE,
-            AgentHttpErrorKind::ServerUnavailable,
+            RunnerHttpErrorKind::ServerUnavailable,
         ),
         (
             reqwest::StatusCode::GATEWAY_TIMEOUT,
-            AgentHttpErrorKind::ServerUnavailable,
+            RunnerHttpErrorKind::ServerUnavailable,
         ),
     ];
     for (status, expected) in cases {
-        let error = AgentHttpError::status("/api/shell/agent/result", status, "{}");
+        let error = RunnerHttpError::status("/api/shell/agent/result", status, "{}");
         assert_eq!(error.kind, expected, "status {status}");
     }
 }
 
 #[test]
 fn register_recovery_classification_is_strict_about_lease_conflicts() {
-    let lease = AgentHttpError::status(
+    let lease = RunnerHttpError::status(
         AGENT_REGISTER_PATH,
         reqwest::StatusCode::BAD_REQUEST,
         r#"{"success":false,"error":"agent client oe is already online with a different instance"}"#,
@@ -184,7 +187,7 @@ fn register_recovery_classification_is_strict_about_lease_conflicts() {
         r#"{"success":false,"error":"agent client oe is already online"}"#,
     ] {
         let rejected =
-            AgentHttpError::status(AGENT_REGISTER_PATH, reqwest::StatusCode::BAD_REQUEST, body);
+            RunnerHttpError::status(AGENT_REGISTER_PATH, reqwest::StatusCode::BAD_REQUEST, body);
         let rejected = RegisterError::from_http(rejected, "oe");
         assert_eq!(
             rejected.recovery_action(),
@@ -197,7 +200,7 @@ fn register_recovery_classification_is_strict_about_lease_conflicts() {
 #[test]
 fn poll_recovery_actions_separate_transport_session_and_fatal_errors() {
     let transient = PollError::from_http(
-        AgentHttpError::status(
+        RunnerHttpError::status(
             AGENT_POLL_PATH,
             reqwest::StatusCode::INTERNAL_SERVER_ERROR,
             "{}",
@@ -210,7 +213,7 @@ fn poll_recovery_actions_separate_transport_session_and_fatal_errors() {
     );
 
     let missing_session = PollError::from_http(
-        AgentHttpError::status(
+        RunnerHttpError::status(
             AGENT_POLL_PATH,
             reqwest::StatusCode::BAD_REQUEST,
             r#"{"success":false,"error":"unknown shell client: oe"}"#,
@@ -223,7 +226,7 @@ fn poll_recovery_actions_separate_transport_session_and_fatal_errors() {
     );
 
     let ordinary_400 = PollError::from_http(
-        AgentHttpError::status(
+        RunnerHttpError::status(
             AGENT_POLL_PATH,
             reqwest::StatusCode::BAD_REQUEST,
             r#"{"success":false,"error":"invalid poll payload"}"#,

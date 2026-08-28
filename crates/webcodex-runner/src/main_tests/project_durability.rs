@@ -124,7 +124,7 @@ fn project_lifecycle_persists_state_and_unregister_preserves_source() {
     ));
     assert_eq!(retry_disabled["outcome"], "already_disabled");
     let disabled_revision = disabled["revision"].as_str().unwrap().to_string();
-    let summaries = load_agent_project_summaries_from_dir(&projects_dir);
+    let summaries = load_runner_project_summaries_from_dir(&projects_dir);
     assert_eq!(summaries.len(), 1);
     assert!(summaries[0].disabled);
 
@@ -185,7 +185,7 @@ fn project_lifecycle_persists_state_and_unregister_preserves_source() {
 
     let stale_tombstone = projects_dir.join(".demo.crash.toml.unregistering");
     std::fs::write(&stale_tombstone, "stale").unwrap();
-    assert!(load_agent_project_summaries_from_dir(&projects_dir).is_empty());
+    assert!(load_runner_project_summaries_from_dir(&projects_dir).is_empty());
     let recovered = project_ok(handle_project_lifecycle_op(
         &policy,
         &projects_dir,

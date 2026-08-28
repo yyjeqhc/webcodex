@@ -5146,9 +5146,9 @@ dependencies = [
  "urlencoding",
  "uuid",
  "webcodex-admin",
- "webcodex-agent-config",
  "webcodex-core",
  "webcodex-persistent-shell",
+ "webcodex-runner-config",
  "webcodex-sandbox",
  "webcodex-workspace",
  "zip",
@@ -5163,15 +5163,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
-]
-
-[[package]]
-name = "webcodex-agent-config"
-version = "0.3.9"
-dependencies = [
- "serde",
- "toml 0.8.23",
- "webcodex-core",
 ]
 
 [[package]]
@@ -5194,8 +5185,8 @@ dependencies = [
  "uuid",
  "webcodex",
  "webcodex-admin",
- "webcodex-agent-config",
  "webcodex-core",
+ "webcodex-runner-config",
  "windows-sys 0.61.2",
 ]
 
@@ -5261,10 +5252,10 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
- "webcodex-agent-config",
  "webcodex-core",
  "webcodex-persistent-shell",
  "webcodex-process",
+ "webcodex-runner-config",
  "webcodex-sandbox",
  "webcodex-workspace",
  "webpki-roots 0.26.11",
@@ -5273,6 +5264,15 @@ dependencies = [
  "xcap",
  "xml",
  "zip",
+]
+
+[[package]]
+name = "webcodex-runner-config"
+version = "0.3.9"
+dependencies = [
+ "serde",
+ "toml 0.8.23",
+ "webcodex-core",
 ]
 
 [[package]]

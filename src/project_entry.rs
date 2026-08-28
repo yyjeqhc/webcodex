@@ -18,7 +18,7 @@ mod share_service;
 use setup_service::{
     create_private_dir, local_readiness, read_private_value, read_project_agent_token,
     read_project_credential, read_toml_optional, validate_agent_authentication,
-    validate_existing_agent, validate_existing_registration, validate_product_config,
+    validate_existing_registration, validate_existing_runner, validate_product_config,
     validate_profile, ProjectConfig,
 };
 pub(crate) use setup_service::{resolve_local_task_state, setup};
@@ -170,7 +170,7 @@ pub(crate) enum RemoteProbe {
     Unreachable,
     CredentialRejected,
     Ready,
-    AgentOffline,
+    RunnerOffline,
     ProjectMissing,
     RequiredCapabilityMissing,
     StructuredValidationMissing,
@@ -267,7 +267,7 @@ pub(crate) fn readiness_with_probe(
     } else {
         "not configured".to_string()
     };
-    let mut agent = "unknown".to_string();
+    let mut runner_status = "unknown".to_string();
     let mut capabilities = "not_ready".to_string();
     let local_complete = can_probe_remote
         && paths.as_ref().is_some_and(|paths| {
@@ -282,7 +282,7 @@ pub(crate) fn readiness_with_probe(
     if can_probe_remote {
         let runtime = runtime_readiness(project.clone(), remote);
         connection = runtime.connection;
-        agent = runtime.agent;
+        runner_status = runtime.agent;
         capabilities = runtime.capabilities;
         findings.extend(runtime.findings);
     }
@@ -312,8 +312,10 @@ pub(crate) fn readiness_with_probe(
             ),
         ),
     });
-    let ready =
-        local_complete && connection == "connected" && agent == "online" && capabilities == "ready";
+    let ready = local_complete
+        && connection == "connected"
+        && runner_status == "online"
+        && capabilities == "ready";
     if ready {
         findings.push(ReadinessFact::pass(
             "Coding access",
@@ -333,7 +335,7 @@ pub(crate) fn readiness_with_probe(
     ProjectReadiness {
         project,
         connection,
-        agent,
+        agent: runner_status,
         capabilities,
         ready,
         next_action,
@@ -347,7 +349,7 @@ pub(crate) fn runtime_readiness(project: Option<String>, probe: RemoteProbe) -> 
         "server_reachable",
         "WebCodex is reachable.",
     )];
-    let (connection, agent, capabilities) = match probe {
+    let (connection, runner_status, capabilities) = match probe {
         RemoteProbe::Unreachable => {
             findings[0] = ReadinessFact::fail(
                 "Connection",
@@ -366,11 +368,11 @@ pub(crate) fn runtime_readiness(project: Option<String>, probe: RemoteProbe) -> 
             ));
             ("connected", "unknown", "not_ready")
         }
-        RemoteProbe::AgentOffline => {
+        RemoteProbe::RunnerOffline => {
             findings.push(ReadinessFact::fail(
-                "Agent",
+                "Runner",
                 "agent_offline",
-                "The local Agent is offline.",
+                "The local Runner is offline.",
                 "Run webcodex run.",
             ));
             ("connected", "offline", "not_ready")
@@ -379,8 +381,8 @@ pub(crate) fn runtime_readiness(project: Option<String>, probe: RemoteProbe) -> 
             findings.push(ReadinessFact::fail(
                 "Project",
                 "project_registration_invalid",
-                "The Agent registration does not contain this project.",
-                "Stop the Agent, run webcodex setup, then start it again.",
+                "The Runner registration does not contain this project.",
+                "Stop the Runner, run webcodex setup, then start it again.",
             ));
             ("connected", "online", "not_ready")
         }
@@ -388,8 +390,8 @@ pub(crate) fn runtime_readiness(project: Option<String>, probe: RemoteProbe) -> 
             findings.push(ReadinessFact::fail(
                 "Capabilities",
                 "required_capability_unavailable",
-                "The local Agent is missing a required coding capability.",
-                "Upgrade the WebCodex Agent and restart it.",
+                "The local Runner is missing a required coding capability.",
+                "Upgrade the WebCodex Runner and restart it.",
             ));
             ("connected", "online", "not_ready")
         }
@@ -398,15 +400,15 @@ pub(crate) fn runtime_readiness(project: Option<String>, probe: RemoteProbe) -> 
                 "Capabilities",
                 "structured_validation_unavailable",
                 "Structured validation is unavailable.",
-                "Upgrade the WebCodex Agent and restart it.",
+                "Upgrade the WebCodex Runner and restart it.",
             ));
             ("connected", "online", "not_ready")
         }
         RemoteProbe::Ready => {
             findings.push(ReadinessFact::pass(
-                "Agent",
+                "Runner",
                 "agent_online",
-                "The local Agent is online.",
+                "The local Runner is online.",
             ));
             findings.push(ReadinessFact::pass(
                 "Project",
@@ -429,7 +431,7 @@ pub(crate) fn runtime_readiness(project: Option<String>, probe: RemoteProbe) -> 
     ProjectReadiness {
         project,
         connection: connection.to_string(),
-        agent: agent.to_string(),
+        agent: runner_status.to_string(),
         capabilities: capabilities.to_string(),
         ready: probe == RemoteProbe::Ready,
         next_action: (probe != RemoteProbe::Ready).then(|| "webcodex doctor".to_string()),
@@ -669,7 +671,7 @@ pub(super) struct LocalRuntimeHandle {
     pub(super) public_url: String,
     pub(super) console_assets_dir: Option<PathBuf>,
     server: Child,
-    agent: Child,
+    runner: Child,
 }
 
 impl LocalRuntimeHandle {
@@ -680,18 +682,18 @@ impl LocalRuntimeHandle {
                 format!("WebCodex stopped unexpectedly ({:?})", status.ok()),
                 Some("Run webcodex doctor."),
             )),
-            status = self.agent.wait() => Err(ProductError::new(
+            status = self.runner.wait() => Err(ProductError::new(
                 "agent_offline",
-                format!("the local Agent stopped unexpectedly ({:?})", status.ok()),
+                format!("the local Runner stopped unexpectedly ({:?})", status.ok()),
                 Some("Run webcodex doctor."),
             )),
         }
     }
 
     pub(super) async fn stop(&mut self) {
-        let _ = self.agent.start_kill();
+        let _ = self.runner.start_kill();
         let _ = self.server.start_kill();
-        let _ = self.agent.wait().await;
+        let _ = self.runner.wait().await;
         let _ = self.server.wait().await;
     }
 }
@@ -708,7 +710,7 @@ fn configured_project(
         )
     })?;
     validate_product_config(&expected, &config)?;
-    validate_existing_agent(&config, &paths)?;
+    validate_existing_runner(&config, &paths)?;
     validate_existing_registration(&config, &paths)?;
     Ok((config, paths))
 }
@@ -736,10 +738,10 @@ pub(super) async fn start_local_runtime(
     ensure_local_runtime_port_available(config.port, runtime_options.port_conflict_action)?;
     let project_share_oauth = runtime_options.project_share_oauth.clone();
     let mcp_query_token_auth = runtime_options.mcp_query_token_auth;
-    let agent_binary = locate_agent_binary().ok_or_else(|| {
+    let runner_binary = locate_runner_binary().ok_or_else(|| {
         ProductError::new(
             "required_capability_unavailable",
-            "the WebCodex Agent executable is unavailable",
+            "the WebCodex Runner executable is unavailable",
             Some("Install all WebCodex binaries, then run webcodex doctor."),
         )
     })?;
@@ -840,41 +842,41 @@ pub(super) async fn start_local_runtime(
     })?;
     wait_for_server(&mut server, &local_url, &connector_key).await?;
 
-    let agent_log = open_log(&paths.logs.join("agent.log"))?;
-    let agent_error = agent_log.try_clone().map_err(io_error)?;
-    let mut agent_command = Command::new(agent_binary);
-    remove_npm_wrapper_network_environment(&mut agent_command);
+    let runner_log = open_log(&paths.logs.join("agent.log"))?;
+    let runner_error = runner_log.try_clone().map_err(io_error)?;
+    let mut runner_command = Command::new(runner_binary);
+    remove_npm_wrapper_network_environment(&mut runner_command);
     for name in &runtime_options.child_environment_remove {
-        agent_command.env_remove(name);
+        runner_command.env_remove(name);
     }
-    agent_command
+    runner_command
         .arg("--config")
         .arg(&paths.agent_config)
         .current_dir(&paths.state)
         .env_remove("WEBCODEX_TOKEN")
         .env_remove("WEBCODEX_AGENT_TOKEN")
-        .stdout(Stdio::from(agent_log))
-        .stderr(Stdio::from(agent_error))
+        .stdout(Stdio::from(runner_log))
+        .stderr(Stdio::from(runner_error))
         .kill_on_drop(true);
-    let mut agent = agent_command.spawn().map_err(|_| {
+    let mut runner = runner_command.spawn().map_err(|_| {
         ProductError::new(
             "agent_offline",
-            "the local Agent could not start",
+            "the local Runner could not start",
             Some("Run webcodex doctor."),
         )
     })?;
-    wait_for_ready(&mut server, &mut agent, options, &config, &connector_key).await?;
+    wait_for_ready(&mut server, &mut runner, options, &config, &connector_key).await?;
     Ok(LocalRuntimeHandle {
         project_name: config.project_name,
         local_url,
         public_url,
         console_assets_dir,
         server,
-        agent,
+        runner,
     })
 }
 
-pub(crate) async fn start_agent(options: &ProjectCommandOptions) -> Result<(), ProductError> {
+pub(crate) async fn start_runner(options: &ProjectCommandOptions) -> Result<(), ProductError> {
     let mut runtime = start_local_runtime(options, LocalRuntimeOptions::default()).await?;
     let mut started = format!(
         "Project: {}\nConnection: connected at {}\nConsole: {}/console\nConsole assets: {}",
@@ -890,7 +892,7 @@ pub(crate) async fn start_agent(options: &ProjectCommandOptions) -> Result<(), P
     if let Some(directory) = &runtime.console_assets_dir {
         started.push_str(&format!("\nAssets directory: {}", directory.display()));
     }
-    started.push_str("\nAgent: online\nCoding access: ready\n\nPress Ctrl-C to stop.");
+    started.push_str("\nRunner: online\nCoding access: ready\n\nPress Ctrl-C to stop.");
     println!("{started}");
     let outcome = tokio::select! {
         _ = tokio::signal::ctrl_c() => Ok(()),
@@ -935,7 +937,7 @@ fn remote_probe_from_readiness(readiness: &ProjectReadiness) -> RemoteProbe {
             RemoteProbe::RequiredCapabilityMissing,
         ),
         ("project_registration_invalid", RemoteProbe::ProjectMissing),
-        ("agent_offline", RemoteProbe::AgentOffline),
+        ("agent_offline", RemoteProbe::RunnerOffline),
     ] {
         if readiness
             .findings
@@ -952,7 +954,7 @@ fn remote_probe_from_readiness(readiness: &ProjectReadiness) -> RemoteProbe {
     }
 }
 
-fn locate_agent_binary() -> Option<PathBuf> {
+fn locate_runner_binary() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("WEBCODEX_AGENT_BIN").map(PathBuf::from) {
         if path.is_file() {
             return Some(path);
@@ -989,14 +991,14 @@ pub(super) fn executable_name(name: &str) -> String {
     }
 }
 
-fn agent_runtime_available() -> bool {
+fn runner_runtime_available() -> bool {
     #[cfg(test)]
     {
         true
     }
     #[cfg(not(test))]
     {
-        locate_agent_binary().is_some()
+        locate_runner_binary().is_some()
     }
 }
 
@@ -1067,7 +1069,7 @@ async fn wait_for_server(
 
 async fn wait_for_ready(
     server: &mut Child,
-    agent: &mut Child,
+    runner: &mut Child,
     options: &ProjectCommandOptions,
     config: &ProjectConfig,
     connector_key: &str,
@@ -1081,10 +1083,10 @@ async fn wait_for_ready(
                 Some("Run webcodex doctor."),
             ));
         }
-        if agent.try_wait().ok().flatten().is_some() {
+        if runner.try_wait().ok().flatten().is_some() {
             return Err(ProductError::new(
                 "agent_offline",
-                "the local Agent stopped during startup",
+                "the local Runner stopped during startup",
                 Some("Run webcodex doctor."),
             ));
         }
@@ -1098,7 +1100,7 @@ async fn wait_for_ready(
     }
     Err(ProductError::new(
         "agent_offline",
-        "the local Agent did not become ready",
+        "the local Runner did not become ready",
         Some("Run webcodex doctor."),
     ))
 }

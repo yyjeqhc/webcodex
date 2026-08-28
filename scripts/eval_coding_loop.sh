@@ -35,14 +35,14 @@ esac
 PASS=0
 FAIL=0
 SERVER_PID=""
-AGENT_PID=""
+RUNNER_PID=""
 TMP_ROOT=""
 DATA_DIR=""
 PROJECTS_DIR=""
 AGENT_TOML=""
 TEST_REPO=""
 SERVER_LOG=""
-AGENT_LOG=""
+RUNNER_LOG=""
 CASE_SUMMARIES_FILE=""
 CASE_WARNINGS_FILE=""
 LAST_BODY=""
@@ -94,17 +94,17 @@ print_logs_hint() {
 
 [eval] ---- log locations ----
 [eval] server log: ${SERVER_LOG:-<none>}
-[eval] agent log:  ${AGENT_LOG:-<none>}
+[eval] runner log:  ${RUNNER_LOG:-<none>}
 [eval] temp root:  ${TMP_ROOT:-<none>}
 EOF
 }
 
 cleanup_background_processes() {
-    if [ -n "${AGENT_PID:-}" ] && kill -0 "$AGENT_PID" 2>/dev/null; then
-        kill "$AGENT_PID" 2>/dev/null || true
+    if [ -n "${RUNNER_PID:-}" ] && kill -0 "$RUNNER_PID" 2>/dev/null; then
+        kill "$RUNNER_PID" 2>/dev/null || true
         sleep 1
-        kill -9 "$AGENT_PID" 2>/dev/null || true
-        wait "$AGENT_PID" 2>/dev/null || true
+        kill -9 "$RUNNER_PID" 2>/dev/null || true
+        wait "$RUNNER_PID" 2>/dev/null || true
     fi
     if [ -n "${SERVER_PID:-}" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
         kill "$SERVER_PID" 2>/dev/null || true
@@ -1020,7 +1020,7 @@ start_eval_services() {
     AGENT_TOML="$TMP_ROOT/agent.toml"
     TEST_REPO="$TMP_ROOT/coding-loop-project"
     SERVER_LOG="$TMP_ROOT/server.log"
-    AGENT_LOG="$TMP_ROOT/agent.log"
+    RUNNER_LOG="$TMP_ROOT/agent.log"
     CASE_SUMMARIES_FILE="$TMP_ROOT/case-summaries.jsonl"
 
     mkdir -p "$DATA_DIR" "$PROJECTS_DIR" "$TEST_REPO/src"
@@ -1124,8 +1124,8 @@ EOF
     else
         runner_command=("$CARGO_BIN" run --quiet -p webcodex-runner --bin webcodex-runner -- --config "$AGENT_TOML")
     fi
-    "${runner_command[@]}" >"$AGENT_LOG" 2>&1 &
-    AGENT_PID=$!
+    "${runner_command[@]}" >"$RUNNER_LOG" 2>&1 &
+    RUNNER_PID=$!
 
     log "waiting for agent registration"
     local registered=0

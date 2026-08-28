@@ -1,6 +1,6 @@
 use super::config::{
-    dialect_for_program, platform_default_dialect, validate_shell_config, AgentPolicy, ShellConfig,
-    ShellDialect, ShellProfileConfig,
+    dialect_for_program, platform_default_dialect, validate_shell_config, RunnerPolicy,
+    ShellConfig, ShellDialect, ShellProfileConfig,
 };
 use super::output::{CommandResult, ShellCommandResult};
 use super::output_text::{
@@ -1209,7 +1209,7 @@ pub(crate) fn canonicalize_existing(path: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("failed to access {}: {}", path.display(), e))
 }
 
-pub(crate) fn cwd_allowed(policy: &AgentPolicy, cwd: &Path) -> Result<(), String> {
+pub(crate) fn cwd_allowed(policy: &RunnerPolicy, cwd: &Path) -> Result<(), String> {
     if policy.allow_cwd_anywhere {
         return Ok(());
     }
@@ -1217,7 +1217,7 @@ pub(crate) fn cwd_allowed(policy: &AgentPolicy, cwd: &Path) -> Result<(), String
     for root in &policy.allowed_roots {
         let root = canonicalize_existing(root)?;
         // Case-insensitive component-wise containment on Windows.
-        if webcodex_agent_config::paths::path_is_within(&cwd, &root) {
+        if webcodex_runner_config::paths::path_is_within(&cwd, &root) {
             return Ok(());
         }
     }
@@ -1743,7 +1743,7 @@ fn restore_utf16_bom(tail: &mut Vec<u8>, total_bytes: usize, little_endian: bool
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state(
     generation: u64,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -1775,7 +1775,7 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_detached_process_launch(
     generation: u64,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -1789,7 +1789,7 @@ pub(crate) fn prepare_detached_process_launch(
     // ordinary native-argv path. This helper performs preparation only; it never
     // spawns the requested payload.
     if !policy.allow_raw_shell {
-        return Err("structured process execution is disabled by local agent policy".to_string());
+        return Err("structured process execution is disabled by local Runner policy".to_string());
     }
     let cwd_path = cwd
         .map(PathBuf::from)
@@ -1834,7 +1834,7 @@ pub(crate) fn prepare_detached_process_launch(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state_with_start_hook(
     generation: u64,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -1855,7 +1855,7 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state_with_star
             stdout: None,
             stderr: None,
             duration_ms: Some(0),
-            error: Some("structured process execution is disabled by local agent policy".into()),
+            error: Some("structured process execution is disabled by local Runner policy".into()),
         });
     }
     let cwd_path = cwd
@@ -1962,7 +1962,7 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state_with_star
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_internal_search_script_with_profiles_in_sandbox_and_execution_state(
     generation: u64,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -1990,7 +1990,7 @@ pub(crate) fn run_internal_search_script_with_profiles_in_sandbox_and_execution_
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_internal_posix_script_with_profiles_in_sandbox_and_execution_state(
     generation: u64,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -2018,7 +2018,7 @@ pub(crate) fn run_internal_posix_script_with_profiles_in_sandbox_and_execution_s
 #[allow(clippy::too_many_arguments)]
 fn run_internal_posix_script_impl(
     generation: u64,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -2071,7 +2071,7 @@ fn run_internal_posix_script_impl(
                 stderr: None,
                 duration_ms: Some(0),
                 error: Some(format!(
-                    "{subject} execution is disabled by local agent policy"
+                    "{subject} execution is disabled by local Runner policy"
                 )),
             });
         }
@@ -2218,7 +2218,7 @@ fn run_internal_posix_script_impl(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state(
     generation: u64,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -2248,7 +2248,7 @@ pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state_with_start_hook(
     generation: u64,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -2268,7 +2268,7 @@ pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state_with_start
             stdout: None,
             stderr: None,
             duration_ms: Some(0),
-            error: Some("structured script execution is disabled by local agent policy".into()),
+            error: Some("structured script execution is disabled by local Runner policy".into()),
         });
     }
     let cwd_path = cwd
@@ -2413,7 +2413,7 @@ pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state_with_start
 // production request path uses `run_shell_with_profiles` directly.
 #[cfg(test)]
 pub(crate) fn run_shell(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     cwd: Option<&str>,
     command: &str,
@@ -2438,7 +2438,7 @@ pub(crate) fn run_shell(
 #[cfg(test)]
 pub(crate) fn run_shell_with_profiles(
     generation: u64,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -2467,7 +2467,7 @@ pub(crate) fn run_shell_with_profiles(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_shell_with_profiles_in_sandbox(
     generation: u64,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -2497,7 +2497,7 @@ pub(crate) fn run_shell_with_profiles_in_sandbox(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_shell_with_profiles_in_sandbox_and_execution_state(
     generation: u64,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -2522,7 +2522,7 @@ pub(crate) fn run_shell_with_profiles_in_sandbox_and_execution_state(
 }
 
 fn run_shell_impl(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     profiles: Option<(u64, &Path, &PreparedShellProfileCache)>,
     cwd: Option<&str>,
@@ -2538,7 +2538,7 @@ fn run_shell_impl(
             stdout: None,
             stderr: None,
             duration_ms: Some(0),
-            error: Some("raw shell is disabled by local agent policy".to_string()),
+            error: Some("raw shell is disabled by local Runner policy".to_string()),
         });
     }
     let cwd_path = cwd
@@ -2670,7 +2670,7 @@ fn run_shell_impl(
 
 #[allow(clippy::too_many_arguments)]
 fn execute_configured_command(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     mut cmd: Command,
     cwd_path: &Path,
     stdin: Option<&str>,

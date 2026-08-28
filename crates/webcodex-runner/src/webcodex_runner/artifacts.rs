@@ -53,7 +53,7 @@ pub(crate) fn is_artifact_request_kind(kind: &str) -> bool {
     )
 }
 
-pub(crate) fn validate_artifact_agent_path(path: &str) -> Result<(), String> {
+pub(crate) fn validate_artifact_runner_path(path: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("path cannot be empty".to_string());
     }
@@ -1430,7 +1430,7 @@ fn handle_save_project_artifact(
         Ok(payload) => payload,
         Err(e) => return line_edit_stdout(save_error(None, e), start),
     };
-    if let Err(e) = validate_artifact_agent_path(path) {
+    if let Err(e) = validate_artifact_runner_path(path) {
         return line_edit_stdout(save_error(Some(path), e), start);
     }
     let root = match project_root(request) {
@@ -1528,7 +1528,7 @@ fn handle_artifact_upload_begin(
         Ok(payload) => payload,
         Err(e) => return line_edit_stdout(upload_error(None, None, e), start),
     };
-    if let Err(e) = validate_artifact_agent_path(path) {
+    if let Err(e) = validate_artifact_runner_path(path) {
         return line_edit_stdout(upload_error(Some(path), None, e), start);
     }
     let root = match project_root(request) {
@@ -1746,7 +1746,7 @@ fn handle_artifact_upload_chunk(
     if let Err(e) = validate_upload_id(&upload_id) {
         return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
     }
-    if let Err(e) = validate_artifact_agent_path(path) {
+    if let Err(e) = validate_artifact_runner_path(path) {
         return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
     }
     let offset = match parse_optional_usize_field(&payload, "offset") {
@@ -1968,7 +1968,7 @@ fn handle_artifact_upload_finish(
     if let Err(e) = validate_upload_id(&upload_id) {
         return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
     }
-    if let Err(e) = validate_artifact_agent_path(path) {
+    if let Err(e) = validate_artifact_runner_path(path) {
         return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
     }
     let root = match project_root(request) {
@@ -2109,7 +2109,7 @@ fn handle_artifact_upload_abort(
     if let Err(e) = validate_upload_id(&upload_id) {
         return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
     }
-    if let Err(e) = validate_artifact_agent_path(path) {
+    if let Err(e) = validate_artifact_runner_path(path) {
         return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
     }
     let root = match project_root(request) {
@@ -2184,7 +2184,7 @@ fn handle_read_project_artifact_metadata(
         Ok(payload) => payload,
         Err(e) => return line_edit_stdout(metadata_error(None, e), start),
     };
-    if let Err(e) = validate_artifact_agent_path(path) {
+    if let Err(e) = validate_artifact_runner_path(path) {
         return line_edit_stdout(metadata_error(Some(path), e), start);
     }
     let root = match project_root(request) {
@@ -2336,7 +2336,7 @@ fn handle_read_project_artifact_export_chunk(
         Ok(payload) => payload,
         Err(e) => return line_edit_stdout(read_error(None, e), start),
     };
-    if let Err(e) = validate_artifact_agent_path(path) {
+    if let Err(e) = validate_artifact_runner_path(path) {
         return line_edit_stdout(read_error(Some(path), e), start);
     }
     let root = match project_root(request) {
@@ -2477,7 +2477,7 @@ fn handle_read_project_artifact(
         Ok(payload) => payload,
         Err(e) => return line_edit_stdout(read_error(None, e), start),
     };
-    if let Err(e) = validate_artifact_agent_path(path) {
+    if let Err(e) = validate_artifact_runner_path(path) {
         return line_edit_stdout(read_error(Some(path), e), start);
     }
     let root = match project_root(request) {

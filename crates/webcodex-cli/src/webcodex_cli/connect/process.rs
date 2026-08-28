@@ -13,7 +13,7 @@ use super::profile::{
     validate_existing_regular_file, ProfileLock,
 };
 #[cfg(windows)]
-use webcodex_agent_config::paths::paths_equal;
+use webcodex_runner_config::paths::paths_equal;
 
 const CONNECT_MARKER_FILE: &str = "hosted-connect";
 const RUNNER_STATE_FILE: &str = "runner.toml";

@@ -1,10 +1,10 @@
 //! Private project setup, registration, and local-state ownership.
 
 use super::{
-    agent_runtime_available, LocalTaskState, ProductError, ProjectCommandOptions, ReadinessFact,
+    runner_runtime_available, LocalTaskState, ProductError, ProjectCommandOptions, ReadinessFact,
     SetupReport,
 };
-use crate::agent_init::{
+use crate::runner_config::{
     generated_runner_config_toml, RunnerInitOptions, DEFAULT_POLL_INTERVAL_MS, TRANSPORT_WEBSOCKET,
 };
 use serde::{Deserialize, Serialize};
@@ -42,13 +42,13 @@ pub(super) struct ProjectPaths {
 impl ProjectPaths {
     fn new(state: PathBuf) -> Self {
         let credentials = state.join("credentials");
-        let agent = state.join("agent");
+        let runner_state_dir = state.join("agent");
         let cache = state.join("cache");
         Self {
             data: state.join("data"),
             cargo_target: cache.join("cargo-target"),
             cache,
-            projects: agent.join("projects.d"),
+            projects: runner_state_dir.join("projects.d"),
             runs: state.join("runs"),
             results: state.join("results"),
             logs: state.join("logs"),
@@ -56,7 +56,7 @@ impl ProjectPaths {
             bootstrap_key: credentials.join("bootstrap-key"),
             connector_key: credentials.join("connector-key"),
             agent_token: credentials.join("agent-token"),
-            agent_config: agent.join("agent.toml"),
+            agent_config: runner_state_dir.join("agent.toml"),
             credentials,
             state,
         }
@@ -234,7 +234,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
             expected
         }
     };
-    validate_existing_agent(&config, &paths)?;
+    validate_existing_runner(&config, &paths)?;
     validate_existing_registration(&config, &paths)?;
     if paths.agent_config.exists() {
         validate_agent_authentication(&config, &paths)?;
@@ -248,7 +248,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
         if paths.agent_config.exists() {
             return Err(ProductError::new(
                 "project_registration_invalid",
-                "existing Agent configuration conflicts with missing authentication material",
+                "existing Runner configuration conflicts with missing authentication material",
                 Some("Restore the existing authentication material or remove this incomplete profile, then run webcodex setup."),
             ));
         }
@@ -285,7 +285,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
             token_file: None,
             client_id: config.executor_client_id.clone(),
             owner: "local-owner".to_string(),
-            display_name: Some(format!("{} local Agent", config.project_name)),
+            display_name: Some(format!("{} local Runner", config.project_name)),
             transport: TRANSPORT_WEBSOCKET.to_string(),
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
             projects_dir: paths.projects.clone(),
@@ -297,12 +297,12 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
         .map_err(|message| {
             ProductError::new(
                 "project_registration_invalid",
-                format!("could not generate Agent configuration: {message}"),
+                format!("could not generate Runner configuration: {message}"),
                 Some("Correct the reported configuration issue, then run webcodex setup."),
             )
         })?;
         write_new_private(&paths.agent_config, content.as_bytes())?;
-        changed.push("Agent".to_string());
+        changed.push("Runner".to_string());
     }
 
     let project_path = registration_path(&config, &paths);
@@ -332,7 +332,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
             changed.insert(0, "Connection".to_string());
         }
     }
-    validate_existing_agent(&config, &paths)?;
+    validate_existing_runner(&config, &paths)?;
     validate_agent_authentication(&config, &paths)?;
     validate_existing_registration(&config, &paths)?;
     let connection_url = config.server_url();
@@ -467,17 +467,17 @@ fn configured_readiness(config: ProjectConfig, paths: ProjectPaths) -> LocalRead
     .into_iter()
     .map(|(name, code, summary)| ReadinessFact::pass(name, code, summary))
     .collect::<Vec<_>>();
-    if agent_runtime_available() {
+    if runner_runtime_available() {
         findings.push(ReadinessFact::pass(
-            "Agent runtime",
+            "Runner runtime",
             "agent_runtime_available",
-            "The local Agent runtime is available.",
+            "The local Runner runtime is available.",
         ));
     } else {
         findings.push(ReadinessFact::fail(
-            "Agent runtime",
+            "Runner runtime",
             "required_capability_unavailable",
-            "The local Agent executable is unavailable.",
+            "The local Runner executable is unavailable.",
             "Install all WebCodex binaries, then retry.",
         ));
     }
@@ -536,7 +536,7 @@ fn local_project_state(options: &ProjectCommandOptions) -> LocalProjectState {
         Err(error) => return LocalProjectState::invalid(Some(config), paths, error),
     };
     let validation = validate_product_config(&expected, &config)
-        .and_then(|_| validate_existing_agent(&config, &paths))
+        .and_then(|_| validate_existing_runner(&config, &paths))
         .and_then(|_| validate_existing_registration(&config, &paths))
         .and_then(|_| read_project_credential(&paths.connector_key).map(|_| ()))
         .and_then(|_| validate_agent_authentication(&config, &paths))
@@ -577,7 +577,7 @@ pub(super) fn validate_product_config(
             actual.logical_project_id == expected.logical_project_id,
         ),
         (
-            "Agent identity",
+            "Runner identity",
             actual.executor_client_id == expected.executor_client_id,
         ),
     ] {
@@ -592,7 +592,7 @@ pub(super) fn validate_product_config(
     Ok(())
 }
 
-pub(super) fn validate_existing_agent(
+pub(super) fn validate_existing_runner(
     config: &ProjectConfig,
     paths: &ProjectPaths,
 ) -> Result<(), ProductError> {
@@ -612,7 +612,7 @@ pub(super) fn validate_existing_agent(
         if value.get(field).and_then(toml::Value::as_str) != Some(expected.as_str()) {
             return Err(ProductError::new(
                 "project_registration_invalid",
-                format!("existing Agent configuration conflicts in field '{field}'"),
+                format!("existing Runner configuration conflicts in field '{field}'"),
                 Some(
                     "Resolve the existing configuration conflict; WebCodex will not overwrite it.",
                 ),
@@ -626,7 +626,7 @@ pub(super) fn validate_existing_agent(
     {
         return Err(ProductError::new(
             "project_registration_invalid",
-            "existing Agent configuration conflicts in field 'authentication'",
+            "existing Runner configuration conflicts in field 'authentication'",
             Some("Restore the existing authentication material; WebCodex will not overwrite it."),
         ));
     }
@@ -645,7 +645,7 @@ pub(super) fn validate_agent_authentication(
         .ok_or_else(|| {
             ProductError::new(
                 "agent_credential_invalid",
-                "the bound project Agent Token is missing from Agent configuration",
+                "the bound project Agent Token is missing from Runner configuration",
                 Some("Restore the private Agent Token or recreate this project profile."),
             )
         })?;
@@ -669,7 +669,7 @@ pub(super) fn validate_agent_authentication(
         .ok_or_else(|| {
             ProductError::new(
                 "agent_credential_invalid",
-                "the Agent configuration does not match the bound project Agent Token",
+                "the Runner configuration does not match the bound project Agent Token",
                 Some("Restore the matching private Agent Token or recreate this project profile."),
             )
         })

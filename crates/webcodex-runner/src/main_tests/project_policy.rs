@@ -22,10 +22,10 @@ fn register_project_rejects_path_outside_allowed_roots() {
 
 #[test]
 fn register_project_rejects_dangerous_subpaths_without_explicit_root() {
-    let policy = AgentPolicy {
+    let policy = RunnerPolicy {
         allow_cwd_anywhere: true,
         allowed_roots: Vec::new(),
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     };
 
     // Dangerous system roots are platform-specific: the well-known Unix trees,
@@ -79,7 +79,7 @@ fn load_config_defaults_empty_allowed_roots_to_home() {
 }
 
 #[test]
-fn agent_config_defaults_allow_cwd_anywhere_to_false() {
+fn runner_config_defaults_allow_cwd_anywhere_to_false() {
     let base = "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\nprojects_dir = \"projects.d\"\n";
 
     // This is a serde/default-policy invariant, not a per-user path test. Parse
@@ -91,7 +91,7 @@ fn agent_config_defaults_allow_cwd_anywhere_to_false() {
             format!("{base}\n[policy]\nallow_raw_shell = true\n"),
         ),
     ] {
-        let cfg: AgentConfig = toml::from_str(&body).unwrap();
+        let cfg: RunnerConfig = toml::from_str(&body).unwrap();
         assert!(
             !cfg.policy.allow_cwd_anywhere,
             "{label}: allow_cwd_anywhere must default to false"
@@ -102,9 +102,9 @@ fn agent_config_defaults_allow_cwd_anywhere_to_false() {
 #[test]
 fn default_policy_denies_paths_outside_allowed_roots() {
     // The shipped default must not resolve an absolute path outside the
-    // configured roots. `AgentPolicy::default()` has no roots at all, so
+    // configured roots. `RunnerPolicy::default()` has no roots at all, so
     // every path is out of bounds.
-    let policy = AgentPolicy::default();
+    let policy = RunnerPolicy::default();
     assert!(!policy.allow_cwd_anywhere);
     let err = resolve_requested_path(&policy, Some("/tmp"), "/etc/passwd")
         .expect_err("default policy must not reach /etc/passwd");
@@ -116,9 +116,9 @@ fn default_policy_denies_paths_outside_allowed_roots() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     std::fs::write(root.join("in-bounds.txt"), "ok").unwrap();
-    let scoped = AgentPolicy {
+    let scoped = RunnerPolicy {
         allowed_roots: vec![root.clone()],
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     };
     resolve_requested_path(&scoped, Some(root.to_str().unwrap()), "in-bounds.txt")
         .expect("in-bounds path must still resolve under the fail-closed default");

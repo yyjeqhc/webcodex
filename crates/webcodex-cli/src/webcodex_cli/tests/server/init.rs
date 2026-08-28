@@ -155,7 +155,7 @@ fn runner_init_empty_tokens_are_rejected() {
 }
 
 /// Unix-only: asserts the historical `$HOME` default for empty allowed_roots.
-/// Windows uses `USERPROFILE` instead (see `webcodex_agent_config::paths`).
+/// Windows uses `USERPROFILE` instead (see `webcodex_runner_config::paths`).
 #[cfg(unix)]
 #[test]
 fn runner_init_allows_empty_allowed_roots_with_home_default() {

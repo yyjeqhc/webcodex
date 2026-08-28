@@ -1,4 +1,4 @@
-//! Language registry for agent-side LSP navigation.
+//! Language registry for Runner-side LSP navigation.
 //!
 //! Every language-specific fact lives in one `LanguageProfile`: routed file
 //! extensions, the LSP `languageId`, manifest detection markers, executable

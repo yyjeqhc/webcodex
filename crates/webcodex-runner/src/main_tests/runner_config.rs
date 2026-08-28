@@ -1,14 +1,14 @@
 use super::*;
 
 #[test]
-fn agent_config_defaults_transport_to_websocket_without_quic_section() {
+fn runner_config_defaults_transport_to_websocket_without_quic_section() {
     // No transport field and no [quic] section: default stays websocket.
     let toml = r#"
 server_url = "http://127.0.0.1:8000"
 token = "t"
 client_id = "oe"
 "#;
-    let cfg: AgentConfig = toml::from_str(toml).unwrap();
+    let cfg: RunnerConfig = toml::from_str(toml).unwrap();
     assert!(cfg.transport.is_none());
     assert!(cfg.quic.is_none());
     assert_eq!(effective_transport(&cfg), TRANSPORT_WEBSOCKET);
@@ -25,7 +25,7 @@ client_id = "oe"
 }
 
 #[test]
-fn agent_config_rejects_zero_websocket_connect_timeout() {
+fn runner_config_rejects_zero_websocket_connect_timeout() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     std::fs::write(
@@ -48,7 +48,7 @@ websocket_connect_timeout_secs = 0
 }
 
 #[test]
-fn agent_config_rejects_relative_temporary_projects_root() {
+fn runner_config_rejects_relative_temporary_projects_root() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     std::fs::write(
@@ -71,7 +71,7 @@ temporary_projects_root = "temporary"
 }
 
 #[test]
-fn agent_config_accepts_transport_quic_with_quic_section() {
+fn runner_config_accepts_transport_quic_with_quic_section() {
     let toml = r#"
 server_url = "http://127.0.0.1:8000"
 token = "t"
@@ -82,7 +82,7 @@ transport = "quic"
 server_addr = "v4.example.test:8443"
 server_name = "v4.example.test"
 "#;
-    let cfg: AgentConfig = toml::from_str(toml).unwrap();
+    let cfg: RunnerConfig = toml::from_str(toml).unwrap();
     assert_eq!(cfg.transport.as_deref(), Some("quic"));
     let quic = cfg.quic.expect("quic section");
     assert_eq!(quic.server_addr, "v4.example.test:8443");
@@ -94,14 +94,14 @@ server_name = "v4.example.test"
 }
 
 #[test]
-fn agent_config_accepts_transport_auto() {
+fn runner_config_accepts_transport_auto() {
     let toml = r#"
 server_url = "http://127.0.0.1:8000"
 token = "t"
 client_id = "oe"
 transport = "auto"
 "#;
-    let cfg: AgentConfig = toml::from_str(toml).unwrap();
+    let cfg: RunnerConfig = toml::from_str(toml).unwrap();
     assert_eq!(cfg.transport.as_deref(), Some(TRANSPORT_AUTO));
     assert_eq!(effective_transport(&cfg), TRANSPORT_AUTO);
     assert_eq!(
@@ -227,10 +227,10 @@ fn quic_client_bind_addr_matches_remote_address_family() {
 }
 
 #[test]
-fn agent_cli_help_and_version_exit_before_runtime() {
+fn runner_cli_help_and_version_exit_before_runtime() {
     let _guard = test_env_lock();
-    match parse_agent_args(["--help"]).unwrap() {
-        AgentCliAction::Exit {
+    match parse_runner_args(["--help"]).unwrap() {
+        RunnerCliAction::Exit {
             code,
             stdout,
             stderr,
@@ -242,8 +242,8 @@ fn agent_cli_help_and_version_exit_before_runtime() {
         }
         other => panic!("expected help exit, got {other:?}"),
     }
-    match parse_agent_args(["--version"]).unwrap() {
-        AgentCliAction::Exit {
+    match parse_runner_args(["--version"]).unwrap() {
+        RunnerCliAction::Exit {
             code,
             stdout,
             stderr,
@@ -265,17 +265,17 @@ fn agent_cli_help_and_version_exit_before_runtime() {
 }
 
 #[test]
-fn agent_cli_has_no_init_alias() {
+fn runner_cli_has_no_init_alias() {
     let _guard = test_env_lock();
-    let error = parse_agent_args(["init"]).unwrap_err();
+    let error = parse_runner_args(["init"]).unwrap_err();
     assert!(error.contains("unknown argument: init"));
 }
 
 #[test]
-fn agent_version_output_includes_build_metadata() {
+fn runner_version_output_includes_build_metadata() {
     let _guard = test_env_lock();
-    match parse_agent_args(["-V"]).unwrap() {
-        AgentCliAction::Exit {
+    match parse_runner_args(["-V"]).unwrap() {
+        RunnerCliAction::Exit {
             code,
             stdout,
             stderr,
@@ -290,12 +290,12 @@ fn agent_version_output_includes_build_metadata() {
 }
 
 #[test]
-fn agent_cli_legacy_runtime_args_are_preserved() {
+fn runner_cli_legacy_runtime_args_are_preserved() {
     let _guard = test_env_lock();
-    let action = parse_agent_args(["--config", "/tmp/agent.toml", "--once"]).unwrap();
+    let action = parse_runner_args(["--config", "/tmp/agent.toml", "--once"]).unwrap();
     assert_eq!(
         action,
-        AgentCliAction::Run {
+        RunnerCliAction::Run {
             config_path: PathBuf::from("/tmp/agent.toml"),
             once: true,
         }
@@ -303,25 +303,26 @@ fn agent_cli_legacy_runtime_args_are_preserved() {
 }
 
 #[test]
-fn agent_cli_profile_derives_default_config_path() {
+fn runner_cli_profile_derives_default_config_path() {
     let _guard = test_env_lock();
-    let action = parse_agent_args(["--profile", "special"]).unwrap();
+    let action = parse_runner_args(["--profile", "special"]).unwrap();
     assert_eq!(
         action,
-        AgentCliAction::Run {
-            config_path: client_profile_agent_config("special").unwrap(),
+        RunnerCliAction::Run {
+            config_path: client_profile_runner_config("special").unwrap(),
             once: false,
         }
     );
 }
 
 #[test]
-fn agent_cli_explicit_config_overrides_profile() {
+fn runner_cli_explicit_config_overrides_profile() {
     let _guard = test_env_lock();
-    let action = parse_agent_args(["--profile", "special", "--config", "/tmp/agent.toml"]).unwrap();
+    let action =
+        parse_runner_args(["--profile", "special", "--config", "/tmp/agent.toml"]).unwrap();
     assert_eq!(
         action,
-        AgentCliAction::Run {
+        RunnerCliAction::Run {
             config_path: PathBuf::from("/tmp/agent.toml"),
             once: false,
         }
@@ -329,9 +330,9 @@ fn agent_cli_explicit_config_overrides_profile() {
 }
 
 #[test]
-fn agent_cli_rejects_unsafe_profile() {
+fn runner_cli_rejects_unsafe_profile() {
     let _guard = test_env_lock();
-    let err = parse_agent_args(["--profile", "../x"]).unwrap_err();
+    let err = parse_runner_args(["--profile", "../x"]).unwrap_err();
     assert_eq!(err, CLIENT_PROFILE_ERROR);
 }
 
@@ -356,7 +357,7 @@ fn empty_tokens_config_parser_accepts_empty_and_whitespace_token() {
 }
 
 #[test]
-fn agent_config_host_context_is_normalized_closed_and_restart_scoped() {
+fn runner_config_host_context_is_normalized_closed_and_restart_scoped() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     std::fs::write(
@@ -407,7 +408,7 @@ allow_cwd_anywhere = true
 }
 
 #[test]
-fn agent_config_without_shell_section_parses() {
+fn runner_config_without_shell_section_parses() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     std::fs::write(
@@ -432,7 +433,7 @@ allowed_roots = ["."]
 }
 
 #[test]
-fn agent_config_persistent_shell_limits_are_validated() {
+fn runner_config_persistent_shell_limits_are_validated() {
     let mut shell = ShellConfig {
         max_persistent_shells: 0,
         ..Default::default()
@@ -459,7 +460,7 @@ fn agent_config_persistent_shell_limits_are_validated() {
 }
 
 #[test]
-fn agent_config_loads_named_ssh_resources_without_authentication_material() {
+fn runner_config_loads_named_ssh_resources_without_authentication_material() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     std::fs::write(
@@ -497,7 +498,7 @@ host = "ops-alias"
 }
 
 #[test]
-fn agent_config_shell_profiles_parse() {
+fn runner_config_shell_profiles_parse() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     std::fs::write(
@@ -558,7 +559,7 @@ source .venv/bin/activate
 }
 
 #[test]
-fn agent_config_shell_default_profile_must_exist() {
+fn runner_config_shell_default_profile_must_exist() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     std::fs::write(
@@ -588,7 +589,7 @@ program = "sh"
 }
 
 #[test]
-fn agent_config_shell_profile_name_must_be_safe() {
+fn runner_config_shell_profile_name_must_be_safe() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     std::fs::write(
@@ -615,7 +616,7 @@ program = "sh"
 }
 
 #[test]
-fn agent_config_shell_profile_type_errors_are_reported() {
+fn runner_config_shell_profile_type_errors_are_reported() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     std::fs::write(
@@ -641,7 +642,7 @@ args = "-c"
 }
 
 #[test]
-fn agent_config_shell_profile_env_type_errors_are_reported() {
+fn runner_config_shell_profile_env_type_errors_are_reported() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     std::fs::write(
@@ -667,7 +668,7 @@ PATH = ["/root/.cargo/bin"]
 }
 
 #[test]
-fn agent_config_shell_errors_do_not_include_init_script_body() {
+fn runner_config_shell_errors_do_not_include_init_script_body() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     let secret = "DO_NOT_LEAK_THIS_INLINE_SCRIPT_BODY";
@@ -703,8 +704,8 @@ export SECRET={}
 }
 
 #[test]
-fn agent_project_toml_parse_sorts_hook_names() {
-    let project = parse_agent_project_toml(
+fn runner_project_toml_parse_sorts_hook_names() {
+    let project = parse_runner_project_toml(
         r#"
 id = "webcodex"
 path = "/root/git/webcodex"
@@ -717,7 +718,7 @@ doctor = ["git status --short"]
 "#,
     )
     .unwrap();
-    let summary = agent_project_summary(&project, 123456, false);
+    let summary = runner_project_summary(&project, 123456, false);
     assert_eq!(summary.id, "webcodex");
     assert_eq!(summary.name.as_deref(), Some("webcodex"));
     assert_eq!(summary.path, "/root/git/webcodex");
@@ -729,8 +730,8 @@ doctor = ["git status --short"]
 }
 
 #[test]
-fn agent_project_toml_rejects_invalid_id() {
-    let err = parse_agent_project_toml(
+fn runner_project_toml_rejects_invalid_id() {
+    let err = parse_runner_project_toml(
         r#"
 id = "bad id"
 path = "/tmp/webcodex"
@@ -741,8 +742,8 @@ path = "/tmp/webcodex"
 }
 
 #[test]
-fn agent_project_toml_hints_when_server_projects_format_is_used() {
-    let err = parse_agent_project_toml(
+fn runner_project_toml_hints_when_server_projects_format_is_used() {
+    let err = parse_runner_project_toml(
         r#"
 [projects.smoke]
 path = "/root/webcodex-smoke"
@@ -752,7 +753,7 @@ path = "/root/webcodex-smoke"
     assert!(err.contains("missing field"), "{err}");
     assert!(err.contains("server projects.toml"), "{err}");
     assert!(
-        err.contains("Agent projects.d files must use top-level fields"),
+        err.contains("Runner projects.d files must use top-level fields"),
         "{err}"
     );
     assert!(err.contains("id = \"smoke\""), "{err}");
@@ -760,8 +761,8 @@ path = "/root/webcodex-smoke"
 }
 
 #[test]
-fn agent_project_toml_rejects_invalid_shell_profile() {
-    let err = parse_agent_project_toml(
+fn runner_project_toml_rejects_invalid_shell_profile() {
+    let err = parse_runner_project_toml(
         r#"
 id = "demo"
 path = "/tmp/webcodex"
@@ -776,7 +777,7 @@ shell_profile = "../rust"
 fn missing_projects_dir_returns_empty_list() {
     let tmp = tempfile::tempdir().unwrap();
     let missing = tmp.path().join("missing-projects.d");
-    let projects = load_agent_project_summaries_from_dir(&missing);
+    let projects = load_runner_project_summaries_from_dir(&missing);
     assert!(projects.is_empty());
 }
 
@@ -824,7 +825,7 @@ fn mcp_test_toml_path(path: &std::path::Path) -> String {
 }
 
 #[test]
-fn agent_config_accepts_static_literal_mcp_gateway_provider() {
+fn runner_config_accepts_static_literal_mcp_gateway_provider() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     let executable = mcp_test_toml_path(&std::env::current_exe().unwrap());
@@ -880,7 +881,7 @@ timeout_secs = 5
 }
 
 #[test]
-fn agent_config_mcp_gateway_provider_timeout_defaults_to_gateway_timeout() {
+fn runner_config_mcp_gateway_provider_timeout_defaults_to_gateway_timeout() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");
     let executable = mcp_test_toml_path(&std::env::current_exe().unwrap());
@@ -914,7 +915,7 @@ executable = {executable}
 }
 
 #[test]
-fn agent_config_rejects_unsafe_or_ambiguous_mcp_gateway_identity() {
+fn runner_config_rejects_unsafe_or_ambiguous_mcp_gateway_identity() {
     let executable = mcp_test_toml_path(&std::env::current_exe().unwrap());
     for (providers, expected) in [
         (

@@ -10,13 +10,13 @@ use tempfile::TempDir;
 mod experimental_tests;
 
 /// Routing tests that operate inside the fixture root and are not about the
-/// filesystem boundary. `AgentPolicy::default()` is fail-closed, so these opt
+/// filesystem boundary. `RunnerPolicy::default()` is fail-closed, so these opt
 /// out explicitly; `router_rejects_absolute_parent_and_symlink_escape_paths`
 /// deliberately keeps the default to assert the boundary still rejects.
-fn permissive_test_policy() -> AgentPolicy {
-    AgentPolicy {
+fn permissive_test_policy() -> RunnerPolicy {
+    RunnerPolicy {
         allow_cwd_anywhere: true,
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     }
 }
 
@@ -565,7 +565,7 @@ fn router_rejects_absolute_parent_and_symlink_escape_paths() {
         let mut search = agent_request("run_shell", &fixture.root, ".", None);
         search.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
         search.stdin = Some(search_request_with_path(&path).to_string());
-        let ExternalRoute::Handled(result) = router.route(&AgentPolicy::default(), &search) else {
+        let ExternalRoute::Handled(result) = router.route(&RunnerPolicy::default(), &search) else {
             panic!("unsafe path routed to native");
         };
         let output: Value = serde_json::from_str(result.stdout.as_deref().unwrap()).unwrap();
@@ -578,7 +578,7 @@ fn router_rejects_absolute_parent_and_symlink_escape_paths() {
         let mut search = agent_request("run_shell", &fixture.root, ".", None);
         search.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
         search.stdin = Some(search_request_with_path("escape/outside.txt").to_string());
-        let ExternalRoute::Handled(result) = router.route(&AgentPolicy::default(), &search) else {
+        let ExternalRoute::Handled(result) = router.route(&RunnerPolicy::default(), &search) else {
             panic!("symlink escape routed to native");
         };
         assert!(result.stdout.unwrap().contains("provider_path_rejected"));

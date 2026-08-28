@@ -1,13 +1,13 @@
 use super::config::{
-    max_concurrent_jobs, projects_dir, validate_quic_config, AgentConfig, HotAgentConfig,
-    QuicClientConfig, ReloadableAgentConfig,
+    max_concurrent_jobs, projects_dir, validate_quic_config, HotRunnerConfig, QuicClientConfig,
+    ReloadableRunnerConfig, RunnerConfig,
 };
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 use super::detached_job::DetachedJobStore;
 #[cfg(windows)]
 use super::exit_diagnostics::RunnerExitDiagnostics;
 use super::lsp::LspSupervisor;
-use super::projects::AgentProjectCache;
+use super::projects::RunnerProjectCache;
 use super::shutdown::{
     ActivityTracker, BackgroundThreads, ShutdownCoordinator, ShutdownDeadline, ShutdownPhaseResult,
     ShutdownReport, BACKGROUND_JOIN_BUDGET, DEFAULT_SHUTDOWN_BUDGET, JOB_DRAIN_BUDGET,
@@ -15,7 +15,9 @@ use super::shutdown::{
 };
 use super::util::contains_any;
 use super::{PersistentShellManager, ShellCommandResult};
-use crate::agent_init::{TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET};
+use crate::runner_config::{
+    TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
+};
 use crate::shell_protocol::{
     read_quic_frame, write_quic_frame, write_quic_register_frame, AgentEnvelope, QuicFrameError,
     QuicRegisterFrame, ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse,
@@ -28,9 +30,9 @@ use crate::shell_protocol::{
 };
 use crate::{
     build_register_request_with_provider_status, dispatch_request, handle_one_poll, is_project_op,
-    legacy_inline_project_inventory, project_registration_bootstrap, register, AgentHttpError,
-    AgentHttpErrorKind, CommandResult, JobManager, PollingDispatchSupervisor,
-    PollingRecoveryAction, RegisterRecoveryAction,
+    legacy_inline_project_inventory, project_registration_bootstrap, register, CommandResult,
+    JobManager, PollingDispatchSupervisor, PollingRecoveryAction, RegisterRecoveryAction,
+    RunnerHttpError, RunnerHttpErrorKind,
 };
 use reqwest::blocking::Client;
 use std::fmt;
@@ -134,7 +136,7 @@ const RESULT_SUBMIT_RETRY_BACKOFF: [Duration; 3] = [
 
 fn send_provider_metadata(
     tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
-    runtime: &ReloadableAgentConfig,
+    runtime: &ReloadableRunnerConfig,
     expected_generation: Option<u64>,
 ) {
     runtime.with_active(|config| {
@@ -159,9 +161,9 @@ fn send_provider_metadata(
 }
 
 #[derive(Clone)]
-pub(crate) struct AgentRuntimeState {
+pub(crate) struct RunnerRuntimeState {
     lsp: LspSupervisor,
-    config: Arc<ReloadableAgentConfig>,
+    config: Arc<ReloadableRunnerConfig>,
     jobs: JobManager,
     persistent_shells: PersistentShellManager,
     coordinator: Arc<ShutdownCoordinator>,
@@ -172,12 +174,12 @@ pub(crate) struct AgentRuntimeState {
     exit_diagnostics: Option<Arc<RunnerExitDiagnostics>>,
 }
 
-impl AgentRuntimeState {
-    pub(crate) fn new(cfg: &AgentConfig, path: PathBuf) -> Self {
+impl RunnerRuntimeState {
+    pub(crate) fn new(cfg: &RunnerConfig, path: PathBuf) -> Self {
         Self::with_shutdown_budget(cfg, path, DEFAULT_SHUTDOWN_BUDGET)
     }
 
-    fn with_shutdown_budget(cfg: &AgentConfig, path: PathBuf, budget: Duration) -> Self {
+    fn with_shutdown_budget(cfg: &RunnerConfig, path: PathBuf, budget: Duration) -> Self {
         let jobs = JobManager::new(max_concurrent_jobs(cfg))
             .with_detached_profile_identity(&cfg.server_url);
         // Persistent shells reuse the same authenticated OpenSSH multiplex pool
@@ -186,7 +188,7 @@ impl AgentRuntimeState {
         let persistent_shells = PersistentShellManager::new(&cfg.shell, jobs.ssh_pool.clone());
         Self {
             lsp: LspSupervisor::default(),
-            config: Arc::new(ReloadableAgentConfig::new(cfg.clone(), path)),
+            config: Arc::new(ReloadableRunnerConfig::new(cfg.clone(), path)),
             jobs,
             persistent_shells,
             coordinator: Arc::new(ShutdownCoordinator::new(budget)),
@@ -225,8 +227,8 @@ impl AgentRuntimeState {
 
     fn project_summaries(
         &self,
-        cache: &mut AgentProjectCache,
-        cfg: &AgentConfig,
+        cache: &mut RunnerProjectCache,
+        cfg: &RunnerConfig,
     ) -> Vec<ShellAgentProjectSummary> {
         let shutdown = self.shutdown_flag();
         cache.get_with_shutdown(cfg, Some(shutdown.as_ref()))
@@ -435,14 +437,14 @@ fn sleep_or_shutdown(delay: Duration, shutdown: &AtomicBool) -> bool {
     shutdown.load(Ordering::SeqCst)
 }
 
-async fn async_sleep_or_shutdown(delay: Duration, runtime: &AgentRuntimeState) -> bool {
+async fn async_sleep_or_shutdown(delay: Duration, runtime: &RunnerRuntimeState) -> bool {
     tokio::select! {
         _ = tokio::time::sleep(delay) => false,
         _ = runtime.wait_for_shutdown() => true,
     }
 }
 
-async fn future_or_shutdown<F>(future: F, runtime: &AgentRuntimeState) -> Option<F::Output>
+async fn future_or_shutdown<F>(future: F, runtime: &RunnerRuntimeState) -> Option<F::Output>
 where
     F: std::future::Future,
 {
@@ -453,7 +455,7 @@ where
 }
 
 fn install_shutdown_listener(
-    runtime: AgentRuntimeState,
+    runtime: RunnerRuntimeState,
 ) -> Result<std::thread::JoinHandle<()>, String> {
     std::thread::Builder::new()
         .name("webcodex-runner-shutdown".to_string())
@@ -474,20 +476,20 @@ fn install_shutdown_listener(
         .map_err(|_| "failed to start process shutdown signal listener".to_string())
 }
 
-fn complete_polling_shutdown(runtime: &AgentRuntimeState) -> Result<(), String> {
+fn complete_polling_shutdown(runtime: &RunnerRuntimeState) -> Result<(), String> {
     runtime.request_shutdown_signal();
     runtime.shutdown();
     Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum AgentTransportError {
+pub(crate) enum RunnerTransportError {
     Transient(String),
     ProxyConfiguration(String),
     Fatal(String),
 }
 
-impl AgentTransportError {
+impl RunnerTransportError {
     fn transient(message: impl Into<String>) -> Self {
         Self::Transient(message.into())
     }
@@ -517,7 +519,7 @@ impl AgentTransportError {
     }
 }
 
-impl fmt::Display for AgentTransportError {
+impl fmt::Display for RunnerTransportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Transient(message) | Self::ProxyConfiguration(message) | Self::Fatal(message) => {
@@ -527,7 +529,7 @@ impl fmt::Display for AgentTransportError {
     }
 }
 
-impl From<String> for AgentTransportError {
+impl From<String> for RunnerTransportError {
     fn from(message: String) -> Self {
         classify_session_error(message)
     }
@@ -575,12 +577,12 @@ fn is_fatal_config_or_tls_error(message: &str) -> bool {
     )
 }
 
-fn classify_session_error(message: impl Into<String>) -> AgentTransportError {
+fn classify_session_error(message: impl Into<String>) -> RunnerTransportError {
     let message = message.into();
     if is_fatal_auth_or_register_error(&message) || is_fatal_config_or_tls_error(&message) {
-        AgentTransportError::fatal(message)
+        RunnerTransportError::fatal(message)
     } else {
-        AgentTransportError::transient(message)
+        RunnerTransportError::transient(message)
     }
 }
 
@@ -659,7 +661,11 @@ fn enabled_projects_count(projects: &[ShellAgentProjectSummary]) -> usize {
     projects.iter().filter(|project| !project.disabled).count()
 }
 
-fn registered_log_line(cfg: &AgentConfig, actual_transport: &str, projects_count: usize) -> String {
+fn registered_log_line(
+    cfg: &RunnerConfig,
+    actual_transport: &str,
+    projects_count: usize,
+) -> String {
     format!(
         "webcodex-runner registered client_id={} server={} preferred_transport={} actual_transport={} projects={}",
         cfg.client_id,
@@ -701,7 +707,7 @@ async fn shutdown_signal() {
 
 #[cfg(unix)]
 fn install_reload_listener(
-    runtime: Arc<ReloadableAgentConfig>,
+    runtime: Arc<ReloadableRunnerConfig>,
 ) -> Result<std::thread::JoinHandle<()>, String> {
     let signal_runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -730,9 +736,9 @@ fn install_reload_listener(
         .map_err(|_| "failed to start config reload signal listener".to_string())
 }
 
-/// Minimal HTTP send configuration used by the polling `AgentSink`. We do not
-/// store the whole `AgentConfig` here: policy and concurrency limits stay
-/// with the agent config and are passed alongside the sink.
+/// Minimal HTTP send configuration used by the polling `RunnerSink`. We do not
+/// store the whole `RunnerConfig` here: policy and concurrency limits stay
+/// with the Runner config and are passed alongside the sink.
 #[derive(Debug, Clone)]
 pub(crate) struct HttpSendConfig {
     pub(crate) client: Client,
@@ -744,11 +750,11 @@ pub(crate) struct HttpSendConfig {
 }
 
 /// Transport-neutral outgoing channel for an agent. Both the polling loop and
-/// the WebSocket loop build an `AgentSink` and hand it to the shared
+/// the WebSocket loop build an `RunnerSink` and hand it to the shared
 /// `dispatch_request` / `JobManager` execution path. This shared boundary lets
-/// the agent speak either transport without duplicating execution logic.
+/// the Runner speak either transport without duplicating execution logic.
 #[derive(Debug, Clone)]
-pub(crate) enum AgentSink {
+pub(crate) enum RunnerSink {
     /// Polling transport: POST results/job_updates to the HTTP endpoints.
     Http(HttpSendConfig),
     /// WebSocket transport: push envelopes through an mpsc that a writer task
@@ -824,19 +830,19 @@ enum ResultHttpErrorDisposition {
     FatalConfig,
 }
 
-fn result_http_error_disposition(kind: &AgentHttpErrorKind) -> ResultHttpErrorDisposition {
+fn result_http_error_disposition(kind: &RunnerHttpErrorKind) -> ResultHttpErrorDisposition {
     match kind {
-        AgentHttpErrorKind::ServerUnavailable
-        | AgentHttpErrorKind::Status
-        | AgentHttpErrorKind::RequestTimeout
-        | AgentHttpErrorKind::Request
-        | AgentHttpErrorKind::DecodeTransient => ResultHttpErrorDisposition::RetryTransient,
-        AgentHttpErrorKind::ClientRejected => ResultHttpErrorDisposition::RejectPermanent,
-        AgentHttpErrorKind::Auth => ResultHttpErrorDisposition::FatalAuth,
-        AgentHttpErrorKind::NotFound | AgentHttpErrorKind::ProtocolDecode => {
+        RunnerHttpErrorKind::ServerUnavailable
+        | RunnerHttpErrorKind::Status
+        | RunnerHttpErrorKind::RequestTimeout
+        | RunnerHttpErrorKind::Request
+        | RunnerHttpErrorKind::DecodeTransient => ResultHttpErrorDisposition::RetryTransient,
+        RunnerHttpErrorKind::ClientRejected => ResultHttpErrorDisposition::RejectPermanent,
+        RunnerHttpErrorKind::Auth => ResultHttpErrorDisposition::FatalAuth,
+        RunnerHttpErrorKind::NotFound | RunnerHttpErrorKind::ProtocolDecode => {
             ResultHttpErrorDisposition::FatalProtocol
         }
-        AgentHttpErrorKind::Config => ResultHttpErrorDisposition::FatalConfig,
+        RunnerHttpErrorKind::Config => ResultHttpErrorDisposition::FatalConfig,
     }
 }
 
@@ -941,24 +947,24 @@ fn submit_result_http(
     }
 }
 
-impl AgentSink {
+impl RunnerSink {
     pub(crate) fn client_id(&self) -> &str {
         match self {
-            AgentSink::Http(h) => &h.client_id,
-            AgentSink::WebSocket { client_id, .. } => client_id,
-            AgentSink::Quic { client_id, .. } => client_id,
+            RunnerSink::Http(h) => &h.client_id,
+            RunnerSink::WebSocket { client_id, .. } => client_id,
+            RunnerSink::Quic { client_id, .. } => client_id,
         }
     }
 
-    /// Active agent process identity carried by this sink so every result /
+    /// Active Runner process identity carried by this sink so every result /
     /// job_update submission includes it.
     pub(crate) fn agent_instance_id(&self) -> &str {
         match self {
-            AgentSink::Http(h) => &h.agent_instance_id,
-            AgentSink::WebSocket {
+            RunnerSink::Http(h) => &h.agent_instance_id,
+            RunnerSink::WebSocket {
                 agent_instance_id, ..
             } => agent_instance_id,
-            AgentSink::Quic {
+            RunnerSink::Quic {
                 agent_instance_id, ..
             } => agent_instance_id,
         }
@@ -1051,8 +1057,8 @@ impl AgentSink {
             );
         }
         let submitted = match self {
-            AgentSink::Http(h) => submit_result_http(h, &body),
-            AgentSink::WebSocket { tx, .. } | AgentSink::Quic { tx, .. } => {
+            RunnerSink::Http(h) => submit_result_http(h, &body),
+            RunnerSink::WebSocket { tx, .. } | RunnerSink::Quic { tx, .. } => {
                 let env = AgentEnvelope::Result { payload: body };
                 tx.blocking_send(env).map_err(|_| {
                     SubmitResultError::TransportClosed(
@@ -1085,8 +1091,8 @@ impl AgentSink {
         &self,
         request_id: String,
         shell_result: ShellCommandResult,
-        config: &HotAgentConfig,
-        runtime: &ReloadableAgentConfig,
+        config: &HotRunnerConfig,
+        runtime: &ReloadableRunnerConfig,
     ) -> Result<ResultSubmission, SubmitResultError> {
         let ShellCommandResult {
             result,
@@ -1118,8 +1124,8 @@ impl AgentSink {
         &self,
         request_id: String,
         result: CommandResult,
-        config: &HotAgentConfig,
-        runtime: &ReloadableAgentConfig,
+        config: &HotRunnerConfig,
+        runtime: &ReloadableRunnerConfig,
     ) -> Result<ResultSubmission, SubmitResultError> {
         let submitted = self.submit_result(request_id, result);
         // Provider metadata is a best-effort follow-up on push transports, not
@@ -1146,8 +1152,8 @@ impl AgentSink {
             result,
         };
         match self {
-            AgentSink::Http(h) => submit_persistent_shell_result_http(h, &body),
-            AgentSink::WebSocket { tx, .. } | AgentSink::Quic { tx, .. } => {
+            RunnerSink::Http(h) => submit_persistent_shell_result_http(h, &body),
+            RunnerSink::WebSocket { tx, .. } | RunnerSink::Quic { tx, .. } => {
                 tx.blocking_send(AgentEnvelope::PersistentShellResult { payload: body })
                     .map_err(|_| {
                         SubmitResultError::TransportClosed(
@@ -1159,8 +1165,12 @@ impl AgentSink {
         }
     }
 
-    fn send_provider_metadata_best_effort(&self, generation: u64, runtime: &ReloadableAgentConfig) {
-        let (AgentSink::WebSocket { tx, .. } | AgentSink::Quic { tx, .. }) = self else {
+    fn send_provider_metadata_best_effort(
+        &self,
+        generation: u64,
+        runtime: &ReloadableRunnerConfig,
+    ) {
+        let (RunnerSink::WebSocket { tx, .. } | RunnerSink::Quic { tx, .. }) = self else {
             return;
         };
         send_provider_metadata(tx, runtime, Some(generation));
@@ -1168,13 +1178,13 @@ impl AgentSink {
 
     pub(crate) fn same_job_update_target(&self, other: &Self) -> bool {
         match (self, other) {
-            (AgentSink::Http(left), AgentSink::Http(right)) => {
+            (RunnerSink::Http(left), RunnerSink::Http(right)) => {
                 left.server_url == right.server_url
                     && left.client_id == right.client_id
                     && left.agent_instance_id == right.agent_instance_id
             }
-            (AgentSink::WebSocket { tx: left, .. }, AgentSink::WebSocket { tx: right, .. })
-            | (AgentSink::Quic { tx: left, .. }, AgentSink::Quic { tx: right, .. }) => {
+            (RunnerSink::WebSocket { tx: left, .. }, RunnerSink::WebSocket { tx: right, .. })
+            | (RunnerSink::Quic { tx: left, .. }, RunnerSink::Quic { tx: right, .. }) => {
                 left.same_channel(right)
             }
             _ => false,
@@ -1191,7 +1201,7 @@ impl AgentSink {
         body: &ShellAgentJobUpdateRequest,
     ) -> Result<bool, String> {
         match self {
-            AgentSink::Http(h) => {
+            RunnerSink::Http(h) => {
                 let resp: ShellAgentJobUpdateResponse = post_json_raw(
                     &h.client,
                     &h.server_url,
@@ -1208,7 +1218,7 @@ impl AgentSink {
                         .unwrap_or_else(|| "job_update failed without error".to_string()))
                 }
             }
-            AgentSink::WebSocket { tx, .. } | AgentSink::Quic { tx, .. } => {
+            RunnerSink::WebSocket { tx, .. } | RunnerSink::Quic { tx, .. } => {
                 let env = AgentEnvelope::JobUpdate {
                     payload: body.clone(),
                 };
@@ -1228,7 +1238,7 @@ impl AgentSink {
     /// and the terminal state is still resolved by the final result path.
     pub(crate) fn send_job_update(&self, body: &ShellAgentJobUpdateRequest) -> Result<(), String> {
         match self {
-            AgentSink::Http(h) => {
+            RunnerSink::Http(h) => {
                 let resp: ShellAgentJobUpdateResponse = post_json_raw(
                     &h.client,
                     &h.server_url,
@@ -1245,7 +1255,7 @@ impl AgentSink {
                         .unwrap_or_else(|| "job_update failed without error".to_string()))
                 }
             }
-            AgentSink::WebSocket { tx, .. } | AgentSink::Quic { tx, .. } => {
+            RunnerSink::WebSocket { tx, .. } | RunnerSink::Quic { tx, .. } => {
                 let env = AgentEnvelope::JobUpdate {
                     payload: body.clone(),
                 };
@@ -1329,15 +1339,15 @@ fn submit_persistent_shell_result_http(
 
 /// Send a JSON POST to the server and decode the response. Same wire behavior
 /// as `post_json` but takes the raw connection bits so it can be used from
-/// `AgentSink::Http` without an `AgentConfig`. Preserves the structured
-/// `AgentHttpError` classification for callers that must act on it.
+/// `RunnerSink::Http` without an `RunnerConfig`. Preserves the structured
+/// `RunnerHttpError` classification for callers that must act on it.
 fn post_json_raw<T, R>(
     client: &Client,
     server_url: &str,
     token: &str,
     path: &str,
     body: &T,
-) -> Result<R, AgentHttpError>
+) -> Result<R, RunnerHttpError>
 where
     T: serde::Serialize + ?Sized,
     R: serde::de::DeserializeOwned,
@@ -1354,7 +1364,11 @@ pub(crate) fn non_empty_token(token: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn run_agent(cfg: AgentConfig, config_path: PathBuf, once: bool) -> Result<(), String> {
+pub(crate) fn run_runner(
+    cfg: RunnerConfig,
+    config_path: PathBuf,
+    once: bool,
+) -> Result<(), String> {
     // Generate the per-process agent instance identity once. It is stable for
     // the whole process lifetime, including across WebSocket reconnects, so the
     // server can treat this process as a single active lease for `client_id`.
@@ -1390,9 +1404,9 @@ pub(crate) fn run_agent(cfg: AgentConfig, config_path: PathBuf, once: bool) -> R
             }
         }
     };
-    // The LSP supervisor belongs to the agent process rather than any server
+    // The LSP supervisor belongs to the Runner process rather than any server
     // transport session and is shared across reconnects.
-    let runtime = AgentRuntimeState::new(&cfg, config_path.clone());
+    let runtime = RunnerRuntimeState::new(&cfg, config_path.clone());
     #[cfg(windows)]
     let runtime = {
         let mut runtime = runtime;
@@ -1445,10 +1459,10 @@ pub(crate) fn run_agent(cfg: AgentConfig, config_path: PathBuf, once: bool) -> R
         }
     }
     let result = match transport.as_str() {
-        TRANSPORT_WEBSOCKET => run_websocket_agent(cfg, once, &agent_instance_id, &runtime),
-        TRANSPORT_QUIC => run_quic_agent(cfg, once, &agent_instance_id, &runtime),
-        TRANSPORT_AUTO => run_auto_agent(cfg, once, &agent_instance_id, &runtime),
-        _ => run_polling_agent(cfg, once, &agent_instance_id, &runtime),
+        TRANSPORT_WEBSOCKET => run_websocket_runner(cfg, once, &agent_instance_id, &runtime),
+        TRANSPORT_QUIC => run_quic_runner(cfg, once, &agent_instance_id, &runtime),
+        TRANSPORT_AUTO => run_auto_runner(cfg, once, &agent_instance_id, &runtime),
+        _ => run_polling_runner(cfg, once, &agent_instance_id, &runtime),
     };
     #[cfg(windows)]
     if let Some(diagnostics) = exit_diagnostics.as_ref() {
@@ -1470,7 +1484,7 @@ pub(crate) fn run_agent(cfg: AgentConfig, config_path: PathBuf, once: bool) -> R
     result
 }
 
-pub(crate) fn effective_transport(cfg: &AgentConfig) -> &str {
+pub(crate) fn effective_transport(cfg: &RunnerConfig) -> &str {
     cfg.transport
         .as_deref()
         .map(str::trim)
@@ -1478,7 +1492,7 @@ pub(crate) fn effective_transport(cfg: &AgentConfig) -> &str {
         .unwrap_or(TRANSPORT_WEBSOCKET)
 }
 
-pub(crate) fn auto_transport_plan(cfg: &AgentConfig) -> Vec<&'static str> {
+pub(crate) fn auto_transport_plan(cfg: &RunnerConfig) -> Vec<&'static str> {
     let mut plan = Vec::new();
     if cfg.quic.is_some() {
         plan.push(TRANSPORT_QUIC);
@@ -1735,7 +1749,7 @@ impl PollingProjectRefresh {
         self.last_sent_at = now;
     }
 
-    fn should_refresh(&self, project_cache: &AgentProjectCache, now: Instant) -> bool {
+    fn should_refresh(&self, project_cache: &RunnerProjectCache, now: Instant) -> bool {
         project_cache.needs_refresh()
             || now.saturating_duration_since(self.last_sent_at) >= POLLING_PROJECT_REFRESH_INTERVAL
     }
@@ -1743,8 +1757,8 @@ impl PollingProjectRefresh {
 
 fn polling_projects_for_poll(
     refresh: &PollingProjectRefresh,
-    project_cache: &mut AgentProjectCache,
-    cfg: &AgentConfig,
+    project_cache: &mut RunnerProjectCache,
+    cfg: &RunnerConfig,
     shutdown: &AtomicBool,
     now: Instant,
 ) -> Option<Vec<ShellAgentProjectSummary>> {
@@ -1854,7 +1868,7 @@ enum StreamSupervisorExit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AgentSessionExit {
+pub(crate) enum RunnerSessionExit {
     Completed,
     TransportDisconnected,
     Shutdown,
@@ -1863,8 +1877,8 @@ pub(crate) enum AgentSessionExit {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StreamSessionDecision {
     Complete { shutdown: bool },
-    Reconnect(Option<AgentTransportError>),
-    TryNext(AgentTransportError),
+    Reconnect(Option<RunnerTransportError>),
+    TryNext(RunnerTransportError),
     Fatal(String),
 }
 
@@ -1872,15 +1886,15 @@ fn decide_stream_session(
     mode: StreamSupervisorMode,
     transport: StreamTransport,
     once: bool,
-    result: Result<AgentSessionExit, AgentTransportError>,
+    result: Result<RunnerSessionExit, RunnerTransportError>,
 ) -> StreamSessionDecision {
     match result {
-        Ok(AgentSessionExit::Shutdown) => StreamSessionDecision::Complete { shutdown: true },
-        Ok(AgentSessionExit::Completed) => StreamSessionDecision::Complete { shutdown: false },
-        Ok(AgentSessionExit::TransportDisconnected) if once => {
+        Ok(RunnerSessionExit::Shutdown) => StreamSessionDecision::Complete { shutdown: true },
+        Ok(RunnerSessionExit::Completed) => StreamSessionDecision::Complete { shutdown: false },
+        Ok(RunnerSessionExit::TransportDisconnected) if once => {
             StreamSessionDecision::Complete { shutdown: false }
         }
-        Ok(AgentSessionExit::TransportDisconnected) => StreamSessionDecision::Reconnect(None),
+        Ok(RunnerSessionExit::TransportDisconnected) => StreamSessionDecision::Reconnect(None),
         Err(error) if error.is_proxy_configuration() => {
             if matches!(mode, StreamSupervisorMode::Strict(_)) {
                 StreamSessionDecision::Fatal(error.into_message())
@@ -1905,7 +1919,7 @@ fn decide_stream_session(
     }
 }
 
-fn stream_transport_plan(cfg: &AgentConfig, mode: StreamSupervisorMode) -> Vec<StreamTransport> {
+fn stream_transport_plan(cfg: &RunnerConfig, mode: StreamSupervisorMode) -> Vec<StreamTransport> {
     match mode {
         StreamSupervisorMode::Strict(transport) => vec![transport],
         StreamSupervisorMode::Auto => auto_transport_plan(cfg)
@@ -1921,12 +1935,12 @@ fn stream_transport_plan(cfg: &AgentConfig, mode: StreamSupervisorMode) -> Vec<S
 
 async fn run_stream_session(
     transport: StreamTransport,
-    cfg: &AgentConfig,
+    cfg: &RunnerConfig,
     projects: Vec<ShellAgentProjectSummary>,
     agent_instance_id: &str,
     once: bool,
-    runtime: &AgentRuntimeState,
-) -> Result<AgentSessionExit, AgentTransportError> {
+    runtime: &RunnerRuntimeState,
+) -> Result<RunnerSessionExit, RunnerTransportError> {
     match transport {
         StreamTransport::WebSocket => {
             websocket_session_classified(cfg, projects, agent_instance_id, runtime).await
@@ -1938,13 +1952,13 @@ async fn run_stream_session(
 }
 
 async fn supervise_stream_transports(
-    cfg: &AgentConfig,
+    cfg: &RunnerConfig,
     once: bool,
     agent_instance_id: &str,
-    runtime: &AgentRuntimeState,
+    runtime: &RunnerRuntimeState,
     mode: StreamSupervisorMode,
 ) -> Result<StreamSupervisorExit, String> {
-    let mut project_cache = AgentProjectCache::default();
+    let mut project_cache = RunnerProjectCache::default();
     let mut backoff = RetryBackoff::new(&RECONNECT_BACKOFF_STEPS);
     'supervisor: loop {
         if mode == StreamSupervisorMode::Auto && cfg.quic.is_none() {
@@ -2020,11 +2034,11 @@ async fn supervise_stream_transports(
     }
 }
 
-fn run_stream_transport_agent(
-    cfg: &AgentConfig,
+fn run_stream_transport_runner(
+    cfg: &RunnerConfig,
     once: bool,
     agent_instance_id: &str,
-    runtime: &AgentRuntimeState,
+    runtime: &RunnerRuntimeState,
     mode: StreamSupervisorMode,
 ) -> Result<StreamSupervisorExit, String> {
     let runtime_for_shutdown = runtime.clone();
@@ -2043,13 +2057,13 @@ fn run_stream_transport_agent(
     result
 }
 
-fn run_auto_agent(
-    cfg: AgentConfig,
+fn run_auto_runner(
+    cfg: RunnerConfig,
     once: bool,
     agent_instance_id: &str,
-    runtime: &AgentRuntimeState,
+    runtime: &RunnerRuntimeState,
 ) -> Result<(), String> {
-    match run_stream_transport_agent(
+    match run_stream_transport_runner(
         &cfg,
         once,
         agent_instance_id,
@@ -2058,19 +2072,19 @@ fn run_auto_agent(
     )? {
         StreamSupervisorExit::Completed => Ok(()),
         StreamSupervisorExit::PollingFallback => {
-            run_polling_agent(cfg, once, agent_instance_id, runtime)
+            run_polling_runner(cfg, once, agent_instance_id, runtime)
         }
     }
 }
 
-fn run_polling_agent(
-    cfg: AgentConfig,
+fn run_polling_runner(
+    cfg: RunnerConfig,
     once: bool,
     agent_instance_id: &str,
-    runtime: &AgentRuntimeState,
+    runtime: &RunnerRuntimeState,
 ) -> Result<(), String> {
     let shutdown = runtime.shutdown_flag();
-    run_polling_agent_with_shutdown(cfg, once, agent_instance_id, shutdown, runtime)
+    run_polling_runner_with_shutdown(cfg, once, agent_instance_id, shutdown, runtime)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2082,8 +2096,8 @@ enum PollFailureDirective {
 #[allow(clippy::too_many_arguments)]
 fn handle_poll_failure(
     error: crate::PollError,
-    cfg: &AgentConfig,
-    runtime: &AgentRuntimeState,
+    cfg: &RunnerConfig,
+    runtime: &RunnerRuntimeState,
     shutdown: &AtomicBool,
     registered: &mut bool,
     recovering: &mut bool,
@@ -2140,9 +2154,9 @@ fn handle_poll_failure(
 }
 
 fn complete_polling_after_shutdown(
-    runtime: &AgentRuntimeState,
+    runtime: &RunnerRuntimeState,
     polling_dispatches: &mut PollingDispatchSupervisor,
-    project_cache: &mut AgentProjectCache,
+    project_cache: &mut RunnerProjectCache,
 ) -> Result<(), String> {
     // Match the former synchronous dispatch race: a fatal submission response
     // that has already reached a worker gets a bounded chance to reach polling
@@ -2157,19 +2171,19 @@ fn complete_polling_after_shutdown(
     complete_polling_shutdown(runtime)
 }
 
-fn run_polling_agent_with_shutdown(
-    cfg: AgentConfig,
+fn run_polling_runner_with_shutdown(
+    cfg: RunnerConfig,
     once: bool,
     agent_instance_id: &str,
     shutdown: Arc<AtomicBool>,
-    runtime: &AgentRuntimeState,
+    runtime: &RunnerRuntimeState,
 ) -> Result<(), String> {
     let client = Client::builder()
         .timeout(POLLING_HTTP_TIMEOUT)
         .build()
         .map_err(|e| format!("failed to create http client: {}", e))?;
     let jobs = runtime.jobs.clone();
-    let mut project_cache = AgentProjectCache::default();
+    let mut project_cache = RunnerProjectCache::default();
     let mut idle_backoff = PollingIdleBackoff::new(Duration::from_millis(cfg.poll_interval_ms));
     let mut project_refresh = PollingProjectRefresh::new(Instant::now());
     let mut polling_dispatches = PollingDispatchSupervisor::new(
@@ -2235,7 +2249,7 @@ fn run_polling_agent_with_shutdown(
                         registered_projects,
                         inventory_status.as_ref(),
                     );
-                    let sink = AgentSink::Http(HttpSendConfig {
+                    let sink = RunnerSink::Http(HttpSendConfig {
                         client: client.clone(),
                         server_url: cfg.server_url.clone(),
                         token: cfg.token.clone(),
@@ -2900,7 +2914,7 @@ fn handle_project_inventory_status(
 struct StreamingProjectInventoryCoordinator {
     supported: bool,
     sync: Option<ProjectInventorySync>,
-    project_cache: AgentProjectCache,
+    project_cache: RunnerProjectCache,
     retry_backoff: RetryBackoff,
     retry_at: Option<tokio::time::Instant>,
 }
@@ -2910,7 +2924,7 @@ impl StreamingProjectInventoryCoordinator {
         Self {
             supported: sync.is_some(),
             sync,
-            project_cache: AgentProjectCache::default(),
+            project_cache: RunnerProjectCache::default(),
             retry_backoff: RetryBackoff::new(&PROJECT_INVENTORY_STAGING_RETRY_BACKOFF_STEPS),
             retry_at: None,
         }
@@ -2940,8 +2954,8 @@ impl StreamingProjectInventoryCoordinator {
     fn refresh_from_current_projects(
         &mut self,
         transport: StreamTransport,
-        cfg: &AgentConfig,
-        runtime: &AgentRuntimeState,
+        cfg: &RunnerConfig,
+        runtime: &RunnerRuntimeState,
         out_tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
         reason_code: &str,
     ) {
@@ -2967,8 +2981,8 @@ impl StreamingProjectInventoryCoordinator {
         &mut self,
         transport: StreamTransport,
         status: ShellProjectInventoryStatus,
-        cfg: &AgentConfig,
-        runtime: &AgentRuntimeState,
+        cfg: &RunnerConfig,
+        runtime: &RunnerRuntimeState,
         out_tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
     ) {
         match handle_project_inventory_status(
@@ -2997,12 +3011,12 @@ impl StreamingProjectInventoryCoordinator {
 fn handle_stream_envelope(
     transport: StreamTransport,
     envelope: AgentEnvelope,
-    cfg: &AgentConfig,
-    sink: &AgentSink,
+    cfg: &RunnerConfig,
+    sink: &RunnerSink,
     out_tx: &tokio::sync::mpsc::Sender<AgentEnvelope>,
     project_inventory: &mut StreamingProjectInventoryCoordinator,
     project_inventory_refresh_tx: &tokio::sync::mpsc::Sender<()>,
-    runtime: &AgentRuntimeState,
+    runtime: &RunnerRuntimeState,
 ) -> Option<String> {
     match envelope {
         AgentEnvelope::Request { request } => {
@@ -3067,26 +3081,26 @@ fn handle_stream_envelope(
 
 async fn serve_registered_stream<F>(
     transport: StreamTransport,
-    cfg: &AgentConfig,
+    cfg: &RunnerConfig,
     agent_instance_id: &str,
     registered_jobs: &ShellJobInventory,
     out_tx: tokio::sync::mpsc::Sender<AgentEnvelope>,
     mut stream: RegisteredStream,
     mut writer_task: tokio::task::JoinHandle<StreamWriterExit>,
     project_inventory_sync: Option<ProjectInventorySync>,
-    runtime: &AgentRuntimeState,
+    runtime: &RunnerRuntimeState,
     shutdown: F,
-) -> Result<AgentSessionExit, String>
+) -> Result<RunnerSessionExit, String>
 where
     F: std::future::Future<Output = ()>,
 {
     let sink = match transport {
-        StreamTransport::WebSocket => AgentSink::WebSocket {
+        StreamTransport::WebSocket => RunnerSink::WebSocket {
             tx: out_tx.clone(),
             client_id: cfg.client_id.clone(),
             agent_instance_id: agent_instance_id.to_string(),
         },
-        StreamTransport::Quic => AgentSink::Quic {
+        StreamTransport::Quic => RunnerSink::Quic {
             tx: out_tx.clone(),
             client_id: cfg.client_id.clone(),
             agent_instance_id: agent_instance_id.to_string(),
@@ -3223,22 +3237,22 @@ where
         return Err(error);
     }
     Ok(if shutdown_requested {
-        AgentSessionExit::Shutdown
+        RunnerSessionExit::Shutdown
     } else {
-        AgentSessionExit::TransportDisconnected
+        RunnerSessionExit::TransportDisconnected
     })
 }
 
 // The custom QUIC transport is a QUIC stream, not HTTP/3. It intentionally
 // keeps one serialized bidirectional stream today so a future multistream
 // implementation can change this adapter without changing the supervisor.
-fn run_quic_agent(
-    cfg: AgentConfig,
+fn run_quic_runner(
+    cfg: RunnerConfig,
     once: bool,
     agent_instance_id: &str,
-    runtime: &AgentRuntimeState,
+    runtime: &RunnerRuntimeState,
 ) -> Result<(), String> {
-    run_stream_transport_agent(
+    run_stream_transport_runner(
         &cfg,
         once,
         agent_instance_id,
@@ -3250,7 +3264,7 @@ fn run_quic_agent(
 
 /// Validate the `[quic]` config section. Returns a cloned, resolved config so
 /// the session owns a concrete value (defaults applied).
-pub(crate) fn resolve_quic_config(cfg: &AgentConfig) -> Result<QuicClientConfig, String> {
+pub(crate) fn resolve_quic_config(cfg: &RunnerConfig) -> Result<QuicClientConfig, String> {
     let quic = cfg
         .quic
         .clone()
@@ -3329,7 +3343,7 @@ fn build_quic_transport_config(quic: &QuicClientConfig) -> Result<quinn::Transpo
     Ok(transport)
 }
 
-fn classify_quic_agent_connect_error(error: &str) -> &'static str {
+fn classify_quic_runner_connect_error(error: &str) -> &'static str {
     let lower = error.to_ascii_lowercase();
     if lower.contains("certificate")
         || lower.contains("cert")
@@ -3356,12 +3370,12 @@ fn classify_quic_agent_connect_error(error: &str) -> &'static str {
 /// the stream closes or a fatal server error arrives. In `--once` mode,
 /// completes one ping/pong after the ack then returns.
 async fn quic_session(
-    cfg: &AgentConfig,
+    cfg: &RunnerConfig,
     projects: Vec<ShellAgentProjectSummary>,
     agent_instance_id: &str,
     once: bool,
-    runtime: &AgentRuntimeState,
-) -> Result<AgentSessionExit, String> {
+    runtime: &RunnerRuntimeState,
+) -> Result<RunnerSessionExit, String> {
     let quic = resolve_quic_config(cfg)?;
     let client_crypto = build_quic_client_crypto(&quic)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
@@ -3372,7 +3386,7 @@ async fn quic_session(
     let mut conn = None;
     for server_addr in server_addrs {
         if runtime.shutdown_requested() {
-            return Ok(AgentSessionExit::Shutdown);
+            return Ok(RunnerSessionExit::Shutdown);
         }
         let endpoint = match quinn::Endpoint::client(quic_client_bind_addr_for(server_addr)) {
             Ok(endpoint) => endpoint,
@@ -3401,7 +3415,7 @@ async fn quic_session(
         )
         .await
         else {
-            return Ok(AgentSessionExit::Shutdown);
+            return Ok(RunnerSessionExit::Shutdown);
         };
         match connect_result {
             Ok(Ok(connection)) => {
@@ -3418,7 +3432,7 @@ async fn quic_session(
                 connect_errors.push(format!(
                     "{}: {} ({})",
                     server_addr,
-                    classify_quic_agent_connect_error(&raw),
+                    classify_quic_runner_connect_error(&raw),
                     raw
                 ));
             }
@@ -3441,7 +3455,7 @@ async fn quic_session(
     let Some(open_result) = future_or_shutdown(conn.open_bi(), runtime).await else {
         conn.close(quinn::VarInt::from_u32(0), b"process shutdown");
         client_endpoint.close(quinn::VarInt::from_u32(0), b"process shutdown");
-        return Ok(AgentSessionExit::Shutdown);
+        return Ok(RunnerSessionExit::Shutdown);
     };
     let (mut send, mut recv) =
         open_result.map_err(|e| format!("failed to open quic bidirectional stream: {}", e))?;
@@ -3479,7 +3493,7 @@ async fn quic_session(
     else {
         conn.close(quinn::VarInt::from_u32(0), b"process shutdown");
         client_endpoint.close(quinn::VarInt::from_u32(0), b"process shutdown");
-        return Ok(AgentSessionExit::Shutdown);
+        return Ok(RunnerSessionExit::Shutdown);
     };
     register_write.map_err(|e| format!("failed to send quic register: {}", e))?;
 
@@ -3492,7 +3506,7 @@ async fn quic_session(
     else {
         conn.close(quinn::VarInt::from_u32(0), b"process shutdown");
         client_endpoint.close(quinn::VarInt::from_u32(0), b"process shutdown");
-        return Ok(AgentSessionExit::Shutdown);
+        return Ok(RunnerSessionExit::Shutdown);
     };
     let ack = ack_result
         .map_err(|_| "quic register ack timed out".to_string())?
@@ -3517,7 +3531,7 @@ async fn quic_session(
         else {
             conn.close(quinn::VarInt::from_u32(0), b"process shutdown");
             client_endpoint.close(quinn::VarInt::from_u32(0), b"process shutdown");
-            return Ok(AgentSessionExit::Shutdown);
+            return Ok(RunnerSessionExit::Shutdown);
         };
         ping_write.map_err(|e| format!("quic once ping send failed: {}", e))?;
         let Some(pong_result) = future_or_shutdown(
@@ -3528,7 +3542,7 @@ async fn quic_session(
         else {
             conn.close(quinn::VarInt::from_u32(0), b"process shutdown");
             client_endpoint.close(quinn::VarInt::from_u32(0), b"process shutdown");
-            return Ok(AgentSessionExit::Shutdown);
+            return Ok(RunnerSessionExit::Shutdown);
         };
         let resp = pong_result
             .map_err(|_| "quic once pong timed out".to_string())?
@@ -3564,7 +3578,7 @@ async fn quic_session(
             .map_err(|_| "quic once goodbye flush timed out".to_string())?
             .map_err(|e| format!("quic once goodbye send failed: {e}"))?;
         finish_result.map_err(|e| format!("quic once send finish failed: {e}"))?;
-        return Ok(AgentSessionExit::Completed);
+        return Ok(RunnerSessionExit::Completed);
     }
 
     // Outgoing envelopes share one writer so future QUIC multistream work can
@@ -3615,7 +3629,7 @@ async fn quic_session(
 // ============================================================================
 //
 // The WebSocket mode keeps one long-lived connection to the server. The server
-// pushes `Request` envelopes; the agent executes them via the same
+// pushes `Request` envelopes; the Runner executes them via the same
 // `dispatch_request` path the polling loop uses, and sends `Result` /
 // `JobUpdate` envelopes back. Polling is unchanged and remains the fallback.
 
@@ -3758,35 +3772,35 @@ fn canonical_url_host(parsed: &url::Url) -> Option<String> {
     }
 }
 
-fn parse_http_proxy_endpoint(raw: &str) -> Result<HttpProxyEndpoint, AgentTransportError> {
+fn parse_http_proxy_endpoint(raw: &str) -> Result<HttpProxyEndpoint, RunnerTransportError> {
     let parsed = url::Url::parse(raw.trim()).map_err(|_| {
-        AgentTransportError::proxy_configuration(
+        RunnerTransportError::proxy_configuration(
             "websocket connect failed: proxy configuration is invalid",
         )
     })?;
     if parsed.scheme() != "http" {
-        return Err(AgentTransportError::proxy_configuration(
+        return Err(RunnerTransportError::proxy_configuration(
             "websocket connect failed: proxy scheme is unsupported",
         ));
     }
     if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(AgentTransportError::proxy_configuration(
+        return Err(RunnerTransportError::proxy_configuration(
             "websocket connect failed: proxy authentication is unsupported",
         ));
     }
     if parsed.query().is_some() || parsed.fragment().is_some() || !matches!(parsed.path(), "" | "/")
     {
-        return Err(AgentTransportError::proxy_configuration(
+        return Err(RunnerTransportError::proxy_configuration(
             "websocket connect failed: proxy URL options are unsupported",
         ));
     }
     let host = canonical_url_host(&parsed).ok_or_else(|| {
-        AgentTransportError::proxy_configuration(
+        RunnerTransportError::proxy_configuration(
             "websocket connect failed: proxy configuration is invalid",
         )
     })?;
     let port = parsed.port_or_known_default().ok_or_else(|| {
-        AgentTransportError::proxy_configuration(
+        RunnerTransportError::proxy_configuration(
             "websocket connect failed: proxy configuration is invalid",
         )
     })?;
@@ -3796,18 +3810,18 @@ fn parse_http_proxy_endpoint(raw: &str) -> Result<HttpProxyEndpoint, AgentTransp
 fn websocket_proxy_from_env_with<F>(
     ws_url: &str,
     mut get_env: F,
-) -> Result<Option<HttpProxyEndpoint>, AgentTransportError>
+) -> Result<Option<HttpProxyEndpoint>, RunnerTransportError>
 where
     F: FnMut(&str) -> Option<std::ffi::OsString>,
 {
     let target = url::Url::parse(ws_url).map_err(|_| {
-        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+        RunnerTransportError::fatal("websocket connect failed: websocket target is invalid")
     })?;
     let proxy_names: &[&str] = match target.scheme() {
         "wss" => &["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"],
         "ws" => &["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"],
         _ => {
-            return Err(AgentTransportError::fatal(
+            return Err(RunnerTransportError::fatal(
                 "websocket connect failed: websocket target scheme is invalid",
             ));
         }
@@ -3816,16 +3830,16 @@ where
         return Ok(None);
     };
     let target_host = canonical_url_host(&target).ok_or_else(|| {
-        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+        RunnerTransportError::fatal("websocket connect failed: websocket target is invalid")
     })?;
     let target_port = target.port_or_known_default().ok_or_else(|| {
-        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+        RunnerTransportError::fatal("websocket connect failed: websocket target is invalid")
     })?;
     if let Some(no_proxy_raw) =
         first_nonempty_env_value_with(&["NO_PROXY", "no_proxy"], &mut get_env)
     {
         let no_proxy = no_proxy_raw.into_string().map_err(|_| {
-            AgentTransportError::proxy_configuration(
+            RunnerTransportError::proxy_configuration(
                 "websocket connect failed: NO_PROXY configuration is invalid",
             )
         })?;
@@ -3834,7 +3848,7 @@ where
         }
     }
     let proxy = proxy_raw.into_string().map_err(|_| {
-        AgentTransportError::proxy_configuration(
+        RunnerTransportError::proxy_configuration(
             "websocket connect failed: proxy configuration is invalid",
         )
     })?;
@@ -3843,7 +3857,7 @@ where
 
 fn websocket_proxy_from_env(
     ws_url: &str,
-) -> Result<Option<HttpProxyEndpoint>, AgentTransportError> {
+) -> Result<Option<HttpProxyEndpoint>, RunnerTransportError> {
     websocket_proxy_from_env_with(ws_url, |name| std::env::var_os(name))
 }
 
@@ -3855,15 +3869,15 @@ fn target_authority(host: &str, port: u16) -> String {
     }
 }
 
-fn websocket_target_endpoint(ws_url: &str) -> Result<(String, u16), AgentTransportError> {
+fn websocket_target_endpoint(ws_url: &str) -> Result<(String, u16), RunnerTransportError> {
     let target = url::Url::parse(ws_url).map_err(|_| {
-        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+        RunnerTransportError::fatal("websocket connect failed: websocket target is invalid")
     })?;
     let host = canonical_url_host(&target).ok_or_else(|| {
-        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+        RunnerTransportError::fatal("websocket connect failed: websocket target is invalid")
     })?;
     let port = target.port_or_known_default().ok_or_else(|| {
-        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+        RunnerTransportError::fatal("websocket connect failed: websocket target is invalid")
     })?;
     Ok((host, port))
 }
@@ -3872,36 +3886,36 @@ async fn http_proxy_connect_tunnel(
     proxy: &HttpProxyEndpoint,
     target_host: &str,
     target_port: u16,
-) -> Result<tokio::net::TcpStream, AgentTransportError> {
+) -> Result<tokio::net::TcpStream, RunnerTransportError> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let mut stream = tokio::net::TcpStream::connect((proxy.host.as_str(), proxy.port))
         .await
         .map_err(|_| {
-            AgentTransportError::transient("websocket connect failed: proxy TCP connect failed")
+            RunnerTransportError::transient("websocket connect failed: proxy TCP connect failed")
         })?;
     let authority = target_authority(target_host, target_port);
     let request = format!(
         "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nConnection: keep-alive\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.map_err(|_| {
-        AgentTransportError::transient("websocket connect failed: proxy CONNECT write failed")
+        RunnerTransportError::transient("websocket connect failed: proxy CONNECT write failed")
     })?;
 
     let mut headers = Vec::with_capacity(1024);
     loop {
         if headers.len() >= WS_PROXY_CONNECT_HEADER_MAX_BYTES {
-            return Err(AgentTransportError::transient(format!(
+            return Err(RunnerTransportError::transient(format!(
                 "websocket connect failed: proxy CONNECT response headers exceeded {} bytes",
                 WS_PROXY_CONNECT_HEADER_MAX_BYTES
             )));
         }
         let mut byte = [0u8; 1];
         let read = stream.read(&mut byte).await.map_err(|_| {
-            AgentTransportError::transient("websocket connect failed: proxy CONNECT read failed")
+            RunnerTransportError::transient("websocket connect failed: proxy CONNECT read failed")
         })?;
         if read == 0 {
-            return Err(AgentTransportError::transient(
+            return Err(RunnerTransportError::transient(
                 "websocket connect failed: proxy CONNECT response was malformed",
             ));
         }
@@ -3911,12 +3925,12 @@ async fn http_proxy_connect_tunnel(
         }
     }
     let headers = std::str::from_utf8(&headers).map_err(|_| {
-        AgentTransportError::transient(
+        RunnerTransportError::transient(
             "websocket connect failed: proxy CONNECT response was malformed",
         )
     })?;
     let status_line = headers.split("\r\n").next().ok_or_else(|| {
-        AgentTransportError::transient(
+        RunnerTransportError::transient(
             "websocket connect failed: proxy CONNECT response was malformed",
         )
     })?;
@@ -3925,7 +3939,7 @@ async fn http_proxy_connect_tunnel(
         .next()
         .filter(|version| version.starts_with("HTTP/"))
         .ok_or_else(|| {
-            AgentTransportError::transient(
+            RunnerTransportError::transient(
                 "websocket connect failed: proxy CONNECT response was malformed",
             )
         })?;
@@ -3934,17 +3948,17 @@ async fn http_proxy_connect_tunnel(
         .next()
         .and_then(|status| status.parse::<u16>().ok())
         .ok_or_else(|| {
-            AgentTransportError::transient(
+            RunnerTransportError::transient(
                 "websocket connect failed: proxy CONNECT response was malformed",
             )
         })?;
     if status == 407 {
-        return Err(AgentTransportError::proxy_configuration(
+        return Err(RunnerTransportError::proxy_configuration(
             "websocket connect failed: proxy CONNECT returned HTTP 407",
         ));
     }
     if !(200..300).contains(&status) {
-        return Err(AgentTransportError::transient(format!(
+        return Err(RunnerTransportError::transient(format!(
             "websocket connect failed: proxy CONNECT returned HTTP {status}"
         )));
     }
@@ -3956,7 +3970,7 @@ async fn connect_websocket_request_with_proxy(
     ws_url: &str,
     proxy: Option<&HttpProxyEndpoint>,
     token: &str,
-) -> Result<RunnerWebSocket, AgentTransportError> {
+) -> Result<RunnerWebSocket, RunnerTransportError> {
     let Some(proxy) = proxy else {
         return tokio_tungstenite::connect_async(request)
             .await
@@ -3985,18 +3999,18 @@ async fn connect_websocket_request(
     request: tokio_tungstenite::tungstenite::http::Request<()>,
     ws_url: &str,
     token: &str,
-) -> Result<RunnerWebSocket, AgentTransportError> {
+) -> Result<RunnerWebSocket, RunnerTransportError> {
     let proxy = websocket_proxy_from_env(ws_url)?;
     connect_websocket_request_with_proxy(request, ws_url, proxy.as_ref(), token).await
 }
 
-fn run_websocket_agent(
-    cfg: AgentConfig,
+fn run_websocket_runner(
+    cfg: RunnerConfig,
     once: bool,
     agent_instance_id: &str,
-    runtime: &AgentRuntimeState,
+    runtime: &RunnerRuntimeState,
 ) -> Result<(), String> {
-    run_stream_transport_agent(
+    run_stream_transport_runner(
         &cfg,
         once,
         agent_instance_id,
@@ -4010,22 +4024,22 @@ fn run_websocket_agent(
 /// until the socket closes or a fatal server error arrives.
 #[cfg(test)]
 pub(crate) async fn websocket_session(
-    cfg: &AgentConfig,
+    cfg: &RunnerConfig,
     projects: Vec<ShellAgentProjectSummary>,
     agent_instance_id: &str,
-    runtime: &AgentRuntimeState,
-) -> Result<AgentSessionExit, String> {
+    runtime: &RunnerRuntimeState,
+) -> Result<RunnerSessionExit, String> {
     websocket_session_classified(cfg, projects, agent_instance_id, runtime)
         .await
-        .map_err(AgentTransportError::into_message)
+        .map_err(RunnerTransportError::into_message)
 }
 
 async fn websocket_session_classified(
-    cfg: &AgentConfig,
+    cfg: &RunnerConfig,
     projects: Vec<ShellAgentProjectSummary>,
     agent_instance_id: &str,
-    runtime: &AgentRuntimeState,
-) -> Result<AgentSessionExit, AgentTransportError> {
+    runtime: &RunnerRuntimeState,
+) -> Result<RunnerSessionExit, RunnerTransportError> {
     websocket_session_with_shutdown(
         cfg,
         projects,
@@ -4037,12 +4051,12 @@ async fn websocket_session_classified(
 }
 
 async fn websocket_session_with_shutdown<F>(
-    cfg: &AgentConfig,
+    cfg: &RunnerConfig,
     projects: Vec<ShellAgentProjectSummary>,
     agent_instance_id: &str,
-    runtime: &AgentRuntimeState,
+    runtime: &RunnerRuntimeState,
     shutdown: F,
-) -> Result<AgentSessionExit, AgentTransportError>
+) -> Result<RunnerSessionExit, RunnerTransportError>
 where
     F: std::future::Future<Output = ()>,
 {
@@ -4059,7 +4073,7 @@ where
         ) => result,
         _ = &mut shutdown => {
             runtime.request_shutdown_signal();
-            return Ok(AgentSessionExit::Shutdown);
+            return Ok(RunnerSessionExit::Shutdown);
         }
     };
     let mut ws_stream = connect.map_err(|_| {
@@ -4102,7 +4116,7 @@ where
         result = ws_stream.send(WsMessage::Text(reg_json.into())) => result,
         _ = &mut shutdown => {
             runtime.request_shutdown_signal();
-            return Ok(AgentSessionExit::Shutdown);
+            return Ok(RunnerSessionExit::Shutdown);
         }
     }
     .map_err(|e| format!("failed to send register: {}", e))?;
@@ -4114,7 +4128,7 @@ where
         }
         _ = &mut shutdown => {
             runtime.request_shutdown_signal();
-            return Ok(AgentSessionExit::Shutdown);
+            return Ok(RunnerSessionExit::Shutdown);
         }
     }
     .ok_or_else(|| "server closed before register ack".to_string())?

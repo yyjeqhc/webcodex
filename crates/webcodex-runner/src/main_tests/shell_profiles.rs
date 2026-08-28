@@ -105,7 +105,7 @@ fn prepared_profile_init_script_is_project_relative() {
         ),
     )
     .unwrap();
-    write_agent_project(&projects_dir, "demo", &project_dir, Some("py-venv"));
+    write_runner_project(&projects_dir, "demo", &project_dir, Some("py-venv"));
     let shell = shell_with_profiles(
         None,
         vec![(
@@ -134,7 +134,7 @@ fn project_shell_profile_overrides_default_profile() {
     let project_dir = tmp.path().join("project");
     let projects_dir = tmp.path().join("projects.d");
     std::fs::create_dir_all(&project_dir).unwrap();
-    write_agent_project(&projects_dir, "demo", &project_dir, Some("project"));
+    write_runner_project(&projects_dir, "demo", &project_dir, Some("project"));
     let shell = shell_with_profiles(
         Some("default"),
         vec![
@@ -200,7 +200,7 @@ fn prepared_profile_run_shell_and_run_job_see_same_env() {
     let project_dir = tmp.path().join("project");
     let projects_dir = tmp.path().join("projects.d");
     std::fs::create_dir_all(&project_dir).unwrap();
-    write_agent_project(&projects_dir, "demo", &project_dir, Some("test"));
+    write_runner_project(&projects_dir, "demo", &project_dir, Some("test"));
     let shell = shell_with_profiles(
         None,
         vec![(
@@ -610,7 +610,7 @@ fn project_shell_profile_missing_profile_returns_clear_error() {
     let project_dir = tmp.path().join("project");
     let projects_dir = tmp.path().join("projects.d");
     std::fs::create_dir_all(&project_dir).unwrap();
-    write_agent_project(&projects_dir, "demo", &project_dir, Some("missing"));
+    write_runner_project(&projects_dir, "demo", &project_dir, Some("missing"));
     let result = run_profile_shell(
         &unrestricted_test_policy(),
         &ShellConfig::default(),

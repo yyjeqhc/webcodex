@@ -1398,7 +1398,7 @@ fn rustup_home_dir() -> Option<PathBuf> {
     }
     // Shared home policy: `HOME` on Unix, `USERPROFILE` on Windows (HOME is
     // ignored on Windows — it is either absent or a Git Bash POSIX path).
-    webcodex_agent_config::paths::home_dir().map(|home| home.join(".rustup"))
+    webcodex_runner_config::paths::home_dir().map(|home| home.join(".rustup"))
 }
 
 fn active_rustup_toolchain() -> Option<String> {

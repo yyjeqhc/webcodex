@@ -1,9 +1,9 @@
 #[cfg(windows)]
 use super::config::{dialect_for_program, platform_default_dialect, ShellDialect};
 use super::config::{
-    validate_shell_config, AgentPolicy, ShellConfig, ShellProfileConfig, SshConfig,
+    validate_shell_config, RunnerPolicy, ShellConfig, ShellProfileConfig, SshConfig,
 };
-use super::projects::{find_project_shell_context_by_id, AgentProjectShellContext};
+use super::projects::{find_project_shell_context_by_id, RunnerProjectShellContext};
 #[cfg(any(unix, windows))]
 use super::remote_shell::{remote_shell_bootstrap, RemoteShellTransport};
 #[cfg(unix)]
@@ -49,7 +49,7 @@ impl PersistentShellManager {
 
     pub(crate) fn handle(
         &self,
-        policy: &AgentPolicy,
+        policy: &RunnerPolicy,
         shell: &ShellConfig,
         ssh: &SshConfig,
         ssh_generation: u64,
@@ -139,13 +139,13 @@ impl PersistentShellManager {
     #[cfg(any(unix, windows))]
     fn open_ssh(
         &self,
-        policy: &AgentPolicy,
+        policy: &RunnerPolicy,
         ssh: &SshConfig,
         ssh_generation: u64,
         request: &ShellAgentShellRequest,
         operation: &PersistentShellRequest,
         resource_name: &str,
-        _project: &AgentProjectShellContext,
+        _project: &RunnerProjectShellContext,
     ) -> PersistentShellResult {
         if !policy.allow_raw_shell {
             return error_result(
@@ -239,13 +239,13 @@ impl PersistentShellManager {
     #[cfg(not(any(unix, windows)))]
     fn open_ssh(
         &self,
-        _policy: &AgentPolicy,
+        _policy: &RunnerPolicy,
         _ssh: &SshConfig,
         _ssh_generation: u64,
         _request: &ShellAgentShellRequest,
         operation: &PersistentShellRequest,
         _resource_name: &str,
-        _project: &AgentProjectShellContext,
+        _project: &RunnerProjectShellContext,
     ) -> PersistentShellResult {
         error_result(
             &operation.shell_id,
@@ -258,12 +258,12 @@ impl PersistentShellManager {
 
     fn exec_ssh(
         &self,
-        policy: &AgentPolicy,
+        policy: &RunnerPolicy,
         ssh: &SshConfig,
         ssh_generation: u64,
         operation: &PersistentShellRequest,
         resource_name: &str,
-        _project: &AgentProjectShellContext,
+        _project: &RunnerProjectShellContext,
     ) -> PersistentShellResult {
         if !policy.allow_raw_shell {
             return error_result(
@@ -386,11 +386,11 @@ impl PersistentShellManager {
 
     fn open(
         &self,
-        policy: &AgentPolicy,
+        policy: &RunnerPolicy,
         shell: &ShellConfig,
         request: &ShellAgentShellRequest,
         operation: &PersistentShellRequest,
-        project: &AgentProjectShellContext,
+        project: &RunnerProjectShellContext,
     ) -> PersistentShellResult {
         let launch = match build_launch(policy, shell, request, operation, project) {
             Ok(launch) => launch,
@@ -441,10 +441,10 @@ impl PersistentShellManager {
 
     fn exec(
         &self,
-        policy: &AgentPolicy,
+        policy: &RunnerPolicy,
         shell: &ShellConfig,
         operation: &PersistentShellRequest,
-        project: &AgentProjectShellContext,
+        project: &RunnerProjectShellContext,
     ) -> PersistentShellResult {
         let summary = match self.processes.status(
             &operation.shell_id,
@@ -527,10 +527,10 @@ impl PersistentShellManager {
 
     fn finalize_exec(
         &self,
-        policy: &AgentPolicy,
+        policy: &RunnerPolicy,
         shell: &ShellConfig,
         operation: &PersistentShellRequest,
-        project: &AgentProjectShellContext,
+        project: &RunnerProjectShellContext,
         mut result: ShellExecResult,
     ) -> PersistentShellResult {
         if result.shell_state != ShellState::Running {
@@ -627,12 +627,12 @@ fn limits(shell: &ShellConfig) -> ShellLimits {
 }
 
 fn validate_boundary(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     client_id: &str,
     operation: &PersistentShellRequest,
-) -> Result<AgentProjectShellContext, (&'static str, String)> {
+) -> Result<RunnerProjectShellContext, (&'static str, String)> {
     if !policy.allow_raw_shell {
         return Err((
             "raw_shell_disabled",
@@ -753,7 +753,7 @@ fn validate_ssh_binding_current(
 }
 
 fn resolve_cwd(
-    project: &AgentProjectShellContext,
+    project: &RunnerProjectShellContext,
     requested: Option<&str>,
 ) -> Result<PathBuf, (&'static str, String)> {
     let root = PathBuf::from(&project.path)
@@ -791,7 +791,7 @@ fn resolve_cwd(
 
 fn selected_profile<'a>(
     shell: &'a ShellConfig,
-    project: &AgentProjectShellContext,
+    project: &RunnerProjectShellContext,
 ) -> Result<(Option<String>, Option<&'a ShellProfileConfig>), (&'static str, String)> {
     let name = project
         .shell_profile
@@ -813,11 +813,11 @@ fn selected_profile<'a>(
 }
 
 fn build_launch(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     request: &ShellAgentShellRequest,
     operation: &PersistentShellRequest,
-    project: &AgentProjectShellContext,
+    project: &RunnerProjectShellContext,
 ) -> Result<ShellLaunch, (&'static str, String)> {
     let cwd = resolve_cwd(project, operation.cwd.as_deref())?;
     cwd_allowed(policy, &cwd).map_err(|message| ("persistent_shell_cwd_denied", message))?;
@@ -835,7 +835,7 @@ fn build_launch_at_cwd(
     shell: &ShellConfig,
     request: &ShellAgentShellRequest,
     operation: &PersistentShellRequest,
-    project: &AgentProjectShellContext,
+    project: &RunnerProjectShellContext,
     cwd: PathBuf,
     max_output_bytes: usize,
 ) -> Result<ShellLaunch, (&'static str, String)> {
@@ -975,9 +975,9 @@ fn windows_persistent_shell_prefix_args(
 }
 
 fn validate_open_shell_boundary(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
-    project: &AgentProjectShellContext,
+    project: &RunnerProjectShellContext,
     summary: &ShellSummary,
 ) -> Result<(), (&'static str, String)> {
     let cwd = resolve_cwd(project, Some(&summary.cwd.to_string_lossy()))?;
@@ -1187,7 +1187,7 @@ mod tests {
         }
     }
 
-    fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, AgentPolicy) {
+    fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, RunnerPolicy) {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
         let projects = temp.path().join("projects.d");
@@ -1199,7 +1199,7 @@ mod tests {
             format!("id = \"demo\"\npath = \"{}\"\n", project.display()),
         )
         .unwrap();
-        let policy = AgentPolicy {
+        let policy = RunnerPolicy {
             allow_raw_shell: true,
             allow_cwd_anywhere: false,
             allowed_roots: vec![project.clone()],
@@ -1619,7 +1619,7 @@ mod windows_tests {
         .expect("build Windows named-SSH persistent-shell request")
     }
 
-    fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, AgentPolicy) {
+    fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, RunnerPolicy) {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
         let projects = temp.path().join("projects.d");
@@ -1631,7 +1631,7 @@ mod windows_tests {
             format!("id = \"demo\"\npath = \"{escaped}\"\n"),
         )
         .unwrap();
-        let policy = AgentPolicy {
+        let policy = RunnerPolicy {
             allow_raw_shell: true,
             allow_cwd_anywhere: false,
             allowed_roots: vec![project.clone()],
@@ -1789,7 +1789,7 @@ mod windows_tests {
             profiles,
             ..ShellConfig::default()
         };
-        let project = AgentProjectShellContext {
+        let project = RunnerProjectShellContext {
             id: "demo".to_string(),
             path: cwd.to_string_lossy().to_string(),
             shell_profile: Some("modern".to_string()),
@@ -1816,7 +1816,7 @@ mod windows_tests {
             &ShellConfig::default(),
             &explicit,
             explicit.persistent_shell.as_ref().unwrap(),
-            &AgentProjectShellContext {
+            &RunnerProjectShellContext {
                 id: "demo".to_string(),
                 path: cwd.to_string_lossy().to_string(),
                 shell_profile: None,
@@ -1829,7 +1829,7 @@ mod windows_tests {
 
         let mut invalid_shell = ShellConfig::default();
         invalid_shell.args = vec!["-NoProfile".to_string()];
-        let default_project = AgentProjectShellContext {
+        let default_project = RunnerProjectShellContext {
             id: "demo".to_string(),
             path: cwd.to_string_lossy().to_string(),
             shell_profile: None,

@@ -308,10 +308,10 @@ impl ConnectorRuntime {
             .get_client_semantic_view_for_auth(client_id, Some(auth))
             .await
         else {
-            return Some(self.observed_readiness(RemoteProbe::AgentOffline));
+            return Some(self.observed_readiness(RemoteProbe::RunnerOffline));
         };
         if agent.view.status != "online" || !agent.view.connected {
-            return Some(self.observed_readiness(RemoteProbe::AgentOffline));
+            return Some(self.observed_readiness(RemoteProbe::RunnerOffline));
         }
         if !agent
             .view

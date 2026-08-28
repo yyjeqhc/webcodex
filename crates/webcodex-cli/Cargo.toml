@@ -11,7 +11,7 @@ path = "src/main.rs"
 [dependencies]
 webcodex = { path = "../.." }
 webcodex-admin = { path = "../webcodex-admin" }
-webcodex-agent-config = { path = "../webcodex-agent-config" }
+webcodex-runner-config = { path = "../webcodex-runner-config" }
 webcodex-core = { path = "../webcodex-core" }
 chrono = "0.4"
 fs2 = "0.4"

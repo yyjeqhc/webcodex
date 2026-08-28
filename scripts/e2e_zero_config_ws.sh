@@ -64,10 +64,10 @@ RUNTIME_PROJECT_ID="agent:${CLIENT_ID}:${PROJECT_ID}"
 PASS=0
 FAIL=0
 SERVER_PID=""
-AGENT_PID=""
+RUNNER_PID=""
 TMP_ROOT=""
 SERVER_LOG=""
-AGENT_LOG=""
+RUNNER_LOG=""
 START_EPOCH=$(date +%s)
 
 # ----------------------------------------------------------------------------
@@ -225,7 +225,7 @@ print_logs_hint() {
 
 [e2e] ---- log locations ----
 [e2e] server log: ${SERVER_LOG:-<none>}
-[e2e] agent log:  ${AGENT_LOG:-<none>}
+[e2e] runner log:  ${RUNNER_LOG:-<none>}
 [e2e] temp root:  ${TMP_ROOT:-<none>}
 EOF
 }
@@ -237,10 +237,10 @@ EOF
 cleanup() {
     trap - INT TERM EXIT
     log "cleaning up background processes"
-    if [ -n "${AGENT_PID:-}" ] && kill -0 "$AGENT_PID" 2>/dev/null; then
-        kill "$AGENT_PID" 2>/dev/null || true
+    if [ -n "${RUNNER_PID:-}" ] && kill -0 "$RUNNER_PID" 2>/dev/null; then
+        kill "$RUNNER_PID" 2>/dev/null || true
         sleep 1
-        kill -9 "$AGENT_PID" 2>/dev/null || true
+        kill -9 "$RUNNER_PID" 2>/dev/null || true
     fi
     if [ -n "${SERVER_PID:-}" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
         kill "$SERVER_PID" 2>/dev/null || true
@@ -313,7 +313,7 @@ PROJECTS_DIR="$TMP_ROOT/projects.d"
 AGENT_TOML="$TMP_ROOT/agent.toml"
 TEST_REPO="$TMP_ROOT/smoke-repo"
 SERVER_LOG="$TMP_ROOT/server.log"
-AGENT_LOG="$TMP_ROOT/agent.log"
+RUNNER_LOG="$TMP_ROOT/agent.log"
 
 mkdir -p "$DATA_DIR" "$PROJECTS_DIR" "$TEST_REPO"
 log "temp root: $TMP_ROOT"
@@ -404,12 +404,12 @@ pass "server listening on $PORT"
 
 if [ -n "$RUNNER_BIN" ]; then
     log "starting agent (existing binary: $RUNNER_BIN, transport=$TRANSPORT)"
-    "$RUNNER_BIN" --config "$AGENT_TOML" >"$AGENT_LOG" 2>&1 &
+    "$RUNNER_BIN" --config "$AGENT_TOML" >"$RUNNER_LOG" 2>&1 &
 else
     log "starting agent (cargo run -p webcodex-runner --bin webcodex-runner, transport=$TRANSPORT)"
-    "$CARGO_BIN" run --quiet -p webcodex-runner --bin webcodex-runner -- --config "$AGENT_TOML" >"$AGENT_LOG" 2>&1 &
+    "$CARGO_BIN" run --quiet -p webcodex-runner --bin webcodex-runner -- --config "$AGENT_TOML" >"$RUNNER_LOG" 2>&1 &
 fi
-AGENT_PID=$!
+RUNNER_PID=$!
 
 # Wait for the agent to register by polling runtime_status for the client.
 log "waiting for agent registration..."

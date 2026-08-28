@@ -85,7 +85,7 @@ jobs:
           - shard: workspace-crates
             packages: >-
               -p webcodex-admin
-              -p webcodex-agent-config
+              -p webcodex-runner-config
               -p webcodex-core
               -p webcodex-cli
               -p webcodex-persistent-shell
@@ -243,7 +243,7 @@ jobs:
       - name: Run Windows persistent-shell tests (PowerShell 5.1 + PowerShell 7)
         run: cargo test --locked -p webcodex-persistent-shell
       - name: Run Windows library and CLI tests
-        run: cargo test --locked -p webcodex-agent-config -p webcodex-process -p webcodex-cli
+        run: cargo test --locked -p webcodex-runner-config -p webcodex-process -p webcodex-cli
 
   test-windows-runner:
     needs: contract

@@ -1,8 +1,8 @@
-use super::config::AgentPolicy;
+use super::config::RunnerPolicy;
 use super::output::CommandResult;
 use super::shell::cwd_allowed;
-use crate::agent_init::DEFAULT_MAX_OUTPUT_BYTES;
 use crate::project_overview::build_project_overview;
+use crate::runner_config::DEFAULT_MAX_OUTPUT_BYTES;
 use crate::shell_protocol::ShellAgentShellRequest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,7 +17,7 @@ pub(crate) fn sha256_hex_bytes(bytes: &[u8]) -> String {
 }
 
 pub(crate) fn resolve_requested_path(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     cwd: Option<&str>,
     path: &str,
 ) -> Result<PathBuf, String> {
@@ -65,7 +65,7 @@ pub(crate) fn is_basic_file_request_kind(kind: &str) -> bool {
 }
 
 pub(crate) fn handle_basic_file_request(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     request: &ShellAgentShellRequest,
     resolved: &Path,
     start: Instant,
@@ -186,7 +186,7 @@ fn handle_delete_project_files_request(
                     target.canonicalize().ok()
                 };
                 if !containment.as_ref().is_some_and(|candidate| {
-                    webcodex_agent_config::paths::path_is_within(candidate, &canonical_root)
+                    webcodex_runner_config::paths::path_is_within(candidate, &canonical_root)
                 }) {
                     return delete_project_files_error(
                         start,
@@ -210,7 +210,7 @@ fn handle_delete_project_files_request(
                         "delete_project_files parent is unavailable",
                     );
                 };
-                if !webcodex_agent_config::paths::path_is_within(&ancestor, &canonical_root) {
+                if !webcodex_runner_config::paths::path_is_within(&ancestor, &canonical_root) {
                     return delete_project_files_error(
                         start,
                         "delete_project_files target is outside the project",
@@ -236,7 +236,7 @@ fn handle_delete_project_files_request(
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct ProjectOverviewAgentOptions {
+struct ProjectOverviewRunnerOptions {
     #[serde(default)]
     max_depth: Option<usize>,
     #[serde(default)]
@@ -258,7 +258,7 @@ fn handle_project_overview_request(
     };
     let requested_path = request.path.as_deref().unwrap_or(".");
     let options = match request.content.as_deref() {
-        Some(payload) => match serde_json::from_str::<ProjectOverviewAgentOptions>(payload) {
+        Some(payload) => match serde_json::from_str::<ProjectOverviewRunnerOptions>(payload) {
             Ok(options) => options,
             Err(error) => {
                 return CommandResult {
@@ -270,7 +270,7 @@ fn handle_project_overview_request(
                 }
             }
         },
-        None => ProjectOverviewAgentOptions::default(),
+        None => ProjectOverviewRunnerOptions::default(),
     };
     match build_project_overview(
         Path::new(project_root),
@@ -329,7 +329,7 @@ fn ensure_file_read_target_in_project(
 }
 
 fn handle_file_read_request(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     request: &ShellAgentShellRequest,
     resolved: &Path,
     start: Instant,
@@ -657,7 +657,7 @@ fn handle_skill_list_packages_request(
 }
 
 fn handle_skill_read_file_request(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     request: &ShellAgentShellRequest,
     resolved: &Path,
     start: Instant,
@@ -802,7 +802,7 @@ fn file_read_error_message(error: &std::io::Error) -> String {
 }
 
 fn handle_file_write_request(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     request: &ShellAgentShellRequest,
     resolved: &Path,
     start: Instant,

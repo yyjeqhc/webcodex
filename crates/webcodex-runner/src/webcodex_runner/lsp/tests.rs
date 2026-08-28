@@ -434,7 +434,7 @@ fn lsp_supervisor_uses_distinct_processes_for_distinct_projects() {
 }
 
 #[test]
-fn lsp_supervisor_enforces_agent_capacity() {
+fn lsp_supervisor_enforces_runner_capacity() {
     let _serial = super::super::serialize_fake_lsp_test();
     let fixture = Fixture::with_limits("normal", 1, Duration::from_secs(60));
     let second_root = fixture._temp.path().join("second-project");

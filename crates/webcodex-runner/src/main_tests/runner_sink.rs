@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn sink_submit_result_sends_result_envelope() {
-    type SinkFactory = fn(&str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>);
+    type SinkFactory = fn(&str) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentEnvelope>);
     for (label, make_sink, expected_client, expected_instance) in [
         ("ws", ws_sink as SinkFactory, "ws-client", "ws-inst"),
         ("quic", quic_sink as SinkFactory, "quic-client", "quic-inst"),
@@ -40,7 +40,7 @@ fn sink_submit_result_sends_result_envelope() {
 
 #[test]
 fn sink_send_job_update_sends_job_update_envelope() {
-    type SinkFactory = fn(&str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>);
+    type SinkFactory = fn(&str) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentEnvelope>);
     for (label, make_sink, expected_client) in [
         ("ws", ws_sink as SinkFactory, "ws-client"),
         ("quic", quic_sink as SinkFactory, "quic-client"),
@@ -94,12 +94,12 @@ fn sink_try_send_job_update_preserves_full_ws_and_quic_queue_for_retry() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
         tx.try_send(AgentEnvelope::Ping { ts: 11 }).unwrap();
         let sink = match label {
-            "ws" => AgentSink::WebSocket {
+            "ws" => RunnerSink::WebSocket {
                 tx,
                 client_id: "stream-client".to_string(),
                 agent_instance_id: "stream-instance".to_string(),
             },
-            "quic" => AgentSink::Quic {
+            "quic" => RunnerSink::Quic {
                 tx,
                 client_id: "stream-client".to_string(),
                 agent_instance_id: "stream-instance".to_string(),

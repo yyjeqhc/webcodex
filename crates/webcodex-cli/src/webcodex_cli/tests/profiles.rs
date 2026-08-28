@@ -2,7 +2,7 @@ use super::support::*;
 
 /// Deterministic per-user environment so default path derivation is stable
 /// and platform-independent. `XDG_*` wins over home on every platform in the
-/// shared `webcodex_agent_config::paths` policy, so setting them pins the
+/// shared `webcodex_runner_config::paths` policy, so setting them pins the
 /// derived paths without depending on the ambient HOME/USERPROFILE.
 fn deterministic_user_env() -> EnvGuard {
     EnvGuard::new()
@@ -428,7 +428,7 @@ fn runner_install_service_explicit_paths_win_and_rejects_unsafe_profile() {
 /// Unix-only: asserts the historical XDG/HOME directory semantics (`~/.config`
 /// and `~/.config/systemd/user` layouts with Unix path spelling). Windows has
 /// its own directory policy (APPDATA/LOCALAPPDATA) covered in
-/// `webcodex_agent_config::paths` tests.
+/// `webcodex_runner_config::paths` tests.
 #[cfg(unix)]
 #[test]
 fn runner_service_scope_parsing_defaults_and_paths_are_deterministic() {

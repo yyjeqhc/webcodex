@@ -152,7 +152,7 @@ fn job_reconciliation_local_snapshot_advances_before_best_effort_send() {
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
     tx.try_send(AgentEnvelope::Ping { ts: 17 }).unwrap();
-    manager.install_sink(AgentSink::WebSocket {
+    manager.install_sink(RunnerSink::WebSocket {
         tx,
         client_id: "test-agent".to_string(),
         agent_instance_id: "test-instance".to_string(),
@@ -243,7 +243,7 @@ fn job_reconciliation_local_snapshot_advances_before_best_effort_send() {
 
     let mut registered_inventory = manager.inventory();
     let (reconnected_tx, mut reconnected_rx) = tokio::sync::mpsc::channel(4);
-    manager.install_sink(AgentSink::WebSocket {
+    manager.install_sink(RunnerSink::WebSocket {
         tx: reconnected_tx,
         client_id: "test-agent".to_string(),
         agent_instance_id: "test-instance".to_string(),
@@ -255,7 +255,7 @@ fn job_reconciliation_local_snapshot_advances_before_best_effort_send() {
     while reconnected_rx.try_recv().is_ok() {}
 
     let (fresh_tx, mut fresh_rx) = tokio::sync::mpsc::channel(4);
-    manager.install_sink(AgentSink::WebSocket {
+    manager.install_sink(RunnerSink::WebSocket {
         tx: fresh_tx,
         client_id: "test-agent".to_string(),
         agent_instance_id: "test-instance".to_string(),
@@ -1061,10 +1061,10 @@ fn structured_script_context(
 fn structured_test_sink(
     client_id: &str,
     instance_id: &str,
-) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
+) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
     let (tx, rx) = tokio::sync::mpsc::channel(256);
     (
-        AgentSink::WebSocket {
+        RunnerSink::WebSocket {
             tx,
             client_id: client_id.to_string(),
             agent_instance_id: instance_id.to_string(),
@@ -1075,7 +1075,7 @@ fn structured_test_sink(
 
 fn enqueue_structured_process_job(
     manager: &JobManager,
-    sink: AgentSink,
+    sink: RunnerSink,
     cwd: &Path,
     job_id: &str,
     executable: &Path,
@@ -1094,9 +1094,9 @@ fn enqueue_structured_process_job(
         stdin,
         timeout_secs,
         sandbox,
-        AgentPolicy {
+        RunnerPolicy {
             allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         },
     );
 }
@@ -1104,7 +1104,7 @@ fn enqueue_structured_process_job(
 #[allow(clippy::too_many_arguments)]
 fn enqueue_structured_process_job_with_policy(
     manager: &JobManager,
-    sink: AgentSink,
+    sink: RunnerSink,
     cwd: &Path,
     job_id: &str,
     executable: &Path,
@@ -1112,7 +1112,7 @@ fn enqueue_structured_process_job_with_policy(
     stdin: Option<String>,
     timeout_secs: u64,
     sandbox: Option<&str>,
-    policy: AgentPolicy,
+    policy: RunnerPolicy,
 ) {
     let context = structured_process_context(cwd, args.len(), stdin.is_some());
     manager.enqueue(
@@ -1148,7 +1148,7 @@ fn enqueue_structured_process_job_with_policy(
 
 fn enqueue_detached_process_job(
     manager: &JobManager,
-    sink: AgentSink,
+    sink: RunnerSink,
     cwd: &Path,
     job_id: &str,
     executable: &Path,
@@ -1161,9 +1161,9 @@ fn enqueue_detached_process_job(
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
@@ -1277,7 +1277,7 @@ fn sh_quote(path: &Path) -> String {
 #[cfg(unix)]
 fn enqueue_shell_job(
     manager: &JobManager,
-    sink: &AgentSink,
+    sink: &RunnerSink,
     cwd: &Path,
     job_id: &str,
     command: String,
@@ -1287,9 +1287,9 @@ fn enqueue_shell_job(
         sink.clone(),
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
@@ -1345,7 +1345,7 @@ impl GatedStructuredJob {
 
 fn enqueue_gated_structured_job(
     manager: &JobManager,
-    sink: &AgentSink,
+    sink: &RunnerSink,
     cwd: &Path,
     helper: &StructuredProcessHelper,
     job: &GatedStructuredJob,
@@ -1365,7 +1365,7 @@ fn enqueue_gated_structured_job(
 
 fn enqueue_gated_structured_job_for_project(
     manager: &JobManager,
-    sink: &AgentSink,
+    sink: &RunnerSink,
     cwd: &Path,
     helper: &StructuredProcessHelper,
     job: &GatedStructuredJob,
@@ -1377,9 +1377,9 @@ fn enqueue_gated_structured_job_for_project(
         sink.clone(),
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
@@ -1760,9 +1760,9 @@ fn phase_e2_prestart_structured_failure_releases_slot_for_queued_job() {
     .unwrap();
     manager.start_structured_job(
         1,
-        AgentPolicy {
+        RunnerPolicy {
             allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         },
         ShellConfig::default(),
         temp.path().join("projects.d"),
@@ -1872,9 +1872,9 @@ fn phase_e2_validation_job_shares_the_same_job_manager_slot_limit() {
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell,
             ssh: SshConfig::default(),
@@ -2010,7 +2010,7 @@ fn chatty_job_and_queued_job_progress_while_stream_transport_is_full() {
     let queued_marker = temp.path().join("queued-progressed");
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     tx.try_send(AgentEnvelope::Ping { ts: 1 }).unwrap();
-    let sink = AgentSink::WebSocket {
+    let sink = RunnerSink::WebSocket {
         tx,
         client_id: "backpressure-agent".into(),
         agent_instance_id: "backpressure-instance".into(),
@@ -2092,7 +2092,7 @@ fn output_only_delivery_coalescing_preserves_authoritative_snapshot_invariants()
     );
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     tx.try_send(AgentEnvelope::Ping { ts: 7 }).unwrap();
-    manager.install_sink(AgentSink::WebSocket {
+    manager.install_sink(RunnerSink::WebSocket {
         tx,
         client_id: "test-agent".into(),
         agent_instance_id: "test-instance".into(),
@@ -2357,10 +2357,10 @@ fn structured_process_job_drains_large_output_without_log_observation_and_runs_o
         None,
         10,
         None,
-        AgentPolicy {
+        RunnerPolicy {
             allow_cwd_anywhere: true,
             max_output_bytes: output_limit,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         },
     );
 
@@ -2426,10 +2426,10 @@ fn structured_process_job_stop_after_large_output_is_bounded_and_exact_once() {
         None,
         30,
         None,
-        AgentPolicy {
+        RunnerPolicy {
             allow_cwd_anywhere: true,
             max_output_bytes: output_limit,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         },
     );
     assert!(
@@ -2488,10 +2488,10 @@ fn structured_process_job_timeout_after_large_output_is_bounded_and_exact_once()
         None,
         5,
         None,
-        AgentPolicy {
+        RunnerPolicy {
             allow_cwd_anywhere: true,
             max_output_bytes: output_limit,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         },
     );
     assert!(
@@ -2552,10 +2552,10 @@ fn structured_process_job_shutdown_after_large_output_reaps_the_same_execution()
         None,
         30,
         None,
-        AgentPolicy {
+        RunnerPolicy {
             allow_cwd_anywhere: true,
             max_output_bytes: 16 * 1024,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         },
     );
     assert!(wait_until(Duration::from_secs(10), || ready.exists()));
@@ -2747,9 +2747,9 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
@@ -2792,9 +2792,9 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
@@ -2914,9 +2914,9 @@ fn structured_script_job_keeps_its_temporary_file_until_terminal_then_removes_it
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
@@ -2992,10 +2992,10 @@ fn structured_script_job_drains_large_output_without_log_observation_and_runs_on
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
                 max_output_bytes: 16 * 1024,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
@@ -3110,9 +3110,9 @@ fn structured_process_and_script_jobs_preserve_the_inspect_sandbox() {
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
@@ -3211,7 +3211,7 @@ fn inspect_job_manager_path_landlocks_commands_and_descendants() {
     let tracked = project.join("tracked.txt");
     std::fs::write(&tracked, "original\n").unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-    let sink = AgentSink::WebSocket {
+    let sink = RunnerSink::WebSocket {
         tx,
         client_id: "inspect-agent".into(),
         agent_instance_id: "inspect-instance".into(),
@@ -3221,9 +3221,9 @@ fn inspect_job_manager_path_landlocks_commands_and_descendants() {
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
@@ -3293,7 +3293,7 @@ fn run_fail_fast_validation_job(attempt: usize) -> FailFastAttempt {
     .unwrap();
     std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o700)).unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-    let sink = AgentSink::WebSocket {
+    let sink = RunnerSink::WebSocket {
         tx,
         client_id: "validation-agent".into(),
         agent_instance_id: "validation-instance".into(),
@@ -3325,11 +3325,11 @@ fn run_fail_fast_validation_job(attempt: usize) -> FailFastAttempt {
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 // These tests run jobs in a temp dir; the boundary itself is
-                // covered separately, and AgentPolicy::default() is fail-closed.
+                // covered separately, and RunnerPolicy::default() is fail-closed.
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell,
             ssh: SshConfig::default(),
@@ -3408,7 +3408,7 @@ fn noisy_validation_progress_delivery_stays_ordered_after_transport_backpressure
     shell.path_prepend.push(bin);
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     tx.try_send(AgentEnvelope::Ping { ts: 9 }).unwrap();
-    let sink = AgentSink::WebSocket {
+    let sink = RunnerSink::WebSocket {
         tx,
         client_id: "validation-agent".into(),
         agent_instance_id: "validation-instance".into(),
@@ -3418,9 +3418,9 @@ fn noisy_validation_progress_delivery_stays_ordered_after_transport_backpressure
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell,
             ssh: SshConfig::default(),
@@ -3607,7 +3607,7 @@ fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
         temp.path().to_string_lossy().into_owned(),
     );
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-    let sink = AgentSink::WebSocket {
+    let sink = RunnerSink::WebSocket {
         tx,
         client_id: "validation-agent".into(),
         agent_instance_id: "validation-instance".into(),
@@ -3617,11 +3617,11 @@ fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 // These tests run jobs in a temp dir; the boundary itself is
-                // covered separately, and AgentPolicy::default() is fail-closed.
+                // covered separately, and RunnerPolicy::default() is fail-closed.
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell,
             ssh: SshConfig::default(),
@@ -4338,7 +4338,7 @@ fn job_timeout_terminates_the_whole_tree() {
         marker.display()
     );
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-    let sink = AgentSink::WebSocket {
+    let sink = RunnerSink::WebSocket {
         tx,
         client_id: "timeout-agent".into(),
         agent_instance_id: "timeout-instance".into(),
@@ -4348,9 +4348,9 @@ fn job_timeout_terminates_the_whole_tree() {
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
+            policy: RunnerPolicy {
                 allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
+                ..RunnerPolicy::default()
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),

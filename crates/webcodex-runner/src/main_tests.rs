@@ -57,19 +57,19 @@ impl Drop for EnvGuard {
 }
 
 /// Policy for tests that exercise shell/profile behavior inside a temp dir
-/// rather than the filesystem boundary itself. `AgentPolicy::default()` is
+/// rather than the filesystem boundary itself. `RunnerPolicy::default()` is
 /// now fail-closed (empty `allowed_roots` reaches nothing), so these tests
 /// opt out of the boundary explicitly instead of leaning on a permissive
 /// production default.
-fn unrestricted_test_policy() -> AgentPolicy {
-    AgentPolicy {
+fn unrestricted_test_policy() -> RunnerPolicy {
+    RunnerPolicy {
         allow_cwd_anywhere: true,
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     }
 }
 
-fn test_config(projects_dir: PathBuf) -> AgentConfig {
-    AgentConfig {
+fn test_config(projects_dir: PathBuf) -> RunnerConfig {
+    RunnerConfig {
         server_url: "http://127.0.0.1:8000".to_string(),
         token: "test-token".to_string(),
         client_id: "oe".to_string(),
@@ -96,7 +96,7 @@ fn test_config(projects_dir: PathBuf) -> AgentConfig {
 
 #[test]
 fn detached_process_capability_matches_supported_native_backends() {
-    let capabilities = agent_register_capabilities(&test_config(PathBuf::new()));
+    let capabilities = runner_register_capabilities(&test_config(PathBuf::new()));
     assert_eq!(
         capabilities.detached_process_jobs,
         cfg!(any(target_os = "linux", target_os = "macos", windows))
@@ -105,15 +105,15 @@ fn detached_process_capability_matches_supported_native_backends() {
 
 #[test]
 fn pointer_capability_matches_supported_native_backends() {
-    let capabilities = agent_register_capabilities(&test_config(PathBuf::new()));
+    let capabilities = runner_register_capabilities(&test_config(PathBuf::new()));
     assert_eq!(
         capabilities.computer_pointer_control,
         cfg!(any(target_os = "macos", windows))
     );
 }
 
-fn runtime_config(cfg: &AgentConfig) -> Arc<ReloadableAgentConfig> {
-    Arc::new(ReloadableAgentConfig::new(cfg.clone(), PathBuf::new()))
+fn runtime_config(cfg: &RunnerConfig) -> Arc<ReloadableRunnerConfig> {
+    Arc::new(ReloadableRunnerConfig::new(cfg.clone(), PathBuf::new()))
 }
 
 fn quic_client_config() -> QuicClientConfig {
@@ -126,10 +126,6 @@ fn quic_client_config() -> QuicClientConfig {
     }
 }
 
-#[path = "main_tests/agent_config.rs"]
-mod agent_config;
-#[path = "main_tests/agent_sink.rs"]
-mod agent_sink;
 #[path = "main_tests/apply_text_edits.rs"]
 mod apply_text_edits;
 #[path = "main_tests/artifact_read.rs"]
@@ -162,6 +158,10 @@ mod project_policy;
 mod project_registration;
 #[path = "main_tests/registration.rs"]
 mod registration;
+#[path = "main_tests/runner_config.rs"]
+mod runner_config;
+#[path = "main_tests/runner_sink.rs"]
+mod runner_sink;
 #[path = "main_tests/shell_config.rs"]
 mod shell_config;
 #[path = "main_tests/shell_job_execution.rs"]
@@ -390,7 +390,7 @@ fn profile_env(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn write_agent_project(projects_dir: &Path, id: &str, path: &Path, shell_profile: Option<&str>) {
+fn write_runner_project(projects_dir: &Path, id: &str, path: &Path, shell_profile: Option<&str>) {
     std::fs::create_dir_all(projects_dir).unwrap();
     let shell_profile = shell_profile
         .map(|profile| format!("shell_profile = {:?}\n", profile))
@@ -409,7 +409,7 @@ fn write_agent_project(projects_dir: &Path, id: &str, path: &Path, shell_profile
 }
 
 fn run_profile_shell(
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     shell: &ShellConfig,
     projects_dir: &Path,
     cache: &PreparedShellProfileCache,
@@ -1188,7 +1188,7 @@ fn server_url_to_ws_converts_http_https_and_rejects_bare() {
 
 #[test]
 fn generated_agent_instance_id_is_non_empty_uuid_like() {
-    // `run_agent` generates the instance id the same way; verify the
+    // `run_runner` generates the instance id the same way; verify the
     // format here without driving the full agent loop.
     let id = uuid::Uuid::new_v4().to_string();
     assert!(!id.is_empty());
@@ -1216,10 +1216,10 @@ fn generated_agent_instance_id_is_non_empty_uuid_like() {
     );
 }
 
-fn ws_sink(client_id: &str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
+fn ws_sink(client_id: &str) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
     let (tx, rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
     (
-        AgentSink::WebSocket {
+        RunnerSink::WebSocket {
             tx,
             client_id: client_id.to_string(),
             agent_instance_id: "ws-inst".to_string(),
@@ -1228,10 +1228,10 @@ fn ws_sink(client_id: &str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnve
     )
 }
 
-fn quic_sink(client_id: &str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
+fn quic_sink(client_id: &str) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
     let (tx, rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
     (
-        AgentSink::Quic {
+        RunnerSink::Quic {
             tx,
             client_id: client_id.to_string(),
             agent_instance_id: "quic-inst".to_string(),
@@ -1361,11 +1361,11 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
     assert_eq!(rejected.error.as_deref(), Some("runner is shutting down"));
 }
 
-fn project_policy(root: &Path) -> AgentPolicy {
-    AgentPolicy {
+fn project_policy(root: &Path) -> RunnerPolicy {
+    RunnerPolicy {
         allow_cwd_anywhere: false,
         allowed_roots: vec![root.to_path_buf()],
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     }
 }
 
@@ -1440,14 +1440,14 @@ fn project_error_value(result: CommandResult) -> serde_json::Value {
 }
 
 #[test]
-fn agent_project_cache_invalidate_refreshes_after_project_op() {
+fn runner_project_cache_invalidate_refreshes_after_project_op() {
     let tmp = tempfile::tempdir().unwrap();
     let project_dir = tmp.path().join("repo");
     let projects_dir = tmp.path().join("projects.d");
     std::fs::create_dir(&project_dir).unwrap();
     let mut cfg = test_config(projects_dir.clone());
     cfg.policy = project_policy(tmp.path());
-    let mut cache = AgentProjectCache::default();
+    let mut cache = RunnerProjectCache::default();
     assert!(cache.get(&cfg).is_empty());
 
     let req = project_request(
@@ -1475,7 +1475,7 @@ fn http_sink_client_id_matches_config() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/projects.d"));
     let client = Client::new();
-    let sink = AgentSink::Http(HttpSendConfig {
+    let sink = RunnerSink::Http(HttpSendConfig {
         client,
         server_url: cfg.server_url.clone(),
         token: cfg.token.clone(),
@@ -1552,8 +1552,8 @@ fn empty_tokens_http_register_omits_authorization_header() {
     cfg.token = "   \t".to_string();
 
     let client = Client::builder().no_proxy().build().unwrap();
-    let mut project_cache = AgentProjectCache::default();
-    let runtime = ReloadableAgentConfig::new(cfg.clone(), PathBuf::new());
+    let mut project_cache = RunnerProjectCache::default();
+    let runtime = ReloadableRunnerConfig::new(cfg.clone(), PathBuf::new());
     register(
         &client,
         &cfg,
@@ -1611,7 +1611,7 @@ async fn websocket_session_accepts_pong_without_error_or_disconnect() {
             .await
             .unwrap();
 
-        // Send a Pong — the agent must accept it as keepalive and stay
+        // Send a Pong — the Runner must accept it as keepalive and stay
         // connected (this is the regression we are guarding against).
         let pong = AgentEnvelope::Pong { ts: 42 };
         ws.send(WsMessage::Text(pong.to_json().unwrap().into()))
@@ -1646,7 +1646,7 @@ async fn websocket_session_accepts_pong_without_error_or_disconnect() {
     let mut cfg = test_config(tmp.path().join("config/projects.d"));
     cfg.server_url = format!("http://{}", addr);
     cfg.transport = Some(TRANSPORT_WEBSOCKET.to_string());
-    let runtime = AgentRuntimeState::new(&cfg, PathBuf::new());
+    let runtime = RunnerRuntimeState::new(&cfg, PathBuf::new());
 
     let outcome = tokio::time::timeout(
         Duration::from_secs(10),

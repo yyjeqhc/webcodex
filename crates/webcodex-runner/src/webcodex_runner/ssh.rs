@@ -8,7 +8,7 @@
 use super::config::SshConfig;
 use super::output::{CommandResult, ShellCommandResult};
 use super::shutdown::lock_unpoison;
-use super::AgentPolicy;
+use super::RunnerPolicy;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -675,7 +675,7 @@ pub(crate) fn run_ssh_shell(
     pool: &SshConnectionPool,
     generation: u64,
     config: &SshConfig,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     resource_name: &str,
     session_id: &str,
     cwd: Option<&str>,
@@ -707,7 +707,7 @@ pub(crate) fn run_ssh_shell_with_execution_state(
     pool: &SshConnectionPool,
     generation: u64,
     config: &SshConfig,
-    policy: &AgentPolicy,
+    policy: &RunnerPolicy,
     resource_name: &str,
     session_id: &str,
     cwd: Option<&str>,
@@ -721,7 +721,7 @@ pub(crate) fn run_ssh_shell_with_execution_state(
     if !policy.allow_raw_shell {
         return ShellCommandResult::not_started(command_error(
             start,
-            "raw shell is disabled by local agent policy".to_string(),
+            "raw shell is disabled by local Runner policy".to_string(),
         ));
     }
     if sandbox.is_some() {
@@ -1468,7 +1468,7 @@ mod tests {
         windows_direct_program_bootstrap, windows_direct_program_frame, PreparedSshTransport,
         SshConnectionKey, SshConnectionPool,
     };
-    use crate::webcodex_runner::config::{AgentPolicy, SshConfig, SshResourceConfig};
+    use crate::webcodex_runner::config::{RunnerPolicy, SshConfig, SshResourceConfig};
     use std::collections::BTreeMap;
     use std::io::Write;
     #[cfg(target_os = "linux")]
@@ -1661,7 +1661,7 @@ mod tests {
             pool,
             7,
             config,
-            &AgentPolicy::default(),
+            &RunnerPolicy::default(),
             resource,
             session_id,
             cwd,
@@ -2124,7 +2124,7 @@ mod tests {
             &pool,
             8,
             &config,
-            &AgentPolicy::default(),
+            &RunnerPolicy::default(),
             "tmp",
             "wc_sess_generation",
             None,
@@ -2341,7 +2341,7 @@ mod tests {
         let mut manager = crate::JobManager::new(1);
         manager.ssh_pool = SshConnectionPool::with_test_config(server.client_config.clone());
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-        let sink = crate::webcodex_runner::AgentSink::WebSocket {
+        let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
             agent_instance_id: "ssh-instance".to_string(),
@@ -2350,7 +2350,7 @@ mod tests {
             sink.clone(),
             crate::PendingJobStart {
                 generation: 11,
-                policy: AgentPolicy::default(),
+                policy: RunnerPolicy::default(),
                 shell: crate::webcodex_runner::ShellConfig::default(),
                 ssh: config.clone(),
                 projects_dir: PathBuf::new(),
@@ -2377,7 +2377,7 @@ mod tests {
             sink.clone(),
             crate::PendingJobStart {
                 generation: 11,
-                policy: AgentPolicy::default(),
+                policy: RunnerPolicy::default(),
                 shell: crate::webcodex_runner::ShellConfig::default(),
                 ssh: config.clone(),
                 projects_dir: PathBuf::new(),
@@ -2408,7 +2408,7 @@ mod tests {
             sink,
             crate::PendingJobStart {
                 generation: 11,
-                policy: AgentPolicy::default(),
+                policy: RunnerPolicy::default(),
                 shell: crate::webcodex_runner::ShellConfig::default(),
                 ssh: config,
                 projects_dir: PathBuf::new(),
@@ -2516,7 +2516,7 @@ mod tests {
 
     /// A projects.d directory with a registered `remote-project` owned by the
     /// `ssh-agent` Runner. SSH persistent shells still require the project to
-    /// be registered on the Runner (it owns the agent + resource binding);
+    /// be registered on the Runner (it owns the Runner + resource binding);
     /// only execution happens remotely.
     fn ssh_projects_dir() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("create ssh projects dir");
@@ -2601,7 +2601,7 @@ mod tests {
             &crate::webcodex_runner::ShellConfig::default(),
             pool,
         );
-        let policy = AgentPolicy::default();
+        let policy = RunnerPolicy::default();
         let projects_dir = ssh_projects_dir();
         let projects = projects_dir.path().to_path_buf();
 
@@ -2713,7 +2713,7 @@ mod tests {
             &crate::webcodex_runner::ShellConfig::default(),
             pool,
         );
-        let policy = AgentPolicy::default();
+        let policy = RunnerPolicy::default();
         let projects_dir = ssh_projects_dir();
         let projects = projects_dir.path().to_path_buf();
 
@@ -2762,7 +2762,7 @@ mod tests {
             &crate::webcodex_runner::ShellConfig::default(),
             pool,
         );
-        let policy = AgentPolicy::default();
+        let policy = RunnerPolicy::default();
         let projects_dir = ssh_projects_dir();
         let projects = projects_dir.path().to_path_buf();
         let shell_id = "wc_shell_rps_gen";
@@ -2872,7 +2872,7 @@ mod tests {
             &crate::webcodex_runner::ShellConfig::default(),
             pool,
         );
-        let policy = AgentPolicy::default();
+        let policy = RunnerPolicy::default();
         let projects_dir = ssh_projects_dir();
         let projects = projects_dir.path().to_path_buf();
 
@@ -2936,7 +2936,7 @@ mod tests {
             &crate::webcodex_runner::ShellConfig::default(),
             pool,
         );
-        let policy = AgentPolicy::default();
+        let policy = RunnerPolicy::default();
         let projects_dir = ssh_projects_dir();
         let projects = projects_dir.path().to_path_buf();
         let session_cwd = server.remote_cwd.join("session-dir");
@@ -3001,7 +3001,7 @@ mod tests {
             &crate::webcodex_runner::ShellConfig::default(),
             pool,
         );
-        let policy = AgentPolicy::default();
+        let policy = RunnerPolicy::default();
         let projects_dir = ssh_projects_dir();
         let projects = projects_dir.path().to_path_buf();
         let resource_cwd = server.remote_cwd.to_string_lossy().into_owned();
@@ -3050,7 +3050,7 @@ mod tests {
             &crate::webcodex_runner::ShellConfig::default(),
             pool,
         );
-        let policy = AgentPolicy::default();
+        let policy = RunnerPolicy::default();
         let projects_dir = ssh_projects_dir();
         let projects = projects_dir.path().to_path_buf();
 
@@ -3153,7 +3153,7 @@ mod tests {
             &crate::webcodex_runner::ShellConfig::default(),
             pool,
         );
-        let policy = AgentPolicy::default();
+        let policy = RunnerPolicy::default();
         let projects_dir = ssh_projects_dir();
         let projects = projects_dir.path().to_path_buf();
         let physical = server.remote_cwd.join("physical");
@@ -3239,7 +3239,7 @@ mod tests {
             &crate::webcodex_runner::ShellConfig::default(),
             pool,
         );
-        let policy = AgentPolicy::default();
+        let policy = RunnerPolicy::default();
         let projects_dir = ssh_projects_dir();
         let projects = projects_dir.path().to_path_buf();
         let missing = server
@@ -3297,7 +3297,7 @@ mod tests {
 mod windows_tests {
     use super::*;
     use crate::shell_protocol::ShellCommandExecutionState;
-    use crate::webcodex_runner::config::{AgentPolicy, SshResourceConfig};
+    use crate::webcodex_runner::config::{RunnerPolicy, SshResourceConfig};
     use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::path::PathBuf;
@@ -3653,9 +3653,9 @@ fn main() {
 
     fn enqueue_job(
         manager: &crate::JobManager,
-        sink: crate::webcodex_runner::AgentSink,
+        sink: crate::webcodex_runner::RunnerSink,
         config: SshConfig,
-        policy: AgentPolicy,
+        policy: RunnerPolicy,
         job_id: &str,
         command: &str,
         timeout_secs: u64,
@@ -3795,7 +3795,7 @@ fn main() {
             &fake_pool(),
             7,
             &ssh_config("spe", None),
-            &AgentPolicy::default(),
+            &RunnerPolicy::default(),
             "spe",
             "wc_sess_windows_long_program",
             None,
@@ -3943,7 +3943,7 @@ fn main() {
             &fake_pool(),
             7,
             &ssh_config("spe", None),
-            &AgentPolicy::default(),
+            &RunnerPolicy::default(),
             "spe",
             "wc_sess_windows_frame",
             None,
@@ -3981,7 +3981,7 @@ fn main() {
             &fake_pool(),
             7,
             &ssh_config("fake-exit-before-program", None),
-            &AgentPolicy::default(),
+            &RunnerPolicy::default(),
             "spe",
             "wc_sess_windows_program_writer_failure",
             Some(&cwd),
@@ -4009,9 +4009,9 @@ fn main() {
 
     #[test]
     fn windows_blocked_program_writer_timeout_drains_output_and_returns_bounded() {
-        let policy = AgentPolicy {
+        let policy = RunnerPolicy {
             max_output_bytes: 4 * 1024,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         };
         let program = "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES);
         let started = Instant::now();
@@ -4064,7 +4064,7 @@ fn main() {
             &fake_pool(),
             7,
             &ssh_config(&host, None),
-            &AgentPolicy::default(),
+            &RunnerPolicy::default(),
             "spe",
             "wc_sess_windows_blocked_stop",
             None,
@@ -4103,7 +4103,7 @@ fn main() {
     #[test]
     fn windows_one_shot_direct_ssh_preserves_execution_state_and_no_retry() {
         let config = ssh_config("spe", None);
-        let policy = AgentPolicy::default();
+        let policy = RunnerPolicy::default();
         let pool = fake_pool();
 
         let ok = run_ssh_shell_with_execution_state(
@@ -4237,7 +4237,7 @@ fn main() {
             &fake_pool(),
             7,
             &ssh_config("spe", None),
-            &AgentPolicy::default(),
+            &RunnerPolicy::default(),
             "spe",
             "wc_sess_windows_one_shot_stop",
             None,
@@ -4281,7 +4281,7 @@ fn main() {
             &pool,
             7,
             &ssh_config("spe", None),
-            &AgentPolicy::default(),
+            &RunnerPolicy::default(),
             "spe",
             "wc_sess_windows_spawn_failure",
             None,
@@ -4313,7 +4313,7 @@ fn main() {
         manager.ssh_pool =
             SshConnectionPool::with_test_executable(temp.path().join("missing-ssh.exe"));
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
-        let sink = crate::webcodex_runner::AgentSink::WebSocket {
+        let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
             agent_instance_id: "ssh-instance".to_string(),
@@ -4322,7 +4322,7 @@ fn main() {
             &manager,
             sink,
             ssh_config("spe", None),
-            AgentPolicy::default(),
+            RunnerPolicy::default(),
             "win-ssh-spawn-failure",
             "printf never",
             5,
@@ -4439,7 +4439,7 @@ fn main() {
             &fake_pool(),
             7,
             &ssh_config("spe", None),
-            &AgentPolicy::default(),
+            &RunnerPolicy::default(),
             "spe",
             "wc_sess_windows_tree",
             None,
@@ -4471,7 +4471,7 @@ fn main() {
         let mut manager = crate::JobManager::new(1);
         manager.ssh_pool = fake_pool();
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-        let sink = crate::webcodex_runner::AgentSink::WebSocket {
+        let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
             agent_instance_id: "ssh-instance".to_string(),
@@ -4481,7 +4481,7 @@ fn main() {
             &manager,
             sink.clone(),
             config.clone(),
-            AgentPolicy::default(),
+            RunnerPolicy::default(),
             "win-ssh-0",
             "WC_FAKE_EXIT_0",
             5,
@@ -4499,7 +4499,7 @@ fn main() {
             &manager,
             sink.clone(),
             config.clone(),
-            AgentPolicy::default(),
+            RunnerPolicy::default(),
             "win-ssh-7",
             "WC_FAKE_EXIT_7",
             5,
@@ -4519,7 +4519,7 @@ fn main() {
             &manager,
             sink.clone(),
             config.clone(),
-            AgentPolicy::default(),
+            RunnerPolicy::default(),
             "win-ssh-255",
             &format!("WC_FAKE_EXIT_255::{}", starts.display()),
             5,
@@ -4544,7 +4544,7 @@ fn main() {
             &manager,
             sink.clone(),
             config.clone(),
-            AgentPolicy::default(),
+            RunnerPolicy::default(),
             "win-ssh-long-program",
             &long_wire,
             5,
@@ -4558,9 +4558,9 @@ fn main() {
             "{long:?}"
         );
 
-        let bounded_policy = AgentPolicy {
+        let bounded_policy = RunnerPolicy {
             max_output_bytes: 4 * 1024,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         };
         enqueue_job(
             &manager,
@@ -4585,7 +4585,7 @@ fn main() {
             &manager,
             sink,
             config,
-            AgentPolicy::default(),
+            RunnerPolicy::default(),
             "win-ssh-slot",
             "WC_FAKE_EXIT_0",
             5,
@@ -4604,7 +4604,7 @@ fn main() {
         let mut manager = crate::JobManager::new(1);
         manager.ssh_pool = fake_pool();
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-        let sink = crate::webcodex_runner::AgentSink::WebSocket {
+        let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
             agent_instance_id: "ssh-instance".to_string(),
@@ -4615,7 +4615,7 @@ fn main() {
             &manager,
             sink.clone(),
             config.clone(),
-            AgentPolicy::default(),
+            RunnerPolicy::default(),
             "win-ssh-stop",
             &format!("WC_FAKE_TREE::{}", stop_marker.display()),
             30,
@@ -4654,7 +4654,7 @@ fn main() {
             &manager,
             sink,
             config,
-            AgentPolicy::default(),
+            RunnerPolicy::default(),
             "win-ssh-timeout",
             &format!("WC_FAKE_TREE::{}", timeout_marker.display()),
             1,
@@ -4681,7 +4681,7 @@ fn main() {
         let mut manager = crate::JobManager::new(1);
         manager.ssh_pool = fake_pool();
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-        let sink = crate::webcodex_runner::AgentSink::WebSocket {
+        let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
             agent_instance_id: "ssh-instance".to_string(),
@@ -4690,7 +4690,7 @@ fn main() {
             &manager,
             sink,
             ssh_config("spe", None),
-            AgentPolicy::default(),
+            RunnerPolicy::default(),
             "win-ssh-shutdown",
             &format!("WC_FAKE_TREE::{}", marker.display()),
             30,
@@ -4770,7 +4770,7 @@ fn main() {
                 &pool,
                 7,
                 &config,
-                &AgentPolicy::default(),
+                &RunnerPolicy::default(),
                 "spe",
                 "wc_sess_windows_real_ssh",
                 cwd,
@@ -4920,7 +4920,7 @@ fn main() {
             &pool,
             7,
             &config,
-            &AgentPolicy::default(),
+            &RunnerPolicy::default(),
             "spe",
             "wc_sess_windows_real_ssh",
             None,
@@ -4985,7 +4985,7 @@ fn main() {
 
         let manager = crate::JobManager::new(1);
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-        let sink = crate::webcodex_runner::AgentSink::WebSocket {
+        let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
             agent_instance_id: "ssh-instance".to_string(),
@@ -4994,7 +4994,7 @@ fn main() {
             &manager,
             sink.clone(),
             config.clone(),
-            AgentPolicy::default(),
+            RunnerPolicy::default(),
             "win-ssh-real-background",
             "printf 'wc-windows-background|'; umask",
             15,
@@ -5030,7 +5030,7 @@ fn main() {
             &manager,
             sink,
             config,
-            AgentPolicy::default(),
+            RunnerPolicy::default(),
             "win-ssh-real-background-eof",
             &background_eof_program,
             15,
@@ -5071,7 +5071,7 @@ fn main() {
             &fake_pool(),
             7,
             &ssh_config("spe", None),
-            &AgentPolicy::default(),
+            &RunnerPolicy::default(),
             "spe",
             "wc_sess_windows_invalid_cwd",
             Some("/tmp\ninvalid"),

@@ -1,6 +1,6 @@
 //! Internal Pyright adapter: command construction, execution, JSON parse.
 //!
-//! Command argv is built only on the agent. Structured JSON is captured in full
+//! Command argv is built only on the Runner. Structured JSON is captured in full
 //! up to a hard byte cap; oversized output is never tail-parsed.
 
 use super::execute::{resolve_executable, run_bounded};

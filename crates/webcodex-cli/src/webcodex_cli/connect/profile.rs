@@ -325,7 +325,7 @@ pub(super) fn stored_project_matches(project: &ProjectFile, canonical_project: &
         // Windows `canonicalize` can return `\\?\`-prefixed extended paths and
         // the filesystem is case-insensitive, so identity uses the shared
         // normalization instead of raw `Path` equality.
-        webcodex_agent_config::paths::paths_equal(&path, canonical_project)
+        webcodex_runner_config::paths::paths_equal(&path, canonical_project)
     })
 }
 

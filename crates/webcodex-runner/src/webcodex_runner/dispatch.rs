@@ -11,7 +11,7 @@ use super::{
     run_process_with_profiles_in_sandbox_and_execution_state,
     run_script_with_profiles_in_sandbox_and_execution_state,
     run_shell_with_profiles_in_sandbox_and_execution_state, run_ssh_shell_with_execution_state,
-    AgentSink, CommandResult, HotAgentConfig, PersistentShellManager, ReloadableAgentConfig,
+    CommandResult, HotRunnerConfig, PersistentShellManager, ReloadableRunnerConfig, RunnerSink,
     ShellCommandResult, SubmitResultError,
 };
 use crate::shell_protocol::{
@@ -44,8 +44,8 @@ pub(super) fn runner_tool_trace_enabled() -> bool {
 
 #[allow(clippy::too_many_arguments)]
 fn run_native_shell_or_internal_search(
-    config: &HotAgentConfig,
-    runtime: &ReloadableAgentConfig,
+    config: &HotRunnerConfig,
+    runtime: &ReloadableRunnerConfig,
     jobs: &JobManager,
     projects_dir: &Path,
     request: &ShellAgentShellRequest,
@@ -96,9 +96,9 @@ fn run_native_shell_or_internal_search(
 /// both the polling loop (`handle_one_poll`) and the WebSocket loop. It contains
 /// no transport-specific code: all outgoing traffic goes through `sink`.
 pub(crate) fn dispatch_request(
-    sink: &AgentSink,
-    config: &HotAgentConfig,
-    runtime: &ReloadableAgentConfig,
+    sink: &RunnerSink,
+    config: &HotRunnerConfig,
+    runtime: &ReloadableRunnerConfig,
     jobs: &JobManager,
     persistent_shells: &PersistentShellManager,
     projects_dir: &Path,

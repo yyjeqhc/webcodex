@@ -22,8 +22,8 @@ use std::path::{Path, PathBuf};
 mod webcodex_cli;
 
 use webcodex_admin as admin_cli;
-use webcodex_agent_config as runner_config;
 use webcodex_core::build_info;
+use webcodex_runner_config as runner_config;
 
 use admin_cli::{
     parse_admin_cli, run_admin_command, AdminCliCommand, AdminOptions, ServerHttpOptions,

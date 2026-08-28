@@ -183,7 +183,7 @@ pub async fn run_project_command(args: Vec<String>) -> CliCommandOutput {
                 stderr: String::new(),
             }
         }
-        ProjectCliAction::Run(options) => match project_entry::start_agent(&options).await {
+        ProjectCliAction::Run(options) => match project_entry::start_runner(&options).await {
             Ok(()) => CliCommandOutput::success(String::new()),
             Err(error) => CliCommandOutput::failure(
                 1,

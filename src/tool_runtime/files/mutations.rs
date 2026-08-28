@@ -877,7 +877,7 @@ impl ToolRuntime {
                         target.canonicalize().ok()
                     };
                     if !containment.as_ref().is_some_and(|candidate| {
-                        webcodex_agent_config::paths::path_is_within(candidate, &canonical_root)
+                        webcodex_runner_config::paths::path_is_within(candidate, &canonical_root)
                     }) {
                         return ToolResult::err(
                             "delete_project_files target is outside the project",
@@ -895,7 +895,7 @@ impl ToolRuntime {
                     while let Some(candidate) = ancestor {
                         match candidate.canonicalize() {
                             Ok(candidate) => {
-                                contained = webcodex_agent_config::paths::path_is_within(
+                                contained = webcodex_runner_config::paths::path_is_within(
                                     &candidate,
                                     &canonical_root,
                                 );

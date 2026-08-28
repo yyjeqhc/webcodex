@@ -37,7 +37,7 @@ fn managed_temporary_project_is_registered_persistent_and_ordinary_project_compa
         "the returned project path must be canonical"
     );
 
-    let persisted = parse_agent_project_toml(
+    let persisted = parse_runner_project_toml(
         &std::fs::read_to_string(projects_dir.join(format!("{id}.toml"))).unwrap(),
     )
     .unwrap();
@@ -46,7 +46,7 @@ fn managed_temporary_project_is_registered_persistent_and_ordinary_project_compa
 
     // A fresh project-registry scan models a Runner restart: it finds the same
     // ordinary project record, including its source marker and canonical path.
-    let reloaded = load_agent_project_summaries_from_dir(&projects_dir);
+    let reloaded = load_runner_project_summaries_from_dir(&projects_dir);
     assert_eq!(reloaded.len(), 1);
     assert_eq!(reloaded[0].id, id);
     assert_eq!(reloaded[0].kind.as_deref(), Some("managed_temporary"));

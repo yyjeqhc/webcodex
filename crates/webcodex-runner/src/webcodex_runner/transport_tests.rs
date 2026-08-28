@@ -1,4 +1,4 @@
-use super::super::config::{AgentPolicy, ShellConfig};
+use super::super::config::{RunnerPolicy, ShellConfig};
 use super::*;
 use crate::shell_protocol::{
     ShellAgentShellRequest, ShellClientCapabilities, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
@@ -16,8 +16,8 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-fn test_agent_config(server_url: String) -> AgentConfig {
-    AgentConfig {
+fn test_runner_config(server_url: String) -> RunnerConfig {
+    RunnerConfig {
         server_url,
         token: "test-token".to_string(),
         client_id: "oe".to_string(),
@@ -34,10 +34,10 @@ fn test_agent_config(server_url: String) -> AgentConfig {
         }),
         max_concurrent_jobs: Some(1),
         // Transport tests run jobs in a temp dir and are not about the
-        // filesystem boundary; AgentPolicy::default() is fail-closed.
-        policy: AgentPolicy {
+        // filesystem boundary; RunnerPolicy::default() is fail-closed.
+        policy: RunnerPolicy {
             allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+            ..RunnerPolicy::default()
         },
         transport: Some(TRANSPORT_WEBSOCKET.to_string()),
         websocket_connect_timeout_secs:
@@ -51,8 +51,8 @@ fn test_agent_config(server_url: String) -> AgentConfig {
     }
 }
 
-fn polling_agent_config(server_url: String, projects_dir: PathBuf) -> AgentConfig {
-    let mut cfg = test_agent_config(server_url);
+fn polling_runner_config(server_url: String, projects_dir: PathBuf) -> RunnerConfig {
+    let mut cfg = test_runner_config(server_url);
     cfg.transport = Some(TRANSPORT_POLLING.to_string());
     cfg.projects_dir = Some(projects_dir);
     cfg
@@ -115,8 +115,8 @@ fn write_synthetic_project_configs(projects_dir: &Path, root: &Path, count: usiz
     }
 }
 
-fn test_runtime(cfg: &AgentConfig) -> AgentRuntimeState {
-    AgentRuntimeState::new(cfg, PathBuf::new())
+fn test_runtime(cfg: &RunnerConfig) -> RunnerRuntimeState {
+    RunnerRuntimeState::new(cfg, PathBuf::new())
 }
 
 fn wait_for_path(path: &Path, deadline: Instant, context: &str) {
@@ -132,9 +132,9 @@ fn wait_for_path(path: &Path, deadline: Instant, context: &str) {
 
 #[test]
 fn runtime_shutdown_is_fast_ordered_and_runs_once_without_resources() {
-    let cfg = test_agent_config("http://127.0.0.1:1".to_string());
+    let cfg = test_runner_config("http://127.0.0.1:1".to_string());
     let runtime =
-        AgentRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(300));
+        RunnerRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(300));
     let started = Instant::now();
     let first = runtime.shutdown();
     let second = runtime.shutdown();
@@ -170,9 +170,9 @@ fn runtime_shutdown_is_fast_ordered_and_runs_once_without_resources() {
 
 #[test]
 fn runtime_completion_log_follows_bounded_background_cleanup() {
-    let cfg = test_agent_config("http://127.0.0.1:1".to_string());
+    let cfg = test_runner_config("http://127.0.0.1:1".to_string());
     let runtime =
-        AgentRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
+        RunnerRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
     runtime.register_background_thread(thread::spawn(|| {
         thread::sleep(Duration::from_millis(60));
     }));
@@ -203,9 +203,9 @@ fn runtime_completion_log_follows_bounded_background_cleanup() {
 
 #[test]
 fn runtime_shutdown_global_budget_bounds_unjoinable_background_thread() {
-    let cfg = test_agent_config("http://127.0.0.1:1".to_string());
+    let cfg = test_runner_config("http://127.0.0.1:1".to_string());
     let budget = Duration::from_millis(80);
-    let runtime = AgentRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), budget);
+    let runtime = RunnerRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), budget);
     runtime.register_background_thread(thread::spawn(|| {
         thread::sleep(Duration::from_millis(400));
     }));
@@ -239,9 +239,9 @@ fn runtime_shutdown_global_budget_bounds_unjoinable_background_thread() {
 
 #[test]
 fn runtime_shutdown_wakes_and_joins_reload_listener() {
-    let cfg = test_agent_config("http://127.0.0.1:1".to_string());
+    let cfg = test_runner_config("http://127.0.0.1:1".to_string());
     let runtime =
-        AgentRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
+        RunnerRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
     let config = Arc::clone(&runtime.config);
     runtime.register_reload_thread(thread::spawn(move || {
         while !config.is_stopping() {
@@ -451,7 +451,7 @@ fn start_auto_fallback_http_server(
     (format!("http://{}", addr), poll_count, server)
 }
 
-fn run_polling_agent_against_server(
+fn run_polling_runner_against_server(
     poll_status: &str,
     poll_content_type: &str,
     poll_body: &str,
@@ -460,7 +460,7 @@ fn run_polling_agent_against_server(
     let (server_url, poll_count, server) =
         start_polling_http_server(poll_status, poll_content_type, poll_body);
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = polling_agent_config(server_url, tmp.path().join("projects.d"));
+    let cfg = polling_runner_config(server_url, tmp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
     let shutdown = Arc::new(AtomicBool::new(false));
     let failsafe = Arc::clone(&shutdown);
@@ -473,7 +473,7 @@ fn run_polling_agent_against_server(
             failsafe.store(true, Ordering::SeqCst);
         }
     });
-    let result = run_polling_agent_with_shutdown(cfg, once, "inst-poll-test", shutdown, &runtime);
+    let result = run_polling_runner_with_shutdown(cfg, once, "inst-poll-test", shutdown, &runtime);
     let _ = failsafe_cancel_tx.send(());
     failsafe_thread.join().unwrap();
     server.join().unwrap();
@@ -610,8 +610,8 @@ impl PollingRunnerHandle {
 }
 
 fn spawn_polling_runner(
-    cfg: AgentConfig,
-    runtime: AgentRuntimeState,
+    cfg: RunnerConfig,
+    runtime: RunnerRuntimeState,
     once: bool,
     instance_id: &str,
     shutdown: Arc<AtomicBool>,
@@ -619,7 +619,7 @@ fn spawn_polling_runner(
     let instance_id = instance_id.to_string();
     let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
     let handle = thread::spawn(move || {
-        let result = run_polling_agent_with_shutdown(cfg, once, &instance_id, shutdown, &runtime);
+        let result = run_polling_runner_with_shutdown(cfg, once, &instance_id, shutdown, &runtime);
         let _ = result_tx.send(result);
     });
     PollingRunnerHandle { result_rx, handle }
@@ -1030,7 +1030,7 @@ fn start_scripted_agent_server(steps: Vec<ScriptStep>) -> ScriptedServer {
     }
 }
 
-fn run_polling_agent_against_scripted_server(
+fn run_polling_runner_against_scripted_server(
     server: &ScriptedServer,
     once: bool,
 ) -> Result<(), String> {
@@ -1040,10 +1040,10 @@ fn run_polling_agent_against_scripted_server(
     let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
     let runner = thread::spawn(move || {
         let tmp = tempfile::tempdir().unwrap();
-        let cfg = polling_agent_config(server_url, tmp.path().join("projects.d"));
+        let cfg = polling_runner_config(server_url, tmp.path().join("projects.d"));
         let runtime = test_runtime(&cfg);
         let result =
-            run_polling_agent_with_shutdown(cfg, once, "inst-script", runner_shutdown, &runtime);
+            run_polling_runner_with_shutdown(cfg, once, "inst-script", runner_shutdown, &runtime);
         let _ = result_tx.send(result);
     });
     match result_rx.recv_timeout(Duration::from_secs(20)) {
@@ -1150,7 +1150,7 @@ fn polling_long_ordinary_dispatch_does_not_pin_and_results_stay_correlated_exact
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -1258,7 +1258,7 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -1375,7 +1375,7 @@ fn polling_job_start_dispatches_behind_one_long_ordinary_request() {
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -1437,7 +1437,7 @@ fn polling_once_waits_for_its_tracked_ordinary_dispatch() {
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -1508,7 +1508,7 @@ fn polling_once_preserves_job_manager_drain_before_exit() {
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -1574,9 +1574,9 @@ fn polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime =
-        AgentRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_secs(2));
+        RunnerRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_secs(2));
     let shutdown = Arc::new(AtomicBool::new(false));
     let runner = spawn_polling_runner(
         cfg,
@@ -1687,7 +1687,7 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
     // authorizes them. This test exercises polling project-cache
     // invalidation, not project-root safety policy, so authorize this
     // test's own temp root explicitly.
-    let mut cfg = polling_agent_config(server.server_url.clone(), projects_dir.clone());
+    let mut cfg = polling_runner_config(server.server_url.clone(), projects_dir.clone());
     cfg.policy.allowed_roots = vec![temp.path().to_path_buf()];
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
@@ -1802,7 +1802,7 @@ fn polling_persistent_shell_exec_remains_responsive_to_close() {
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_agent_config(server.server_url.clone(), projects_dir);
+    let cfg = polling_runner_config(server.server_url.clone(), projects_dir);
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -1856,7 +1856,7 @@ fn polling_502_reregisters_once_then_processes_request() {
         ScriptStep::PollEmpty,
     ]);
     let started = Instant::now();
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("a transient poll 502 must recover");
     server.handle.join().unwrap();
 
@@ -1900,7 +1900,7 @@ fn polling_503_and_504_stay_live_without_registration_storm() {
             ScriptStep::Register,
             ScriptStep::PollEmpty,
         ]);
-        run_polling_agent_against_scripted_server(&server, false)
+        run_polling_runner_against_scripted_server(&server, false)
             .expect("gateway failure must recover");
         server.handle.join().unwrap();
         assert_eq!(
@@ -1924,7 +1924,7 @@ fn polling_connection_closed_enters_session_recovery() {
         ScriptStep::Register,
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("a closed poll connection must recover");
     server.handle.join().unwrap();
     assert_eq!(
@@ -1958,7 +1958,7 @@ fn polling_repeated_transients_back_off_and_refresh_only_once() {
         ScriptStep::PollEmpty,
     ]);
     let started = Instant::now();
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("consecutive gateway failures must recover");
     let elapsed = started.elapsed();
     server.handle.join().unwrap();
@@ -1996,7 +1996,7 @@ fn polling_truncated_json_recovers_and_stays_live() {
         ScriptStep::Register,
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("an incomplete poll response must recover");
     server.handle.join().unwrap();
     assert_eq!(
@@ -2020,7 +2020,7 @@ fn polling_register_truncated_json_recovers_and_stays_live() {
         ScriptStep::Register,
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("an incomplete register response must recover");
     server.handle.join().unwrap();
     assert_eq!(
@@ -2045,7 +2045,7 @@ fn polling_http_200_html_bad_gateway_recovers() {
         ScriptStep::Register,
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("a poll proxy error page must recover");
     server.handle.join().unwrap();
     assert_eq!(
@@ -2070,7 +2070,7 @@ fn polling_register_http_200_html_service_unavailable_recovers() {
         ScriptStep::Register,
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("a register proxy error page must recover");
     server.handle.join().unwrap();
     assert_eq!(
@@ -2092,7 +2092,7 @@ fn polling_complete_schema_mismatch_is_terminal_without_recovery() {
             body: r#"{"success":"yes","request":null,"error":null}"#,
         },
     ]);
-    let error = run_polling_agent_against_scripted_server(&server, false)
+    let error = run_polling_runner_against_scripted_server(&server, false)
         .expect_err("a complete incompatible poll response must stop");
     server.handle.join().unwrap();
     assert!(
@@ -2117,7 +2117,7 @@ fn polling_unknown_json_shape_is_terminal_without_recovery() {
             body: r#"{"unexpected":true}"#,
         },
     ]);
-    let error = run_polling_agent_against_scripted_server(&server, false)
+    let error = run_polling_runner_against_scripted_server(&server, false)
         .expect_err("an unknown complete poll shape must stop");
     server.handle.join().unwrap();
     assert!(
@@ -2138,7 +2138,7 @@ fn polling_register_complete_schema_mismatch_is_terminal_without_retry() {
         status: "200 OK",
         body: r#"{"success":"yes","client":null,"error":null}"#,
     }]);
-    let error = run_polling_agent_against_scripted_server(&server, false)
+    let error = run_polling_runner_against_scripted_server(&server, false)
         .expect_err("a complete incompatible register response must stop");
     server.handle.join().unwrap();
     assert!(
@@ -2159,7 +2159,7 @@ fn polling_register_unknown_json_shape_is_terminal_without_retry() {
         status: "200 OK",
         body: r#"{"unexpected":true}"#,
     }]);
-    let error = run_polling_agent_against_scripted_server(&server, false)
+    let error = run_polling_runner_against_scripted_server(&server, false)
         .expect_err("an unknown complete register shape must stop");
     server.handle.join().unwrap();
     assert!(
@@ -2182,7 +2182,7 @@ fn polling_oversized_response_is_terminal_without_loading_the_body() {
             declared_len: crate::AGENT_HTTP_RESPONSE_BODY_MAX_BYTES + 1,
         },
     ]);
-    let error = run_polling_agent_against_scripted_server(&server, false)
+    let error = run_polling_runner_against_scripted_server(&server, false)
         .expect_err("an oversized poll response must stop at the protocol boundary");
     server.handle.join().unwrap();
     assert!(
@@ -2217,7 +2217,7 @@ fn polling_404_and_non_session_400_are_terminal_without_retry() {
             ScriptStep::Register,
             ScriptStep::PollResponse { status, body },
         ]);
-        let error = run_polling_agent_against_scripted_server(&server, false)
+        let error = run_polling_runner_against_scripted_server(&server, false)
             .expect_err("permanent poll failure must stop");
         server.handle.join().unwrap();
         assert!(error.contains(expected), "{error}");
@@ -2240,7 +2240,7 @@ fn polling_unknown_session_reregisters_then_resumes() {
         ScriptStep::Register,
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("an explicitly missing polling session must re-register");
     server.handle.join().unwrap();
     assert_eq!(
@@ -2265,7 +2265,7 @@ fn polling_initial_register_502_recovers_without_supervisor_restart() {
         ScriptStep::PollEmpty,
     ]);
     let started = Instant::now();
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("initial transient register failure must recover");
     server.handle.join().unwrap();
     assert!(started.elapsed() >= Duration::from_millis(450));
@@ -2294,7 +2294,7 @@ fn polling_recovery_register_502_retries_then_resumes() {
         ScriptStep::Register,
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("transient recovery register failure must recover");
     server.handle.join().unwrap();
     assert_eq!(
@@ -2320,7 +2320,7 @@ fn polling_active_instance_lease_conflict_waits_then_registers() {
         ScriptStep::PollEmpty,
     ]);
     let started = Instant::now();
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("temporary active-instance lease must be retried");
     server.handle.join().unwrap();
     assert!(started.elapsed() >= Duration::from_millis(450));
@@ -2365,7 +2365,7 @@ fn polling_register_auth_404_and_identity_mismatch_are_terminal() {
     ] {
         let server =
             start_scripted_agent_server(vec![ScriptStep::RegisterResponse { status, body }]);
-        let error = run_polling_agent_against_scripted_server(&server, false)
+        let error = run_polling_runner_against_scripted_server(&server, false)
             .expect_err("fatal register response must stop");
         server.handle.join().unwrap();
         assert!(error.contains(expected), "{error}");
@@ -2391,7 +2391,7 @@ fn polling_once_retries_transport_failures_until_one_successful_poll() {
         },
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, true)
+    run_polling_runner_against_scripted_server(&server, true)
         .expect("--once must complete after one successful poll");
     server.handle.join().unwrap();
     assert_eq!(
@@ -2415,7 +2415,7 @@ fn polling_shutdown_interrupts_session_recovery_without_extra_request() {
         },
     ]);
     let started = Instant::now();
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("shutdown during recovery must be a clean exit");
     let elapsed = started.elapsed();
     server.handle.join().unwrap();
@@ -2440,10 +2440,10 @@ fn polling_shutdown_uses_the_process_coordinator_once() {
         },
     ]);
     let temp = tempfile::tempdir().unwrap();
-    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
     let runtime =
-        AgentRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
-    run_polling_agent_with_shutdown(
+        RunnerRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
+    run_polling_runner_with_shutdown(
         cfg,
         false,
         "inst-coordinator",
@@ -2487,7 +2487,7 @@ fn polling_result_permanent_400_is_dropped_once_and_polling_continues() {
         },
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("script completion should shut the polling runner down cleanly");
     server.handle.join().unwrap();
 
@@ -2544,7 +2544,7 @@ fn polling_result_transient_500_retries_same_payload_then_succeeds() {
         },
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("script completion should shut the polling runner down cleanly");
     server.handle.join().unwrap();
 
@@ -2579,7 +2579,7 @@ fn polling_result_503_retries_same_payload_then_continues() {
         },
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("script completion should shut the polling runner down cleanly");
     server.handle.join().unwrap();
 
@@ -2636,7 +2636,7 @@ fn polling_result_server_unavailable_retry_exhaustion_drops_then_continues() {
         },
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("script completion should shut the polling runner down cleanly");
     server.handle.join().unwrap();
 
@@ -2687,7 +2687,7 @@ fn submit_result_503_retry_exhaustion_returns_dropped_outcome() {
             body: r#"{"success":false,"error":"temporary gateway failure"}"#,
         },
     ]);
-    let sink = AgentSink::Http(HttpSendConfig {
+    let sink = RunnerSink::Http(HttpSendConfig {
         client: Client::builder()
             .timeout(Duration::from_secs(2))
             .build()
@@ -2725,7 +2725,7 @@ fn submit_result_retry_backoff_is_shutdown_aware() {
         status: "503 Service Unavailable",
         body: r#"{"success":false,"error":"temporary gateway failure"}"#,
     }]);
-    let sink = AgentSink::Http(HttpSendConfig {
+    let sink = RunnerSink::Http(HttpSendConfig {
         client: Client::builder()
             .timeout(Duration::from_secs(2))
             .build()
@@ -2766,8 +2766,8 @@ fn result_submission_gateway_and_connection_classes_are_transient() {
         reqwest::StatusCode::SERVICE_UNAVAILABLE,
         reqwest::StatusCode::GATEWAY_TIMEOUT,
     ] {
-        let error = AgentHttpError::status(AGENT_RESULT_PATH, status, "{}");
-        assert_eq!(error.kind, AgentHttpErrorKind::ServerUnavailable);
+        let error = RunnerHttpError::status(AGENT_RESULT_PATH, status, "{}");
+        assert_eq!(error.kind, RunnerHttpErrorKind::ServerUnavailable);
         assert_eq!(
             result_http_error_disposition(&error.kind),
             ResultHttpErrorDisposition::RetryTransient,
@@ -2775,15 +2775,15 @@ fn result_submission_gateway_and_connection_classes_are_transient() {
         );
     }
     assert_eq!(
-        result_http_error_disposition(&AgentHttpErrorKind::ServerUnavailable),
+        result_http_error_disposition(&RunnerHttpErrorKind::ServerUnavailable),
         ResultHttpErrorDisposition::RetryTransient,
         "connection-refused/reset/closed classification must enter bounded retry"
     );
     for kind in [
-        AgentHttpErrorKind::Status,
-        AgentHttpErrorKind::RequestTimeout,
-        AgentHttpErrorKind::Request,
-        AgentHttpErrorKind::DecodeTransient,
+        RunnerHttpErrorKind::Status,
+        RunnerHttpErrorKind::RequestTimeout,
+        RunnerHttpErrorKind::Request,
+        RunnerHttpErrorKind::DecodeTransient,
     ] {
         assert_eq!(
             result_http_error_disposition(&kind),
@@ -2792,23 +2792,23 @@ fn result_submission_gateway_and_connection_classes_are_transient() {
         );
     }
     assert_eq!(
-        result_http_error_disposition(&AgentHttpErrorKind::ClientRejected),
+        result_http_error_disposition(&RunnerHttpErrorKind::ClientRejected),
         ResultHttpErrorDisposition::RejectPermanent
     );
     assert_eq!(
-        result_http_error_disposition(&AgentHttpErrorKind::Auth),
+        result_http_error_disposition(&RunnerHttpErrorKind::Auth),
         ResultHttpErrorDisposition::FatalAuth
     );
     assert_eq!(
-        result_http_error_disposition(&AgentHttpErrorKind::NotFound),
+        result_http_error_disposition(&RunnerHttpErrorKind::NotFound),
         ResultHttpErrorDisposition::FatalProtocol
     );
     assert_eq!(
-        result_http_error_disposition(&AgentHttpErrorKind::ProtocolDecode),
+        result_http_error_disposition(&RunnerHttpErrorKind::ProtocolDecode),
         ResultHttpErrorDisposition::FatalProtocol
     );
     assert_eq!(
-        result_http_error_disposition(&AgentHttpErrorKind::Config),
+        result_http_error_disposition(&RunnerHttpErrorKind::Config),
         ResultHttpErrorDisposition::FatalConfig
     );
 }
@@ -2824,7 +2824,7 @@ fn polling_result_401_and_403_are_terminal_auth_errors_without_credentials() {
                 body: r#"{"success":false,"error":"unauthorized token=SECRET-BODY-TOKEN"}"#,
             },
         ]);
-        let error = run_polling_agent_against_scripted_server(&server, false)
+        let error = run_polling_runner_against_scripted_server(&server, false)
             .expect_err("auth rejection on result submission must stop the agent");
         server.handle.join().unwrap();
 
@@ -2861,7 +2861,7 @@ fn polling_fatal_background_submission_reaches_control_without_reexecution() {
             body: r#"{"success":false,"error":"unauthorized"}"#,
         },
     ]);
-    let error = run_polling_agent_against_scripted_server(&server, false)
+    let error = run_polling_runner_against_scripted_server(&server, false)
         .expect_err("fatal background result submission must stop polling control");
     server.handle.join().unwrap();
 
@@ -2887,7 +2887,7 @@ fn polling_result_404_is_terminal_protocol_error_without_retry() {
             body: r#"{"success":false,"error":"token=SECRET-BODY-TOKEN"}"#,
         },
     ]);
-    let error = run_polling_agent_against_scripted_server(&server, false)
+    let error = run_polling_runner_against_scripted_server(&server, false)
         .expect_err("missing result endpoint must stop the polling agent");
     server.handle.join().unwrap();
 
@@ -2915,7 +2915,7 @@ fn polling_result_success_submits_once_and_continues() {
         },
         ScriptStep::PollEmpty,
     ]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("script completion should shut the polling runner down cleanly");
     server.handle.join().unwrap();
 
@@ -3133,8 +3133,8 @@ fn transport_error_classification_separates_transient_and_fatal() {
     assert!(!transient.is_fatal(), "{transient}");
 
     let proxy_network =
-        AgentTransportError::transient("websocket connect failed: proxy TCP connect failed");
-    assert!(matches!(proxy_network, AgentTransportError::Transient(_)));
+        RunnerTransportError::transient("websocket connect failed: proxy TCP connect failed");
+    assert!(matches!(proxy_network, RunnerTransportError::Transient(_)));
 
     let fatal = classify_session_error("register rejected by server: unauthorized");
     assert!(fatal.is_fatal(), "{fatal}");
@@ -3163,7 +3163,7 @@ fn stream_supervisor_once_semantics_are_explicit_and_shared() {
                 mode,
                 transport,
                 true,
-                Ok(AgentSessionExit::TransportDisconnected)
+                Ok(RunnerSessionExit::TransportDisconnected)
             ),
             StreamSessionDecision::Complete { shutdown: false },
             "{mode:?} {transport:?} must stop after a completed once session"
@@ -3189,7 +3189,7 @@ fn stream_supervisor_once_semantics_are_explicit_and_shared() {
             true,
             Err(classify_session_error("connection refused")),
         ),
-        StreamSessionDecision::TryNext(AgentTransportError::Transient(error))
+        StreamSessionDecision::TryNext(RunnerTransportError::Transient(error))
             if error == "connection refused"
     ));
     assert!(matches!(
@@ -3211,7 +3211,7 @@ fn stream_supervisor_reconnect_and_auto_fallback_semantics_are_shared() {
                 StreamSupervisorMode::Strict(transport),
                 transport,
                 false,
-                Ok(AgentSessionExit::TransportDisconnected),
+                Ok(RunnerSessionExit::TransportDisconnected),
             ),
             StreamSessionDecision::Reconnect(None)
         ));
@@ -3222,7 +3222,7 @@ fn stream_supervisor_reconnect_and_auto_fallback_semantics_are_shared() {
                 false,
                 Err(classify_session_error("connection refused")),
             ),
-            StreamSessionDecision::Reconnect(Some(AgentTransportError::Transient(error)))
+            StreamSessionDecision::Reconnect(Some(RunnerTransportError::Transient(error)))
                 if error == "connection refused"
         ));
         assert!(matches!(
@@ -3230,7 +3230,7 @@ fn stream_supervisor_reconnect_and_auto_fallback_semantics_are_shared() {
                 StreamSupervisorMode::Auto,
                 transport,
                 false,
-                Ok(AgentSessionExit::TransportDisconnected),
+                Ok(RunnerSessionExit::TransportDisconnected),
             ),
             StreamSessionDecision::Reconnect(None)
         ));
@@ -3241,7 +3241,7 @@ fn stream_supervisor_reconnect_and_auto_fallback_semantics_are_shared() {
                 false,
                 Err(classify_session_error("connection refused")),
             ),
-            StreamSessionDecision::TryNext(AgentTransportError::Transient(error))
+            StreamSessionDecision::TryNext(RunnerTransportError::Transient(error))
                 if error == "connection refused"
         ));
         assert!(matches!(
@@ -3293,11 +3293,11 @@ fn websocket_proxy_configuration_errors_are_mode_sensitive() {
             false,
             Err(unsupported),
         ),
-        StreamSessionDecision::TryNext(AgentTransportError::ProxyConfiguration(error))
+        StreamSessionDecision::TryNext(RunnerTransportError::ProxyConfiguration(error))
             if error.contains("proxy scheme is unsupported")
     ));
 
-    let proxy_auth_required = AgentTransportError::proxy_configuration(
+    let proxy_auth_required = RunnerTransportError::proxy_configuration(
         "websocket connect failed: proxy CONNECT returned HTTP 407",
     );
     assert!(matches!(
@@ -3310,7 +3310,7 @@ fn websocket_proxy_configuration_errors_are_mode_sensitive() {
         StreamSessionDecision::Fatal(error) if error.contains("HTTP 407")
     ));
 
-    let proxy_auth_required = AgentTransportError::proxy_configuration(
+    let proxy_auth_required = RunnerTransportError::proxy_configuration(
         "websocket connect failed: proxy CONNECT returned HTTP 407",
     );
     assert!(matches!(
@@ -3320,12 +3320,12 @@ fn websocket_proxy_configuration_errors_are_mode_sensitive() {
             false,
             Err(proxy_auth_required),
         ),
-        StreamSessionDecision::TryNext(AgentTransportError::ProxyConfiguration(error))
+        StreamSessionDecision::TryNext(RunnerTransportError::ProxyConfiguration(error))
             if error.contains("HTTP 407")
     ));
 
     let network =
-        AgentTransportError::transient("websocket connect failed: proxy TCP connect failed");
+        RunnerTransportError::transient("websocket connect failed: proxy TCP connect failed");
     assert!(matches!(
         decide_stream_session(
             StreamSupervisorMode::Strict(StreamTransport::WebSocket),
@@ -3333,7 +3333,7 @@ fn websocket_proxy_configuration_errors_are_mode_sensitive() {
             false,
             Err(network),
         ),
-        StreamSessionDecision::Reconnect(Some(AgentTransportError::Transient(error)))
+        StreamSessionDecision::Reconnect(Some(RunnerTransportError::Transient(error)))
             if error.contains("proxy TCP connect failed")
     ));
 }
@@ -3365,7 +3365,7 @@ fn auto_log_lines_are_concise_and_redacted() {
 #[test]
 fn registered_log_includes_actual_transport_without_url_query_or_token() {
     let token = "DO_NOT_LEAK_THIS_TOKEN";
-    let mut cfg = test_agent_config(format!(
+    let mut cfg = test_runner_config(format!(
         "https://webcodex.example.test/agent/path?token={}",
         token
     ));
@@ -3391,13 +3391,13 @@ fn auto_websocket_failure_falls_back_to_polling() {
     let (server_url, poll_count, server) =
         start_auto_fallback_http_server("502 Bad Gateway", "text/html", "<html>bad gateway</html>");
     let tmp = tempfile::tempdir().unwrap();
-    let mut cfg = test_agent_config(server_url);
+    let mut cfg = test_runner_config(server_url);
     cfg.transport = Some(TRANSPORT_AUTO.to_string());
     cfg.projects_dir = Some(tmp.path().join("projects.d"));
     cfg.websocket_connect_timeout_secs = 1;
 
     let runtime = test_runtime(&cfg);
-    let err = run_auto_agent(cfg, false, "inst-auto-fallback", &runtime)
+    let err = run_auto_runner(cfg, false, "inst-auto-fallback", &runtime)
         .expect_err("terminal polling 404 should stop after recovering the first 502");
     server.join().unwrap();
     assert_eq!(poll_count.load(Ordering::SeqCst), 2);
@@ -3410,7 +3410,7 @@ fn auto_websocket_failure_falls_back_to_polling() {
 #[test]
 fn polling_502_html_is_transient_and_sanitized() {
     let nginx_html = "<html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx/1.31.1</center>\n</body>\n</html>";
-    let error = AgentHttpError::status(
+    let error = RunnerHttpError::status(
         "/api/shell/agent/poll",
         reqwest::StatusCode::BAD_GATEWAY,
         nginx_html,
@@ -3444,7 +3444,7 @@ fn polling_503_and_504_are_transient_server_unavailable() {
             "server unavailable while polling /api/shell/agent/poll: HTTP 504 Gateway Timeout",
         ),
     ] {
-        let error = AgentHttpError::status("/api/shell/agent/poll", status, "proxy unavailable");
+        let error = RunnerHttpError::status("/api/shell/agent/poll", status, "proxy unavailable");
         let poll_error = crate::PollError::from_http(error, "oe");
         assert_eq!(
             poll_error.recovery_action(),
@@ -3468,7 +3468,7 @@ fn polling_401_and_403_are_terminal_auth_errors() {
                 "authentication failed while polling /api/shell/agent/poll: HTTP 403 Forbidden; check agent token/config",
             ),
         ] {
-            let (result, poll_count) = run_polling_agent_against_server(
+            let (result, poll_count) = run_polling_runner_against_server(
                 status,
                 "application/json",
                 r#"{"error":"unauthorized"}"#,
@@ -3484,7 +3484,7 @@ fn polling_401_and_403_are_terminal_auth_errors() {
 
 #[test]
 fn polling_idle_empty_response_remains_successful_once() {
-    let (result, poll_count) = run_polling_agent_against_server(
+    let (result, poll_count) = run_polling_runner_against_server(
         "200 OK",
         "application/json",
         r#"{"success":true,"request":null,"error":null}"#,
@@ -3498,7 +3498,7 @@ fn polling_idle_empty_response_remains_successful_once() {
 #[test]
 fn polling_register_sends_projects_and_ordinary_poll_omits_them() {
     let server = start_scripted_agent_server(vec![ScriptStep::Register, ScriptStep::PollEmpty]);
-    run_polling_agent_against_scripted_server(&server, false)
+    run_polling_runner_against_scripted_server(&server, false)
         .expect("empty polling turn should stop cleanly with scripted shutdown");
     server.handle.join().unwrap();
 
@@ -3823,10 +3823,10 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
         let project_root = temp.path().join("projects");
         write_synthetic_project_configs(&projects_dir, &project_root, 100);
 
-        let mut cfg = test_agent_config("http://127.0.0.1:1".to_string());
+        let mut cfg = test_runner_config("http://127.0.0.1:1".to_string());
         cfg.projects_dir = Some(projects_dir.clone());
         let runtime = test_runtime(&cfg);
-        let mut initial_cache = AgentProjectCache::default();
+        let mut initial_cache = RunnerProjectCache::default();
         let initial_projects = runtime.project_summaries(&mut initial_cache, &cfg);
         assert_eq!(initial_projects.len(), 100);
 
@@ -3984,7 +3984,7 @@ async fn streaming_delayed_success_ack_does_not_discard_current_sync() {
         let generation_a = sync_a.generation().to_string();
         let mut coordinator = StreamingProjectInventoryCoordinator::new(Some(sync_a));
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let cfg = test_agent_config("http://127.0.0.1:1".to_string());
+        let cfg = test_runner_config("http://127.0.0.1:1".to_string());
         let runtime = test_runtime(&cfg);
 
         coordinator.queue_pending(transport, &tx);
@@ -4094,7 +4094,7 @@ async fn streaming_delayed_success_ack_does_not_discard_current_sync() {
 #[tokio::test]
 async fn streaming_permanent_inventory_error_does_not_fresh_resnapshot() {
     for transport in [StreamTransport::WebSocket, StreamTransport::Quic] {
-        let cfg = test_agent_config("http://127.0.0.1:1".to_string());
+        let cfg = test_runner_config("http://127.0.0.1:1".to_string());
         let runtime = test_runtime(&cfg);
         let sync = ProjectInventorySync::new(
             (0..65)
@@ -4220,10 +4220,10 @@ fn polling_once_startup_with_100_projects_registers_liveness_then_completes_page
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let mut cfg = polling_agent_config(server.server_url.clone(), projects_dir);
+    let mut cfg = polling_runner_config(server.server_url.clone(), projects_dir);
     cfg.policy.allowed_roots = vec![temp.path().to_path_buf()];
     let runtime = test_runtime(&cfg);
-    let result = run_polling_agent_with_shutdown(
+    let result = run_polling_runner_with_shutdown(
         cfg,
         true,
         "inst-project-inventory",
@@ -4284,10 +4284,10 @@ fn polling_startup_with_65_projects_stays_online_against_old_server_without_new_
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let mut cfg = polling_agent_config(server.server_url.clone(), projects_dir);
+    let mut cfg = polling_runner_config(server.server_url.clone(), projects_dir);
     cfg.policy.allowed_roots = vec![temp.path().to_path_buf()];
     let runtime = test_runtime(&cfg);
-    let result = run_polling_agent_with_shutdown(
+    let result = run_polling_runner_with_shutdown(
         cfg,
         false,
         "inst-old-server-project-inventory",
@@ -4305,12 +4305,12 @@ fn polling_startup_with_65_projects_stays_online_against_old_server_without_new_
 #[test]
 fn polling_project_refresh_is_periodic_and_invalidation_is_immediate() {
     let temp = tempfile::tempdir().unwrap();
-    let cfg = polling_agent_config(
+    let cfg = polling_runner_config(
         "http://127.0.0.1:1".to_string(),
         temp.path().join("projects.d"),
     );
     let shutdown = AtomicBool::new(false);
-    let mut project_cache = AgentProjectCache::default();
+    let mut project_cache = RunnerProjectCache::default();
     let start = Instant::now();
     let _ = project_cache.get_with_shutdown(&cfg, Some(&shutdown));
     let mut refresh = PollingProjectRefresh::new(start);
@@ -4492,7 +4492,7 @@ fn websocket_proxy_invalid_configuration_is_sanitized() {
     let error =
         websocket_proxy_from_env_with("ws://server.test/ws", |name| values.get(name).cloned())
             .expect_err("credentialed proxy URL is intentionally unsupported");
-    assert!(matches!(error, AgentTransportError::ProxyConfiguration(_)));
+    assert!(matches!(error, RunnerTransportError::ProxyConfiguration(_)));
     let error = error.to_string();
     assert!(
         error.contains("proxy authentication is unsupported"),
@@ -4620,7 +4620,7 @@ async fn websocket_proxy_ipv6_target_connect_authority_has_single_brackets() {
 
     assert!(connect.starts_with("CONNECT [2001:db8::1]:443 HTTP/1.1"));
     assert!(
-        matches!(error, AgentTransportError::Transient(_)),
+        matches!(error, RunnerTransportError::Transient(_)),
         "{error}"
     );
 }
@@ -4691,7 +4691,7 @@ async fn websocket_proxy_network_failure_remains_transient() {
         .expect_err("closed proxy connection must fail");
     peer.await.unwrap();
     assert!(
-        matches!(error, AgentTransportError::Transient(_)),
+        matches!(error, RunnerTransportError::Transient(_)),
         "{error}"
     );
 }
@@ -4731,7 +4731,7 @@ async fn websocket_proxy_connect_rejects_non_success_without_leaking_secrets() {
     .expect_err("non-2xx CONNECT status must fail");
     proxy.await.unwrap();
     assert!(
-        matches!(&error, AgentTransportError::ProxyConfiguration(_)),
+        matches!(&error, RunnerTransportError::ProxyConfiguration(_)),
         "{error}"
     );
     let error = error.to_string();
@@ -4873,7 +4873,7 @@ async fn quic_graceful_close_waits_for_peer_within_remaining_budget() {
 #[tokio::test]
 async fn streaming_writer_failure_terminates_pending_reader_for_ws_and_quic() {
     for transport in [StreamTransport::WebSocket, StreamTransport::Quic] {
-        let cfg = test_agent_config("http://127.0.0.1:9".to_string());
+        let cfg = test_runner_config("http://127.0.0.1:9".to_string());
         let runtime = test_runtime(&cfg);
         let registered_jobs = ShellJobInventory::default();
         let (out_tx, _out_rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
@@ -4900,7 +4900,7 @@ async fn streaming_writer_failure_terminates_pending_reader_for_ws_and_quic() {
         .expect("writer failure is a transport disconnect, not a session error");
         assert_eq!(
             exit,
-            AgentSessionExit::TransportDisconnected,
+            RunnerSessionExit::TransportDisconnected,
             "{transport:?}"
         );
     }
@@ -4908,7 +4908,7 @@ async fn streaming_writer_failure_terminates_pending_reader_for_ws_and_quic() {
 
 #[tokio::test]
 async fn streaming_graceful_writer_completion_is_not_a_failure_signal() {
-    let cfg = test_agent_config("http://127.0.0.1:9".to_string());
+    let cfg = test_runner_config("http://127.0.0.1:9".to_string());
     let runtime = test_runtime(&cfg);
     let registered_jobs = ShellJobInventory::default();
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
@@ -4936,7 +4936,7 @@ async fn streaming_graceful_writer_completion_is_not_a_failure_signal() {
     )
     .await
     .expect("graceful shutdown must not be classified as writer failure");
-    assert_eq!(exit, AgentSessionExit::Shutdown);
+    assert_eq!(exit, RunnerSessionExit::Shutdown);
 }
 
 #[tokio::test]
@@ -4961,7 +4961,7 @@ async fn websocket_close_returns_transport_disconnect_not_shutdown() {
         }
     });
 
-    let cfg = test_agent_config(format!("http://{}", addr));
+    let cfg = test_runner_config(format!("http://{}", addr));
     let exit = tokio::time::timeout(
         Duration::from_secs(5),
         websocket_session(
@@ -4975,8 +4975,8 @@ async fn websocket_close_returns_transport_disconnect_not_shutdown() {
     .expect("session completed")
     .expect("session should not error");
 
-    assert_eq!(exit, AgentSessionExit::TransportDisconnected);
-    assert_ne!(exit, AgentSessionExit::Shutdown);
+    assert_eq!(exit, RunnerSessionExit::TransportDisconnected);
+    assert_ne!(exit, RunnerSessionExit::Shutdown);
     server.await.unwrap();
 }
 
@@ -5019,7 +5019,7 @@ async fn websocket_disconnect_with_active_job_returns_without_waiting_for_job() 
         ws.send(WsMessage::Close(None)).await.unwrap();
     });
 
-    let cfg = test_agent_config(format!("http://{}", addr));
+    let cfg = test_runner_config(format!("http://{}", addr));
     let started = Instant::now();
     let exit = tokio::time::timeout(
         Duration::from_millis(900),
@@ -5034,7 +5034,7 @@ async fn websocket_disconnect_with_active_job_returns_without_waiting_for_job() 
     .expect("session must return promptly after disconnect despite active job")
     .expect("session should not error");
 
-    assert_eq!(exit, AgentSessionExit::TransportDisconnected);
+    assert_eq!(exit, RunnerSessionExit::TransportDisconnected);
     assert!(
         started.elapsed() < Duration::from_millis(900),
         "session waited for the active job instead of reconnecting"
@@ -5053,7 +5053,7 @@ async fn websocket_register_rejected_is_fatal() {
         send_register_rejected_ack(&mut ws).await;
     });
 
-    let cfg = test_agent_config(format!("http://{}", addr));
+    let cfg = test_runner_config(format!("http://{}", addr));
     let error = websocket_session(
         &cfg,
         vec![test_project("reject-test")],
@@ -5081,11 +5081,11 @@ async fn strict_websocket_transient_connect_failure_reconnects() {
         send_register_rejected_ack(&mut ws).await;
     });
 
-    let cfg = test_agent_config(format!("http://{}", addr));
+    let cfg = test_runner_config(format!("http://{}", addr));
     let runtime = test_runtime(&cfg);
     let started = Instant::now();
     let runner = tokio::task::spawn_blocking(move || {
-        run_websocket_agent(cfg, false, "inst-retry", &runtime)
+        run_websocket_runner(cfg, false, "inst-retry", &runtime)
     });
     let error = tokio::time::timeout(Duration::from_secs(5), runner)
         .await
@@ -5119,11 +5119,11 @@ async fn strict_websocket_once_stops_after_first_registered_disconnect() {
         );
     });
 
-    let cfg = test_agent_config(format!("http://{}", addr));
+    let cfg = test_runner_config(format!("http://{}", addr));
     let runtime = test_runtime(&cfg);
     tokio::time::timeout(
         Duration::from_secs(5),
-        tokio::task::spawn_blocking(move || run_websocket_agent(cfg, true, "inst-once", &runtime)),
+        tokio::task::spawn_blocking(move || run_websocket_runner(cfg, true, "inst-once", &runtime)),
     )
     .await
     .expect("websocket --once did not stop after the first disconnect")
@@ -5143,11 +5143,11 @@ async fn auto_websocket_register_rejected_is_fatal_without_polling_fallback() {
         send_register_rejected_ack(&mut ws).await;
     });
 
-    let mut cfg = test_agent_config(format!("http://{}", addr));
+    let mut cfg = test_runner_config(format!("http://{}", addr));
     cfg.transport = Some(TRANSPORT_AUTO.to_string());
     let runtime = test_runtime(&cfg);
     let runner = tokio::task::spawn_blocking(move || {
-        run_auto_agent(cfg, false, "inst-auto-reject", &runtime)
+        run_auto_runner(cfg, false, "inst-auto-reject", &runtime)
     });
     let error = tokio::time::timeout(Duration::from_secs(5), runner)
         .await
@@ -5175,7 +5175,7 @@ async fn websocket_disconnect_loop_reregisters_client_projects_and_capabilities(
         }
     });
 
-    let cfg = test_agent_config(format!("http://{}", addr));
+    let cfg = test_runner_config(format!("http://{}", addr));
     let projects = vec![test_project("repo-one")];
     for instance in ["inst-reconnect", "inst-reconnect"] {
         let exit = tokio::time::timeout(
@@ -5185,7 +5185,7 @@ async fn websocket_disconnect_loop_reregisters_client_projects_and_capabilities(
         .await
         .expect("session completed")
         .expect("session should not error");
-        assert_eq!(exit, AgentSessionExit::TransportDisconnected);
+        assert_eq!(exit, RunnerSessionExit::TransportDisconnected);
     }
 
     let first = reg_rx.recv().await.expect("first register");
@@ -5227,12 +5227,12 @@ async fn websocket_reconnect_backoff_is_interrupted_by_process_shutdown() {
         closed_tx.send(()).unwrap();
     });
 
-    let cfg = test_agent_config(format!("http://{}", addr));
+    let cfg = test_runner_config(format!("http://{}", addr));
     let runtime =
-        AgentRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
+        RunnerRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
     let runner_runtime = runtime.clone();
     let runner = tokio::task::spawn_blocking(move || {
-        run_websocket_agent(cfg, false, "inst-backoff-shutdown", &runner_runtime)
+        run_websocket_runner(cfg, false, "inst-backoff-shutdown", &runner_runtime)
     });
     closed_rx.await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -5253,7 +5253,7 @@ async fn websocket_reconnect_backoff_is_interrupted_by_process_shutdown() {
 
 #[test]
 fn quic_connect_or_reconnect_wait_is_interrupted_by_process_shutdown() {
-    let mut cfg = test_agent_config("https://localhost".to_string());
+    let mut cfg = test_runner_config("https://localhost".to_string());
     cfg.transport = Some(TRANSPORT_QUIC.to_string());
     cfg.quic = Some(QuicClientConfig {
         server_addr: "127.0.0.1:9".to_string(),
@@ -5263,14 +5263,14 @@ fn quic_connect_or_reconnect_wait_is_interrupted_by_process_shutdown() {
         keepalive_interval_secs: 20,
     });
     let runtime =
-        AgentRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
+        RunnerRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
     let trigger_runtime = runtime.clone();
     let trigger = thread::spawn(move || {
         thread::sleep(Duration::from_millis(75));
         trigger_runtime.request_shutdown_signal();
     });
     let started = Instant::now();
-    run_quic_agent(cfg, false, "inst-quic-shutdown", &runtime)
+    run_quic_runner(cfg, false, "inst-quic-shutdown", &runtime)
         .expect("QUIC process shutdown should be a normal exit");
     trigger.join().unwrap();
     assert!(
@@ -5319,7 +5319,7 @@ async fn websocket_process_shutdown_exits_gracefully() {
         }
     });
 
-    let cfg = test_agent_config(format!("http://{}", addr));
+    let cfg = test_runner_config(format!("http://{}", addr));
     let runtime = test_runtime(&cfg);
     let session_runtime = runtime.clone();
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
@@ -5343,7 +5343,7 @@ async fn websocket_process_shutdown_exits_gracefully() {
         .expect("shutdown completed")
         .unwrap()
         .expect("session should not error");
-    assert_eq!(exit, AgentSessionExit::Shutdown);
+    assert_eq!(exit, RunnerSessionExit::Shutdown);
     assert_eq!(
         goodbye_rx.await.unwrap().as_deref(),
         Some("process shutdown")

@@ -68,7 +68,7 @@ export WEBCODEX_JOB_RECOVERY_GRACE_SECS="${WEBCODEX_JOB_RECOVERY_GRACE_SECS:-10}
 PASS=0
 FAIL=0
 SERVER_PID=""
-AGENT_PID=""
+RUNNER_PID=""
 TMP_ROOT=""
 COOKIE_JAR=""
 START_EPOCH=$(date +%s)
@@ -165,13 +165,13 @@ assert_ne() {
 
 cleanup() {
     trap - INT TERM EXIT
-    for pid in "${AGENT_PID:-}" "${SERVER_PID:-}"; do
+    for pid in "${RUNNER_PID:-}" "${SERVER_PID:-}"; do
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             kill "$pid" 2>/dev/null || true
         fi
     done
     sleep 1
-    for pid in "${AGENT_PID:-}" "${SERVER_PID:-}"; do
+    for pid in "${RUNNER_PID:-}" "${SERVER_PID:-}"; do
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             kill -9 "$pid" 2>/dev/null || true
         fi
@@ -192,8 +192,8 @@ dump_logs() {
         sed -E 's/(Bearer )[^ ]*/\1<redacted>/g' "$SERVER_LOG" | tail -n 60 >&2
     fi
     log "---- agent log (last 60 lines) ----"
-    if [ -f "$AGENT_LOG" ]; then
-        sed -E 's/(Bearer )[^ ]*/\1<redacted>/g' "$AGENT_LOG" | tail -n 60 >&2
+    if [ -f "$RUNNER_LOG" ]; then
+        sed -E 's/(Bearer )[^ ]*/\1<redacted>/g' "$RUNNER_LOG" | tail -n 60 >&2
     fi
 }
 
@@ -205,7 +205,7 @@ fi
 log "building webcodex + webcodex-runner (debug profile)"
 "$CARGO_BIN" build --quiet -p webcodex -p webcodex-runner --bins
 SERVER_BIN="$PROJECT_DIR/target/debug/webcodex-server"
-AGENT_BIN="$PROJECT_DIR/target/debug/webcodex-runner"
+RUNNER_BIN="$PROJECT_DIR/target/debug/webcodex-runner"
 
 PORT="${E2E_PORT:-$(find_free_port)}"
 TMP_ROOT="$(mktemp -d -t webcodex-jobfail-e2e-XXXXXX)"
@@ -217,7 +217,7 @@ AGENT_TOML="$TMP_ROOT/agent.toml"
 LEGACY_AGENT_TOML="$TMP_ROOT/legacy-agent.toml"
 TEST_REPO="$TMP_ROOT/jobfail-repo"
 SERVER_LOG="$TMP_ROOT/server.log"
-AGENT_LOG="$TMP_ROOT/agent.log"
+RUNNER_LOG="$TMP_ROOT/agent.log"
 mkdir -p "$DATA_DIR" "$PROJECTS_DIR" "$TEST_REPO"
 log "temp root: $TMP_ROOT (port $PORT, grace ${WEBCODEX_JOB_RECOVERY_GRACE_SECS}s)"
 
@@ -276,19 +276,19 @@ start_server() {
     SERVER_PID=$!
 }
 
-start_agent() {
+start_runner() {
     local cfg="${1:-$AGENT_TOML}"
-    "$AGENT_BIN" --config "$cfg" >>"$AGENT_LOG" 2>&1 &
-    AGENT_PID=$!
+    "$RUNNER_BIN" --config "$cfg" >>"$RUNNER_LOG" 2>&1 &
+    RUNNER_PID=$!
 }
 
-stop_agent() {
-    if [ -n "${AGENT_PID:-}" ] && kill -0 "$AGENT_PID" 2>/dev/null; then
-        kill "$AGENT_PID" 2>/dev/null || true
+stop_runner() {
+    if [ -n "${RUNNER_PID:-}" ] && kill -0 "$RUNNER_PID" 2>/dev/null; then
+        kill "$RUNNER_PID" 2>/dev/null || true
         sleep 1
-        kill -9 "$AGENT_PID" 2>/dev/null || true
+        kill -9 "$RUNNER_PID" 2>/dev/null || true
     fi
-    AGENT_PID=""
+    RUNNER_PID=""
 }
 
 stop_server() {
@@ -407,7 +407,7 @@ C_COMMAND="printf 'C-START\\n' >> '$C_MARKER_FILE'; printf 'C-START\\n'; i=0; wh
 
 start_server
 wait_for_server || { fail "C: server did not listen"; dump_logs; exit 1; }
-start_agent
+start_runner
 BODY="$(wait_for_agent_online)" || { fail "C: runner did not register"; dump_logs; exit 1; }
 pass "C: server + runner online"
 wait_for_reconciliation_capability >/dev/null || { fail "C: runner missing reconciliation capability"; dump_logs; exit 1; }
@@ -420,7 +420,7 @@ wait_for_job_status "$JOB_ID_C" running >/dev/null || { fail "C: job did not rea
 pass "C: job is running"
 
 log "C: killing RUNNER only (server stays up)"
-stop_agent
+stop_runner
 pass "C: runner stopped"
 
 # The job enters `recovering` (reconciliation-capable runner disconnect).
@@ -486,7 +486,7 @@ log "scenario C complete"
 # Scenario D — New runner instance replaces the old instance
 # ============================================================================
 log "scenario D: instance B replaces instance A"
-: >"$SERVER_LOG"; : >"$AGENT_LOG"
+: >"$SERVER_LOG"; : >"$RUNNER_LOG"
 D_MARKER_FILE="$TEST_REPO/scenario-d-count.txt"
 : >"$D_MARKER_FILE"
 D_STOP_FLAG="$TEST_REPO/scenario-d-stop.flag"
@@ -499,7 +499,7 @@ write_agent_toml "$TMP_ROOT/agent-b.toml" "$INSTANCE_B"
 
 start_server
 wait_for_server || { fail "D: server did not listen"; dump_logs; exit 1; }
-start_agent "$TMP_ROOT/agent-a.toml"
+start_runner "$TMP_ROOT/agent-a.toml"
 wait_for_agent_online >/dev/null || { fail "D: runner A did not register"; dump_logs; exit 1; }
 pass "D: instance A online"
 
@@ -513,7 +513,7 @@ pass "D: A's job is running"
 # (CLIENT_ONLINE_WINDOW_SECS) so a same-client different-instance register is
 # accepted and triggers instance replacement fencing on A's job.
 log "D: terminating A and waiting for its lease to lapse"
-stop_agent
+stop_runner
 ONLINE_DEADLINE=$(( $(date +%s) + 75 ))
 ONLINE_LAPSED=0
 for _ in $(seq 1 80); do
@@ -530,7 +530,7 @@ if [ "$ONLINE_LAPSED" != "1" ]; then
 fi
 pass "D: A's lease lapsed"
 # Register B with the same client_id and a new instance id.
-start_agent "$TMP_ROOT/agent-b.toml"
+start_runner "$TMP_ROOT/agent-b.toml"
 wait_for_agent_online >/dev/null || { fail "D: runner B did not register"; dump_logs; exit 1; }
 pass "D: instance B online"
 
@@ -558,7 +558,7 @@ D2_START_COUNT="$(grep -c 'D-START' "$D_MARKER_FILE" || true)"
 assert_eq "D: A's command executed once" "$D2_START_COUNT" "1"
 
 stop_server
-stop_agent
+stop_runner
 log "scenario D complete"
 
 # ============================================================================
@@ -576,7 +576,7 @@ log "scenario D complete"
 # legacy transport disconnects, without entering `recovering`.
 # ============================================================================
 log "scenario E: legacy runner disconnect -> deterministic lost"
-: >"$SERVER_LOG"; : >"$AGENT_LOG"
+: >"$SERVER_LOG"; : >"$RUNNER_LOG"
 E_MARKER_FILE="$TEST_REPO/scenario-e-count.txt"
 : >"$E_MARKER_FILE"
 E_COMMAND="printf 'E-START\\n' >> '$E_MARKER_FILE'; sleep 300"
@@ -585,7 +585,7 @@ E_COMMAND="printf 'E-START\\n' >> '$E_MARKER_FILE'; sleep 300"
 write_agent_toml "$LEGACY_AGENT_TOML"
 start_server
 wait_for_server || { fail "E: server did not listen"; dump_logs; exit 1; }
-WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_agent "$LEGACY_AGENT_TOML"
+WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_runner "$LEGACY_AGENT_TOML"
 wait_for_agent_online >/dev/null || { fail "E: legacy runner did not register"; dump_logs; exit 1; }
 pass "E: legacy runner registered without job_state_reconciliation"
 
@@ -611,7 +611,7 @@ assert_ne "E: legacy job did not enter recovering" "$(json_get "$BODY_QUEUED" ou
 pass "E: legacy job dispatched without entering recovering"
 
 log "E: killing legacy runner"
-stop_agent
+stop_runner
 # Legacy disconnect goes straight to lost (no recovering grace, no snapshot).
 E_LOST_BODY="$(wait_for_job_status "$JOB_ID_E" lost)"
 assert_eq "E: legacy job is lost" "$(json_get "$E_LOST_BODY" output.status)" "lost"
@@ -636,21 +636,21 @@ assert_eq "E: command executed once (no re-execution)" "$E_START_COUNT" "1"
 # A same-client new legacy instance cannot take over the old job (it has no
 # durable record after the restart, and the new instance submits no inventory
 # for it).
-WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_agent "$LEGACY_AGENT_TOML"
+WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_runner "$LEGACY_AGENT_TOML"
 wait_for_agent_online >/dev/null || { fail "E: second legacy runner did not register"; dump_logs; exit 1; }
 sleep 2
 BODY_E3="$(job_status_call "$JOB_ID_E")"
 assert_eq "E: old job not revived by new same-client instance" "$(json_get "$BODY_E3" output.status)" ""
 
 stop_server
-stop_agent
+stop_runner
 log "scenario E complete"
 
 # ============================================================================
 # Scenario F — Repeated server restart (3x) keeps the same job_id
 # ============================================================================
 log "scenario F: repeated server restart keeps same job_id"
-: >"$SERVER_LOG"; : >"$AGENT_LOG"
+: >"$SERVER_LOG"; : >"$RUNNER_LOG"
 F_MARKER_FILE="$TEST_REPO/scenario-f-count.txt"
 : >"$F_MARKER_FILE"
 F_STOP_FLAG="$TEST_REPO/scenario-f-stop.flag"
@@ -658,7 +658,7 @@ F_COMMAND="printf 'F-START\\n' >> '$F_MARKER_FILE'; printf 'F-START\\n'; i=0; wh
 
 start_server
 wait_for_server || { fail "F: server did not listen"; dump_logs; exit 1; }
-start_agent
+start_runner
 wait_for_agent_online >/dev/null || { fail "F: runner did not register"; dump_logs; exit 1; }
 wait_for_reconciliation_capability >/dev/null || { fail "F: runner missing reconciliation capability"; dump_logs; exit 1; }
 pass "F: server + runner online"
@@ -672,9 +672,9 @@ LOG_BODY_F="$(job_log_call "$JOB_ID_F")"
 F_SEQ_1="$(json_get "$LOG_BODY_F" output.last_update_seq)"
 F_CURSOR_1="$(json_get "$LOG_BODY_F" output.cursor.stdout)"
 
-restart_keep_agent() {
+restart_keep_runner() {
     stop_server
-    if ! kill -0 "$AGENT_PID" 2>/dev/null; then
+    if ! kill -0 "$RUNNER_PID" 2>/dev/null; then
         fail "F: runner died with the server"; dump_logs; exit 1
     fi
     start_server
@@ -684,7 +684,7 @@ restart_keep_agent() {
 
 # Restart 1.
 log "F: restart #1"
-restart_keep_agent
+restart_keep_runner
 pass "F: runner stayed alive across restart #1"
 RECON1="$(wait_for_job_status "$JOB_ID_F" running stop_requested)"
 assert_ne "F: not lost after restart #1" "$(json_get "$RECON1" output.status)" "lost"
@@ -705,7 +705,7 @@ fi
 
 # Restart 2.
 log "F: restart #2"
-restart_keep_agent
+restart_keep_runner
 pass "F: runner stayed alive across restart #2"
 RECON2="$(wait_for_job_status "$JOB_ID_F" running stop_requested)"
 assert_ne "F: not lost after restart #2" "$(json_get "$RECON2" output.status)" "lost"
@@ -738,7 +738,7 @@ F_END_AT="$(json_get "$STATUS_STOP" output.ended_at)"
 assert_nonempty "F: stopped job ended_at set" "$F_END_AT"
 
 log "F: restart #3 (terminal job)"
-restart_keep_agent
+restart_keep_runner
 # Terminal `stopped` survives the third restart; terminal inventory replay
 # does not rewrite ended_at.
 RECON3="$(wait_for_job_status "$JOB_ID_F" stopped)"
@@ -758,7 +758,7 @@ PY
 assert_eq "F: exactly one list record" "$F_LIST_COUNT" "1"
 
 stop_server
-stop_agent
+stop_runner
 log "scenario F complete"
 
 # ----------------------------------------------------------------------------

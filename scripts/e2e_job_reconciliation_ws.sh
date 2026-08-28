@@ -68,7 +68,7 @@ RUNTIME_PROJECT_ID="agent:${CLIENT_ID}:${PROJECT_ID}"
 PASS=0
 FAIL=0
 SERVER_PID=""
-AGENT_PID=""
+RUNNER_PID=""
 TMP_ROOT=""
 COOKIE_JAR=""
 START_EPOCH=$(date +%s)
@@ -165,13 +165,13 @@ assert_ne() {
 
 cleanup() {
     trap - INT TERM EXIT
-    for pid in "${AGENT_PID:-}" "${SERVER_PID:-}"; do
+    for pid in "${RUNNER_PID:-}" "${SERVER_PID:-}"; do
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             kill "$pid" 2>/dev/null || true
         fi
     done
     sleep 1
-    for pid in "${AGENT_PID:-}" "${SERVER_PID:-}"; do
+    for pid in "${RUNNER_PID:-}" "${SERVER_PID:-}"; do
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             kill -9 "$pid" 2>/dev/null || true
         fi
@@ -194,8 +194,8 @@ dump_logs() {
         sed -E 's/(Bearer )[^ ]*/\1<redacted>/g' "$SERVER_LOG" | tail -n 60 >&2
     fi
     log "---- agent log (last 60 lines) ----"
-    if [ -f "$AGENT_LOG" ]; then
-        sed -E 's/(Bearer )[^ ]*/\1<redacted>/g' "$AGENT_LOG" | tail -n 60 >&2
+    if [ -f "$RUNNER_LOG" ]; then
+        sed -E 's/(Bearer )[^ ]*/\1<redacted>/g' "$RUNNER_LOG" | tail -n 60 >&2
     fi
 }
 
@@ -208,7 +208,7 @@ fi
 log "building webcodex + webcodex-runner (debug profile)"
 "$CARGO_BIN" build --quiet -p webcodex -p webcodex-runner --bins
 SERVER_BIN="$PROJECT_DIR/target/debug/webcodex-server"
-AGENT_BIN="$PROJECT_DIR/target/debug/webcodex-runner"
+RUNNER_BIN="$PROJECT_DIR/target/debug/webcodex-runner"
 
 PORT="${E2E_PORT:-$(find_free_port)}"
 TMP_ROOT="$(mktemp -d -t webcodex-jobrecon-e2e-XXXXXX)"
@@ -219,7 +219,7 @@ PROJECTS_DIR="$TMP_ROOT/projects.d"
 AGENT_TOML="$TMP_ROOT/agent.toml"
 TEST_REPO="$TMP_ROOT/jobrecon-repo"
 SERVER_LOG="$TMP_ROOT/server.log"
-AGENT_LOG="$TMP_ROOT/agent.log"
+RUNNER_LOG="$TMP_ROOT/agent.log"
 mkdir -p "$DATA_DIR" "$PROJECTS_DIR" "$TEST_REPO"
 log "temp root: $TMP_ROOT (port $PORT)"
 
@@ -295,9 +295,9 @@ start_server() {
     SERVER_PID=$!
 }
 
-start_agent() {
-    "$AGENT_BIN" --config "$AGENT_TOML" >>"$AGENT_LOG" 2>&1 &
-    AGENT_PID=$!
+start_runner() {
+    "$RUNNER_BIN" --config "$AGENT_TOML" >>"$RUNNER_LOG" 2>&1 &
+    RUNNER_PID=$!
 }
 
 wait_for_server() {
@@ -409,7 +409,7 @@ wait_for_job_status() {
 log "starting server + runner"
 start_server
 wait_for_server || { fail "server did not listen"; dump_logs; exit 1; }
-start_agent
+start_runner
 BODY="$(wait_for_agent_online)" || { fail "runner did not register"; dump_logs; exit 1; }
 pass "server + runner online"
 
@@ -465,7 +465,7 @@ sleep 2
 kill -9 "$SERVER_PID" 2>/dev/null || true
 SERVER_PID=""
 # Confirm the runner process is still alive (the job must keep running).
-if ! kill -0 "$AGENT_PID" 2>/dev/null; then
+if ! kill -0 "$RUNNER_PID" 2>/dev/null; then
     fail "scenario A: runner process died with the server"; dump_logs; exit 1
 fi
 pass "scenario A: runner process stayed alive across server stop"
@@ -581,7 +581,7 @@ kill "$SERVER_PID" 2>/dev/null || true
 sleep 2
 kill -9 "$SERVER_PID" 2>/dev/null || true
 SERVER_PID=""
-if ! kill -0 "$AGENT_PID" 2>/dev/null; then
+if ! kill -0 "$RUNNER_PID" 2>/dev/null; then
     fail "scenario B: runner process died"; dump_logs; exit 1
 fi
 pass "scenario B: runner process stayed alive"
@@ -690,7 +690,7 @@ kill "$SERVER_PID" 2>/dev/null || true
 sleep 2
 kill -9 "$SERVER_PID" 2>/dev/null || true
 SERVER_PID=""
-if ! kill -0 "$AGENT_PID" 2>/dev/null; then
+if ! kill -0 "$RUNNER_PID" 2>/dev/null; then
     fail "scenario C: runner process died"; dump_logs; exit 1
 fi
 pass "scenario C: runner process stayed alive"
@@ -751,7 +751,7 @@ kill "$SERVER_PID" 2>/dev/null || true
 sleep 2
 kill -9 "$SERVER_PID" 2>/dev/null || true
 SERVER_PID=""
-if ! kill -0 "$AGENT_PID" 2>/dev/null; then
+if ! kill -0 "$RUNNER_PID" 2>/dev/null; then
     fail "scenario D: runner process died"; dump_logs; exit 1
 fi
 pass "scenario D: runner process stayed alive"

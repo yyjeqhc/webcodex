@@ -103,10 +103,10 @@ fn run_direct_script(
     )
 }
 
-fn unrestricted_policy() -> AgentPolicy {
-    AgentPolicy {
+fn unrestricted_policy() -> RunnerPolicy {
+    RunnerPolicy {
         allow_cwd_anywhere: true,
-        ..AgentPolicy::default()
+        ..RunnerPolicy::default()
     }
 }
 

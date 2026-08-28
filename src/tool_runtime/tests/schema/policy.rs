@@ -57,7 +57,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
             definition.is_write_like(),
             matches!(
                 metadata.risk,
-                ToolRisk::ProjectWrite | ToolRisk::ComputerControl
+                ToolRisk::ProjectWrite | ToolRisk::SkillManage | ToolRisk::ComputerControl
             ),
             "{} write-like policy must derive from metadata",
             definition.name

@@ -244,10 +244,9 @@ async fn full_operator_explicit_surface_lists_full_runtime_and_dispatches() {
         .iter()
         .map(|t| t["name"].as_str().unwrap().to_string())
         .collect();
-    let registry_names: Vec<String> = registered_tool_specs()
-        .iter()
-        .map(|s| s.name.clone())
-        .collect();
+    let mut expected_specs = registered_tool_specs();
+    expected_specs.extend(crate::tool_runtime::skill_runtime_tool_specs());
+    let registry_names: Vec<String> = expected_specs.iter().map(|s| s.name.clone()).collect();
     assert_eq!(
         names, registry_names,
         "full operator lists the full runtime"
@@ -385,7 +384,7 @@ async fn selected_surface_is_immutable_after_environment_changes() {
     };
     assert_eq!(
         value["result"]["tools"].as_array().unwrap().len(),
-        registered_tool_specs().len()
+        registered_tool_specs().len() + crate::tool_runtime::skill_runtime_tool_specs().len()
     );
     assert_eq!(
         full.runtime_status(None).await.output["model_surface"],

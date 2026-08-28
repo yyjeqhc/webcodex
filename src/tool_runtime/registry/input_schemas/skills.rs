@@ -18,7 +18,7 @@ pub(crate) fn skill_list_input_schema() -> Value {
             "offset": {"type": "integer", "minimum": 0},
             "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SKILL_LIST_LIMIT},
             "expected_catalog_revision": {"type": "string", "pattern": "^wc_skillcat_[0-9a-f]{64}$", "description": "Optional catalog revision guard. If current discovery differs, the call fails with skill_catalog_changed rather than continuing an old offset."},
-            "session_id": {"type": "string", "description": "Optional explicit Workflow Session recorder; ordinary current-session rules are unchanged."}
+            "session_id": {"type": "string", "description": "Optional explicit Workflow Session for this tool call. No implicit current-Session fallback is used."}
         },
         "required": ["project"],
         "additionalProperties": false
@@ -93,7 +93,7 @@ pub(crate) fn skill_read_file_input_schema() -> Value {
             "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SKILL_READ_LINES},
             "expected_definition_revision": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Optional SKILL.md content digest guard. A mismatch fails with skill_definition_changed and does not return resource text."},
             "expected_package_revision": {"type": "string", "pattern": "^wc_skillpkg_[0-9a-f]{64}$", "description": "Operator-installed Skills only. Pins the current active immutable package revision; stale values fail with skill_package_changed before resource text is returned."},
-            "session_id": {"type": "string", "description": "Optional explicit Workflow Session recorder; ordinary current-session rules are unchanged."}
+            "session_id": {"type": "string", "description": "Optional explicit Workflow Session for this tool call. No implicit current-Session fallback is used."}
         },
         "required": ["project", "skill_id"],
         "additionalProperties": false

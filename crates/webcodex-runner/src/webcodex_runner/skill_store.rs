@@ -704,7 +704,7 @@ impl SkillStore {
                     file_count: metadata.file_count,
                     total_bytes: metadata.total_bytes,
                     installed: false,
-                    activated: activate,
+                    activated: false,
                     replayed: true,
                     state_revision: self.state_revision(skill_key, &state, &versions),
                     active_package_revision: state.active_package_revision,
@@ -744,6 +744,44 @@ impl SkillStore {
             return Err("skill_install_artifact_changed".to_string());
         }
         let prepared = prepare_archive(&archive_bytes, actual_artifact_sha256)?;
+        // A canonical package revision is independent of ZIP container encoding.
+        // If the effect committed an already-installed package whose original
+        // metadata records a different archive SHA, the pre-read artifact fast
+        // path above cannot identify it. Reconcile by the expanded package
+        // identity before applying the caller's now-stale CAS guard.
+        if matches!(&replay, ReplayState::Prepared) {
+            let versions = self.list_version_metadata(skill_key)?;
+            if let Some(metadata) = versions
+                .iter()
+                .find(|metadata| metadata.package_revision == prepared.package_revision)
+            {
+                self.verify_package_immutable(skill_key, metadata)?;
+                let state = self.read_state(skill_key)?;
+                if activate
+                    && state.active_package_revision.as_deref()
+                        != Some(prepared.package_revision.as_str())
+                {
+                    return Err("skill_install_reconcile_required".to_string());
+                }
+                let response = SkillStoreInstallResponse {
+                    format: SKILL_STORE_RESPONSE_FORMAT.to_string(),
+                    skill_id: self.skill_id(skill_key),
+                    skill_key: skill_key.to_string(),
+                    package_revision: prepared.package_revision.clone(),
+                    definition_revision: prepared.definition_revision.clone(),
+                    artifact_sha256: prepared.artifact_sha256.clone(),
+                    file_count: prepared.file_count,
+                    total_bytes: prepared.total_bytes,
+                    installed: false,
+                    activated: false,
+                    replayed: true,
+                    state_revision: self.state_revision(skill_key, &state, &versions),
+                    active_package_revision: state.active_package_revision,
+                };
+                self.complete_replay(&lock, idempotency_key, &response)?;
+                return Ok(response);
+            }
+        }
 
         let existing_keys = self.list_skill_keys()?;
         let is_new_key = !existing_keys.iter().any(|key| key == skill_key);
@@ -2703,9 +2741,14 @@ mod tests {
         drop(store);
 
         let restarted = SkillStore::for_test_persisted(store_root).unwrap();
+        // The timestamped record is written before the legacy record whose file
+        // mtime is observed below. On a loaded filesystem those two clocks can
+        // differ by multiple milliseconds, so use the earlier age basis when
+        // proving both records are still just inside retention.
+        let fresh_now = now.min(legacy_mtime_ms) + effect - 1;
         let lock = restarted.lock().unwrap();
         restarted
-            .gc_expired_replays_locked_at(&lock, legacy_mtime_ms + effect - 1)
+            .gc_expired_replays_locked_at(&lock, fresh_now)
             .unwrap();
         drop(lock);
         assert!(restarted.replay_path("timestamped-prepared").is_file());
@@ -2924,6 +2967,102 @@ mod tests {
         assert!(!second.installed);
         assert_eq!(second.package_revision, first.package_revision);
         assert_eq!(store.versions("demo", 0, 64).unwrap().total_count, 1);
+    }
+
+    #[test]
+    fn prepared_install_replay_recovers_equivalent_zip_encoding_without_second_effect() {
+        let source = tempfile::tempdir().unwrap();
+        let store_root = tempfile::tempdir().unwrap();
+        let store = SkillStore::for_test(store_root.path().join("store"), "runner-a");
+        let policy = AgentPolicy {
+            allow_cwd_anywhere: true,
+            ..AgentPolicy::default()
+        };
+        let entries: &[(&str, &[u8], Option<u32>)] = &[
+            (
+                "SKILL.md",
+                b"---\nname: demo\ndescription: replay same tree\n---\n",
+                None,
+            ),
+            ("references/guide.md", b"same resource\n", None),
+        ];
+        let deflated = zip_bytes(entries);
+        let stored = zip_bytes_stored(entries);
+        let deflated_sha = sha256_hex(&deflated);
+        let stored_sha = sha256_hex(&stored);
+        assert_ne!(deflated_sha, stored_sha);
+        fs::write(source.path().join("deflated.zip"), &deflated).unwrap();
+        fs::write(source.path().join("stored.zip"), &stored).unwrap();
+        let source_root = source.path().to_string_lossy().to_string();
+
+        let first = store
+            .install(
+                &policy,
+                "demo",
+                "project-a",
+                &source_root,
+                "deflated.zip",
+                &deflated_sha,
+                "install-deflated-replay-base",
+                false,
+                None,
+            )
+            .unwrap();
+        let before = store.versions("demo", 0, 64).unwrap();
+        assert!(before.active_package_revision.is_none());
+
+        store
+            .fail_next_replay_completion
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            store
+                .install(
+                    &policy,
+                    "demo",
+                    "project-a",
+                    &source_root,
+                    "stored.zip",
+                    &stored_sha,
+                    "install-stored-replay-failure",
+                    true,
+                    Some(&before.state_revision),
+                )
+                .unwrap_err(),
+            "skill_store_replay_commit_failed"
+        );
+        let after_effect = store.versions("demo", 0, 64).unwrap();
+        assert_eq!(
+            after_effect.active_package_revision.as_deref(),
+            Some(first.package_revision.as_str())
+        );
+
+        let recovered = store
+            .install(
+                &policy,
+                "demo",
+                "project-a",
+                &source_root,
+                "stored.zip",
+                &stored_sha,
+                "install-stored-replay-failure",
+                true,
+                Some(&before.state_revision),
+            )
+            .unwrap();
+        assert!(recovered.replayed);
+        assert!(!recovered.installed);
+        assert!(!recovered.activated);
+        assert_eq!(recovered.package_revision, first.package_revision);
+        assert_eq!(recovered.artifact_sha256, stored_sha);
+        let after_recovery = store.versions("demo", 0, 64).unwrap();
+        assert_eq!(after_recovery.state_revision, after_effect.state_revision);
+        let completed: ReplayRecord = read_json_bounded(
+            &store.replay_path("install-stored-replay-failure"),
+            MAX_SKILL_STORE_REPLAY_RECORD_BYTES,
+        )
+        .unwrap();
+        assert_eq!(completed.status, "completed");
+        assert!(completed.result.is_some());
     }
 
     #[test]

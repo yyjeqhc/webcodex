@@ -425,6 +425,7 @@ fn startup_workflow_schema() -> Value {
                     "session_recording": {"type": "string", "maxLength": 720},
                     "session_message_ack": {"type": "string", "maxLength": 720},
                     "session_message_resolution": {"type": "string", "maxLength": 480},
+                    "context_sidecar": {"type": "string", "maxLength": 320},
                     "normal_closeout": {"type": "string", "maxLength": 480}
                 },
                 "required": [
@@ -432,6 +433,7 @@ fn startup_workflow_schema() -> Value {
                     "session_recording",
                     "session_message_ack",
                     "session_message_resolution",
+                    "context_sidecar",
                     "normal_closeout"
                 ],
                 "additionalProperties": false

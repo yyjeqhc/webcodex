@@ -90,43 +90,41 @@ fn assert_builtin_workflow(output: &Value) {
     let ack_guidance = workflow["model_protocol"]["session_context_ack"]
         .as_str()
         .expect("Session context ACK guidance");
-    assert!(ack_guidance.contains("Schema has ack_session_context_revision"));
-    assert!(ack_guidance.contains("latest returned session_context_revision exactly"));
-    assert!(ack_guidance.contains("never increment/derive"));
-    assert!(ack_guidance.contains("No returned revision: keep ACK"));
-    assert!(ack_guidance.contains("unavailable/unknown"));
-    assert!(ack_guidance.contains("omit"));
-    assert!(ack_guidance.contains("Missing/invalid ACK means caller context is unknown"));
+    assert!(ack_guidance.contains("ack_session_context_revision"));
+    assert!(ack_guidance.contains("returned session_context_revision exactly"));
+    assert!(ack_guidance.contains("never derive it"));
+    assert!(ack_guidance.contains("No revision: keep the last ACK"));
+    assert!(ack_guidance.contains("if unknown, omit"));
+    assert!(ack_guidance.contains("Missing/invalid"));
     assert!(ack_guidance.contains("compact current handoff"));
-    assert!(ack_guidance.contains("known stale ACK"));
+    assert!(ack_guidance.contains("stale may recover"));
     assert!(ack_guidance.contains("nonblocking"));
     let recording_guidance = workflow["model_protocol"]["session_recording"]
         .as_str()
         .expect("Session recording guidance");
-    assert!(recording_guidance.contains("work_on_project creates or explicitly resumes"));
+    assert!(recording_guidance.contains("work_on_project creates or resumes"));
     assert!(recording_guidance.contains("recording_session_id"));
-    assert!(recording_guidance.contains("recorder provenance/context only"));
-    assert!(recording_guidance.contains("business session_id may target a different Session"));
-    assert!(recording_guidance.contains("grants no business authority"));
+    assert!(recording_guidance.contains("recorder provenance only"));
+    assert!(recording_guidance.contains("business session_id may target another Session"));
+    assert!(recording_guidance.contains("recording_session_id grants no authority"));
     let message_ack_guidance = workflow["model_protocol"]["session_message_ack"]
         .as_str()
         .expect("Session message ACK guidance");
     assert!(message_ack_guidance.contains("session_attention"));
     assert!(message_ack_guidance.contains("requires_ack"));
     assert!(message_ack_guidance.contains("ack_session_message_ids"));
-    assert!(message_ack_guidance.contains("request-scoped model-context proof only"));
-    assert!(message_ack_guidance.contains("does not resolve messages"));
-    assert!(message_ack_guidance.contains("grant authority"));
-    assert!(message_ack_guidance.contains("gate execution"));
-    assert!(message_ack_guidance.contains("missing/stale ACK remains nonblocking"));
+    assert!(message_ack_guidance.contains("request-scoped model-context proof"));
+    assert!(message_ack_guidance.contains("resolves messages"));
+    assert!(message_ack_guidance.contains("grants authority"));
+    assert!(message_ack_guidance.contains("gates execution"));
     let message_resolution_guidance = workflow["model_protocol"]["session_message_resolution"]
         .as_str()
         .expect("Session message resolution guidance");
     assert!(message_resolution_guidance.contains("session_message_resolution"));
-    assert!(message_resolution_guidance.contains("next ordinary WebCodex call"));
+    assert!(message_resolution_guidance.contains("next ordinary call"));
     assert!(message_resolution_guidance.contains("recording_session_id"));
     assert!(message_resolution_guidance.contains("ack_session_message_ids"));
-    assert!(message_resolution_guidance.contains("Do not use it to predict"));
+    assert!(message_resolution_guidance.contains("cannot predict the main call"));
     assert!(message_resolution_guidance.contains("complete_session_message"));
     let sidecar_guidance = workflow["model_protocol"]["context_sidecar"]
         .as_str()
@@ -134,7 +132,7 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(sidecar_guidance.contains("context_request"));
     assert!(sidecar_guidance.contains("after the main tool"));
     assert!(sidecar_guidance.contains("never authorizes"));
-    assert!(sidecar_guidance.contains("observation call before making a mutation"));
+    assert!(sidecar_guidance.contains("observation call before dependent mutation"));
     let closeout_guidance = workflow["model_protocol"]["normal_closeout"]
         .as_str()
         .expect("normal closeout guidance");

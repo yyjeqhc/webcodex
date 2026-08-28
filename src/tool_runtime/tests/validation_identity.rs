@@ -426,6 +426,65 @@ fn same_assertion_never_cross_resolves_between_projects() {
 }
 
 #[test]
+fn generic_assertion_success_cannot_resolve_structured_failure_with_hidden_assertion_metadata() {
+    let store = SessionStore::default();
+    let project = "agent:validation-identity:structured-isolation";
+    let session = store.start_session(Some(project.to_string()), None);
+    let assertion = "shared structured label";
+
+    let mut arguments = sample_tool_args("cargo_test");
+    arguments["project"] = json!(project);
+    // Hidden recorder metadata remains supported for internal evidence fixtures,
+    // but it must not turn a structured validation failure into a generic
+    // assertion-equivalence member that a later run_process success can resolve.
+    arguments["assertion_name"] = json!(assertion);
+    let (call, metadata) = ToolCall::from_tool_name_with_recorder_metadata("cargo_test", arguments)
+        .expect("hidden cargo_test assertion metadata");
+    let start = store.record_tool_call_started_with_metadata(
+        Some(&session.session_id),
+        SessionTransport::Mcp,
+        "cargo_test",
+        &call.session_log_arguments(),
+        Some(project.to_string()),
+        metadata,
+    );
+    store.record_tool_call_finished(
+        start,
+        false,
+        &json!({
+            "exit_code": 101,
+            "execution_state": "completed",
+            "tests_detected": true,
+            "tests_run_count": 1,
+            "tests_passed": 0,
+            "tests_failed": 1,
+            "zero_tests_run": false,
+        }),
+        Some("structured test failed"),
+        None,
+    );
+
+    record_run_process(
+        &store,
+        &session.session_id,
+        project,
+        "test",
+        "generic-success",
+        Some(assertion),
+        true,
+    );
+
+    let validation =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(20)).unwrap());
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(
+        validation["resolved_failures"]["count"], 0,
+        "generic validation success must not resolve a structured failure merely because hidden recorder metadata reused the same assertion label: {validation}"
+    );
+    assert_eq!(validation["unresolved_failures"]["count"], 1);
+}
+
+#[test]
 fn assertion_name_is_inert_for_non_validation_execution() {
     let store = SessionStore::default();
     let project = "agent:validation-identity:diagnostic";

@@ -14,8 +14,8 @@ use super::session_context::{
     session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
 };
 use super::sessions::{
-    canonical_tool_call_finished_events, safe_model_facing_assertion_name, SessionEvent,
-    SessionSummary,
+    canonical_tool_call_finished_events, safe_model_facing_assertion_name,
+    tool_supports_model_facing_assertion_name, SessionEvent, SessionSummary,
 };
 use super::tool_audit::{
     assertion_validation_identity, is_structured_validation_target_identity,
@@ -754,11 +754,10 @@ fn classify_validation_failures(
     // Sessions can explicitly record cross-project tool calls, so a successful
     // validation in project B must never resolve a same-shaped failure from
     // project A merely because cwd/package/filter/features match.
-    let mut latest_success_by_identity = HashMap::<(Option<String>, String), usize>::new();
+    let mut latest_success_by_identity = HashMap::<(Option<String>, String, String), usize>::new();
     for (index, event) in events.iter().enumerate() {
         if event.success && validation_event_decides_historical_failure_status(event) {
-            latest_success_by_identity
-                .insert((event.project.clone(), event.identity.clone()), index);
+            latest_success_by_identity.insert(validation_reconciliation_key(event), index);
         }
     }
     let mut resolved = Vec::new();
@@ -768,7 +767,7 @@ fn classify_validation_failures(
             continue;
         }
         let is_resolved = latest_success_by_identity
-            .get(&(event.project.clone(), event.identity.clone()))
+            .get(&validation_reconciliation_key(event))
             .is_some_and(|success_index| *success_index > index);
         event.unresolved_failure = !is_resolved;
         if is_resolved {
@@ -792,6 +791,32 @@ fn classify_validation_failures(
             count: unresolved.len(),
             events: unresolved,
         },
+    )
+}
+
+fn validation_reconciliation_key(event: &ValidationEvent) -> (Option<String>, String, String) {
+    let assertion_domain = if event.identity.starts_with("assertion:") {
+        if tool_supports_model_facing_assertion_name(&event.tool_name) {
+            // P1 intentionally keeps one assertion namespace across the four
+            // public generic execution tools so a logical check can move between
+            // run_process/run_script/run_shell/run_job after a fix.
+            "generic_execution".to_string()
+        } else {
+            // Hidden recorder assertion metadata predates the public P1 contract.
+            // Preserve same-tool internal reconciliation without allowing a
+            // generic model-facing assertion (or another structured tool) to
+            // become proof for this tool's validation failure.
+            format!("tool:{}", event.tool_name)
+        }
+    } else {
+        // Non-assertion identities already carry their existing command/target
+        // domain and keep the exact pre-P1 reconciliation semantics.
+        String::new()
+    };
+    (
+        event.project.clone(),
+        event.identity.clone(),
+        assertion_domain,
     )
 }
 

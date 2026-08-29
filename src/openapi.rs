@@ -273,7 +273,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation(
                     "getRuntimeStatus",
                     "Get runtime status",
-                    "Read-only runtime health/observability with agent count/online_count/stale_count plus project and Job counts, together with safe allowlisted effective Server configuration. effective_config reports running modes without dumping environment or private state; compact=true only changes this response shape and is distinct from MCP compact schema discovery. Pass exact client_id when validating one Runner deployment/source alignment so unrelated fleet mismatches remain secondary; omit it for fleet-wide investigation.",
+                    "Read-only runtime health/observability with agent count/online_count/stale_count, project/Job counts, and safe allowlisted effective_config. compact=true compacts this response, not MCP schema discovery. Pass exact client_id for one Runner; omit it for fleet-wide status.",
                     "RuntimeStatusRequest",
                     "ToolResult"
                 )

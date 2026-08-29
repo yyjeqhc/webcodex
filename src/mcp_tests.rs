@@ -175,6 +175,8 @@ mod computer_app;
 mod file_import;
 #[path = "mcp_tests/http_transport.rs"]
 mod http_transport;
+#[path = "mcp_tests/model_ergonomics.rs"]
+mod model_ergonomics;
 #[path = "mcp_tests/model_surface.rs"]
 mod model_surface;
 #[path = "mcp_tests/oauth_scope.rs"]

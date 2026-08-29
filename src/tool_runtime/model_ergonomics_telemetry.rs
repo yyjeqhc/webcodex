@@ -163,15 +163,24 @@ impl ModelErgonomicsCompletion {
         Some(self.record_from_parts(success, output, Some(serialized_result_bytes)))
     }
 
-    /// Record an invocation rejected after the kernel recognized a model-visible
-    /// tool but before any ToolResult existed. The byte field is intentionally
-    /// null rather than measuring a transport-specific error envelope.
+    /// Record an invocation after a model-visible tool identity exists but no
+    /// ToolResult is available. The byte field is intentionally null rather than
+    /// measuring a transport-specific error envelope.
     pub(crate) fn record_for_pre_result_failure(
         &self,
         error_kind: &'static str,
     ) -> ModelErgonomicsRecord {
         let mut record = self.record_from_parts(false, &Value::Null, None);
         record.error_kind = Some(error_kind.to_string());
+        // The MCP outer hard timeout fires after dispatch and explicitly leaves
+        // terminal tool state unknown. A canonical edit therefore cannot be
+        // projected as a definite rejection merely because no ToolResult was
+        // available to classify.
+        if error_kind == "dispatch_hard_timeout"
+            && record.edit_surface.as_deref() == Some("canonical")
+        {
+            record.edit_outcome = Some("uncertain".to_string());
+        }
         record
     }
 
@@ -526,6 +535,30 @@ mod tests {
         assert_eq!(record.failure_kind, None);
         assert_eq!(record.recovery_kind, None);
         assert_eq!(record.execution_state, None);
+    }
+
+    #[test]
+    fn canonical_edit_pre_result_hard_timeout_is_uncertain_not_rejected() {
+        for tool in ["apply_text_edits", "apply_patch_checked"] {
+            let record = completion(tool, 0).record_for_pre_result_failure("dispatch_hard_timeout");
+            assert!(!record.success);
+            assert_eq!(record.error_kind.as_deref(), Some("dispatch_hard_timeout"));
+            assert_eq!(record.serialized_result_bytes, None);
+            assert_eq!(record.edit_surface.as_deref(), Some("canonical"));
+            assert_eq!(record.edit_outcome.as_deref(), Some("uncertain"));
+            assert_eq!(record.edit_conflict_kind, None);
+        }
+
+        for error_kind in ["invalid_arguments", "insufficient_scope"] {
+            let record =
+                completion("apply_text_edits", 0).record_for_pre_result_failure(error_kind);
+            assert!(!record.success);
+            assert_eq!(record.error_kind.as_deref(), Some(error_kind));
+            assert_eq!(record.serialized_result_bytes, None);
+            assert_eq!(record.edit_surface.as_deref(), Some("canonical"));
+            assert_eq!(record.edit_outcome.as_deref(), Some("rejected"));
+            assert_eq!(record.edit_conflict_kind, None);
+        }
     }
 
     #[test]

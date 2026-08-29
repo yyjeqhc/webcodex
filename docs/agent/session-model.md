@@ -563,15 +563,26 @@ validation rejects the call before kernel entry or the MCP hard dispatch timeout
 prevents kernel completion. Batch items do not create generic invocation records,
 and hidden/internal helpers do not start this telemetry.
 
-The version-1 generic record contains only:
+The current durable generic record uses `schema_version = 3`. Older v1/v2 rows
+remain naturally queryable and are not migrated or backfilled. The current
+record contains:
 
-- `schema_version = 1`;
-- registry-owned `tool_name` and closed/bounded `tool_category`;
-- `success` and non-negative `duration_ms` for the outer invocation up to its
-  returned ToolResult/Job handoff;
-- nullable `serialized_result_bytes`;
-- nullable structured `error_kind`, `failure_kind`, `recovery_kind`, and
-  authoritative closed `execution_state` when present.
+- base generic fields: `tool_name`, `tool_category`, `success`, `duration_ms`,
+  nullable `serialized_result_bytes`, nullable structured `error_kind`,
+  `failure_kind`, `recovery_kind`, and authoritative closed `execution_state`;
+- v2 continuity/recovery fields: `context_continuity_eligible`, optional
+  `context_ack_present`, `context_continuity_status`,
+  `session_recovery_event_count`, `session_recovery_truncated`,
+  `session_history_lost`, and `finish_summary_only`;
+- v3 edit measurement fields: optional `edit_surface`, `edit_outcome`, and
+  `edit_conflict_kind`.
+
+`edit_surface` is the closed label `canonical | advanced`. `edit_outcome` is a
+bounded structured classification derived from authoritative edit result fields.
+`edit_conflict_kind` is limited to the closed allowlist `multiple_matches`,
+`match_not_found`, `occurrence_out_of_range`, `overlapping_edits`, and
+`sha256_mismatch`; unknown values are omitted and arbitrary error prose is never
+promoted into the durable record.
 
 `serialized_result_bytes` is the UTF-8 byte length of the exact final
 model-facing ToolResult JSON object (`success`, `output`, and `error` only when
@@ -580,17 +591,20 @@ character count, Rust memory size, stdout/stderr estimate, database-row size, or
 HTTP/JSON-RPC/MCP framing size. MCP finalizes the count from the final
 `structuredContent` ToolResult after MCP-only image/resource framing, so bytes
 removed from the model-facing ToolResult are not charged. If a registered
-model-visible tool identity has already been established but the call is rejected
-before any ToolResult exists (for example invalid arguments, insufficient scope,
-or MCP wrapper validation), the invocation is still counted but
-`serialized_result_bytes` is `null`; the transport-specific error envelope is
-never substituted for a ToolResult. The MCP hard dispatch timeout is recorded the
-same way with structured `error_kind = dispatch_hard_timeout` so stalled calls do
-not disappear from failure/latency aggregates.
-There is currently no
-authoritative generic final-result truncation fact, so generic
-`result_truncated` is deliberately **not** recorded; tool-specific truncation
-fields keep their existing meanings.
+model-visible tool identity has already been established but a deterministic
+pre-result rejection occurs (for example invalid arguments, insufficient scope,
+or MCP wrapper validation), the invocation is still counted with
+`serialized_result_bytes = null`; canonical edit tools classify those definite
+rejections as `edit_outcome = rejected`.
+
+The MCP outer hard dispatch timeout is different: dispatch may already have
+started and the terminal edit result is unavailable. It is recorded with
+`error_kind = dispatch_hard_timeout`, and a canonical edit remains
+`edit_outcome = uncertain` rather than being interpreted as a definite rejection.
+No retry authority, state-change claim, or rollback claim is derived from that
+measurement. There is currently no authoritative generic final-result truncation
+fact, so generic `result_truncated` is deliberately **not** recorded;
+tool-specific truncation fields keep their existing meanings.
 
 Classification consumes structured ToolResult fields only. It never derives a
 kind from arbitrary English error prose. The generic record stores no tool
@@ -610,6 +624,48 @@ Telemetry is observation-only and failure-isolated. Failure to serialize the
 bounded generic projection or to persist the Action Audit row is dropped/warned
 without changing the tool's success, output, error, permission, execution state,
 retry safety, Job lifecycle, or Computer authority.
+
+#### Real MCP `tools/list` surface telemetry
+
+The real MCP protocol method `tools/list` has a separate durable measurement;
+it is not stored under `summary.model_ergonomics` and must not be confused with
+the runtime `list_tools` tool. Each executed JSON-RPC request with an `id`
+creates one metadata-only ActionAudit row:
+
+```text
+endpoint    = /mcp
+action_name = toolsList
+operation   = mcp_tools_list
+```
+
+A JSON-RPC notification has no executed ActionAudit row. On success the durable
+summary shape is:
+
+```json
+{
+  "transport": "mcp",
+  "tool_surface": {
+    "schema_version": 1,
+    "protocol_era": "legacy | stateless_2026",
+    "model_surface": "local_coding | full_operator_runtime | canonical_connector",
+    "compact_schemas": false,
+    "tool_count": 0,
+    "serialized_tools_bytes": 0,
+    "serialized_result_bytes": 0,
+    "gateway_tool_included": false
+  }
+}
+```
+
+`tool_count` comes from the final caller-visible `tools` array.
+`serialized_tools_bytes` is the exact JSON UTF-8 byte length of final
+`result["tools"]`; `serialized_result_bytes` is the exact JSON UTF-8 byte length
+of the final MCP result object, after stateless result metadata has been added
+when applicable but excluding the JSON-RPC envelope. `gateway_tool_included`
+reflects the actual final response rather than theoretical authorization. The
+durable summary never stores the tool-schema body, tool-name array,
+descriptions, arguments, or scopes. ActionAudit persistence failure remains
+non-blocking and cannot change the MCP protocol result.
 
 For dogfood analysis, read bounded Action Audit events through
 `/api/audit/session` or query SQLite `action_events.summary_json`, select rows

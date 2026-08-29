@@ -6,6 +6,8 @@
 
 ## When to use this topology
 
+If your goal is simply **normal long-lived WebCodex use**, start with the [Full Setup guide](PERSONAL_SETUP.md). This page is a Windows + OpenAI Tunnel deep dive and troubleshooting record; continue here when you deliberately choose this private network path, need to reproduce the explicit topology, or are diagnosing Tunnel behavior.
+
 Use this setup when the Windows machine should host the complete WebCodex runtime while keeping the Server private:
 
 - WebCodex Server runs in the foreground on Windows;

@@ -14,9 +14,9 @@ Server API 完成。
 - `webcodex-runner` —— 实际执行项目工作的 Runner 进程（用
   `webcodex runner ...` 启动与托管）。
 
-`webcodex --help` 会列出顶层命名空间。下面按命名空间说明各自的用途。
+`webcodex --help` 会列出顶层命名空间。下面按命名空间说明各自的用途。本文是完整 CLI reference，不要求普通用户在第一次成功使用前理解所有命令、凭据或内部配置字段。
 
-第一次连接 ChatGPT 时，显式 `webcodex share` 已是 Linux、macOS、Windows 共同的脚本/确定性入口。交互式 Git checkout 中的裸 `webcodex` 自动进入 share 仍只属于 Linux/macOS convenience shortcut；W2 不改变 Windows 无子命令语义。`share` 会完成项目设置、启动本地 Server 与 Runner，并暴露临时 HTTPS MCP endpoint。默认 Quick Tunnel 依次使用 `WEBCODEX_CLOUDFLARED_BIN`、`PATH` 中的 `cloudflared`，否则获取固定版本 managed 副本。Windows x64 支持 managed Cloudflare；固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。OpenAI `tunnel-client` 的 managed 获取支持 Windows x64/arm64。
+日常使用推荐按[完整使用指南](PERSONAL_SETUP.zh-CN.md)建立普通 Server + Runner。`webcodex share` 则是 Linux、macOS、Windows 上用于**临时试用/分享一个项目**的显式入口；它会为本次前台运行准备临时项目环境、Server、Runner 和可选 Tunnel，退出即结束。Linux/macOS 在交互式 Git checkout 中运行裸 `webcodex` 自动进入 `share`，也只是这个临时试用的 convenience shortcut。
 
 ## 命令总览
 
@@ -26,8 +26,8 @@ Server API 完成。
 
 | 命令 | 用途 | 说明 |
 | --- | --- | --- |
-| `webcodex`（无子命令） | 快速交互式 first-run shortcut | 仅 Linux/macOS + stdin/stdout 为终端 + 当前目录位于 Git checkout 时自动进入 `share`；否则照常显示 help。 |
-| `webcodex share` | 通过 HTTPS 把当前项目接入 ChatGPT/MCP | Linux/macOS/Windows 的显式首次使用主路径；包含 setup、本地 Server + Runner、`cloudflare|openai|none`、可用时的 managed tunnel 获取，以及有界前台 cleanup。 |
+| `webcodex`（无子命令） | 临时分享的交互式快捷方式 | 仅 Linux/macOS + stdin/stdout 为终端 + 当前目录位于 Git checkout 时自动进入 `share`；否则照常显示 help。 |
+| `webcodex share` | 临时把当前项目接入 ChatGPT/MCP | Linux/macOS/Windows 的快速试用/短期分享路径；包含临时 setup、本地 Server + Runner、`cloudflare|openai|none` 和有界前台 cleanup。日常完整使用见 `PERSONAL_SETUP`。 |
 | `webcodex connect <server>` | 把当前项目接入已有的 Server | 已经拥有 Server URL 时的长期路径；默认使用 hosted shared-key。 |
 | `webcodex status` | 简洁的项目 coding 就绪状态 | 简短状态；`doctor` 提供完整诊断。 |
 | `webcodex doctor` | 当前项目的只读就绪检查 | 诊断/手动工作流；输出稳定的 `next action`。 |
@@ -63,8 +63,8 @@ Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS
 
 | 命令 | 用途 | 说明 |
 | --- | --- | --- |
-| `webcodex login <server-url> --code <wc_pair_...> [--project PATH]` | 用 pairing code 把本机接入 Server | 主要客户端入口；`--allowed-root` 是注册 authority，`--project` 才注册实际 existing workspace。 |
-| `webcodex project register --config PATH <PROJECT>` | 在 Runner registry 中注册 existing workspace | 使用 `agent.toml` 中的 `projects_dir`；持久化本地 record 不要求 Server 在线。 |
+| `webcodex login <server-url> --code <wc_pair_...> [--project PATH]` | 用一次性登录码把本机接入 Server | 普通 managed 接入入口；`--project` 选择实际项目，`--allowed-root` 指定以后允许添加项目的父目录；`--print-mcp-config` 可显式打印敏感的 ChatGPT MCP 连接信息。 |
+| `webcodex project register --config PATH <PROJECT>` | 给现有 Runner 再添加一个项目 | 写入该 Runner 的项目配置；不要求 Server 在线即可持久化，运行中的 Runner 是否需 reload 以命令输出为准。 |
 | `webcodex pairing create` | Server/admin 侧：创建短期 pairing code | 需要 server bootstrap/admin 认证。 |
 | `webcodex client enroll` | 高级客户端接入，可显式指定 `--client-id` | 高级入口；普通用户应使用 `login`，它会自动派生 client id 并一步写入规范的 server/user 本地连接布局。 |
 | `webcodex logout <server-url>` | 移除本机对某 Server 的凭据 | |
@@ -297,14 +297,24 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 
 ## 常用示例
 
-第一次连接 ChatGPT/MCP：
+日常完整使用：先按[完整使用指南](PERSONAL_SETUP.zh-CN.md)启动普通 Server，再在项目机器上完成一次性登录并启动 Runner：
+
+```bash
+webcodex login https://your-server.example --code <wc_pair_...> \
+  --allowed-root "$HOME/git" \
+  --project "$HOME/git/my-repo" \
+  --print-mcp-config
+webcodex runner run --config <login-reported-agent-config>
+```
+
+只想临时试用一个仓库：
 
 ```bash
 cd /path/to/your/repository
 webcodex share
 ```
 
-Local/manual 工作流：
+Local/manual project-bound 工作流（高级/诊断）：
 
 ```bash
 webcodex setup
@@ -324,11 +334,9 @@ webcodex runner status --profile <profile>
 webcodex runner logs --profile <profile> --lines 100
 ```
 
-Managed 接入：
+Linux 上把已经验证过的 Runner 改为 user service：
 
 ```bash
-webcodex login https://your-server.example --code <wc_pair_...> \
-  --allowed-root "$HOME/git"
 webcodex runner install --scope user --config <login-reported-agent-config>
 webcodex runner status --scope user --config <login-reported-agent-config>
 webcodex ops status --server-url https://your-server.example \

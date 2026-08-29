@@ -36,8 +36,8 @@ During implementation/review, run focused lanes when touching runtime metadata, 
 
 Confirm the user-facing docs tell one story:
 
-- README states the product position in the first screen.
-- Quick Start has one recommended local-first path.
+- README states the product position in the first screen and clearly separates full daily use from temporary `share`.
+- Full Setup has one recommended regular Server + Runner path for ordinary daily use; Quick Trial stays focused on temporary single-project `share`.
 - Concepts explains server, agent, agent-registered projects, runtime project ids, ToolRuntime, MCP, GPT Actions, session, handoff, validation, review/hygiene, and `run_shell` as an escape hatch.
 - Architecture starts with client/server/agent/codebase, security-boundary, and runtime-module diagrams before Rust module notes.
 - MCP and GPT Actions both say they call the same WebCodex ToolRuntime.

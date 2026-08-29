@@ -6,6 +6,8 @@
 
 ## 适用场景
 
+如果你的目标只是**正常长期使用 WebCodex**，先看[完整使用指南](PERSONAL_SETUP.zh-CN.md)。本文是 Windows + OpenAI Tunnel 的深入配置与故障排查记录，只有在你明确选择这条私有网络入口、需要复现实操拓扑或排查 Tunnel 问题时才需要继续阅读。
+
 你希望 Windows 机器本身承担完整的 WebCodex runtime：
 
 - WebCodex Server 运行在 Windows 前台；

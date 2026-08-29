@@ -4,19 +4,23 @@
 
 按你现在想完成的事情选择文档即可。
 
-## 我想先试用 WebCodex
+## 我想正常使用 WebCodex
 
-- [README](../README.zh-CN.md) —— WebCodex 能做什么，以及一条命令的首次体验
-- [快速开始](QUICK_START.zh-CN.md) —— 从零到第一次成功完成 AI 开发请求
-- [MCP](MCP.zh-CN.md) —— ChatGPT、Claude、认证方式和其他 MCP 客户端
-- [AI 辅助接入](AI_ONBOARDING.zh-CN.md) —— 让 AI 帮你配置 WebCodex
+- [README](../README.zh-CN.md) —— WebCodex 能做什么，以及完整使用和临时试用的区别
+- [完整使用指南](PERSONAL_SETUP.zh-CN.md) —— **推荐入口**：普通 Server + Runner + 项目 + ChatGPT
+- [AI 辅助接入](AI_ONBOARDING.zh-CN.md) —— 让 AI 帮你按普通用户语言完成配置
+- [MCP](MCP.zh-CN.md) —— ChatGPT、Claude 与其他 MCP 客户端
 
-## 我需要 Windows 或长期部署
+## 我只想先试几分钟
 
-- [部署指南](DEPLOYMENT.zh-CN.md) —— 自托管 Linux Server、Windows/Runner 接入和长期运行
-- [Windows + OpenAI Secure MCP Tunnel 实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md) —— 独立 Windows Server/Runner、ChatGPT Tunnel Connector 与真实故障排查
-- [Runner](RUNNER.zh-CN.md) —— 运维仓库所在机器上的执行组件
-- [CLI](CLI.zh-CN.md) —— 命令、配置、凭据和运维参考
+- [快速试用](QUICK_START.zh-CN.md) —— 一条 `webcodex share` 临时体验一个仓库
+
+## 我需要生产部署或深入排障
+
+- [部署指南](DEPLOYMENT.zh-CN.md) —— systemd/Docker、多用户、自托管和长期运维
+- [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md) —— 独立 Windows Server/Runner、Tunnel 与真实故障排查
+- [Runner](RUNNER.zh-CN.md) —— Runner 运维参考
+- [CLI](CLI.zh-CN.md) —— 完整命令、配置和凭据参考
 
 ## 我需要认证或网络配置
 

@@ -2,10 +2,7 @@
 
 [English](DEPLOYMENT.md) | [简体中文](DEPLOYMENT.zh-CN.md)
 
-This guide covers self-hosting WebCodex in production: building and installing
-the binaries, bootstrapping the Server, enrolling Runner machines, connecting
-MCP/GPT clients, and running smoke checks. For the shortest first ChatGPT/MCP
-connection, see [Quick Start](QUICK_START.md).
+This guide covers **production and advanced self-hosting**: building and installing the binaries, bootstrapping the Server, enrolling Runner machines, connecting MCP/GPT clients, and running smoke checks. For ordinary personal/daily use, start with the [Full Setup guide](PERSONAL_SETUP.md). If you only want a few-minute one-repository trial, use the [Quick Trial](QUICK_START.md).
 
 ## Components
 
@@ -59,13 +56,13 @@ webcodex pairing create --server-url http://127.0.0.1:8080 --env-file $envFile -
 Then, on the Windows machine that owns the repositories, redeem only that short-lived code and run the generated Runner config in the foreground:
 
 ```powershell
-webcodex login http://127.0.0.1:8080 --code <wc_pair_...> --allowed-root C:\src
+webcodex login http://127.0.0.1:8080 --code <wc_pair_...> --allowed-root C:\src --project C:\src\my-repo
 webcodex runner run --config <login-reported-agent-config>
 ```
 
 When Server and Runner are on different machines, replace the loopback URL with the Server's reachable HTTPS URL and configure the Server listener/public URL plus a trusted reverse proxy or tunnel as described below. Do not copy the Server bootstrap token or env file to the Runner machine. `webcodex server install/start/stop/restart/logs/uninstall` and `webcodex runner install` remain unsupported on Windows; Ctrl-C or Ctrl-Break ends the foreground runtime.
 
-To keep a Windows Server loopback-only while exposing MCP privately through an OpenAI Secure MCP Tunnel and operating an independent Runner like a normal long-lived Runner, see [Windows + OpenAI Secure MCP Tunnel](WINDOWS_OPENAI_TUNNEL.md). That guide records a real end-to-end dogfood run, including a Windows + Clash control-plane routing failure and its proxy fix.
+To keep a Windows Server loopback-only while exposing MCP privately through an OpenAI Secure MCP Tunnel and operating an independent Runner like a normal long-lived Runner, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material and records a real end-to-end dogfood run, including a Windows + Clash control-plane routing failure and its proxy fix; ordinary users do not need it before understanding the full setup path.
 
 ## Connect a repository to an existing shared-key Server
 

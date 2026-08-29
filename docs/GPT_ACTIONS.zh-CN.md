@@ -120,7 +120,8 @@ code，而不是匹配任意英文消息。
 
 ## 相关文档
 
-- [快速开始](QUICK_START.zh-CN.md)
+- [完整使用指南](PERSONAL_SETUP.zh-CN.md)
+- [快速试用](QUICK_START.zh-CN.md)
 - [MCP](MCP.zh-CN.md)
 - [认证模型](AUTH_MODEL.zh-CN.md)
 - [部署指南](DEPLOYMENT.zh-CN.md)

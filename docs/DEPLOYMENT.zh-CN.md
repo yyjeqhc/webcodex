@@ -2,9 +2,7 @@
 
 [English](DEPLOYMENT.md) | [简体中文](DEPLOYMENT.zh-CN.md)
 
-本文档覆盖 WebCodex 的生产自托管：构建与安装二进制、bootstrap Server、接入
-Runner 机器、连接 MCP/GPT 客户端以及 smoke 检查。第一次连接 ChatGPT/MCP 的最短路径见
-[快速开始](QUICK_START.zh-CN.md)。
+本文档覆盖 WebCodex 的**生产与高级自托管**：构建与安装二进制、bootstrap Server、接入 Runner 机器、连接 MCP/GPT 客户端以及 smoke 检查。普通个人/日常使用先看[完整使用指南](PERSONAL_SETUP.zh-CN.md)；如果只想几分钟临时体验一个仓库，再看[快速试用](QUICK_START.zh-CN.md)。
 
 ## 组件
 
@@ -56,13 +54,13 @@ webcodex pairing create --server-url http://127.0.0.1:8080 --env-file $envFile -
 然后在持有仓库的 Windows 机器上只兑换该短期 code，并以前台方式运行登录流程生成的 Runner 配置：
 
 ```powershell
-webcodex login http://127.0.0.1:8080 --code <wc_pair_...> --allowed-root C:\src
+webcodex login http://127.0.0.1:8080 --code <wc_pair_...> --allowed-root C:\src --project C:\src\my-repo
 webcodex runner run --config <login-reported-agent-config>
 ```
 
 如果 Server 与 Runner 位于不同机器，把 loopback URL 替换为 Server 可访问的 HTTPS URL，并按下文配置 Server listener/public URL 与受信任的反向代理或 tunnel。不要把 Server bootstrap token 或 env 文件复制到 Runner 机器。Windows 仍不支持 `webcodex server install/start/stop/restart/logs/uninstall` 与 `webcodex runner install`；Ctrl-C 或 Ctrl-Break 会结束前台 runtime。
 
-如果希望 Windows Server 保持 loopback-only，同时让 ChatGPT 通过 OpenAI Secure MCP Tunnel 访问，并把独立 Runner 当作普通长期 Runner 使用，见 [Windows + OpenAI Secure MCP Tunnel 实操指南](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。该文档记录了一次真实端到端 dogfood，包括 Windows + Clash 环境下 control-plane 直连失败及代理修复。
+如果希望 Windows Server 保持 loopback-only，同时让 ChatGPT 通过 OpenAI Secure MCP Tunnel 访问，并把独立 Runner 当作普通长期 Runner 使用，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。该文档用于高级配置和排障，记录了一次真实端到端 dogfood，包括 Windows + Clash 环境下 control-plane 直连失败及代理修复；普通用户不需要先读它才能理解完整使用流程。
 
 ## 把仓库接入已有的 shared-key Server
 

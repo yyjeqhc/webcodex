@@ -2,17 +2,19 @@
 
 [English](MCP.md) | [简体中文](MCP.zh-CN.md)
 
-WebCodex exposes an MCP endpoint so ChatGPT, Claude, and other MCP clients can
-work with a repository through the Runner that owns it. For a first connection,
-start with the client setup below; protocol surfaces and scope ceilings are
-reference material, not onboarding prerequisites.
+WebCodex exposes an MCP endpoint so ChatGPT, Claude, and other MCP clients can work with repositories through the Runner that owns them. Ordinary users only need to choose between **full use** and a **temporary trial**; protocol surfaces, scopes, and credential taxonomy are reference material, not onboarding prerequisites.
 
-## ChatGPT Developer Mode: first connection
+## ChatGPT: recommended full setup
 
-The self-contained explicit `share` path below is supported on Linux, macOS, and Windows and owns a local foreground Server + Runner for the session. Windows x64 can use the managed default Cloudflare Quick Tunnel; Windows ARM64 needs a trusted explicit/PATH `cloudflared` because the pinned Cloudflare release publishes no official ARM64 artifact. Managed OpenAI `tunnel-client` supports both Windows x64 and arm64.
+For everyday use, run a regular Server + Runner. Follow the [Full Setup guide](PERSONAL_SETUP.md) for one-time login and project registration, and use `--print-mcp-config` during that same `webcodex login` to obtain regular HTTPS MCP connection values. Public HTTPS, Cloudflare Tunnel, and OpenAI Secure MCP Tunnel are reachability choices; they do not change the capabilities of this full development path.
 
-For the default temporary public path, WebCodex reuses an explicit/PATH
-`cloudflared` or downloads its pinned verified managed copy automatically, then run:
+If you only want to try one repository temporarily, use the `share` path below.
+
+## ChatGPT: temporary `share`
+
+Explicit `share` is supported on Linux, macOS, and Windows and owns a temporary single-project environment for that foreground run. Windows x64 can use the managed default Cloudflare Quick Tunnel; Windows ARM64 needs a trusted explicit/PATH `cloudflared` because the pinned Cloudflare release publishes no official ARM64 artifact. Managed OpenAI `tunnel-client` supports both Windows x64 and arm64.
+
+For the default temporary public path, WebCodex reuses an explicit/PATH `cloudflared` or downloads its pinned verified managed copy automatically, then run:
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -56,7 +58,7 @@ Read + Use, and run `webcodex share --tunnel openai`. ChatGPT uses Connection:
 Tunnel + No authentication; the temporary WebCodex Bearer stays local and is
 injected by the pinned verified OpenAI `tunnel-client`.
 
-For an explicit Windows Server + Runner + Tunnel topology, or to troubleshoot a case where local `/readyz` is healthy but ChatGPT Connector creation still fails, see [Windows + OpenAI Secure MCP Tunnel](WINDOWS_OPENAI_TUNNEL.md).
+For a regular independent Windows Server + Runner reached through OpenAI Tunnel, or to troubleshoot a case where local `/readyz` is healthy but ChatGPT Connector creation still fails, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material, not required reading for a first-time user.
 
 ## Existing Server
 

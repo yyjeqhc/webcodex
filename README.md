@@ -6,39 +6,24 @@
 
 Ask your assistant to inspect a repository, modify code, run tests, use Git, or investigate a failure. Your repository stays on the machine where it already lives; you do not need to move the project into a hosted workspace just to use an AI coding agent.
 
-## Quick start
+## Start using WebCodex
 
-With Node.js 18+ and Git installed on Linux, macOS, or Windows x64:
+### Everyday development: full WebCodex (recommended)
+
+If you want ChatGPT to keep using your real development environment, start with a **regular Server + Runner**. This is the full development experience: durable access to multiple projects plus project exploration, editing, Git, commands, tests, long-running work, and code navigation. Public HTTPS, Cloudflare Tunnel, and OpenAI Secure MCP Tunnel are only ways for ChatGPT to reach the Server; they do not switch you into a different restricted experience.
+
+Follow the [Full Setup guide](docs/PERSONAL_SETUP.md) for installation, one-time login, project selection, Runner startup, and ChatGPT connection. You do not need to learn internal identity, registry, or token details before the first successful setup.
+
+### Just trying it for a few minutes: temporary share
+
+To quickly see whether WebCodex fits your workflow, run this inside one repository:
 
 ```bash
 cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex share
 ```
 
-When WebCodex reports **WebCodex ready**, keep the terminal open. Linux and macOS normally copy the **MCP URL** to your clipboard and can use **Enter** in an interactive terminal to open ChatGPT App settings. On Windows, copy the printed **MCP URL** manually and open **Settings -> Apps -> Create**. Then:
-
-1. Enable **Developer Mode** if needed and choose **Create**.
-2. Paste the copied **MCP URL** (or use the URL printed by WebCodex).
-3. Choose **Access token / API key** (or the equivalent Bearer-token option) and paste the printed **Credential**.
-4. Run **Scan Tools**.
-
-Developer Mode, custom MCP Apps, and write/modify actions depend on your ChatGPT plan, workspace, and administrator policy. WebCodex cannot enable capabilities the client does not grant.
-
-Try a read-only first request:
-
-```text
-Inspect this repository and summarize its structure. Do not make changes.
-```
-
-If ChatGPT does not show a Bearer/access-token option, or tries OAuth discovery and reports **does not implement OAuth**, use:
-
-```bash
-npx --yes @yyjeqhc/webcodex share --auth query-token
-```
-
-Paste the complete `/mcp?token=...` URL and choose **No authentication**. This fallback requires WebCodex 0.3.9 or later. That URL contains a temporary secret, so do not publish or log it. If WebCodex is installed globally, the equivalent command is `webcodex share --auth query-token`. See the [Quick Start](docs/QUICK_START.md) and [MCP setup guide](docs/MCP.md) for details and other clients.
-
-The default one-command flow creates a temporary public HTTPS MCP endpoint protected by that run's temporary credential; both the endpoint and credential stop working when the command exits. Advanced networking, OAuth, private tunnels, and self-hosting options are documented separately.
+`share` starts a temporary, single-project, restricted WebCodex environment and prints the ChatGPT connection values. The endpoint and temporary credential stop working when the command exits. It is intended for trials and short-lived sharing, not as the default full daily setup. See the [Quick Trial](docs/QUICK_START.md) for the exact steps.
 
 ## What can it do?
 
@@ -82,23 +67,18 @@ For the internal Server/Runner architecture, protocol surfaces, and authority bo
 
 Windows and long-lived deployments are covered in [Deployment](docs/DEPLOYMENT.md) and [MCP](docs/MCP.md).
 
-## Long-lived and advanced setup
+## Existing Servers and advanced setup
 
-If you want to keep the CLI installed:
+If someone already provides the WebCodex Server and connection credential, use that existing Server. For a normal personal installation, follow the [Full Setup guide](docs/PERSONAL_SETUP.md). Use [Deployment](docs/DEPLOYMENT.md) later for production hosting, multiple users, systemd/Docker, OAuth, proxies, and private CAs.
 
-```bash
-npm install -g @yyjeqhc/webcodex
-```
-
-If an operator has provided a shared key for an existing hosted WebCodex Server, use `webcodex connect <server-url>`. For a newly deployed self-hosted Server, keep the bootstrap administrator token on the Server and use the [Deployment](docs/DEPLOYMENT.md) guide's short-lived pairing code + `webcodex login` enrollment flow.
-
-For production/self-hosted deployment, Windows enrollment, OAuth, private tunnels, proxy/CA configuration, and other operator workflows, use the documentation below rather than the first-run path.
+Those are follow-up operating concerns, not concepts a first-time user should have to learn before WebCodex works.
 
 ## Documentation
 
-- [Quick Start](docs/QUICK_START.md) — from zero to the first successful AI connection
+- [Full Setup](docs/PERSONAL_SETUP.md) — recommended daily use: a regular Server + Runner + your projects
+- [Quick Trial](docs/QUICK_START.md) — temporarily try one repository with `share`
 - [MCP](docs/MCP.md) — ChatGPT, Claude, authentication choices, and MCP reference
-- [Deployment](docs/DEPLOYMENT.md) — self-hosting, permanent Servers, and machine enrollment
+- [Deployment](docs/DEPLOYMENT.md) — production, self-hosting, and advanced operations
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — connection and runtime problems
 - [CLI](docs/CLI.md) — command and credential reference
 - [AI-assisted setup](docs/AI_ONBOARDING.md) — have an AI agent help configure WebCodex

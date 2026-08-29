@@ -44,8 +44,10 @@ WebCodex exposes the same runtime through several thin adapters:
 - **Console** — a read-only browser view of project readiness and review.
 
 All adapters share the same Server, project registration, authentication, and
-policy boundaries. The project-bound Connector is the canonical project-first
-path; generic Servers expose their configured runtime surfaces instead.
+policy boundaries. A regular Server is the normal long-lived coding runtime and
+exposes its configured runtime surface. The project-bound Connector is the
+isolated project-first adapter used by flows such as `webcodex run` and
+`webcodex share`; it is intentionally a different, narrower execution contract.
 
 ## Project registration
 

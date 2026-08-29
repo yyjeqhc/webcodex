@@ -5,28 +5,37 @@
 本文面向帮助**用户**把仓库接入 WebCodex 或操作已有部署的 AI coding agent。它不是
 [`AGENTS.md`](../AGENTS.md)；后者约束的是 WebCodex 自身开发。
 
-默认用户目标应理解为：**“让 ChatGPT 操作这个仓库。”** 除非用户选择的路径确实需要，
-不要提前引入 Server 部署、client id、runtime project id、PAT、Runner token 或 OAuth scope
-ceiling。
+默认用户目标应理解为：**“让 ChatGPT 正常使用我的开发环境。”** 除非用户明确说只想临时试用，否则优先帮助他获得普通 Server + Runner 的完整 coding 体验，而不是默认把 `share` 当成 WebCodex 本体。
 
-## 选择最小路径
+第一次成功前，把用户需要理解的词汇压缩到：**WebCodex 服务、Runner（运行代码的机器）、Project（项目）、一次性登录码、ChatGPT 连接**。不要提前解释 `client_id`、runtime project id、`projects_dir`、PAT、Runner token、scope ceiling、Connector surface 等内部术语。
 
-先检查平台再选路径。Windows 已支持与 Linux/macOS 相同的显式 `webcodex share`，不要再把远程 Linux Server 当成 Windows 前置条件；无子命令的交互式 shortcut 仍只在 Linux/macOS 自动进入 share。Windows ARM64 如果使用默认/显式 Cloudflare，需要说明固定版本 Cloudflare 没有官方 ARM64 artifact，应提供受信任的显式/`PATH` `cloudflared`，或者选择 OpenAI tunnel / 本地 `none`。
+## 先判断用户要哪种体验
 
-1. 用户只有一个本地仓库、想马上试 ChatGPT/MCP，并且没有现成 WebCodex Server URL：使用 **`webcodex share`**。
-2. 用户已经有 WebCodex Server URL，需要长期连接：使用
-   **`webcodex connect <server>`**。
-3. 用户明确需要独立身份、独立撤销、审计或 managed user：使用 managed identity
-   （`webcodex login` / managed OAuth）。
-4. 用户需要基础设施控制、内网、稳定 HTTPS 或自有身份系统：使用
-   [部署指南](DEPLOYMENT.zh-CN.md)。
+1. 用户想正常/长期/日常使用 WebCodex，或没有明确要求“只临时试一下”：使用[完整使用指南](PERSONAL_SETUP.zh-CN.md)，建立普通 Server + Runner。
+2. 用户明确只想几分钟体验一个仓库、不想配置长期 runtime：使用 **`webcodex share`**。这是临时、单项目、受限体验。
+3. 用户已经有 WebCodex Server URL：优先使用该 Server 已提供的正常 enrollment 方式；自托管 managed Server 用 pairing + `webcodex login`，只有 operator 明确提供 shared-key credential 时才使用 `webcodex connect <server>`。
+4. 用户需要生产托管、多用户、OAuth、systemd/Docker、私有 CA 等运维能力：再进入[部署指南](DEPLOYMENT.zh-CN.md)。
 
-不要把虚构的 `https://your-server.example` 当作全新用户的前置条件。
+Windows 可以直接运行前台 Server 和 Runner；不要因为平台是 Windows 就把用户推到远程 Linux，也不要因为需要 Tunnel 就切换成 `share`。**Tunnel 解决网络可达性，不决定 WebCodex 的 coding 权限模式。**
 
-## 第一次 ChatGPT 接入：`share`
+## 默认：完整使用
 
-先确认 Git 和目标仓库。默认公网 share 会复用 `WEBCODEX_CLOUDFLARED_BIN` / `PATH`，
-没有时由 WebCodex 自动下载并校验固定的 managed `cloudflared`；不要要求第一次用户先手动安装。
+完整路径的用户说明以[完整使用指南](PERSONAL_SETUP.zh-CN.md)为准。AI 应优先帮助用户完成这些可观察步骤：
+
+- 安装 WebCodex；
+- 启动普通 Server；
+- 选择公网 HTTPS / Cloudflare / OpenAI Tunnel 等一种到 Server 的连接方式；
+- 创建一次性登录码；
+- `webcodex login ... --project <repo>`；
+- 启动 Runner；
+- 按 `--print-mcp-config` 或 Tunnel 指南把连接加入 ChatGPT；
+- 用一次读取和一次小修改验证完整 coding 体验。
+
+不要把 Deployment reference 中的 systemd socket、OAuth scope、token 类型、registry 路径等内容提前搬进这条普通用户流程。
+
+## 临时试用：`share`
+
+只有用户明确选择快速临时体验时，才把 `share` 作为主路径：
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -34,29 +43,9 @@ cd /path/to/your/repository
 webcodex share
 ```
 
-`share` 自己会完成项目 setup。不要把
-`setup → doctor → run → 停掉 run → share` 教成 onboarding 主流程。
+`share` 自己完成临时项目 setup，并启动本次会话拥有的 Server/Runner/Tunnel。CLI 显示 **WebCodex ready** 后，让人类按输出配置 ChatGPT。Developer Mode、custom MCP app 与 write/modify action 仍受 ChatGPT 套餐、workspace 和管理员设置控制。
 
-CLI 显示 **WebCodex ready** 后，让人类保持终端运行，并按 **What to do next**。不要在未确认
-前承诺 write 能力：ChatGPT Developer Mode、custom MCP app 与 write/modify action 受用户的
-ChatGPT 套餐、workspace 和管理员设置控制，这些客户端侧权限与 WebCodex authorization 是
-两层独立边界：
-
-- ChatGPT Developer Mode → 创建 MCP custom app；
-- 粘贴输出的 MCP URL；
-- 选择 CLI 输出的认证类型；
-- 由**人类**把输出的 credential 粘贴到 ChatGPT；
-- Scan Tools；
-- 第一条：`检查这个仓库并总结它的结构。先不要做任何修改。`
-
-仅做本地调试时可用 `webcodex share --tunnel none`，不启动 Cloudflare Quick Tunnel，也不
-需要 `cloudflared`。
-
-如果用户明确只需要 OpenAI 产品的私有可达性，并且已经创建 OpenAI Secure MCP Tunnel，
-使用 `webcodex share --tunnel openai`。要求 `CONTROL_PLANE_TUNNEL_ID` 和只授予 Tunnels
-Read + Use 的 Restricted `CONTROL_PLANE_API_KEY`。ChatGPT 侧选择 Connection: Tunnel +
-No authentication；WebCodex 临时 Bearer 留在本机，由 `tunnel-client` 注入，不要让人类把它
-粘贴到 ChatGPT。普通零 Platform 配置的 first-run 默认仍然是 Cloudflare Quick。
+仅本地调试可用 `webcodex share --tunnel none`；明确使用 OpenAI Secure MCP Tunnel 的临时分享可用 `webcodex share --tunnel openai`。这些都是 `share` 的临时模式，不要据此推断普通 Server + Runner 也受同样的临时限制。
 
 ## 已有 shared-key Server：`connect`
 
@@ -95,7 +84,7 @@ webcodex runner install --scope user \
   --config <login-reported-agent-config>
 ```
 
-`--allowed-root` 只定义后续 Project 注册可使用的文件系统 authority boundary，并不会注册工作区；`agent.toml` 中的 `projects_dir` 是 Runner 的 Project registry 目录，也不是源码工作区。如果有意先只做 login、不传 `--project`，应在使用 project-bound tools 前执行 `webcodex project register --config <login-reported-agent-config> /path/to/repo` 注册实际工作区。
+面向普通用户只解释：`--project` 是实际项目，`--allowed-root` 是以后允许继续添加项目的父目录。不要要求用户手工编辑 `agent.toml` 或 `projects.d`；只有排障或 reference 场景才解释 registry/authority 的内部表示。如果 login 时没有传 `--project`，再用 `webcodex project register --config <login-reported-agent-config> /path/to/repo` 添加项目。
 
 只有 MCP client 要求 OAuth 且精确 callback URL 已知时，才使用 `share --auth oauth` 或
 `connect --auth oauth`。不要把 OAuth client secret、shared key、Project Credential、PAT、
@@ -116,8 +105,7 @@ Runner token 或 bootstrap administrator token 合并成一个概念。
 - `webcodex status` 与 `webcodex doctor` 输出；
 - token 文件的位置，但不是其内容。
 
-`doctor` 是本地/手动 runtime 诊断。即使它推荐 `webcodex run`，也不要把这解释成 hosted
-ChatGPT 的前置条件；第一次 hosted-chat 路径用 `share`。
+`doctor` 是本地/手动 runtime 诊断，不是普通 ChatGPT 接入的必经仪式。根据用户目标选择完整 Server + Runner 或临时 `share`，不要机械地把诊断命令堆进 onboarding。
 
 ## Secret 仍由人类控制
 
@@ -129,9 +117,7 @@ ChatGPT 的前置条件；第一次 hosted-chat 路径用 `share`。
 - 完整 `agent.toml` 或 Server env 文件；
 - `Authorization` header。
 
-需要把 credential 填进 ChatGPT/Claude 时，要准确说明来源并让**人类**复制。首次优先使用
-成功的 `share`/`connect` disclosure；若必须恢复已保存的值，只指出精确受保护文件/字段，
-不要由 AI 自己回显。status/log 命令故意不显示 secret。
+需要把 credential 填进 ChatGPT/Claude 时，要准确说明来源并让**人类**复制。优先使用当前流程显式产生的连接信息，例如完整使用中的 `login --print-mcp-config`，或临时 `share` / 已有 Server `connect` 的成功 disclosure。若必须恢复已保存的值，只指出精确受保护文件/字段，不要由 AI 自己回显。status/log 命令故意不显示 secret。
 
 永远不要用 `wc_agent_*` Runner token 替代 MCP token，不要把 bootstrap
 `WEBCODEX_TOKEN` 当作 MCP credential，也不要假设 `webcodex token generate` 的离线素材

@@ -1,8 +1,10 @@
-# Quick Start
+# Quick Trial
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-This page is only the shortest path from a local repository to a first successful AI-assisted development request. You do not need to understand WebCodex internals before starting.
+This page does one thing: use `webcodex share` to temporarily expose one local repository so you can decide within a few minutes whether WebCodex fits your workflow. This is a **temporary, single-project, restricted experience** that ends when the command exits.
+
+For everyday WebCodex use and the full regular Server + Runner coding experience, go directly to the [Full Setup guide](PERSONAL_SETUP.md) instead of treating `share` as the default long-lived deployment.
 
 ## Prerequisites
 
@@ -21,7 +23,7 @@ cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex share
 ```
 
-You do not need to run `setup`, `doctor`, or `run` first. The default one-command flow creates a temporary public HTTPS MCP endpoint protected by that run's temporary credential; both the endpoint and credential stop working when the command exits.
+A temporary trial does not require `setup`, `doctor`, or `run` first. The one-command flow creates a temporary public HTTPS MCP endpoint protected by that run's temporary credential; both the endpoint and credential stop working when the command exits.
 
 ## 2. Wait for `WebCodex ready`
 
@@ -67,12 +69,12 @@ Use Git or the WebCodex review surfaces to inspect the result before accepting i
 
 ## Done
 
-You now have a working first connection. Keep the WebCodex terminal open while using this temporary share; Ctrl-C ends it.
+The temporary trial is working. Keep the WebCodex terminal open while using this share; Ctrl-C ends it.
 
-Next steps:
+If you want to keep using WebCodex for daily development, move next to the [Full Setup guide](PERSONAL_SETUP.md) for the regular Server + Runner coding experience. Other references:
 
 - [ChatGPT, Claude, and authentication options](MCP.md)
-- [Windows and permanent/self-hosted deployment](DEPLOYMENT.md)
+- [Production and advanced deployment](DEPLOYMENT.md)
 - [CLI reference](CLI.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Security](../SECURITY.md)

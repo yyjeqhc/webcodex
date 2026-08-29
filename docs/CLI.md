@@ -17,10 +17,9 @@ The CLI produces three binaries when built from source:
 - `webcodex-runner` — the Runner process that executes project work (started
   and supervised with `webcodex runner ...`).
 
-`webcodex --help` lists the top-level namespaces. The sections below explain
-what each namespace is for.
+`webcodex --help` lists the top-level namespaces. The sections below explain what each namespace is for. This is the complete CLI reference; ordinary users do not need to understand every command, credential, or internal configuration field before their first successful setup.
 
-For a first ChatGPT connection, explicit `webcodex share` is the deterministic/script-friendly entry on Linux, macOS, and Windows. Running bare `webcodex` in an interactive Git checkout remains a Linux/macOS-only convenience shortcut; W2 does not change Windows no-command auto-dispatch. `share` performs project setup, starts the local Server and Runner, and exposes a temporary HTTPS MCP endpoint. For the default Quick Tunnel, WebCodex prefers `WEBCODEX_CLOUDFLARED_BIN`, then `cloudflared` on `PATH`, and otherwise acquires a pinned, verified managed copy before creating project/share state. Managed Cloudflare acquisition supports Windows x64; the pinned Cloudflare release has no official Windows ARM64 artifact, so Windows ARM64 Cloudflare use requires a trusted explicit/PATH binary. Managed OpenAI `tunnel-client` supports Windows x64 and arm64.
+For everyday development, follow the [Full Setup guide](PERSONAL_SETUP.md) and use a regular Server + Runner. `webcodex share` is the explicit **temporary one-project trial/share** entry on Linux, macOS, and Windows; it prepares the temporary project environment, Server, Runner, and optional Tunnel for that foreground run and ends when the process exits. Running bare `webcodex` in an interactive Git checkout remains a Linux/macOS convenience shortcut into that same temporary `share` flow.
 
 ## Command map
 
@@ -30,8 +29,8 @@ These commands work on the current Git project.
 
 | Command | Purpose | Notes |
 | --- | --- | --- |
-| `webcodex` (no command) | Fast interactive first-run shortcut | Only auto-dispatches to `share` on Linux/macOS when stdin/stdout are terminals and the current directory is inside a Git checkout; otherwise normal help is shown. |
-| `webcodex share` | Share the current project for ChatGPT/MCP over HTTPS | Explicit first-run path on Linux/macOS/Windows; includes setup, local Server + Runner, `cloudflare|openai|none`, managed tunnel acquisition when available, and bounded foreground cleanup. |
+| `webcodex` (no command) | Interactive temporary-share shortcut | Only auto-dispatches to `share` on Linux/macOS when stdin/stdout are terminals and the current directory is inside a Git checkout; otherwise normal help is shown. |
+| `webcodex share` | Temporarily share the current project with ChatGPT/MCP | Quick trial/short-lived sharing path on Linux/macOS/Windows; includes temporary setup, local Server + Runner, `cloudflare|openai|none`, and bounded foreground cleanup. Use `PERSONAL_SETUP` for full daily use. |
 | `webcodex connect <server>` | Connect the current project to an existing Server | Long-lived path when you already have a Server URL; defaults to hosted shared-key. |
 | `webcodex status` | Concise project coding readiness | Short summary; `doctor` is the full diagnostic check. |
 | `webcodex doctor` | Read-only readiness checks for the current project | Diagnostics/manual workflow; reports a stable `next action`. |
@@ -69,8 +68,8 @@ not advertised by ordinary MCP/GPT Actions model discovery.
 
 | Command | Purpose | Notes |
 | --- | --- | --- |
-| `webcodex login <server-url> --code <wc_pair_...> [--project PATH]` | Log this device into a Server with a pairing code | Primary client entry. `--allowed-root` is registration authority; `--project` registers an actual existing workspace. |
-| `webcodex project register --config PATH <PROJECT>` | Register an existing workspace in a Runner registry | Uses `projects_dir` from `agent.toml`; no Server connection is required to persist the local record. |
+| `webcodex login <server-url> --code <wc_pair_...> [--project PATH]` | Log this device into a Server with a one-time code | Normal managed enrollment entry. `--project` selects the actual project, `--allowed-root` names a parent from which more projects may be added later, and `--print-mcp-config` explicitly prints sensitive ChatGPT MCP connection values. |
+| `webcodex project register --config PATH <PROJECT>` | Add another project to an existing Runner | Persists that Runner's project configuration without requiring the Server to be online; follow the command output if an already-running Runner needs a reload. |
 | `webcodex pairing create` | Server/admin side: create a short-lived pairing code | Needs server bootstrap/admin auth. |
 | `webcodex client enroll` | Advanced client enrollment with explicit `--client-id` | Advanced; ordinary users should use `login`, which derives the client id and publishes the canonical per-server/user connection layout in one step. |
 | `webcodex logout <server-url>` | Remove this device's credentials for a Server | |
@@ -329,14 +328,24 @@ and `wc_oat_*` access tokens are delegated credentials; see
 
 ## Common examples
 
-First ChatGPT/MCP connection:
+Full everyday use: first follow the [Full Setup guide](PERSONAL_SETUP.md) to start a regular Server, then enroll the project machine and start its Runner:
+
+```bash
+webcodex login https://your-server.example --code <wc_pair_...> \
+  --allowed-root "$HOME/git" \
+  --project "$HOME/git/my-repo" \
+  --print-mcp-config
+webcodex runner run --config <login-reported-agent-config>
+```
+
+To try one repository temporarily:
 
 ```bash
 cd /path/to/your/repository
 webcodex share
 ```
 
-Local/manual workflow:
+Local/manual project-bound workflow (advanced/diagnostic):
 
 ```bash
 webcodex setup

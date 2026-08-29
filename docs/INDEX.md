@@ -4,19 +4,23 @@
 
 Start with the goal that matches what you are trying to do.
 
-## I want to try WebCodex
+## I want to use WebCodex normally
 
-- [README](../README.md) — what WebCodex does and the one-command first-run path
-- [Quick Start](QUICK_START.md) — zero to the first successful AI-assisted development request
-- [MCP](MCP.md) — ChatGPT, Claude, authentication choices, and other MCP clients
-- [AI-assisted setup](AI_ONBOARDING.md) — have an AI agent help configure WebCodex
+- [README](../README.md) — what WebCodex does and the difference between full use and a temporary trial
+- [Full Setup](PERSONAL_SETUP.md) — **recommended entry**: regular Server + Runner + projects + ChatGPT
+- [AI-assisted setup](AI_ONBOARDING.md) — have an AI agent configure WebCodex using ordinary user language
+- [MCP](MCP.md) — ChatGPT, Claude, and other MCP clients
 
-## I need Windows or a permanent deployment
+## I only want to try it for a few minutes
 
-- [Deployment](DEPLOYMENT.md) — self-hosting, Linux Server setup, Windows/Runner enrollment, and long-lived operation
-- [Windows + OpenAI Secure MCP Tunnel](WINDOWS_OPENAI_TUNNEL.md) — independent Windows Server/Runner, ChatGPT Tunnel Connector, and real troubleshooting notes
-- [Runner](RUNNER.md) — operate the component that works beside your repositories
-- [CLI](CLI.md) — commands, profiles, credentials, and operator reference
+- [Quick Trial](QUICK_START.md) — temporarily try one repository with one `webcodex share` command
+
+## I need production deployment or deep troubleshooting
+
+- [Deployment](DEPLOYMENT.md) — systemd/Docker, multi-user self-hosting, and long-lived operations
+- [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md) — independent Windows Server/Runner, Tunnel setup, and real troubleshooting notes
+- [Runner](RUNNER.md) — Runner operations reference
+- [CLI](CLI.md) — full command, configuration, and credential reference
 
 ## I need authentication or network options
 

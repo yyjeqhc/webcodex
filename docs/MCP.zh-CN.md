@@ -2,16 +2,19 @@
 
 [English](MCP.md) | [简体中文](MCP.zh-CN.md)
 
-WebCodex 通过 MCP endpoint，让 ChatGPT、Claude 与其他 MCP client 使用持有仓库机器上的
-Runner。第一次接入先完成下面的客户端配置；protocol surface 与 scope ceiling 属于
-reference，不是 onboarding 前置知识。
+WebCodex 通过 MCP endpoint，让 ChatGPT、Claude 与其他 MCP client 使用持有仓库机器上的 Runner。普通用户先选择**完整使用**还是**临时试用**即可；protocol surface、scope、credential taxonomy 都属于 reference，不是 onboarding 前置知识。
 
-## ChatGPT Developer Mode：第一次接入
+## ChatGPT：推荐的完整使用方式
 
-下面的 self-contained 显式 `share` 路径支持 Linux、macOS 与 Windows，并由当前前台 session 持有本地 Server + Runner。Windows x64 可直接使用 managed 默认 Cloudflare Quick Tunnel；固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 需要受信任的显式/`PATH` `cloudflared`。managed OpenAI `tunnel-client` 支持 Windows x64/arm64。
+日常使用推荐普通 Server + Runner。按照[完整使用指南](PERSONAL_SETUP.zh-CN.md)完成一次性登录和项目注册，并在同一次 `webcodex login` 中使用 `--print-mcp-config` 获取普通 HTTPS MCP 连接信息。公网 HTTPS、Cloudflare Tunnel 或 OpenAI Secure MCP Tunnel 只负责到达 Server，不改变这条完整开发路径本身的能力。
 
-默认临时公网路径会复用显式指定/`PATH` 中的 `cloudflared`，否则由 WebCodex 自动下载并校验
-固定的 managed 副本，然后执行：
+如果只是临时试用一个仓库，再使用下面的 `share` 路径。
+
+## ChatGPT：临时 `share`
+
+显式 `share` 支持 Linux、macOS 与 Windows，并由当前前台进程持有临时单项目环境。Windows x64 可直接使用 managed 默认 Cloudflare Quick Tunnel；固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 需要受信任的显式/`PATH` `cloudflared`。managed OpenAI `tunnel-client` 支持 Windows x64/arm64。
+
+默认临时公网路径会复用显式指定/`PATH` 中的 `cloudflared`，否则由 WebCodex 自动下载并校验固定的 managed 副本，然后执行：
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -51,7 +54,7 @@ share 的 Project Credential，并不是 PAT/OAuth/shared-key 的通用 query au
 Connection: Tunnel + No authentication；临时 WebCodex Bearer 留在本机，由固定且经过校验的
 OpenAI `tunnel-client` 注入。
 
-如果需要在 Windows 上把 Server、Runner 和 Tunnel 显式拆开运行，或排查“本地 `/readyz` 正常但 ChatGPT Connector 创建失败”的情况，见 [Windows + OpenAI Secure MCP Tunnel 实操指南](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。
+如果在 Windows 上使用普通独立 Server + Runner 并通过 OpenAI Tunnel 接入，或排查“本地 `/readyz` 正常但 ChatGPT Connector 创建失败”的情况，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。它是深入配置/排障文档，不是普通用户第一次必须阅读的教程。
 
 ## 已有 Server
 

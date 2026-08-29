@@ -6,39 +6,24 @@
 
 你可以直接让 AI 理解项目、修改代码、运行测试、检查 Git 或排查问题。仓库仍然留在原来的机器上，不需要为了使用 WebCodex 把整个项目搬到托管环境里。
 
-## 快速开始
+## 开始使用
 
-Linux、macOS 或 Windows x64 上准备好 Node.js 18+ 和 Git，然后进入一个仓库：
+### 日常使用：完整 WebCodex（推荐）
+
+如果你准备让 ChatGPT 长期使用自己的开发环境，推荐从 **普通 Server + Runner** 开始。这是 WebCodex 的完整开发体验：可以长期连接多个项目，并使用项目探索、编辑、Git、命令、测试、长任务和代码导航能力。公网 HTTPS、Cloudflare Tunnel 或 OpenAI Secure MCP Tunnel 只是 ChatGPT 到 Server 的连接方式，不会把你切换到另一套受限体验。
+
+按照[完整使用指南](docs/PERSONAL_SETUP.zh-CN.md)完成安装、一次性登录、项目选择、Runner 启动和 ChatGPT 连接即可。第一次成功使用前，不需要理解内部身份、注册表或令牌细节。
+
+### 只想先试几分钟：临时分享
+
+如果你只是想快速看看 WebCodex 是否适合自己，可以在一个仓库里运行：
 
 ```bash
 cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex share
 ```
 
-看到 **WebCodex ready** 后保持终端运行。Linux 与 macOS 通常会自动复制 **MCP URL**，并可在交互终端按 **Enter** 打开 ChatGPT App 设置；Windows 请手动复制终端中打印的 **MCP URL**，并进入 **Settings -> Apps -> Create**。然后：
-
-1. 如有需要，开启 **Developer Mode** 并选择 **Create**。
-2. 粘贴已经复制的 **MCP URL**；也可以使用 WebCodex 终端中打印的地址。
-3. 认证选择 **Access token / API key**（或等价的 Bearer 令牌选项），再填入输出的临时 **Credential**。
-4. 点击 **Scan Tools**。
-
-Developer Mode、自定义 MCP App 和写入/修改操作是否可用取决于 ChatGPT 套餐、workspace 与管理员策略；WebCodex 无法启用客户端未授予的权限。
-
-第一条消息可以先只读检查：
-
-```text
-检查这个仓库并总结它的结构。先不要做任何修改。
-```
-
-如果 ChatGPT 没有显示 Bearer/访问令牌选项，或者自动尝试 OAuth 后出现 **does not implement OAuth**，直接运行：
-
-```bash
-npx --yes @yyjeqhc/webcodex share --auth query-token
-```
-
-把输出的完整 `/mcp?token=...` 地址粘贴到 ChatGPT，并选择 **No authentication**。这个 fallback 需要 WebCodex 0.3.9 或更新版本。这条地址包含本次临时密钥，不要公开、转发或记录到日志中。如果已经全局安装 WebCodex，也可以使用等价命令 `webcodex share --auth query-token`。更多客户端配置见[快速开始](docs/QUICK_START.zh-CN.md)和 [MCP 接入指南](docs/MCP.zh-CN.md)。
-
-默认的一键流程会创建一个由本次临时凭据保护的公网 HTTPS MCP 地址；关闭命令后，该地址和凭据都会失效。代理网络、OAuth、私有隧道、自托管等高级配置都放在单独的文档中，不是第一次使用的前置条件。
+`share` 会临时启动单项目、受限的 WebCodex 环境并给出 ChatGPT 连接信息；关闭命令后连接和临时凭据都会失效。它适合试用和临时分享，不是日常完整体验的默认部署方式。详细步骤见[快速试用](docs/QUICK_START.zh-CN.md)。
 
 ## 能做什么？
 
@@ -82,23 +67,18 @@ WebCodex
 
 Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP](docs/MCP.zh-CN.md)。
 
-## 长期使用与高级配置
+## 已有 Server 与高级配置
 
-希望长期保留命令行工具时可以全局安装：
+如果已经有人为你提供 WebCodex Server 和接入凭据，可以直接使用已有 Server；普通个人完整安装见[完整使用指南](docs/PERSONAL_SETUP.zh-CN.md)。生产环境、多用户、systemd/Docker、OAuth、代理/私有 CA 等运维内容再查看[部署指南](docs/DEPLOYMENT.zh-CN.md)。
 
-```bash
-npm install -g @yyjeqhc/webcodex
-```
-
-对于 operator 提供 shared key 的已有 hosted WebCodex Server，使用 `webcodex connect <server-url>`；新部署的自托管 Server 应把 bootstrap administrator token 留在 Server 侧，并按[部署指南](docs/DEPLOYMENT.zh-CN.md)使用短期 pairing code + `webcodex login` 完成 enrollment。
-
-生产环境、自托管、Windows 接入、OAuth、私有隧道、代理/私有 CA 等运维配置请直接查看下面的专题文档，不需要在第一次体验前理解这些概念。
+这些是后续配置，不应该成为第一次使用 WebCodex 的概念负担。
 
 ## 文档
 
-- [快速开始](docs/QUICK_START.zh-CN.md) —— 从零到第一次成功连接 AI
+- [完整使用指南](docs/PERSONAL_SETUP.zh-CN.md) —— 日常使用推荐：普通 Server + Runner + 你的项目
+- [快速试用](docs/QUICK_START.zh-CN.md) —— 用 `share` 临时体验一个仓库
 - [MCP](docs/MCP.zh-CN.md) —— ChatGPT、Claude、认证方式和 MCP 参考
-- [部署指南](docs/DEPLOYMENT.zh-CN.md) —— 自托管、长期 Server 和机器接入
+- [部署指南](docs/DEPLOYMENT.zh-CN.md) —— 生产、自托管和高级运维
 - [故障排查](docs/TROUBLESHOOTING.zh-CN.md) —— 连接和运行问题
 - [CLI](docs/CLI.zh-CN.md) —— 命令与凭据参考
 - [AI 辅助接入](docs/AI_ONBOARDING.zh-CN.md) —— 让 AI 帮你配置 WebCodex

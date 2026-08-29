@@ -8,37 +8,26 @@
 
 WebCodex lets an AI inspect and edit code, run tests and commands, use Git, and work with the development environment that already exists beside your repository.
 
-### Fastest first connection
+### Recommended: full everyday setup
 
-Requires Node.js 18+ and Git. On Linux, macOS, or Windows x64:
+For normal daily use, install WebCodex and run a regular Server + Runner. This gives ChatGPT the full coding runtime against your real projects; public HTTPS, Cloudflare, and OpenAI Tunnel are reachability choices rather than separate permission modes.
+
+```bash
+npm install -g @yyjeqhc/webcodex
+```
+
+Follow the [Full Setup guide](https://github.com/yyjeqhc/webcodex/blob/main/docs/PERSONAL_SETUP.md) for Server startup, one-time login, project selection, Runner startup, and ChatGPT connection.
+
+### Quick temporary trial
+
+If you only want to try one repository for a few minutes, use:
 
 ```bash
 cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex share
 ```
 
-When WebCodex reports **WebCodex ready**, keep the terminal open. Linux and macOS normally copy the **MCP URL** to your clipboard and can use **Enter** in an interactive terminal to open ChatGPT App settings. On Windows, copy the printed **MCP URL** manually and open **Settings -> Apps -> Create**. Then:
-
-1. Enable **Developer Mode** if needed and choose **Create**.
-2. Paste the copied **MCP URL** (or use the URL printed by WebCodex).
-3. Choose **Access token / API key** (Bearer token) and paste the printed **Credential**.
-4. Run **Scan Tools**.
-
-The default one-command flow creates a temporary public HTTPS MCP endpoint protected by that run's temporary credential; both the endpoint and credential stop working when the command exits. Developer Mode, custom MCP Apps, and write/modify actions depend on your ChatGPT plan, workspace, and administrator policy; WebCodex cannot enable capabilities the client does not grant.
-
-Try:
-
-```text
-Inspect this repository and summarize its structure. Do not make changes.
-```
-
-If ChatGPT does not show a Bearer/access-token option, or reports **does not implement OAuth**, run:
-
-```bash
-npx --yes @yyjeqhc/webcodex share --auth query-token
-```
-
-Paste the complete `/mcp?token=...` URL and choose **No authentication**. This fallback requires WebCodex 0.3.9 or later. Treat the complete URL as a temporary secret. If the package is installed globally, `webcodex share --auth query-token` is equivalent.
+`share` is a temporary, single-project, more restricted experience. The endpoint and temporary credential stop working when the command exits. See the [Quick Trial](https://github.com/yyjeqhc/webcodex/blob/main/docs/QUICK_START.md) for the ChatGPT steps and authentication fallback.
 
 ### Platforms
 
@@ -46,7 +35,7 @@ Paste the complete `/mcp?token=...` URL and choose **No authentication**. This f
 - macOS x64/arm64: local one-command `share` and Runner workflows.
 - Windows x64/arm64: CLI + Runner, foreground Server, and explicit local `share` with `cloudflare`, `openai`, or `none`. Windows x64 auto-manages the pinned Cloudflare binary; managed OpenAI `tunnel-client` supports x64 and arm64. The pinned Cloudflare release has no official Windows ARM64 artifact, so ARM64 Cloudflare use requires a trusted explicit/PATH binary. Managed Windows Server services remain unsupported.
 
-For Windows, permanent/self-hosted setup, OAuth, private tunnels, proxy settings, and troubleshooting, use the [WebCodex documentation](https://github.com/yyjeqhc/webcodex/tree/main/docs). The [Quick Start](https://github.com/yyjeqhc/webcodex/blob/main/docs/QUICK_START.md) stays focused on the first successful connection.
+For normal Windows/Linux use, start with the [Full Setup guide](https://github.com/yyjeqhc/webcodex/blob/main/docs/PERSONAL_SETUP.md). Production hosting, OAuth, private-network details, proxy settings, and troubleshooting are available in the [WebCodex documentation](https://github.com/yyjeqhc/webcodex/tree/main/docs).
 
 ### Install globally
 
@@ -66,37 +55,26 @@ WebCodex can read and modify files and execute commands inside configured projec
 
 WebCodex 可以让 AI 理解和修改代码、运行测试与命令、检查 Git，并直接使用仓库旁边已经存在的真实开发环境。
 
-### 最快的第一次连接
+### 推荐：日常完整使用
 
-需要 Node.js 18+ 和 Git。Linux、macOS 或 Windows x64 上进入仓库：
+如果准备正常长期使用 WebCodex，推荐安装后运行普通 Server + Runner。这样 ChatGPT 可以使用真实项目上的完整 coding runtime；公网 HTTPS、Cloudflare、OpenAI Tunnel 都只是网络连接方式，不是不同的权限模式。
+
+```bash
+npm install -g @yyjeqhc/webcodex
+```
+
+按照[完整使用指南](https://github.com/yyjeqhc/webcodex/blob/main/docs/PERSONAL_SETUP.zh-CN.md)完成 Server 启动、一次性登录、项目选择、Runner 启动和 ChatGPT 连接。
+
+### 快速临时试用
+
+如果只想用几分钟体验一个仓库，可以运行：
 
 ```bash
 cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex share
 ```
 
-看到 **WebCodex ready** 后保持终端运行。Linux 与 macOS 通常会自动复制 **MCP URL**，并可在交互终端按 **Enter** 打开 ChatGPT App 设置；Windows 请手动复制终端中打印的 **MCP URL**，并进入 **Settings -> Apps -> Create**。然后：
-
-1. 如有需要，开启 **Developer Mode** 并选择 **Create**。
-2. 粘贴已经复制的 **MCP URL**；也可以使用 WebCodex 终端中打印的地址。
-3. 认证选择 **Access token / API key**（Bearer 令牌），并填入输出的临时 **Credential**。
-4. 点击 **Scan Tools**。
-
-默认的一键流程会创建一个由本次临时凭据保护的公网 HTTPS MCP 地址；关闭命令后，该地址和凭据都会失效。Developer Mode、自定义 MCP App 和写入/修改操作是否可用取决于 ChatGPT 套餐、workspace 与管理员策略；WebCodex 无法启用客户端未授予的权限。
-
-第一条可以先只读检查：
-
-```text
-检查这个仓库并总结它的结构。先不要做任何修改。
-```
-
-如果 ChatGPT 没有 Bearer/访问令牌选项，或者出现 **does not implement OAuth**，运行：
-
-```bash
-npx --yes @yyjeqhc/webcodex share --auth query-token
-```
-
-粘贴完整的 `/mcp?token=...` 地址并选择 **No authentication**。这个 fallback 需要 WebCodex 0.3.9 或更新版本。完整地址包含本次临时密钥，请按敏感信息处理。如果已经全局安装，也可以使用 `webcodex share --auth query-token`。
+`share` 是临时、单项目、能力更受限的体验；命令退出后地址和临时凭据都会失效。ChatGPT 配置和认证 fallback 见[快速试用](https://github.com/yyjeqhc/webcodex/blob/main/docs/QUICK_START.zh-CN.md)。
 
 ### 平台支持
 
@@ -104,7 +82,7 @@ npx --yes @yyjeqhc/webcodex share --auth query-token
 - macOS x64/arm64：支持本机一键 `share` 和 Runner 工作流。
 - Windows x64/arm64：支持 CLI、Runner、前台 Server，以及显式本机 `share --tunnel cloudflare|openai|none`。Windows x64 可自动管理固定版本 Cloudflare；OpenAI `tunnel-client` 的 managed 获取支持 x64/arm64。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。WebCodex 托管的 Windows Server service 仍不支持。
 
-Windows、长期/自托管部署、OAuth、私有隧道、代理配置和故障排查见 [WebCodex 文档](https://github.com/yyjeqhc/webcodex/tree/main/docs)。[快速开始](https://github.com/yyjeqhc/webcodex/blob/main/docs/QUICK_START.zh-CN.md)只保留第一次成功连接所需的步骤。
+Windows/Linux 普通使用先看[完整使用指南](https://github.com/yyjeqhc/webcodex/blob/main/docs/PERSONAL_SETUP.zh-CN.md)。生产部署、OAuth、私有网络细节、代理配置和故障排查再查看 [WebCodex 文档](https://github.com/yyjeqhc/webcodex/tree/main/docs)。
 
 ### 全局安装
 

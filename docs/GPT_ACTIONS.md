@@ -134,7 +134,8 @@ matching.
 
 ## Related
 
-- [Quick Start](QUICK_START.md)
+- [Full Setup](PERSONAL_SETUP.md)
+- [Quick Trial](QUICK_START.md)
 - [MCP](MCP.md)
 - [Authentication](AUTH_MODEL.md)
 - [Deployment](DEPLOYMENT.md)

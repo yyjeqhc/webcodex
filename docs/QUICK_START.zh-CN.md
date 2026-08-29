@@ -1,8 +1,10 @@
-# 快速开始
+# 快速试用
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-这个页面只做一件事：让一个本地代码仓库尽快完成第一次 AI 开发请求。开始之前不需要理解 WebCodex 的内部架构。
+这个页面只做一件事：用 `webcodex share` 临时分享一个本地仓库，让你几分钟内判断 WebCodex 是否适合自己。这个模式是一条命令的**临时、单项目、受限体验**；关闭命令后连接会结束。
+
+如果你准备日常使用 WebCodex，并希望获得普通 Server + Runner 的完整 coding 能力，请直接使用[完整使用指南](PERSONAL_SETUP.zh-CN.md)，不要把 `share` 当作长期默认部署。
 
 ## 前置条件
 
@@ -21,7 +23,7 @@ cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex share
 ```
 
-第一次使用不需要提前运行 `setup`、`doctor` 或 `run`。默认的一键流程会创建一个由本次临时凭据保护的公网 HTTPS MCP 地址；关闭命令后，该地址和凭据都会失效。
+临时试用不需要提前运行 `setup`、`doctor` 或 `run`。这一键流程会创建一个由本次临时凭据保护的公网 HTTPS MCP 地址；关闭命令后，该地址和凭据都会失效。
 
 ## 2. 等待 `WebCodex ready`
 
@@ -67,12 +69,12 @@ npx --yes @yyjeqhc/webcodex share --auth query-token
 
 ## 完成
 
-第一次连接已经成功。使用这次临时分享时保持 WebCodex 终端运行；按 Ctrl-C 会结束本次连接。
+临时试用已经成功。使用这次分享时保持 WebCodex 终端运行；按 Ctrl-C 会结束本次连接。
 
-接下来按需要阅读：
+如果准备继续日常使用，下一步推荐切换到[完整使用指南](PERSONAL_SETUP.zh-CN.md)，获得普通 Server + Runner 的完整 coding 体验。其他参考：
 
 - [ChatGPT、Claude 与认证方式](MCP.zh-CN.md)
-- [Windows 与长期/自托管部署](DEPLOYMENT.zh-CN.md)
+- [生产与高级部署](DEPLOYMENT.zh-CN.md)
 - [CLI 参考](CLI.zh-CN.md)
 - [故障排查](TROUBLESHOOTING.zh-CN.md)
 - [安全说明](../SECURITY.md)

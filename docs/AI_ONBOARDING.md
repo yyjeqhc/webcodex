@@ -6,35 +6,37 @@ This guide is for an AI coding agent helping a **user** connect a repository to
 WebCodex or operate an existing deployment. It is not [`AGENTS.md`](../AGENTS.md),
 which governs development of WebCodex itself.
 
-The default user goal is: **"let ChatGPT work with this repository."** Do not
-introduce Server deployment, client ids, runtime project ids, PATs, Runner tokens,
-or OAuth scope ceilings unless the user's chosen path actually requires them.
+Treat the default user goal as: **"let ChatGPT use my development environment normally."** Unless the user explicitly asks only for a temporary trial, prefer the full regular Server + Runner coding experience instead of treating `share` as WebCodex itself.
 
-## Choose the smallest path
+Before the first successful setup, keep the user-facing vocabulary to: **WebCodex service, Runner (the machine that runs code), Project, one-time login code, and ChatGPT connection**. Do not front-load `client_id`, runtime project ids, `projects_dir`, PATs, Runner tokens, scope ceilings, or Connector surfaces.
 
-Check the platform before choosing the path. Windows supports the same explicit
-`webcodex share` path as Linux/macOS; do not invent a remote Linux Server as a
-Windows prerequisite. Keep the no-command interactive shortcut Linux/macOS-only.
-On Windows ARM64, explain that the pinned Cloudflare release has no official ARM64
-artifact if the user selects/defaults to Cloudflare; a trusted explicit/PATH
-`cloudflared`, OpenAI tunnel, or local-only `none` is required instead.
+## First choose the experience
 
-1. The user has one local repository and wants to try ChatGPT/MCP now, with no
-   existing WebCodex Server URL: use **`webcodex share`**.
-2. The user already has a WebCodex Server URL and wants a persistent repository
-   connection: use **`webcodex connect <server>`**.
-3. The user needs separate identity, independent revocation, audit, or managed
-   users: use the managed identity path (`webcodex login` / managed OAuth).
-4. The user needs infrastructure control, private networking, stable HTTPS, or
-   their own identity system: use [Deployment](DEPLOYMENT.md).
+1. The user wants normal/daily/long-lived WebCodex use, or did not explicitly ask for a temporary trial: use the [Full Setup guide](PERSONAL_SETUP.md) with a regular Server + Runner.
+2. The user explicitly wants a few-minute, zero-commitment trial of one repository: use **`webcodex share`**. It is temporary, single-project, and more restricted.
+3. The user already has a WebCodex Server URL: use the enrollment method that Server actually provides. Fresh managed self-hosting uses pairing + `webcodex login`; use `webcodex connect <server>` only when an operator explicitly supplied a shared-key credential.
+4. Move to [Deployment](DEPLOYMENT.md) only for production hosting, multiple users, OAuth, systemd/Docker, private CAs, and similar operator concerns.
 
-Do not invent `https://your-server.example` as a prerequisite for a new user.
+Windows can run a foreground Server and Runner directly. Do not redirect Windows users to a remote Linux host by default, and do not switch them to `share` merely because they need a Tunnel. **A Tunnel solves reachability; it does not choose the WebCodex coding permission model.**
 
-## First-time ChatGPT path: `share`
+## Default: full setup
 
-Verify Git and the target repository. For the default public share, WebCodex
-reuses `WEBCODEX_CLOUDFLARED_BIN` / `PATH` or automatically downloads its pinned,
-verified managed `cloudflared`; do not ask a first-time user to install it first.
+Use the [Full Setup guide](PERSONAL_SETUP.md) as the user-facing source of truth. Help the user complete these observable steps:
+
+- install WebCodex;
+- start a regular Server;
+- choose one reachability path to that Server (public HTTPS, Cloudflare, OpenAI Tunnel, etc.);
+- create a one-time login code;
+- run `webcodex login ... --project <repo>`;
+- start the Runner;
+- use `--print-mcp-config` or the selected Tunnel guide to add WebCodex to ChatGPT;
+- verify one read and one small edit using the full coding experience.
+
+Do not copy systemd socket details, OAuth scopes, token taxonomy, registry paths, or similar Deployment reference material into this ordinary user path before it is needed.
+
+## Temporary trial: `share`
+
+Only make `share` the main path after the user explicitly chooses a quick temporary trial:
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -42,32 +44,9 @@ cd /path/to/your/repository
 webcodex share
 ```
 
-`share` performs project setup itself. Do not teach `setup → doctor → run → stop
-run → share` as the onboarding sequence.
+`share` performs temporary project setup and owns the Server/Runner/Tunnel for that run. When the CLI reports **WebCodex ready**, have the human follow its ChatGPT connection output. Developer Mode, custom MCP apps, and write/modify actions still depend on the ChatGPT plan, workspace, and admin policy.
 
-When the CLI reports **WebCodex ready**, tell the human to keep that terminal open
-and follow the printed **What to do next** section. Before promising write access,
-remember that ChatGPT Developer Mode, custom MCP apps, and write/modify actions
-are controlled by the user's ChatGPT plan, workspace, and admin settings; these
-client-side permissions are separate from WebCodex authorization:
-
-- ChatGPT Developer Mode → create an MCP custom app.
-- paste the printed MCP URL.
-- select the authentication type printed by the CLI.
-- the **human** pastes the printed credential into ChatGPT.
-- Scan Tools.
-- first prompt: `Inspect this repository and summarize its structure. Do not make changes.`
-
-For local-only debugging, `webcodex share --tunnel none` avoids the Cloudflare
-Quick Tunnel and does not require `cloudflared`.
-
-When the user explicitly wants OpenAI-only private reachability and already has
-an OpenAI Secure MCP Tunnel, use `webcodex share --tunnel openai`. Require
-`CONTROL_PLANE_TUNNEL_ID` and a Restricted `CONTROL_PLANE_API_KEY` with Tunnels
-Read + Use. In ChatGPT choose Connection: Tunnel and No authentication; WebCodex
-keeps its temporary Bearer local and injects it through `tunnel-client`. Do not
-ask the human to paste that local credential into ChatGPT. Keep Cloudflare Quick
-as the ordinary zero-Platform-setup default.
+Use `webcodex share --tunnel none` only for a local-only temporary trial, and `webcodex share --tunnel openai` for an explicitly selected OpenAI Tunnel temporary share. Do not infer from those temporary share modes that a regular Server + Runner has the same restrictions.
 
 ## Existing shared-key Server path: `connect`
 
@@ -109,7 +88,7 @@ webcodex runner install --scope user \
   --config <login-reported-agent-config>
 ```
 
-`--allowed-root` is only the filesystem authority boundary for future project registration; it does not register a workspace. `projects_dir` in `agent.toml` is the Runner's project-registry directory, not a source checkout. If login is intentionally done without `--project`, register the actual workspace later with `webcodex project register --config <login-reported-agent-config> /path/to/repo` before expecting project-bound tools.
+For ordinary users, explain only that `--project` is the actual project and `--allowed-root` is a parent directory from which more projects may be added later. Do not require manual edits to `agent.toml` or `projects.d`; reserve registry/authority internals for troubleshooting and reference material. If login intentionally omitted `--project`, add it later with `webcodex project register --config <login-reported-agent-config> /path/to/repo`.
 
 Use `share --auth oauth` or `connect --auth oauth` only when the client requires
 OAuth and the exact callback URL is known. Do not collapse OAuth client secrets,
@@ -146,11 +125,7 @@ Do **not** read back, print, log, commit, or echo into chat:
 - full `agent.toml` contents or Server env files;
 - `Authorization` headers.
 
-When a credential must be entered into ChatGPT/Claude, identify the source
-precisely and ask the **human** to copy it. The successful `share`/`connect` output
-is the preferred first-disclosure source. If a stored value must be recovered,
-point the user to the exact protected file/field without echoing it yourself.
-Status/log commands intentionally do not reveal secrets.
+When a credential must be entered into ChatGPT/Claude, identify the source precisely and ask the **human** to copy it. Prefer connection details explicitly produced by the current flow, such as `login --print-mcp-config` for full setup or the successful disclosure from a temporary `share` / existing-Server `connect`. If a stored value must be recovered, point the user to the exact protected file/field without echoing it yourself. Status/log commands intentionally do not reveal secrets.
 
 Never substitute a `wc_agent_*` Runner token for an MCP token, never use a
 bootstrap `WEBCODEX_TOKEN` as an MCP credential, and never assume offline

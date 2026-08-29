@@ -24,7 +24,7 @@ The documented distribution path is the npm thin installer/wrapper:
 npm install -g @yyjeqhc/webcodex
 ```
 
-Supported package platforms are Linux x64, Linux arm64, macOS x64, macOS arm64, Windows x64, and Windows arm64. Windows supports CLI + Runner, explicit foreground Server, and explicit local `webcodex share --tunnel cloudflare|openai|none`. Windows x64 supports managed Cloudflare acquisition; Windows ARM64 Cloudflare requires a trusted explicit/PATH binary because the pinned upstream release has no official ARM64 artifact. Managed OpenAI `tunnel-client` supports Windows x64/arm64. WebCodex-managed Windows Server services remain unsupported. The npm wrapper
+Supported package platforms are Linux x64, Linux arm64, macOS x64, macOS arm64, Windows x64, and Windows arm64. Windows supports CLI + Runner, explicit foreground Server, and explicit local `webcodex share --tunnel cloudflare|openai|none`. Windows x64 supports managed Cloudflare acquisition; Windows ARM64 Cloudflare requires a trusted explicit/PATH binary because the pinned upstream release has no official ARM64 artifact. Managed OpenAI `tunnel-client` supports Windows x64/arm64. WebCodex-managed Windows Server and Runner services remain unsupported; run them explicitly in the foreground instead. The npm wrapper
 requires Node.js 18 or newer. Starting with v0.3.5, the native Linux x64
 artifact targets glibc 2.17 or newer.
 
@@ -36,6 +36,34 @@ export PATH="$PWD/target/release:$PATH"
 ```
 
 This produces `webcodex`, `webcodex-server`, and `webcodex-runner`.
+
+## Windows foreground Server and Runner
+
+The npm package installs all three Windows executables. Windows can run both the Server and Runner directly without Linux, WSL, or a Windows Service. Keep the foreground terminals open while the processes are in use.
+
+On the Windows Server machine, initialize an explicit env file and start the Server from PowerShell:
+
+```powershell
+$envFile = Join-Path $HOME ".config\webcodex\webcodex.env"
+$dataDir = Join-Path $HOME ".local\share\webcodex"
+webcodex server init --listen 127.0.0.1:8080 --data-dir $dataDir --env-file $envFile
+webcodex server run --env-file $envFile
+```
+
+Pass the same `--env-file` explicitly when starting the foreground Server; do not rely on a managed-service default. For a local same-machine enrollment, open another PowerShell window and create a short-lived pairing code:
+
+```powershell
+webcodex pairing create --server-url http://127.0.0.1:8080 --env-file $envFile --username workstation --display-name "Windows Workstation" --ttl-secs 600
+```
+
+Then, on the Windows machine that owns the repositories, redeem only that short-lived code and run the generated Runner config in the foreground:
+
+```powershell
+webcodex login http://127.0.0.1:8080 --code <wc_pair_...> --allowed-root C:\src
+webcodex runner run --config <login-reported-agent-config>
+```
+
+When Server and Runner are on different machines, replace the loopback URL with the Server's reachable HTTPS URL and configure the Server listener/public URL plus a trusted reverse proxy or tunnel as described below. Do not copy the Server bootstrap token or env file to the Runner machine. `webcodex server install/start/stop/restart/logs/uninstall` and `webcodex runner install` remain unsupported on Windows; Ctrl-C or Ctrl-Break ends the foreground runtime.
 
 ## Connect a repository to an existing shared-key Server
 

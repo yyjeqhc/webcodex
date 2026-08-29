@@ -17,7 +17,7 @@ cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex share
 ```
 
-When WebCodex reports **WebCodex ready**, keep the terminal open. The **MCP URL** is normally copied to your clipboard; press **Enter** in the terminal to open ChatGPT App settings, or open **Settings -> Apps -> Create** manually. Then:
+When WebCodex reports **WebCodex ready**, keep the terminal open. Linux and macOS normally copy the **MCP URL** to your clipboard and can use **Enter** in an interactive terminal to open ChatGPT App settings. On Windows, copy the printed **MCP URL** manually and open **Settings -> Apps -> Create**. Then:
 
 1. Enable **Developer Mode** if needed and choose **Create**.
 2. Paste the copied **MCP URL** (or use the URL printed by WebCodex).
@@ -75,7 +75,7 @@ cd /path/to/your/repository
 npx --yes @yyjeqhc/webcodex share
 ```
 
-看到 **WebCodex ready** 后保持终端运行。**MCP URL** 通常已经复制到剪贴板；可以直接在终端按 **Enter** 打开 ChatGPT App 设置，也可以手动进入 **Settings -> Apps -> Create**。然后：
+看到 **WebCodex ready** 后保持终端运行。Linux 与 macOS 通常会自动复制 **MCP URL**，并可在交互终端按 **Enter** 打开 ChatGPT App 设置；Windows 请手动复制终端中打印的 **MCP URL**，并进入 **Settings -> Apps -> Create**。然后：
 
 1. 如有需要，开启 **Developer Mode** 并选择 **Create**。
 2. 粘贴已经复制的 **MCP URL**；也可以使用 WebCodex 终端中打印的地址。

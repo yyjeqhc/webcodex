@@ -25,7 +25,7 @@ You do not need to run `setup`, `doctor`, or `run` first. The default one-comman
 
 ## 2. Wait for `WebCodex ready`
 
-Keep that terminal open. WebCodex prints the values needed by the MCP client and normally copies the MCP URL to your clipboard. Press **Enter** in the terminal to open ChatGPT App settings; you can also open **Settings -> Apps -> Create** manually.
+Keep that terminal open. WebCodex prints the values needed by the MCP client. On Linux and macOS it normally copies the MCP URL to your clipboard and an interactive terminal can use **Enter** to open ChatGPT App settings. On Windows, copy the printed MCP URL manually and open **Settings -> Apps -> Create**.
 
 ## 3. Add WebCodex to ChatGPT
 

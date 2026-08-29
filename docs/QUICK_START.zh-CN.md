@@ -25,7 +25,7 @@ npx --yes @yyjeqhc/webcodex share
 
 ## 2. 等待 `WebCodex ready`
 
-看到 **WebCodex ready** 后保持终端运行。WebCodex 会打印 MCP 客户端需要的配置，通常也会把 MCP URL 复制到剪贴板。可以直接在终端按 **Enter** 打开 ChatGPT App 设置，也可以手动进入 **Settings -> Apps -> Create**。
+看到 **WebCodex ready** 后保持终端运行。WebCodex 会打印 MCP 客户端需要的配置。Linux 与 macOS 通常会自动复制 MCP URL，并可在交互终端按 **Enter** 打开 ChatGPT App 设置；Windows 请手动复制终端中打印的 MCP URL，并进入 **Settings -> Apps -> Create**。
 
 ## 3. 在 ChatGPT 中添加 WebCodex
 

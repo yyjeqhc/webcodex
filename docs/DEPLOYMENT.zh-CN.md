@@ -21,7 +21,7 @@ Runner 机器、连接 MCP/GPT 客户端以及 smoke 检查。第一次连接 Ch
 npm install -g @yyjeqhc/webcodex
 ```
 
-支持 Linux x64、Linux arm64、macOS x64、macOS arm64、Windows x64 与 Windows arm64。Windows 支持 CLI + Runner、显式前台 Server，以及显式本机 `webcodex share --tunnel cloudflare|openai|none`。Windows x64 支持 managed Cloudflare 获取；固定版本 upstream 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。managed OpenAI `tunnel-client` 支持 Windows x64/arm64。WebCodex 仍不支持 Windows Server service 托管生命周期。npm 包装器要求 Node.js 18 或更新。从 v0.3.5 起，Linux x64
+支持 Linux x64、Linux arm64、macOS x64、macOS arm64、Windows x64 与 Windows arm64。Windows 支持 CLI + Runner、显式前台 Server，以及显式本机 `webcodex share --tunnel cloudflare|openai|none`。Windows x64 支持 managed Cloudflare 获取；固定版本 upstream 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。managed OpenAI `tunnel-client` 支持 Windows x64/arm64。WebCodex 仍不支持 Windows Server/Runner service 托管生命周期；Windows 上应显式以前台方式运行。npm 包装器要求 Node.js 18 或更新。从 v0.3.5 起，Linux x64
 native artifact 以
 glibc 2.17 或更新为兼容基线。
 
@@ -33,6 +33,34 @@ export PATH="$PWD/target/release:$PATH"
 ```
 
 这会生成 `webcodex`、`webcodex-server`、`webcodex-runner`。
+
+## Windows 前台 Server 与 Runner
+
+npm 包会同时安装三个 Windows 可执行文件。Windows 不需要 Linux、WSL 或 Windows Service，也可以直接以前台方式运行 Server 与 Runner；使用期间保持对应终端开启即可。
+
+在 Windows Server 机器上，从 PowerShell 初始化显式 env 文件并启动 Server：
+
+```powershell
+$envFile = Join-Path $HOME ".config\webcodex\webcodex.env"
+$dataDir = Join-Path $HOME ".local\share\webcodex"
+webcodex server init --listen 127.0.0.1:8080 --data-dir $dataDir --env-file $envFile
+webcodex server run --env-file $envFile
+```
+
+启动前台 Server 时继续显式传入同一个 `--env-file`，不要依赖受管 service 的默认行为。如果先做同一台机器上的本地接入，再打开一个 PowerShell 窗口创建短期 pairing code：
+
+```powershell
+webcodex pairing create --server-url http://127.0.0.1:8080 --env-file $envFile --username workstation --display-name "Windows Workstation" --ttl-secs 600
+```
+
+然后在持有仓库的 Windows 机器上只兑换该短期 code，并以前台方式运行登录流程生成的 Runner 配置：
+
+```powershell
+webcodex login http://127.0.0.1:8080 --code <wc_pair_...> --allowed-root C:\src
+webcodex runner run --config <login-reported-agent-config>
+```
+
+如果 Server 与 Runner 位于不同机器，把 loopback URL 替换为 Server 可访问的 HTTPS URL，并按下文配置 Server listener/public URL 与受信任的反向代理或 tunnel。不要把 Server bootstrap token 或 env 文件复制到 Runner 机器。Windows 仍不支持 `webcodex server install/start/stop/restart/logs/uninstall` 与 `webcodex runner install`；Ctrl-C 或 Ctrl-Break 会结束前台 runtime。
 
 ## 把仓库接入已有的 shared-key Server
 

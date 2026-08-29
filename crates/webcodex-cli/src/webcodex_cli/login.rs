@@ -2274,9 +2274,47 @@ mod tests {
             print_mcp_config: false,
         };
         let error = run_login(opts).await.unwrap_err();
+        assert!(error.contains("outside allowed_roots"), "{error}");
+        let canonical = canonical_server_url(&format!("http://{address}")).unwrap();
+        let parent = resolve_connection_parent(&base, &canonical).unwrap();
+        assert_no_internal_residue(&parent);
+    }
+
+    #[tokio::test]
+    async fn login_project_rejects_unauthorized_dangerous_root_before_redemption() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let base = temp.path().join("config");
+        let allowed_root = temp.path().join("allowed");
+        std::fs::create_dir_all(&allowed_root).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        #[cfg(windows)]
+        let dangerous_project = PathBuf::from(r"C:\");
+        #[cfg(not(windows))]
+        let dangerous_project = PathBuf::from("/etc");
+        let opts = LoginOptions {
+            server_url: format!("http://{address}"),
+            server_http: ServerHttpOptions {
+                proxy: None,
+                no_system_proxy: true,
+            },
+            code: CODE.to_string(),
+            device: "project-device".to_string(),
+            device_explicit: true,
+            base_dir: base.clone(),
+            transport: "websocket".to_string(),
+            allowed_roots: vec![allowed_root],
+            project: Some(dangerous_project),
+            overwrite: false,
+            json: false,
+            print_mcp_config: false,
+        };
+        let error = run_login(opts).await.unwrap_err();
+        assert!(error.contains("outside allowed_roots"), "{error}");
         assert!(
-            error.contains("outside the Runner allowed_roots"),
-            "{error}"
+            !error.contains("failed to send"),
+            "path policy must fail before the one-shot pairing request: {error}"
         );
         let canonical = canonical_server_url(&format!("http://{address}")).unwrap();
         let parent = resolve_connection_parent(&base, &canonical).unwrap();

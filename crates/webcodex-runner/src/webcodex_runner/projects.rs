@@ -706,57 +706,6 @@ impl RunnerProjectCache {
     }
 }
 
-/// System directories that must never be used as a project root unless they are
-/// explicitly under an `allowed_roots` entry. Even when `allow_cwd_anywhere`
-/// is true, these roots are rejected to prevent accidental registration of
-/// critical system paths.
-///
-/// On Windows the Unix entries can never match (a canonical Windows path has a
-/// drive prefix) and the Windows entries guard the OS/Program Files trees; any
-/// drive root (`C:\`, `D:\`, ...) is rejected by `is_windows_drive_root`.
-const DANGEROUS_PROJECT_ROOTS: &[&str] = &[
-    "/",
-    "/etc",
-    "/bin",
-    "/sbin",
-    "/usr",
-    "/var",
-    // macOS canonicalizes the public `/etc` and `/var` aliases through
-    // `/private`; policy is evaluated after canonicalization, so fence those
-    // canonical spellings as the same dangerous roots.
-    #[cfg(target_os = "macos")]
-    "/private/etc",
-    #[cfg(target_os = "macos")]
-    "/private/var",
-    "/proc",
-    "/sys",
-    "/dev",
-    "/run",
-    "/boot",
-    #[cfg(windows)]
-    "C:\\Windows",
-    #[cfg(windows)]
-    "C:\\Program Files",
-    #[cfg(windows)]
-    "C:\\Program Files (x86)",
-];
-
-/// True when `canonical_path` is a drive root like `C:\` (any drive letter).
-#[cfg(windows)]
-fn is_windows_drive_root(canonical_path: &Path) -> bool {
-    let mut components = canonical_path.components();
-    matches!(
-        (components.next(), components.next()),
-        (Some(std::path::Component::Prefix(_)), Some(std::path::Component::RootDir))
-            if components.next().is_none()
-    )
-}
-
-#[cfg(not(windows))]
-fn is_windows_drive_root(_canonical_path: &Path) -> bool {
-    false
-}
-
 /// Windows-only fail-closed rule: project roots must be on a local disk drive
 /// (`C:\repo`, `D:\repo`, or the canonicalized `\\?\C:\repo` form). UNC
 /// (`\\server\share\repo`), verbatim-UNC (`\\?\UNC\...`), device-namespace
@@ -897,67 +846,24 @@ fn validate_project_op_description(desc: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Check whether a canonicalized project path is allowed by the Runner policy.
-/// Returns Ok(()) if the path is safe, Err otherwise.
-///
-/// - If `allow_cwd_anywhere` is false, the path must be under an explicit
-///   `allowed_roots` entry.
-/// - If `allow_cwd_anywhere` is true, the path is allowed unless it is one of
-///   the `DANGEROUS_PROJECT_ROOTS` (and not under an explicit `allowed_roots`).
+/// Thin Runner adapter over the shared authoritative project-path policy.
+/// Runner config loading has already materialized HOME-derived effective roots;
+/// this layer only canonicalizes currently usable roots before applying the
+/// same pure path semantics used by local onboarding.
 pub(crate) fn validate_project_path_policy(
     policy: &RunnerPolicy,
     canonical_path: &Path,
 ) -> Result<(), String> {
-    let path_str = canonical_path.to_string_lossy().to_string();
-    // Backstop: registration handlers reject non-local-disk paths with the
-    // dedicated `unc_project_path_unsupported` code before this function is
-    // reached, but the policy check itself must never bless one either (for
-    // example through an `allowed_roots` entry that names a UNC share).
-    #[cfg(windows)]
-    if !webcodex_runner_config::paths::is_windows_local_disk_path(canonical_path) {
-        return Err(format!(
-            "path {} is not on a local disk drive; UNC and other Windows network/device paths are not supported for projects",
-            path_str
-        ));
-    }
-    // If under an explicit allowed_root, always allow.
-    for root in &policy.allowed_roots {
-        if let Ok(canonical_root) = canonicalize_existing(root) {
-            // Case-insensitive component-wise containment on Windows so
-            // `C:\Users\Alice` roots match `c:\users\alice\proj` projects.
-            if webcodex_runner_config::paths::path_is_within(canonical_path, &canonical_root) {
-                return Ok(());
-            }
-        }
-    }
-    if !policy.allow_cwd_anywhere {
-        return Err(format!(
-            "path {} is outside allowed_roots and allow_cwd_anywhere is false",
-            path_str
-        ));
-    }
-    // allow_cwd_anywhere is true: reject dangerous system roots.
-    for &dangerous in DANGEROUS_PROJECT_ROOTS {
-        let dangerous_root = Path::new(dangerous);
-        let is_dangerous = if dangerous_root == Path::new("/") {
-            paths_equal(canonical_path, dangerous_root)
-        } else {
-            webcodex_runner_config::paths::path_is_within(canonical_path, dangerous_root)
-        };
-        if is_dangerous {
-            return Err(format!(
-                "path {} is under a dangerous system root; register it under an explicit allowed_roots entry if intended",
-                path_str
-            ));
-        }
-    }
-    if is_windows_drive_root(canonical_path) {
-        return Err(format!(
-            "path {} is a Windows drive root; register it under an explicit allowed_roots entry if intended",
-            path_str
-        ));
-    }
-    Ok(())
+    let canonical_roots = policy
+        .allowed_roots
+        .iter()
+        .filter_map(|root| canonicalize_existing(root).ok())
+        .collect::<Vec<_>>();
+    webcodex_runner_config::paths::validate_project_path_policy(
+        canonical_path,
+        &canonical_roots,
+        policy.allow_cwd_anywhere,
+    )
 }
 
 #[derive(Debug, Clone)]

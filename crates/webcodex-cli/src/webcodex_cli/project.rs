@@ -66,16 +66,11 @@ fn validate_project_authority(
     allow_cwd_anywhere: bool,
 ) -> Result<Vec<PathBuf>, String> {
     let roots = effective_canonical_roots(configured_roots, allow_cwd_anywhere)?;
-    if !allow_cwd_anywhere
-        && !roots
-            .iter()
-            .any(|root| webcodex_runner_config::paths::path_is_within(project, root))
-    {
-        return Err(format!(
-            "project {} is outside the Runner allowed_roots; --allowed-root controls registration authority and does not register a workspace",
-            project.display()
-        ));
-    }
+    webcodex_runner_config::paths::validate_project_path_policy(
+        project,
+        &roots,
+        allow_cwd_anywhere,
+    )?;
     Ok(roots)
 }
 
@@ -224,16 +219,29 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
 mod tests {
     use super::*;
 
-    fn config(path: &Path, projects_dir: &Path, root: &Path) {
+    fn config_with_policy(
+        path: &Path,
+        projects_dir: &Path,
+        roots: &[PathBuf],
+        allow_cwd_anywhere: bool,
+    ) {
+        let roots = roots
+            .iter()
+            .map(|root| format!("{:?}", root.to_string_lossy()))
+            .collect::<Vec<_>>()
+            .join(", ");
         std::fs::write(
             path,
             format!(
-                "server_url = \"https://example.test\"\ntoken = \"secret-not-printed\"\nclient_id = \"client\"\nprojects_dir = {:?}\n\n[policy]\nallowed_roots = [{:?}]\n",
+                "server_url = \"https://example.test\"\ntoken = \"secret-not-printed\"\nclient_id = \"client\"\nprojects_dir = {:?}\n\n[policy]\nallow_cwd_anywhere = {allow_cwd_anywhere}\nallowed_roots = [{roots}]\n",
                 projects_dir.to_string_lossy(),
-                root.to_string_lossy()
             ),
         )
         .unwrap();
+    }
+
+    fn config(path: &Path, projects_dir: &Path, root: &Path) {
+        config_with_policy(path, projects_dir, &[root.to_path_buf()], false);
     }
 
     #[test]
@@ -299,11 +307,75 @@ mod tests {
             json: false,
         })
         .unwrap_err();
-        assert!(
-            error.contains("outside the Runner allowed_roots"),
-            "{error}"
-        );
+        assert!(error.contains("outside allowed_roots"), "{error}");
         assert!(!registry.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cwd_anywhere_rejects_dangerous_root_without_mutating_registry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let _guard = crate::webcodex_cli::test_support::env_test_guard();
+        let _env = crate::webcodex_cli::test_support::EnvGuard::new()
+            .set_os("HOME", home.as_os_str().to_os_string());
+        let registry = tmp.path().join("registry");
+        let config_path = tmp.path().join("agent.toml");
+        config_with_policy(&config_path, &registry, &[], true);
+
+        let error = run_project_register(ProjectRegisterOptions {
+            config: config_path,
+            project: PathBuf::from("/etc"),
+            json: true,
+        })
+        .unwrap_err();
+        assert!(error.contains("dangerous system root"), "{error}");
+        assert!(
+            !registry.exists(),
+            "policy failure must not mutate registry"
+        );
+    }
+
+    #[test]
+    fn cwd_anywhere_still_allows_an_ordinary_directory_outside_explicit_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let authority = tmp.path().join("authority");
+        let project = tmp.path().join("ordinary-project");
+        let registry = tmp.path().join("registry");
+        std::fs::create_dir_all(&authority).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        let config_path = tmp.path().join("agent.toml");
+        config_with_policy(&config_path, &registry, &[authority], true);
+
+        let output = run_project_register(ProjectRegisterOptions {
+            config: config_path,
+            project,
+            json: true,
+        })
+        .unwrap();
+        let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["project"]["already_registered"], false);
+        assert!(registry.join("ordinary-project.toml").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_dangerous_root_authority_allows_intentional_registration() {
+        let tmp = tempfile::tempdir().unwrap();
+        let registry = tmp.path().join("registry");
+        let config_path = tmp.path().join("agent.toml");
+        config_with_policy(&config_path, &registry, &[PathBuf::from("/etc")], true);
+
+        let output = run_project_register(ProjectRegisterOptions {
+            config: config_path,
+            project: PathBuf::from("/etc"),
+            json: true,
+        })
+        .unwrap();
+        let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["project"]["id"], "etc");
+        assert!(registry.join("etc.toml").is_file());
     }
 
     #[test]

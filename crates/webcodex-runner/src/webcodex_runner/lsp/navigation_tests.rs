@@ -1083,6 +1083,47 @@ fn cold_workspace_symbols_waits_for_quiescent_readiness_before_dispatch() {
 }
 
 #[test]
+fn rust_workspace_symbols_can_outlive_the_ordinary_request_timeout() {
+    let _serial = super::serialize_fake_lsp_test();
+    let fixture = NavFixture::new("workspace_slow_success");
+    let result = fixture.request_with_timeout(
+        AgentLspPayload {
+            project_id: "demo".into(),
+            request: AgentLspRequest::WorkspaceSymbols {
+                query: "KnownSymbol".into(),
+                limit: 50,
+            },
+        },
+        5,
+    );
+    assert_eq!(result["success"], true, "{result}");
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    assert!(marker.contains("workspace-request"), "{marker}");
+}
+
+#[test]
+fn rust_workspace_symbol_timeout_remains_bounded_by_the_operation_deadline() {
+    let _serial = super::serialize_fake_lsp_test();
+    let fixture = NavFixture::new("workspace_slow_success");
+    let started = Instant::now();
+    let result = fixture.request_with_timeout(
+        AgentLspPayload {
+            project_id: "demo".into(),
+            request: AgentLspRequest::WorkspaceSymbols {
+                query: "KnownSymbol".into(),
+                limit: 50,
+            },
+        },
+        1,
+    );
+    assert_eq!(result["success"], false, "{result}");
+    assert_eq!(result["error"]["code"], "lsp_request_timeout", "{result}");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    assert!(marker.contains("workspace-request"), "{marker}");
+}
+
+#[test]
 fn workspace_symbol_restart_reapplies_readiness_fence_before_retry() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("workspace_readiness_restart");

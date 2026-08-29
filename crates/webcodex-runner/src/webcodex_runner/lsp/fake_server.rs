@@ -306,6 +306,10 @@ fn run() -> io::Result<()> {
                         ),
                     )?
                 }
+                "workspace_slow_success" if method == "workspace/symbol" => {
+                    thread::sleep(Duration::from_millis(3500));
+                    write_result(&mut writer, id, method, &body)?;
+                }
                 "workspace_readiness_restart" if method == "workspace/symbol" => {
                     if start_count(marker.as_deref()) <= 1 {
                         return Ok(());

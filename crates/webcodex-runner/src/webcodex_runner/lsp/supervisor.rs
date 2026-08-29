@@ -608,7 +608,11 @@ impl LspSupervisor {
             kind,
             method,
             params,
-            self.inner.config.request_timeout,
+            workspace_symbol_request_timeout(
+                kind,
+                self.inner.config.request_timeout,
+                remaining_until(operation_deadline),
+            ),
             Some(operation_deadline),
             None,
             false,
@@ -1526,6 +1530,22 @@ fn combine_initialize_failure(error: &LspError, stderr_summary: Option<String>) 
 
 fn remaining_until(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now())
+}
+
+fn workspace_symbol_request_timeout(
+    kind: LspServerKind,
+    ordinary_timeout: Duration,
+    operation_budget: Duration,
+) -> Duration {
+    // Real large Rust workspaces can become quiescent quickly while the first
+    // workspace/symbol computation itself exceeds the ordinary 10s request
+    // timeout. Let that one request consume the already-authoritative outer
+    // operation budget; the shared absolute deadline still caps every attempt.
+    if kind == LspServerKind::RustAnalyzer {
+        operation_budget
+    } else {
+        ordinary_timeout
+    }
 }
 
 /// Reaper cadence: a fraction of the idle TTL, bounded so long TTLs still

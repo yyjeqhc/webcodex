@@ -339,6 +339,32 @@ fn diagnostics_cache_is_latest_value_bounded_and_counts_malformed_notifications(
 }
 
 #[test]
+fn workspace_symbol_timeout_uses_operation_budget_only_for_rust() {
+    let ordinary = Duration::from_secs(3);
+    let operation_budget = Duration::from_secs(17);
+    assert_eq!(
+        workspace_symbol_request_timeout(LspServerKind::RustAnalyzer, ordinary, operation_budget),
+        operation_budget
+    );
+    assert_eq!(
+        workspace_symbol_request_timeout(LspServerKind::Gopls, ordinary, operation_budget),
+        ordinary
+    );
+    assert_eq!(
+        workspace_symbol_request_timeout(LspServerKind::Pyright, ordinary, operation_budget),
+        ordinary
+    );
+    assert_eq!(
+        workspace_symbol_request_timeout(
+            LspServerKind::TypeScriptLanguageServer,
+            ordinary,
+            operation_budget
+        ),
+        ordinary
+    );
+}
+
+#[test]
 fn server_status_cache_malformed_notification_clears_stale_readiness() {
     let cache = ServerStatusCache::default();
     cache.record(Some(&json!({"health": "ok", "quiescent": true})));

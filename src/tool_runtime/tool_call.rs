@@ -39,6 +39,22 @@ pub enum SearchResultMode {
     Count,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchPatternMode {
+    Regex,
+    Literal,
+}
+
+impl SearchPatternMode {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Regex => "regex",
+            Self::Literal => "literal",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadFilesItem {
@@ -54,6 +70,8 @@ pub struct ReadFilesItem {
 #[serde(deny_unknown_fields)]
 pub struct SearchProjectTextsQuery {
     pub pattern: String,
+    #[serde(default)]
+    pub pattern_mode: Option<SearchPatternMode>,
     #[serde(default)]
     pub path: Option<String>,
     #[serde(default)]
@@ -1201,6 +1219,8 @@ pub enum ToolCall {
     SearchProjectText {
         project: String,
         pattern: String,
+        #[serde(default)]
+        pattern_mode: Option<SearchPatternMode>,
         #[serde(default)]
         session_id: Option<String>,
         #[serde(default)]

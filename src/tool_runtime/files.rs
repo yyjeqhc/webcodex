@@ -21,7 +21,7 @@ use super::tool_inputs::{
 };
 use super::tool_result::ToolResult;
 use super::{file_listing, permissions, project_instructions};
-use super::{SearchResultMode, ToolRuntime};
+use super::{SearchPatternMode, SearchResultMode, ToolRuntime};
 use crate::artifact_policy::{
     has_safe_octet_stream_artifact_extension, octet_stream_safe_extension_error,
     ooxml_extension_for_mime, MAX_MCP_IMAGE_BYTES,

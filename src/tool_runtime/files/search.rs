@@ -145,6 +145,7 @@ impl SearchValidationError {
 #[derive(Debug, Clone)]
 pub(crate) struct SearchOptions {
     pub(crate) pattern: String,
+    pub(crate) pattern_mode: SearchPatternMode,
     pub(crate) path: String,
     pub(crate) limit: usize,
     pub(crate) context_before: usize,
@@ -157,7 +158,15 @@ pub(crate) struct SearchOptions {
 }
 
 impl SearchOptions {
+    #[cfg(test)]
     pub(crate) fn normalize(request: SearchRequest) -> Result<Self, SearchValidationError> {
+        Self::normalize_with_pattern_mode(request, None)
+    }
+
+    pub(crate) fn normalize_with_pattern_mode(
+        request: SearchRequest,
+        pattern_mode: Option<SearchPatternMode>,
+    ) -> Result<Self, SearchValidationError> {
         if request.pattern.trim().is_empty() {
             return Err(
                 SearchValidationError::new("pattern", "pattern cannot be empty")
@@ -190,6 +199,7 @@ impl SearchOptions {
             false,
         )?;
         let result_mode = request.result_mode.unwrap_or(SearchResultMode::Matches);
+        let pattern_mode = pattern_mode.unwrap_or(SearchPatternMode::Regex);
         let timeout_secs = request
             .timeout_secs
             .unwrap_or(DEFAULT_SEARCH_TIMEOUT_SECS as i64)
@@ -210,6 +220,7 @@ impl SearchOptions {
 
         Ok(Self {
             pattern: request.pattern,
+            pattern_mode,
             path,
             limit: request.limit.unwrap_or(50).clamp(1, 200),
             context_before: request
@@ -589,6 +600,10 @@ fn search_output_line_budget(options: &SearchOptions) -> usize {
 fn ripgrep_search_command(options: &SearchOptions) -> String {
     let globs = search_project_text_rg_glob_args(options);
     let pattern = shell_escape_simple(&options.pattern);
+    let pattern_mode_arg = match options.pattern_mode {
+        SearchPatternMode::Regex => "",
+        SearchPatternMode::Literal => "--fixed-strings ",
+    };
     let target = shell_escape_simple(&options.path);
     let mode_args = match options.result_mode {
         SearchResultMode::Matches => format!(
@@ -605,12 +620,16 @@ fn ripgrep_search_command(options: &SearchOptions) -> String {
     // record budget is satisfied, which SIGPIPEs the backend and stops the
     // work early. Match order is not stable, but the result is bounded and
     // timely, which matters more for this tool.
-    format!("rg {mode_args} --color never --hidden {globs} -e {pattern} -- {target} 2>/dev/null")
+    format!("rg {mode_args} --color never --hidden {globs} {pattern_mode_arg}-e {pattern} -- {target} 2>/dev/null")
 }
 
 fn grep_search_command(options: &SearchOptions) -> String {
+    let pattern_mode_arg = match options.pattern_mode {
+        SearchPatternMode::Regex => "",
+        SearchPatternMode::Literal => "-F ",
+    };
     format!(
-        "grep -rnI --null {excludes} -B {before} -A {after} -e {pattern} -- {target} 2>/dev/null",
+        "grep -rnI --null {pattern_mode_arg}{excludes} -B {before} -A {after} -e {pattern} -- {target} 2>/dev/null",
         excludes = search_project_text_exclude_args(),
         before = options.context_before,
         after = options.context_after,
@@ -685,6 +704,7 @@ fn search_failure_tool_result(
         "reason_code": reason_code,
         "backend": backend,
         "result_mode": options.result_mode.as_str(),
+        "pattern_mode": options.pattern_mode.as_str(),
         "effective_timeout_secs": options.timeout_secs,
         "message": message,
     });
@@ -1405,6 +1425,7 @@ fn search_result_json(
         "path": options.path,
         "backend": result.backend,
         "result_mode": options.result_mode.as_str(),
+        "pattern_mode": options.pattern_mode.as_str(),
         "effective_timeout_secs": options.timeout_secs,
         "exit_code": exit_code,
         "context_before": options.context_before,
@@ -1501,6 +1522,7 @@ impl ToolRuntime {
         &self,
         project: String,
         pattern: String,
+        pattern_mode: Option<SearchPatternMode>,
         path: Option<String>,
         limit: Option<usize>,
         context_before: Option<usize>,
@@ -1522,7 +1544,7 @@ impl ToolRuntime {
             timeout_secs,
         };
         // Preserve the single-query validation-before-resolution ordering.
-        let options = match SearchOptions::normalize(request) {
+        let options = match SearchOptions::normalize_with_pattern_mode(request, pattern_mode) {
             Ok(options) => options,
             Err(error) => return error.into_tool_result(),
         };
@@ -1539,8 +1561,9 @@ impl ToolRuntime {
         resolved: &ResolvedProject,
         output_project: &str,
         request: SearchRequest,
+        pattern_mode: Option<SearchPatternMode>,
     ) -> ToolResult {
-        let options = match SearchOptions::normalize(request) {
+        let options = match SearchOptions::normalize_with_pattern_mode(request, pattern_mode) {
             Ok(options) => options,
             Err(error) => return error.into_tool_result(),
         };
@@ -1591,6 +1614,7 @@ impl ToolRuntime {
             };
             let payload = json!({
                 "pattern": options.pattern,
+                "pattern_mode": options.pattern_mode.as_str(),
                 "path": options.path,
                 "limit": options.limit,
                 "context_before": options.context_before,
@@ -2233,6 +2257,43 @@ mod tests {
             "[output truncated]\n",
             "[...]\n",
         ]
+    }
+
+    #[test]
+    fn search_project_text_literal_mode_matches_regex_metacharacters_as_text() {
+        let root = unique_temp_dir("search-literal-pattern");
+        std::fs::write(
+            root.join("sample.txt"),
+            "RuntimeInfo { value.* }\nRuntimeInfo valueZZ\n",
+        )
+        .expect("write sample");
+        let options = SearchOptions::normalize_with_pattern_mode(
+            SearchRequest {
+                pattern: "RuntimeInfo { value.* }".to_string(),
+                path: None,
+                limit: Some(10),
+                context_before: None,
+                context_after: None,
+                include_globs: None,
+                exclude_globs: None,
+                result_mode: None,
+                timeout_secs: None,
+            },
+            Some(SearchPatternMode::Literal),
+        )
+        .unwrap();
+        let command = search_project_text_command(&options);
+        assert!(command.contains("--fixed-strings"));
+        assert!(command.contains("grep -rnI --null -F"));
+        let (exit_code, stdout, stderr, _) = run_command_sync(&command, &root, 10);
+        assert_eq!(exit_code, 0, "stderr: {stderr}");
+        let result =
+            search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["pattern_mode"], "literal");
+        let matches = result.output["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["preview"], "RuntimeInfo { value.* }");
     }
 
     #[test]

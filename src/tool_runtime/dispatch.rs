@@ -150,12 +150,14 @@ impl SearchModelProjection {
     pub(super) fn capture(call: &ToolCall) -> Self {
         match call {
             ToolCall::SearchProjectText {
+                pattern_mode,
                 result_mode,
                 timeout_secs,
                 context_before,
                 context_after,
                 ..
             } if caller_uses_default_search_controls(
+                pattern_mode,
                 result_mode,
                 timeout_secs,
                 context_before,
@@ -169,6 +171,7 @@ impl SearchModelProjection {
                     .iter()
                     .map(|query| {
                         caller_uses_default_search_controls(
+                            &query.pattern_mode,
                             &query.result_mode,
                             &query.timeout_secs,
                             &query.context_before,
@@ -211,14 +214,18 @@ impl BatchResponseBudgetProjection {
 }
 
 fn caller_uses_default_search_controls(
+    pattern_mode: &Option<super::SearchPatternMode>,
     result_mode: &Option<super::SearchResultMode>,
     timeout_secs: &Option<i64>,
     context_before: &Option<usize>,
     context_after: &Option<usize>,
 ) -> bool {
-    result_mode
+    pattern_mode
         .as_ref()
-        .is_none_or(|mode| matches!(mode, super::SearchResultMode::Matches))
+        .is_none_or(|mode| matches!(mode, super::SearchPatternMode::Regex))
+        && result_mode
+            .as_ref()
+            .is_none_or(|mode| matches!(mode, super::SearchResultMode::Matches))
         && timeout_secs
             .as_ref()
             .copied()
@@ -255,6 +262,7 @@ pub(crate) fn sparsify_complete_default_search_output(
         effective_timeout == Some(super::files::DEFAULT_SEARCH_TIMEOUT_SECS)
     };
     let ordinary_complete = output.get("backend").and_then(Value::as_str) == Some("rg")
+        && output.get("pattern_mode").and_then(Value::as_str) == Some("regex")
         && output.get("result_mode").and_then(Value::as_str) == Some("matches")
         && default_timeout
         && output.get("context_before").and_then(Value::as_u64) == Some(0)
@@ -272,6 +280,7 @@ pub(crate) fn sparsify_complete_default_search_output(
         "pattern",
         "backend",
         "result_mode",
+        "pattern_mode",
         "effective_timeout_secs",
         "exit_code",
         "context_before",

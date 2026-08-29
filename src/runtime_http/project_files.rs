@@ -107,6 +107,8 @@ struct SearchProjectTextRequest {
     pub project: String,
     pub pattern: String,
     #[serde(default)]
+    pub pattern_mode: Option<crate::tool_runtime::SearchPatternMode>,
+    #[serde(default)]
     pub session_id: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
@@ -449,6 +451,7 @@ pub async fn projects_search_text(req: &mut Request, depot: &mut Depot, res: &mu
             ToolCall::SearchProjectText {
                 project: body.project,
                 pattern: body.pattern,
+                pattern_mode: body.pattern_mode,
                 session_id: body.session_id,
                 path: body.path,
                 limit: body.limit,

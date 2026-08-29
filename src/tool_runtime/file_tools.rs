@@ -72,6 +72,7 @@ impl ToolRuntime {
             ToolCall::SearchProjectText {
                 project,
                 pattern,
+                pattern_mode,
                 session_id: _,
                 path,
                 limit,
@@ -97,6 +98,7 @@ impl ToolRuntime {
                             result_mode,
                             timeout_secs,
                         },
+                        pattern_mode,
                     )
                     .await
                 }
@@ -105,6 +107,7 @@ impl ToolRuntime {
                     self.search_project_text(
                         project,
                         pattern,
+                        pattern_mode,
                         path,
                         limit,
                         context_before,

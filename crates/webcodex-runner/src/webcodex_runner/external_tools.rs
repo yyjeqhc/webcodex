@@ -945,6 +945,20 @@ fn required_fields(_capability: ProviderCapability) -> &'static [&'static str] {
     GREP
 }
 
+fn escape_search_literal_for_regex(pattern: &str) -> String {
+    let mut escaped = String::with_capacity(pattern.len());
+    for ch in pattern.chars() {
+        if matches!(
+            ch,
+            '\\' | '.' | '^' | '$' | '|' | '?' | '*' | '+' | '(' | ')' | '[' | ']' | '{' | '}'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
 fn build_arguments(
     _capability: ProviderCapability,
     request: &Value,
@@ -964,8 +978,18 @@ fn build_arguments(
     } else {
         request["result_mode"].as_str().ok_or_else(request_error)?
     };
+    let pattern = request["pattern"].as_str().ok_or_else(request_error)?;
+    let provider_pattern = match request
+        .get("pattern_mode")
+        .and_then(Value::as_str)
+        .unwrap_or("regex")
+    {
+        "regex" => pattern.to_string(),
+        "literal" => escape_search_literal_for_regex(pattern),
+        _ => return Err(request_error()),
+    };
     let mut args = json!({
-        "pattern": request["pattern"],
+        "pattern": provider_pattern,
         "path": target,
         "output_mode": output_mode,
         "head_limit": request["limit"],

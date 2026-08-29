@@ -94,7 +94,18 @@ pub(crate) fn project_overview_input_schema() -> Value {
 pub(crate) fn search_project_text_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
         ("project", "string", "Agent-registered project id.", true),
-        ("pattern", "string", "Text pattern to search for.", true),
+        (
+            "pattern",
+            "string",
+            "Search pattern. Interpreted as a regular expression by default; set pattern_mode=literal for exact text without regex escaping.",
+            true,
+        ),
+        (
+            "pattern_mode",
+            "string",
+            "Pattern interpretation: regex (default, backward compatible) or literal for exact text.",
+            false,
+        ),
         (
             "path",
             "string",
@@ -159,6 +170,8 @@ pub(crate) fn search_project_text_input_schema() -> Value {
     }
     schema["properties"]["result_mode"]["enum"] = json!(["matches", "files_with_matches", "count"]);
     schema["properties"]["result_mode"]["default"] = json!("matches");
+    schema["properties"]["pattern_mode"]["enum"] = json!(["regex", "literal"]);
+    schema["properties"]["pattern_mode"]["default"] = json!("regex");
     // Intentionally no minimum/maximum: strict clients would reject 0/999
     // before send, but runtime clamps any integer to 1..120.
     schema["properties"]["timeout_secs"]["default"] = json!(30);

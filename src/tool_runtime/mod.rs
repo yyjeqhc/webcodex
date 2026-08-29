@@ -96,7 +96,8 @@ pub use runtime_info::RuntimeInfo;
 #[cfg(test)]
 pub(crate) use session_context::workflow_session_authority_fingerprint;
 pub use tool_call::{
-    ObserveJobsItem, ReadFilesItem, SearchProjectTextsQuery, SearchResultMode, ToolCall,
+    ObserveJobsItem, ReadFilesItem, SearchPatternMode, SearchProjectTextsQuery, SearchResultMode,
+    ToolCall,
 };
 pub(crate) use tool_call::{
     TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,

@@ -906,6 +906,7 @@ fn openapi_file_search_shell_schemas_include_ergonomics_fields() {
     assert!(search_props.contains_key("include_globs"));
     assert!(search_props.contains_key("exclude_globs"));
     assert!(search_props.contains_key("result_mode"));
+    assert!(search_props.contains_key("pattern_mode"));
     assert!(search_props.contains_key("timeout_secs"));
     assert_eq!(search_props["include_globs"]["maxItems"], 32);
     assert_eq!(search_props["include_globs"]["items"]["maxLength"], 256);
@@ -913,6 +914,11 @@ fn openapi_file_search_shell_schemas_include_ergonomics_fields() {
         search_props["result_mode"]["enum"],
         json!(["matches", "files_with_matches", "count"])
     );
+    assert_eq!(
+        search_props["pattern_mode"]["enum"],
+        json!(["regex", "literal"])
+    );
+    assert_eq!(search_props["pattern_mode"]["default"], "regex");
     let flattened_props = schemas["ToolCallRequest"]["properties"]
         .as_object()
         .unwrap();
@@ -921,6 +927,10 @@ fn openapi_file_search_shell_schemas_include_ergonomics_fields() {
     assert_eq!(
         flattened_props["result_mode"]["enum"],
         json!(["matches", "files_with_matches", "count"])
+    );
+    assert_eq!(
+        flattened_props["pattern_mode"]["enum"],
+        json!(["regex", "literal"])
     );
     assert!(
         flattened_schema_alternatives(&flattened_props["timeout_secs"])

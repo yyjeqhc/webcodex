@@ -1678,6 +1678,7 @@ fn search_call(project: String, request: SearchRequest) -> ToolCall {
     ToolCall::SearchProjectText {
         project,
         pattern: request.pattern,
+        pattern_mode: None,
         session_id: None,
         path: request.path,
         limit: request.limit,
@@ -3601,6 +3602,7 @@ async fn search_project_text_no_matches_returns_empty_matches() {
                     ToolCall::SearchProjectText {
                         project,
                         pattern: "absent_needle".to_string(),
+                        pattern_mode: None,
                         session_id: None,
                         path: None,
                         limit: Some(5),
@@ -3657,6 +3659,7 @@ async fn search_project_text_excludes_sensitive_and_build_dirs() {
                     ToolCall::SearchProjectText {
                         project,
                         pattern: "KEEP_SEARCH_NEEDLE".to_string(),
+                        pattern_mode: None,
                         session_id: None,
                         path: None,
                         limit: Some(10),
@@ -3924,6 +3927,7 @@ async fn project_read_adapters_reject_out_of_project_paths_before_agent_dispatch
             ToolCall::SearchProjectText {
                 project: project.clone(),
                 pattern: "needle".to_string(),
+                pattern_mode: None,
                 session_id: None,
                 path: Some("/etc".to_string()),
                 limit: None,
@@ -3941,6 +3945,7 @@ async fn project_read_adapters_reject_out_of_project_paths_before_agent_dispatch
             ToolCall::SearchProjectText {
                 project,
                 pattern: "needle".to_string(),
+                pattern_mode: None,
                 session_id: None,
                 path: Some("../outside".to_string()),
                 limit: None,
@@ -3992,6 +3997,7 @@ async fn search_project_text_requires_shell_capability() {
             ToolCall::SearchProjectText {
                 project: agent_test_project_id("oe"),
                 pattern: "fn".to_string(),
+                pattern_mode: None,
                 session_id: None,
                 path: None,
                 limit: None,
@@ -4037,6 +4043,7 @@ async fn search_project_text_context_does_not_enqueue_python_helper() {
                         path: None,
                         limit: Some(5),
                         context_before: Some(1),
+                        pattern_mode: None,
                         context_after: Some(1),
                         include_globs: None,
                         exclude_globs: None,
@@ -4121,6 +4128,7 @@ async fn search_project_text_rejects_empty_pattern() {
             ToolCall::SearchProjectText {
                 project: agent_test_project_id("oe"),
                 pattern: "   ".to_string(),
+                pattern_mode: None,
                 session_id: None,
                 path: None,
                 limit: None,

@@ -11,6 +11,7 @@ use std::time::Duration;
 fn query(pattern: &str, mode: Option<SearchResultMode>) -> SearchProjectTextsQuery {
     SearchProjectTextsQuery {
         pattern: pattern.to_string(),
+        pattern_mode: None,
         path: None,
         limit: Some(20),
         context_before: None,
@@ -245,6 +246,7 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
         json!({"project": "demo", "queries": [{"pattern": "needle", "unexpected": true}]}),
         json!({"project": "demo", "queries": [{"pattern": "needle"}], "unexpected": true}),
         json!({"project": "demo", "queries": [{"pattern": "needle", "result_mode": "paths"}]}),
+        json!({"project": "demo", "queries": [{"pattern": "needle", "pattern_mode": "glob"}]}),
     ] {
         assert!(ToolCall::from_tool_name("search_project_texts", invalid).is_err());
     }
@@ -317,6 +319,7 @@ async fn search_project_text_default_success_is_sparse_after_session_recording()
                         project,
                         pattern: "needle".to_string(),
                         session_id: Some(session_id),
+                        pattern_mode: None,
                         path: None,
                         limit: Some(20),
                         context_before: None,
@@ -344,6 +347,7 @@ async fn search_project_text_default_success_is_sparse_after_session_recording()
         "path",
         "backend",
         "result_mode",
+        "pattern_mode",
         "effective_timeout_secs",
         "exit_code",
         "context_before",
@@ -413,6 +417,7 @@ async fn search_project_text_nondefault_success_keeps_effective_metadata() {
                         pattern: "needle".to_string(),
                         session_id: None,
                         path: Some("src".to_string()),
+                        pattern_mode: None,
                         limit: Some(20),
                         context_before: Some(1),
                         context_after: None,
@@ -434,12 +439,104 @@ async fn search_project_text_nondefault_success_keeps_effective_metadata() {
     assert_eq!(result.output["path"], "src");
     assert_eq!(result.output["backend"], "rg");
     assert_eq!(result.output["result_mode"], "matches");
+    assert_eq!(result.output["pattern_mode"], "regex");
     assert_eq!(result.output["effective_timeout_secs"], 5);
     assert_eq!(result.output["context_before"], 1);
     assert_eq!(result.output["context_after"], 0);
     assert_eq!(result.output["count"], 1);
     assert_eq!(result.output["truncated"], false);
     assert!(result.output["truncation_reason"].is_null());
+}
+
+#[tokio::test]
+async fn search_project_text_literal_mode_keeps_effective_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-literal-single";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectText {
+                        project,
+                        pattern: "RuntimeInfo {".to_string(),
+                        pattern_mode: Some(SearchPatternMode::Literal),
+                        session_id: None,
+                        path: None,
+                        limit: Some(20),
+                        context_before: None,
+                        context_after: None,
+                        include_globs: None,
+                        exclude_globs: None,
+                        result_mode: None,
+                        timeout_secs: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
+    let payload: Value = serde_json::from_str(request.stdin.as_deref().expect("search payload"))
+        .expect("search payload json");
+    assert_eq!(payload["pattern_mode"], "literal");
+    complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["pattern_mode"], "literal");
+    assert_eq!(result.output["backend"], "rg");
+    assert_eq!(result.output["matches"][0]["path"], "src/a.rs");
+}
+
+#[tokio::test]
+async fn search_project_texts_literal_query_preserves_mode_to_runner_and_output() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-literal-batch";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+    let mut literal = query("RuntimeInfo {", None);
+    literal.pattern_mode = Some(SearchPatternMode::Literal);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectTexts {
+                        project,
+                        queries: vec![literal],
+                        session_id: None,
+                        max_result_bytes: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
+    let payload: Value = serde_json::from_str(request.stdin.as_deref().expect("search payload"))
+        .expect("search payload json");
+    assert_eq!(payload["pattern_mode"], "literal");
+    complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["items"][0]["success"], true);
+    assert_eq!(
+        result.output["items"][0]["output"]["pattern_mode"],
+        "literal"
+    );
+    assert_eq!(result.output["items"][0]["output"]["backend"], "rg");
 }
 
 #[tokio::test]
@@ -463,6 +560,7 @@ async fn search_project_text_grep_fallback_keeps_backend_metadata() {
                         session_id: None,
                         path: None,
                         limit: Some(20),
+                        pattern_mode: None,
                         context_before: None,
                         context_after: None,
                         include_globs: None,

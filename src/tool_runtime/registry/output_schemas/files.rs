@@ -130,6 +130,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 }),
             ),
             (
+                "pattern_mode",
+                json!({
+                    "type": "string",
+                    "enum": ["regex", "literal"],
+                    "description": "Effective pattern interpretation; omitted when it is the default regex mode in ordinary complete rg/matches success."
+                }),
+            ),
+            (
                 "effective_timeout_secs",
                 schema_type("integer", "Effective clamped timeout in seconds; omitted when it is the default budget in ordinary complete rg/matches success."),
             ),
@@ -311,6 +319,7 @@ fn search_project_texts_output_schema() -> Value {
         "path": schema_type("string", "Effective project-relative search root; omitted for the default project root in sparse complete matches success."),
         "backend": nullable_schema("string", "Search backend: rg, grep, native, or null when unknown; omitted for ordinary complete default rg/matches success."),
         "result_mode": {"type": "string", "enum": ["matches", "files_with_matches", "count"]},
+        "pattern_mode": {"type": "string", "enum": ["regex", "literal"]},
         "effective_timeout_secs": {"type": "integer", "minimum": 1, "maximum": 120},
         "exit_code": nullable_schema("integer", "Search command exit code, when available."),
         "context_before": {"type": "integer", "minimum": 0, "maximum": 20},
@@ -335,7 +344,7 @@ fn search_project_texts_output_schema() -> Value {
         "additionalProperties": false,
         "properties": search_success_properties.clone(),
         "required": [
-            "path", "backend", "result_mode", "effective_timeout_secs", "exit_code",
+            "path", "backend", "result_mode", "pattern_mode", "effective_timeout_secs", "exit_code",
             "context_before", "context_after", "truncated", "truncation_reason"
         ]
     });
@@ -391,6 +400,7 @@ fn search_project_texts_output_schema() -> Value {
             "backend": {"type": "string", "enum": ["rg", "grep", "native", "claude_code"]},
             "exit_code": {"type": "integer"},
             "result_mode": {"type": "string", "enum": ["matches", "files_with_matches", "count"]},
+            "pattern_mode": {"type": "string", "enum": ["regex", "literal"]},
             "effective_timeout_secs": {"type": "integer", "minimum": 1, "maximum": 120},
             "provider_code": {
                 "type": "string",

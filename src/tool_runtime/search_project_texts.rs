@@ -16,20 +16,35 @@ pub(crate) const DEFAULT_SEARCH_PROJECT_TEXTS_DEADLINE: Duration = Duration::fro
 pub(crate) const DEFAULT_SEARCH_PROJECT_TEXTS_RESULT_BYTES: usize = 64 * 1024;
 pub(crate) const MIN_SEARCH_PROJECT_TEXTS_RESULT_BYTES: usize = 8 * 1024;
 
-impl From<SearchProjectTextsQuery> for SearchRequest {
-    fn from(query: SearchProjectTextsQuery) -> Self {
-        Self {
-            pattern: query.pattern,
-            path: query.path,
-            limit: query.limit,
-            context_before: query.context_before,
-            context_after: query.context_after,
-            include_globs: query.include_globs,
-            exclude_globs: query.exclude_globs,
-            result_mode: query.result_mode,
-            timeout_secs: query.timeout_secs,
-        }
-    }
+fn search_request_and_pattern_mode(
+    query: SearchProjectTextsQuery,
+) -> (SearchRequest, Option<super::SearchPatternMode>) {
+    let SearchProjectTextsQuery {
+        pattern,
+        pattern_mode,
+        path,
+        limit,
+        context_before,
+        context_after,
+        include_globs,
+        exclude_globs,
+        result_mode,
+        timeout_secs,
+    } = query;
+    (
+        SearchRequest {
+            pattern,
+            path,
+            limit,
+            context_before,
+            context_after,
+            include_globs,
+            exclude_globs,
+            result_mode,
+            timeout_secs,
+        },
+        pattern_mode,
+    )
 }
 
 fn normalized_result_budget(max_result_bytes: Option<usize>) -> usize {
@@ -540,18 +555,33 @@ impl ToolRuntime {
                 let project = &resolved.config;
                 let output_project = runtime_project_id.as_str();
                 async move {
-                    let result = match SearchOptions::normalize(query.into()) {
-                        Ok(options) if project.is_agent() => {
-                            let first = self
-                                .search_one_resolved_project_text(
-                                    project,
-                                    output_project,
-                                    options.clone(),
-                                    Some(deadline),
-                                )
-                                .await;
-                            if retryable_agent_request_failure(&first) && Instant::now() < deadline
-                            {
+                    let (request, pattern_mode) = search_request_and_pattern_mode(query);
+                    let result =
+                        match SearchOptions::normalize_with_pattern_mode(request, pattern_mode) {
+                            Ok(options) if project.is_agent() => {
+                                let first = self
+                                    .search_one_resolved_project_text(
+                                        project,
+                                        output_project,
+                                        options.clone(),
+                                        Some(deadline),
+                                    )
+                                    .await;
+                                if retryable_agent_request_failure(&first)
+                                    && Instant::now() < deadline
+                                {
+                                    self.search_one_resolved_project_text(
+                                        project,
+                                        output_project,
+                                        options,
+                                        Some(deadline),
+                                    )
+                                    .await
+                                } else {
+                                    first
+                                }
+                            }
+                            Ok(options) => {
                                 self.search_one_resolved_project_text(
                                     project,
                                     output_project,
@@ -559,21 +589,9 @@ impl ToolRuntime {
                                     Some(deadline),
                                 )
                                 .await
-                            } else {
-                                first
                             }
-                        }
-                        Ok(options) => {
-                            self.search_one_resolved_project_text(
-                                project,
-                                output_project,
-                                options,
-                                Some(deadline),
-                            )
-                            .await
-                        }
-                        Err(error) => error.into_tool_result(),
-                    };
+                            Err(error) => error.into_tool_result(),
+                        };
                     batch_item(index, result)
                 }
             }))

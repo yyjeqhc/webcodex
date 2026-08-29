@@ -639,7 +639,7 @@ fn ripgrep_search_command(options: &SearchOptions) -> String {
 
 fn grep_search_command(options: &SearchOptions) -> String {
     let pattern_mode_arg = match options.pattern_mode {
-        SearchPatternMode::Regex => "",
+        SearchPatternMode::Regex => "-E ",
         SearchPatternMode::Literal => "-F ",
     };
     format!(

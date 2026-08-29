@@ -481,7 +481,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "searchProjectText",
                     "Search project text",
-                    "Read-only bounded text search inside an agent-registered project. Patterns are regular expressions by default; set pattern_mode=literal for exact text without regex escaping. Each match carries a project-relative path, 1-based line number, and a preview line. Optional context_before/context_after add bounded 1-based context lines. Sensitive/build dirs (.git, target, node_modules) are excluded.",
+                    "Read-only bounded text search inside an agent-registered project. Patterns are regular expressions by default. For identifiers, source snippets, paths, and other exact text, prefer pattern_mode=literal; use regex when regex syntax is intentional. Each match carries a project-relative path, 1-based line number, and a preview line. Optional context_before/context_after add bounded 1-based context lines. Sensitive/build dirs (.git, target, node_modules) are excluded.",
                     "SearchProjectTextRequest",
                     "ToolResult",
                     json!({
@@ -1646,13 +1646,13 @@ fn schemas() -> Value {
                 },
                 "pattern": {
                     "type": "string",
-                    "description": "Search pattern. Interpreted as a regular expression by default; set pattern_mode=literal for exact text."
+                    "description": "Search pattern. Interpreted as a regular expression by default. For identifiers, source snippets, paths, and other exact text, prefer pattern_mode=literal; use regex when regex syntax is intentional."
                 },
                 "pattern_mode": {
                     "type": "string",
                     "enum": ["regex", "literal"],
                     "default": "regex",
-                    "description": "Pattern interpretation: regex (default, backward compatible) or literal."
+                    "description": "Pattern interpretation: regex (default, backward compatible) or literal. Prefer literal unless regex syntax is intentional."
                 },
                 "session_id": {
                     "type": "string",

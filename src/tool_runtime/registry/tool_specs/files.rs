@@ -29,12 +29,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "search_project_text",
-            "Default inspect/search tool for project text. Patterns are regex by default for backward compatibility; use pattern_mode=literal for exact text without regex escaping. Uses rg-first with grep fallback. Supports matches/files_with_matches/count modes and context. Returns structured output with backend/truncated metadata; failure_stage/reason_code distinguish failure from a proven empty result.",
+            "Default inspect/search tool for project text. Patterns are regex by default for backward compatibility. For identifiers, source snippets, paths, and other exact text, prefer pattern_mode=literal; use regex when regex syntax is intentional. Uses rg-first with grep fallback. Supports matches/files_with_matches/count modes and context. Returns structured output with backend/truncated metadata; failure_stage/reason_code distinguish failure from a proven empty result.",
             search_project_text_input_schema(),
         ),
         tool_spec(
             "search_project_texts",
-            "Run 1 to 8 searches in request order with isolated failures and two Runner requests in flight. Each query defaults to regex pattern semantics and may opt into pattern_mode=literal for exact text. Primary batch budget is ~64 KiB, up to 256 KiB. Budget continuation returns whole queries via next_index; if the first remaining query cannot fit, raise max_result_bytes or narrow it.",
+            "Run 1 to 8 searches in request order with isolated failures and two Runner requests in flight. Each query defaults to regex pattern semantics. For identifiers, source snippets, paths, and other exact text, prefer pattern_mode=literal; use regex when regex syntax is intentional. Primary batch budget is ~64 KiB, up to 256 KiB. Budget continuation returns whole queries via next_index; if the first remaining query cannot fit, raise max_result_bytes or narrow it.",
             search_project_texts_input_schema(),
         ),
         tool_spec(

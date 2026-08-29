@@ -97,13 +97,13 @@ pub(crate) fn search_project_text_input_schema() -> Value {
         (
             "pattern",
             "string",
-            "Search pattern. Interpreted as a regular expression by default; set pattern_mode=literal for exact text without regex escaping.",
+            "Search pattern. Interpreted as a regular expression by default. For identifiers, source snippets, paths, and other exact text, prefer pattern_mode=literal; use regex when regex syntax is intentional.",
             true,
         ),
         (
             "pattern_mode",
             "string",
-            "Pattern interpretation: regex (default, backward compatible) or literal for exact text.",
+            "Pattern interpretation: regex (default, backward compatible) or literal for exact text. Prefer literal unless regex syntax is intentional.",
             false,
         ),
         (

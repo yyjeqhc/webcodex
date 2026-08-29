@@ -1,38 +1,62 @@
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
+use super::helpers::{bounded_tail, decode_git_quoted_path};
+use super::shell::{agent_command_lifecycle, dispatch_uncertainty_lifecycle};
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
-use crate::shell_protocol::ShellRunRequest;
+use crate::shell_protocol::{ShellCommandExecutionState, ShellRunRequest, ShellRunResponse};
 
-pub(crate) fn parse_changed_files_from_patch(patch: &str) -> Vec<String> {
-    let mut files = Vec::new();
-    for line in patch.lines() {
-        if line.starts_with("diff --git ") {
-            if let Some(b_pos) = line.rfind(" b/") {
-                let file = &line[b_pos + 3..];
-                if !files.iter().any(|f: &String| f == file) {
-                    files.push(file.to_string());
-                }
-            }
-            continue;
-        }
-        for prefix in ["+++ b/", "--- a/"] {
-            if let Some(file) = line.strip_prefix(prefix) {
-                if file != "/dev/null" && !files.iter().any(|f: &String| f == file) {
-                    files.push(file.to_string());
-                }
-            }
-        }
-    }
-    files
+pub(crate) const MAX_UNIFIED_DIFF_BYTES: usize = 256 * 1024;
+const MAX_UNIFIED_DIFF_AFFECTED_FILES: usize = 128;
+const MAX_UNIFIED_DIFF_WARNINGS: usize = 32;
+const UNIFIED_DIFF_STDERR_MAX_CHARS: usize = 4096;
+const UNIFIED_DIFF_COMMAND_TIMEOUT_SECS: u64 = 60;
+const UNIFIED_DIFF_WAIT_TIMEOUT_SECS: u64 = 62;
+const UNIFIED_DIFF_SERVER_WAIT_SECS: u64 = 64;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnifiedDiffAnalysis {
+    pub(crate) affected_files: Vec<String>,
+    pub(crate) affected_files_truncated: bool,
+    pub(crate) warnings: Vec<String>,
+    pub(crate) warnings_truncated: bool,
+    pub(crate) has_sensitive_paths: bool,
 }
 
-const UNSUPPORTED_CODEX_PATCH_WRAPPER_ERROR: &str = "Patch uses Codex apply_patch wrapper syntax. This endpoint accepts only raw standard unified diff. Retry with diff --git / --- / +++ unified diff format.";
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnifiedDiffInputError {
+    pub(crate) error_kind: &'static str,
+    pub(crate) recovery_action: &'static str,
+    pub(crate) expected_format: Option<&'static str>,
+    pub(crate) message: String,
+}
 
-pub(crate) fn looks_like_codex_apply_patch_wrapper(patch: &str) -> bool {
-    patch.lines().any(|line| {
+fn unsupported_diff_format(message: impl Into<String>) -> UnifiedDiffInputError {
+    UnifiedDiffInputError {
+        error_kind: "unsupported_diff_format",
+        recovery_action: "regenerate_unified_diff",
+        expected_format: Some("unified_diff"),
+        message: message.into(),
+    }
+}
+
+fn invalid_unified_diff(
+    message: impl Into<String>,
+    recovery_action: &'static str,
+) -> UnifiedDiffInputError {
+    UnifiedDiffInputError {
+        error_kind: "invalid_unified_diff",
+        recovery_action,
+        expected_format: Some("unified_diff"),
+        message: message.into(),
+    }
+}
+
+pub(crate) fn looks_like_codex_apply_patch_wrapper(diff: &str) -> bool {
+    diff.lines().any(|line| {
         let line = line.trim_end();
         line == "*** Begin Patch"
             || line == "*** End Patch"
@@ -42,572 +66,616 @@ pub(crate) fn looks_like_codex_apply_patch_wrapper(patch: &str) -> bool {
     })
 }
 
-pub(crate) fn reject_unsupported_patch_wrapper(patch: &str) -> Option<String> {
-    if looks_like_codex_apply_patch_wrapper(patch) {
-        Some(UNSUPPORTED_CODEX_PATCH_WRAPPER_ERROR.to_string())
-    } else {
-        None
+fn take_git_path_token(input: &str) -> Option<(&str, &str)> {
+    let input = input.trim_start();
+    if input.is_empty() {
+        return None;
+    }
+    if input.starts_with('"') {
+        let bytes = input.as_bytes();
+        let mut index = 1usize;
+        while index < bytes.len() {
+            match bytes[index] {
+                b'\\' => index = index.saturating_add(2),
+                b'"' => {
+                    let token = &input[..=index];
+                    return Some((token, input[index + 1..].trim_start()));
+                }
+                _ => index += 1,
+            }
+        }
+        return None;
+    }
+    match input.find(char::is_whitespace) {
+        Some(index) => Some((&input[..index], input[index..].trim_start())),
+        None => Some((input, "")),
     }
 }
 
-fn patch_preflight_rejection(message: impl Into<String>) -> ToolResult {
+fn is_cross_platform_absolute_path(path: &str) -> bool {
+    if path.starts_with('/') || path.starts_with('\\') || Path::new(path).is_absolute() {
+        return true;
+    }
+    let bytes = path.as_bytes();
+    bytes.first().is_some_and(u8::is_ascii_alphabetic)
+        && bytes.get(1) == Some(&b':')
+        && bytes
+            .get(2)
+            .is_some_and(|byte| matches!(*byte, b'\\' | b'/'))
+}
+
+fn normalize_diff_path(raw: &str) -> Result<Option<String>, UnifiedDiffInputError> {
+    let decoded = decode_git_quoted_path(raw).ok_or_else(|| {
+        invalid_unified_diff(
+            "Unified diff contains an invalid or unsupported quoted path",
+            "regenerate_unified_diff",
+        )
+    })?;
+    if decoded == "/dev/null" {
+        return Ok(None);
+    }
+    let path = decoded
+        .strip_prefix("a/")
+        .or_else(|| decoded.strip_prefix("b/"))
+        .unwrap_or(decoded.as_str());
+    if path.is_empty() || path == "." {
+        return Err(invalid_unified_diff(
+            "Unified diff path cannot be empty or '.'",
+            "fix_diff_paths",
+        ));
+    }
+    if path.contains('\0') {
+        return Err(invalid_unified_diff(
+            "Unified diff path cannot contain NUL bytes",
+            "fix_diff_paths",
+        ));
+    }
+    if is_cross_platform_absolute_path(path) {
+        return Err(invalid_unified_diff(
+            format!("Unified diff path must be project-relative: {path}"),
+            "fix_diff_paths",
+        ));
+    }
+    if path.split(['/', '\\']).any(|component| component == "..") {
+        return Err(invalid_unified_diff(
+            format!("Unified diff path cannot contain parent traversal: {path}"),
+            "fix_diff_paths",
+        ));
+    }
+    Ok(Some(path.to_string()))
+}
+
+fn sensitive_path_warning(path: &str) -> Option<String> {
+    let mut sensitive = None;
+    for component in path.split(['/', '\\']) {
+        let lower = component.to_ascii_lowercase();
+        let is_sensitive = matches!(
+            lower.as_str(),
+            "agent.toml"
+                | "webcodex.env"
+                | "secret.pem"
+                | "id_rsa"
+                | "projects.d"
+                | ".git"
+                | "target"
+                | "node_modules"
+        ) || lower == ".env"
+            || lower.starts_with(".env.");
+        if is_sensitive {
+            sensitive = Some(format!(
+                "unified diff touches sensitive path component '{component}': {path}"
+            ));
+            break;
+        }
+    }
+    sensitive
+}
+
+pub(crate) fn sensitive_path_warnings(path: &str) -> Vec<String> {
+    sensitive_path_warning(path).into_iter().collect()
+}
+
+fn insert_normalized_path(
+    paths: &mut BTreeSet<String>,
+    raw: &str,
+) -> Result<(), UnifiedDiffInputError> {
+    if let Some(path) = normalize_diff_path(raw)? {
+        paths.insert(path);
+    }
+    Ok(())
+}
+
+fn parse_diff_git_paths(
+    line: &str,
+    paths: &mut BTreeSet<String>,
+) -> Result<(), UnifiedDiffInputError> {
+    let rest = line.strip_prefix("diff --git ").ok_or_else(|| {
+        invalid_unified_diff("Invalid diff --git header", "regenerate_unified_diff")
+    })?;
+    let (left, rest) = take_git_path_token(rest).ok_or_else(|| {
+        invalid_unified_diff("Invalid diff --git source path", "regenerate_unified_diff")
+    })?;
+    let (right, trailing) = take_git_path_token(rest).ok_or_else(|| {
+        invalid_unified_diff(
+            "Invalid diff --git destination path",
+            "regenerate_unified_diff",
+        )
+    })?;
+    if !trailing.trim().is_empty() {
+        return Err(invalid_unified_diff(
+            "Invalid trailing data in diff --git header",
+            "regenerate_unified_diff",
+        ));
+    }
+    insert_normalized_path(paths, left)?;
+    insert_normalized_path(paths, right)?;
+    Ok(())
+}
+
+fn diff_file_header_path(raw: &str) -> &str {
+    raw.split_once('\t').map_or(raw, |(path, _timestamp)| path)
+}
+
+pub(crate) fn analyze_unified_diff(
+    diff: &str,
+) -> Result<UnifiedDiffAnalysis, UnifiedDiffInputError> {
+    if diff.is_empty() {
+        return Err(invalid_unified_diff(
+            "Unified diff cannot be empty",
+            "regenerate_unified_diff",
+        ));
+    }
+    if diff.contains('\0') {
+        return Err(invalid_unified_diff(
+            "Unified diff cannot contain NUL bytes",
+            "regenerate_unified_diff",
+        ));
+    }
+    if diff.len() > MAX_UNIFIED_DIFF_BYTES {
+        return Err(UnifiedDiffInputError {
+            error_kind: "diff_too_large",
+            recovery_action: "split_unified_diff",
+            expected_format: Some("unified_diff"),
+            message: format!(
+                "Unified diff is {} bytes; maximum is {} bytes",
+                diff.len(),
+                MAX_UNIFIED_DIFF_BYTES
+            ),
+        });
+    }
+    if looks_like_codex_apply_patch_wrapper(diff) {
+        return Err(unsupported_diff_format(
+            "Codex apply_patch wrapper syntax is not accepted. Regenerate a raw standard unified diff without *** Begin Patch / *** Update File markers.",
+        ));
+    }
+
+    let lines: Vec<&str> = diff.lines().collect();
+    let mut paths = BTreeSet::new();
+    for (index, line) in lines.iter().enumerate() {
+        if line.starts_with("diff --git ") {
+            parse_diff_git_paths(line, &mut paths)?;
+            continue;
+        }
+        if let Some(old_path) = line.strip_prefix("--- ") {
+            if let Some(new_path) = lines
+                .get(index + 1)
+                .and_then(|next| next.strip_prefix("+++ "))
+            {
+                insert_normalized_path(&mut paths, diff_file_header_path(old_path))?;
+                insert_normalized_path(&mut paths, diff_file_header_path(new_path))?;
+            }
+        }
+    }
+    if paths.is_empty() {
+        return Err(invalid_unified_diff(
+            "Unified diff does not declare any project file paths",
+            "regenerate_unified_diff",
+        ));
+    }
+
+    let all_paths: Vec<String> = paths.into_iter().collect();
+    let mut all_warnings = all_paths
+        .iter()
+        .filter_map(|path| sensitive_path_warning(path))
+        .collect::<Vec<_>>();
+    all_warnings.sort();
+    all_warnings.dedup();
+    let has_sensitive_paths = !all_warnings.is_empty();
+    let affected_files_truncated = all_paths.len() > MAX_UNIFIED_DIFF_AFFECTED_FILES;
+    let warnings_truncated = all_warnings.len() > MAX_UNIFIED_DIFF_WARNINGS;
+
+    Ok(UnifiedDiffAnalysis {
+        affected_files: all_paths
+            .into_iter()
+            .take(MAX_UNIFIED_DIFF_AFFECTED_FILES)
+            .collect(),
+        affected_files_truncated,
+        warnings: all_warnings
+            .into_iter()
+            .take(MAX_UNIFIED_DIFF_WARNINGS)
+            .collect(),
+        warnings_truncated,
+        has_sensitive_paths,
+    })
+}
+
+fn bounded_stderr(stderr: Option<String>) -> (Value, bool) {
+    match stderr {
+        Some(stderr) if !stderr.is_empty() => {
+            let (tail, truncated) = bounded_tail(&stderr, UNIFIED_DIFF_STDERR_MAX_CHARS);
+            (Value::String(tail), truncated)
+        }
+        _ => (Value::Null, false),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn unified_diff_output(
+    analysis: Option<&UnifiedDiffAnalysis>,
+    applied: Option<bool>,
+    can_apply: Option<bool>,
+    policy_blocked: bool,
+    state_changed: Option<bool>,
+    execution_state: &'static str,
+    stderr: Option<String>,
+    error_kind: Option<&'static str>,
+    expected_format: Option<&'static str>,
+    recovery_action: Option<&'static str>,
+) -> Value {
+    let (stderr, stderr_truncated) = bounded_stderr(stderr);
+    json!({
+        "applied": applied,
+        "can_apply": can_apply,
+        "policy_blocked": policy_blocked,
+        "state_changed": state_changed,
+        "execution_state": execution_state,
+        "affected_files": analysis.map(|value| value.affected_files.clone()).unwrap_or_default(),
+        "affected_files_truncated": analysis.is_some_and(|value| value.affected_files_truncated),
+        "warnings": analysis.map(|value| value.warnings.clone()).unwrap_or_default(),
+        "warnings_truncated": analysis.is_some_and(|value| value.warnings_truncated),
+        "stderr": stderr,
+        "stderr_truncated": stderr_truncated,
+        "error_kind": error_kind,
+        "expected_format": expected_format,
+        "recovery_action": recovery_action,
+    })
+}
+
+fn input_rejection(error: UnifiedDiffInputError) -> ToolResult {
     ToolResult::err_with_output(
-        message,
-        json!({
-            "state_changed": false,
-            "command_started": false,
-            "command_completed": false,
-            "execution_state": "not_started",
-        }),
+        error.message,
+        unified_diff_output(
+            None,
+            Some(false),
+            None,
+            false,
+            Some(false),
+            "not_started",
+            None,
+            Some(error.error_kind),
+            error.expected_format,
+            Some(error.recovery_action),
+        ),
     )
 }
 
-pub(crate) fn validate_patch_file_path(path: &str) -> Result<(), String> {
-    if path.is_empty() {
-        return Err("patch path cannot be empty".to_string());
-    }
-    if path.starts_with('/') {
-        return Err(format!("Absolute paths are not allowed: {}", path));
-    }
-    if path.contains("..") {
-        return Err(format!("Path traversal (..) is not allowed: {}", path));
-    }
-    let sensitive = [".env", ".env.local", "secret.pem", "id_rsa", ".git/config"];
-    if sensitive.iter().any(|s| path.contains(s)) {
-        return Err(format!("Cannot modify sensitive path: {}", path));
-    }
-    Ok(())
+fn pre_apply_rejection(
+    message: impl Into<String>,
+    analysis: &UnifiedDiffAnalysis,
+    error_kind: &'static str,
+    recovery_action: &'static str,
+) -> ToolResult {
+    ToolResult::err_with_output(
+        message.into(),
+        unified_diff_output(
+            Some(analysis),
+            Some(false),
+            None,
+            false,
+            Some(false),
+            "not_started",
+            None,
+            Some(error_kind),
+            None,
+            Some(recovery_action),
+        ),
+    )
 }
 
-/// Maximum accepted patch size for `validate_patch`, in bytes. Kept
-/// conservative to bound memory use and the agent stdin payload size. The
-/// patch is sent to the agent as stdin for `git apply`; larger patches should
-/// be split.
-/// This is a preflight-only bound; it does not affect `apply_patch`.
-pub(crate) const MAX_VALIDATE_PATCH_BYTES: usize = 256 * 1024; // 256 KiB
-
-/// Hard-reject patch file paths that would escape the project boundary during
-/// `validate_patch` preflight. Unlike `validate_patch_file_path` (used by the
-/// real `apply_patch`), this does **not** reject sensitive filenames — those
-/// are reported as `warnings` instead so the caller can still see the dry-run
-/// result. Only absolute paths, `..` traversal, and NUL bytes are hard
-/// rejects, ensuring the preflight never escapes the project root.
-pub(crate) fn validate_preflight_path(path: &str) -> Result<(), String> {
-    if path.is_empty() {
-        return Err("patch path cannot be empty".to_string());
-    }
-    if path.starts_with('/') {
-        return Err(format!("Absolute paths are not allowed: {}", path));
-    }
-    if path.contains("..") {
-        return Err(format!("Path traversal (..) is not allowed: {}", path));
-    }
-    if path.contains('\0') {
-        return Err("NUL byte in patch path is not allowed".to_string());
-    }
-    Ok(())
-}
-
-/// Sensitive path components that `validate_patch` should warn about (but not
-/// hard-reject). The preflight still runs; the caller sees the warning and can
-/// decide whether to proceed with `apply_patch`. Sensitive filenames retain
-/// case-insensitive substring matching, while sensitive directories match
-/// complete normalized path components so names like `targeting.rs` stay safe.
-pub(crate) fn sensitive_path_warnings(path: &str) -> Vec<String> {
-    let lower = path.to_lowercase();
-    let sensitive_files = ["agent.toml", "webcodex.env", ".env"];
-    let sensitive_directories = ["projects.d", ".git", "target", "node_modules"];
-    let mut warnings = Vec::new();
-    for name in sensitive_files {
-        if lower.contains(name) {
-            warnings.push(format!(
-                "patch touches sensitive path component '{}': {}",
-                name, path
-            ));
-        }
-    }
-    for name in sensitive_directories {
-        if Path::new(&lower)
-            .components()
-            .any(|component| component.as_os_str() == name)
-        {
-            warnings.push(format!(
-                "patch touches sensitive path component '{}': {}",
-                name, path
-            ));
-        }
-    }
-    warnings
+struct UnifiedDiffCommandFailure {
+    message: String,
+    execution_state: ShellCommandExecutionState,
 }
 
 impl ToolRuntime {
-    pub(crate) async fn apply_patch(&self, project: String, patch: String) -> ToolResult {
-        let proj = match self.resolve_project(&project).await {
-            Ok(p) => p,
-            Err(e) => return ToolResult::err(e),
-        };
-        if !proj.allow_patch() {
-            return ToolResult::err("Patch is not allowed for this project");
-        }
-        if patch.is_empty() {
-            return ToolResult::err("Patch cannot be empty");
-        }
-        if patch.contains('\0') {
-            return ToolResult::err("Patch contains NUL byte");
-        }
-        if let Some(err) = reject_unsupported_patch_wrapper(&patch) {
-            return ToolResult::err(err);
-        }
-        let changed = parse_changed_files_from_patch(&patch);
-        if changed.is_empty() {
-            return ToolResult::err("Patch does not declare any changed files");
-        }
-        for file in &changed {
-            if let Err(e) = validate_patch_file_path(file) {
-                return ToolResult::err(e);
-            }
-        }
-        // ---- Agent routing ----
-        // apply_patch mutates the worktree through the owning agent only. The
-        // server never reads or writes the agent project filesystem directly,
-        // and server-configured legacy projects are not a supported runtime
-        // surface for this tool (consistent with `validate_patch`). The patch
-        // payload always travels over `ShellRunRequest.stdin`; the command
-        // string is a fixed `git apply` invocation and never contains patch
-        // content, `echo <patch>`, heredocs, or a `cd` prefix — the working
-        // directory is supplied via the shell request `cwd` field.
-        if !proj.is_agent() {
-            return ToolResult::err(
-                "apply_patch requires an agent-registered project; \
-                 server-configured projects are not supported",
-            );
-        }
-        let client_id = match proj.agent_client_id() {
-            Ok(id) => id.to_string(),
-            Err(e) => return ToolResult::err(e),
-        };
-        let (check_req_id, check_rx) = match self
-            .shell_clients
-            .enqueue_run(
-                ShellRunRequest {
-                    client_id: client_id.clone(),
-                    cwd: Some(proj.path.clone()),
-                    command: "git apply --check -".to_string(),
-                    stdin: Some(patch.clone()),
-                    timeout_secs: 60,
-                    wait_timeout_secs: 62,
-                },
-                "tool_runtime".to_string(),
-            )
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => return ToolResult::err(e),
-        };
-        let check_result = tokio::time::timeout(Duration::from_secs(64), check_rx).await;
-        match check_result {
-            Ok(Ok(resp)) if resp.exit_code != Some(0) => {
-                return ToolResult::ok(json!({
-                    "success": false,
-                    "changed_files": changed,
-                    "stdout": resp.stdout,
-                    "stderr": resp.stderr,
-                    "error": "git apply --check failed",
-                }));
-            }
-            Err(_) => {
-                self.shell_clients.cancel_request(&check_req_id).await;
-                return ToolResult::err("timed out during patch validation");
-            }
-            Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&check_req_id).await;
-                return ToolResult::err("patch validation request dropped");
-            }
-            _ => {}
-        }
-        let (apply_req_id, apply_rx) = match self
+    async fn run_unified_diff_command(
+        &self,
+        client_id: String,
+        cwd: String,
+        command: &'static str,
+        diff: String,
+    ) -> Result<ShellRunResponse, UnifiedDiffCommandFailure> {
+        let (request_id, receiver) = self
             .shell_clients
             .enqueue_run(
                 ShellRunRequest {
                     client_id,
-                    cwd: Some(proj.path.clone()),
-                    command: "git apply -".to_string(),
-                    stdin: Some(patch.clone()),
-                    timeout_secs: 60,
-                    wait_timeout_secs: 62,
+                    cwd: Some(cwd),
+                    command: command.to_string(),
+                    stdin: Some(diff),
+                    timeout_secs: UNIFIED_DIFF_COMMAND_TIMEOUT_SECS,
+                    wait_timeout_secs: UNIFIED_DIFF_WAIT_TIMEOUT_SECS,
                 },
                 "tool_runtime".to_string(),
             )
             .await
+            .map_err(|error| UnifiedDiffCommandFailure {
+                message: error,
+                execution_state: ShellCommandExecutionState::NotStarted,
+            })?;
+
+        match tokio::time::timeout(Duration::from_secs(UNIFIED_DIFF_SERVER_WAIT_SECS), receiver)
+            .await
         {
-            Ok(r) => r,
-            Err(e) => return ToolResult::err(e),
-        };
-        match tokio::time::timeout(Duration::from_secs(64), apply_rx).await {
-            Ok(Ok(resp)) => {
-                let success = resp.exit_code == Some(0);
-                ToolResult::ok(json!({
-                    "success": success,
-                    "changed_files": changed,
-                    "stdout": resp.stdout,
-                    "stderr": resp.stderr,
-                }))
-            }
+            Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&apply_req_id).await;
-                ToolResult::err("apply request dropped")
+                let dispatch = self
+                    .shell_clients
+                    .cancel_request_dispatch_state(&request_id)
+                    .await;
+                Err(UnifiedDiffCommandFailure {
+                    message:
+                        "Runner response channel closed before a trustworthy result was received"
+                            .to_string(),
+                    execution_state: dispatch_uncertainty_lifecycle(dispatch),
+                })
             }
             Err(_) => {
-                self.shell_clients.cancel_request(&apply_req_id).await;
-                ToolResult::err("timed out applying patch")
+                let dispatch = self
+                    .shell_clients
+                    .cancel_request_dispatch_state(&request_id)
+                    .await;
+                Err(UnifiedDiffCommandFailure {
+                    message: "Timed out waiting for the Runner command result".to_string(),
+                    execution_state: dispatch_uncertainty_lifecycle(dispatch),
+                })
             }
         }
     }
 
-    pub(crate) async fn apply_patch_checked(
+    pub(crate) async fn apply_unified_diff(
         &self,
         project: String,
-        patch: String,
+        diff: String,
         deny_sensitive_paths: Option<bool>,
     ) -> ToolResult {
-        let deny = deny_sensitive_paths.unwrap_or(true);
-        let validate = self
-            .validate_patch(project.clone(), patch.clone(), Some(deny))
-            .await;
-        if !validate.success {
-            return validate;
-        }
-        let can_apply = validate.output["can_apply"].as_bool().unwrap_or(false);
-        if !can_apply {
-            return ToolResult::ok(json!({
-                "applied": false,
-                "validate": validate.output,
-                "apply": Value::Null,
-                "diff_summary": Value::Null,
-            }));
-        }
-        let apply = self.apply_patch(project.clone(), patch).await;
-        if !apply.success {
-            return ToolResult::ok(json!({
-                "applied": false,
-                "validate": validate.output,
-                "apply": apply,
-                "diff_summary": Value::Null,
-            }));
-        }
-        let diff_summary = self.git_diff_summary(project).await;
-        ToolResult::ok(json!({
-            "applied": apply.output["success"].as_bool().unwrap_or(false),
-            "validate": validate.output,
-            "apply": apply.output,
-            "diff_summary": diff_summary.output,
-        }))
-    }
+        let analysis = match analyze_unified_diff(&diff) {
+            Ok(analysis) => analysis,
+            Err(error) => return input_rejection(error),
+        };
 
-    pub(crate) async fn validate_patch(
-        &self,
-        project: String,
-        patch: String,
-        deny_sensitive_paths: Option<bool>,
-    ) -> ToolResult {
-        // ---- Input validation (before any project resolution) ----
-        if patch.is_empty() {
-            return patch_preflight_rejection("Patch cannot be empty");
+        let proj = match self.resolve_project(&project).await {
+            Ok(project) => project,
+            Err(error) => {
+                return pre_apply_rejection(error, &analysis, "project_unavailable", "fix_project")
+            }
+        };
+        if !proj.is_agent() {
+            return pre_apply_rejection(
+                "apply_unified_diff requires an agent-registered project; server-configured projects are not supported",
+                &analysis,
+                "project_not_agent_registered",
+                "fix_project",
+            );
         }
-        if patch.contains('\0') {
-            return patch_preflight_rejection("Patch contains NUL byte");
+        if !proj.allow_patch() {
+            return pre_apply_rejection(
+                "Unified diff mutation is not allowed for this project",
+                &analysis,
+                "patch_not_allowed",
+                "user_action",
+            );
         }
-        if patch.len() > MAX_VALIDATE_PATCH_BYTES {
-            return patch_preflight_rejection(format!(
-                "Patch too large ({} bytes); maximum is {} bytes",
-                patch.len(),
-                MAX_VALIDATE_PATCH_BYTES
+        if deny_sensitive_paths.unwrap_or(true) && analysis.has_sensitive_paths {
+            return ToolResult::ok(unified_diff_output(
+                Some(&analysis),
+                Some(false),
+                Some(false),
+                true,
+                Some(false),
+                "not_started",
+                None,
+                Some("policy_blocked"),
+                None,
+                Some("review_sensitive_paths"),
             ));
         }
-        if let Some(err) = reject_unsupported_patch_wrapper(&patch) {
-            return patch_preflight_rejection(err);
-        }
 
-        // ---- Project resolution (agent-registered only) ----
-        let proj = match self.resolve_project(&project).await {
-            Ok(p) => p,
-            Err(e) => return patch_preflight_rejection(e),
-        };
-        if !proj.allow_patch() {
-            return patch_preflight_rejection("Patch is not allowed for this project");
-        }
-        // ---- Patch path analysis ----
-        let affected = parse_changed_files_from_patch(&patch);
-        if affected.is_empty() {
-            return patch_preflight_rejection("Patch does not declare any changed files");
-        }
-        // Hard-reject paths that escape the project boundary. Collect warnings
-        // for sensitive filenames. Callers can request a hard policy block so
-        // full-auto loops do not accidentally ignore sensitive-path warnings.
-        let mut warnings: Vec<String> = Vec::new();
-        for file in &affected {
-            if let Err(e) = validate_preflight_path(file) {
-                return patch_preflight_rejection(e);
+        let client_id = match proj.agent_client_id() {
+            Ok(client_id) => client_id.to_string(),
+            Err(error) => {
+                return pre_apply_rejection(error, &analysis, "project_unavailable", "fix_project")
             }
-            warnings.extend(sensitive_path_warnings(file));
-        }
-        warnings.sort();
-        warnings.dedup();
-        let deny_sensitive = deny_sensitive_paths.unwrap_or(false);
-        if deny_sensitive && !warnings.is_empty() {
-            return ToolResult::ok(json!({
-                "can_apply": false,
-                "policy_blocked": true,
-                "affected_files": affected,
-                "stat": Value::Null,
-                "stdout": Value::Null,
-                "stderr": "sensitive path policy blocked patch preflight",
-                "warnings": warnings,
-            }));
-        }
+        };
 
-        // ---- Agent routing ----
-        // validate_patch must run through the owning agent; the server never
-        // reads the agent project filesystem directly, and server-configured
-        // legacy projects are not a supported runtime surface for this tool.
-        if !proj.is_agent() {
-            return patch_preflight_rejection(
-                "validate_patch requires an agent-registered project; \
-                 server-configured projects are not supported",
+        let check_response = match self
+            .run_unified_diff_command(
+                client_id.clone(),
+                proj.path.clone(),
+                "git apply --check -",
+                diff.clone(),
+            )
+            .await
+        {
+            Ok(response) => response,
+            Err(failure) => {
+                return ToolResult::err_with_output(
+                    format!(
+                        "Unified diff preflight did not produce a trustworthy result: {}. No apply command was dispatched; retrying the same request is safe after the Runner is healthy.",
+                        failure.message
+                    ),
+                    unified_diff_output(
+                        Some(&analysis),
+                        Some(false),
+                        None,
+                        false,
+                        Some(false),
+                        "not_started",
+                        None,
+                        Some("preflight_failed"),
+                        None,
+                        Some("retry_same"),
+                    ),
+                )
+            }
+        };
+        let check_state =
+            agent_command_lifecycle(&check_response, UNIFIED_DIFF_COMMAND_TIMEOUT_SECS);
+        if check_state != ShellCommandExecutionState::Completed || check_response.error.is_some() {
+            return ToolResult::err_with_output(
+                "Unified diff preflight did not complete reliably. No apply command was dispatched; retrying the same request is safe after the Runner is healthy.",
+                unified_diff_output(
+                    Some(&analysis),
+                    Some(false),
+                    None,
+                    false,
+                    Some(false),
+                    "not_started",
+                    check_response.stderr,
+                    Some("preflight_failed"),
+                    None,
+                    Some("retry_same"),
+                ),
             );
         }
-        let client_id = match proj.agent_client_id() {
-            Ok(id) => id.to_string(),
-            Err(e) => return patch_preflight_rejection(e),
-        };
-
-        // ---- 1) git apply --check (read-only applicability test) ----
-        let (check_req_id, check_rx) = match self
-            .shell_clients
-            .enqueue_run(
-                ShellRunRequest {
-                    client_id: client_id.clone(),
-                    cwd: Some(proj.path.clone()),
-                    command: "git apply --check -".to_string(),
-                    stdin: Some(patch.clone()),
-                    timeout_secs: 60,
-                    wait_timeout_secs: 62,
-                },
-                "tool_runtime".to_string(),
-            )
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => return ToolResult::err(e),
-        };
-        let check_resp = match tokio::time::timeout(Duration::from_secs(64), check_rx).await {
-            Ok(Ok(resp)) => resp,
-            Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&check_req_id).await;
-                return ToolResult::err("patch validation request dropped");
-            }
-            Err(_) => {
-                self.shell_clients.cancel_request(&check_req_id).await;
-                return ToolResult::err("timed out during patch validation");
-            }
-        };
-        let can_apply = check_resp.exit_code == Some(0);
-        let check_stdout = check_resp.stdout.clone();
-        let check_stderr = check_resp.stderr.clone();
-
-        // ---- 2) git apply --stat (read-only summary) ----
-        // `--stat` only parses the diff and prints a summary; it does not
-        // check applicability and does not write files. It works regardless
-        // of `can_apply`, so the caller always gets a summary.
-        let (stat_req_id, stat_rx) = match self
-            .shell_clients
-            .enqueue_run(
-                ShellRunRequest {
-                    client_id,
-                    cwd: Some(proj.path.clone()),
-                    command: "git apply --stat -".to_string(),
-                    stdin: Some(patch.clone()),
-                    timeout_secs: 60,
-                    wait_timeout_secs: 62,
-                },
-                "tool_runtime".to_string(),
-            )
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => return ToolResult::err(e),
-        };
-        let stat_resp = match tokio::time::timeout(Duration::from_secs(64), stat_rx).await {
-            Ok(Ok(resp)) => resp.stdout,
-            Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&stat_req_id).await;
-                None
-            }
-            Err(_) => {
-                self.shell_clients.cancel_request(&stat_req_id).await;
-                None
-            }
-        };
-
-        // ---- Structured result ----
-        // ToolResult.success reflects whether the *validation* ran cleanly;
-        // `can_apply` reports whether the patch would apply. A non-applicable
-        // patch is a normal preflight outcome (success=true, can_apply=false),
-        // not a tool error, so the agent loop can read it and regenerate.
-        ToolResult::ok(json!({
-            "can_apply": can_apply,
-            "policy_blocked": false,
-            "affected_files": affected,
-            "stat": stat_resp,
-            "stdout": check_stdout,
-            "stderr": check_stderr,
-            "warnings": warnings,
-        }))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::{RuntimeInfo, ToolResult};
-    use super::*;
-    use crate::shell_client::ShellClientRegistry;
-    use crate::shell_protocol::{
-        ShellAgentPollRequest, ShellAgentProjectSummary, ShellClientCapabilities,
-        ShellClientRegisterRequest,
-    };
-    use std::sync::Arc;
-
-    fn codex_apply_patch_wrapper() -> &'static str {
-        "*** Begin Patch\n*** Update File: src/example.rs\n@@\n-old\n+new\n*** End Patch\n"
-    }
-
-    fn standard_unified_diff() -> &'static str {
-        "diff --git a/src/example.rs b/src/example.rs\n--- a/src/example.rs\n+++ b/src/example.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n"
-    }
-
-    fn runtime_with_agent_project(client_id: &str) -> ToolRuntime {
-        let _ = client_id;
-        ToolRuntime::new(
-            Arc::new(ShellClientRegistry::default()),
-            Arc::new(RuntimeInfo::default()),
-        )
-    }
-
-    async fn register_patch_agent(runtime: &ToolRuntime, client_id: &str) {
-        runtime
-            .shell_clients
-            .register(ShellClientRegisterRequest {
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
-                display_name: None,
-                owner: None,
-                hostname: None,
-                host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    ..ShellClientCapabilities::default()
-                }),
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: "agent-proj".to_string(),
-                    name: None,
-                    path: "/tmp/agent-proj".to_string(),
-                    allow_patch: true,
-                    kind: None,
-                    description: None,
-                    hooks: Vec::new(),
-                    disabled: false,
-                    revision: None,
-                    git_branch: None,
-                    git_head: None,
-                    git_dirty: None,
-                    updated_at: 0,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("polling-v1".to_string()),
-                policy: None,
-            })
-            .await
-            .unwrap();
-    }
-
-    async fn assert_no_agent_shell_request(runtime: &ToolRuntime, client_id: &str) {
-        let req = runtime
-            .shell_clients
-            .poll(ShellAgentPollRequest {
-                client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
-                projects: None,
-            })
-            .await
-            .unwrap();
-        assert!(
-            req.is_none(),
-            "wrapper rejection must not enqueue agent shell requests"
-        );
-    }
-
-    fn assert_codex_wrapper_rejected(result: &ToolResult) {
-        assert!(!result.success, "wrapper patch must fail: {:?}", result);
-        let err = result.error.as_deref().unwrap_or("");
-        assert!(err.contains("Codex apply_patch wrapper"), "{err}");
-        assert!(err.contains("raw standard unified diff"), "{err}");
-    }
-
-    #[test]
-    fn standard_unified_diff_is_not_codex_apply_patch_wrapper() {
-        assert!(!looks_like_codex_apply_patch_wrapper(
-            standard_unified_diff()
-        ));
-        assert!(reject_unsupported_patch_wrapper(standard_unified_diff()).is_none());
-    }
-
-    #[tokio::test]
-    async fn validate_patch_rejects_codex_apply_patch_wrapper() {
-        let runtime = runtime_with_agent_project("patcher");
-        register_patch_agent(&runtime, "patcher").await;
-        let result = runtime
-            .validate_patch(
-                "agent:patcher:agent-proj".to_string(),
-                codex_apply_patch_wrapper().to_string(),
+        if check_response.exit_code != Some(0) {
+            return ToolResult::ok(unified_diff_output(
+                Some(&analysis),
+                Some(false),
+                Some(false),
+                false,
+                Some(false),
+                "completed",
+                check_response.stderr,
+                Some("not_applicable"),
                 None,
-            )
-            .await;
-        assert_codex_wrapper_rejected(&result);
-        assert_no_agent_shell_request(&runtime, "patcher").await;
-    }
+                Some("regenerate_unified_diff"),
+            ));
+        }
 
-    #[tokio::test]
-    async fn apply_patch_checked_rejects_codex_apply_patch_wrapper_before_apply() {
-        let runtime = runtime_with_agent_project("patcher");
-        register_patch_agent(&runtime, "patcher").await;
-        let result = runtime
-            .apply_patch_checked(
-                "agent:patcher:agent-proj".to_string(),
-                codex_apply_patch_wrapper().to_string(),
-                Some(true),
+        let apply_response = match self
+            .run_unified_diff_command(
+                client_id,
+                proj.path.clone(),
+                "git apply -",
+                diff,
             )
-            .await;
-        assert_codex_wrapper_rejected(&result);
-        assert_no_agent_shell_request(&runtime, "patcher").await;
-    }
+            .await
+        {
+            Ok(response) => response,
+            Err(failure) if failure.execution_state == ShellCommandExecutionState::NotStarted => {
+                return ToolResult::err_with_output(
+                    "Unified diff apply was not dispatched; no mutation from this apply request started. Retrying the same request is safe after the Runner is healthy.",
+                    unified_diff_output(
+                        Some(&analysis),
+                        Some(false),
+                        Some(true),
+                        false,
+                        Some(false),
+                        "not_started",
+                        None,
+                        Some("apply_not_started"),
+                        None,
+                        Some("retry_same"),
+                    ),
+                )
+            }
+            Err(failure) => {
+                return ToolResult::err_with_output(
+                    format!(
+                        "Unified diff apply outcome is unknown: {}. The apply request may already have changed the worktree. Inspect current workspace state before deciding whether to retry.",
+                        failure.message
+                    ),
+                    unified_diff_output(
+                        Some(&analysis),
+                        None,
+                        Some(true),
+                        false,
+                        None,
+                        "outcome_unknown",
+                        None,
+                        Some("outcome_unknown"),
+                        None,
+                        Some("inspect_workspace_before_retry"),
+                    ),
+                )
+            }
+        };
+        let apply_state =
+            agent_command_lifecycle(&apply_response, UNIFIED_DIFF_COMMAND_TIMEOUT_SECS);
+        if apply_state == ShellCommandExecutionState::NotStarted {
+            return ToolResult::err_with_output(
+                "Unified diff apply was not started by the Runner; no mutation from this apply request occurred. Retrying the same request is safe.",
+                unified_diff_output(
+                    Some(&analysis),
+                    Some(false),
+                    Some(true),
+                    false,
+                    Some(false),
+                    "not_started",
+                    apply_response.stderr,
+                    Some("apply_not_started"),
+                    None,
+                    Some("retry_same"),
+                ),
+            );
+        }
+        if apply_state != ShellCommandExecutionState::Completed || apply_response.error.is_some() {
+            return ToolResult::err_with_output(
+                "Unified diff apply outcome is unknown after dispatch. The worktree may already have changed; inspect current workspace state before deciding whether to retry.",
+                unified_diff_output(
+                    Some(&analysis),
+                    None,
+                    Some(true),
+                    false,
+                    None,
+                    "outcome_unknown",
+                    apply_response.stderr,
+                    Some("outcome_unknown"),
+                    None,
+                    Some("inspect_workspace_before_retry"),
+                ),
+            );
+        }
+        if apply_response.exit_code != Some(0) {
+            return ToolResult::err_with_output(
+                "git apply completed with a non-zero exit after a successful preflight. The requested diff was not confirmed applied; inspect current workspace state before retrying because post-dispatch mutation state is not inferred.",
+                unified_diff_output(
+                    Some(&analysis),
+                    Some(false),
+                    Some(true),
+                    false,
+                    None,
+                    "completed",
+                    apply_response.stderr,
+                    Some("apply_failed"),
+                    None,
+                    Some("inspect_workspace_before_retry"),
+                ),
+            );
+        }
 
-    #[tokio::test]
-    async fn apply_patch_rejects_codex_apply_patch_wrapper() {
-        let runtime = runtime_with_agent_project("patcher");
-        register_patch_agent(&runtime, "patcher").await;
-        let result = runtime
-            .apply_patch(
-                "agent:patcher:agent-proj".to_string(),
-                codex_apply_patch_wrapper().to_string(),
-            )
-            .await;
-        assert_codex_wrapper_rejected(&result);
-        assert_no_agent_shell_request(&runtime, "patcher").await;
+        ToolResult::ok(unified_diff_output(
+            Some(&analysis),
+            Some(true),
+            Some(true),
+            false,
+            Some(true),
+            "completed",
+            apply_response.stderr,
+            None,
+            None,
+            None,
+        ))
     }
 }

@@ -77,7 +77,7 @@ Use them only when:
 - The resulting output will not expose secrets.
 - A human can review the command, output summary, and workspace state.
 
-Prefer structured tools first: `read_file`, `search_project_text`, structured edits, `validate_patch`, `cargo_fmt`, `cargo_check`, `cargo_test`, `show_changes`, and `workspace_hygiene_check`.
+Prefer structured tools first: `read_file`, `search_project_text`, structured edits, `apply_unified_diff`, `cargo_fmt`, `cargo_check`, `cargo_test`, `show_changes`, and `workspace_hygiene_check`.
 
 ## Token Handling
 

@@ -807,7 +807,7 @@ mod tests {
             "artifact_upload_chunk",
             "artifact_upload_finish",
             "artifact_upload_abort",
-            "apply_patch_checked",
+            "apply_unified_diff",
             "computer_list_windows",
             "computer_find_elements",
             "computer_element_state",

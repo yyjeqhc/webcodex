@@ -1423,9 +1423,7 @@ impl ToolRuntime {
                 self.dispatch_session_shell_tool(call, ssh_resource).await
             }
 
-            call @ (ToolCall::ApplyPatch { .. }
-            | ToolCall::ApplyPatchChecked { .. }
-            | ToolCall::ValidatePatch { .. }) => self.dispatch_patch_tool(call).await,
+            call @ ToolCall::ApplyUnifiedDiff { .. } => self.dispatch_patch_tool(call).await,
 
             ToolCall::SkillList {
                 query,

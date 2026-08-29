@@ -1062,8 +1062,7 @@ fn semantic_kind(event: &SessionEvent) -> &'static str {
         | "find_references"
         | "call_hierarchy" => "Navigated",
         "apply_text_edits"
-        | "apply_patch"
-        | "apply_patch_checked"
+        | "apply_unified_diff"
         | "write_project_file"
         | "delete_project_files"
         | "git_restore_paths"
@@ -1076,7 +1075,7 @@ fn semantic_kind(event: &SessionEvent) -> &'static str {
         | "show_changes"
         | "workspace_hygiene_check"
         | "finish_coding_task" => "Reviewed",
-        "cargo_test" | "cargo_check" | "cargo_fmt" | "go_test" | "validate_patch" => "Tested",
+        "cargo_test" | "cargo_check" | "cargo_fmt" | "go_test" => "Tested",
         "run_process"
         | "run_script"
         | "run_shell"

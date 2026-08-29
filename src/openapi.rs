@@ -4,11 +4,11 @@ use std::collections::BTreeMap;
 
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::{
-    generic_tool_call_flattened_args_for_spec, registered_tool_specs, TOOL_CALL_ARGUMENTS_FIELD,
-    TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
+    generic_tool_call_flattened_args_for_spec, registered_tool_specs, MAX_UNIFIED_DIFF_BYTES,
+    TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
 };
 
-const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
+const UNIFIED_DIFF_FIELD_DESCRIPTION: &str = "Raw standard unified diff only. Do not include shell heredocs or Codex apply_patch wrapper syntax such as *** Begin Patch / *** Update File / *** End Patch. The first non-empty line should be diff --git ..., --- ..., or another git-apply-compatible unified diff header.";
 const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional explicit existing wc_sess_* id. When provided, records this dedicated action in that exact Workflow Session; omission does not infer a Session.";
 const FLATTENED_TOOL_ARG_DESCRIPTION: &str =
     "Flattened tool-specific argument. Used only when `params` and `arguments` are absent.";
@@ -104,18 +104,17 @@ pub(crate) fn public_url() -> String {
 /// 3. project inspection (`readProjectFile`, `getProjectGitStatus`,
 ///    `getProjectGitDiff`, `getProjectGitDiffSummary`, `listProjectFiles`,
 ///    `searchProjectText`)
-/// 4. project mutation (`validateProjectPatch`, `applyProjectPatch`,
-///    `applyProjectPatchChecked`, `runProjectShellCommand`,
+/// 4. project mutation (`applyUnifiedDiff`, `runProjectShellCommand`,
 ///    `deleteProjectFiles`, `gitRestorePaths`, `discardUntrackedFiles`,
 ///    `startProjectShellJob`)
 /// 5. job inspection (`listRuntimeJobs`, `getRuntimeJobTail`)
 /// 6. advanced/generic entry point (`callRuntimeTool`)
 ///
 /// Edit tools reachable through `callRuntimeTool` are `apply_text_edits`
-/// (guarded transactional file changes), `apply_patch_checked` (complex checked
-/// unified diff), `write_project_file` (intentional full rewrite), and the
-/// lower-level raw `apply_patch`. The legacy line/pattern edit tools were
-/// removed entirely.
+/// (guarded transactional file changes), `apply_unified_diff` (complex raw
+/// unified diff with internal preflight), and `write_project_file`
+/// (intentional full rewrite). The legacy line/pattern and patch-triplet edit
+/// tools were removed entirely.
 #[cfg(test)]
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",
@@ -131,9 +130,7 @@ const GPT_ACTION_OPS: &[&str] = &[
     "getProjectGitDiffSummary",
     "listProjectFiles",
     "searchProjectText",
-    "validateProjectPatch",
-    "applyProjectPatch",
-    "applyProjectPatchChecked",
+    "applyUnifiedDiff",
     "runProjectShellCommand",
     "deleteProjectFiles",
     "gitRestorePaths",
@@ -167,6 +164,9 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/codex/projects",
     "/api/codex/run",
     "/api/projects/write_file",
+    "/api/projects/apply_patch",
+    "/api/projects/validate_patch",
+    "/api/projects/apply_patch_checked",
 ];
 
 #[handler]
@@ -498,19 +498,19 @@ pub(crate) fn build_openapi_spec() -> Value {
                     })
                 )
             },
-            "/api/projects/apply_patch": {
+            "/api/projects/apply_unified_diff": {
                 "post": operation_with_examples(
-                    "applyProjectPatch",
-                    "Apply a patch to a project",
-                    "Applies a unified diff patch to an agent-registered project through the owning agent. Mutation with side effects; requires Bearer auth and the agent shell capability. Use after inspecting files and validating the patch; for targeted edits prefer apply_text_edits via callRuntimeTool.",
-                    "ApplyPatchRequest",
-                    "ToolResult",
+                    "applyUnifiedDiff",
+                    "Apply a unified diff to a project",
+                    "Canonical complex or multi-file unified-diff mutation with side effects; requires Bearer auth and agent shell capability. Accepts only bounded raw standard unified diff, performs its own safety/applicability preflight, and applies only after it passes. Prefer apply_text_edits for ordinary guarded local edits. Failed preflight never mutates; post-dispatch uncertainty requires workspace inspection before retry.",
+                    "ApplyUnifiedDiffRequest",
+                    "ApplyUnifiedDiffToolResult",
                     json!({
                         "example": {
                             "summary": "Apply a small unified diff",
                             "value": {
                                 "project": "webcodex",
-                                "patch": "--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n# WebCodex\n+edited\n"
+                                "diff": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n# WebCodex\n+edited\n"
                             }
                         }
                     })
@@ -537,42 +537,6 @@ pub(crate) fn build_openapi_spec() -> Value {
                                 "project": "webcodex",
                                 "command": "ls",
                                 "cwd": "src"
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/validate_patch": {
-                "post": operation_with_examples(
-                    "validateProjectPatch",
-                    "Validate a project patch (dry-run)",
-                    "Read-only dry-run patch preflight. Runs `git apply --check` and `git apply --stat` through the owning agent without modifying the worktree. Returns can_apply, affected_files, stat, and warnings. Never writes files.",
-                    "ValidatePatchRequest",
-                    "ToolResult",
-                    json!({
-                        "byProject": {
-                            "summary": "Dry-run a small patch",
-                            "value": {
-                                "project": "webcodex",
-                                "patch": "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/apply_patch_checked": {
-                "post": operation_with_examples(
-                    "applyProjectPatchChecked",
-                    "Apply a checked patch to a project",
-                    "Mutation with side effects. Runs the validate_patch preflight first and, only when can_apply=true, applies the patch and returns the post-apply diff summary. Requires Bearer auth and the agent shell capability.",
-                    "ApplyPatchCheckedRequest",
-                    "ToolResult",
-                    json!({
-                        "byProject": {
-                            "summary": "Validate then apply a small patch",
-                            "value": {
-                                "project": "webcodex",
-                                "patch": "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"
                             }
                         }
                     })
@@ -946,12 +910,10 @@ fn is_consequential_operation(operation_id: &str) -> bool {
         | "getRuntimeJobLog"
         | "getRuntimeJobTail"
         | "listRuntimeJobs"
-        | "validateProjectPatch"
         | "registerProject"
         | "createProject" => false,
 
-        "applyProjectPatch"
-        | "applyProjectPatchChecked"
+        "applyUnifiedDiff"
         | "importConversationFilesToProject"
         | "runProjectShellCommand"
         | "startProjectShellJob"
@@ -1190,7 +1152,7 @@ fn schemas() -> Value {
                 },
                 "dry_run": {
                     "type": "boolean",
-                    "description": "Flattened apply_text_edits / validate_patch flag to compute the plan without writing. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened apply_text_edits flag to compute the plan without writing. Used only when `params` and `arguments` are absent."
                 },
                 "message": {
                     "type": "string",
@@ -1415,39 +1377,20 @@ fn schemas() -> Value {
                 }
             }
         },
-        "ApplyPatchRequest": {
+        "ApplyUnifiedDiffRequest": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["project", "patch"],
-            "description": "Apply a unified diff patch to an agent-registered project. Executable mutation; the owning agent must allow patching.",
+            "required": ["project", "diff"],
+            "description": "Apply one bounded raw standard unified diff to an agent-registered project after the tool's own safety/applicability preflight.",
             "properties": {
                 "project": {
                     "type": "string",
                     "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
-                "patch": {
+                "diff": {
                     "type": "string",
-                    "description": PATCH_FIELD_DESCRIPTION
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": SESSION_ID_FIELD_DESCRIPTION
-                }
-            }
-        },
-        "ValidatePatchRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["project", "patch"],
-            "description": "Dry-run a unified diff patch against an agent-registered project without applying it. Read-only preflight.",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "patch": {
-                    "type": "string",
-                    "description": PATCH_FIELD_DESCRIPTION
+                    "maxLength": MAX_UNIFIED_DIFF_BYTES,
+                    "description": UNIFIED_DIFF_FIELD_DESCRIPTION
                 },
                 "session_id": {
                     "type": "string",
@@ -1455,31 +1398,8 @@ fn schemas() -> Value {
                 },
                 "deny_sensitive_paths": {
                     "type": "boolean",
-                    "description": "Optional. When true, sensitive-path warnings become a hard policy block (can_apply=false)."
-                }
-            }
-        },
-        "ApplyPatchCheckedRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["project", "patch"],
-            "description": "Validate then apply a unified diff patch. Mutation with side effects; applies only when the preflight passes.",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "patch": {
-                    "type": "string",
-                    "description": PATCH_FIELD_DESCRIPTION
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": SESSION_ID_FIELD_DESCRIPTION
-                },
-                "deny_sensitive_paths": {
-                    "type": "boolean",
-                    "description": "Optional. When true, sensitive-path warnings block the apply."
+                    "default": true,
+                    "description": "Optional fail-safe sensitive-path policy. Defaults to true; when true, any sensitive-path warning blocks mutation before git apply --check is dispatched."
                 }
             }
         },
@@ -1945,8 +1865,21 @@ fn schemas() -> Value {
     });
     insert_tool_call_request_flattened_arg_properties(&mut schemas);
     insert_tool_call_request_reserved_properties(&mut schemas);
+    insert_apply_unified_diff_result_schema(&mut schemas);
     insert_handoff_brief_schema(&mut schemas);
     schemas
+}
+
+fn insert_apply_unified_diff_result_schema(schemas: &mut Value) {
+    let schema = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "apply_unified_diff")
+        .map(|spec| spec.output_schema)
+        .expect("apply_unified_diff must publish an output schema");
+    schemas
+        .as_object_mut()
+        .expect("OpenAPI schemas must be an object")
+        .insert("ApplyUnifiedDiffToolResult".to_string(), schema);
 }
 
 fn insert_handoff_brief_schema(schemas: &mut Value) {

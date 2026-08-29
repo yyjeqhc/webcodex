@@ -180,7 +180,7 @@ impl Default for QuicServerConfig {
 ///
 /// Codex is an optional advanced local dependency for external workflows. The
 /// WebCodex runtime itself serves `read_file`, `git_status`, `git_diff`,
-/// `apply_patch`, and `run_shell` through the agent registry.
+/// `apply_unified_diff`, and `run_shell` through the agent registry.
 #[derive(Debug, Clone)]
 pub struct CodexConfig {
     /// Path/name of the Codex CLI binary. Default `codex`.

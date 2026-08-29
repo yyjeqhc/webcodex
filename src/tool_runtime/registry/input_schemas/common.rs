@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 pub(super) const OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by work_on_project or another compatible Session bootstrap. When provided, this tool call is recorded in that exact Session ledger; omission leaves the call unlinked to Workflow Session state.";
 
-pub(super) const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
+pub(super) const UNIFIED_DIFF_FIELD_DESCRIPTION: &str = "Raw standard unified diff only. Do not include shell heredocs or Codex apply_patch wrapper syntax such as *** Begin Patch / *** Update File / *** End Patch. The first non-empty line should be diff --git ..., --- ..., or another git-apply-compatible unified diff header.";
 
 pub(super) fn object_schema(fields: Vec<(&str, &str, &str, bool)>) -> Value {
     let mut properties = serde_json::Map::new();

@@ -43,11 +43,11 @@ pub(in crate::tool_runtime::tests) fn finished_event<'a>(
         })
 }
 
-/// Assert a patch-related agent command is one of the fixed, known-safe
-/// invocations and never carries patch content, a `cd` prefix, a heredoc,
-/// or an `echo`/`cat` splice of the patch body.
+/// Assert a unified-diff agent command is one of the two fixed, known-safe
+/// invocations and never carries diff content, a `cd` prefix, a heredoc,
+/// or an `echo`/`cat` splice of the diff body.
 pub(in crate::tool_runtime::tests) fn assert_safe_patch_command(command: &str, marker: &str) {
-    let allowed = ["git apply --check -", "git apply --stat -", "git apply -"];
+    let allowed = ["git apply --check -", "git apply -"];
     assert!(
         allowed.contains(&command),
         "unexpected patch command (must be a fixed git apply invocation): {}",

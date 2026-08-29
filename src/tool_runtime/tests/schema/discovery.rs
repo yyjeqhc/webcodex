@@ -292,14 +292,14 @@ fn allowed_tool_definition_categories_for_discovery_group(group: &str) -> &'stat
         "review" => &["checkpoint", "cleanup", "file", "git", "workflow"],
         "runtime" => &["checkpoint", "project", "runtime", "session", "workflow"],
         "shell" => &["job", "validation"],
-        "validation" => &["patch", "validation"],
+        "validation" => &["validation"],
         other => panic!("missing discovery group category allowlist for {other}"),
     }
 }
 
 fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'static str]> {
     match tool {
-        "apply_patch_checked" => Some(&["edit", "patch", "validation"]),
+        "apply_unified_diff" => Some(&["edit", "patch"]),
         "cargo_check" => Some(&["shell", "validation"]),
         "cargo_fmt" => Some(&["shell", "validation"]),
         "cargo_test" => Some(&["shell", "validation"]),
@@ -325,7 +325,6 @@ fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'stat
         | "close_session_shell" => Some(&["jobs", "shell"]),
         "runtime_status" => Some(&["inspect", "runtime"]),
         "show_changes" => Some(&["git", "inspect", "review"]),
-        "validate_patch" => Some(&["patch", "validation"]),
         "work_on_project" => Some(&["inspect", "runtime"]),
         "workspace_checkpoint_create" => Some(&["checkpoint", "git", "runtime"]),
         "workspace_checkpoint_delete" => Some(&["checkpoint", "cleanup", "runtime"]),
@@ -436,7 +435,7 @@ fn tool_discovery_groups_drive_tool_categories() {
     }
 
     for allowed in [
-        "apply_patch_checked",
+        "apply_unified_diff",
         "cargo_check",
         "cargo_fmt",
         "cargo_test",
@@ -456,7 +455,6 @@ fn tool_discovery_groups_drive_tool_categories() {
         "run_script",
         "runtime_status",
         "show_changes",
-        "validate_patch",
         "work_on_project",
         "workspace_checkpoint_create",
         "workspace_checkpoint_delete",
@@ -938,13 +936,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     let validation = categories[TOOL_DISCOVERY_GROUP_VALIDATION]
         .as_array()
         .unwrap();
-    for name in [
-        "cargo_fmt",
-        "cargo_check",
-        "cargo_test",
-        "validate_patch",
-        "apply_patch_checked",
-    ] {
+    for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
         assert!(validation.iter().any(|v| v == name));
     }
     let review = categories[TOOL_DISCOVERY_GROUP_REVIEW].as_array().unwrap();
@@ -973,7 +965,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         edit_prefix,
         vec![
             "apply_text_edits",
-            "apply_patch_checked",
+            "apply_unified_diff",
             "write_project_file",
             "save_project_artifact",
             "read_project_artifact_metadata",
@@ -993,9 +985,9 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "inspect: use search_project_text and read_file before editing",
         "run_shell with rg or git grep is the diagnostic escape hatch",
         "edit: prefer apply_text_edits for transactional guarded file changes",
-        "apply_patch_checked for complex unified diffs",
+        "apply_unified_diff for complex raw unified diffs",
         "write_project_file only for intentional full rewrites",
-        "validate: use cargo_check / cargo_test / go_test / validate_patch",
+        "validate: use cargo_check / cargo_test / go_test",
         "raw run_shell is a bounded escape hatch",
         "not the primary validation path",
         "review: use show_changes / git_diff_hunks / workspace_hygiene_check",
@@ -1021,7 +1013,7 @@ fn tool_categories_include_edit_group() {
     // NOT appear here.
     assert!(edit.iter().any(|v| v == "apply_text_edits"));
     assert!(edit.iter().any(|v| v == "write_project_file"));
-    assert!(edit.iter().any(|v| v == "apply_patch_checked"));
+    assert!(edit.iter().any(|v| v == "apply_unified_diff"));
     assert!(!edit.iter().any(|v| v == "replace_in_file"));
     assert!(!edit.iter().any(|v| v == "replace_line_range"));
     assert!(!edit.iter().any(|v| v == "insert_at_line"));
@@ -1286,9 +1278,9 @@ async fn tool_manifest_unknown_intent_returns_structured_error() {
 #[tokio::test]
 async fn tool_manifest_intent_can_combine_with_category_filter() {
     // category is a strict ToolDefinition.category filter, not a flow/group filter.
-    // validate_patch and apply_patch_checked remain patch-category tools, even
-    // though they can participate in validation flows. Intent only ranks/filters
-    // discovery output and does not change tool behavior.
+    // apply_unified_diff is a patch-category mutation and is intentionally not a
+    // validation-category tool merely because it performs an internal preflight.
+    // Intent only ranks/filters discovery output and does not change tool behavior.
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
@@ -1307,8 +1299,7 @@ async fn tool_manifest_intent_can_combine_with_category_filter() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    // Structured validation tools and validation_summary are validation;
-    // validate_patch/apply_patch_checked remain patch.
+    // Structured validation tools and validation_summary are the entire validation category.
     assert_eq!(
         names,
         vec![
@@ -1463,6 +1454,7 @@ fn coding_intent_matches_local_coding_canonical_tools() {
     for middle in [
         "project_overview",
         "apply_text_edits",
+        "apply_unified_diff",
         "cargo_test",
         "show_changes",
     ] {
@@ -1535,8 +1527,8 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
         "coding intent tools should expose canonical precise edits: {coding_names:?}"
     );
     assert!(
-        coding_names.contains(&"apply_patch_checked"),
-        "coding intent tools should expose checked patches: {coding_names:?}"
+        coding_names.contains(&"apply_unified_diff"),
+        "coding intent tools should expose canonical unified-diff mutation: {coding_names:?}"
     );
     assert!(
         !coding_names.contains(&"replace_line_range"),
@@ -1576,12 +1568,12 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
     let no_patch_tools = serde_json::to_string(&no_patch["tools"]).unwrap();
     let no_patch_flows = serde_json::to_string(&no_patch["recommended_flows"]).unwrap();
     assert!(
-        !no_patch_tools.contains("apply_patch_checked"),
-        "without patch category, tools must not include apply_patch_checked"
+        !no_patch_tools.contains("apply_unified_diff"),
+        "without patch category, tools must not include apply_unified_diff"
     );
     assert!(
-        !no_patch_flows.contains("apply_patch_checked"),
-        "without patch category, recommended_flows must not include apply_patch_checked"
+        !no_patch_flows.contains("apply_unified_diff"),
+        "without patch category, recommended_flows must not include apply_unified_diff"
     );
 
     // same filter with patch
@@ -1608,8 +1600,8 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
         .filter_map(|tool| tool["name"].as_str())
         .collect();
     assert!(
-        with_patch_tools.contains(&"apply_patch_checked"),
-        "with patch category, tools should include apply_patch_checked: {with_patch_tools:?}"
+        with_patch_tools.contains(&"apply_unified_diff"),
+        "with patch category, tools should include apply_unified_diff: {with_patch_tools:?}"
     );
     let edit_flow = with_patch["recommended_flows"]
         .as_array()
@@ -1622,8 +1614,8 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
             .as_array()
             .unwrap()
             .iter()
-            .any(|tool| tool == "apply_patch_checked"),
-        "with patch category, edit flow may include apply_patch_checked: {edit_flow}"
+            .any(|tool| tool == "apply_unified_diff"),
+        "with patch category, edit flow may include apply_unified_diff: {edit_flow}"
     );
 
     // limit truncation after intent ordering

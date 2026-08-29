@@ -257,7 +257,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ("delete_project_files", PERMISSION_RISK_DESTRUCTIVE),
         ("save_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
         ("computer_save_snapshot", PERMISSION_RISK_ARTIFACT_WRITE),
-        ("apply_patch", PERMISSION_RISK_PATCH),
+        ("apply_unified_diff", PERMISSION_RISK_PATCH),
         ("write_project_file", PERMISSION_RISK_WRITE),
     ] {
         assert_eq!(runtime_tool_permission_risk(tool), risk, "{tool}");
@@ -334,12 +334,7 @@ fn required_agent_capability_matches_metadata_risk_table() {
             AgentCapability::PersistentShell,
         ),
         (
-            "apply_patch",
-            ToolRisk::ProjectWrite,
-            AgentCapability::Shell,
-        ),
-        (
-            "apply_patch_checked",
+            "apply_unified_diff",
             ToolRisk::ProjectWrite,
             AgentCapability::Shell,
         ),
@@ -358,8 +353,6 @@ fn required_agent_capability_matches_metadata_risk_table() {
             ToolRisk::ProjectWrite,
             AgentCapability::StructuredProcess,
         ),
-        // Read-only dry run, but implemented through the agent shell path.
-        ("validate_patch", ToolRisk::ReadOnly, AgentCapability::Shell),
         (
             "write_project_file",
             ToolRisk::ProjectWrite,

@@ -124,19 +124,17 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "cargo_test",
             "go_test",
             "validation_summary",
-            "validate_patch",
-            "apply_patch_checked",
         ],
     },
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_PATCH,
-        tools: &["apply_patch", "apply_patch_checked", "validate_patch"],
+        tools: &["apply_unified_diff"],
     },
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_EDIT,
         tools: &[
             "apply_text_edits",
-            "apply_patch_checked",
+            "apply_unified_diff",
             "write_project_file",
             "save_project_artifact",
             "read_project_artifact_metadata",
@@ -276,19 +274,19 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "edit",
         summary:
-            "Edit: prefer apply_text_edits for transactional guarded file changes; apply_patch_checked for complex unified diffs; write_project_file only for intentional full rewrites.",
+            "Edit: prefer apply_text_edits for transactional guarded file changes; apply_unified_diff for complex raw unified diffs; write_project_file only for intentional full rewrites.",
         manifest_purpose:
-            "Prefer guarded transactional changes and checked complex diffs for source changes; whole-file write only for an intentional full rewrite.",
+            "Prefer guarded transactional changes and preflighted complex unified diffs for source changes; whole-file write only for an intentional full rewrite.",
         tools: &[
             "apply_text_edits",
-            "apply_patch_checked",
+            "apply_unified_diff",
             "write_project_file",
         ],
     },
     ToolRecommendedFlow {
         name: "validate",
         summary:
-            "Validate: use cargo_check / cargo_test / go_test / validate_patch; long validation continues as a Job. Prefer structured validation tools when available; raw run_shell is a bounded escape hatch, not the primary validation path.",
+            "Validate: use cargo_check / cargo_test / go_test; long validation continues as a Job. Prefer structured validation tools when available; raw run_shell is a bounded escape hatch, not the primary validation path.",
         manifest_purpose:
             "Use structured Rust or Go validation; long checks become Jobs. Prefer structured validation tools when available; run_shell remains an explicit escape hatch, not the primary validation path.",
         tools: &[
@@ -298,7 +296,6 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
             "observe_jobs",
             "job_status",
             "validation_summary",
-            "validate_patch",
             "run_process",
             "run_script",
             "run_shell",
@@ -394,7 +391,7 @@ pub(crate) const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "call_hierarchy",
     // guarded edits
     "apply_text_edits",
-    "apply_patch_checked",
+    "apply_unified_diff",
     // structured process, shell escape hatch, and jobs
     "run_process",
     "run_script",

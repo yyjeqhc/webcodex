@@ -391,9 +391,12 @@ fn from_tool_name_parses_read_file_and_git_tools() {
         .unwrap();
     assert!(matches!(call, ToolCall::GitDiff { .. }));
 
-    let call = ToolCall::from_tool_name("apply_patch", json!({"project": "demo", "patch": "diff"}))
-        .unwrap();
-    assert!(matches!(call, ToolCall::ApplyPatch { .. }));
+    let call = ToolCall::from_tool_name(
+        "apply_unified_diff",
+        json!({"project": "demo", "diff": "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-a\n+b\n"}),
+    )
+    .unwrap();
+    assert!(matches!(call, ToolCall::ApplyUnifiedDiff { .. }));
 
     let call =
         ToolCall::from_tool_name("run_job", json!({"project": "demo", "command": "make"})).unwrap();
@@ -526,7 +529,7 @@ fn from_tool_name_unknown_tool_lists_available_tools_and_hint() {
     );
     // Should list at least a couple of known tool names.
     assert!(err.contains("git_diff_summary"));
-    assert!(err.contains("apply_patch_checked"));
+    assert!(err.contains("apply_unified_diff"));
     // Must not leak secret/config artifacts.
     let lower = err.to_lowercase();
     for forbidden in [
@@ -1154,16 +1157,16 @@ fn from_tool_name_list_jobs_with_null_arguments_parses() {
 }
 
 #[test]
-fn from_tool_name_parses_checked_and_cleanup_tools() {
-    let checked = ToolCall::from_tool_name(
-        "apply_patch_checked",
-        json!({"project":"agent:c:p","patch":"diff","deny_sensitive_paths":true}),
+fn from_tool_name_parses_unified_diff_and_cleanup_tools() {
+    let unified = ToolCall::from_tool_name(
+        "apply_unified_diff",
+        json!({"project":"agent:c:p","diff":"diff","deny_sensitive_paths":true}),
     )
     .unwrap();
     assert!(matches!(
-        checked,
-        ToolCall::ApplyPatchChecked { project, patch, deny_sensitive_paths, .. }
-            if project == "agent:c:p" && patch == "diff" && deny_sensitive_paths == Some(true)
+        unified,
+        ToolCall::ApplyUnifiedDiff { project, diff, deny_sensitive_paths, .. }
+            if project == "agent:c:p" && diff == "diff" && deny_sensitive_paths == Some(true)
     ));
 
     let delete = ToolCall::from_tool_name(
@@ -1195,15 +1198,12 @@ fn from_tool_name_parses_checked_and_cleanup_tools() {
 }
 
 #[test]
-fn from_tool_name_parses_validate_patch() {
-    let call = ToolCall::from_tool_name(
-        "validate_patch",
-        json!({"project": "agent:c:p", "patch": "diff"}),
-    )
-    .unwrap();
-    assert!(
-        matches!(call, ToolCall::ValidatePatch { project, patch, .. } if project == "agent:c:p" && patch == "diff")
-    );
+fn from_tool_name_rejects_removed_patch_triplet() {
+    for removed in ["apply_patch", "apply_patch_checked", "validate_patch"] {
+        let error = ToolCall::from_tool_name(removed, json!({"project":"agent:c:p"}))
+            .expect_err("removed patch tool names must not parse");
+        assert!(error.contains(removed), "{error}");
+    }
 }
 
 #[test]

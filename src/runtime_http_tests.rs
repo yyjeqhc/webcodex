@@ -229,13 +229,11 @@ fn build_projects_router(
                 .push(Router::with_path("projects/read_file").post(projects_read_file))
                 .push(Router::with_path("projects/git_status").post(projects_git_status))
                 .push(Router::with_path("projects/git_diff").post(projects_git_diff))
-                .push(Router::with_path("projects/apply_patch").post(projects_apply_patch))
-                .push(Router::with_path("projects/validate_patch").post(projects_validate_patch))
-                .push(Router::with_path("projects/run_shell").post(projects_run_shell))
                 .push(
-                    Router::with_path("projects/apply_patch_checked")
-                        .post(projects_apply_patch_checked),
+                    Router::with_path("projects/apply_unified_diff")
+                        .post(projects_apply_unified_diff),
                 )
+                .push(Router::with_path("projects/run_shell").post(projects_run_shell))
                 .push(Router::with_path("projects/delete_files").post(projects_delete_files))
                 .push(
                     Router::with_path("projects/git_restore_paths")
@@ -449,12 +447,8 @@ async fn all_project_endpoints_require_bearer_auth() {
         ("/api/projects/git_status", json!({"project": "demo"})),
         ("/api/projects/git_diff", json!({"project": "demo"})),
         (
-            "/api/projects/apply_patch",
-            json!({"project": "demo", "patch": "diff"}),
-        ),
-        (
-            "/api/projects/validate_patch",
-            json!({"project": "demo", "patch": "diff"}),
+            "/api/projects/apply_unified_diff",
+            json!({"project": "demo", "diff": "diff"}),
         ),
         ("/api/tools/list", json!({})),
         ("/api/tools/call", json!({"tool": "list_tools"})),

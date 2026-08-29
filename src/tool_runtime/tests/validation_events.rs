@@ -17,13 +17,12 @@ fn validation_like_tool_calls_are_classified_correctly() {
         ("cargo_fmt", "format"),
         ("cargo_check", "check"),
         ("cargo_test", "test"),
-        ("validate_patch", "patch_preflight"),
-        ("apply_patch_checked", "patch_apply_checked"),
     ] {
         assert_eq!(validation_kind_for_tool(tool_name), Some(validation_kind));
     }
 
     assert_eq!(validation_kind_for_tool("run_shell"), None);
+    assert_eq!(validation_kind_for_tool("apply_unified_diff"), None);
     assert_eq!(validation_kind_for_tool("read_file"), None);
 }
 
@@ -730,44 +729,28 @@ fn run_shell_without_declared_validation_purpose_is_not_validation_evidence() {
 }
 
 #[test]
-fn patch_validation_tools_are_classified_as_patch_validation() {
+fn unified_diff_mutation_does_not_create_validation_lifecycle() {
     let store = SessionStore::default();
     let session = store.start_session(Some("agent:eval:demo".to_string()), None);
     record_finished_tool(
         &store,
         &session.session_id,
-        "validate_patch",
+        "apply_unified_diff",
         json!({
             "project": "agent:eval:demo",
-            "patch_present": true,
+            "diff_present": true,
             "deny_sensitive_paths": true,
         }),
         true,
-        json!({"can_apply": true}),
-    );
-    record_finished_tool(
-        &store,
-        &session.session_id,
-        "apply_patch_checked",
-        json!({
-            "project": "agent:eval:demo",
-            "patch_present": true,
-            "deny_sensitive_paths": true,
-        }),
-        true,
-        json!({}),
+        json!({"applied": true, "can_apply": true}),
     );
 
     let session = store.summary(&session.session_id, Some(50)).unwrap();
     let validation = validation_summary_for_session(&session);
-    let events = validation["events"].as_array().unwrap();
-
-    assert_eq!(validation["available"], true);
-    assert_eq!(validation["events_total"], 2);
-    assert_eq!(events[0]["tool_name"], "validate_patch");
-    assert_eq!(events[0]["validation_kind"], "patch_preflight");
-    assert_eq!(events[1]["tool_name"], "apply_patch_checked");
-    assert_eq!(events[1]["validation_kind"], "patch_apply_checked");
+    assert_eq!(validation["available"], false);
+    assert_eq!(validation["status"], "not_run");
+    assert_eq!(validation["events_total"], 0);
+    assert_eq!(validation["reason"], "no_validation_tool_invoked");
 }
 
 #[test]

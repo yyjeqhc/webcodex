@@ -2017,11 +2017,10 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
         "search_project_text",
         "show_changes",
         "apply_text_edits",
-        "apply_patch_checked",
+        "apply_unified_diff",
         "write_project_file",
         "cargo_check",
         "cargo_test",
-        "validate_patch",
         "git_diff_hunks",
         "workspace_hygiene_check",
         "session_summary",
@@ -2038,7 +2037,7 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
             "recommended_flows should not rank retired edit tool {tool}: {serialized}"
         );
     }
-    // Avoid substring false positives against apply_patch_checked.
+    // The edit flow must expose only the canonical unified-diff mutation, never retired patch names.
     let edit_tools = result.output["recommended_flows"]
         .as_array()
         .unwrap()
@@ -2048,10 +2047,13 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    assert!(
-        !edit_tools.iter().any(|tool| tool == "apply_patch"),
-        "recommended edit flow must not rank raw apply_patch: {edit_tools:?}"
-    );
+    assert!(edit_tools.iter().any(|tool| tool == "apply_unified_diff"));
+    for removed in ["apply_patch", "apply_patch_checked", "validate_patch"] {
+        assert!(
+            !edit_tools.iter().any(|tool| tool == removed),
+            "recommended edit flow must not rank retired patch tool {removed}: {edit_tools:?}"
+        );
+    }
     assert!(
         serialized.contains("run_shell")
             && serialized.contains("escape hatch")
@@ -2820,7 +2822,7 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
         .values()
         .map(|path| path.as_object().unwrap().len())
         .sum();
-    assert_eq!(operation_count, 25);
+    assert_eq!(operation_count, 23);
 }
 
 #[tokio::test]

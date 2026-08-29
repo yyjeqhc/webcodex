@@ -35,32 +35,9 @@ struct ProjectGitDiffRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct ApplyPatchRequest {
+struct ApplyUnifiedDiffRequest {
     pub project: String,
-    pub patch: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
-}
-
-/// `POST /api/projects/validate_patch` — dedicated read-only GPT Action
-/// wrapper over `ToolCall::ValidatePatch`. Patch preflight / dry-run only;
-/// accepts only raw standard unified diff, runs `git apply --check`/`--stat`
-/// through the owning agent, never modifies the worktree, and never falls back
-/// to a real apply.
-#[derive(Debug, Deserialize)]
-struct ValidatePatchRequest {
-    pub project: String,
-    pub patch: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub deny_sensitive_paths: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ApplyPatchCheckedRequest {
-    pub project: String,
-    pub patch: String,
+    pub diff: String,
     #[serde(default)]
     pub session_id: Option<String>,
     #[serde(default)]
@@ -209,104 +186,38 @@ pub async fn projects_git_diff(req: &mut Request, depot: &mut Depot, res: &mut R
     render_result(res, &audit, "git_diff", project, result);
 }
 
-/// `POST /api/projects/apply_patch` — thin GPT Actions wrapper over
-/// `ToolCall::ApplyPatch`. Executable mutation; requires the owning agent to
-/// allow patching and the caller to pass Bearer auth.
+/// `POST /api/projects/apply_unified_diff` — thin GPT Actions wrapper over the
+/// canonical unified-diff mutation. The runtime validates the bounded raw diff,
+/// performs one `git apply --check -`, and dispatches `git apply -` only after
+/// the preflight passes.
 #[handler]
-pub async fn projects_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/projects/apply_patch", "applyProjectPatch");
-    let Some(runtime) = require_runtime(depot, res) else {
-        return;
-    };
-    let Some(body) = parse_json_body::<ApplyPatchRequest>(req, res).await else {
-        return;
-    };
-    let project = Some(body.project.clone());
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::ApplyPatch {
-                project: body.project,
-                patch: body.patch,
-                session_id: body.session_id,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "apply_patch", project, result);
-}
-
-/// `POST /api/projects/validate_patch` — dedicated read-only GPT Action
-/// wrapper over `ToolCall::ValidatePatch`. It accepts only raw standard
-/// unified diff and performs `git apply --check`/`--stat` through the owning
-/// agent via `ToolRuntime`. Never writes files.
-#[handler]
-pub async fn projects_validate_patch(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+pub async fn projects_apply_unified_diff(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(
         req,
         depot,
-        "/api/projects/validate_patch",
-        "validateProjectPatch",
+        "/api/projects/apply_unified_diff",
+        "applyUnifiedDiff",
     );
     let Some(runtime) = require_runtime(depot, res) else {
         return;
     };
-    let Some(body) = parse_json_body::<ValidatePatchRequest>(req, res).await else {
+    let Some(body) = parse_json_body::<ApplyUnifiedDiffRequest>(req, res).await else {
         return;
     };
     let project = Some(body.project.clone());
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime
         .dispatch_with_auth(
-            ToolCall::ValidatePatch {
+            ToolCall::ApplyUnifiedDiff {
                 project: body.project,
-                patch: body.patch,
+                diff: body.diff,
                 session_id: body.session_id,
                 deny_sensitive_paths: body.deny_sensitive_paths,
             },
             auth.as_ref(),
         )
         .await;
-    render_result(res, &audit, "validate_patch", project, result);
-}
-
-/// `POST /api/projects/apply_patch_checked` — thin GPT Actions wrapper over
-/// `ToolCall::ApplyPatchChecked`. Mutation with side effects: runs the
-/// `validate_patch` preflight first and, only when it passes, applies the
-/// patch and returns the post-apply diff summary. Requires Bearer auth and
-/// the agent shell capability.
-#[handler]
-pub async fn projects_apply_patch_checked(
-    req: &mut Request,
-    depot: &mut Depot,
-    res: &mut Response,
-) {
-    let audit = ActionAudit::start(
-        req,
-        depot,
-        "/api/projects/apply_patch_checked",
-        "applyProjectPatchChecked",
-    );
-    let Some(runtime) = require_runtime(depot, res) else {
-        return;
-    };
-    let Some(body) = parse_json_body::<ApplyPatchCheckedRequest>(req, res).await else {
-        return;
-    };
-    let project = Some(body.project.clone());
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::ApplyPatchChecked {
-                project: body.project,
-                patch: body.patch,
-                session_id: body.session_id,
-                deny_sensitive_paths: body.deny_sensitive_paths,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "apply_patch_checked", project, result);
+    render_result(res, &audit, "apply_unified_diff", project, result);
 }
 
 /// `POST /api/projects/delete_files` — thin GPT Actions wrapper over

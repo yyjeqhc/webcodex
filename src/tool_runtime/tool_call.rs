@@ -728,18 +728,10 @@ pub enum ToolCall {
         shell_id: String,
     },
 
-    /// Apply a unified diff patch to a project.
-    ApplyPatch {
+    /// Apply one bounded raw standard unified diff after an internal safety/applicability preflight.
+    ApplyUnifiedDiff {
         project: String,
-        patch: String,
-        #[serde(default)]
-        session_id: Option<String>,
-    },
-
-    /// Validate then apply a unified diff patch in one safer full-auto step.
-    ApplyPatchChecked {
-        project: String,
-        patch: String,
+        diff: String,
         #[serde(default)]
         session_id: Option<String>,
         #[serde(default)]
@@ -768,21 +760,6 @@ pub enum ToolCall {
         paths: Vec<String>,
         #[serde(default)]
         session_id: Option<String>,
-    },
-
-    /// Validate (preflight) a unified diff patch against an agent-registered
-    /// project **without applying it**. Dry-run only: runs `git apply --check`
-    /// and `git apply --stat` through the owning agent. Never modifies the
-    /// worktree and never falls back to a real apply. Intended for full-auto
-    /// coding agent loops that want to check a generated patch before calling
-    /// `apply_patch`.
-    ValidatePatch {
-        project: String,
-        patch: String,
-        #[serde(default)]
-        session_id: Option<String>,
-        #[serde(default)]
-        deny_sensitive_paths: Option<bool>,
     },
 
     /// Run `git status` on a project.
@@ -2330,12 +2307,10 @@ impl ToolCall {
             Self::SessionShellExec { .. } => "session_shell_exec",
             Self::SessionShellStatus { .. } => "session_shell_status",
             Self::CloseSessionShell { .. } => "close_session_shell",
-            Self::ApplyPatch { .. } => "apply_patch",
-            Self::ApplyPatchChecked { .. } => "apply_patch_checked",
+            Self::ApplyUnifiedDiff { .. } => "apply_unified_diff",
             Self::DeleteProjectFiles { .. } => "delete_project_files",
             Self::GitRestorePaths { .. } => "git_restore_paths",
             Self::DiscardUntracked { .. } => "discard_untracked",
-            Self::ValidatePatch { .. } => "validate_patch",
             Self::GitStatus { .. } => "git_status",
             Self::GitDiff { .. } => "git_diff",
             Self::GitDiffHunks { .. } => "git_diff_hunks",
@@ -2430,12 +2405,10 @@ impl ToolCall {
             | Self::RunDetachedProcess { session_id, .. }
             | Self::RunScript { session_id, .. }
             | Self::RunShell { session_id, .. }
-            | Self::ApplyPatch { session_id, .. }
-            | Self::ApplyPatchChecked { session_id, .. }
+            | Self::ApplyUnifiedDiff { session_id, .. }
             | Self::DeleteProjectFiles { session_id, .. }
             | Self::GitRestorePaths { session_id, .. }
             | Self::DiscardUntracked { session_id, .. }
-            | Self::ValidatePatch { session_id, .. }
             | Self::GitStatus { session_id, .. }
             | Self::GitDiff { session_id, .. }
             | Self::GitDiffHunks { session_id, .. }
@@ -2563,12 +2536,10 @@ impl ToolCall {
             | Self::SessionShellExec { project, .. }
             | Self::SessionShellStatus { project, .. }
             | Self::CloseSessionShell { project, .. }
-            | Self::ApplyPatch { project, .. }
-            | Self::ApplyPatchChecked { project, .. }
+            | Self::ApplyUnifiedDiff { project, .. }
             | Self::DeleteProjectFiles { project, .. }
             | Self::GitRestorePaths { project, .. }
             | Self::DiscardUntracked { project, .. }
-            | Self::ValidatePatch { project, .. }
             | Self::GitStatus { project, .. }
             | Self::GitDiff { project, .. }
             | Self::GitDiffHunks { project, .. }

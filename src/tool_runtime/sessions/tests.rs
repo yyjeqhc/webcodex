@@ -53,7 +53,7 @@ fn session_tool_classification_uses_definition_policy() {
         ("show_changes", "read_only"),
         ("start_session", "read_only"),
         ("write_project_file", "project_write"),
-        ("apply_patch_checked", "project_write"),
+        ("apply_unified_diff", "project_write"),
         ("run_process", "job_run"),
         ("run_script", "job_run"),
         ("run_shell", "job_run"),
@@ -114,8 +114,8 @@ fn changed_paths_single_path_and_path_list_from_metadata() {
     )
     .is_empty());
     assert!(changed_paths_for_tool(
-        "apply_patch_checked",
-        &json!({"project": "demo", "patch": "--- a/src/lib.rs\n+++ b/src/lib.rs\n"}),
+        "apply_unified_diff",
+        &json!({"project": "demo", "diff": "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n"}),
     )
     .is_empty());
 }

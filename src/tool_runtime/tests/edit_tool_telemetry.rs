@@ -222,15 +222,11 @@ fn edit_surface_table_matches_canonicalization_contract() {
         Some(EditToolSurface::Canonical)
     );
     assert_eq!(
-        edit_tool_surface("apply_patch_checked"),
+        edit_tool_surface("apply_unified_diff"),
         Some(EditToolSurface::Canonical)
     );
     assert_eq!(
         edit_tool_surface("write_project_file"),
-        Some(EditToolSurface::Advanced)
-    );
-    assert_eq!(
-        edit_tool_surface("apply_patch"),
         Some(EditToolSurface::Advanced)
     );
     // Removed legacy compatibility tools are no longer classified.
@@ -242,10 +238,12 @@ fn edit_surface_table_matches_canonicalization_contract() {
         "replace_line_range",
         "insert_at_line",
         "delete_line_range",
+        "apply_patch",
+        "apply_patch_checked",
+        "validate_patch",
     ] {
         assert_eq!(edit_tool_surface(name), None, "{name}");
     }
-    assert_eq!(edit_tool_surface("validate_patch"), None);
     assert_eq!(edit_tool_surface("read_file"), None);
     assert_eq!(EDIT_TOOL_USAGE_EVENT, "edit_tool_usage");
     assert_eq!(TELEMETRY_CATEGORY_EDIT, "edit");

@@ -1,6 +1,5 @@
 use super::super::input_schemas::{
-    apply_patch_checked_input_schema, apply_patch_input_schema, apply_text_edits_input_schema,
-    validate_patch_input_schema, write_project_file_input_schema,
+    apply_text_edits_input_schema, apply_unified_diff_input_schema, write_project_file_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -8,19 +7,9 @@ use crate::tool_runtime::tool_spec::ToolSpec;
 pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
-            "apply_patch",
-            "Advanced/raw unified-diff apply. Prefer apply_patch_checked for new workflows; this lower-level path does not provide the full checked preflight and diff_summary package.".to_string(),
-            apply_patch_input_schema(),
-        ),
-        tool_spec(
-            "apply_patch_checked",
-            "Canonical checked patch tool for complex multi-file unified diffs. Runs patch preflight first and applies only when validation passes. Prefer over raw apply_patch; for ordinary local edits prefer apply_text_edits.",
-            apply_patch_checked_input_schema(),
-        ),
-        tool_spec(
-            "validate_patch",
-            "Dry-run a unified diff with git apply --check/--stat through the owning agent; never writes files.",
-            validate_patch_input_schema(),
+            "apply_unified_diff",
+            "Canonical complex/multi-file raw unified-diff mutation. Prefer apply_text_edits for ordinary guarded local edits. This tool performs its own bounded preflight, applies only after it passes, and never needs a separate validation call. Input must be a standard unified diff; shell heredocs and Codex *** Begin Patch wrappers are rejected with recovery metadata.",
+            apply_unified_diff_input_schema(),
         ),
         tool_spec(
             "write_project_file",

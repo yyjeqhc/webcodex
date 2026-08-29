@@ -160,10 +160,8 @@ pub(crate) enum RouteId {
     ProjectsGitDiffSummary,
     ProjectsListFiles,
     ProjectsSearchText,
-    ProjectsApplyPatch,
-    ProjectsValidatePatch,
+    ProjectsApplyUnifiedDiff,
     ProjectsRunShell,
-    ProjectsApplyPatchChecked,
     ProjectsDeleteFiles,
     ProjectsGitRestorePaths,
     ProjectsDiscardUntracked,
@@ -566,7 +564,7 @@ mod tests {
     #[test]
     fn audit_class_preserves_existing_http_stats_semantics() {
         for (path, class) in [
-            ("/api/projects/apply_patch", Edit),
+            ("/api/projects/apply_unified_diff", Edit),
             ("/api/projects/read_file", Context),
             ("/api/projects/run_job", Job),
             ("/api/tools/call", Command),

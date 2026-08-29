@@ -282,8 +282,7 @@ mod tests {
         for name in [
             "write_project_file",
             "apply_text_edits",
-            "apply_patch",
-            "apply_patch_checked",
+            "apply_unified_diff",
             "delete_project_files",
             "save_project_artifact",
             "artifact_upload_begin",

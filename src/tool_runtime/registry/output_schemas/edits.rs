@@ -1,8 +1,6 @@
 use serde_json::Value;
 
-use super::common::{
-    array_schema, nullable_schema, open_object_schema, schema_type, wrapped_output_schema,
-};
+use super::common::{array_schema, nullable_schema, schema_type, wrapped_output_schema};
 use serde_json::json;
 
 fn edit_conflict_recovery_schema() -> Value {
@@ -64,48 +62,21 @@ fn edit_conflict_recovery_schema() -> Value {
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "apply_patch" | "apply_patch_checked" => Some(wrapped_output_schema(vec![
-            (
-                "exit_code",
-                nullable_schema("integer", "Patch command exit code."),
-            ),
-            ("stdout", schema_type("string", "Patch command stdout.")),
-            ("stderr", schema_type("string", "Patch command stderr.")),
-            (
-                "changed_files",
-                array_schema(
-                    open_object_schema("Changed file summary."),
-                    "Changed files.",
-                ),
-            ),
-            (
-                "applied",
-                schema_type("boolean", "Whether the patch was applied."),
-            ),
-            (
-                "check",
-                open_object_schema("Patch validation/check result."),
-            ),
-        ])),
-        "validate_patch" => Some(wrapped_output_schema(vec![
-            (
-                "valid",
-                schema_type("boolean", "Whether the patch passed validation."),
-            ),
-            (
-                "applies",
-                schema_type("boolean", "Whether git apply --check succeeded."),
-            ),
-            (
-                "exit_code",
-                nullable_schema("integer", "Validation command exit code."),
-            ),
-            ("stdout", schema_type("string", "Validation stdout.")),
-            ("stderr", schema_type("string", "Validation stderr.")),
-            (
-                "diff_stat",
-                schema_type("string", "Patch diff stat, when available."),
-            ),
+        "apply_unified_diff" => Some(wrapped_output_schema(vec![
+            ("applied", nullable_schema("boolean", "True only when git apply completed successfully; null when the post-dispatch mutation outcome is unknown.")),
+            ("can_apply", nullable_schema("boolean", "Result of the internal applicability preflight; null when applicability was not established.")),
+            ("policy_blocked", schema_type("boolean", "True when sensitive-path policy blocked mutation before the applicability check.")),
+            ("state_changed", nullable_schema("boolean", "True on confirmed apply success, false when mutation definitely did not start, null when post-dispatch worktree state is uncertain.")),
+            ("execution_state", json!({"type":"string","enum":["not_started","completed","outcome_unknown"],"description":"Mutation effect state, not the internal read-only preflight command state."})),
+            ("affected_files", array_schema(schema_type("string", "Validated project-relative path declared by the unified diff."), "Bounded affected paths parsed before dispatch.")),
+            ("affected_files_truncated", schema_type("boolean", "True when affected_files exceeded the bounded projection.")),
+            ("warnings", array_schema(schema_type("string", "Bounded sensitive-path policy warning."), "Bounded policy warnings.")),
+            ("warnings_truncated", schema_type("boolean", "True when warnings exceeded the bounded projection.")),
+            ("stderr", nullable_schema("string", "Bounded stderr tail from the decisive git apply command, when available.")),
+            ("stderr_truncated", schema_type("boolean", "True when stderr was truncated to the model-facing bound.")),
+            ("error_kind", nullable_schema("string", "Bounded domain or uncertainty classification; null on confirmed success.")),
+            ("expected_format", nullable_schema("string", "unified_diff for malformed/unsupported input recovery; null otherwise.")),
+            ("recovery_action", nullable_schema("string", "Bounded next action such as regenerate_unified_diff, retry_same, or inspect_workspace_before_retry; null on success.")),
         ])),
         "write_project_file" => Some(wrapped_output_schema(vec![
             (

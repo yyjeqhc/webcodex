@@ -412,20 +412,12 @@ only for local/trusted-network demos."
                 .post(runtime_http::projects_search_text),
         )
         .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsApplyPatch))
-                .post(runtime_http::projects_apply_patch),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsValidatePatch))
-                .post(runtime_http::projects_validate_patch),
+            Router::with_path(route_metadata::api_path(RouteId::ProjectsApplyUnifiedDiff))
+                .post(runtime_http::projects_apply_unified_diff),
         )
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsRunShell))
                 .post(runtime_http::projects_run_shell),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsApplyPatchChecked))
-                .post(runtime_http::projects_apply_patch_checked),
         )
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsDeleteFiles))

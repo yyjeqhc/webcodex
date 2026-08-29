@@ -888,12 +888,10 @@ pub(in crate::tool_runtime::tests) async fn runtime_with_resolver_projects() -> 
 
 //   * the working directory is supplied via the shell request `cwd` field,
 //     never via a `cd <path> && ...` prefix in the command;
-//   * `apply_patch_checked` checks before applying and skips the apply step
-//     when the preflight fails (no partial application);
-//   * `validate_patch` only ever enqueues read-only `git apply --check` /
-//     `--stat` commands, never a bare mutating `git apply -`;
-//   * server-configured (non-agent) projects are rejected by every patch
-//     tool, so the server never touches the filesystem directly.
+//   * `apply_unified_diff` performs one applicability check before one apply;
+//   * the raw unified diff always travels via typed stdin, never command text;
+//   * server-configured (non-agent) projects are rejected, so the server never
+//     touches their filesystem directly.
 
 pub(in crate::tool_runtime::tests) async fn probe_patch_agent_request(
     runtime: &ToolRuntime,

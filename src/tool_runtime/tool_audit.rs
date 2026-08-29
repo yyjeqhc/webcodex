@@ -780,10 +780,10 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
         "artifact_upload_finish" | "artifact_upload_abort" => {
             copy_keys(obj, &mut out, &["path", "upload_id"]);
         }
-        "apply_patch" | "apply_patch_checked" | "validate_patch" => {
+        "apply_unified_diff" => {
             out.insert(
-                "patch_present".to_string(),
-                Value::Bool(obj.contains_key("patch")),
+                "diff_present".to_string(),
+                Value::Bool(obj.contains_key("diff")),
             );
             copy_keys(obj, &mut out, &["deny_sensitive_paths"]);
         }
@@ -3507,22 +3507,13 @@ impl ToolCall {
                 "tail_lines": tail_lines,
                 "wait_secs": wait_secs,
             }),
-            Self::ApplyPatch { project, .. } => serde_json::json!({
-                "project": project,
-                "patch_present": true,
-            }),
-            Self::ApplyPatchChecked {
-                project,
-                deny_sensitive_paths,
-                ..
-            }
-            | Self::ValidatePatch {
+            Self::ApplyUnifiedDiff {
                 project,
                 deny_sensitive_paths,
                 ..
             } => serde_json::json!({
                 "project": project,
-                "patch_present": true,
+                "diff_present": true,
                 "deny_sensitive_paths": deny_sensitive_paths,
             }),
             Self::DeleteProjectFiles { project, paths, .. }

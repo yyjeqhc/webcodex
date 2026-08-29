@@ -632,7 +632,7 @@ if [ "$EXPECTED_SURFACE" = "local_coding" ]; then
     # The local_coding canonical coding loop must expose its key tools.
     mcp_canonical_present=1
     for tname in work_on_project list_projects project_overview read_file read_files \
-        search_project_text search_project_texts apply_text_edits apply_patch_checked run_shell \
+        search_project_text search_project_texts apply_text_edits apply_unified_diff run_shell \
         run_job job_status job_log list_jobs stop_job cargo_fmt cargo_check \
         cargo_test validation_summary git_status git_diff show_changes \
         finish_coding_task; do
@@ -665,7 +665,7 @@ else
     # full_operator_runtime: the complete operator tool surface.
     mcp_operator_present=1
     for tname in list_tools start_coding_task work_on_project finish_coding_task \
-        git_diff_summary validate_patch apply_patch apply_patch_checked read_file read_files \
+        git_diff_summary apply_unified_diff read_file read_files \
         search_project_texts run_shell run_job job_status job_log list_jobs show_changes; do
         if mcp_tool_present "$tname"; then
             :
@@ -851,126 +851,58 @@ if [ "$phase_a_present" = "1" ]; then
 fi
 
 # ----------------------------------------------------------------------------
-# 6c. validate_patch (patch preflight / dry-run) against the agent project
+# 6c. apply_unified_diff non-applicable/no-change contract
 # ----------------------------------------------------------------------------
 
-log "---- validate_patch (patch preflight) ----"
+log "---- apply_unified_diff (non-applicable/no-change) ----"
 
-# Build a JSON request body containing a patch, using python3 for safe
-# JSON string escaping (patches contain newlines and special chars).
-build_validate_body() {
-    local patch="$1"
+build_unified_diff_body() {
+    local diff="$1"
     python3 -c '
 import json, sys
-print(json.dumps({"project": sys.argv[1], "patch": sys.argv[2]}))
-' "$RUNTIME_PROJECT_ID" "$patch"
+print(json.dumps({"project": sys.argv[1], "diff": sys.argv[2]}))
+' "$RUNTIME_PROJECT_ID" "$diff"
 }
 
-# A patch that creates a new file — always applies cleanly to a clean repo.
-GOOD_PATCH='diff --git a/VALIDATE_PROBE.md b/VALIDATE_PROBE.md
-new file mode 100644
---- /dev/null
-+++ b/VALIDATE_PROBE.md
-@@ -0,0 +1 @@
-+preflight
-'
-
-# A patch whose context does not match — cannot apply.
-BAD_PATCH='--- a/README.md
+BAD_UNIFIED_DIFF='diff --git a/README.md b/README.md
+--- a/README.md
 +++ b/README.md
 @@ -1,1 +1,1 @@
 -NONEXISTENT_CONTEXT_LINE
 +replacement
 '
-
-# Capture the worktree state before validation (should be clean: committed).
 pre_status="$(api_post /api/projects/git_status "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
 pre_porcelain="$(json_get "$pre_status" output.stdout)"
-
-# validate_patch with an applicable patch — can_apply must be true.
-good_body="$(build_validate_body "$GOOD_PATCH")"
-body="$(api_post /api/projects/validate_patch "$good_body")"
-vp_success="$(json_get "$body" success)"
-vp_can_apply="$(json_get "$body" output.can_apply)"
-if [ "$vp_success" = "True" ] && [ "$vp_can_apply" = "True" ]; then
-    pass "validate_patch(applicable) returns can_apply=true"
+bad_body="$(build_unified_diff_body "$BAD_UNIFIED_DIFF")"
+body="$(api_post /api/projects/apply_unified_diff "$bad_body")"
+ud_success="$(json_get "$body" success)"
+ud_applied="$(json_get "$body" output.applied)"
+ud_can_apply="$(json_get "$body" output.can_apply)"
+ud_state_changed="$(json_get "$body" output.state_changed)"
+if [ "$ud_success" = "True" ] && [ "$ud_applied" = "False" ] && \
+   [ "$ud_can_apply" = "False" ] && [ "$ud_state_changed" = "False" ]; then
+    pass "apply_unified_diff(non-applicable) returns a no-change domain outcome"
 else
-    fail "validate_patch(applicable) did not return can_apply=true (success=$vp_success can_apply=$vp_can_apply body=${body:0:300})"
+    fail "apply_unified_diff(non-applicable) contract mismatch (body=${body:0:300})"
 fi
-vp_affected="$(json_get "$body" output.affected_files)"
-if echo "$vp_affected" | grep -q "VALIDATE_PROBE.md"; then
-    pass "validate_patch(applicable) returns affected_files"
-else
-    fail "validate_patch(applicable) missing affected_files (got: ${vp_affected:0:200})"
-fi
-vp_stat="$(json_get "$body" output.stat)"
-if [ -n "$vp_stat" ] && [ "$vp_stat" != "None" ] && [ "$vp_stat" != "" ]; then
-    pass "validate_patch(applicable) returns stat"
-else
-    fail "validate_patch(applicable) missing stat (got: ${vp_stat:0:200})"
-fi
-
-# validate_patch with a patch larger than the shell command limit. The patch is
-# sent to the agent as stdin, not embedded in the command string.
-LARGE_PATCH="$(python3 - <<'PY'
-print("diff --git a/LARGE_VALIDATE_PROBE.md b/LARGE_VALIDATE_PROBE.md")
-print("new file mode 100644")
-print("--- /dev/null")
-print("+++ b/LARGE_VALIDATE_PROBE.md")
-print("@@ -0,0 +1,220 @@")
-for i in range(220):
-    print(f"+line-{i:03d}-" + ("x" * 48))
-PY
-)"
-LARGE_PATCH="${LARGE_PATCH}"$'\n'
-large_body="$(build_validate_body "$LARGE_PATCH")"
-body="$(api_post /api/projects/validate_patch "$large_body")"
-vp_large_success="$(json_get "$body" success)"
-vp_large_can_apply="$(json_get "$body" output.can_apply)"
-if [ "$vp_large_success" = "True" ] && [ "$vp_large_can_apply" = "True" ]; then
-    pass "validate_patch handles patch larger than command limit"
-else
-    fail "validate_patch large patch failed (success=$vp_large_success can_apply=$vp_large_can_apply body=${body:0:300})"
-fi
-
-# validate_patch with a non-applicable patch — can_apply must be false.
-bad_body="$(build_validate_body "$BAD_PATCH")"
-body="$(api_post /api/projects/validate_patch "$bad_body")"
-vp2_success="$(json_get "$body" success)"
-vp2_can_apply="$(json_get "$body" output.can_apply)"
-if [ "$vp2_success" = "True" ] && [ "$vp2_can_apply" = "False" ]; then
-    pass "validate_patch(non-applicable) returns can_apply=false"
-else
-    fail "validate_patch(non-applicable) did not return can_apply=false (success=$vp2_success can_apply=$vp2_can_apply body=${body:0:300})"
-fi
-
-# Worktree must be unchanged after both validations (dry-run never writes).
 post_status="$(api_post /api/projects/git_status "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
 post_porcelain="$(json_get "$post_status" output.stdout)"
-if [ "$pre_porcelain" = "$post_porcelain" ] && \
-   ! echo "$post_porcelain" | grep -q "VALIDATE_PROBE" && \
-   ! echo "$post_porcelain" | grep -q "LARGE_VALIDATE_PROBE"; then
-    pass "validate_patch does not modify the worktree"
+if [ "$pre_porcelain" = "$post_porcelain" ]; then
+    pass "apply_unified_diff failed preflight leaves worktree unchanged"
 else
-    fail "validate_patch modified the worktree (pre=${pre_porcelain:0:120} post=${post_porcelain:0:120})"
+    fail "apply_unified_diff failed preflight mutated the worktree"
 fi
 
-# MCP tools/list must expose validate_patch on the surfaces that include it
-# (full-operator). On the local_coding surface validate_patch is intentionally
-# not exposed; apply_patch_checked is the canonical guarded-apply entry.
-if [ "$EXPECTED_SURFACE" = "local_coding" ]; then
-    if mcp_tool_present "validate_patch"; then
-        fail "MCP tools/list must not expose validate_patch on local_coding"
-    else
-        pass "MCP tools/list excludes validate_patch on local_coding"
-    fi
+if mcp_tool_present "apply_unified_diff"; then
+    pass "MCP tools/list exposes apply_unified_diff"
 else
-    if mcp_tool_present "validate_patch"; then
-        pass "MCP tools/list exposes validate_patch"
-    else
-        fail "MCP tools/list missing validate_patch"
-    fi
+    fail "MCP tools/list missing apply_unified_diff"
 fi
+for retired_patch_tool in apply_patch apply_patch_checked validate_patch; do
+    if mcp_tool_present "$retired_patch_tool"; then
+        fail "MCP tools/list must not expose retired patch tool $retired_patch_tool"
+    fi
+done
 
 # ----------------------------------------------------------------------------
 # 7. GPT Actions schema smoke (/openapi.json)
@@ -996,7 +928,7 @@ expected_ops = {
     "getRuntimeStatus", "getRuntimeJobStatus", "getRuntimeJobLog",
     "readProjectFile", "getProjectGitStatus", "getProjectGitDiff",
     "getProjectGitDiffSummary", "listProjectFiles", "searchProjectText",
-    "validateProjectPatch", "applyProjectPatch", "applyProjectPatchChecked",
+    "applyUnifiedDiff",
     "runProjectShellCommand", "deleteProjectFiles", "gitRestorePaths",
     "discardUntrackedFiles", "importConversationFilesToProject", "startProjectShellJob",
     "listRuntimeJobs", "getRuntimeJobTail", "callRuntimeTool",
@@ -1048,13 +980,13 @@ for path, methods in schema.get("paths", {}).items():
             )
 
 # Forbidden legacy/admin/internal paths must not appear in the schema paths.
-# Phase 3 promotes validate_patch, list_files, search_text, git_diff_summary,
-# jobs/list, and jobs/tail to dedicated GPT Actions, so they are no longer
-# forbidden. jobs/stop, audit, shell, codex legacy, console, and /mcp remain
-# forbidden.
+# list_files, search_text, git_diff_summary, jobs/list, and jobs/tail remain
+# dedicated GPT Actions. The retired patch triplet is explicitly forbidden;
+# jobs/stop, audit, legacy shell/codex, console, and /mcp also remain forbidden.
 forbidden = ["/api/audit/sessions", "/api/audit/session", "/api/audit/stats",
              "/api/jobs/stop",
              "/api/projects/replace_in_file", "/api/projects/write_file",
+             "/api/projects/apply_patch", "/api/projects/apply_patch_checked", "/api/projects/validate_patch",
              "/api/messages", "/api/files", "/api/desktop/task_op", "/api/desktop/task",
              "/api/shell/run", "/api/shell/job", "/api/shell/file",
              "/mcp", "/openapi.json", "/console", "/console/app.js", "/console/styles.css"]
@@ -1118,8 +1050,7 @@ for path, methods in schema.get("paths", {}).items():
 mutation_paths = [
     "/api/projects/register",
     "/api/projects/create",
-    "/api/projects/apply_patch",
-    "/api/projects/apply_patch_checked",
+    "/api/projects/apply_unified_diff",
     "/api/projects/run_shell",
     "/api/projects/delete_files",
     "/api/projects/git_restore_paths",
@@ -1151,7 +1082,6 @@ readonly_paths = [
     "/api/projects/git_diff_summary",
     "/api/projects/list_files",
     "/api/projects/search_text",
-    "/api/projects/validate_patch",
 ]
 for path in readonly_paths:
     op = schema.get("paths", {}).get(path, {}).get("post", {})
@@ -1393,7 +1323,7 @@ for name in ["read_file", "search_project_text", "show_changes"]:
         errors.append(f"output.recommended_flow.inspect missing {name}")
 for name in [
     "apply_text_edits",
-    "apply_patch_checked",
+    "apply_unified_diff",
 ]:
     if not isinstance(edit, list) or name not in edit:
         errors.append(f"output.recommended_flow.edit missing {name}")
@@ -1509,7 +1439,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# 7d. Phase 3: dedicated mutation actions (apply_patch_checked, delete_files,
+# 7d. Dedicated mutation actions (apply_unified_diff, delete_files,
 #     git_restore_paths, discard_untracked) against probe files only
 # ----------------------------------------------------------------------------
 #
@@ -1530,7 +1460,7 @@ print(json.dumps(obj))
 ' "$1"
 }
 
-# applyProjectPatchChecked — apply a probe patch that creates a new file,
+# applyUnifiedDiff — apply a probe diff that creates a new file,
 # then verify via git_diff_summary that the probe file appears as untracked.
 PROBE_PATCH='diff --git a/APPLY_CHECKED_PROBE.txt b/APPLY_CHECKED_PROBE.txt
 new file mode 100644
@@ -1541,22 +1471,22 @@ new file mode 100644
 '
 apc_body="$(python3 -c '
 import json, sys
-print(json.dumps({"project": sys.argv[1], "patch": sys.argv[2]}))
+print(json.dumps({"project": sys.argv[1], "diff": sys.argv[2]}))
 ' "$RUNTIME_PROJECT_ID" "$PROBE_PATCH")"
-body="$(api_post /api/projects/apply_patch_checked "$apc_body")"
+body="$(api_post /api/projects/apply_unified_diff "$apc_body")"
 apc_success="$(json_get "$body" success)"
 if [ "$apc_success" = "True" ]; then
-    pass "applyProjectPatchChecked(probe) returns success"
+    pass "applyUnifiedDiff(probe) returns success"
 else
-    fail "applyProjectPatchChecked(probe) failed (body: ${body:0:300})"
+    fail "applyUnifiedDiff(probe) failed (body: ${body:0:300})"
 fi
 # Verify the probe file now shows up in the worktree via git_diff_summary.
 body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
 gds_changed="$(json_get "$body" output.changed_files)"
 if echo "$gds_changed" | grep -q "APPLY_CHECKED_PROBE.txt"; then
-    pass "applyProjectPatchChecked probe file visible in git_diff_summary"
+    pass "applyUnifiedDiff probe file visible in git_diff_summary"
 else
-    fail "applyProjectPatchChecked probe file not in diff summary (got: ${gds_changed:0:200})"
+    fail "applyUnifiedDiff probe file not in diff summary (got: ${gds_changed:0:200})"
 fi
 
 # deleteProjectFiles — delete the probe file created above.
@@ -1799,20 +1729,19 @@ del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"NEG_PR
 body="$(api_post /api/projects/delete_files "$del_body")" || true
 
 # ----------------------------------------------------------------------------
-# 7g. Patch chain hardening: large patch via applyProjectPatchChecked, and a
-#     check-failed patch must NOT mutate the worktree. The patch payload
-#     travels over the agent shell request stdin, never inside the command
-#     string, so a patch larger than the shell command limit still applies.
+# 7g. Unified-diff hardening: a large diff still travels over typed stdin,
+#     while a non-applicable diff must return a definite no-change outcome.
+#     The diff payload never enters the shell command string.
 # ----------------------------------------------------------------------------
 
-log "---- patch chain hardening (large + check-failed) ----"
+log "---- unified diff hardening (large + non-applicable) ----"
 
 # Capture the worktree state before the hardening probes (should be clean).
 pre_harden_status="$(api_post /api/projects/git_status "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
 pre_harden_porcelain="$(json_get "$pre_harden_status" output.stdout)"
 
-# A LARGE patch (over the 16,000-byte authored raw shell command limit) that creates a new
-# file. It must still validate + apply because the patch travels over stdin,
+# A LARGE diff (over the 16,000-byte authored raw shell command limit) that
+# creates a new file. It still applies because the diff travels over stdin,
 # not the command string.
 LARGE_APPLY_PATCH="$(python3 - <<'PY'
 print("diff --git a/LARGE_APPLY_PROBE.md b/LARGE_APPLY_PROBE.md")
@@ -1831,14 +1760,14 @@ if [ "${lap_bytes:-0}" -gt 16000 ] 2>/dev/null; then
 else
     fail "LARGE_APPLY_PATCH must exceed the 16000-byte authored command limit (got ${lap_bytes} bytes)"
 fi
-lap_body="$(python3 -c 'import json,sys; print(json.dumps({"project": sys.argv[1], "patch": sys.argv[2]}))' "$RUNTIME_PROJECT_ID" "$LARGE_APPLY_PATCH")"
-body="$(api_post /api/projects/apply_patch_checked "$lap_body")"
+lap_body="$(python3 -c 'import json,sys; print(json.dumps({"project": sys.argv[1], "diff": sys.argv[2]}))' "$RUNTIME_PROJECT_ID" "$LARGE_APPLY_PATCH")"
+body="$(api_post /api/projects/apply_unified_diff "$lap_body")"
 lap_success="$(json_get "$body" success)"
 lap_applied="$(json_get "$body" output.applied)"
 if [ "$lap_success" = "True" ] && [ "$lap_applied" = "True" ]; then
-    pass "applyProjectPatchChecked applies large patch over command limit"
+    pass "applyUnifiedDiff applies large diff over command limit"
 else
-    fail "applyProjectPatchChecked large patch did not apply (success=$lap_success applied=$lap_applied body=${body:0:300})"
+    fail "applyUnifiedDiff large diff did not apply (success=$lap_success applied=$lap_applied body=${body:0:300})"
 fi
 # Verify the large probe file now shows up in the worktree.
 body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
@@ -1851,31 +1780,31 @@ fi
 del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"LARGE_APPLY_PROBE.md\"]}")"
 body="$(api_post /api/projects/delete_files "$del_body")" || true
 
-# A patch whose context does not match — applyProjectPatchChecked must NOT
-# apply it (check fails first) and must NOT modify the worktree.
+# A diff whose context does not match — applyUnifiedDiff must return the
+# non-applicable no-change domain outcome.
 BAD_CHECKED_PATCH='--- a/README.md
 +++ b/README.md
 @@ -1,1 +1,1 @@
 -NONEXISTENT_CONTEXT_LINE_FOR_CHECKED
 +replacement
 '
-bcp_body="$(python3 -c 'import json,sys; print(json.dumps({"project": sys.argv[1], "patch": sys.argv[2]}))' "$RUNTIME_PROJECT_ID" "$BAD_CHECKED_PATCH")"
-body="$(api_post /api/projects/apply_patch_checked "$bcp_body")"
+bcp_body="$(python3 -c 'import json,sys; print(json.dumps({"project": sys.argv[1], "diff": sys.argv[2]}))' "$RUNTIME_PROJECT_ID" "$BAD_CHECKED_PATCH")"
+body="$(api_post /api/projects/apply_unified_diff "$bcp_body")"
 bcp_success="$(json_get "$body" success)"
 bcp_applied="$(json_get "$body" output.applied)"
-bcp_can_apply="$(json_get "$body" output.validate.can_apply)"
+bcp_can_apply="$(json_get "$body" output.can_apply)"
 if [ "$bcp_success" = "True" ] && [ "$bcp_applied" = "False" ] && [ "$bcp_can_apply" = "False" ]; then
-    pass "applyProjectPatchChecked(check-failed) does not apply"
+    pass "applyUnifiedDiff(non-applicable) does not apply"
 else
-    fail "applyProjectPatchChecked(check-failed) should not apply (success=$bcp_success applied=$bcp_applied can_apply=$bcp_can_apply body=${body:0:300})"
+    fail "applyUnifiedDiff(non-applicable) should not apply (success=$bcp_success applied=$bcp_applied can_apply=$bcp_can_apply body=${body:0:300})"
 fi
-# Worktree must be unchanged after the check-failed probe (no mutation).
+# Worktree must be unchanged after the non-applicable probe.
 post_harden_status="$(api_post /api/projects/git_status "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
 post_harden_porcelain="$(json_get "$post_harden_status" output.stdout)"
 if [ "$pre_harden_porcelain" = "$post_harden_porcelain" ]; then
-    pass "check-failed patch leaves worktree unchanged"
+    pass "non-applicable diff leaves worktree unchanged"
 else
-    fail "check-failed patch mutated the worktree (pre=${pre_harden_porcelain:0:120} post=${post_harden_porcelain:0:120})"
+    fail "non-applicable diff mutated the worktree (pre=${pre_harden_porcelain:0:120} post=${post_harden_porcelain:0:120})"
 fi
 
 # ----------------------------------------------------------------------------
@@ -1897,12 +1826,11 @@ fi
 #   8. gitRestorePaths           — restore the modified tracked file
 #   9. getProjectGitDiffSummary  — confirm worktree is clean again
 #
-# Then an optional patch sub-loop:
-#  10. validateProjectPatch      — dry-run a small patch
-#  11. applyProjectPatchChecked  — apply it
-#  12. getProjectGitDiffSummary  — confirm patch visible
-#  13. deleteProjectFiles        — cleanup the probe file
-#  14. getProjectGitDiffSummary  — confirm clean again
+# Then an optional unified-diff sub-loop:
+#  10. applyUnifiedDiff           — preflight + apply one small raw unified diff
+#  11. getProjectGitDiffSummary   — confirm diff visible
+#  12. deleteProjectFiles         — cleanup the probe file
+#  13. getProjectGitDiffSummary   — confirm clean again
 
 log "---- full-auto coding loop smoke (dedicated actions plus callRuntimeTool) ----"
 
@@ -2023,9 +1951,9 @@ else
     fail "loop: README.md content not restored (got: ${body:0:200})"
 fi
 
-# --- Optional patch sub-loop: validate → apply → diff → cleanup ---
+# --- Optional unified-diff sub-loop: apply → diff → cleanup ---
 
-# Step 10: validateProjectPatch — dry-run a small patch that creates a probe file.
+# Step 10: applyUnifiedDiff — the tool owns its preflight and applies once.
 LOOP_PATCH='diff --git a/LOOP_PATCH_PROBE.md b/LOOP_PATCH_PROBE.md
 new file mode 100644
 --- /dev/null
@@ -2033,23 +1961,15 @@ new file mode 100644
 @@ -0,0 +1 @@
 +loop-patch-probe
 '
-loop_vp_body="$(python3 -c 'import json,sys; print(json.dumps({"project": sys.argv[1], "patch": sys.argv[2]}))' "$RUNTIME_PROJECT_ID" "$LOOP_PATCH")"
-body="$(api_post /api/projects/validate_patch "$loop_vp_body")"
-if [ "$(json_get "$body" success)" = "True" ] && [ "$(json_get "$body" output.can_apply)" = "True" ]; then
-    pass "loop: validateProjectPatch confirms patch is applicable"
-else
-    fail "loop: validateProjectPatch did not confirm applicability (body: ${body:0:300})"
-fi
-
-# Step 11: applyProjectPatchChecked — apply the validated patch.
-body="$(api_post /api/projects/apply_patch_checked "$loop_vp_body")"
+loop_vp_body="$(python3 -c 'import json,sys; print(json.dumps({"project": sys.argv[1], "diff": sys.argv[2]}))' "$RUNTIME_PROJECT_ID" "$LOOP_PATCH")"
+body="$(api_post /api/projects/apply_unified_diff "$loop_vp_body")"
 if [ "$(json_get "$body" success)" = "True" ] && [ "$(json_get "$body" output.applied)" = "True" ]; then
-    pass "loop: applyProjectPatchChecked applied probe patch"
+    pass "loop: applyUnifiedDiff applied probe diff"
 else
-    fail "loop: applyProjectPatchChecked did not apply probe patch (body: ${body:0:300})"
+    fail "loop: applyUnifiedDiff did not apply probe diff (body: ${body:0:300})"
 fi
 
-# Step 12: getProjectGitDiffSummary — confirm the probe file is visible.
+# Step 11: getProjectGitDiffSummary — confirm the probe file is visible.
 body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
 if echo "$(json_get "$body" output.changed_files)" | grep -q "LOOP_PATCH_PROBE.md"; then
     pass "loop: getProjectGitDiffSummary shows probe file after apply"
@@ -2057,7 +1977,7 @@ else
     fail "loop: probe file not visible after apply (got: ${body:0:200})"
 fi
 
-# Step 13: deleteProjectFiles — cleanup the probe file.
+# Step 12: deleteProjectFiles — cleanup the probe file.
 loop_del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"LOOP_PATCH_PROBE.md\"]}")"
 body="$(api_post /api/projects/delete_files "$loop_del_body")"
 if [ "$(json_get "$body" success)" = "True" ]; then
@@ -2066,7 +1986,7 @@ else
     fail "loop: deleteProjectFiles did not remove probe file (body: ${body:0:300})"
 fi
 
-# Step 14: getProjectGitDiffSummary — confirm clean again.
+# Step 13: getProjectGitDiffSummary — confirm clean again.
 body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
 loop_patch_final_count="$(json_get "$body" output.changed_files_count)"
 if [ "${loop_patch_final_count:-0}" = "0" ] 2>/dev/null; then

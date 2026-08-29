@@ -103,6 +103,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         }]),
         "prompt" => json!("summarize"),
         "query" => json!("ToolRuntime"),
+        "diff" => json!("diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-a\n+b\n"),
         "job_id" => json!("job_123"),
         "idempotency_key" => json!("sample-detached-key"),
         "provider_id" => json!("codex"),

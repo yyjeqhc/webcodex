@@ -43,6 +43,7 @@ mod sync_timeout;
 mod targeted_inventory;
 mod tool_call;
 mod trusted_smoke;
+mod unified_diff;
 mod validation_events;
 mod validation_handoff;
 mod validation_identity;

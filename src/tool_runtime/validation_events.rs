@@ -929,11 +929,7 @@ pub(crate) fn validation_kind_for_tool(tool_name: &str) -> Option<&'static str> 
     if let Some(adapter) = validation_adapter_for_tool(tool_name) {
         return Some(adapter.validation_kind());
     }
-    match tool_name {
-        "validate_patch" => Some("patch_preflight"),
-        "apply_patch_checked" => Some("patch_apply_checked"),
-        _ => None,
-    }
+    None
 }
 
 fn execution_purpose(event: &SessionEvent) -> Option<String> {
@@ -941,7 +937,7 @@ fn execution_purpose(event: &SessionEvent) -> Option<String> {
         return Some(
             match kind {
                 "test" => "test",
-                "check" | "patch_preflight" | "patch_apply_checked" => "validation",
+                "check" => "validation",
                 "format" => "format",
                 _ => "validation",
             }

@@ -155,13 +155,11 @@ fn openapi_consequential_flags_match_operation_risk() {
         "getRuntimeJobLog",
         "getRuntimeJobTail",
         "listRuntimeJobs",
-        "validateProjectPatch",
         "registerProject",
         "createProject",
     ];
     let consequential = [
-        "applyProjectPatch",
-        "applyProjectPatchChecked",
+        "applyUnifiedDiff",
         "runProjectShellCommand",
         "startProjectShellJob",
         "deleteProjectFiles",
@@ -180,7 +178,7 @@ fn openapi_consequential_flags_match_operation_risk() {
     for id in consequential {
         assert_eq!(flags.get(id), Some(&true), "{} should be consequential", id);
     }
-    assert_eq!(flags.len(), 25);
+    assert_eq!(flags.len(), 23);
 }
 
 #[test]
@@ -227,28 +225,37 @@ fn openapi_route_visibility_matches_canonical_metadata() {
 }
 
 #[test]
-fn openapi_phase3_exposes_validate_patch_as_dedicated_action() {
-    // Phase 3: validate_patch is now promoted to a dedicated GPT Action
-    // (validateProjectPatch) so a custom GPT can dry-run patches without
-    // callRuntimeTool. It is a read-only preflight that never modifies the
-    // worktree.
+fn openapi_exposes_only_canonical_unified_diff_action() {
     let spec = build_openapi_spec();
     let paths = spec["paths"].as_object().unwrap();
-    assert!(
-        paths.contains_key("/api/projects/validate_patch"),
-        "validate_patch must now appear in /openapi.json as a dedicated read-only action"
-    );
+    assert!(paths.contains_key("/api/projects/apply_unified_diff"));
+    for removed in [
+        "/api/projects/apply_patch",
+        "/api/projects/apply_patch_checked",
+        "/api/projects/validate_patch",
+    ] {
+        assert!(
+            !paths.contains_key(removed),
+            "retired patch route leaked: {removed}"
+        );
+    }
+    let operation = &spec["paths"]["/api/projects/apply_unified_diff"]["post"];
+    assert_eq!(operation["operationId"], "applyUnifiedDiff");
     assert_eq!(
-        spec["paths"]["/api/projects/validate_patch"]["post"]["operationId"],
-        "validateProjectPatch"
+        operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ApplyUnifiedDiffToolResult"
     );
-    let desc = spec["paths"]["/api/projects/validate_patch"]["post"]["description"]
-        .as_str()
-        .unwrap();
-    assert!(
-        desc.to_lowercase().contains("read-only"),
-        "validateProjectPatch description must be marked read-only: {}",
-        desc
+    let request = &spec["components"]["schemas"]["ApplyUnifiedDiffRequest"];
+    assert_eq!(request["required"], json!(["project", "diff"]));
+    assert!(request["properties"].get("diff").is_some());
+    assert!(request["properties"].get("patch").is_none());
+    let registry = registered_tool_specs()
+        .into_iter()
+        .find(|tool| tool.name == "apply_unified_diff")
+        .expect("apply_unified_diff ToolSpec");
+    assert_eq!(
+        spec["components"]["schemas"]["ApplyUnifiedDiffToolResult"],
+        registry.output_schema
     );
 }
 
@@ -503,7 +510,7 @@ fn openapi_call_runtime_tool_lists_accepted_tool_names() {
         .collect::<Vec<_>>();
     assert!(!operation_ids.contains(&"hover"));
     assert!(!operation_ids.contains(&"workspaceSymbols"));
-    assert_eq!(operation_ids.len(), 25);
+    assert_eq!(operation_ids.len(), 23);
 }
 
 #[test]
@@ -609,9 +616,6 @@ fn openapi_search_project_texts_is_available_through_strict_flattened_runtime_fi
 #[test]
 fn openapi_key_actions_have_examples() {
     let spec = build_openapi_spec();
-    // getRuntimeJobStatus, getRuntimeJobLog, and callRuntimeTool must ship
-    // with at least one request example so GPT has a concrete template to
-    // follow. Phase 3 dedicated actions are also required to carry examples.
     for (path, label) in [
         ("/api/jobs/status", "getRuntimeJobStatus"),
         ("/api/jobs/log", "getRuntimeJobLog"),
@@ -621,12 +625,7 @@ fn openapi_key_actions_have_examples() {
         ("/api/projects/git_diff_summary", "getProjectGitDiffSummary"),
         ("/api/projects/list_files", "listProjectFiles"),
         ("/api/projects/search_text", "searchProjectText"),
-        ("/api/projects/validate_patch", "validateProjectPatch"),
-        ("/api/projects/apply_patch", "applyProjectPatch"),
-        (
-            "/api/projects/apply_patch_checked",
-            "applyProjectPatchChecked",
-        ),
+        ("/api/projects/apply_unified_diff", "applyUnifiedDiff"),
         ("/api/projects/run_shell", "runProjectShellCommand"),
         ("/api/projects/delete_files", "deleteProjectFiles"),
         ("/api/projects/git_restore_paths", "gitRestorePaths"),
@@ -655,9 +654,6 @@ fn openapi_key_actions_have_examples() {
 
 #[test]
 fn openapi_dedicated_actions_have_expected_routes_and_operation_ids() {
-    // Complete path -> operationId map for the GPT Actions surface. Every
-    // operation in GPT_ACTION_OPS must appear here, so adding an action
-    // without pinning its route fails the length check below.
     let spec = build_openapi_spec();
     let expected = [
         ("/api/tools/list", "listRuntimeTools"),
@@ -675,12 +671,7 @@ fn openapi_dedicated_actions_have_expected_routes_and_operation_ids() {
         ("/api/projects/git_diff_summary", "getProjectGitDiffSummary"),
         ("/api/projects/list_files", "listProjectFiles"),
         ("/api/projects/search_text", "searchProjectText"),
-        ("/api/projects/validate_patch", "validateProjectPatch"),
-        ("/api/projects/apply_patch", "applyProjectPatch"),
-        (
-            "/api/projects/apply_patch_checked",
-            "applyProjectPatchChecked",
-        ),
+        ("/api/projects/apply_unified_diff", "applyUnifiedDiff"),
         ("/api/projects/run_shell", "runProjectShellCommand"),
         ("/api/projects/delete_files", "deleteProjectFiles"),
         ("/api/projects/git_restore_paths", "gitRestorePaths"),
@@ -689,17 +680,9 @@ fn openapi_dedicated_actions_have_expected_routes_and_operation_ids() {
         ("/api/projects/run_job", "startProjectShellJob"),
         ("/api/tools/call", "callRuntimeTool"),
     ];
-    assert_eq!(
-        expected.len(),
-        GPT_ACTION_OPS.len(),
-        "route map must cover every GPT Action operation"
-    );
+    assert_eq!(expected.len(), GPT_ACTION_OPS.len());
     for (path, operation_id) in expected {
-        assert_eq!(
-            spec["paths"][path]["post"]["operationId"], operation_id,
-            "GPT Action path '{}' must map to operationId '{}'",
-            path, operation_id
-        );
+        assert_eq!(spec["paths"][path]["post"]["operationId"], operation_id);
     }
 }
 
@@ -728,16 +711,9 @@ fn openapi_import_preserves_reserved_gpt_actions_file_reference_contract() {
 
 #[test]
 fn openapi_mutation_actions_describe_execution_risk_and_auth() {
-    // Phase 3 mutation actions (applyProjectPatch, applyProjectPatchChecked,
-    // runProjectShellCommand, deleteProjectFiles, gitRestorePaths,
-    // discardUntrackedFiles) are executable actions with side effects; their
-    // descriptions must call out the execution risk/side effects and the
-    // Bearer-auth requirement so GPT callers understand they are not
-    // read-only inspection.
     let spec = build_openapi_spec();
     for path in [
-        "/api/projects/apply_patch",
-        "/api/projects/apply_patch_checked",
+        "/api/projects/apply_unified_diff",
         "/api/projects/run_shell",
         "/api/projects/delete_files",
         "/api/projects/git_restore_paths",
@@ -751,23 +727,15 @@ fn openapi_mutation_actions_describe_execution_risk_and_auth() {
             .unwrap_or("");
         assert!(
             desc.to_lowercase().contains("side effect"),
-            "{} description should mention side effects, got: {}",
-            path,
-            desc
+            "{path}: {desc}"
         );
         assert!(
             desc.to_lowercase().contains("bearer auth"),
-            "{} description should mention Bearer auth, got: {}",
-            path,
-            desc
+            "{path}: {desc}"
         );
     }
-    // Patch/shell/delete mutations still require the agent shell capability.
-    // Git path mutations use typed executable+argv dispatch and therefore
-    // require the distinct structured-process capability instead.
     for path in [
-        "/api/projects/apply_patch",
-        "/api/projects/apply_patch_checked",
+        "/api/projects/apply_unified_diff",
         "/api/projects/run_shell",
         "/api/projects/delete_files",
     ] {
@@ -776,9 +744,7 @@ fn openapi_mutation_actions_describe_execution_risk_and_auth() {
             .unwrap_or("");
         assert!(
             desc.to_lowercase().contains("agent shell capability"),
-            "{} description should mention the agent shell capability, got: {}",
-            path,
-            desc
+            "{path}: {desc}"
         );
     }
     for path in [
@@ -788,39 +754,23 @@ fn openapi_mutation_actions_describe_execution_risk_and_auth() {
         let desc = spec["paths"][path]["post"]["description"]
             .as_str()
             .unwrap_or("");
-        assert!(
-            desc.contains("structured_process_argv"),
-            "{} description should mention structured_process_argv, got: {}",
-            path,
-            desc
-        );
+        assert!(desc.contains("structured_process_argv"), "{path}: {desc}");
         assert!(
             !desc.to_lowercase().contains("agent shell capability"),
-            "{} must not advertise the obsolete shell capability, got: {}",
-            path,
-            desc
+            "{path}: {desc}"
         );
     }
-    // startProjectShellJob requires the async shell job capability, not
-    // the plain shell capability. Pin its capability wording so GPT callers
-    // understand the different requirement.
-    {
-        let desc = spec["paths"]["/api/projects/run_job"]["post"]["description"]
-            .as_str()
-            .unwrap_or("");
-        assert!(
-                desc.to_lowercase().contains("async shell job"),
-                "startProjectShellJob description should mention the async shell job capability, got: {}",
-                desc
-            );
-    }
+    let desc = spec["paths"]["/api/projects/run_job"]["post"]["description"]
+        .as_str()
+        .unwrap_or("");
+    assert!(desc.to_lowercase().contains("async shell job"));
 }
 
 #[test]
 fn openapi_readonly_actions_describe_readonly() {
     // Every read-only dedicated action must mark itself read-only (or
     // "never writes") in its description so GPT callers can tell them
-    // apart from mutations. This covers all 14 read-only operations;
+    // apart from mutations.
     // callRuntimeTool is excluded because it is a generic escape hatch
     // that can dispatch either read-only or mutating tools.
     let spec = build_openapi_spec();
@@ -838,7 +788,6 @@ fn openapi_readonly_actions_describe_readonly() {
         "/api/projects/git_diff_summary",
         "/api/projects/list_files",
         "/api/projects/search_text",
-        "/api/projects/validate_patch",
     ] {
         let desc = spec["paths"][path]["post"]["description"]
             .as_str()
@@ -974,9 +923,7 @@ fn openapi_dedicated_project_action_schemas_include_optional_session_id() {
         "ProjectIdRequest",
         "ProjectGitDiffRequest",
         "SearchProjectTextRequest",
-        "ApplyPatchRequest",
-        "ApplyPatchCheckedRequest",
-        "ValidatePatchRequest",
+        "ApplyUnifiedDiffRequest",
         "DeleteProjectFilesRequest",
         "GitRestorePathsRequest",
         "DiscardUntrackedRequest",
@@ -1231,7 +1178,7 @@ fn openapi_tool_call_request_exposes_canonical_closeout_and_visible_runtime_fiel
     );
 
     let count = operation_ids(&spec).len();
-    assert_eq!(count, 25, "GPT Actions operation count must stay 25");
+    assert_eq!(count, 23, "GPT Actions operation count must stay 23");
 }
 
 #[test]
@@ -1272,7 +1219,7 @@ fn openapi_call_runtime_tool_declares_checkpoint_flattened_fields() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 25, "operation count must stay 25");
+    assert_eq!(count, 23, "operation count must stay 23");
 }
 
 #[test]
@@ -1354,7 +1301,7 @@ fn openapi_call_runtime_tool_declares_apply_text_edits_flattened_fields() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 25, "operation count must stay 25");
+    assert_eq!(count, 23, "operation count must stay 23");
 }
 
 #[test]
@@ -1465,7 +1412,7 @@ fn openapi_artifact_upload_tools_remain_generic_and_under_action_limit() {
         );
     }
     let count = ids.len();
-    assert_eq!(count, 25, "GPT Actions operation count must stay 25");
+    assert_eq!(count, 23, "GPT Actions operation count must stay 23");
     assert!(count <= 30, "GPT Actions operation count must stay <= 30");
 
     let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];

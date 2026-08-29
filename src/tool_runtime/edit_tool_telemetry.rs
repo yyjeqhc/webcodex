@@ -2,8 +2,8 @@
 //!
 //! Emits always-on structured logs for edit-surface tool calls so operators can
 //! measure how often the canonical edit tools (`apply_text_edits`,
-//! `apply_patch_checked`) are used relative to the advanced whole-file/raw-patch
-//! paths (`write_project_file`, `apply_patch`).
+//! `apply_unified_diff`) are used relative to the intentional whole-file
+//! rewrite path (`write_project_file`).
 //!
 //! Design constraints:
 //! - No new database tables, Action Audit columns, session ledger fields, or
@@ -24,9 +24,9 @@ pub(crate) const EDIT_TOOL_USAGE_EVENT: &str = "edit_tool_usage";
 /// How a specific edit tool sits on the preferred-vs-legacy surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EditToolSurface {
-    /// Preferred precise/local or checked multi-file paths.
+    /// Preferred precise/local or unified-diff multi-file paths.
     Canonical,
-    /// Valid but non-preferred specialized paths (whole-file write, raw patch).
+    /// Valid but non-preferred specialized path (intentional whole-file write).
     Advanced,
 }
 
@@ -43,8 +43,8 @@ impl EditToolSurface {
 /// tracked by this phase-1 telemetry.
 pub(crate) fn edit_tool_surface(tool_name: &str) -> Option<EditToolSurface> {
     match tool_name {
-        "apply_text_edits" | "apply_patch_checked" => Some(EditToolSurface::Canonical),
-        "write_project_file" | "apply_patch" => Some(EditToolSurface::Advanced),
+        "apply_text_edits" | "apply_unified_diff" => Some(EditToolSurface::Canonical),
+        "write_project_file" => Some(EditToolSurface::Advanced),
         _ => None,
     }
 }
@@ -249,15 +249,11 @@ mod tests {
             Some(EditToolSurface::Canonical)
         );
         assert_eq!(
-            edit_tool_surface("apply_patch_checked"),
+            edit_tool_surface("apply_unified_diff"),
             Some(EditToolSurface::Canonical)
         );
         assert_eq!(
             edit_tool_surface("write_project_file"),
-            Some(EditToolSurface::Advanced)
-        );
-        assert_eq!(
-            edit_tool_surface("apply_patch"),
             Some(EditToolSurface::Advanced)
         );
         // Removed legacy compatibility tools are no longer classified.
@@ -269,6 +265,9 @@ mod tests {
             "replace_line_range",
             "insert_at_line",
             "delete_line_range",
+            "apply_patch",
+            "apply_patch_checked",
+            "validate_patch",
         ] {
             assert_eq!(edit_tool_surface(name), None, "{name}");
         }
@@ -279,7 +278,6 @@ mod tests {
         for name in [
             "read_file",
             "run_shell",
-            "validate_patch",
             "list_tools",
             "save_project_artifact",
             "git_status",

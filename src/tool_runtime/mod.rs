@@ -97,6 +97,7 @@ pub(crate) use files::{
 pub(crate) use local_jobs::ACTIVE_JOB_STATUSES;
 #[cfg(test)]
 pub(crate) use local_jobs::{LocalJobKiller, LocalJobRecord, SystemJobKiller, TerminateOutcome};
+pub(crate) use patch::MAX_UNIFIED_DIFF_BYTES;
 pub use runtime::ToolRuntime;
 pub use runtime_info::RuntimeInfo;
 #[cfg(test)]

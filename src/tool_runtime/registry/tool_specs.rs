@@ -456,28 +456,21 @@ mod tests {
     }
 
     #[test]
-    fn tool_specs_patch_fields_reject_codex_wrapper() {
+    fn tool_specs_unified_diff_field_rejects_codex_wrapper() {
         let specs = registered_tool_specs();
-        for tool in ["apply_patch", "apply_patch_checked", "validate_patch"] {
-            let spec = specs
-                .iter()
-                .find(|spec| spec.name == tool)
-                .unwrap_or_else(|| panic!("missing tool spec: {tool}"));
-            let description = spec.input_schema["properties"]["patch"]["description"]
-                .as_str()
-                .unwrap_or_else(|| panic!("missing patch description for {tool}"));
-            assert!(
-                description.contains("raw standard unified diff"),
-                "{tool}: {description}"
-            );
-            assert!(
-                description.contains("Codex apply_patch wrapper"),
-                "{tool}: {description}"
-            );
-            assert!(
-                description.contains("*** Begin Patch"),
-                "{tool}: {description}"
-            );
-        }
+        let spec = specs
+            .iter()
+            .find(|spec| spec.name == "apply_unified_diff")
+            .expect("missing apply_unified_diff spec");
+        let description = spec.input_schema["properties"]["diff"]["description"]
+            .as_str()
+            .expect("missing unified diff description");
+        let lower = description.to_lowercase();
+        assert!(lower.contains("raw standard unified diff"), "{description}");
+        assert!(
+            description.contains("Codex apply_patch wrapper"),
+            "{description}"
+        );
+        assert!(description.contains("*** Begin Patch"), "{description}");
     }
 }

@@ -321,64 +321,36 @@ async fn http_console_routes_accept_correct_bearer_and_route_to_runtime() {
 }
 
 // =========================================================================
-// validateProjectPatch (POST /api/projects/validate_patch)
+// applyUnifiedDiff (POST /api/projects/apply_unified_diff)
 // =========================================================================
 
 #[tokio::test]
-async fn http_projects_validate_patch_dispatches_to_runtime() {
-    // With a correct bearer token the route reaches the runtime. The
-    // project id below is not agent-registered, so the runtime returns a
-    // structured error (not a 401/404) — proving the request was
-    // authenticated, deserialized, and dispatched to ToolRuntime.
+async fn http_projects_apply_unified_diff_dispatches_to_runtime() {
+    // With a correct bearer token the route reaches the runtime. The project
+    // id below is not agent-registered, so the runtime returns a structured
+    // error rather than a 401/404, proving auth/deserialization/dispatch wiring.
     let config = super::test_config(Some("secret"));
     let (_tmp, db) = super::test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
     let runtime = Arc::new(super::runtime_with_local_project(tmp_proj.path(), "demo"));
     let service = Service::new(super::build_projects_router(config, db, runtime));
 
-    let mut resp = TestClient::post("http://localhost/api/projects/validate_patch")
+    let mut resp = TestClient::post("http://localhost/api/projects/apply_unified_diff")
         .bearer_auth("secret")
         .json(&json!({
             "project": "agent:nope:nope",
-            "patch": "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"
+            "diff": "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"
         }))
         .send(&service)
         .await;
     assert_eq!(super::effective_status(&resp), StatusCode::BAD_REQUEST);
     let body: Value = resp.take_json().await.unwrap();
     assert_eq!(body["success"], false);
-    assert!(
-        body["error"].as_str().is_some_and(|e| !e.is_empty()),
-        "validate_patch should return a structured runtime error"
-    );
-}
-
-#[tokio::test]
-async fn http_projects_validate_patch_rejects_empty_patch_via_runtime() {
-    // An empty patch is rejected by the runtime with a structured error
-    // (BAD_REQUEST + success=false), not a 401/404. This proves the
-    // wrapper deserializes and dispatches even for invalid patches.
-    let config = super::test_config(Some("secret"));
-    let (_tmp, db) = super::test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let runtime = Arc::new(super::runtime_with_local_project(tmp_proj.path(), "demo"));
-    let service = Service::new(super::build_projects_router(config, db, runtime));
-
-    let mut resp = TestClient::post("http://localhost/api/projects/validate_patch")
-        .bearer_auth("secret")
-        .json(&json!({"project": "agent:nope:nope", "patch": ""}))
-        .send(&service)
-        .await;
-    // Empty patch is rejected; because the project is not agent-registered
-    // authorize_agent_tool fails first, but the request is still
-    // authenticated + dispatched (structured error, not 401/404).
-    assert_eq!(super::effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], false);
+    assert!(body["error"].as_str().is_some_and(|e| !e.is_empty()));
 }
 
 // =========================================================================
-// Phase 3: dedicated mutation actions (apply_patch_checked, delete_files,
+// Dedicated mutation actions (apply_unified_diff, delete_files,
 // git_restore_paths, discard_untracked) — auth gate + dispatch wiring
 // =========================================================================
 
@@ -388,8 +360,8 @@ async fn http_phase3_mutation_actions_require_bearer_auth() {
     let (_tmp, service) = super::phase2_service();
     for (path, body) in [
         (
-            "/api/projects/apply_patch_checked",
-            json!({"project": "demo", "patch": "diff"}),
+            "/api/projects/apply_unified_diff",
+            json!({"project": "demo", "diff": "diff"}),
         ),
         (
             "/api/projects/delete_files",
@@ -426,8 +398,8 @@ async fn http_phase3_mutation_actions_dispatch_to_runtime() {
     let (_tmp, service) = super::phase2_service();
     for (path, body) in [
         (
-            "/api/projects/apply_patch_checked",
-            json!({"project": "agent:nope:nope", "patch": "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"}),
+            "/api/projects/apply_unified_diff",
+            json!({"project": "agent:nope:nope", "diff": "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"}),
         ),
         (
             "/api/projects/delete_files",

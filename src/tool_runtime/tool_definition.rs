@@ -518,9 +518,8 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     lsp::DEFINITIONS,
     git::DETAIL_DEFINITIONS,
     testing::DEFINITIONS,
-    patches::APPLY_DEFINITIONS,
+    patches::DEFINITIONS,
     hygiene::CLEANUP_DEFINITIONS,
-    patches::VALIDATION_DEFINITIONS,
     artifacts::DEFINITIONS,
     edits::DEFINITIONS,
 ];

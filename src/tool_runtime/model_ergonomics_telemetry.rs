@@ -266,28 +266,29 @@ fn edit_facts(tool_name: &str, success: bool, output: &Value) -> EditFacts {
                 Some("rejected".to_string())
             };
         }
-        Some(EditToolSurface::Canonical) if tool_name == "apply_patch_checked" => {
-            facts.outcome = if !success {
-                Some("rejected".to_string())
-            } else {
-                match output.get("applied").and_then(Value::as_bool) {
-                    Some(true) => Some("applied".to_string()),
-                    Some(false) => {
-                        let policy_blocked = output
-                            .pointer("/validate/policy_blocked")
-                            .and_then(Value::as_bool);
-                        let can_apply = output
-                            .pointer("/validate/can_apply")
-                            .and_then(Value::as_bool);
-                        match (policy_blocked, can_apply) {
-                            (Some(true), _) => Some("policy_blocked".to_string()),
-                            (_, Some(false)) => Some("not_applicable".to_string()),
-                            (_, Some(true)) => Some("apply_failed".to_string()),
-                            _ => None,
-                        }
-                    }
-                    None => None,
+        Some(EditToolSurface::Canonical) if tool_name == "apply_unified_diff" => {
+            let error_kind = output.get("error_kind").and_then(Value::as_str);
+            facts.outcome = match (
+                output.get("applied").and_then(Value::as_bool),
+                output.get("policy_blocked").and_then(Value::as_bool),
+                output.get("can_apply").and_then(Value::as_bool),
+                error_kind,
+            ) {
+                (Some(true), _, _, _) => Some("applied".to_string()),
+                (_, Some(true), _, _) => Some("policy_blocked".to_string()),
+                (_, _, Some(false), Some("not_applicable")) => Some("not_applicable".to_string()),
+                (
+                    _,
+                    _,
+                    _,
+                    Some("unsupported_diff_format" | "invalid_unified_diff" | "diff_too_large"),
+                ) => Some("malformed".to_string()),
+                (_, _, _, Some("outcome_unknown")) => Some("uncertain".to_string()),
+                (_, _, Some(true), Some("apply_failed" | "apply_not_started")) => {
+                    Some("apply_failed".to_string())
                 }
+                _ if !success => Some("rejected".to_string()),
+                _ => None,
             };
         }
         _ => {}
@@ -539,7 +540,7 @@ mod tests {
 
     #[test]
     fn canonical_edit_pre_result_hard_timeout_is_uncertain_not_rejected() {
-        for tool in ["apply_text_edits", "apply_patch_checked"] {
+        for tool in ["apply_text_edits", "apply_unified_diff"] {
             let record = completion(tool, 0).record_for_pre_result_failure("dispatch_hard_timeout");
             assert!(!record.success);
             assert_eq!(record.error_kind.as_deref(), Some("dispatch_hard_timeout"));
@@ -622,37 +623,50 @@ mod tests {
             assert_eq!(record.edit_conflict_kind.as_deref(), conflict_kind);
         }
 
-        let patch_cases = [
-            (true, json!({"applied": true}), Some("applied")),
+        let unified_diff_cases = [
             (
                 true,
-                json!({"applied": false, "validate": {"can_apply": false}}),
+                json!({"applied": true, "can_apply": true, "policy_blocked": false, "error_kind": null}),
+                Some("applied"),
+            ),
+            (
+                true,
+                json!({"applied": false, "can_apply": false, "policy_blocked": false, "error_kind": "not_applicable"}),
                 Some("not_applicable"),
             ),
             (
                 true,
-                json!({"applied": false, "validate": {"can_apply": false, "policy_blocked": true}}),
+                json!({"applied": false, "can_apply": false, "policy_blocked": true, "error_kind": "policy_blocked"}),
                 Some("policy_blocked"),
             ),
             (
-                true,
-                json!({"applied": false, "validate": {"can_apply": true}}),
+                false,
+                json!({"applied": false, "can_apply": null, "policy_blocked": false, "error_kind": "unsupported_diff_format"}),
+                Some("malformed"),
+            ),
+            (
+                false,
+                json!({"applied": null, "can_apply": true, "policy_blocked": false, "error_kind": "outcome_unknown"}),
+                Some("uncertain"),
+            ),
+            (
+                false,
+                json!({"applied": false, "can_apply": true, "policy_blocked": false, "error_kind": "apply_failed"}),
                 Some("apply_failed"),
             ),
             (
                 false,
-                json!({"error_kind": "policy_rejected"}),
+                json!({"applied": false, "can_apply": null, "policy_blocked": false, "error_kind": "project_unavailable"}),
                 Some("rejected"),
             ),
-            (true, json!({"applied": false, "validate": {}}), None),
         ];
-        for (success, output, outcome) in patch_cases {
+        for (success, output, outcome) in unified_diff_cases {
             let result = if success {
                 ToolResult::ok(output)
             } else {
                 ToolResult::err_with_output("private", output)
             };
-            let record = completion("apply_patch_checked", 0)
+            let record = completion("apply_unified_diff", 0)
                 .record_for_tool_result(&result)
                 .unwrap();
             assert_eq!(record.edit_surface.as_deref(), Some("canonical"));
@@ -692,7 +706,7 @@ mod tests {
             assert_eq!(record.edit_conflict_kind, None);
         }
 
-        for tool in ["write_project_file", "apply_patch"] {
+        for tool in ["write_project_file"] {
             let record = completion(tool, 0)
                 .record_for_tool_result(&ToolResult::ok(json!({"changed": true})))
                 .unwrap();

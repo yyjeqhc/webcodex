@@ -1,26 +1,23 @@
 use super::*;
 
 #[test]
-fn openapi_patch_request_descriptions_reject_codex_wrapper() {
+fn openapi_unified_diff_request_rejects_codex_wrapper_and_uses_canonical_bound() {
     let spec = build_openapi_spec();
-    let schemas = &spec["components"]["schemas"];
-    let apply_desc = schemas["ApplyPatchRequest"]["properties"]["patch"]["description"]
+    let schema = &spec["components"]["schemas"]["ApplyUnifiedDiffRequest"];
+    let diff = &schema["properties"]["diff"];
+    let description = diff["description"]
         .as_str()
-        .expect("ApplyPatchRequest patch description");
-    let validate_desc = schemas["ValidatePatchRequest"]["properties"]["patch"]["description"]
-        .as_str()
-        .expect("ValidatePatchRequest patch description");
-    let checked_desc = schemas["ApplyPatchCheckedRequest"]["properties"]["patch"]["description"]
-        .as_str()
-        .expect("ApplyPatchCheckedRequest patch description");
+        .expect("ApplyUnifiedDiffRequest diff description");
 
-    assert!(
-        apply_desc.contains("raw standard unified diff"),
-        "{apply_desc}"
+    assert!(description
+        .to_lowercase()
+        .contains("raw standard unified diff"));
+    assert!(description.contains("Codex apply_patch wrapper"));
+    assert!(description.contains("*** Begin Patch"));
+    assert_eq!(diff["maxLength"], MAX_UNIFIED_DIFF_BYTES);
+    assert_eq!(
+        schema["properties"]["deny_sensitive_paths"]["default"],
+        true
     );
-    assert!(
-        validate_desc.contains("Codex apply_patch wrapper"),
-        "{validate_desc}"
-    );
-    assert!(checked_desc.contains("*** Begin Patch"), "{checked_desc}");
+    assert!(schema["properties"].get("patch").is_none());
 }

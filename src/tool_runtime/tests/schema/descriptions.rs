@@ -95,26 +95,19 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    // Canonical checked patch path.
-    let apply_patch_checked_desc = desc("apply_patch_checked");
+    // Canonical complex unified-diff path owns its own preflight and recovery semantics.
+    let unified_diff_desc = desc("apply_unified_diff");
     for phrase in [
-        "canonical checked patch",
-        "multi-file",
-        "preflight",
-        "prefer over raw apply_patch",
+        "canonical complex/multi-file",
+        "raw unified-diff mutation",
+        "prefer apply_text_edits",
+        "bounded preflight",
+        "never needs a separate validation call",
+        "standard unified diff",
     ] {
         assert!(
-            apply_patch_checked_desc.contains(phrase),
-            "apply_patch_checked description should mention {phrase}: {apply_patch_checked_desc}"
-        );
-    }
-
-    // Advanced/raw apply_patch.
-    let apply_patch_desc = desc("apply_patch");
-    for phrase in ["advanced/raw", "prefer apply_patch_checked"] {
-        assert!(
-            apply_patch_desc.contains(phrase),
-            "apply_patch description should mention {phrase}: {apply_patch_desc}"
+            unified_diff_desc.contains(phrase),
+            "apply_unified_diff description should mention {phrase}: {unified_diff_desc}"
         );
     }
 
@@ -199,6 +192,9 @@ fn removed_legacy_edit_tools_are_not_known_tools() {
         "replace_line_range",
         "insert_at_line",
         "delete_line_range",
+        "apply_patch",
+        "apply_patch_checked",
+        "validate_patch",
     ] {
         assert!(
             !is_known_tool_name(removed),
@@ -223,8 +219,7 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
 
     for required in [
         "apply_text_edits",
-        "apply_patch_checked",
-        "apply_patch",
+        "apply_unified_diff",
         "write_project_file",
     ] {
         assert!(
@@ -250,13 +245,14 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
             "apply_text_edits must keep field {field}"
         );
     }
-    let patch_checked = &spec_named(&specs, "apply_patch_checked").input_schema["properties"];
-    for field in ["project", "patch", "deny_sensitive_paths"] {
+    let unified_diff = &spec_named(&specs, "apply_unified_diff").input_schema["properties"];
+    for field in ["project", "diff", "deny_sensitive_paths"] {
         assert!(
-            patch_checked.get(field).is_some(),
-            "apply_patch_checked must keep field {field}"
+            unified_diff.get(field).is_some(),
+            "apply_unified_diff must keep field {field}"
         );
     }
+    assert!(unified_diff.get("patch").is_none());
     let write_file = &spec_named(&specs, "write_project_file").input_schema["properties"];
     for field in ["project", "path", "content"] {
         assert!(

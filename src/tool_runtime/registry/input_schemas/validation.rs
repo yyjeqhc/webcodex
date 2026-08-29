@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::common::{object_schema, with_optional_session_id, PATCH_FIELD_DESCRIPTION};
+use super::common::{object_schema, with_optional_session_id};
 
 /// `timeout_secs` for read-only structured validation tools is the total
 /// runtime budget of the command. Short validations return immediately; a
@@ -207,17 +207,4 @@ pub(crate) fn go_test_input_schema() -> Value {
     schema["properties"]["packages"]["items"]["maxLength"] =
         json!(crate::shell_protocol::GO_TEST_PACKAGE_MAX_BYTES);
     schema
-}
-
-pub(crate) fn validate_patch_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
-        (
-            "deny_sensitive_paths",
-            "boolean",
-            "Block sensitive path warnings.",
-            false,
-        ),
-    ]))
 }

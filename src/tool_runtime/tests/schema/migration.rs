@@ -338,7 +338,7 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
         .values()
         .map(|methods| methods.as_object().unwrap().len())
         .sum();
-    assert_eq!(openapi_operation_count, 25, "OpenAPI operation count");
+    assert_eq!(openapi_operation_count, 23, "OpenAPI operation count");
 
     let operation_ids = openapi["paths"]
         .as_object()

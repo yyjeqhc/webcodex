@@ -27,10 +27,9 @@ pub use jobs::{
     job_log, job_status, job_stop, job_tail, jobs_list, projects_run_job, projects_run_shell,
 };
 pub use project_files::{
-    projects_apply_patch, projects_apply_patch_checked, projects_delete_files,
-    projects_discard_untracked, projects_git_diff, projects_git_diff_summary,
-    projects_git_restore_paths, projects_git_status, projects_list_files, projects_read_file,
-    projects_search_text, projects_validate_patch,
+    projects_apply_unified_diff, projects_delete_files, projects_discard_untracked,
+    projects_git_diff, projects_git_diff_summary, projects_git_restore_paths, projects_git_status,
+    projects_list_files, projects_read_file, projects_search_text,
 };
 pub use projects::{projects_create, projects_list, projects_register, projects_unregister};
 

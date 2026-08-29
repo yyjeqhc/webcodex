@@ -287,8 +287,8 @@ async fn http_audit_session_happy_path_returns_session_and_events() {
     seed_event(
         &db,
         "sess-detail",
-        "/api/projects/apply_patch",
-        "applyProjectPatch",
+        "/api/projects/apply_unified_diff",
+        "applyUnifiedDiff",
         "success",
         json!({"files_changed": 1}),
     );
@@ -304,7 +304,7 @@ async fn http_audit_session_happy_path_returns_session_and_events() {
     assert_eq!(body["session"]["session_id"], "sess-detail");
     let events = body["events"].as_array().unwrap();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["endpoint"], "/api/projects/apply_patch");
+    assert_eq!(events[0]["endpoint"], "/api/projects/apply_unified_diff");
     assert_eq!(events[0]["summary"]["files_changed"], 1);
 }
 
@@ -341,8 +341,8 @@ async fn http_audit_stats_happy_path_scoped_to_session() {
     seed_event(
         &db,
         "stats-1",
-        "/api/projects/apply_patch",
-        "applyProjectPatch",
+        "/api/projects/apply_unified_diff",
+        "applyUnifiedDiff",
         "failed",
         json!({}),
     );
@@ -356,7 +356,7 @@ async fn http_audit_stats_happy_path_scoped_to_session() {
     assert_eq!(effective_status(&resp), StatusCode::OK);
     let body: Value = resp.take_json().await.unwrap();
     assert_eq!(body["by_endpoint"]["/api/projects/run_job"], 1);
-    assert_eq!(body["by_endpoint"]["/api/projects/apply_patch"], 1);
+    assert_eq!(body["by_endpoint"]["/api/projects/apply_unified_diff"], 1);
     assert_eq!(body["by_status"]["success"], 1);
     assert_eq!(body["by_status"]["failed"], 1);
     assert_eq!(body["job_count"], 1);
@@ -536,8 +536,8 @@ async fn http_audit_responses_do_not_leak_secret_fields_or_values() {
     seed_event(
         &db,
         "leak-1",
-        "/api/projects/apply_patch",
-        "applyProjectPatch",
+        "/api/projects/apply_unified_diff",
+        "applyUnifiedDiff",
         "success",
         json!({
             "api_key": "sk-leak-12345",
@@ -608,8 +608,8 @@ async fn http_audit_responses_do_not_leak_secret_fields_or_values() {
     seed_event(
         &db,
         "leak-2",
-        "/api/projects/apply_patch",
-        "applyProjectPatch",
+        "/api/projects/apply_unified_diff",
+        "applyUnifiedDiff",
         "success",
         json!({ "command_text": "token=cmd-secret-xyz" }),
     );

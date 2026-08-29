@@ -437,7 +437,7 @@ mod tests {
             AdminWebStylesCss as usize + 1,
             "canonical iteration must cover every RouteId exactly once",
         );
-        assert_eq!(iter_routes().count(), 127, "R2 canonical route closure");
+        assert_eq!(iter_routes().count(), 125, "R2 canonical route closure");
         assert_eq!(lookup("GET", "/mcp").unwrap().id, McpGet);
         assert_eq!(lookup("POST", "/mcp").unwrap().id, McpPost);
     }
@@ -475,7 +475,7 @@ mod tests {
             );
             references += 1;
         }
-        assert_eq!(references, 127, "R2 production leaf RouteId closure");
+        assert_eq!(references, 125, "R2 production leaf RouteId closure");
     }
 
     #[test]

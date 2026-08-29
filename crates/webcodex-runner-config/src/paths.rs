@@ -241,18 +241,30 @@ pub fn is_windows_local_disk_path(path: &Path) -> bool {
     }
 }
 
+#[cfg(windows)]
+fn windows_non_local_project_path_error(path: &Path) -> String {
+    format!(
+        "path {} is not on a local disk drive; UNC and other Windows network/device paths are not supported for projects",
+        path.to_string_lossy()
+    )
+}
+
 /// Validate the raw project path before any canonicalization or filesystem I/O.
 ///
-/// On Windows only local disk paths (`Disk` / `VerbatimDisk`) may proceed.
-/// UNC, verbatim UNC, device namespace, and other non-local prefixes fail
-/// closed. Non-Windows platforms have no corresponding raw-prefix fence.
+/// On Windows an explicit local-disk prefix (`Disk` / `VerbatimDisk`) may
+/// proceed, while explicit UNC, verbatim UNC, device namespace, and other
+/// unsupported prefixes fail closed. Paths with no prefix (including relative
+/// paths) proceed to canonicalization, where the canonical path policy requires
+/// a local disk. Non-Windows platforms have no corresponding raw-prefix fence.
 pub fn validate_project_path_ingress(path: &Path) -> Result<(), String> {
     #[cfg(windows)]
-    if !is_windows_local_disk_path(path) {
-        return Err(format!(
-            "path {} is not on a local disk drive; UNC and other Windows network/device paths are not supported for projects",
-            path.to_string_lossy()
-        ));
+    if let Some(std::path::Component::Prefix(prefix)) = path.components().next() {
+        if !matches!(
+            prefix.kind(),
+            std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_)
+        ) {
+            return Err(windows_non_local_project_path_error(path));
+        }
     }
 
     #[cfg(not(windows))]
@@ -318,7 +330,11 @@ pub fn validate_project_path_policy(
     allow_cwd_anywhere: bool,
 ) -> Result<(), String> {
     let path_str = canonical_path.to_string_lossy();
-    validate_project_path_ingress(canonical_path)?;
+
+    #[cfg(windows)]
+    if !is_windows_local_disk_path(canonical_path) {
+        return Err(windows_non_local_project_path_error(canonical_path));
+    }
 
     if canonical_allowed_roots
         .iter()
@@ -678,8 +694,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_local_disk_prefix_classification_is_grammar_based() {
-        // Local disk paths, plain and canonicalized.
+    fn windows_local_disk_prefix_classification_is_strict_for_canonical_paths() {
         for accepted in [
             r"C:\repo",
             r"c:\repo",
@@ -690,23 +705,46 @@ mod tests {
                 is_windows_local_disk_path(Path::new(accepted)),
                 "{accepted} must be accepted as a local disk path"
             );
-            validate_project_path_ingress(Path::new(accepted))
-                .expect("local-disk ingress must proceed without filesystem access");
         }
-        // Everything else is fail-closed, whatever it starts with.
-        for rejected in [
+
+        for non_local_or_uncanonical in [
             r"\\server\share\repo",
             r"\\?\UNC\server\share\repo",
-            r"\\server\share",
             r"\\.\device\repo",
             r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\repo",
             r"\repo",
             r"repo",
+            ".",
         ] {
             assert!(
-                !is_windows_local_disk_path(Path::new(rejected)),
-                "{rejected} must be rejected as a non-local-disk path"
+                !is_windows_local_disk_path(Path::new(non_local_or_uncanonical)),
+                "{non_local_or_uncanonical} must not satisfy the strict canonical local-disk predicate"
             );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_raw_project_ingress_rejects_only_explicit_non_local_prefixes() {
+        for allowed in [
+            r"C:\repo",
+            r"\\?\C:\repo",
+            ".",
+            r"repo",
+            r"some\repo",
+            r"\repo",
+        ] {
+            validate_project_path_ingress(Path::new(allowed)).unwrap_or_else(|error| {
+                panic!("{allowed} must proceed to canonicalization: {error}")
+            });
+        }
+
+        for rejected in [
+            r"\\server\share\repo",
+            r"\\?\UNC\server\share\repo",
+            r"\\.\device\repo",
+            r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\repo",
+        ] {
             let error = validate_project_path_ingress(Path::new(rejected)).unwrap_err();
             assert!(error.contains("not on a local disk drive"), "{error}");
         }
@@ -728,11 +766,20 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn project_path_policy_preserves_windows_local_disk_and_drive_root_fences() {
-        let unc = Path::new(r"\\server\share\repo");
-        let error =
-            validate_project_path_policy(unc, &[PathBuf::from(r"\\server\share\repo")], true)
-                .unwrap_err();
-        assert!(error.contains("not on a local disk drive"), "{error}");
+        for non_local in [
+            r"\\server\share\repo",
+            r"\\?\UNC\server\share\repo",
+            r"\\.\device\repo",
+            r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\repo",
+        ] {
+            let error = validate_project_path_policy(
+                Path::new(non_local),
+                &[PathBuf::from(non_local)],
+                true,
+            )
+            .unwrap_err();
+            assert!(error.contains("not on a local disk drive"), "{error}");
+        }
 
         let drive_root = Path::new(r"C:\");
         let error = validate_project_path_policy(drive_root, &[], true).unwrap_err();

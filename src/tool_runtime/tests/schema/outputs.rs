@@ -1158,6 +1158,7 @@ fn key_tool_output_schemas_include_expected_fields() {
         "build",
         "auth_enabled",
         "configured_public_url",
+        "effective_config",
         "agents",
         "projects",
         "jobs",

@@ -20,8 +20,39 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "mcp_compact_schemas",
                 schema_type(
                     "boolean",
-                    "Whether MCP tools/list omits outputSchema while retaining tool names, descriptions, inputSchema, and annotations.",
+                    "Whether MCP tools/list omits outputSchema while retaining tool names, descriptions, inputSchema, and annotations. This is MCP discovery schema compaction, not runtime_status compact=true response shaping or GPT Action response compaction.",
                 ),
+            ),
+            (
+                "effective_config",
+                json!({
+                    "type": "object",
+                    "description": "Safe allowlisted effective configuration of the running Server. This is distinct from runtime_status compact=true response shaping and from health or transport state.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "action_compact_responses": {
+                            "type": "boolean",
+                            "description": "Whether the GPT Action/API adapter returns its compact response projection."
+                        },
+                        "auth": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "shared_key_enabled": {"type": "boolean", "description": "Whether direct shared-key quick-start authentication is effective for the running authenticated Server."},
+                                "anonymous_enabled": {"type": "boolean", "description": "Whether explicit open-anonymous access is effective for the running authenticated Server."},
+                                "oauth2_enabled": {"type": "boolean", "description": "Whether OAuth2 support was enabled in the running Server configuration."},
+                                "oauth2_shared_key_bridge_enabled": {"type": "boolean", "description": "Whether the OAuth2 shared-key bridge is effective; false whenever OAuth2 itself is disabled."}
+                            },
+                            "required": ["shared_key_enabled", "anonymous_enabled", "oauth2_enabled", "oauth2_shared_key_bridge_enabled"]
+                        },
+                        "tool_request_trace_mode": {
+                            "type": "string",
+                            "enum": ["off", "metadata", "full"],
+                            "description": "Effective bounded tool-request trace mode; no trace paths, request bodies, headers, or environment values are exposed."
+                        }
+                    },
+                    "required": ["action_compact_responses", "auth", "tool_request_trace_mode"]
+                }),
             ),
             ("version", schema_type("string", "Runtime version.")),
             (

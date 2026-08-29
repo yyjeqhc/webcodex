@@ -25,8 +25,8 @@ pub(crate) struct ListAgentsOptions {
 }
 
 /// Lightweight runtime metadata injected into `ToolRuntime` so observability
-/// tools (e.g. `runtime_status`) can report auth/public-url state without the
-/// runtime holding a full `Config` (which would couple it to HTTP/fs details).
+/// tools (e.g. `runtime_status`) can report bounded auth/OAuth/public-url state
+/// without the runtime holding a full `Config` (which would couple it to HTTP/fs details).
 ///
 /// `configured_public_url` is `None` when `WEBCODEX_PUBLIC_URL` is unset; the
 /// observability output reports this as `null` so a deployer can immediately
@@ -35,22 +35,25 @@ pub(crate) struct ListAgentsOptions {
 pub struct RuntimeInfo {
     pub auth_enabled: bool,
     pub configured_public_url: Option<String>,
+    pub oauth2_enabled: bool,
+    pub oauth2_shared_key_bridge_enabled: bool,
     pub quic: Option<std::sync::Arc<std::sync::Mutex<crate::config::QuicRuntimeStatus>>>,
 }
 
 impl RuntimeInfo {
-    /// Build `RuntimeInfo` from the process environment. Reads
-    /// `WEBCODEX_TOKEN` (presence) and `WEBCODEX_PUBLIC_URL`.
+    /// Build test runtime metadata from the same parsed `Config` used by
+    /// production startup, plus the public URL and QUIC runtime configuration.
     #[cfg(test)]
     pub fn from_env() -> Self {
-        Self::from_env_with_quic_config(&crate::config::QuicServerConfig::from_env())
+        let config = crate::config::Config::from_env();
+        Self::from_config_with_quic_config(&config, &crate::config::QuicServerConfig::from_env())
     }
 
-    pub fn from_env_with_quic_config(quic_cfg: &crate::config::QuicServerConfig) -> Self {
-        let auth_enabled = std::env::var("WEBCODEX_TOKEN")
-            .ok()
-            .map(|v| !v.trim().is_empty())
-            .unwrap_or(false);
+    pub fn from_config_with_quic_config(
+        config: &crate::config::Config,
+        quic_cfg: &crate::config::QuicServerConfig,
+    ) -> Self {
+        let auth_enabled = config.is_auth_enabled();
         let configured_public_url = std::env::var("WEBCODEX_PUBLIC_URL")
             .ok()
             .map(|s| s.trim().trim_end_matches('/').to_string())
@@ -58,6 +61,9 @@ impl RuntimeInfo {
         Self {
             auth_enabled,
             configured_public_url,
+            oauth2_enabled: config.oauth2.enabled,
+            oauth2_shared_key_bridge_enabled: config.oauth2.enabled
+                && config.oauth2.shared_key_bridge_enabled,
             quic: Some(std::sync::Arc::new(std::sync::Mutex::new(
                 quic_cfg.runtime_status(),
             ))),
@@ -66,6 +72,21 @@ impl RuntimeInfo {
 }
 
 impl ToolRuntime {
+    fn effective_config_status(&self) -> Value {
+        json!({
+            "action_compact_responses": crate::config::action_compact_responses_enabled(),
+            "auth": {
+                "shared_key_enabled": self.runtime_info.auth_enabled
+                    && crate::auth::shared_key_enabled(),
+                "anonymous_enabled": self.runtime_info.auth_enabled
+                    && crate::auth::allow_anonymous_enabled(),
+                "oauth2_enabled": self.runtime_info.oauth2_enabled,
+                "oauth2_shared_key_bridge_enabled": self.runtime_info.oauth2_shared_key_bridge_enabled,
+            },
+            "tool_request_trace_mode": crate::config::tool_request_trace_mode().as_str(),
+        })
+    }
+
     pub(crate) async fn list_agents(&self, auth: Option<&AuthContext>) -> ToolResult {
         self.list_agents_with_options(auth, ListAgentsOptions::default())
             .await
@@ -452,6 +473,7 @@ impl ToolRuntime {
             "service": "webcodex",
             "model_surface": self.model_surface().name(),
             "mcp_compact_schemas": crate::config::mcp_compact_schemas_enabled(),
+            "effective_config": self.effective_config_status(),
             "version": env!("CARGO_PKG_VERSION"),
             "build": crate::build_info::runtime_build_info(),
             "server_time": now,
@@ -644,6 +666,7 @@ impl ToolRuntime {
             "service": "webcodex",
             "model_surface": self.model_surface().name(),
             "mcp_compact_schemas": crate::config::mcp_compact_schemas_enabled(),
+            "effective_config": self.effective_config_status(),
             "version": env!("CARGO_PKG_VERSION"),
             "build": server_build,
             "server_time": now,
@@ -692,6 +715,9 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
                 .cloned()
                 .unwrap_or_else(|| json!(crate::model_surface::MODEL_SURFACE_LOCAL_CODING)),
             "mcp_compact_schemas": status.get("mcp_compact_schemas").cloned().unwrap_or_else(|| json!(false)),
+            "effective_config": status.get("effective_config").cloned().unwrap_or(Value::Null),
+            "auth_enabled": status.get("auth_enabled").cloned().unwrap_or_else(|| json!(false)),
+            "configured_public_url": status.get("configured_public_url").cloned().unwrap_or(Value::Null),
             "version": status.get("version").cloned().unwrap_or(Value::Null),
             "focus": status.get("focus").cloned().unwrap_or(Value::Null),
             "server": status.get("server").cloned().unwrap_or(Value::Null),
@@ -719,6 +745,9 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
             .cloned()
             .unwrap_or_else(|| json!(crate::model_surface::MODEL_SURFACE_LOCAL_CODING)),
         "mcp_compact_schemas": status.get("mcp_compact_schemas").cloned().unwrap_or_else(|| json!(false)),
+        "effective_config": status.get("effective_config").cloned().unwrap_or(Value::Null),
+        "auth_enabled": status.get("auth_enabled").cloned().unwrap_or_else(|| json!(false)),
+        "configured_public_url": status.get("configured_public_url").cloned().unwrap_or(Value::Null),
         "version": status.get("version").cloned().unwrap_or(Value::Null),
         "build": {
             "version": status.get("version").cloned().unwrap_or(Value::Null),
@@ -1460,6 +1489,8 @@ impl Default for RuntimeInfo {
         Self {
             auth_enabled: false,
             configured_public_url: None,
+            oauth2_enabled: false,
+            oauth2_shared_key_bridge_enabled: false,
             quic: Some(std::sync::Arc::new(std::sync::Mutex::new(
                 crate::config::QuicServerConfig::default().runtime_status(),
             ))),

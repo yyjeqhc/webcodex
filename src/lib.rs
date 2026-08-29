@@ -247,8 +247,8 @@ only for local/trusted-network demos."
     // projection reads this immutable enum from ToolRuntime.
     let model_surface = model_surface::resolve_model_surface(connector_context.as_ref())
         .map_err(std::io::Error::other)?;
-    let runtime_info = Arc::new(tool_runtime::RuntimeInfo::from_env_with_quic_config(
-        &quic_cfg,
+    let runtime_info = Arc::new(tool_runtime::RuntimeInfo::from_config_with_quic_config(
+        &config, &quic_cfg,
     ));
     let runtime_state_dir = config.runtime_state_dir();
     let mut tool_runtime_builder =

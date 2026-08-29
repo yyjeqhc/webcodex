@@ -346,6 +346,16 @@ pub(crate) enum ToolRequestTraceMode {
     Full,
 }
 
+impl ToolRequestTraceMode {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Metadata => "metadata",
+            Self::Full => "full",
+        }
+    }
+}
+
 pub(crate) fn tool_request_trace_mode() -> ToolRequestTraceMode {
     let Ok(value) = std::env::var("WEBCODEX_TOOL_REQUEST_TRACE") else {
         return ToolRequestTraceMode::Off;

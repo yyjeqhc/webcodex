@@ -2230,10 +2230,12 @@ mod tests {
             project.canonicalize().unwrap()
         );
         assert!(records[0].0.starts_with(&paths.projects_dir));
-        assert!(value["registered_projects"][0]["record"]
-            .as_str()
-            .unwrap()
-            .starts_with(paths.projects_dir.to_str().unwrap()));
+        let reported_record =
+            PathBuf::from(value["registered_projects"][0]["record"].as_str().unwrap());
+        assert_eq!(
+            reported_record.canonicalize().unwrap(),
+            records[0].0.canonicalize().unwrap()
+        );
         let agent_config = std::fs::read_to_string(&paths.agent_config).unwrap();
         let parsed: toml::Value = toml::from_str(&agent_config).unwrap();
         assert_eq!(

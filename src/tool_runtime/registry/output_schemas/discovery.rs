@@ -41,7 +41,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                                 "shared_key_enabled": {"type": "boolean", "description": "Whether direct shared-key quick-start authentication is effective for the running Server; false on the project-bound canonical Connector surface."},
                                 "anonymous_enabled": {"type": "boolean", "description": "Whether explicit open-anonymous access is effective for the running Server; false on the project-bound canonical Connector surface."},
                                 "oauth2_enabled": {"type": "boolean", "description": "Whether OAuth2 support was enabled in the running Server configuration."},
-                                "oauth2_shared_key_bridge_enabled": {"type": "boolean", "description": "Whether the OAuth2 shared-key bridge is effective; false whenever OAuth2 itself is disabled or the project-bound canonical Connector surface excludes shared-key auth."}
+                                "oauth2_shared_key_bridge_enabled": {"type": "boolean", "description": "Whether the OAuth2 shared-key bridge is enabled in the running OAuth2 configuration; false whenever OAuth2 itself is disabled. This public OAuth flow is distinct from direct Bearer shared-key authentication."}
                             },
                             "required": ["shared_key_enabled", "anonymous_enabled", "oauth2_enabled", "oauth2_shared_key_bridge_enabled"]
                         },

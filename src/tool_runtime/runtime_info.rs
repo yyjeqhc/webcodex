@@ -85,8 +85,7 @@ impl ToolRuntime {
                     && self.runtime_info.auth_enabled
                     && crate::auth::allow_anonymous_enabled(),
                 "oauth2_enabled": self.runtime_info.oauth2_enabled,
-                "oauth2_shared_key_bridge_enabled": lightweight_auth_available
-                    && self.runtime_info.oauth2_shared_key_bridge_enabled,
+                "oauth2_shared_key_bridge_enabled": self.runtime_info.oauth2_shared_key_bridge_enabled,
             },
             "tool_request_trace_mode": crate::config::tool_request_trace_mode().as_str(),
         })

@@ -2261,7 +2261,7 @@ async fn runtime_status_reports_canonical_connector_surface_when_configured() {
     );
     assert_eq!(
         full.output["effective_config"]["auth"]["oauth2_shared_key_bridge_enabled"],
-        false
+        true
     );
     let compact = runtime
         .dispatch(ToolCall::from_tool_name("runtime_status", json!({"compact": true})).unwrap())
@@ -2273,6 +2273,10 @@ async fn runtime_status_reports_canonical_connector_surface_when_configured() {
     assert_eq!(
         compact.output["mcp_compact_schemas"],
         crate::config::mcp_compact_schemas_enabled()
+    );
+    assert_eq!(
+        compact.output["effective_config"]["auth"]["oauth2_shared_key_bridge_enabled"],
+        true
     );
 }
 

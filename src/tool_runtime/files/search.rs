@@ -597,6 +597,20 @@ fn search_output_line_budget(options: &SearchOptions) -> usize {
         .saturating_add(1)
 }
 
+fn escape_search_literal_for_regex(pattern: &str) -> String {
+    let mut escaped = String::with_capacity(pattern.len());
+    for ch in pattern.chars() {
+        if matches!(
+            ch,
+            '\\' | '.' | '^' | '$' | '|' | '?' | '*' | '+' | '(' | ')' | '[' | ']' | '{' | '}'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
 fn ripgrep_search_command(options: &SearchOptions) -> String {
     let globs = search_project_text_rg_glob_args(options);
     let pattern = shell_escape_simple(&options.pattern);
@@ -1612,9 +1626,17 @@ impl ToolRuntime {
                     )
                 }
             };
+            // External search providers historically interpret `pattern` as regex and
+            // older Runners ignore unknown request fields. Encode literal semantics into
+            // that established pattern contract so mixed Server/Runner versions cannot
+            // silently reinterpret an exact-text request as a regex. The native command
+            // above still uses --fixed-strings/-F when the external provider falls back.
+            let external_pattern = match options.pattern_mode {
+                SearchPatternMode::Regex => options.pattern.clone(),
+                SearchPatternMode::Literal => escape_search_literal_for_regex(&options.pattern),
+            };
             let payload = json!({
-                "pattern": options.pattern,
-                "pattern_mode": options.pattern_mode.as_str(),
+                "pattern": external_pattern,
                 "path": options.path,
                 "limit": options.limit,
                 "context_before": options.context_before,

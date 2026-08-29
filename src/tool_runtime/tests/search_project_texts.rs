@@ -485,7 +485,8 @@ async fn search_project_text_literal_mode_keeps_effective_metadata() {
     let request = wait_for_patch_agent_request(&runtime, client_id).await;
     let payload: Value = serde_json::from_str(request.stdin.as_deref().expect("search payload"))
         .expect("search payload json");
-    assert_eq!(payload["pattern_mode"], "literal");
+    assert!(payload.get("pattern_mode").is_none());
+    assert_eq!(payload["pattern"], r"RuntimeInfo \{");
     complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
 
     let result = task.await.unwrap();
@@ -526,7 +527,8 @@ async fn search_project_texts_literal_query_preserves_mode_to_runner_and_output(
     let request = wait_for_patch_agent_request(&runtime, client_id).await;
     let payload: Value = serde_json::from_str(request.stdin.as_deref().expect("search payload"))
         .expect("search payload json");
-    assert_eq!(payload["pattern_mode"], "literal");
+    assert!(payload.get("pattern_mode").is_none());
+    assert_eq!(payload["pattern"], r"RuntimeInfo \{");
     complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
 
     let result = task.await.unwrap();

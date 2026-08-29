@@ -166,24 +166,6 @@ fn search_request() -> Value {
     })
 }
 
-#[test]
-fn search_argument_mapping_preserves_regex_and_escapes_literal_patterns() {
-    let fixture = Fixture::new("normal");
-    let context = fixture.context(".");
-
-    let regex = search_request();
-    let regex_args = build_arguments(ProviderCapability::SearchProjectText, &regex, &context)
-        .expect("regex search arguments");
-    assert_eq!(regex_args["pattern"], "needle");
-
-    let mut literal = search_request();
-    literal["pattern"] = json!("RuntimeInfo { value.* }");
-    literal["pattern_mode"] = json!("literal");
-    let literal_args = build_arguments(ProviderCapability::SearchProjectText, &literal, &context)
-        .expect("literal search arguments");
-    assert_eq!(literal_args["pattern"], r"RuntimeInfo \{ value\.\* \}");
-}
-
 fn call_search(fixture: &Fixture) -> Result<Value, ProviderError> {
     fixture.provider.call(
         ProviderCapability::SearchProjectText,

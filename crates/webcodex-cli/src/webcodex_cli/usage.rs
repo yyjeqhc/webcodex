@@ -11,6 +11,7 @@ Project (local/manual):\n\
   setup                         Configure the current Git project without starting it\n\
   run                           Run the project-bound Server and Runner locally\n\
   disconnect                    Disconnect a local project from its hosted Server\n\
+  project register              Register an existing workspace in a Runner projects registry\n\
   task                          Review tasks and make host-local decisions\n\n\
 Account / identity (advanced):\n\
   login                         Log this device into a server (one-time pairing code)\n\
@@ -83,6 +84,17 @@ unregistered through the Server first; an offline hosted Runner is updated local
 Options:\n\
   --project PATH             Local project directory [default: .]\n\
   --profile NAME             Select an exact hosted profile when more than one matches\n\
+  -h, --help                 Print help and exit\n"
+}
+
+pub(crate) fn project_register_usage() -> &'static str {
+    "Usage: webcodex project register --config PATH <PROJECT> [OPTIONS]\n\n\
+Register one existing workspace in the projects_dir referenced by a Runner agent.toml.\n\
+projects_dir is the Runner project registry directory, not the workspace root.\n\
+allowed_roots is the filesystem authority boundary for registration; it does not register a workspace.\n\n\
+Options:\n\
+  --config PATH              Runner agent.toml containing projects_dir and policy\n\
+  --json                     Print machine-readable output\n\
   -h, --help                 Print help and exit\n"
 }
 
@@ -423,7 +435,8 @@ pub(crate) fn login_usage() -> &'static str {
      \x20\x20--proxy http://HOST:PORT Explicit proxy override for this CLI request\n\
      \x20\x20--no-system-proxy   Ignore proxy environment and connect directly\n\
      \x20\x20--device NAME        Name for this device [default: hostname + local suffix]\n\
-     \x20\x20--allowed-root PATH  Repeatable project root the agent may touch\n\
+     \x20\x20--allowed-root PATH  Repeatable registration authority root; does not register a workspace\n\
+     \x20\x20--project PATH       Existing workspace to register with this login\n\
      \x20\x20--transport NAME     websocket|polling|quic|auto [default: websocket]\n\
      \x20\x20--dir PATH           Where connections are stored [default: root /etc/webcodex;\n\
      \x20\x20                       non-root ~/.config/webcodex]\n\

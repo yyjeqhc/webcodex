@@ -470,9 +470,103 @@ pub(crate) fn system_user_is_root(user: &str) -> bool {
     status == 0 && !result.is_null() && unsafe { record.assume_init().pw_uid == 0 }
 }
 
+#[cfg(unix)]
+pub(crate) fn system_user_exists(user: &str) -> bool {
+    use std::ffi::CString;
+
+    let initial_size = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    let size = if initial_size > 0 {
+        usize::try_from(initial_size)
+            .unwrap_or(16 * 1024)
+            .clamp(1024, 1024 * 1024)
+    } else {
+        16 * 1024
+    };
+    let mut buffer = vec![0_u8; size];
+    let mut record = std::mem::MaybeUninit::<libc::passwd>::uninit();
+    let mut result = std::ptr::null_mut();
+    if let Ok(uid) = user.parse::<libc::uid_t>() {
+        return unsafe {
+            libc::getpwuid_r(
+                uid,
+                record.as_mut_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
+            ) == 0
+                && !result.is_null()
+        };
+    }
+    let Ok(user) = CString::new(user) else {
+        return false;
+    };
+    unsafe {
+        libc::getpwnam_r(
+            user.as_ptr(),
+            record.as_mut_ptr(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut result,
+        ) == 0
+            && !result.is_null()
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn system_group_exists(group: &str) -> bool {
+    use std::ffi::CString;
+
+    let initial_size = unsafe { libc::sysconf(libc::_SC_GETGR_R_SIZE_MAX) };
+    let size = if initial_size > 0 {
+        usize::try_from(initial_size)
+            .unwrap_or(16 * 1024)
+            .clamp(1024, 1024 * 1024)
+    } else {
+        16 * 1024
+    };
+    let mut buffer = vec![0_u8; size];
+    let mut record = std::mem::MaybeUninit::<libc::group>::uninit();
+    let mut result = std::ptr::null_mut();
+    if let Ok(gid) = group.parse::<libc::gid_t>() {
+        return unsafe {
+            libc::getgrgid_r(
+                gid,
+                record.as_mut_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
+            ) == 0
+                && !result.is_null()
+        };
+    }
+    let Ok(group) = CString::new(group) else {
+        return false;
+    };
+    unsafe {
+        libc::getgrnam_r(
+            group.as_ptr(),
+            record.as_mut_ptr(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut result,
+        ) == 0
+            && !result.is_null()
+    }
+}
+
 #[cfg(not(unix))]
 pub(crate) fn system_user_home(_user: &str) -> Option<PathBuf> {
     None
+}
+
+#[cfg(not(unix))]
+pub(crate) fn system_user_exists(_user: &str) -> bool {
+    true
+}
+
+#[cfg(not(unix))]
+pub(crate) fn system_group_exists(_group: &str) -> bool {
+    true
 }
 
 #[cfg(not(unix))]

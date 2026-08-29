@@ -116,21 +116,200 @@ fn explicitly_allowed_root_runner_is_visibly_marked() {
 #[cfg(unix)]
 #[test]
 fn install_service_refuses_overwrite_unless_requested() {
+    // Preflight is intentionally satisfied here so this remains an overwrite test.
+    use std::os::unix::fs::PermissionsExt;
+
     let tmp = tempfile::tempdir().unwrap();
     let service_file = tmp.path().join("webcodex.service");
     let env_file = server_env(&tmp);
+    let binary = tmp.path().join("webcodex-server");
+    std::fs::write(&binary, "test binary").unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::write(&service_file, "old").unwrap();
     let opts = parse_server_install_service(&args(&[
         "--bin",
-        "/usr/local/bin/webcodex-server",
+        binary.to_str().unwrap(),
         "--env-file",
         env_file.to_str().unwrap(),
+        "--working-directory",
+        tmp.path().to_str().unwrap(),
         "--service-file",
         service_file.to_str().unwrap(),
     ]))
     .unwrap();
     let err = run_server_install_service(opts).unwrap_err();
     assert!(err.contains("already exists"));
+}
+
+#[cfg(unix)]
+#[test]
+fn server_install_working_directory_follows_env_data_unless_explicit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = tmp.path().join("server.env");
+    let data_dir = tmp.path().join("custom-data");
+    std::fs::write(
+        &env_file,
+        format!(
+            "WEBCODEX_ADDR=127.0.0.1:9090\nWEBCODEX_DATA={}\n",
+            data_dir.display()
+        ),
+    )
+    .unwrap();
+    let from_env = parse_server_install_service(&args(&[
+        "--env-file",
+        env_file.to_str().unwrap(),
+        "--bin",
+        "/usr/local/bin/webcodex-server",
+        "--dry-run",
+    ]))
+    .unwrap();
+    assert_eq!(from_env.working_directory, data_dir);
+
+    let explicit = tmp.path().join("explicit-data");
+    let overridden = parse_server_install_service(&args(&[
+        "--env-file",
+        env_file.to_str().unwrap(),
+        "--bin",
+        "/usr/local/bin/webcodex-server",
+        "--working-directory",
+        explicit.to_str().unwrap(),
+        "--dry-run",
+    ]))
+    .unwrap();
+    assert_eq!(overridden.working_directory, explicit);
+}
+
+#[cfg(unix)]
+#[test]
+fn server_install_preflight_rejects_missing_workdir_before_service_mutation() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = tmp.path().join("server.env");
+    let missing_workdir = tmp.path().join("missing-data");
+    std::fs::write(
+        &env_file,
+        format!(
+            "WEBCODEX_ADDR=127.0.0.1:9090\nWEBCODEX_DATA={}\n",
+            missing_workdir.display()
+        ),
+    )
+    .unwrap();
+    let binary = tmp.path().join("webcodex-server");
+    std::fs::write(&binary, "test binary").unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let service_file = tmp.path().join("webcodex.service");
+    let opts = parse_server_install_service(&args(&[
+        "--env-file",
+        env_file.to_str().unwrap(),
+        "--bin",
+        binary.to_str().unwrap(),
+        "--service-file",
+        service_file.to_str().unwrap(),
+    ]))
+    .unwrap();
+    let error = run_server_install_service(opts).unwrap_err();
+    assert!(error.contains("WorkingDirectory"), "{error}");
+    assert!(error.contains("does not exist"), "{error}");
+    assert!(
+        !service_file.exists(),
+        "preflight must precede unit mutation"
+    );
+    assert!(!service_file.with_extension("socket").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn server_install_preflight_rejects_missing_and_non_executable_binary() {
+    // Binary checks are local and must fail before systemd is contacted.
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = server_env(&tmp);
+    let service_file = tmp.path().join("webcodex.service");
+    let missing = tmp.path().join("missing-server");
+    let missing_opts = parse_server_install_service(&args(&[
+        "--env-file",
+        env_file.to_str().unwrap(),
+        "--bin",
+        missing.to_str().unwrap(),
+        "--working-directory",
+        tmp.path().to_str().unwrap(),
+        "--service-file",
+        service_file.to_str().unwrap(),
+    ]))
+    .unwrap();
+    let error = run_server_install_service(missing_opts).unwrap_err();
+    assert!(error.contains("binary"), "{error}");
+    assert!(error.contains("does not exist"), "{error}");
+    assert!(!service_file.exists());
+
+    let binary = tmp.path().join("not-executable-server");
+    std::fs::write(&binary, "test binary").unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let non_exec_opts = parse_server_install_service(&args(&[
+        "--env-file",
+        env_file.to_str().unwrap(),
+        "--bin",
+        binary.to_str().unwrap(),
+        "--working-directory",
+        tmp.path().to_str().unwrap(),
+        "--service-file",
+        service_file.to_str().unwrap(),
+    ]))
+    .unwrap();
+    let error = run_server_install_service(non_exec_opts).unwrap_err();
+    assert!(error.contains("not executable"), "{error}");
+    assert!(!service_file.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn server_install_preflight_rejects_unknown_user_and_group() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = server_env(&tmp);
+    let binary = tmp.path().join("webcodex-server");
+    std::fs::write(&binary, "test binary").unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let service_file = tmp.path().join("webcodex.service");
+
+    let unknown_user = "webcodex-o1-user-that-must-not-exist";
+    let user_opts = parse_server_install_service(&args(&[
+        "--env-file",
+        env_file.to_str().unwrap(),
+        "--bin",
+        binary.to_str().unwrap(),
+        "--working-directory",
+        tmp.path().to_str().unwrap(),
+        "--service-file",
+        service_file.to_str().unwrap(),
+        "--user",
+        unknown_user,
+    ]))
+    .unwrap();
+    let error = run_server_install_service(user_opts).unwrap_err();
+    assert!(error.contains(&format!("User={unknown_user}")), "{error}");
+    assert!(!service_file.exists());
+
+    let unknown_group = "webcodex-o1-group-that-must-not-exist";
+    let group_opts = parse_server_install_service(&args(&[
+        "--env-file",
+        env_file.to_str().unwrap(),
+        "--bin",
+        binary.to_str().unwrap(),
+        "--working-directory",
+        tmp.path().to_str().unwrap(),
+        "--service-file",
+        service_file.to_str().unwrap(),
+        "--group",
+        unknown_group,
+    ]))
+    .unwrap();
+    let error = run_server_install_service(group_opts).unwrap_err();
+    assert!(error.contains(&format!("Group={unknown_group}")), "{error}");
+    assert!(!service_file.exists());
 }
 
 /// Unix-only: systemd service unit semantics with Unix absolute-path

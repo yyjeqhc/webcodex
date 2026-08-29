@@ -79,6 +79,13 @@ fn cli_version_output_includes_build_metadata() {
 #[test]
 fn project_doctor_and_hosted_connect_dispatch() {
     assert!(matches!(
+        cli_action(["project", "register", "--config", "/tmp/agent.toml", "/tmp/repo"]),
+        CliAction::ProjectRegister(opts)
+            if opts.config == std::path::PathBuf::from("/tmp/agent.toml")
+                && opts.project == std::path::PathBuf::from("/tmp/repo")
+                && !opts.json
+    ));
+    assert!(matches!(
         cli_action(["doctor"]),
         CliAction::Project(args) if args == ["doctor"]
     ));
@@ -121,6 +128,32 @@ fn webcodex_cli_help_mentions_management_commands() {
         }
         other => panic!("expected help exit, got {other:?}"),
     }
+}
+
+#[test]
+fn project_register_and_login_project_help_explain_registry_vs_authority() {
+    let project_help = cli_exit(["project", "register", "--help"]).unwrap();
+    assert!(project_help.contains("projects_dir is the Runner project registry directory"));
+    assert!(project_help.contains("allowed_roots is the filesystem authority boundary"));
+    let login_help = cli_exit(["login", "--help"]).unwrap();
+    assert!(login_help.contains("--project PATH"));
+    assert!(login_help.contains("does not register a workspace"));
+
+    assert!(matches!(
+        cli_action([
+            "login",
+            "https://example.test",
+            "--code",
+            "wc_pair_example",
+            "--allowed-root",
+            "/tmp",
+            "--project",
+            "/tmp/repo",
+        ]),
+        CliAction::Login(opts)
+            if opts.allowed_roots == vec![std::path::PathBuf::from("/tmp")]
+                && opts.project == Some(std::path::PathBuf::from("/tmp/repo"))
+    ));
 }
 
 #[test]

@@ -89,10 +89,13 @@ webcodex disconnect
 
 ```bash
 webcodex login https://webcodex.example --code <wc_pair_...> \
-  --allowed-root "$HOME/git"
+  --allowed-root "$HOME/git" \
+  --project "$HOME/git/my-repo"
 webcodex runner install --scope user \
   --config <login-reported-agent-config>
 ```
+
+`--allowed-root` 只定义后续 Project 注册可使用的文件系统 authority boundary，并不会注册工作区；`agent.toml` 中的 `projects_dir` 是 Runner 的 Project registry 目录，也不是源码工作区。如果有意先只做 login、不传 `--project`，应在使用 project-bound tools 前执行 `webcodex project register --config <login-reported-agent-config> /path/to/repo` 注册实际工作区。
 
 只有 MCP client 要求 OAuth 且精确 callback URL 已知时，才使用 `share --auth oauth` 或
 `connect --auth oauth`。不要把 OAuth client secret、shared key、Project Credential、PAT、

@@ -103,10 +103,13 @@ ordinary user that will run project commands:
 
 ```bash
 webcodex login https://webcodex.example --code <wc_pair_...> \
-  --allowed-root "$HOME/git"
+  --allowed-root "$HOME/git" \
+  --project "$HOME/git/my-repo"
 webcodex runner install --scope user \
   --config <login-reported-agent-config>
 ```
+
+`--allowed-root` is only the filesystem authority boundary for future project registration; it does not register a workspace. `projects_dir` in `agent.toml` is the Runner's project-registry directory, not a source checkout. If login is intentionally done without `--project`, register the actual workspace later with `webcodex project register --config <login-reported-agent-config> /path/to/repo` before expecting project-bound tools.
 
 Use `share --auth oauth` or `connect --auth oauth` only when the client requires
 OAuth and the exact callback URL is known. Do not collapse OAuth client secrets,

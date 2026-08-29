@@ -42,20 +42,21 @@ use webcodex_cli::{
     default_client_output_dir_for_profile, default_device_name, default_server_paths,
     disconnect_usage, discover_internal_binary, is_effective_root, login_usage, logout_usage,
     ops_agents_usage, ops_projects_usage, ops_runner_usage, ops_smoke_preflight_usage,
-    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, render_token_generate,
-    run_agent_token_create_local, run_client_enroll, run_connect, run_disconnect,
-    run_hosted_log_writer, run_internal_binary, run_login, run_logout, run_ops_command,
-    run_pairing_create, run_runner_install_service, run_runner_service, run_runner_status,
-    run_server_init, run_server_install_service, run_server_service, run_server_status,
-    run_setup_single_user, run_status, run_token_create_local, runner_init_usage,
-    runner_install_service_usage, runner_service_file_for_scope, runner_status_usage, runner_usage,
-    server_init_usage, server_install_service_usage, server_status_usage, server_usage,
-    service_unit_name, status_usage, system_user_home, system_user_is_root, usage,
-    validate_client_profile, validate_service_file_scope, write_connect_result, write_secret_file,
-    write_text_file, ConnectAuth, ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions,
-    OpsCommand, OpsCommonOptions, OpsRunnerOptions, OpsSmokePreflightOptions, ServerStatusOptions,
-    ServiceControl, StatusOptions, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT, SERVER_SERVICE_FILE,
-    SERVER_SERVICE_UNIT,
+    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, project_register_usage,
+    read_env_file_value, render_token_generate, run_agent_token_create_local, run_client_enroll,
+    run_connect, run_disconnect, run_hosted_log_writer, run_internal_binary, run_login, run_logout,
+    run_ops_command, run_pairing_create, run_project_register, run_runner_install_service,
+    run_runner_service, run_runner_status, run_server_init, run_server_install_service,
+    run_server_service, run_server_status, run_setup_single_user, run_status,
+    run_token_create_local, runner_init_usage, runner_install_service_usage,
+    runner_service_file_for_scope, runner_status_usage, runner_usage, server_init_usage,
+    server_install_service_usage, server_status_usage, server_usage, service_unit_name,
+    status_usage, system_user_home, system_user_is_root, usage, validate_client_profile,
+    validate_service_file_scope, write_connect_result, write_secret_file, write_text_file,
+    ConnectAuth, ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand,
+    OpsCommonOptions, OpsRunnerOptions, OpsSmokePreflightOptions, ProjectRegisterOptions,
+    ServerStatusOptions, ServiceControl, StatusOptions, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT,
+    SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
 };
 const SETUP_GPT_SCOPES: &[&str] = &[
     "runtime:read",
@@ -105,6 +106,7 @@ fn default_runner_service_scope(effective_root: bool) -> ServiceScope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CliAction {
     Project(Vec<String>),
+    ProjectRegister(ProjectRegisterOptions),
     Connect(ConnectOptions),
     Disconnect(DisconnectOptions),
     HostedLogWriter(PathBuf),
@@ -357,6 +359,7 @@ where
         }
         "connect" => parse_connect(&args[1..]),
         "disconnect" => parse_disconnect(&args[1..]),
+        "project" => parse_project_subcommand(&args[1..]),
         "__hosted-log-writer" => {
             if args.len() == 2 {
                 CliAction::HostedLogWriter(PathBuf::from(&args[1]))
@@ -649,6 +652,75 @@ fn parse_disconnect(args: &[String]) -> CliAction {
     })
 }
 
+fn parse_project_subcommand(args: &[String]) -> CliAction {
+    match args.first().map(String::as_str) {
+        Some("register") => {
+            if args[1..]
+                .iter()
+                .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+            {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: project_register_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            let mut config = None;
+            let mut project = None;
+            let mut json = false;
+            let mut index = 1;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--config" => {
+                        index += 1;
+                        match args.get(index) {
+                            Some(value) => config = Some(PathBuf::from(value)),
+                            None => {
+                                return cli_parse_error("--config requires a value".to_string())
+                            }
+                        }
+                    }
+                    "--json" => json = true,
+                    other if other.starts_with('-') => {
+                        return cli_parse_error(format!("unknown project register option: {other}"))
+                    }
+                    value => {
+                        if project.is_some() {
+                            return cli_parse_error(format!(
+                                "unexpected project register argument: {value}"
+                            ));
+                        }
+                        project = Some(PathBuf::from(value));
+                    }
+                }
+                index += 1;
+            }
+            let Some(config) = config else {
+                return cli_parse_error("project register requires --config PATH".to_string());
+            };
+            let Some(project) = project else {
+                return cli_parse_error(
+                    "project register requires an existing workspace path".to_string(),
+                );
+            };
+            CliAction::ProjectRegister(ProjectRegisterOptions {
+                config,
+                project,
+                json,
+            })
+        }
+        Some("--help" | "-h") => CliAction::Exit {
+            code: 0,
+            stdout: project_register_usage().to_string(),
+            stderr: String::new(),
+        },
+        Some(other) => cli_parse_error(format!("unknown project subcommand: {other}")),
+        None => cli_parse_error(
+            "missing project subcommand; try `webcodex project register --help`".to_string(),
+        ),
+    }
+}
+
 fn parse_auth_subcommand(args: &[String]) -> CliAction {
     match args.first().map(String::as_str) {
         Some("status") => parse_status(&args[1..]),
@@ -689,6 +761,7 @@ fn parse_login(args: &[String]) -> CliAction {
     let mut base_dir: Option<PathBuf> = None;
     let mut transport = TRANSPORT_WEBSOCKET.to_string();
     let mut allowed_roots: Vec<PathBuf> = Vec::new();
+    let mut project: Option<PathBuf> = None;
     let mut overwrite = false;
     let mut json = false;
     let mut print_mcp_config = false;
@@ -727,6 +800,10 @@ fn parse_login(args: &[String]) -> CliAction {
             "--allowed-root" => match take(&mut index) {
                 Some(value) => allowed_roots.push(PathBuf::from(value)),
                 None => return cli_parse_error("--allowed-root requires a value".to_string()),
+            },
+            "--project" => match take(&mut index) {
+                Some(value) => project = Some(PathBuf::from(value)),
+                None => return cli_parse_error("--project requires a value".to_string()),
             },
             "--overwrite" => overwrite = true,
             "--json" => json = true,
@@ -774,6 +851,7 @@ fn parse_login(args: &[String]) -> CliAction {
         base_dir,
         transport,
         allowed_roots,
+        project,
         overwrite,
         json,
         print_mcp_config,
@@ -2025,12 +2103,13 @@ fn parse_runner_status_with_identity(
 }
 
 fn parse_server_install_service(args: &[String]) -> Result<ServerInstallServiceOptions, String> {
-    let mut env_file = PathBuf::from("/etc/webcodex/webcodex.env");
+    let defaults = default_server_paths()?;
+    let mut env_file = defaults.env_file;
     let mut bin: Option<PathBuf> = None;
     let mut service_file = PathBuf::from("/etc/systemd/system/webcodex.service");
     let mut user = None;
     let mut group = None;
-    let mut working_directory = PathBuf::from("/var/lib/webcodex");
+    let mut working_directory: Option<PathBuf> = None;
     let mut overwrite = false;
     let mut dry_run = false;
     let mut output_stdout = false;
@@ -2044,7 +2123,9 @@ fn parse_server_install_service(args: &[String]) -> Result<ServerInstallServiceO
             "--service-file" => service_file = PathBuf::from(next_value(&mut iter, arg)?),
             "--user" => user = Some(next_value(&mut iter, arg)?),
             "--group" => group = Some(next_value(&mut iter, arg)?),
-            "--working-directory" => working_directory = PathBuf::from(next_value(&mut iter, arg)?),
+            "--working-directory" => {
+                working_directory = Some(PathBuf::from(next_value(&mut iter, arg)?))
+            }
             "--overwrite" => overwrite = true,
             "--dry-run" => dry_run = true,
             "--no-start" => no_start = true,
@@ -2063,6 +2144,20 @@ fn parse_server_install_service(args: &[String]) -> Result<ServerInstallServiceO
         Some(path) => path,
         None => return Err("--bin is required because webcodex-server was not found beside webcodex or in an absolute PATH entry".to_string()),
     };
+    let working_directory = match working_directory {
+        Some(path) => path,
+        None if env_file.exists() => match read_env_file_value(&env_file, "WEBCODEX_DATA")? {
+            Some(value) if !value.trim().is_empty() => PathBuf::from(value.trim()),
+            Some(_) => {
+                return Err(format!(
+                    "{} defines an empty WEBCODEX_DATA; pass --working-directory explicitly",
+                    env_file.display()
+                ))
+            }
+            None => defaults.data_dir,
+        },
+        None => defaults.data_dir,
+    };
     if env_file.as_os_str().is_empty() {
         return Err("--env-file cannot be empty".to_string());
     }
@@ -2074,6 +2169,9 @@ fn parse_server_install_service(args: &[String]) -> Result<ServerInstallServiceO
     }
     if working_directory.as_os_str().is_empty() {
         return Err("--working-directory cannot be empty".to_string());
+    }
+    if !working_directory.is_absolute() {
+        return Err("--working-directory must be an absolute path".to_string());
     }
     Ok(ServerInstallServiceOptions {
         env_file,
@@ -2093,6 +2191,7 @@ fn parse_server_install_service(args: &[String]) -> Result<ServerInstallServiceO
 fn parse_server_status(args: &[String]) -> Result<ServerStatusOptions, String> {
     let mut opts = ServerStatusOptions {
         url: "http://127.0.0.1:8080".to_string(),
+        url_explicit: false,
         server_http: ServerHttpOptions::default(),
         env_file: Some(default_server_paths()?.env_file),
         env_file_explicit: false,
@@ -2103,7 +2202,10 @@ fn parse_server_status(args: &[String]) -> Result<ServerStatusOptions, String> {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--url" => opts.url = next_value(&mut iter, arg)?,
+            "--url" => {
+                opts.url = next_value(&mut iter, arg)?;
+                opts.url_explicit = true;
+            }
             "--proxy" => opts.server_http.proxy = Some(next_value(&mut iter, arg)?),
             "--no-system-proxy" => opts.server_http.no_system_proxy = true,
             "--env-file" => {
@@ -2501,6 +2603,19 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             std::process::exit(output.code);
         }
+        CliAction::ProjectRegister(opts) => match run_project_register(opts) {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
         CliAction::Connect(opts) => match run_connect(opts).await {
             Ok(result) => {
                 let stdout = std::io::stdout();

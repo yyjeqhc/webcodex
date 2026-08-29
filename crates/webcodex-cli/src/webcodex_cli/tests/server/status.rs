@@ -106,6 +106,53 @@ fn server_status_accepts_custom_service_file() {
     );
 }
 
+#[test]
+fn server_status_url_defaults_from_env_and_maps_wildcards_to_loopback() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = tmp.path().join("webcodex.env");
+    for (listen, expected) in [
+        ("127.0.0.1:9090", "http://127.0.0.1:9090"),
+        ("0.0.0.0:9091", "http://127.0.0.1:9091"),
+        ("[::1]:9092", "http://[::1]:9092"),
+        ("[::]:9093", "http://[::1]:9093"),
+    ] {
+        std::fs::write(
+            &env_file,
+            format!("WEBCODEX_ADDR={listen}\nWEBCODEX_TOKEN=hidden\n"),
+        )
+        .unwrap();
+        let opts = parse_server_status(&args(&["--env-file", env_file.to_str().unwrap()])).unwrap();
+        assert!(!opts.url_explicit);
+        assert_eq!(
+            crate::webcodex_cli::server::derive_server_status_url(&opts).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn server_status_explicit_url_wins_over_env_address() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = tmp.path().join("webcodex.env");
+    std::fs::write(
+        &env_file,
+        "WEBCODEX_ADDR=not-a-socket\nWEBCODEX_TOKEN=hidden\n",
+    )
+    .unwrap();
+    let opts = parse_server_status(&args(&[
+        "--env-file",
+        env_file.to_str().unwrap(),
+        "--url",
+        "http://127.0.0.1:9191",
+    ]))
+    .unwrap();
+    assert!(opts.url_explicit);
+    assert_eq!(
+        crate::webcodex_cli::server::derive_server_status_url(&opts).unwrap(),
+        "http://127.0.0.1:9191"
+    );
+}
+
 #[tokio::test]
 async fn server_status_parses_env_token_posts_and_does_not_print_token() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

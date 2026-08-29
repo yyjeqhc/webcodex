@@ -10,16 +10,18 @@ use crate::{
 
 use super::{
     compare_build_commits, control_server_unit_pair, encode_exec_program, encode_unit_path_value,
-    fetch_runtime_status, generate_bootstrap_token, install_server_unit_pair,
+    fetch_runtime_status, generate_bootstrap_token, install_server_unit_pair, is_effective_root,
     local_cli_build_metadata, query_systemd_service_status, query_systemd_socket_status,
     read_env_file_value, render_build_metadata_block, render_server_env, run_logs,
-    runtime_build_metadata, server_status_revision_check, service_unit_name, token_prefix,
-    uninstall_server_unit_pair, validate_systemd_identity, SERVER_SERVICE_UNIT, SERVER_SOCKET_UNIT,
+    runtime_build_metadata, server_status_revision_check, service_unit_name, shell_command,
+    system_group_exists, system_user_exists, token_prefix, uninstall_server_unit_pair,
+    validate_systemd_identity, SERVER_SERVICE_UNIT, SERVER_SOCKET_UNIT,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ServerStatusOptions {
     pub(crate) url: String,
+    pub(crate) url_explicit: bool,
     pub(crate) server_http: ServerHttpOptions,
     pub(crate) env_file: Option<PathBuf>,
     pub(crate) env_file_explicit: bool,
@@ -35,6 +37,18 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
             opts.env_file.display()
         ));
     }
+    std::fs::create_dir_all(&opts.data_dir).map_err(|error| {
+        format!(
+            "failed to create Server data directory {}: {error}",
+            opts.data_dir.display()
+        )
+    })?;
+    if !opts.data_dir.is_dir() {
+        return Err(format!(
+            "Server data path {} is not a directory",
+            opts.data_dir.display()
+        ));
+    }
     let existing_token = if opts.env_file.exists() {
         read_env_file_value(&opts.env_file, "WEBCODEX_TOKEN")?
             .filter(|token| !token.trim().is_empty())
@@ -45,20 +59,39 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
     let token = existing_token.unwrap_or_else(generate_bootstrap_token);
     let env_content = render_server_env(&opts, &token);
     super::system::write_server_secret_text_file(&opts.env_file, &env_content, opts.overwrite)?;
+    let foreground_command = shell_command(&[
+        "webcodex".to_string(),
+        "server".to_string(),
+        "run".to_string(),
+        "--env-file".to_string(),
+        opts.env_file.to_string_lossy().into_owned(),
+    ]);
+    let status_command = shell_command(&[
+        "webcodex".to_string(),
+        "server".to_string(),
+        "status".to_string(),
+        "--env-file".to_string(),
+        opts.env_file.to_string_lossy().into_owned(),
+    ]);
+    let install_command = (cfg!(target_os = "linux") && is_effective_root()).then(|| {
+        shell_command(&[
+            "webcodex".to_string(),
+            "server".to_string(),
+            "install".to_string(),
+            "--env-file".to_string(),
+            opts.env_file.to_string_lossy().into_owned(),
+            "--working-directory".to_string(),
+            opts.data_dir.to_string_lossy().into_owned(),
+        ])
+    });
     if opts.json {
-        let next_steps = if cfg!(windows) {
-            json!([
-                "webcodex server run --env-file <path shown in env_file>",
-                "webcodex server status",
-                "configure HTTPS/public URL separately if using GPT Actions"
-            ])
-        } else {
-            json!([
-                "webcodex server install",
-                "webcodex server status",
-                "configure HTTPS/public URL separately if using GPT Actions"
-            ])
-        };
+        let mut next_steps = Vec::new();
+        if let Some(command) = &install_command {
+            next_steps.push(command.clone());
+        }
+        next_steps.push(foreground_command.clone());
+        next_steps.push(status_command.clone());
+        next_steps.push("configure HTTPS/public URL separately if using GPT Actions".to_string());
         let summary = json!({
             "env_file": opts.env_file.to_string_lossy(),
             "listen": opts.listen,
@@ -85,15 +118,20 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
     ));
     out.push_str("  shared key:   enabled\n");
     out.push_str("\nNext steps:\n");
-    if cfg!(windows) {
-        out.push_str(
-            "  - Run in foreground: `webcodex server run --env-file <path shown above>`\n",
-        );
+    if let Some(command) = install_command {
+        out.push_str(&format!("  - Install and start: `{command}`\n"));
+        out.push_str(&format!(
+            "  - Or run in foreground: `{foreground_command}`\n"
+        ));
     } else {
-        out.push_str("  - Install and start: `webcodex server install`\n");
-        out.push_str("  - Or run in foreground: `webcodex server run`\n");
+        out.push_str(&format!("  - Run in foreground: `{foreground_command}`\n"));
+        if cfg!(target_os = "linux") {
+            out.push_str("  - System service installation is root-only; non-root onboarding uses the foreground Server flow.\n");
+        } else {
+            out.push_str("  - Managed systemd Server installation is Linux-only.\n");
+        }
     }
-    out.push_str("  - Check it: `webcodex server status`\n");
+    out.push_str(&format!("  - Check it: `{status_command}`\n"));
     out.push_str("\nNo full token was printed. No user or Agent tokens were created.\n");
     Ok(out)
 }
@@ -130,10 +168,83 @@ fn configured_socket_addr(env_file: &Path) -> Result<String, String> {
     Ok(addr.to_string())
 }
 
+fn preflight_server_install(opts: &ServerInstallServiceOptions) -> Result<(), String> {
+    let binary = std::fs::metadata(&opts.bin).map_err(|_| {
+        format!(
+            "cannot install WebCodex Server: binary {} does not exist",
+            opts.bin.display()
+        )
+    })?;
+    if !binary.is_file() {
+        return Err(format!(
+            "cannot install WebCodex Server: binary {} is not a regular file",
+            opts.bin.display()
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if binary.permissions().mode() & 0o111 == 0 {
+            return Err(format!(
+                "cannot install WebCodex Server: binary {} is not executable",
+                opts.bin.display()
+            ));
+        }
+    }
+    let working = std::fs::metadata(&opts.working_directory).map_err(|_| {
+        format!(
+            "cannot install WebCodex Server: WorkingDirectory {} does not exist\n\nCreate it or pass --working-directory <existing-directory>.",
+            opts.working_directory.display()
+        )
+    })?;
+    if !working.is_dir() {
+        return Err(format!(
+            "cannot install WebCodex Server: WorkingDirectory {} is not a directory",
+            opts.working_directory.display()
+        ));
+    }
+    let env = std::fs::metadata(&opts.env_file).map_err(|_| {
+        format!(
+            "cannot install WebCodex Server: env file {} does not exist",
+            opts.env_file.display()
+        )
+    })?;
+    if !env.is_file() {
+        return Err(format!(
+            "cannot install WebCodex Server: env file {} is not a regular file",
+            opts.env_file.display()
+        ));
+    }
+    std::fs::File::open(&opts.env_file).map_err(|error| {
+        format!(
+            "cannot install WebCodex Server: env file {} is not readable: {error}",
+            opts.env_file.display()
+        )
+    })?;
+    if let Some(user) = &opts.user {
+        if !system_user_exists(user) {
+            return Err(format!(
+                "cannot install WebCodex Server: User={user} does not name a local account"
+            ));
+        }
+    }
+    if let Some(group) = &opts.group {
+        if !system_group_exists(group) {
+            return Err(format!(
+                "cannot install WebCodex Server: Group={group} does not name a local group"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn run_server_install_service(
     opts: ServerInstallServiceOptions,
 ) -> Result<String, String> {
     let service_unit = service_unit_name(&opts.service_file, SERVER_SERVICE_UNIT);
+    if !opts.output_stdout && !opts.dry_run {
+        preflight_server_install(&opts)?;
+    }
     let socket_file = server_socket_file(&opts.service_file)?;
     let socket_unit = service_unit_name(&socket_file, SERVER_SOCKET_UNIT);
     let rendered_service = render_systemd_unit(&opts, &socket_unit)?;
@@ -146,6 +257,7 @@ pub(crate) fn run_server_install_service(
                 "socket_file": socket_file.to_string_lossy(),
                 "env_file": opts.env_file.to_string_lossy(),
                 "bin": opts.bin.to_string_lossy(),
+                "working_directory": opts.working_directory.to_string_lossy(),
                 "service_unit": service_unit,
                 "socket_unit": socket_unit,
                 "listen": listen,
@@ -184,6 +296,7 @@ pub(crate) fn run_server_install_service(
             "env_file": opts.env_file.to_string_lossy(),
             "bin": opts.bin.to_string_lossy(),
             "service_unit": service_unit,
+            "working_directory": opts.working_directory.to_string_lossy(),
             "socket_unit": socket_unit,
             "listen": listen,
             "enabled": true,
@@ -192,13 +305,15 @@ pub(crate) fn run_server_install_service(
         .map_err(|e| e.to_string());
     }
     Ok(format!(
-        "Server socket/service pair installed.\n\n  service file: {}\n  socket file:  {}\n  service unit: {}\n  socket unit:  {}\n  listen:       {}\n  binary:       {}\n  enabled:      yes\n  started:      {}\n",
+        "Server socket/service pair installed.\n\n  service file:      {}\n  socket file:       {}\n  service unit:      {}\n  socket unit:       {}\n  binary:            {}\n  env file:          {}\n  working directory: {}\n  listen:            {}\n  enabled:           yes\n  started:           {}\n",
         opts.service_file.display(),
         socket_file.display(),
         service_unit,
         socket_unit,
-        listen,
         opts.bin.display(),
+        opts.env_file.display(),
+        opts.working_directory.display(),
+        listen,
         if result.started { "yes" } else { "no (--no-start)" }
     ))
 }
@@ -334,14 +449,54 @@ fn resolve_status_token(opts: &ServerStatusOptions) -> Result<Option<String>, St
     Ok(None)
 }
 
+pub(crate) fn derive_server_status_url(opts: &ServerStatusOptions) -> Result<String, String> {
+    if opts.url_explicit {
+        return Ok(opts.url.clone());
+    }
+    let Some(env_file) = &opts.env_file else {
+        return Ok(opts.url.clone());
+    };
+    if !env_file.exists() {
+        if opts.env_file_explicit {
+            return Err(format!("env file {} does not exist", env_file.display()));
+        }
+        return Ok(opts.url.clone());
+    }
+    let Some(value) = read_env_file_value(env_file, "WEBCODEX_ADDR")? else {
+        return Ok(opts.url.clone());
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!(
+            "{} defines an empty WEBCODEX_ADDR",
+            env_file.display()
+        ));
+    }
+    let mut addr = value.parse::<SocketAddr>().map_err(|error| {
+        format!(
+            "WEBCODEX_ADDR {value:?} from {} is not a fixed IP socket address: {error}",
+            env_file.display()
+        )
+    })?;
+    if addr.ip().is_unspecified() {
+        addr.set_ip(if addr.is_ipv4() {
+            std::net::Ipv4Addr::LOCALHOST.into()
+        } else {
+            std::net::Ipv6Addr::LOCALHOST.into()
+        });
+    }
+    Ok(format!("http://{addr}"))
+}
+
 pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> {
+    let probe_url = derive_server_status_url(&opts)?;
     let service_unit = service_unit_name(&opts.service_file, SERVER_SERVICE_UNIT);
     let socket_file = server_socket_file(&opts.service_file)?;
     let socket_unit = service_unit_name(&socket_file, SERVER_SOCKET_UNIT);
     let systemd = query_systemd_service_status(&service_unit);
     let socket = query_systemd_socket_status(&socket_unit);
     let token = resolve_status_token(&opts)?;
-    let http = fetch_runtime_status(&opts.url, &opts.server_http, token.as_deref()).await?;
+    let http = fetch_runtime_status(&probe_url, &opts.server_http, token.as_deref()).await?;
     let output = http.output.as_ref();
     let auth_enabled = output.and_then(|v| v.get("auth_enabled")).cloned();
     let configured_public_url = output
@@ -363,6 +518,7 @@ pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<Strin
     if opts.json {
         let summary = json!({
             "http_reachable": http.reachable,
+            "probe_url": probe_url,
             "http_status_code": http.status_code,
             "http_content_type": http.content_type,
             "http_error": http.error,
@@ -404,6 +560,7 @@ pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<Strin
     }
     let mut out = String::new();
     out.push_str("Server status:\n\n");
+    out.push_str(&format!("  HTTP probe:            {}\n", probe_url));
     out.push_str(&format!(
         "  HTTP reachable:        {}\n",
         if http.reachable { "yes" } else { "no" }

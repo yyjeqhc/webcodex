@@ -24,7 +24,10 @@ use super::connections::{
     list_connections, resolve_connection_parent, user_slug, Connection, ConnectionPaths,
     INTERNAL_DIR_PREFIX,
 };
-use super::{is_effective_root, shell_command, validate_user_api_token};
+use super::{
+    is_effective_root, register_existing_project, shell_command, validate_user_api_token,
+    ProjectRegistration,
+};
 
 /// Device name reported to the server. The hostname is what a person would call
 /// this machine; `--device` overrides it.
@@ -295,6 +298,7 @@ pub(crate) struct LoginOptions {
     pub(crate) base_dir: PathBuf,
     pub(crate) transport: String,
     pub(crate) allowed_roots: Vec<PathBuf>,
+    pub(crate) project: Option<PathBuf>,
     pub(crate) overwrite: bool,
     pub(crate) json: bool,
     pub(crate) print_mcp_config: bool,
@@ -584,6 +588,8 @@ pub(crate) fn render_login_result(
     server_url: &str,
     username: &str,
     device: &str,
+    registration: Option<&ProjectRegistration>,
+    allowed_roots: &[PathBuf],
     effective_root: bool,
     json: bool,
     print_mcp_config: bool,
@@ -617,18 +623,43 @@ pub(crate) fn render_login_result(
     };
     let foreground_command = foreground_argv.as_ref().map(|argv| shell_command(argv));
     let runner_install_command = runner_install_argv.as_ref().map(|argv| shell_command(argv));
+    let runtime_project = registration.map(|project| format!("agent:{device}:{}", project.id));
+    let register_command = format!(
+        "{} <existing-workspace>",
+        shell_command(&[
+            "webcodex".to_string(),
+            "project".to_string(),
+            "register".to_string(),
+            "--config".to_string(),
+            paths.agent_config.to_string_lossy().into_owned(),
+        ])
+    );
 
     // JSON output carries only safe metadata; never a full token. The
     // `--print-mcp-config` path is text-only and mutually exclusive with `--json`
     // (enforced at parse time), so the two cannot both apply here.
     if json {
         let mut next_steps = Vec::new();
+        if registration.is_none() {
+            next_steps.push(register_command.clone());
+        }
         if let Some(command) = &foreground_command {
             next_steps.push(command.clone());
         }
         if let Some(command) = &runner_install_command {
             next_steps.push(command.clone());
         }
+        let registered_projects = registration
+            .iter()
+            .map(|project| {
+                serde_json::json!({
+                    "id": project.id,
+                    "path": project.path.to_string_lossy(),
+                    "record": project.record_path.to_string_lossy(),
+                    "runtime_project": format!("agent:{device}:{}", project.id),
+                })
+            })
+            .collect::<Vec<_>>();
         let summary = serde_json::json!({
             "server_url": server_url,
             "username": username,
@@ -637,6 +668,13 @@ pub(crate) fn render_login_result(
             "dir": paths.dir.to_string_lossy(),
             "user_token_file": paths.user_token.to_string_lossy(),
             "agent_config": paths.agent_config.to_string_lossy(),
+            "projects_registry": paths.projects_dir.to_string_lossy(),
+            "allowed_roots": allowed_roots.iter().map(|root| root.to_string_lossy().to_string()).collect::<Vec<_>>(),
+            "project_registration": {
+                "registered": registration.is_some(),
+                "count": registered_projects.len(),
+            },
+            "registered_projects": registered_projects,
             "credential_usage": {
                 "webcodex-user-token": "GPT Actions, MCP, and REST/project APIs",
                 "agent_config_token": "Runner transport only",
@@ -688,14 +726,36 @@ pub(crate) fn render_login_result(
         _ => return Err("inconsistent login Runner guidance state".to_string()),
     };
 
+    let allowed_roots_text = if allowed_roots.is_empty() {
+        "    (none)\n".to_string()
+    } else {
+        allowed_roots
+            .iter()
+            .map(|root| format!("    {}\n", root.display()))
+            .collect::<String>()
+    };
+    let project_guidance = if let (Some(project), Some(runtime_project)) =
+        (registration, runtime_project)
+    {
+        format!(
+            "Registered project:\n  id:   {}\n  path: {}\n\nAfter the Runner starts, WebCodex should expose:\n  {}\n",
+            project.id,
+            project.path.display(),
+            runtime_project,
+        )
+    } else {
+        format!(
+            "Project registration: none\n\nNo project is registered yet.\n--allowed-root controls where projects may be registered; it does not register a workspace.\nRegister an existing workspace before using project-bound coding tools:\n  {register_command}\n\nRunner access is configured, but project-bound tools remain unavailable until a project is registered.\n"
+        )
+    };
+
     Ok(format!(
-        "Logged in to {server_url} as {username} ({device}).\n\n  \
-         MCP endpoint: {server_url}/mcp\n  \
-         user token file: {} (GPT Actions, MCP, and REST/project APIs)\n  \
-         agent config:   {} (contains Runner transport credentials only)\n\n\
-         {}",
+        "Login succeeded.\n\n  server:            {server_url}\n  username:          {username}\n  device/client_id:  {device}\n  MCP endpoint:      {server_url}/mcp\n  user token file:   {} (GPT Actions, MCP, and REST/project APIs)\n  agent config:      {} (contains Runner transport credentials only)\n  projects registry: {} (Runner project registry, not a workspace root)\n\nAllowed roots (registration authority):\n{}\n{}\n{}",
         paths.user_token.display(),
         paths.agent_config.display(),
+        paths.projects_dir.display(),
+        allowed_roots_text,
+        project_guidance,
         next_step_guidance,
     ))
 }
@@ -892,21 +952,73 @@ pub(crate) async fn run_login(opts: LoginOptions) -> Result<String, String> {
     let server_url = canonical.url.clone();
     let parent = resolve_connection_parent(&opts.base_dir, &canonical)?;
 
-    // The device name is settled here, after the target directory has been
-    // verified but before the one-time code is spent: `resolve_device_name`
-    // generates and validates the client_id, and creates `.device-id` in the
-    // verified base (the server directory's parent). Every local problem —
-    // an invalid explicit `--device`, a planted `.device-id` — fails now.
+    // The device name and effective filesystem authority are settled before the
+    // one-shot pairing code is redeemed. In particular, a missing HOME with no
+    // explicit roots must not consume the code and fail only while rendering the
+    // Runner config later.
     let base = parent
         .parent()
         .ok_or_else(|| format!("{} has no parent directory", parent.display()))?;
     let device = resolve_device_name(base, &opts)?;
+    let mut output_allowed_roots =
+        webcodex_runner_config::effective_allowed_roots(&opts.allowed_roots, false)?;
 
-    let identity = redeem_pairing_code(&server_url, &opts, &device).await?;
+    // When --project is present, even the project record is fully validated and
+    // staged before redemption. The staging directory contains no credentials at
+    // this point, so any path/policy/registry write failure leaves the one-shot
+    // pairing code untouched.
+    let mut prestaged: Option<(PathBuf, ProjectRegistration)> = None;
+    if let Some(project) = &opts.project {
+        let staging = create_staging_dir(&parent)?;
+        let staged_projects_dir = staging.join("projects.d");
+        match register_existing_project(
+            &staged_projects_dir,
+            project,
+            &output_allowed_roots,
+            false,
+            None,
+        ) {
+            Ok((registration, roots)) => {
+                output_allowed_roots = roots;
+                prestaged = Some((staging, registration));
+            }
+            Err(error) => {
+                let residue = discard_internal_dir(&staging);
+                return Err(match residue {
+                    None => error,
+                    Some(path) => format!(
+                        "{error}; non-secret project-registration staging data remains at {} and may be deleted",
+                        path.display()
+                    ),
+                });
+            }
+        }
+    }
+
+    let identity = match redeem_pairing_code(&server_url, &opts, &device).await {
+        Ok(identity) => identity,
+        Err(error) => {
+            if let Some((staging, _)) = prestaged.as_ref() {
+                let residue = discard_internal_dir(staging);
+                return Err(match residue {
+                    None => error,
+                    Some(path) => format!(
+                        "{error}; non-secret project-registration staging data remains at {} and may be deleted",
+                        path.display()
+                    ),
+                });
+            }
+            return Err(error);
+        }
+    };
     let user = user_slug(&identity.username)?;
     let paths = ConnectionPaths::new(parent.join(user));
 
-    let staging = create_staging_dir(&parent)?;
+    let (staging, mut registration) = if let Some((staging, registration)) = prestaged {
+        (staging, Some(registration))
+    } else {
+        (create_staging_dir(&parent)?, None)
+    };
     let now = chrono::Utc::now().to_rfc3339();
     if let Err(error) = stage_connection(
         &staging,
@@ -922,15 +1034,22 @@ pub(crate) async fn run_login(opts: LoginOptions) -> Result<String, String> {
     }
 
     match publish_connection(&staging, &paths.dir, opts.overwrite)? {
-        PublishOutcome::Published => render_login_result(
-            &paths,
-            &server_url,
-            &identity.username,
-            &device,
-            effective_root,
-            opts.json,
-            opts.print_mcp_config,
-        ),
+        PublishOutcome::Published => {
+            if let Some(project) = registration.as_mut() {
+                project.record_path = paths.projects_dir.join(format!("{}.toml", project.id));
+            }
+            render_login_result(
+                &paths,
+                &server_url,
+                &identity.username,
+                &device,
+                registration.as_ref(),
+                &output_allowed_roots,
+                effective_root,
+                opts.json,
+                opts.print_mcp_config,
+            )
+        }
         // The pairing code was spent but the destination was taken; the fresh
         // credentials are real and are parked for recovery. Never emit a token
         // here, even with `--print-mcp-config` — there is no published
@@ -1033,6 +1152,7 @@ mod tests {
             transport: "websocket".to_string(),
             allowed_roots: Vec::new(),
             overwrite,
+            project: None,
             json: false,
             print_mcp_config: false,
         }
@@ -1180,6 +1300,7 @@ mod tests {
         assert!(paths.agent_config.is_file());
         assert!(paths.user_token.is_file());
         assert!(paths.projects_dir.is_dir());
+        assert_eq!(std::fs::read_dir(&paths.projects_dir).unwrap().count(), 0);
         // The agent token has exactly one home.
         assert!(!paths.dir.join("webcodex-runner-token").exists());
         let agent_config = std::fs::read_to_string(&paths.agent_config).unwrap();
@@ -1202,6 +1323,52 @@ mod tests {
 
         assert_no_internal_residue(base);
         assert_no_internal_residue(paths.dir.parent().unwrap());
+    }
+
+    #[test]
+    fn allowed_root_without_project_remains_policy_only() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let base = temp.path().join("config");
+        let allowed_root = temp.path().join("workspaces");
+        std::fs::create_dir_all(&allowed_root).unwrap();
+        let mut opts = login_opts(&base, "https://api.example.com", false);
+        opts.allowed_roots = vec![allowed_root.clone()];
+        let canonical = canonical_server_url(&opts.server_url).unwrap();
+        let identity = identity();
+        let parent = resolve_connection_parent(&base, &canonical).unwrap();
+        let paths = ConnectionPaths::new(parent.join(user_slug(&identity.username).unwrap()));
+        let staging = create_staging_dir(&parent).unwrap();
+        stage_connection(
+            &staging,
+            &paths.projects_dir,
+            &opts,
+            &canonical.url,
+            &identity,
+            &opts.device,
+            "t",
+        )
+        .unwrap();
+        assert_eq!(
+            publish_connection(&staging, &paths.dir, false).unwrap(),
+            PublishOutcome::Published
+        );
+        assert_eq!(std::fs::read_dir(&paths.projects_dir).unwrap().count(), 0);
+        let agent_config = std::fs::read_to_string(&paths.agent_config).unwrap();
+        let parsed: toml::Value = toml::from_str(&agent_config).unwrap();
+        assert_eq!(
+            PathBuf::from(parsed["projects_dir"].as_str().unwrap())
+                .canonicalize()
+                .unwrap(),
+            paths.projects_dir.canonicalize().unwrap()
+        );
+        assert_ne!(
+            paths.projects_dir.canonicalize().unwrap(),
+            allowed_root.canonicalize().unwrap()
+        );
+        assert_eq!(
+            parsed["policy"]["allowed_roots"].as_array().unwrap()[0].as_str(),
+            allowed_root.to_str()
+        );
     }
 
     #[cfg(unix)]
@@ -1966,6 +2133,7 @@ mod tests {
             transport: "websocket".to_string(),
             allowed_roots: Vec::new(),
             overwrite: false,
+            project: None,
             json: false,
             print_mcp_config: false,
         };
@@ -1981,6 +2149,138 @@ mod tests {
         assert_eq!(value["pairing_code"], CODE);
         assert!(output.contains(device), "{output}");
         assert!(base.join(DEVICE_ID_FILE).is_file());
+    }
+
+    #[tokio::test]
+    async fn login_project_registers_existing_workspace_into_published_registry() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 16384];
+            let length = stream.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..length]);
+            let body = request.split("\r\n\r\n").nth(1).unwrap();
+            let value: serde_json::Value = serde_json::from_str(body).unwrap();
+            assert_eq!(value["pairing_code"], CODE);
+            assert_eq!(value["allow_cwd_anywhere"], false);
+            assert_eq!(value["allowed_roots"].as_array().unwrap().len(), 1);
+            let body = serde_json::json!({
+                "username": "alice",
+                "user_token": USER_TOKEN,
+                "agent_token": AGENT_TOKEN,
+            })
+            .to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let base = temp.path().join("config");
+        let allowed_root = temp.path().join("workspaces");
+        let project = allowed_root.join("my-repo");
+        std::fs::create_dir_all(&project).unwrap();
+        let opts = LoginOptions {
+            server_url: format!("http://{address}"),
+            server_http: ServerHttpOptions {
+                proxy: None,
+                no_system_proxy: true,
+            },
+            code: CODE.to_string(),
+            device: "project-device".to_string(),
+            device_explicit: true,
+            base_dir: base.clone(),
+            transport: "websocket".to_string(),
+            allowed_roots: vec![allowed_root.clone()],
+            project: Some(project.clone()),
+            overwrite: false,
+            json: true,
+            print_mcp_config: false,
+        };
+        let output = run_login(opts).await.unwrap();
+        server.join().unwrap();
+
+        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(value["project_registration"]["registered"], true);
+        assert_eq!(value["project_registration"]["count"], 1);
+        assert_eq!(value["registered_projects"][0]["id"], "my-repo");
+        assert_eq!(
+            value["registered_projects"][0]["runtime_project"],
+            "agent:project-device:my-repo"
+        );
+        assert!(!output.contains(USER_TOKEN));
+        assert!(!output.contains(AGENT_TOKEN));
+
+        let connections = all_connections(&base);
+        assert_eq!(connections.len(), 1);
+        let paths = &connections[0].paths;
+        let records =
+            crate::webcodex_cli::connect::profile::read_project_files(&paths.projects_dir).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].1.id, "my-repo");
+        assert_eq!(
+            PathBuf::from(&records[0].1.path).canonicalize().unwrap(),
+            project.canonicalize().unwrap()
+        );
+        assert!(records[0].0.starts_with(&paths.projects_dir));
+        assert!(value["registered_projects"][0]["record"]
+            .as_str()
+            .unwrap()
+            .starts_with(paths.projects_dir.to_str().unwrap()));
+        let agent_config = std::fs::read_to_string(&paths.agent_config).unwrap();
+        let parsed: toml::Value = toml::from_str(&agent_config).unwrap();
+        assert_eq!(
+            PathBuf::from(parsed["projects_dir"].as_str().unwrap())
+                .canonicalize()
+                .unwrap(),
+            paths.projects_dir.canonicalize().unwrap()
+        );
+        assert_no_internal_residue(paths.dir.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn login_project_outside_allowed_roots_fails_before_redemption() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let base = temp.path().join("config");
+        let allowed_root = temp.path().join("allowed");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&allowed_root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let opts = LoginOptions {
+            server_url: format!("http://{address}"),
+            server_http: ServerHttpOptions {
+                proxy: None,
+                no_system_proxy: true,
+            },
+            code: CODE.to_string(),
+            device: "project-device".to_string(),
+            device_explicit: true,
+            base_dir: base.clone(),
+            transport: "websocket".to_string(),
+            allowed_roots: vec![allowed_root],
+            project: Some(outside),
+            overwrite: false,
+            json: false,
+            print_mcp_config: false,
+        };
+        let error = run_login(opts).await.unwrap_err();
+        assert!(
+            error.contains("outside the Runner allowed_roots"),
+            "{error}"
+        );
+        let canonical = canonical_server_url(&format!("http://{address}")).unwrap();
+        let parent = resolve_connection_parent(&base, &canonical).unwrap();
+        assert_no_internal_residue(&parent);
     }
 
     #[test]
@@ -2152,6 +2452,8 @@ mod tests {
             "https://api.example.com",
             "alice",
             "laptop",
+            None,
+            &[],
             false,
             false,
             false,
@@ -2172,6 +2474,9 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("Runner transport credentials only"), "{text}");
+        assert!(text.contains("Project registration: none"), "{text}");
+        assert!(text.contains("--allowed-root controls where projects may be registered; it does not register a workspace"), "{text}");
+        assert!(text.contains("projects registry"), "{text}");
         assert!(
             (!cfg!(windows) && text.contains("webcodex runner install --scope user --config"))
                 || (cfg!(windows) && !text.contains("webcodex runner install")),
@@ -2193,6 +2498,8 @@ mod tests {
             "https://api.example.com",
             "alice",
             "laptop",
+            None,
+            &[],
             false,
             true,
             false,
@@ -2206,6 +2513,13 @@ mod tests {
             Some("https://api.example.com/mcp")
         );
         assert!(json_value.get("credential_usage").is_some(), "{json}");
+        assert_eq!(json_value["project_registration"]["registered"], false);
+        assert_eq!(json_value["project_registration"]["count"], 0);
+        assert_eq!(json_value["registered_projects"], serde_json::json!([]));
+        assert_eq!(
+            json_value["projects_registry"],
+            paths.projects_dir.to_string_lossy().as_ref()
+        );
         assert_eq!(
             json_value
                 .get("user_token_file")
@@ -2222,7 +2536,7 @@ mod tests {
                 json_value["runner_install_reason"],
                 serde_json::json!(WINDOWS_RUNNER_INSTALL_REASON)
             );
-            assert_eq!(json_value["next_steps"].as_array().unwrap().len(), 1);
+            assert_eq!(json_value["next_steps"].as_array().unwrap().len(), 2);
         }
         assert!(!json.contains(USER_TOKEN), "json leaked a token");
         assert!(!json.contains(AGENT_TOKEN), "json leaked a token");
@@ -2251,6 +2565,8 @@ mod tests {
             "https://api.example.com",
             "alice",
             "laptop",
+            None,
+            &[],
             false,
             false,
             false,
@@ -2272,6 +2588,8 @@ mod tests {
             "https://api.example.com",
             "alice",
             "laptop",
+            None,
+            &[],
             false,
             true,
             false,
@@ -2301,13 +2619,17 @@ mod tests {
         } else {
             assert!(value["runner_install_reason"].is_null());
         }
+        assert!(value["next_steps"][0]
+            .as_str()
+            .unwrap()
+            .contains("webcodex project register"));
         assert_eq!(
-            value["next_steps"][0].as_str().unwrap(),
+            value["next_steps"][1].as_str().unwrap(),
             shell_command(&foreground_argv)
         );
         assert_eq!(
             value["next_steps"]
-                .get(1)
+                .get(2)
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or(""),
             if cfg!(windows) {
@@ -2355,6 +2677,8 @@ mod tests {
             "https://api.example.com",
             "alice",
             "laptop",
+            None,
+            &[],
             true,
             false,
             false,
@@ -2397,6 +2721,8 @@ mod tests {
             "https://api.example.com",
             "alice",
             "laptop",
+            None,
+            &[],
             true,
             true,
             false,
@@ -2414,7 +2740,11 @@ mod tests {
         let foreground_reason = value["foreground_reason"].as_str().unwrap();
         assert!(foreground_reason.contains("login ran as root"));
         assert!(foreground_reason.contains("project commands as root"));
-        assert_eq!(value["next_steps"], serde_json::json!([]));
+        assert_eq!(value["next_steps"].as_array().unwrap().len(), 1);
+        assert!(value["next_steps"][0]
+            .as_str()
+            .unwrap()
+            .contains("webcodex project register"));
         assert!(!json_text.contains("--allow-root-runner"));
         assert!(!json_text.contains("webcodex runner install --scope user"));
         assert!(!json_text.contains(USER_TOKEN), "root json leaked a token");
@@ -2432,6 +2762,8 @@ mod tests {
             "https://api.example.com",
             "alice",
             "laptop",
+            None,
+            &[],
             false,
             false,
             true,
@@ -2460,6 +2792,8 @@ mod tests {
             "https://api.example.com",
             "alice",
             "laptop",
+            None,
+            &[],
             false,
             false,
             true,

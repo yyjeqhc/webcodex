@@ -248,6 +248,29 @@ fn server_init_writes_env_file_and_0600_permissions() {
     ]))
     .unwrap();
     let output = run_server_init(opts).unwrap();
+    assert!(data_dir.is_dir(), "server init must create WEBCODEX_DATA");
+    let foreground = crate::webcodex_cli::shell_command(&[
+        "webcodex".to_string(),
+        "server".to_string(),
+        "run".to_string(),
+        "--env-file".to_string(),
+        env_file.to_string_lossy().into_owned(),
+    ]);
+    assert!(output.contains(&foreground), "{output}");
+    if cfg!(target_os = "linux") && is_effective_root() {
+        let install = crate::webcodex_cli::shell_command(&[
+            "webcodex".to_string(),
+            "server".to_string(),
+            "install".to_string(),
+            "--env-file".to_string(),
+            env_file.to_string_lossy().into_owned(),
+            "--working-directory".to_string(),
+            data_dir.to_string_lossy().into_owned(),
+        ]);
+        assert!(output.contains(&install), "{output}");
+    } else {
+        assert!(!output.contains("webcodex server install"), "{output}");
+    }
     let content = std::fs::read_to_string(&env_file).unwrap();
     assert!(content.contains("WEBCODEX_ADDR=127.0.0.1:9090\n"));
     assert!(content.contains(&format!("WEBCODEX_DATA={}\n", data_dir.display())));

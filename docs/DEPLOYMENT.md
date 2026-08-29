@@ -120,17 +120,19 @@ sudo webcodex server init \
   --public-url https://your-domain.example
 ```
 
-`server init` creates only the server-side bootstrap/admin token. It does not
-create user API tokens or agent tokens.
+`server init` creates the selected data directory and the server-side bootstrap/admin token. It does not create user API tokens or agent tokens. Its next-step guidance preserves the exact env/data paths supplied above.
 
 Install and start the managed systemd socket/service pair:
 
 ```bash
 sudo webcodex server install \
   --env-file /etc/webcodex/webcodex.env \
+  --working-directory /var/lib/webcodex \
   --bin /usr/local/bin/webcodex-server
 webcodex server status --env-file /etc/webcodex/webcodex.env
 ```
+
+When `--working-directory` is omitted, `server install` uses `WEBCODEX_DATA` from the selected env file before falling back to the platform default. Install preflight rejects a missing/non-executable binary, missing working directory, unreadable env file, or unknown explicit User/Group before mutating systemd. `server status` likewise derives its default local HTTP probe from that env file's `WEBCODEX_ADDR`; an explicit `--url` still wins.
 
 The managed Linux layout is intentionally split: `webcodex.socket` owns the
 fixed `WEBCODEX_ADDR` listener, while `webcodex.service` owns only the Server
@@ -234,7 +236,8 @@ project commands (do not use `sudo`):
 
 ```bash
 webcodex login https://your-domain.example --code <wc_pair_...> \
-  --allowed-root "$HOME/git"
+  --allowed-root "$HOME/git" \
+  --project "$HOME/git/my-repo"
 webcodex runner install --scope user \
   --config <login-reported-agent-config>
 webcodex runner status --scope user \
@@ -243,10 +246,7 @@ webcodex ops status --server-url https://your-domain.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```
 
-`webcodex login` is the primary client entry: it derives a unique device name,
-redeems the pairing code, and writes the client-side `webcodex-user-token` and
-an `agent.toml`. `webcodex client enroll` remains the advanced alternative for
-an explicit client id or custom output directory.
+`webcodex login` is the primary client entry: it derives a unique device name, redeems the pairing code, and writes the client-side `webcodex-user-token` and an `agent.toml`. `--allowed-root` grants registration authority only; `--project` names the actual existing workspace to register. The generated `projects_dir` is a registry directory, not the workspace root. If login is performed without `--project`, use `webcodex project register --config <login-reported-agent-config> /path/to/repo` before project-bound work. `webcodex client enroll` remains the advanced alternative for an explicit client id or custom output directory.
 
 The pairing code is created server/admin-side:
 

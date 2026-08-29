@@ -69,7 +69,8 @@ not advertised by ordinary MCP/GPT Actions model discovery.
 
 | Command | Purpose | Notes |
 | --- | --- | --- |
-| `webcodex login <server-url> --code <wc_pair_...>` | Log this device into a Server with a pairing code | Primary client entry. Writes the user token and `agent.toml`. |
+| `webcodex login <server-url> --code <wc_pair_...> [--project PATH]` | Log this device into a Server with a pairing code | Primary client entry. `--allowed-root` is registration authority; `--project` registers an actual existing workspace. |
+| `webcodex project register --config PATH <PROJECT>` | Register an existing workspace in a Runner registry | Uses `projects_dir` from `agent.toml`; no Server connection is required to persist the local record. |
 | `webcodex pairing create` | Server/admin side: create a short-lived pairing code | Needs server bootstrap/admin auth. |
 | `webcodex client enroll` | Advanced client enrollment with explicit `--client-id` | Advanced; ordinary users should use `login`, which derives the client id and publishes the canonical per-server/user connection layout in one step. |
 | `webcodex logout <server-url>` | Remove this device's credentials for a Server | |
@@ -100,8 +101,8 @@ keep their detached-process behavior when `--scope` is omitted.
 
 | Command | Purpose |
 | --- | --- |
-| `webcodex server init` | Initialize or update the Server env file (creates the bootstrap token) |
-| `webcodex server install` | Install the Linux systemd `webcodex.socket` + `webcodex.service` pair |
+| `webcodex server init` | Initialize/update the Server env file and selected data directory (creates the bootstrap token) |
+| `webcodex server install` | Install the Linux systemd `webcodex.socket` + `webcodex.service` pair; default WorkingDirectory follows selected env `WEBCODEX_DATA` |
 | `webcodex server run [--env-file PATH]` | Run `webcodex-server` in the foreground (direct bind); `--env-file` passes the exact path via `WEBCODEX_ENV_FILE` |
 | `webcodex server start` / `stop` | Start or stop socket activation and the Server process coherently |
 | `webcodex server restart` | Restart only the Server process; keep the managed listener socket active |
@@ -115,6 +116,8 @@ On Windows, `server init`, foreground `server run`, and explicit `share` are sup
 `/path/name.socket`. Use the same `--service-file` on `start`, `stop`, `restart`,
 `status`, `logs`, and `uninstall` to manage or inspect that custom pair; omitting
 it targets the default `webcodex.service` / `webcodex.socket` pair.
+
+For Runner config terminology, `projects_dir` is the directory of Project registry TOML files, not a workspace root. `[policy].allowed_roots` bounds which filesystem paths may be registered; a Project record names the actual workspace.
 
 ### Operations (read-only operator checks)
 

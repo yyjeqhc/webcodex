@@ -3,7 +3,7 @@ mod oauth;
 mod output;
 mod probe;
 mod process;
-mod profile;
+pub(crate) mod profile;
 mod shared_key_oauth;
 
 pub(crate) use disconnect::{run_disconnect, DisconnectOptions};

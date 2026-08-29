@@ -108,17 +108,19 @@ sudo webcodex server init \
   --public-url https://your-domain.example
 ```
 
-`server init` 只创建 server 侧 bootstrap/admin token。它不创建 user API token
-或 agent token。
+`server init` 会创建所选 data directory 与 server 侧 bootstrap/admin token；它不创建 user API token 或 agent token。后续 guidance 会保留上面实际传入的 env/data 路径。
 
 安装并启动受管 systemd socket/service pair：
 
 ```bash
 sudo webcodex server install \
   --env-file /etc/webcodex/webcodex.env \
+  --working-directory /var/lib/webcodex \
   --bin /usr/local/bin/webcodex-server
 webcodex server status --env-file /etc/webcodex/webcodex.env
 ```
+
+省略 `--working-directory` 时，`server install` 会优先读取所选 env 文件中的 `WEBCODEX_DATA`，再回退到平台默认值。安装前会在任何 systemd mutation 之前拒绝缺失/不可执行 binary、缺失 WorkingDirectory、不可读 env file 或不存在的显式 User/Group。`server status` 也会默认从同一 env 的 `WEBCODEX_ADDR` 派生本地 HTTP probe；显式 `--url` 始终优先。
 
 受管 Linux 部署会明确拆分职责：`webcodex.socket` 持有固定的
 `WEBCODEX_ADDR` listener，`webcodex.service` 只持有 Server process。该结构建立后，
@@ -206,7 +208,8 @@ named Cloudflare Tunnel 也是有效入口。同一 hostname 必须承载普通 
 
 ```bash
 webcodex login https://your-domain.example --code <wc_pair_...> \
-  --allowed-root "$HOME/git"
+  --allowed-root "$HOME/git" \
+  --project "$HOME/git/my-repo"
 webcodex runner install --scope user \
   --config <login-reported-agent-config>
 webcodex runner status --scope user \
@@ -215,9 +218,7 @@ webcodex ops status --server-url https://your-domain.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```
 
-`webcodex login` 是主要客户端入口：它自动派生唯一设备名、兑换 pairing code，并
-写入客户端侧 `webcodex-user-token` 与 `agent.toml`。需要显式 client id 或自定义
-输出目录时，`webcodex client enroll` 仍是高级替代方案。
+`webcodex login` 是主要客户端入口：它自动派生唯一设备名、兑换 pairing code，并写入客户端侧 `webcodex-user-token` 与 `agent.toml`。`--allowed-root` 只授予 Project 注册 authority，`--project` 才表示要注册的实际 existing workspace；生成的 `projects_dir` 是 registry 而不是 workspace root。如果 login 时没有传 `--project`，应在 project-bound 工作前执行 `webcodex project register --config <login-reported-agent-config> /path/to/repo`。需要显式 client id 或自定义输出目录时，`webcodex client enroll` 仍是高级替代方案。
 
 pairing code 由 server/admin 侧创建：
 

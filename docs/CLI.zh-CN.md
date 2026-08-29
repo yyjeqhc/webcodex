@@ -63,7 +63,8 @@ Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS
 
 | 命令 | 用途 | 说明 |
 | --- | --- | --- |
-| `webcodex login <server-url> --code <wc_pair_...>` | 用 pairing code 把本机接入 Server | 主要客户端入口，写入 user token 与 `agent.toml`。 |
+| `webcodex login <server-url> --code <wc_pair_...> [--project PATH]` | 用 pairing code 把本机接入 Server | 主要客户端入口；`--allowed-root` 是注册 authority，`--project` 才注册实际 existing workspace。 |
+| `webcodex project register --config PATH <PROJECT>` | 在 Runner registry 中注册 existing workspace | 使用 `agent.toml` 中的 `projects_dir`；持久化本地 record 不要求 Server 在线。 |
 | `webcodex pairing create` | Server/admin 侧：创建短期 pairing code | 需要 server bootstrap/admin 认证。 |
 | `webcodex client enroll` | 高级客户端接入，可显式指定 `--client-id` | 高级入口；普通用户应使用 `login`，它会自动派生 client id 并一步写入规范的 server/user 本地连接布局。 |
 | `webcodex logout <server-url>` | 移除本机对某 Server 的凭据 | |
@@ -94,8 +95,8 @@ detached-process 行为。
 
 | 命令 | 用途 |
 | --- | --- |
-| `webcodex server init` | 初始化或更新 Server env 文件（创建 bootstrap token） |
-| `webcodex server install` | 安装 Linux systemd `webcodex.socket` + `webcodex.service` pair |
+| `webcodex server init` | 初始化/更新 Server env 文件与所选 data directory（创建 bootstrap token） |
+| `webcodex server install` | 安装 Linux systemd `webcodex.socket` + `webcodex.service` pair；默认 WorkingDirectory 跟随所选 env 的 `WEBCODEX_DATA` |
 | `webcodex server run [--env-file PATH]` | 前台运行 `webcodex-server`（direct bind）；`--env-file` 通过 `WEBCODEX_ENV_FILE` 精确传递路径 |
 | `webcodex server start` / `stop` | 一致地启动或停止 socket activation 与 Server process |
 | `webcodex server restart` | 只 restart Server process，保持受管 listener socket active |
@@ -109,6 +110,8 @@ Windows 支持 `server init`、前台 `server run` 与显式 `share`。受管 se
 `/path/name.socket`。后续 `start`、`stop`、`restart`、`status`、`logs` 和 `uninstall`
 应传入相同的 `--service-file` 来管理或检查该自定义 pair；省略时仍操作默认的
 `webcodex.service` / `webcodex.socket` pair。
+
+Runner 配置术语中，`projects_dir` 是 Project registry TOML 文件目录，不是 workspace root；`[policy].allowed_roots` 只限制哪些文件系统路径可以注册，Project record 才指向实际 workspace。
 
 ### 运维（只读操作检查）
 

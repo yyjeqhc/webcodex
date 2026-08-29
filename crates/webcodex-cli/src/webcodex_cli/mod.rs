@@ -7,6 +7,7 @@ pub(crate) mod ops;
 pub(crate) mod output;
 pub(crate) mod pairing;
 pub(crate) mod profiles;
+pub(crate) mod project;
 pub(crate) mod runner_service;
 pub(crate) mod server;
 pub(crate) mod service;
@@ -88,6 +89,9 @@ pub(crate) use profiles::{
 };
 #[cfg(test)]
 pub(crate) use profiles::{client_output_dir_for_profile, CLIENT_PROFILE_ERROR};
+pub(crate) use project::{
+    register_existing_project, run_project_register, ProjectRegisterOptions, ProjectRegistration,
+};
 #[cfg(all(test, unix))]
 pub(crate) use runner_service::render_runner_systemd_unit;
 pub(crate) use runner_service::{
@@ -109,8 +113,9 @@ pub(crate) use service::{
 };
 pub(crate) use setup::run_setup_single_user;
 pub(crate) use system::{
-    discover_internal_binary, read_optional_token, read_optional_user_api_token, system_user_home,
-    system_user_is_root, validate_user_api_token, write_secret_file, write_text_file,
+    discover_internal_binary, read_optional_token, read_optional_user_api_token,
+    system_group_exists, system_user_exists, system_user_home, system_user_is_root,
+    validate_user_api_token, write_secret_file, write_text_file,
 };
 #[cfg(test)]
 pub(crate) use token_commands::resolve_account_credential;
@@ -122,9 +127,10 @@ pub(crate) use tokens::{
 pub(crate) use usage::{
     client_enroll_usage, client_usage, connect_usage, disconnect_usage, login_usage, logout_usage,
     ops_agents_usage, ops_projects_usage, ops_runner_usage, ops_smoke_preflight_usage,
-    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, runner_init_usage,
-    runner_install_service_usage, runner_status_usage, runner_usage, server_init_usage,
-    server_install_service_usage, server_status_usage, server_usage, status_usage, usage,
+    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, project_register_usage,
+    runner_init_usage, runner_install_service_usage, runner_status_usage, runner_usage,
+    server_init_usage, server_install_service_usage, server_status_usage, server_usage,
+    status_usage, usage,
 };
 
 #[cfg(test)]

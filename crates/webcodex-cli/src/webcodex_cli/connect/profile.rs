@@ -60,9 +60,9 @@ pub(super) struct ExistingAgentConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub(super) struct ProjectFile {
-    pub(super) id: String,
-    pub(super) path: String,
+pub(crate) struct ProjectFile {
+    pub(crate) id: String,
+    pub(crate) path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shell_profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -283,7 +283,7 @@ pub(super) fn read_existing_agent_config(
         .map_err(|error| format!("failed to parse agent config {}: {error}", path.display()))
 }
 
-pub(super) fn read_project_files(
+pub(crate) fn read_project_files(
     projects_dir: &Path,
 ) -> Result<Vec<(PathBuf, ProjectFile)>, String> {
     let entries = match std::fs::read_dir(projects_dir) {
@@ -447,7 +447,7 @@ pub(super) fn ensure_private_directory(path: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-pub(super) fn atomic_write(path: &Path, content: &[u8], secret: bool) -> Result<bool, String> {
+pub(crate) fn atomic_write(path: &Path, content: &[u8], secret: bool) -> Result<bool, String> {
     if path.exists() {
         validate_existing_regular_file(path)?;
         let existing = std::fs::read(path)
@@ -512,11 +512,11 @@ pub(super) fn protect_secret_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn render_project_file(project: &ProjectFile) -> Result<String, String> {
+pub(crate) fn render_project_file(project: &ProjectFile) -> Result<String, String> {
     toml::to_string(project).map_err(|error| format!("failed to render project config: {error}"))
 }
 
-pub(super) fn resolve_project(
+pub(crate) fn resolve_project(
     projects_dir: &Path,
     canonical_project: &Path,
     explicit_id: Option<&str>,

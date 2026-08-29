@@ -153,14 +153,20 @@ fn read_registration_config(path: &Path) -> Result<RegistrationAgentConfig, Stri
         .map_err(|error| format!("failed to parse agent config {}: {error}", path.display()))
 }
 
+fn registration_projects_dir(config: &RegistrationAgentConfig) -> Result<PathBuf, String> {
+    config.projects_dir.clone().map(Ok).unwrap_or_else(|| {
+        webcodex_runner_config::paths::default_client_config_base_dir()
+            .map(|base| base.join("projects.d"))
+    })
+}
+
 pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<String, String> {
     let config = read_registration_config(&opts.config)?;
-    let projects_dir = config.projects_dir.ok_or_else(|| {
-        format!(
-            "agent config {} does not define projects_dir; projects_dir is the Runner project registry directory, not the workspace root",
-            opts.config.display()
-        )
-    })?;
+    // Mirror Runner config loading exactly: a minimal agent.toml may omit
+    // projects_dir, in which case the Runner materializes the shared per-user
+    // config-base projects.d path. The local registration CLI must write to that
+    // same registry rather than rejecting a config the Runner itself accepts.
+    let projects_dir = registration_projects_dir(&config)?;
     let (registration, roots) = register_existing_project(
         &projects_dir,
         &opts.project,
@@ -182,7 +188,7 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
                 "allow_cwd_anywhere": config.policy.allow_cwd_anywhere,
                 "allowed_roots": roots.iter().map(|root| root.to_string_lossy().to_string()).collect::<Vec<_>>(),
             },
-            "runner_reload_required": true,
+            "runner_reload_required": !registration.already_registered,
         }))
         .map_err(|error| error.to_string());
     }
@@ -191,8 +197,15 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
         "--config".to_string(),
         opts.config.to_string_lossy().into_owned(),
     ]);
+    let reload_guidance = if registration.already_registered {
+        "The project registry was unchanged; no Runner reload is required.\n".to_string()
+    } else {
+        format!(
+            "Restart or reload the existing Runner that uses this config so the registry change is loaded.\nIf it is a foreground Runner, stop that existing process first, then run:\n  {runner_command}\nIf it is installed as a service, use the matching `webcodex runner restart ...` command instead; do not start a second foreground Runner with the same client_id.\n"
+        )
+    };
     Ok(format!(
-        "Project {}.\n\n  id:                {}\n  path:              {}\n  agent config:      {}\n  projects registry: {}\n  project record:    {}\n\nAllowed roots are registration authority; they are not workspace registrations.\nRestart the Runner using this config (or start it if stopped) so the registry change is loaded:\n  {}\n",
+        "Project {}.\n\n  id:                {}\n  path:              {}\n  agent config:      {}\n  projects registry: {}\n  project record:    {}\n\nAllowed roots are registration authority; they are not workspace registrations.\n{}",
         if registration.already_registered {
             "already registered"
         } else {
@@ -203,7 +216,7 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
         opts.config.display(),
         projects_dir.display(),
         registration.record_path.display(),
-        runner_command,
+        reload_guidance,
     ))
 }
 
@@ -242,6 +255,7 @@ mod tests {
         let first: serde_json::Value = serde_json::from_str(&first).unwrap();
         assert_eq!(first["project"]["id"], "demo");
         assert_eq!(first["project"]["already_registered"], false);
+        assert_eq!(first["runner_reload_required"], true);
         assert!(registry.join("demo.toml").is_file());
         assert!(!first.to_string().contains("secret-not-printed"));
 
@@ -254,6 +268,19 @@ mod tests {
         let second: serde_json::Value = serde_json::from_str(&second).unwrap();
         assert_eq!(second["project"]["id"], "demo");
         assert_eq!(second["project"]["already_registered"], true);
+        assert_eq!(second["runner_reload_required"], false);
+    }
+
+    #[test]
+    fn omitted_projects_dir_uses_the_same_default_as_runner_config_loading() {
+        let config = RegistrationAgentConfig {
+            projects_dir: None,
+            policy: RegistrationPolicy::default(),
+        };
+        let expected = webcodex_runner_config::paths::default_client_config_base_dir()
+            .unwrap()
+            .join("projects.d");
+        assert_eq!(registration_projects_dir(&config).unwrap(), expected);
     }
 
     #[test]

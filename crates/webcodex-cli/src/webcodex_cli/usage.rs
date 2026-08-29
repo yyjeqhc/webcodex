@@ -89,11 +89,12 @@ Options:\n\
 
 pub(crate) fn project_register_usage() -> &'static str {
     "Usage: webcodex project register --config PATH <PROJECT> [OPTIONS]\n\n\
-Register one existing workspace in the projects_dir referenced by a Runner agent.toml.\n\
-projects_dir is the Runner project registry directory, not the workspace root.\n\
+Register one existing workspace in the projects_dir used by a Runner agent.toml.\n\
+projects_dir is the Runner project registry directory, not the workspace root; when omitted,\n\
+the same per-user default as Runner config loading is used.\n\
 allowed_roots is the filesystem authority boundary for registration; it does not register a workspace.\n\n\
 Options:\n\
-  --config PATH              Runner agent.toml containing projects_dir and policy\n\
+  --config PATH              Runner agent.toml whose registry and policy should be used\n\
   --json                     Print machine-readable output\n\
   -h, --help                 Print help and exit\n"
 }

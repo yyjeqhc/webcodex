@@ -29,7 +29,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "search_project_text",
-            "Search project text with rg-first/grep fallback. Regex is the backward-compatible default; prefer pattern_mode=literal for identifiers, snippets, paths, and other exact text. Supports matches/files_with_matches/count plus context and returns structured backend/truncation/failure metadata.",
+            "Default inspect/search tool for project text. Uses rg-first with grep fallback. Regex is default; prefer pattern_mode=literal for exact identifiers, snippets, and paths. Supports matches/files_with_matches/count and context. Structured output reports backend, truncated, and failure metadata.",
             search_project_text_input_schema(),
         ),
         tool_spec(

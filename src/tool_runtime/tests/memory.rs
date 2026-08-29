@@ -1553,9 +1553,11 @@ async fn memory_scope_legacy_exact_match_is_current_without_read_side_attributio
     let persisted = db.get_project_memory_scope(&scope_id).unwrap().unwrap();
     assert_eq!(persisted.scope.identity_state, "legacy_unattributed");
     assert!(persisted.scope.project_runtime_id.is_none());
-    // The same legacy scope becomes safely purgeable only after a non-empty,
-    // fully synchronized current Server inventory proves there is no exact
-    // Project scope match. No durable attribution is guessed in the process.
+    // Once the exact match disappears, this legacy scope has no persisted owning
+    // Runner identity. Even a complete inventory for the currently registered
+    // Runner cannot prove that an absent Runner does not own the opaque scope, so
+    // destructive lifecycle state remains fail-closed until a real mutation
+    // safely attributes it.
     register_agent_projects(
         &runtime,
         client_id,
@@ -1567,7 +1569,7 @@ async fn memory_scope_legacy_exact_match_is_current_without_read_side_attributio
     let detached = runtime.memory_scope_list(Some(&admin), None, None).await;
     let detached_scope = &detached.output["scopes"][0];
     assert_eq!(detached_scope["identity_state"], "legacy_unattributed");
-    assert_eq!(detached_scope["current_status"], "not_current");
+    assert_eq!(detached_scope["current_status"], "unknown");
     let catalog_revision = detached_scope["catalog_revision"]
         .as_str()
         .unwrap()
@@ -1575,8 +1577,74 @@ async fn memory_scope_legacy_exact_match_is_current_without_read_side_attributio
     let purged = runtime
         .memory_scope_purge(Some(&admin), scope_id.clone(), catalog_revision, true)
         .await;
-    assert!(purged.success, "{}", purged.output);
-    assert!(db.get_project_memory_scope(&scope_id).unwrap().is_none());
+    assert!(!purged.success);
+    assert_eq!(purged.output["error_kind"], "memory_scope_status_unknown");
+    assert!(db.get_project_memory_scope(&scope_id).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn legacy_scope_missing_owner_stays_unknown_with_unrelated_complete_inventory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Arc::new(crate::Database::open(&tmp.path().join("webcodex.db")).unwrap());
+    let runtime = ToolRuntime::new_for_tests()
+        .with_memory_database(db.clone())
+        .with_permission_evaluator(PermissionEvaluator::with_mode(AuthorityMode::TrustedAgent));
+    let admin = bootstrap_auth_context();
+    let project = resolved(
+        &crate::tool_runtime::agent_project_runtime_id("legacy-owner", "demo"),
+        "legacy-owner",
+        "/registered/legacy-owner",
+    );
+    assert!(
+        set(
+            &runtime,
+            &project,
+            "legacy-owner-policy",
+            "Owner may be absent after restart.",
+            "body",
+            "normal",
+            false,
+            &[],
+            None,
+        )
+        .success
+    );
+    let scope_id = super::super::memory::memory_scope_id(&project);
+    {
+        let conn = db.conn_for_tests();
+        conn.execute(
+            "UPDATE project_memory_scopes
+             SET identity_state = 'legacy_unattributed', project_runtime_id = NULL,
+                 runner_client_id = NULL, root_fingerprint = NULL
+             WHERE memory_scope_id = ?1",
+            rusqlite::params![scope_id],
+        )
+        .unwrap();
+    }
+
+    // A different Runner can have a fully complete inventory while the true
+    // legacy owner has not reconnected to this Server epoch. That observation is
+    // not a complete global Runner roster and must never authorize deletion.
+    register_agent_projects(
+        &runtime,
+        "unrelated-runner",
+        None,
+        ShellClientCapabilities::default(),
+        Vec::new(),
+    )
+    .await;
+    let listed = runtime.memory_scope_list(Some(&admin), None, None).await;
+    assert!(listed.success, "{}", listed.output);
+    let scope = &listed.output["scopes"][0];
+    assert_eq!(scope["identity_state"], "legacy_unattributed");
+    assert_eq!(scope["current_status"], "unknown");
+    let catalog_revision = scope["catalog_revision"].as_str().unwrap().to_string();
+    let purged = runtime
+        .memory_scope_purge(Some(&admin), scope_id.clone(), catalog_revision, true)
+        .await;
+    assert!(!purged.success);
+    assert_eq!(purged.output["error_kind"], "memory_scope_status_unknown");
+    assert!(db.get_project_memory_scope(&scope_id).unwrap().is_some());
 }
 
 #[tokio::test]

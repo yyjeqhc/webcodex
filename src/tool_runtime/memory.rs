@@ -107,7 +107,6 @@ impl MemoryScopeCurrentStatus {
 struct MemoryInventoryObservation {
     current_projects: BTreeMap<String, String>,
     client_inventory_complete: BTreeMap<String, bool>,
-    global_inventory_complete: bool,
 }
 
 fn memory_inventory_observation(
@@ -137,12 +136,9 @@ fn memory_inventory_observation(
             }
         }
     }
-    let global_inventory_complete =
-        !views.is_empty() && client_inventory_complete.values().all(|complete| *complete);
     MemoryInventoryObservation {
         current_projects,
         client_inventory_complete,
-        global_inventory_complete,
     }
 }
 
@@ -157,15 +153,14 @@ fn memory_scope_current_status(
         return MemoryScopeCurrentStatus::Current;
     }
     let Some(client_id) = scope.runner_client_id.as_deref() else {
-        // Legacy opaque scopes cannot target one Runner for a negative check. A
-        // complete non-empty current Server inventory can still prove that no
-        // currently registered Project has this exact scope identity. Empty,
-        // pending, degraded, or collision-ambiguous observations remain unknown.
-        return if inventory.global_inventory_complete {
-            MemoryScopeCurrentStatus::NotCurrent
-        } else {
-            MemoryScopeCurrentStatus::Unknown
-        };
+        // Legacy opaque scopes have no persisted owning Runner identity. An exact
+        // current scope match above proves `current`, but absence from this
+        // process-local registry can never prove `not_current`: after Server
+        // restart or while another Runner is absent, unrelated complete
+        // inventories are not a durable global Runner roster. Keep destructive
+        // lifecycle decisions fail-closed until a real Memory mutation safely
+        // upgrades the scope to attributed metadata.
+        return MemoryScopeCurrentStatus::Unknown;
     };
     if inventory.client_inventory_complete.get(client_id) == Some(&true) {
         MemoryScopeCurrentStatus::NotCurrent

@@ -62,6 +62,8 @@ commit 1fa862829122
 
 ### OpenAI Secure MCP Tunnel
 
+## 这个tunnel_id 还有api-key需要问gpt在它的官网手动创建
+
 需要已经创建好的 OpenAI Secure MCP Tunnel，并在 Windows 用户环境中配置：
 
 ```text
@@ -258,6 +260,8 @@ recent_controlplane_failures=0
 
 ## 6. 在 ChatGPT Developer Mode 创建 Connector
 
+![0eeb07fe3df699b66c7fc2d592d9d4cf](WINDOWS_OPENAI_TUNNEL.zh-CN/0eeb07fe3df699b66c7fc2d592d9d4cf.png)
+
 在 ChatGPT 的新插件/custom MCP app 页面：
 
 1. 名称：任意，例如 `tunnel-test`；
@@ -265,11 +269,13 @@ recent_controlplane_failures=0
 3. 从可用 Tunnel 中选择对应的 WebCodex Tunnel；
 4. 身份验证选择 **无身份验证 / No authentication**；
 5. 确认自定义 MCP 风险提示；
-6. 点击创建。
+6. 点击创建。![fdeaad5c8f257517d1f556f090c9a37c](WINDOWS_OPENAI_TUNNEL.zh-CN/fdeaad5c8f257517d1f556f090c9a37c.png)
 
 为什么是 **No authentication**？
 
 因为 OpenAI Tunnel 到本机 WebCodex MCP 的 Bearer 已由 `tunnel-client` 在本机注入。ChatGPT 不应该拿到或保存该 Bearer。
+
+![06653330b9a154a1ed60a481afa6efb7](WINDOWS_OPENAI_TUNNEL.zh-CN/06653330b9a154a1ed60a481afa6efb7.png)
 
 ## 7. 真实端到端验收：从新 Connector 注册项目
 

@@ -102,7 +102,7 @@ npx --yes @yyjeqhc/webcodex share --auth query-token
 
 - Linux x64/arm64：支持本机一键 `share`、Server 和 Runner 工作流。
 - macOS x64/arm64：支持本机一键 `share` 和 Runner 工作流。
-- Windows x64/arm64：支持 CLI 和 Runner，连接远程 Linux Server；本版本不支持 Windows 本机 `share`。
+- Windows x64/arm64：支持 CLI、Runner，以及显式的本地前台 Server（先执行 `webcodex server init`，再执行 `webcodex server run --env-file <path>`）；暂不支持 WebCodex 托管的 Windows Server service，也不支持本机 `share`。
 
 Windows、长期/自托管部署、OAuth、私有隧道、代理配置和故障排查见 [WebCodex 文档](https://github.com/yyjeqhc/webcodex/tree/main/docs)。[快速开始](https://github.com/yyjeqhc/webcodex/blob/main/docs/QUICK_START.zh-CN.md)只保留第一次成功连接所需的步骤。
 

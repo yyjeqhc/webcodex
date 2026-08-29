@@ -78,7 +78,7 @@ WebCodex
 
 - **Linux x64/arm64** —— 支持本机 `share`、Server 和 Runner 工作流。
 - **macOS x64/arm64** —— 支持本机 `share` 和 Runner 工作流。
-- **Windows x64/arm64** —— 支持 CLI 和 Runner，连接远程 Linux Server；本版本不在 Windows 本机运行 `webcodex share`。
+- **Windows x64/arm64** —— 支持 CLI、Runner，以及显式的本地前台 Server（`webcodex server init` 后执行 `webcodex server run --env-file <path>`）；暂不支持 WebCodex 托管的 Windows Server service，也不支持本机 `webcodex share`。
 
 Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP](docs/MCP.zh-CN.md)。
 

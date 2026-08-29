@@ -42,25 +42,7 @@ pub(crate) fn write_text_file(
                 .map_err(|e| format!("failed to set permissions on {}: {}", path.display(), e))?;
         }
     }
-    #[cfg(windows)]
-    {
-        if secret {
-            write_windows_secret_text_file(path, content, overwrite)?;
-        } else if overwrite {
-            std::fs::write(path, content)
-                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-        } else {
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)
-                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-            use std::io::Write;
-            file.write_all(content.as_bytes())
-                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-        }
-    }
-    #[cfg(all(not(unix), not(windows)))]
+    #[cfg(not(unix))]
     {
         let _ = secret;
         if overwrite {
@@ -78,6 +60,21 @@ pub(crate) fn write_text_file(
         }
     }
     Ok(())
+}
+
+pub(crate) fn write_server_secret_text_file(
+    path: &Path,
+    content: &str,
+    overwrite: bool,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        return write_windows_secret_text_file(path, content, overwrite);
+    }
+    #[cfg(not(windows))]
+    {
+        write_text_file(path, content, overwrite, true)
+    }
 }
 
 #[cfg(windows)]

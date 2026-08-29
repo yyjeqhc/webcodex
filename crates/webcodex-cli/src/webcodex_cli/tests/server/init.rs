@@ -337,6 +337,16 @@ fn server_init_secret_env_file_has_protected_windows_dacl() {
     let content = std::fs::read_to_string(&env_file).unwrap();
     let token = parse_env_content_value(&content, "WEBCODEX_TOKEN").unwrap();
     assert!(!output.contains(&token));
+    let json: Value = serde_json::from_str(&output).unwrap();
+    let next_steps = json["next_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(next_steps.contains("server run --env-file"), "{next_steps}");
+    assert!(!next_steps.contains("server install"), "{next_steps}");
 
     let sddl = crate::webcodex_cli::system::windows_dacl_sddl(&env_file).unwrap();
     assert!(sddl.starts_with("D:P"), "DACL must be protected: {sddl}");

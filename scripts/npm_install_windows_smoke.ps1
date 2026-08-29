@@ -238,16 +238,23 @@ try {
     }
     $Listen = "127.0.0.1:$ServerPort"
 
-    # The explicit env file is the only Server startup-env source for this smoke.
-    # Do not let CI/operator control-plane or tunnel credentials participate.
+    # Process environment wins over env-file values, so clear the canonical
+    # Server keys that could override this smoke's isolated listener/data/auth
+    # state. Also keep operator control-plane/tunnel credentials out of scope.
     $SensitiveEnvNames = @(
         "CONTROL_PLANE_API_KEY",
         "CONTROL_PLANE_TUNNEL_ID",
         "OPENAI_TUNNEL_TOKEN",
         "WEBCODEX_ENV_FILE",
+        "WEBCODEX_ADDR",
+        "WEBCODEX_DATA",
         "WEBCODEX_TOKEN",
-        "WEBCODEX_LISTEN",
-        "WEBCODEX_DATA_DIR"
+        "WEBCODEX_SHARED_KEY_ENABLED",
+        "WEBCODEX_ALLOW_ANONYMOUS",
+        "WEBCODEX_PUBLIC_URL",
+        "WEBCODEX_OAUTH2_ENABLED",
+        "WEBCODEX_OAUTH2_ISSUER",
+        "WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE"
     )
     $SavedSensitiveEnv = @{}
     foreach ($name in $SensitiveEnvNames) {

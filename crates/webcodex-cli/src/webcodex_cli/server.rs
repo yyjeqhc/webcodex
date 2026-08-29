@@ -44,8 +44,21 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
     let token_generated = existing_token.is_none();
     let token = existing_token.unwrap_or_else(generate_bootstrap_token);
     let env_content = render_server_env(&opts, &token);
-    super::write_text_file(&opts.env_file, &env_content, opts.overwrite, true)?;
+    super::system::write_server_secret_text_file(&opts.env_file, &env_content, opts.overwrite)?;
     if opts.json {
+        let next_steps = if cfg!(windows) {
+            json!([
+                "webcodex server run --env-file <path shown in env_file>",
+                "webcodex server status",
+                "configure HTTPS/public URL separately if using GPT Actions"
+            ])
+        } else {
+            json!([
+                "webcodex server install",
+                "webcodex server status",
+                "configure HTTPS/public URL separately if using GPT Actions"
+            ])
+        };
         let summary = json!({
             "env_file": opts.env_file.to_string_lossy(),
             "listen": opts.listen,
@@ -56,11 +69,7 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
             "token_generated": token_generated,
             "token_prefix": token_prefix(&token),
             "wrote_env_file": true,
-            "next_steps": [
-                "webcodex server install",
-                "webcodex server status",
-                "configure HTTPS/public URL separately if using GPT Actions"
-            ],
+            "next_steps": next_steps,
         });
         return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
     }
@@ -76,8 +85,14 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
     ));
     out.push_str("  shared key:   enabled\n");
     out.push_str("\nNext steps:\n");
-    out.push_str("  - Install and start: `webcodex server install`\n");
-    out.push_str("  - Or run in foreground: `webcodex server run`\n");
+    if cfg!(windows) {
+        out.push_str(
+            "  - Run in foreground: `webcodex server run --env-file <path shown above>`\n",
+        );
+    } else {
+        out.push_str("  - Install and start: `webcodex server install`\n");
+        out.push_str("  - Or run in foreground: `webcodex server run`\n");
+    }
     out.push_str("  - Check it: `webcodex server status`\n");
     out.push_str("\nNo full token was printed. No user or Agent tokens were created.\n");
     Ok(out)

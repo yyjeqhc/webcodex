@@ -51,6 +51,8 @@ share 的 Project Credential，并不是 PAT/OAuth/shared-key 的通用 query au
 Connection: Tunnel + No authentication；临时 WebCodex Bearer 留在本机，由固定且经过校验的
 OpenAI `tunnel-client` 注入。
 
+如果需要在 Windows 上把 Server、Runner 和 Tunnel 显式拆开运行，或排查“本地 `/readyz` 正常但 ChatGPT Connector 创建失败”的情况，见 [Windows + OpenAI Secure MCP Tunnel 实操指南](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。
+
 ## 已有 Server
 
 对于已经明确配置为 shared-key client 接入的 hosted Server，使用 operator 提供的 credential

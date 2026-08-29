@@ -56,6 +56,8 @@ Read + Use, and run `webcodex share --tunnel openai`. ChatGPT uses Connection:
 Tunnel + No authentication; the temporary WebCodex Bearer stays local and is
 injected by the pinned verified OpenAI `tunnel-client`.
 
+For an explicit Windows Server + Runner + Tunnel topology, or to troubleshoot a case where local `/readyz` is healthy but ChatGPT Connector creation still fails, see [Windows + OpenAI Secure MCP Tunnel](WINDOWS_OPENAI_TUNNEL.md).
+
 ## Existing Server
 
 For an existing hosted Server intentionally configured for shared-key clients,

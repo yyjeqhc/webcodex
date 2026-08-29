@@ -14,6 +14,7 @@
 ## 我需要 Windows 或长期部署
 
 - [部署指南](DEPLOYMENT.zh-CN.md) —— 自托管 Linux Server、Windows/Runner 接入和长期运行
+- [Windows + OpenAI Secure MCP Tunnel 实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md) —— 独立 Windows Server/Runner、ChatGPT Tunnel Connector 与真实故障排查
 - [Runner](RUNNER.zh-CN.md) —— 运维仓库所在机器上的执行组件
 - [CLI](CLI.zh-CN.md) —— 命令、配置、凭据和运维参考
 

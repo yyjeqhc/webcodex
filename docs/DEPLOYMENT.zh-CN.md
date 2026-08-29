@@ -62,6 +62,8 @@ webcodex runner run --config <login-reported-agent-config>
 
 如果 Server 与 Runner 位于不同机器，把 loopback URL 替换为 Server 可访问的 HTTPS URL，并按下文配置 Server listener/public URL 与受信任的反向代理或 tunnel。不要把 Server bootstrap token 或 env 文件复制到 Runner 机器。Windows 仍不支持 `webcodex server install/start/stop/restart/logs/uninstall` 与 `webcodex runner install`；Ctrl-C 或 Ctrl-Break 会结束前台 runtime。
 
+如果希望 Windows Server 保持 loopback-only，同时让 ChatGPT 通过 OpenAI Secure MCP Tunnel 访问，并把独立 Runner 当作普通长期 Runner 使用，见 [Windows + OpenAI Secure MCP Tunnel 实操指南](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。该文档记录了一次真实端到端 dogfood，包括 Windows + Clash 环境下 control-plane 直连失败及代理修复。
+
 ## 把仓库接入已有的 shared-key Server
 
 hosted shared-key 路径不需要本地 Server、数据库、反向代理或 systemd unit，但需要一把

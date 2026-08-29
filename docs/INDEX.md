@@ -14,6 +14,7 @@ Start with the goal that matches what you are trying to do.
 ## I need Windows or a permanent deployment
 
 - [Deployment](DEPLOYMENT.md) — self-hosting, Linux Server setup, Windows/Runner enrollment, and long-lived operation
+- [Windows + OpenAI Secure MCP Tunnel](WINDOWS_OPENAI_TUNNEL.md) — independent Windows Server/Runner, ChatGPT Tunnel Connector, and real troubleshooting notes
 - [Runner](RUNNER.md) — operate the component that works beside your repositories
 - [CLI](CLI.md) — commands, profiles, credentials, and operator reference
 

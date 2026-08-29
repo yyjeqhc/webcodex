@@ -65,6 +65,8 @@ webcodex runner run --config <login-reported-agent-config>
 
 When Server and Runner are on different machines, replace the loopback URL with the Server's reachable HTTPS URL and configure the Server listener/public URL plus a trusted reverse proxy or tunnel as described below. Do not copy the Server bootstrap token or env file to the Runner machine. `webcodex server install/start/stop/restart/logs/uninstall` and `webcodex runner install` remain unsupported on Windows; Ctrl-C or Ctrl-Break ends the foreground runtime.
 
+To keep a Windows Server loopback-only while exposing MCP privately through an OpenAI Secure MCP Tunnel and operating an independent Runner like a normal long-lived Runner, see [Windows + OpenAI Secure MCP Tunnel](WINDOWS_OPENAI_TUNNEL.md). That guide records a real end-to-end dogfood run, including a Windows + Clash control-plane routing failure and its proxy fix.
+
 ## Connect a repository to an existing shared-key Server
 
 The hosted shared-key path needs no local Server, database, reverse proxy, or

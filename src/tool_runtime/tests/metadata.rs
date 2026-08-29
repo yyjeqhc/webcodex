@@ -1833,6 +1833,13 @@ async fn tool_manifest_model_fields_and_hidden_start_compatibility_stay_separate
                 .as_str()
                 .unwrap_or_else(|| panic!("{tool_name} accepted field"));
             accepted_fields.insert(field.to_string());
+            if TOOL_CALL_EXPECTATION_METADATA_FIELDS.contains(&field) {
+                assert!(
+                    !properties.contains_key(field),
+                    "{tool_name} recorder metadata arg {field} must stay out of generic ToolCallRequest.properties"
+                );
+                continue;
+            }
             assert!(
                 properties.contains_key(field),
                 "{tool_name} advertises flattened arg {field}, but ToolCallRequest.properties does not declare it"

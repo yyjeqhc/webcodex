@@ -19,10 +19,10 @@ mod share_service;
 mod windows_private_state;
 
 use setup_service::{
-    create_private_dir, local_readiness, read_private_value, read_project_agent_token,
-    read_project_credential, read_toml_optional, validate_agent_authentication,
-    validate_existing_registration, validate_existing_runner, validate_product_config,
-    validate_profile, ProjectConfig,
+    create_private_dir, harden_existing_runtime_private_state, local_readiness, read_private_value,
+    read_project_agent_token, read_project_credential, read_toml_optional,
+    validate_agent_authentication, validate_existing_registration, validate_existing_runner,
+    validate_product_config, validate_profile, ProjectConfig,
 };
 pub(crate) use setup_service::{resolve_local_task_state, setup};
 #[cfg(test)]
@@ -740,6 +740,7 @@ pub(super) async fn start_local_runtime(
 ) -> Result<LocalRuntimeHandle, ProductError> {
     let console_assets_dir = resolve_console_assets_directory(options)?;
     let (config, paths) = configured_project(options)?;
+    harden_existing_runtime_private_state(&paths)?;
     ensure_local_runtime_port_available(config.port, runtime_options.port_conflict_action)?;
     let readiness_deadline = runtime_options
         .readiness_deadline
@@ -1159,6 +1160,10 @@ async fn wait_for_ready(
         Some("Run webcodex doctor."),
     ))
 }
+
+#[cfg(all(test, windows))]
+#[path = "project_entry_windows_migration_tests.rs"]
+mod windows_migration_tests;
 
 #[cfg(test)]
 #[path = "project_entry_tests.rs"]

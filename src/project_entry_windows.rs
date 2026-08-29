@@ -100,10 +100,7 @@ fn reject_reparse(file: &File, label: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn protect_handle(
-    handle: windows_sys::Win32::Foundation::HANDLE,
-    inherit_children: bool,
-) -> Result<(), String> {
+fn current_user_sid() -> Result<String, String> {
     let mut token = std::ptr::null_mut();
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
         return Err("could not inspect the current Windows user identity".to_string());
@@ -142,56 +139,92 @@ fn protect_handle(
             LocalFree(sid_text_ptr as _);
             value
         };
-        let ace_flags = if inherit_children { "OICI" } else { "" };
-        let sddl = format!("D:P(A;{ace_flags};FA;;;{sid})(A;{ace_flags};FA;;;SY)");
-        let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
-        let mut descriptor = std::ptr::null_mut();
-        if unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                sddl_wide.as_ptr(),
-                SDDL_REVISION_1,
-                &mut descriptor,
-                std::ptr::null_mut(),
-            )
-        } == 0
-        {
-            return Err("could not construct the protected Windows DACL".to_string());
-        }
-        let descriptor_result = (|| {
-            let mut present = 0;
-            let mut defaulted = 0;
-            let mut dacl = std::ptr::null_mut();
-            if unsafe {
-                GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted)
-            } == 0
-                || present == 0
-                || dacl.is_null()
-            {
-                return Err("could not inspect the protected Windows DACL".to_string());
-            }
-            let status = unsafe {
-                SetSecurityInfo(
-                    handle,
-                    SE_FILE_OBJECT,
-                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    dacl,
-                    std::ptr::null_mut(),
-                )
-            };
-            if status != 0 {
-                return Err(format!(
-                    "could not install the protected Windows DACL: OS error {status}"
-                ));
-            }
-            Ok(())
-        })();
-        unsafe { LocalFree(descriptor as _) };
-        descriptor_result
+        Ok(sid)
     })();
     unsafe { CloseHandle(token) };
     result
+}
+
+fn install_protected_dacl(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    sddl: &str,
+) -> Result<(), String> {
+    let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut descriptor = std::ptr::null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl_wide.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            std::ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err("could not construct the protected Windows DACL".to_string());
+    }
+    let result = (|| {
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut dacl = std::ptr::null_mut();
+        if unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) }
+            == 0
+            || present == 0
+            || dacl.is_null()
+        {
+            return Err("could not inspect the protected Windows DACL".to_string());
+        }
+        let status = unsafe {
+            SetSecurityInfo(
+                handle,
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                dacl,
+                std::ptr::null_mut(),
+            )
+        };
+        if status != 0 {
+            return Err(format!(
+                "could not install the protected Windows DACL: OS error {status}"
+            ));
+        }
+        Ok(())
+    })();
+    unsafe { LocalFree(descriptor as _) };
+    result
+}
+
+fn protect_handle(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    inherit_children: bool,
+) -> Result<(), String> {
+    let sid = current_user_sid()?;
+    let ace_flags = if inherit_children { "OICI" } else { "" };
+    install_protected_dacl(
+        handle,
+        &format!("D:P(A;{ace_flags};FA;;;{sid})(A;{ace_flags};FA;;;SY)"),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn current_user_sid_for_test() -> Result<String, String> {
+    current_user_sid()
+}
+
+#[cfg(test)]
+pub(super) fn set_broad_test_file_dacl(path: &Path) -> Result<(), String> {
+    let file = OpenOptions::new()
+        .access_mode(READ_CONTROL | WRITE_DAC)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|_| "could not open Windows test file for ACL setup".to_string())?;
+    reject_reparse(&file, "Windows test file")?;
+    let sid = current_user_sid()?;
+    install_protected_dacl(
+        file.as_raw_handle() as _,
+        &format!("D:P(A;;FA;;;{sid})(A;;FA;;;SY)(A;;FA;;;WD)(A;;FA;;;BU)(A;;FA;;;BA)"),
+    )
 }
 
 #[cfg(test)]

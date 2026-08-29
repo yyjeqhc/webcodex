@@ -230,6 +230,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
     // project/share state. On Windows this replaces inherited broad DACLs with
     // a protected current-user + SYSTEM boundary; on Unix it preserves 0700.
     paths.create()?;
+    harden_existing_runtime_private_state(&paths)?;
     let config = match read_toml_optional::<ProjectConfig>(&paths.config)? {
         Some(existing) => {
             validate_product_config(&expected, &existing)?;
@@ -1057,6 +1058,55 @@ fn read_private_value_with_code(path: &Path, code: &str) -> Result<String, Produ
                 Some("Restore protected private authentication material, then retry."),
             )
         })
+}
+
+pub(super) fn harden_existing_runtime_private_state(
+    paths: &ProjectPaths,
+) -> Result<(), ProductError> {
+    #[cfg(windows)]
+    {
+        for path in [
+            paths.data.join("webcodex.db"),
+            paths.data.join("webcodex.db-wal"),
+            paths.data.join("webcodex.db-shm"),
+            paths.logs.join("server.log"),
+            paths.logs.join("agent.log"),
+        ] {
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => {
+                    if !metadata.file_type().is_file() {
+                        return Err(ProductError::new(
+                            "project_registration_invalid",
+                            "WebCodex refused unsafe existing private Windows runtime state",
+                            Some(
+                                "Remove the unexpected reparse or non-file runtime state, then retry.",
+                            ),
+                        ));
+                    }
+                    super::windows_private_state::protect_private_file(&path).map_err(|_| {
+                        ProductError::new(
+                            "project_registration_invalid",
+                            "WebCodex could not protect existing private Windows runtime state",
+                            Some(
+                                "Check local filesystem permissions and reparse points, then retry.",
+                            ),
+                        )
+                    })?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => {
+                    return Err(ProductError::new(
+                        "project_registration_invalid",
+                        "WebCodex could not inspect existing private Windows runtime state",
+                        Some("Check local filesystem permissions, then retry."),
+                    ));
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = paths;
+    Ok(())
 }
 
 pub(super) fn create_private_dir(path: &Path) -> Result<(), ProductError> {

@@ -364,10 +364,11 @@ pub(super) fn handle_list(
     id: Option<Value>,
     auth: Option<&AuthContext>,
     stateless_2026: bool,
+    compact_schemas: bool,
 ) -> McpOutcome {
     let mut result = mcp_tools_list_payload_with_features_for_auth(
         runtime.model_surface(),
-        crate::config::mcp_compact_schemas_enabled(),
+        compact_schemas,
         stateless_2026 && resources::model_surface_supports_computer_app(runtime.model_surface()),
         stateless_2026,
         stateless_2026,

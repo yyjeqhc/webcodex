@@ -390,6 +390,7 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
         "summary must not embed tool output: {summary}"
     );
     let telemetry = &summary["model_ergonomics"];
+    assert_eq!(telemetry["schema_version"], 3);
     assert_eq!(telemetry["tool_name"], "list_tools");
     assert_eq!(telemetry["tool_category"], "runtime");
     assert_eq!(telemetry["success"], true);
@@ -648,9 +649,10 @@ async fn http_mcp_tools_list_success() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());
-    let service = Service::new(build_test_router(config, db, runtime));
+    let service = Service::new(build_test_router(config, db.clone(), runtime));
     let mut resp = TestClient::post("http://localhost/mcp")
         .bearer_auth("secret")
+        .add_header("x-action-session-id", "tools-list-audit", true)
         .json(&json!({
             "jsonrpc": "2.0",
             "id": 2,
@@ -682,6 +684,148 @@ async fn http_mcp_tools_list_success() {
             );
         }
     }
+    let event = db.list_action_events("tools-list-audit", 10).unwrap();
+    assert_eq!(event.len(), 1);
+    assert_eq!(event[0].endpoint, "/mcp");
+    assert_eq!(event[0].action_name, "toolsList");
+    assert_eq!(event[0].operation.as_deref(), Some("mcp_tools_list"));
+    assert_eq!(event[0].status, "success");
+    let summary: Value = serde_json::from_str(&event[0].summary_json).unwrap();
+    let surface = &summary["tool_surface"];
+    assert_eq!(summary["transport"], "mcp");
+    assert_eq!(surface["schema_version"], 1);
+    assert_eq!(surface["protocol_era"], "legacy");
+    assert_eq!(
+        surface["model_surface"],
+        crate::model_surface::MODEL_SURFACE_LOCAL_CODING
+    );
+    assert_eq!(surface["compact_schemas"], false);
+    assert_eq!(surface["tool_count"].as_u64().unwrap(), tools.len() as u64);
+    assert_eq!(
+        surface["serialized_tools_bytes"].as_u64().unwrap(),
+        serde_json::to_vec(&body["result"]["tools"]).unwrap().len() as u64
+    );
+    assert_eq!(
+        surface["serialized_result_bytes"].as_u64().unwrap(),
+        serde_json::to_vec(&body["result"]).unwrap().len() as u64
+    );
+    assert_eq!(
+        surface["gateway_tool_included"],
+        tools
+            .iter()
+            .any(|tool| tool["name"] == crate::mcp_gateway::MCP_TOOL_NAME)
+    );
+    let durable = serde_json::to_string(&summary).unwrap();
+    for forbidden in ["\"tools\"", "inputSchema", "outputSchema", "description"] {
+        assert!(
+            !durable.contains(forbidden),
+            "tools/list audit leaked schema content: {durable}"
+        );
+    }
+}
+
+#[allow(clippy::await_holding_lock)]
+#[tokio::test]
+async fn http_mcp_tools_list_stateless_audit_measures_final_compact_result_and_skips_notifications()
+{
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "1");
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::LocalCoding));
+    let service = Service::new(build_test_router(config, db.clone(), runtime));
+
+    let mut response = TestClient::post("http://localhost/mcp")
+        .bearer_auth("secret")
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_STATELESS_PROTOCOL_VERSION,
+            true,
+        )
+        .add_header(MCP_METHOD_HEADER, "tools/list", true)
+        .add_header("x-action-session-id", "tools-list-stateless", true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 2026,
+            "method": "tools/list",
+            "params": mcp_2026_params(json!({}))
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&response), StatusCode::OK);
+    let body: Value = response.take_json().await.unwrap();
+    assert_eq!(body["result"]["resultType"], "complete");
+    assert!(body["result"].get("ttlMs").is_some());
+    assert!(body["result"].get("_meta").is_some());
+    let tools = body["result"]["tools"].as_array().unwrap();
+    assert!(tools.iter().all(|tool| tool.get("outputSchema").is_none()));
+
+    let events = db.list_action_events("tools-list-stateless", 10).unwrap();
+    assert_eq!(events.len(), 1);
+    let summary: Value = serde_json::from_str(&events[0].summary_json).unwrap();
+    let surface = &summary["tool_surface"];
+    assert_eq!(surface["protocol_era"], "stateless_2026");
+    assert_eq!(
+        surface["model_surface"],
+        crate::model_surface::MODEL_SURFACE_LOCAL_CODING
+    );
+    assert_eq!(surface["compact_schemas"], true);
+    assert_eq!(surface["tool_count"].as_u64().unwrap(), tools.len() as u64);
+    assert_eq!(
+        surface["serialized_tools_bytes"].as_u64().unwrap(),
+        serde_json::to_vec(&body["result"]["tools"]).unwrap().len() as u64
+    );
+    assert_eq!(
+        surface["serialized_result_bytes"].as_u64().unwrap(),
+        serde_json::to_vec(&body["result"]).unwrap().len() as u64
+    );
+
+    let response = TestClient::post("http://localhost/mcp")
+        .bearer_auth("secret")
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_STATELESS_PROTOCOL_VERSION,
+            true,
+        )
+        .add_header(MCP_METHOD_HEADER, "tools/list", true)
+        .add_header("x-action-session-id", "tools-list-notification", true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "method": "tools/list",
+            "params": mcp_2026_params(json!({}))
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&response), StatusCode::ACCEPTED);
+    assert!(db
+        .list_action_events("tools-list-notification", 10)
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn http_mcp_tools_list_audit_sink_failure_is_non_blocking() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::LocalCoding));
+    let service = Service::new(build_test_router(config, db.clone(), runtime));
+    db.conn_for_tests()
+        .execute("DROP TABLE action_events", [])
+        .unwrap();
+
+    let mut response = TestClient::post("http://localhost/mcp")
+        .bearer_auth("secret")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 77,
+            "method": "tools/list",
+            "params": {}
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&response), StatusCode::OK);
+    let body: Value = response.take_json().await.unwrap();
+    assert!(body["result"]["tools"].is_array());
 }
 
 #[tokio::test]
@@ -1319,7 +1463,7 @@ async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_inval
         .map(|row| serde_json::from_str::<Value>(row).unwrap())
         .map(|summary| summary["model_ergonomics"].clone())
         .collect::<Vec<_>>();
-    assert!(telemetry.iter().all(|row| row["schema_version"] == 2));
+    assert!(telemetry.iter().all(|row| row["schema_version"] == 3));
     assert!(telemetry
         .iter()
         .all(|row| row["context_continuity_eligible"] == true));

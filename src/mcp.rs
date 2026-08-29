@@ -192,6 +192,33 @@ fn log_mcp_computer_app_resource_outcome(
     );
 }
 
+fn mcp_tools_list_audit_summary(
+    result: &Value,
+    protocol_era: McpProtocolEra,
+    model_surface: ModelSurface,
+    compact_schemas: bool,
+) -> Option<Value> {
+    let tools = result.get("tools")?.as_array()?;
+    let serialized_tools_bytes = serde_json::to_vec(&result["tools"]).ok()?.len() as u64;
+    let serialized_result_bytes = serde_json::to_vec(result).ok()?.len() as u64;
+    let gateway_tool_included = tools.iter().any(|tool| {
+        tool.get("name").and_then(Value::as_str) == Some(crate::mcp_gateway::MCP_TOOL_NAME)
+    });
+    Some(json!({
+        "transport": "mcp",
+        "tool_surface": {
+            "schema_version": 1,
+            "protocol_era": protocol::era_label(protocol_era),
+            "model_surface": model_surface.name(),
+            "compact_schemas": compact_schemas,
+            "tool_count": tools.len() as u64,
+            "serialized_tools_bytes": serialized_tools_bytes,
+            "serialized_result_bytes": serialized_result_bytes,
+            "gateway_tool_included": gateway_tool_included
+        }
+    }))
+}
+
 #[handler]
 pub async fn mcp_info(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     if let Err((status, _, message)) = crate::auth::require_same_origin(req) {
@@ -441,6 +468,13 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     };
 
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let tools_list_audit = if request.method == "tools/list" && request.id.is_some() {
+        Some(ActionAudit::start(req, depot, "/mcp", "toolsList"))
+    } else {
+        None
+    };
+    let compact_schemas = crate::config::mcp_compact_schemas_enabled();
+
     let config = crate::auth::get_config(depot);
     let db = crate::auth::get_db(depot);
     let host_file_import_trust = tools::host_file_import_trust_for_call(
@@ -484,6 +518,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 window.identity.as_ref(),
                 Some(&mut guard),
                 Some(&mut model_ergonomics),
+                compact_schemas,
             )),
         ),
     )
@@ -533,6 +568,47 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             return;
         }
     };
+
+    if let Some(audit) = tools_list_audit.as_ref() {
+        match &outcome {
+            McpOutcome::Ok(body) => {
+                let summary = body.get("result").and_then(|result| {
+                    mcp_tools_list_audit_summary(
+                        result,
+                        protocol_era,
+                        runtime.model_surface(),
+                        compact_schemas,
+                    )
+                });
+                let mut event = ActionAuditRecord::new(
+                    "mcp_tools_list",
+                    summary.is_some(),
+                    if summary.is_some() {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    },
+                );
+                if let Some(summary) = summary {
+                    event = event.summary(summary);
+                }
+                audit.record(event);
+            }
+            McpOutcome::BadRequest(_) => audit.record(
+                ActionAuditRecord::new("mcp_tools_list", false, StatusCode::BAD_REQUEST)
+                    .summary(json!({"transport": "mcp"})),
+            ),
+            McpOutcome::NotFound(_) => audit.record(
+                ActionAuditRecord::new("mcp_tools_list", false, StatusCode::NOT_FOUND)
+                    .summary(json!({"transport": "mcp"})),
+            ),
+            McpOutcome::Forbidden { .. } => audit.record(
+                ActionAuditRecord::new("mcp_tools_list", false, StatusCode::FORBIDDEN)
+                    .summary(json!({"transport": "mcp"})),
+            ),
+            McpOutcome::ArtifactExportStream { .. } | McpOutcome::Notification => {}
+        }
+    }
 
     if let Some(uri) = computer_app_resource_uri.as_deref() {
         log_mcp_computer_app_resource_outcome(
@@ -684,6 +760,7 @@ async fn handle_mcp_request(
     auth: Option<&AuthContext>,
 ) -> McpOutcome {
     let protocol_era = inferred_protocol_era(&request);
+    let compact_schemas = crate::config::mcp_compact_schemas_enabled();
     let outcome = handle_mcp_request_with_lifecycle(
         runtime,
         None,
@@ -694,6 +771,7 @@ async fn handle_mcp_request(
         None,
         None,
         None,
+        compact_schemas,
     )
     .await;
     match outcome {
@@ -721,6 +799,7 @@ async fn handle_mcp_request_with_lifecycle(
     window: Option<&crate::client_window::ClientWindow>,
     mut lifecycle: Option<&mut ToolRequestLifecycle>,
     mut model_ergonomics_out: Option<&mut Option<ModelErgonomicsRecord>>,
+    compact_schemas: bool,
 ) -> McpOutcome {
     let stateless_2026 = protocol_era == McpProtocolEra::Stateless2026;
     let resource_read_bypasses_runtime_read = stateless_2026
@@ -809,7 +888,7 @@ async fn handle_mcp_request_with_lifecycle(
         ),
         "ping" if !stateless_2026 => rpc_result(id, json!({})),
         "tools/list" => {
-            return tools::handle_list(runtime, id, auth, stateless_2026);
+            return tools::handle_list(runtime, id, auth, stateless_2026, compact_schemas);
         }
         "resources/list" if stateless_2026 => {
             return resources::handle_list(id, mcp_app_enabled);

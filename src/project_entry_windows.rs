@@ -228,6 +228,23 @@ pub(super) fn set_broad_test_file_dacl(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(test)]
+pub(super) fn set_broad_test_directory_dacl(path: &Path) -> Result<(), String> {
+    let directory = OpenOptions::new()
+        .access_mode(READ_CONTROL | WRITE_DAC)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|_| "could not open Windows test directory for ACL setup".to_string())?;
+    reject_reparse(&directory, "Windows test directory")?;
+    let sid = current_user_sid()?;
+    install_protected_dacl(
+        directory.as_raw_handle() as _,
+        &format!(
+            "D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)(A;OICI;FA;;;WD)(A;OICI;FA;;;BU)(A;OICI;FA;;;BA)"
+        ),
+    )
+}
+
+#[cfg(test)]
 pub(super) fn dacl_sddl(path: &Path, directory: bool) -> Result<String, String> {
     use windows_sys::Win32::Security::Authorization::{
         ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo,

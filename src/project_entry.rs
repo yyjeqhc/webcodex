@@ -19,7 +19,7 @@ mod share_service;
 mod windows_private_state;
 
 use setup_service::{
-    create_private_dir, harden_existing_runtime_private_state, local_readiness, read_private_value,
+    create_private_dir, local_readiness, prepare_runtime_private_state, read_private_value,
     read_project_agent_token, read_project_credential, read_toml_optional,
     validate_agent_authentication, validate_existing_registration, validate_existing_runner,
     validate_product_config, validate_profile, ProjectConfig,
@@ -740,7 +740,7 @@ pub(super) async fn start_local_runtime(
 ) -> Result<LocalRuntimeHandle, ProductError> {
     let console_assets_dir = resolve_console_assets_directory(options)?;
     let (config, paths) = configured_project(options)?;
-    harden_existing_runtime_private_state(&paths)?;
+    prepare_runtime_private_state(&paths)?;
     ensure_local_runtime_port_available(config.port, runtime_options.port_conflict_action)?;
     let readiness_deadline = runtime_options
         .readiness_deadline
@@ -926,11 +926,31 @@ pub(crate) async fn start_runner(options: &ProjectCommandOptions) -> Result<(), 
     started.push_str("\nRunner: online\nCoding access: ready\n\nPress Ctrl-C to stop.");
     println!("{started}");
     let outcome = tokio::select! {
-        _ = tokio::signal::ctrl_c() => Ok(()),
+        _ = wait_for_local_runtime_stop_signal() => Ok(()),
         result = runtime.wait_for_exit() => result,
     };
     runtime.stop().await;
     outcome
+}
+
+#[cfg(not(windows))]
+async fn wait_for_local_runtime_stop_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
+#[cfg(windows)]
+async fn wait_for_local_runtime_stop_signal() {
+    let mut ctrl_break = match tokio::signal::windows::ctrl_break() {
+        Ok(signal) => signal,
+        Err(_) => {
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        }
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {},
+        _ = ctrl_break.recv() => {},
+    }
 }
 
 fn resolve_console_assets_directory(

@@ -1,6 +1,9 @@
-use super::setup_service::{harden_existing_runtime_private_state, ProjectConfig, ProjectPaths};
+use super::setup_service::{
+    harden_existing_runtime_private_state, prepare_runtime_private_state, ProjectConfig,
+    ProjectPaths,
+};
 use super::windows_private_state::{
-    current_user_sid_for_test, dacl_sddl, set_broad_test_file_dacl,
+    current_user_sid_for_test, dacl_sddl, set_broad_test_directory_dacl, set_broad_test_file_dacl,
 };
 use super::ProjectCommandOptions;
 use std::fs;
@@ -53,6 +56,96 @@ fn assert_hardened(path: &Path, current_user_sid: &str) {
             "broad Windows ACE {broad} remained: {sddl}"
         );
     }
+}
+
+fn assert_hardened_directory(path: &Path, current_user_sid: &str) {
+    let sddl = dacl_sddl(path, true).unwrap();
+    assert!(sddl.starts_with("D:P"), "DACL must be protected: {sddl}");
+    assert_narrow_acl(&sddl, current_user_sid);
+}
+
+fn assert_narrow_acl(sddl: &str, current_user_sid: &str) {
+    assert!(
+        sddl.contains(&format!(";;;{current_user_sid})")),
+        "current user ACE must remain: {sddl}"
+    );
+    assert!(sddl.contains(";;;SY)"), "SYSTEM ACE must remain: {sddl}");
+    for broad in [";;;WD)", ";;;BU)", ";;;BA)"] {
+        assert!(
+            !sddl.contains(broad),
+            "broad Windows ACE {broad} remained: {sddl}"
+        );
+    }
+}
+
+#[test]
+fn legacy_runtime_parent_acls_are_hardened_before_future_children() {
+    let (_temp, paths) = legacy_paths("legacy-runtime-parent-acls");
+    for parent in [&paths.data, &paths.logs] {
+        set_broad_test_directory_dacl(parent).unwrap();
+        let sddl = dacl_sddl(parent, true).unwrap();
+        assert!(
+            sddl.contains(";;;WD)") && sddl.contains(";;;BU)"),
+            "fixture must start with broad inheritable ACEs: {sddl}"
+        );
+        assert!(
+            sddl.contains("OICI"),
+            "fixture broad ACEs must be inheritable: {sddl}"
+        );
+    }
+
+    let runtime_children = [
+        paths.data.join("webcodex.db"),
+        paths.data.join("webcodex.db-wal"),
+        paths.data.join("webcodex.db-shm"),
+        paths.logs.join("server.log"),
+        paths.logs.join("agent.log"),
+    ];
+    for path in &runtime_children {
+        assert!(!path.exists(), "fixture child must start absent: {path:?}");
+    }
+
+    prepare_runtime_private_state(&paths).unwrap();
+
+    let current_user_sid = current_user_sid_for_test().unwrap();
+    assert_hardened_directory(&paths.data, &current_user_sid);
+    assert_hardened_directory(&paths.logs, &current_user_sid);
+    for path in &runtime_children {
+        assert!(
+            !path.exists(),
+            "runtime preflight must not create an absent child: {path:?}"
+        );
+    }
+
+    for path in [
+        paths.data.join("post-preflight-child.bin"),
+        paths.logs.join("post-preflight-child.log"),
+    ] {
+        fs::write(&path, b"created-after-preflight").unwrap();
+        let sddl = dacl_sddl(&path, false).unwrap();
+        assert_narrow_acl(&sddl, &current_user_sid);
+    }
+}
+
+#[test]
+fn runtime_private_state_preflight_rejects_direct_reparse_parent() {
+    use std::os::windows::fs::symlink_dir;
+
+    let (temp, paths) = legacy_paths("legacy-runtime-parent-reparse");
+    fs::remove_dir(&paths.data).unwrap();
+    let target = temp.path().join("outside-runtime-data");
+    fs::create_dir(&target).unwrap();
+    let marker = target.join("marker.txt");
+    fs::write(&marker, b"must-stay-untouched").unwrap();
+    symlink_dir(&target, &paths.data).expect("Windows test host must support directory symlinks");
+
+    let error = prepare_runtime_private_state(&paths).unwrap_err();
+
+    assert_eq!(error.code, "project_registration_invalid");
+    assert!(error
+        .message
+        .contains("protect its private Windows state directory"));
+    assert_eq!(fs::read(&marker).unwrap(), b"must-stay-untouched");
 }
 
 #[test]

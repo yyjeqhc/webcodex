@@ -230,7 +230,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
     // project/share state. On Windows this replaces inherited broad DACLs with
     // a protected current-user + SYSTEM boundary; on Unix it preserves 0700.
     paths.create()?;
-    harden_existing_runtime_private_state(&paths)?;
+    prepare_runtime_private_state(&paths)?;
     let config = match read_toml_optional::<ProjectConfig>(&paths.config)? {
         Some(existing) => {
             validate_product_config(&expected, &existing)?;
@@ -1058,6 +1058,15 @@ fn read_private_value_with_code(path: &Path, code: &str) -> Result<String, Produ
                 Some("Restore protected private authentication material, then retry."),
             )
         })
+}
+
+pub(super) fn prepare_runtime_private_state(paths: &ProjectPaths) -> Result<(), ProductError> {
+    #[cfg(windows)]
+    {
+        create_private_dir(&paths.data)?;
+        create_private_dir(&paths.logs)?;
+    }
+    harden_existing_runtime_private_state(paths)
 }
 
 pub(super) fn harden_existing_runtime_private_state(

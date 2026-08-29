@@ -2232,12 +2232,36 @@ async fn runtime_status_defaults_to_local_coding_surface() {
 
 #[tokio::test]
 async fn runtime_status_reports_canonical_connector_surface_when_configured() {
-    let runtime =
-        test_runtime().with_model_surface(crate::model_surface::ModelSurface::CanonicalConnector);
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBCODEX_SHARED_KEY_ENABLED", "true");
+    env.set("WEBCODEX_ALLOW_ANONYMOUS", "true");
+    let runtime = runtime_with_info(RuntimeInfo {
+        auth_enabled: true,
+        oauth2_enabled: true,
+        oauth2_shared_key_bridge_enabled: true,
+        ..RuntimeInfo::default()
+    })
+    .with_model_surface(crate::model_surface::ModelSurface::CanonicalConnector);
     let full = runtime.dispatch(runtime_status_call()).await;
     assert_eq!(
         full.output["model_surface"],
         crate::model_surface::MODEL_SURFACE_CANONICAL_CONNECTOR
+    );
+    assert_eq!(
+        full.output["effective_config"]["auth"]["shared_key_enabled"],
+        false
+    );
+    assert_eq!(
+        full.output["effective_config"]["auth"]["anonymous_enabled"],
+        false
+    );
+    assert_eq!(
+        full.output["effective_config"]["auth"]["oauth2_enabled"],
+        true
+    );
+    assert_eq!(
+        full.output["effective_config"]["auth"]["oauth2_shared_key_bridge_enabled"],
+        false
     );
     let compact = runtime
         .dispatch(ToolCall::from_tool_name("runtime_status", json!({"compact": true})).unwrap())

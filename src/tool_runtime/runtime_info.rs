@@ -73,15 +73,20 @@ impl RuntimeInfo {
 
 impl ToolRuntime {
     fn effective_config_status(&self) -> Value {
+        let lightweight_auth_available =
+            self.model_surface() != crate::model_surface::ModelSurface::CanonicalConnector;
         json!({
             "action_compact_responses": crate::config::action_compact_responses_enabled(),
             "auth": {
-                "shared_key_enabled": self.runtime_info.auth_enabled
+                "shared_key_enabled": lightweight_auth_available
+                    && self.runtime_info.auth_enabled
                     && crate::auth::shared_key_enabled(),
-                "anonymous_enabled": self.runtime_info.auth_enabled
+                "anonymous_enabled": lightweight_auth_available
+                    && self.runtime_info.auth_enabled
                     && crate::auth::allow_anonymous_enabled(),
                 "oauth2_enabled": self.runtime_info.oauth2_enabled,
-                "oauth2_shared_key_bridge_enabled": self.runtime_info.oauth2_shared_key_bridge_enabled,
+                "oauth2_shared_key_bridge_enabled": lightweight_auth_available
+                    && self.runtime_info.oauth2_shared_key_bridge_enabled,
             },
             "tool_request_trace_mode": crate::config::tool_request_trace_mode().as_str(),
         })

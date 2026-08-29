@@ -241,6 +241,26 @@ pub fn is_windows_local_disk_path(path: &Path) -> bool {
     }
 }
 
+/// Validate the raw project path before any canonicalization or filesystem I/O.
+///
+/// On Windows only local disk paths (`Disk` / `VerbatimDisk`) may proceed.
+/// UNC, verbatim UNC, device namespace, and other non-local prefixes fail
+/// closed. Non-Windows platforms have no corresponding raw-prefix fence.
+pub fn validate_project_path_ingress(path: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    if !is_windows_local_disk_path(path) {
+        return Err(format!(
+            "path {} is not on a local disk drive; UNC and other Windows network/device paths are not supported for projects",
+            path.to_string_lossy()
+        ));
+    }
+
+    #[cfg(not(windows))]
+    let _ = path;
+
+    Ok(())
+}
+
 /// System directories that must never become project roots through the broad
 /// `allow_cwd_anywhere` relaxation. An explicit allowed root still authorizes
 /// these paths intentionally. Windows non-local-disk paths are rejected before
@@ -298,14 +318,7 @@ pub fn validate_project_path_policy(
     allow_cwd_anywhere: bool,
 ) -> Result<(), String> {
     let path_str = canonical_path.to_string_lossy();
-
-    #[cfg(windows)]
-    if !is_windows_local_disk_path(canonical_path) {
-        return Err(format!(
-            "path {} is not on a local disk drive; UNC and other Windows network/device paths are not supported for projects",
-            path_str
-        ));
-    }
+    validate_project_path_ingress(canonical_path)?;
 
     if canonical_allowed_roots
         .iter()
@@ -677,6 +690,8 @@ mod tests {
                 is_windows_local_disk_path(Path::new(accepted)),
                 "{accepted} must be accepted as a local disk path"
             );
+            validate_project_path_ingress(Path::new(accepted))
+                .expect("local-disk ingress must proceed without filesystem access");
         }
         // Everything else is fail-closed, whatever it starts with.
         for rejected in [
@@ -692,6 +707,8 @@ mod tests {
                 !is_windows_local_disk_path(Path::new(rejected)),
                 "{rejected} must be rejected as a non-local-disk path"
             );
+            let error = validate_project_path_ingress(Path::new(rejected)).unwrap_err();
+            assert!(error.contains("not on a local disk drive"), "{error}");
         }
     }
 

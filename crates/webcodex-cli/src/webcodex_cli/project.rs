@@ -112,6 +112,7 @@ pub(crate) fn register_existing_project(
     allow_cwd_anywhere: bool,
     explicit_id: Option<&str>,
 ) -> Result<(ProjectRegistration, Vec<PathBuf>), String> {
+    webcodex_runner_config::paths::validate_project_path_ingress(project)?;
     let canonical_project = canonical_existing_directory(project, "project path")?;
     let roots =
         validate_project_authority(&canonical_project, configured_roots, allow_cwd_anywhere)?;
@@ -308,6 +309,39 @@ mod tests {
         })
         .unwrap_err();
         assert!(error.contains("outside allowed_roots"), "{error}");
+        assert!(!registry.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn raw_unc_is_rejected_before_canonicalization_even_when_explicitly_allowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let registry = tmp.path().join("registry");
+        let unc = PathBuf::from(r"\\server\share\webcodex-unreachable-repo");
+
+        let error =
+            register_existing_project(&registry, &unc, &[unc.clone()], true, None).unwrap_err();
+        assert!(error.contains("not on a local disk drive"), "{error}");
+        assert!(
+            !error.contains("does not exist or cannot be resolved"),
+            "raw UNC ingress must fail before canonicalization: {error}"
+        );
+        assert!(!registry.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn raw_local_disk_path_proceeds_to_project_canonicalization() {
+        let tmp = tempfile::tempdir().unwrap();
+        let registry = tmp.path().join("registry");
+        let missing = PathBuf::from(r"C:\webcodex-definitely-missing-p2-regression\repo");
+
+        let error = register_existing_project(&registry, &missing, &[], true, None).unwrap_err();
+        assert!(
+            error.contains("does not exist or cannot be resolved"),
+            "local-disk ingress should proceed to canonicalization: {error}"
+        );
+        assert!(!error.contains("not on a local disk drive"), "{error}");
         assert!(!registry.exists());
     }
 

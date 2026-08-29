@@ -713,21 +713,12 @@ impl RunnerProjectCache {
 /// the stable `unc_project_path_unsupported` error before any filesystem
 /// access happens.
 ///
-/// The classification is grammar-based — the shared
-/// `webcodex_runner_config::paths::is_windows_local_disk_path` parses the
-/// Windows path prefix — never a string `starts_with` check.
-#[cfg(windows)]
+/// The shared `webcodex_runner_config::paths::validate_project_path_ingress`
+/// owns the grammar-based prefix rule; it never falls back to a string
+/// `starts_with` check.
 fn validate_windows_project_root(path: &Path) -> Result<(), &'static str> {
-    if webcodex_runner_config::paths::is_windows_local_disk_path(path) {
-        Ok(())
-    } else {
-        Err("unc_project_path_unsupported")
-    }
-}
-
-#[cfg(not(windows))]
-fn validate_windows_project_root(_path: &Path) -> Result<(), &'static str> {
-    Ok(())
+    webcodex_runner_config::paths::validate_project_path_ingress(path)
+        .map_err(|_| "unc_project_path_unsupported")
 }
 
 /// Escape a string for use as a TOML basic string (double-quoted). NUL is

@@ -2321,6 +2321,47 @@ mod tests {
         assert_no_internal_residue(&parent);
     }
 
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn login_project_rejects_raw_unc_before_redemption_or_canonicalization() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let base = temp.path().join("config");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let unc = PathBuf::from(r"\\server\share\webcodex-unreachable-repo");
+        let opts = LoginOptions {
+            server_url: format!("http://{address}"),
+            server_http: ServerHttpOptions {
+                proxy: None,
+                no_system_proxy: true,
+            },
+            code: CODE.to_string(),
+            device: "project-device".to_string(),
+            device_explicit: true,
+            base_dir: base.clone(),
+            transport: "websocket".to_string(),
+            allowed_roots: vec![unc.clone()],
+            project: Some(unc),
+            overwrite: false,
+            json: false,
+            print_mcp_config: false,
+        };
+        let error = run_login(opts).await.unwrap_err();
+        assert!(error.contains("not on a local disk drive"), "{error}");
+        assert!(
+            !error.contains("does not exist or cannot be resolved"),
+            "raw UNC ingress must fail before project canonicalization: {error}"
+        );
+        assert!(
+            !error.contains("failed to send"),
+            "raw UNC ingress must fail before the one-shot pairing request: {error}"
+        );
+        let canonical = canonical_server_url(&format!("http://{address}")).unwrap();
+        let parent = resolve_connection_parent(&base, &canonical).unwrap();
+        assert_no_internal_residue(&parent);
+    }
+
     #[test]
     fn explicit_device_wins_verbatim_without_a_suffix() {
         let temp = tempfile::TempDir::new().unwrap();

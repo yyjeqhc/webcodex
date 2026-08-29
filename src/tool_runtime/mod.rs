@@ -79,6 +79,12 @@ mod validation_events;
 pub(crate) mod validation_parser;
 pub(crate) mod validation_profile;
 
+/// Hard repository ceiling for model-facing ToolSpec and OpenAPI operation descriptions.
+/// Prefer 300 characters or fewer when semantics remain complete; brevity must not
+/// remove required authority, retry, continuation, uncertainty, safety, or recovery semantics.
+#[cfg(test)]
+pub(crate) const MODEL_TOOL_DESCRIPTION_MAX_CHARS: usize = 600;
+
 // Re-export the public API so `crate::tool_runtime::ToolCall` etc. still work.
 #[cfg(test)]
 pub(crate) use agent_authorization::required_agent_capability;

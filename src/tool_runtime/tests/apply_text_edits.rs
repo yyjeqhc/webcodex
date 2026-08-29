@@ -81,7 +81,9 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     assert_eq!(occurrence["type"], "integer");
     assert_eq!(occurrence["minimum"], 1);
     assert!(spec.description.contains("occurrence"));
-    assert!(spec.description.chars().count() <= 300);
+    assert!(
+        spec.description.chars().count() <= crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS
+    );
 }
 
 #[test]

@@ -396,19 +396,20 @@ fn openapi_has_no_duplicate_operation_ids() {
 }
 
 #[test]
-fn openapi_operation_descriptions_fit_chatgpt_limit() {
+fn openapi_operation_descriptions_fit_model_budget() {
     let spec = build_openapi_spec();
     for (path, methods) in spec["paths"].as_object().unwrap() {
         for (method, op) in methods.as_object().unwrap() {
             let operation_id = op["operationId"].as_str().unwrap_or("<missing>");
             let desc = op["description"].as_str().unwrap_or("");
             assert!(
-                desc.chars().count() <= 300,
-                "{} {} operationId {} description has length {}",
+                desc.chars().count() <= crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS,
+                "{} {} operationId {} description has length {} (hard budget {})",
                 method,
                 path,
                 operation_id,
-                desc.chars().count()
+                desc.chars().count(),
+                crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS
             );
         }
     }

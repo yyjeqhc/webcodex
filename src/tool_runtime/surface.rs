@@ -32,8 +32,8 @@ pub(crate) fn registered_tool_categories() -> Value {
     Value::Object(categories)
 }
 
-/// Short, GPT-facing flow hints. Each entry is well under the 300-char
-/// ToolSpec/operation description budget.
+/// Short GPT-facing flow hints. Their compact-discovery summary budget remains
+/// independently capped at 300 characters.
 pub(crate) fn recommended_flows() -> Vec<&'static str> {
     TOOL_RECOMMENDED_FLOWS
         .iter()

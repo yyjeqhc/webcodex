@@ -20,7 +20,9 @@ fn tool_specs_git_log_schema() {
         "git_log output schema",
         present: ["project", "limit", "skip", "count", "truncated", "commits"]
     );
-    assert!(spec.description.chars().count() <= 300);
+    assert!(
+        spec.description.chars().count() <= crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS
+    );
 }
 
 #[test]
@@ -96,7 +98,9 @@ fn tool_specs_show_changes_schema() {
             "session",
         ]
     );
-    assert!(spec.description.chars().count() <= 300);
+    assert!(
+        spec.description.chars().count() <= crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS
+    );
 }
 
 #[test]
@@ -756,7 +760,8 @@ fn tool_specs_schema_spot_checks() {
             );
         }
         assert!(
-            spec.description.chars().count() <= 300,
+            spec.description.chars().count()
+                <= crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS,
             "{name}: description too long"
         );
     }

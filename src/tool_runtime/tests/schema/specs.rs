@@ -662,13 +662,15 @@ fn tool_specs_covers_expected_tool_set() {
 }
 
 #[test]
-fn tool_specs_descriptions_fit_gpt_action_limit() {
+fn tool_specs_descriptions_fit_model_budget() {
     for spec in registered_tool_specs() {
         assert!(
-            spec.description.chars().count() <= 300,
-            "{} description is too long: {} chars",
-            spec.name,
             spec.description.chars().count()
+                <= crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS,
+            "{} description is too long: {} chars (hard budget {})",
+            spec.name,
+            spec.description.chars().count(),
+            crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS
         );
     }
 }

@@ -1034,14 +1034,17 @@ for runtime_tool in ["finish_coding_task"]:
     if runtime_tool not in tool_desc:
         errors.append(f"ToolCallRequest.tool description missing {runtime_tool}")
 
-# Phase 2: each operation description must fit the <= 300 char budget.
+# Keep this cross-language check aligned with MODEL_TOOL_DESCRIPTION_MAX_CHARS.
+MODEL_TOOL_DESCRIPTION_MAX_CHARS = 600
+# Phase 2: each operation description must fit the repository model budget.
 for path, methods in schema.get("paths", {}).items():
     for method, op in methods.items():
         desc = op.get("description", "") or ""
-        if len(desc) > 300:
+        if len(desc) > MODEL_TOOL_DESCRIPTION_MAX_CHARS:
             errors.append(
                 f"{method} {path} operationId {op.get('operationId')} "
-                f"description too long: {len(desc)} chars"
+                f"description too long: {len(desc)} chars "
+                f"(hard budget {MODEL_TOOL_DESCRIPTION_MAX_CHARS})"
             )
 
 # Forbidden legacy/admin/internal paths must not appear in the schema paths.

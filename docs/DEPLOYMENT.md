@@ -24,11 +24,7 @@ The documented distribution path is the npm thin installer/wrapper:
 npm install -g @yyjeqhc/webcodex
 ```
 
-Supported package platforms are Linux x64, Linux arm64, macOS x64, macOS arm64,
-Windows x64, and Windows arm64. Windows x64/arm64 support the CLI + Runner workflow
-and an explicit local foreground Server (`webcodex server init`, then `webcodex server run
---env-file <path>`). WebCodex-managed Windows Server services and `webcodex share` are not
-supported yet. The npm wrapper
+Supported package platforms are Linux x64, Linux arm64, macOS x64, macOS arm64, Windows x64, and Windows arm64. Windows supports CLI + Runner, explicit foreground Server, and explicit local `webcodex share --tunnel cloudflare|openai|none`. Windows x64 supports managed Cloudflare acquisition; Windows ARM64 Cloudflare requires a trusted explicit/PATH binary because the pinned upstream release has no official ARM64 artifact. Managed OpenAI `tunnel-client` supports Windows x64/arm64. WebCodex-managed Windows Server services remain unsupported. The npm wrapper
 requires Node.js 18 or newer. Starting with v0.3.5, the native Linux x64
 artifact targets glibc 2.17 or newer.
 

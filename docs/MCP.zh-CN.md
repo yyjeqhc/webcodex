@@ -8,10 +8,7 @@ reference，不是 onboarding 前置知识。
 
 ## ChatGPT Developer Mode：第一次接入
 
-下面的 self-contained `share` 路径需要本地 WebCodex Server，只支持 Linux/macOS。
-Windows 仍不支持 `share`，但可以用 `webcodex server init` + `webcodex server run --env-file
-<path>` 显式以前台方式运行本地 Server；也可以用 `webcodex connect <server-url>` 把 Runner
-接到已有 Server。
+下面的 self-contained 显式 `share` 路径支持 Linux、macOS 与 Windows，并由当前前台 session 持有本地 Server + Runner。Windows x64 可直接使用 managed 默认 Cloudflare Quick Tunnel；固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 需要受信任的显式/`PATH` `cloudflared`。managed OpenAI `tunnel-client` 支持 Windows x64/arm64。
 
 默认临时公网路径会复用显式指定/`PATH` 中的 `cloudflared`，否则由 WebCodex 自动下载并校验
 固定的 managed 副本，然后执行：

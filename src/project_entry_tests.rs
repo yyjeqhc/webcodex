@@ -1041,6 +1041,35 @@ fn state_directory_allows_absolute_and_relative_paths_outside_checkout() {
     assert!(resolved.join("project.toml").is_file());
 }
 
+#[test]
+fn default_state_base_preserves_home_and_has_windows_localappdata_fallback() {
+    use std::ffi::OsStr;
+
+    assert_eq!(
+        setup_service::default_state_base_from(
+            Some(OsStr::new("/state")),
+            Some(OsStr::new("/home/user")),
+            Some(OsStr::new("/local")),
+        )
+        .unwrap(),
+        PathBuf::from("/state/webcodex/projects")
+    );
+    assert_eq!(
+        setup_service::default_state_base_from(
+            None,
+            Some(OsStr::new("/home/user")),
+            Some(OsStr::new("/local")),
+        )
+        .unwrap(),
+        PathBuf::from("/home/user/.local/state/webcodex/projects")
+    );
+    assert_eq!(
+        setup_service::default_state_base_from(None, None, Some(OsStr::new("/local"))).unwrap(),
+        PathBuf::from("/local/WebCodex/state/projects")
+    );
+    assert!(setup_service::default_state_base_from(None, None, None).is_err());
+}
+
 #[cfg(unix)]
 #[test]
 fn state_directory_rejects_symlink_that_resolves_into_checkout() {

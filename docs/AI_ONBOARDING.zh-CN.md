@@ -11,12 +11,9 @@ ceiling。
 
 ## 选择最小路径
 
-先检查平台再选路径。Windows 不支持 `webcodex share` 所需的本地 Server runtime；
-Windows 已有远程 Linux Server 时使用 `connect`，没有 Server 时先引导用户部署 Linux
-Server。不要在 Windows 上推荐 `share`。
+先检查平台再选路径。Windows 已支持与 Linux/macOS 相同的显式 `webcodex share`，不要再把远程 Linux Server 当成 Windows 前置条件；无子命令的交互式 shortcut 仍只在 Linux/macOS 自动进入 share。Windows ARM64 如果使用默认/显式 Cloudflare，需要说明固定版本 Cloudflare 没有官方 ARM64 artifact，应提供受信任的显式/`PATH` `cloudflared`，或者选择 OpenAI tunnel / 本地 `none`。
 
-1. 在 Linux/macOS 上，用户只有一个本地仓库、想马上试 ChatGPT/MCP，并且没有现成
-   WebCodex Server URL：使用 **`webcodex share`**。
+1. 用户只有一个本地仓库、想马上试 ChatGPT/MCP，并且没有现成 WebCodex Server URL：使用 **`webcodex share`**。
 2. 用户已经有 WebCodex Server URL，需要长期连接：使用
    **`webcodex connect <server>`**。
 3. 用户明确需要独立身份、独立撤销、审计或 managed user：使用 managed identity

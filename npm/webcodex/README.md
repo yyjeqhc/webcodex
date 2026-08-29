@@ -10,11 +10,11 @@ WebCodex lets an AI inspect and edit code, run tests and commands, use Git, and 
 
 ### Fastest first connection
 
-Requires Node.js 18+ and Git. On Linux or macOS:
+Requires Node.js 18+ and Git. On Linux, macOS, or Windows x64:
 
 ```bash
 cd /path/to/your/repository
-npx --yes @yyjeqhc/webcodex
+npx --yes @yyjeqhc/webcodex share
 ```
 
 When WebCodex reports **WebCodex ready**, keep the terminal open. The **MCP URL** is normally copied to your clipboard; press **Enter** in the terminal to open ChatGPT App settings, or open **Settings -> Apps -> Create** manually. Then:
@@ -44,7 +44,7 @@ Paste the complete `/mcp?token=...` URL and choose **No authentication**. This f
 
 - Linux x64/arm64: local one-command `share`, Server, and Runner workflows.
 - macOS x64/arm64: local one-command `share` and Runner workflows.
-- Windows x64/arm64: CLI + Runner and an explicit local foreground Server (`webcodex server init`, then `webcodex server run --env-file <path>`); managed Windows Server services and local `share` are not supported yet.
+- Windows x64/arm64: CLI + Runner, foreground Server, and explicit local `share` with `cloudflare`, `openai`, or `none`. Windows x64 auto-manages the pinned Cloudflare binary; managed OpenAI `tunnel-client` supports x64 and arm64. The pinned Cloudflare release has no official Windows ARM64 artifact, so ARM64 Cloudflare use requires a trusted explicit/PATH binary. Managed Windows Server services remain unsupported.
 
 For Windows, permanent/self-hosted setup, OAuth, private tunnels, proxy settings, and troubleshooting, use the [WebCodex documentation](https://github.com/yyjeqhc/webcodex/tree/main/docs). The [Quick Start](https://github.com/yyjeqhc/webcodex/blob/main/docs/QUICK_START.md) stays focused on the first successful connection.
 
@@ -68,11 +68,11 @@ WebCodex 可以让 AI 理解和修改代码、运行测试与命令、检查 Git
 
 ### 最快的第一次连接
 
-需要 Node.js 18+ 和 Git。Linux 或 macOS 上进入仓库：
+需要 Node.js 18+ 和 Git。Linux、macOS 或 Windows x64 上进入仓库：
 
 ```bash
 cd /path/to/your/repository
-npx --yes @yyjeqhc/webcodex
+npx --yes @yyjeqhc/webcodex share
 ```
 
 看到 **WebCodex ready** 后保持终端运行。**MCP URL** 通常已经复制到剪贴板；可以直接在终端按 **Enter** 打开 ChatGPT App 设置，也可以手动进入 **Settings -> Apps -> Create**。然后：
@@ -102,7 +102,7 @@ npx --yes @yyjeqhc/webcodex share --auth query-token
 
 - Linux x64/arm64：支持本机一键 `share`、Server 和 Runner 工作流。
 - macOS x64/arm64：支持本机一键 `share` 和 Runner 工作流。
-- Windows x64/arm64：支持 CLI、Runner，以及显式的本地前台 Server（先执行 `webcodex server init`，再执行 `webcodex server run --env-file <path>`）；暂不支持 WebCodex 托管的 Windows Server service，也不支持本机 `share`。
+- Windows x64/arm64：支持 CLI、Runner、前台 Server，以及显式本机 `share --tunnel cloudflare|openai|none`。Windows x64 可自动管理固定版本 Cloudflare；OpenAI `tunnel-client` 的 managed 获取支持 x64/arm64。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。WebCodex 托管的 Windows Server service 仍不支持。
 
 Windows、长期/自托管部署、OAuth、私有隧道、代理配置和故障排查见 [WebCodex 文档](https://github.com/yyjeqhc/webcodex/tree/main/docs)。[快速开始](https://github.com/yyjeqhc/webcodex/blob/main/docs/QUICK_START.zh-CN.md)只保留第一次成功连接所需的步骤。
 

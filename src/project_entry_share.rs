@@ -22,7 +22,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-const TUNNEL_START_TIMEOUT: Duration = Duration::from_secs(20);
+const SHARE_START_TIMEOUT: Duration = Duration::from_secs(60);
 const TUNNEL_LOG_LINES: usize = 8;
 const TUNNEL_LOG_LINE_BYTES: usize = 512;
 const TUNNEL_LOG_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
@@ -483,6 +483,10 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
             session_id: crate::auth::generate_project_share_session_id(),
         });
 
+    // All process/network readiness for this share uses one absolute budget.
+    // Managed binary acquisition and local state setup above are preflight, not
+    // readiness stages, and therefore do not reset this deadline.
+    let startup_deadline = Instant::now() + SHARE_START_TIMEOUT;
     let local_url = config.server_url();
     let (public_url, mut cloudflare_tunnel) = match options.tunnel {
         TunnelProvider::CloudflareQuick => {
@@ -490,8 +494,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
                 .as_deref()
                 .ok_or_else(tunnel_runtime_error)?;
             let (url, tunnel) =
-                start_cloudflare_quick_with_binary(binary, &local_url, TUNNEL_START_TIMEOUT)
-                    .await?;
+                start_cloudflare_quick_with_binary(binary, &local_url, startup_deadline).await?;
             (url, Some(tunnel))
         }
         TunnelProvider::OpenAiSecure => (local_url.clone(), None),
@@ -504,7 +507,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
         ),
     };
 
-    let mut runtime = start_local_runtime(
+    let mut runtime = match start_local_runtime(
         &options.project,
         LocalRuntimeOptions {
             public_url: Some(public_url.clone()),
@@ -522,17 +525,44 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
                 Vec::new()
             },
             port_conflict_action: "Stop the conflicting process, then retry webcodex share.",
+            readiness_deadline: Some(startup_deadline),
         },
     )
-    .await?;
+    .await
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            if let Some(tunnel) = cloudflare_tunnel.as_mut() {
+                tunnel.stop().await;
+            }
+            return Err(error);
+        }
+    };
+
+    if let Some(tunnel) = cloudflare_tunnel.as_mut() {
+        if let Err(error) =
+            wait_for_cloudflare_forwarding(tunnel, &runtime.public_url, startup_deadline).await
+        {
+            runtime.stop().await;
+            tunnel.stop().await;
+            return Err(error);
+        }
+    }
 
     let mut openai_tunnel = if let Some(prerequisites) = openai_prerequisites.as_ref() {
-        let authorization_file = session.write_openai_authorization_file()?;
+        let authorization_file = match session.write_openai_authorization_file() {
+            Ok(path) => path,
+            Err(error) => {
+                runtime.stop().await;
+                return Err(error);
+            }
+        };
         match super::openai_tunnel_service::start_openai_tunnel(
             prerequisites,
             &mcp_url(&runtime.local_url),
             &authorization_file,
             &session.directory,
+            startup_deadline,
         )
         .await
         {
@@ -607,17 +637,17 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
 
     let outcome = match (cloudflare_tunnel.as_mut(), openai_tunnel.as_mut()) {
         (Some(tunnel), None) => tokio::select! {
-            _ = tokio::signal::ctrl_c() => Ok(()),
+            _ = wait_for_share_stop_signal() => Ok(()),
             result = runtime.wait_for_exit() => result,
             result = tunnel.wait_for_exit() => result,
         },
         (None, Some(tunnel)) => tokio::select! {
-            _ = tokio::signal::ctrl_c() => Ok(()),
+            _ = wait_for_share_stop_signal() => Ok(()),
             result = runtime.wait_for_exit() => result,
             result = tunnel.wait_for_exit() => result,
         },
         (None, None) => tokio::select! {
-            _ = tokio::signal::ctrl_c() => Ok(()),
+            _ = wait_for_share_stop_signal() => Ok(()),
             result = runtime.wait_for_exit() => result,
         },
         (Some(_), Some(_)) => unreachable!("one share cannot own two tunnel providers"),
@@ -635,6 +665,26 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
         tunnel.stop().await;
     }
     outcome
+}
+
+#[cfg(not(windows))]
+async fn wait_for_share_stop_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
+#[cfg(windows)]
+async fn wait_for_share_stop_signal() {
+    let mut ctrl_break = match tokio::signal::windows::ctrl_break() {
+        Ok(signal) => signal,
+        Err(_) => {
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        }
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {},
+        _ = ctrl_break.recv() => {},
+    }
 }
 
 fn share_access_labels(
@@ -749,7 +799,7 @@ fn render_share_oauth_ready(
 async fn start_cloudflare_quick_with_binary(
     binary: &Path,
     local_url: &str,
-    timeout: Duration,
+    deadline: Instant,
 ) -> Result<(String, CloudflareTunnel), ProductError> {
     let mut tunnel_command = Command::new(binary);
     remove_npm_wrapper_network_environment(&mut tunnel_command);
@@ -773,7 +823,6 @@ async fn start_cloudflare_quick_with_binary(
     let (url_tx, mut url_rx) = mpsc::channel(2);
     let stdout_task = spawn_tunnel_reader(stdout, recent.clone(), url_tx.clone());
     let stderr_task = spawn_tunnel_reader(stderr, recent.clone(), url_tx);
-    let deadline = Instant::now() + timeout;
 
     loop {
         if let Some(status) = child.try_wait().map_err(|_| tunnel_runtime_error())? {
@@ -833,6 +882,57 @@ where
             }
         }
     })
+}
+
+async fn wait_for_cloudflare_forwarding(
+    tunnel: &mut CloudflareTunnel,
+    public_url: &str,
+    deadline: Instant,
+) -> Result<(), ProductError> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(2))
+        .build()
+        .map_err(|_| tunnel_runtime_error())?;
+    let probe_url = format!("{}/openapi.json", public_url.trim_end_matches('/'));
+    loop {
+        if let Some(status) = tunnel
+            .child
+            .try_wait()
+            .map_err(|_| tunnel_runtime_error())?
+        {
+            return Err(ProductError::new(
+                "tunnel_unavailable",
+                format!("Cloudflare Quick Tunnel stopped before public forwarding became ready ({status})"),
+                Some("Check network connectivity and cloudflared, then retry."),
+            ));
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(ProductError::new(
+                "tunnel_unavailable",
+                "Cloudflare Quick Tunnel did not forward the local Server before the share startup timeout",
+                Some("Check network connectivity and cloudflared, then retry."),
+            ));
+        }
+        let remaining = deadline.saturating_duration_since(now);
+        if let Ok(Ok(response)) = tokio::time::timeout(
+            remaining.min(Duration::from_secs(2)),
+            client.get(&probe_url).send(),
+        )
+        .await
+        {
+            if response.status().is_success() {
+                return Ok(());
+            }
+        }
+        tokio::time::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(150)),
+        )
+        .await;
+    }
 }
 
 // A child can exit before the async readers are scheduled to consume bytes that
@@ -1239,6 +1339,25 @@ mod tests {
             );
         }
         let directory = session.directory.clone();
+        #[cfg(windows)]
+        {
+            for (path, directory) in [
+                (state.join("share"), true),
+                (session.directory.clone(), true),
+                (session.credential_file.clone(), false),
+                (authorization_file.clone(), false),
+            ] {
+                let sddl =
+                    super::super::windows_private_state::dacl_sddl(&path, directory).unwrap();
+                assert!(sddl.starts_with("D:P"), "DACL must be protected: {sddl}");
+                for broad in [";;;WD)", ";;;BU)", ";;;BA)"] {
+                    assert!(
+                        !sddl.contains(broad),
+                        "broad Windows ACE {broad} remained: {sddl}"
+                    );
+                }
+            }
+        }
         drop(session);
         assert!(!directory.exists());
         assert!(!authorization_file.exists());
@@ -1262,7 +1381,7 @@ mod tests {
         let error = start_cloudflare_quick_with_binary(
             &binary,
             "http://127.0.0.1:23456",
-            TUNNEL_TEST_START_TIMEOUT,
+            Instant::now() + TUNNEL_TEST_START_TIMEOUT,
         )
         .await
         .unwrap_err();
@@ -1277,7 +1396,7 @@ mod tests {
         let error = start_cloudflare_quick_with_binary(
             &binary,
             "http://127.0.0.1:23456",
-            Duration::from_millis(100),
+            Instant::now() + Duration::from_millis(100),
         )
         .await
         .unwrap_err();
@@ -1294,7 +1413,7 @@ mod tests {
         let (_url, mut tunnel) = start_cloudflare_quick_with_binary(
             &binary,
             "http://127.0.0.1:23456",
-            TUNNEL_TEST_START_TIMEOUT,
+            Instant::now() + TUNNEL_TEST_START_TIMEOUT,
         )
         .await
         .unwrap();
@@ -1311,7 +1430,7 @@ mod tests {
         let (url, mut tunnel) = start_cloudflare_quick_with_binary(
             &binary,
             "http://127.0.0.1:23456",
-            TUNNEL_TEST_START_TIMEOUT,
+            Instant::now() + TUNNEL_TEST_START_TIMEOUT,
         )
         .await
         .unwrap();

@@ -50,26 +50,59 @@ fn official_release_assets_and_extracted_binaries_are_pinned_per_supported_platf
     );
     assert_eq!(darwin_arm64.target, "darwin-arm64");
 
-    let error = tunnel_client_asset_for("windows", "x86_64").unwrap_err();
-    assert_eq!(error.code, "tunnel_unavailable");
-    assert!(error.message.contains("unsupported"));
+    let windows_amd64 = tunnel_client_asset_for("windows", "x86_64").unwrap();
+    assert_eq!(windows_amd64.target, "windows-amd64");
+    assert_eq!(windows_amd64.member_name, "tunnel-client.exe");
+    assert_eq!(
+        windows_amd64.archive_sha256,
+        "2a2804933924e38a502d62b61f0266cb80d56d65744f4c29876b2bf9c1544356"
+    );
+    assert_eq!(
+        windows_amd64.binary_sha256,
+        "6649169733686805ca16cccd91774594d0c017fd729c37ad4ce1cd18323d9ae8"
+    );
+    let windows_arm64 = tunnel_client_asset_for("windows", "aarch64").unwrap();
+    assert_eq!(windows_arm64.target, "windows-arm64");
+    assert_eq!(windows_arm64.member_name, "tunnel-client.exe");
+    assert_eq!(
+        windows_arm64.archive_sha256,
+        "65ab54221554481bb1c23b6015b99abe0b7f79b08593f4fb17a9e2e25532281d"
+    );
+    assert_eq!(
+        windows_arm64.binary_sha256,
+        "480684ec1031fc2985c7e87f9d669e7dfda4012a8ecdab21eabe1b5deafdd656"
+    );
 }
 
 #[test]
 fn managed_root_prefers_private_xdg_then_home() {
     assert_eq!(
-        managed_tunnel_client_root_from(Some(OsStr::new("/state")), Some(OsStr::new("/home/user")))
-            .unwrap(),
+        managed_tunnel_client_root_from(
+            Some(OsStr::new("/state")),
+            Some(OsStr::new("/home/user")),
+            Some(OsStr::new("/local")),
+        )
+        .unwrap(),
         PathBuf::from("/state/webcodex/tools/tunnel-client")
     );
     assert_eq!(
-        managed_tunnel_client_root_from(None, Some(OsStr::new("/home/user"))).unwrap(),
+        managed_tunnel_client_root_from(
+            None,
+            Some(OsStr::new("/home/user")),
+            Some(OsStr::new("/local")),
+        )
+        .unwrap(),
         PathBuf::from("/home/user/.local/state/webcodex/tools/tunnel-client")
     );
-    assert!(managed_tunnel_client_root_from(None, None).is_err());
+    assert_eq!(
+        managed_tunnel_client_root_from(None, None, Some(OsStr::new("/local"))).unwrap(),
+        PathBuf::from("/local/WebCodex/tools/tunnel-client")
+    );
+    assert!(managed_tunnel_client_root_from(None, None, None).is_err());
     assert!(managed_tunnel_client_root_from(
         Some(OsStr::new("relative")),
-        Some(OsStr::new("/home/user"))
+        Some(OsStr::new("/home/user")),
+        None,
     )
     .is_err());
 }
@@ -117,9 +150,31 @@ fn zip_extraction_reads_only_the_exact_tunnel_client_member() {
     archive.finish().unwrap();
 
     let destination = temp.path().join("extracted");
-    extract_tunnel_client(&archive_path, &destination).unwrap();
+    extract_tunnel_client(&archive_path, &destination, "tunnel-client").unwrap();
     assert_eq!(fs::read(&destination).unwrap(), b"expected-binary");
     assert!(!temp.path().join("tunnel-client").exists());
+
+    let windows_archive_path = temp.path().join("windows-client.zip");
+    let file = File::create(&windows_archive_path).unwrap();
+    let mut archive = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+    archive.start_file("../tunnel-client.exe", options).unwrap();
+    archive.write_all(b"wrong-windows").unwrap();
+    archive.start_file("tunnel-client.exe", options).unwrap();
+    archive.write_all(b"expected-windows-binary").unwrap();
+    archive.finish().unwrap();
+    let windows_destination = temp.path().join("extracted.exe");
+    extract_tunnel_client(
+        &windows_archive_path,
+        &windows_destination,
+        "tunnel-client.exe",
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read(&windows_destination).unwrap(),
+        b"expected-windows-binary"
+    );
+    assert!(!temp.path().join("tunnel-client.exe").exists());
 }
 
 #[cfg(unix)]

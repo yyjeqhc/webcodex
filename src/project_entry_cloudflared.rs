@@ -3,8 +3,12 @@ use futures_util::future::join_all;
 use reqwest::header::USER_AGENT;
 use sha2::{Digest, Sha256};
 use std::ffi::OsStr;
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+#[cfg(not(windows))]
+use std::fs::OpenOptions;
+use std::fs::{self, File};
+use std::io::Read;
+#[cfg(not(windows))]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -371,6 +375,20 @@ fn cloudflared_asset_for(os: &str, arch: &str) -> Result<CloudflaredAsset, Produ
             binary_sha256: "f35c50089cd25f77a4cb5a2152036bc26db15aa31fbe11f7995d2e42a4ed6257",
             gzip_archive: true,
         },
+        ("windows", "x86_64") => CloudflaredAsset {
+            target: "windows-amd64",
+            file_name: "cloudflared-windows-amd64.exe",
+            archive_sha256: "8635da433b6df8194746e88ed9d2589566c20e38bfc2a80e431a348b7c765841",
+            binary_sha256: "8635da433b6df8194746e88ed9d2589566c20e38bfc2a80e431a348b7c765841",
+            gzip_archive: false,
+        },
+        ("windows", "aarch64") => {
+            return Err(ProductError::new(
+                "tunnel_unavailable",
+                format!("automatic cloudflared installation is unavailable on {os}/{arch}: Cloudflare {CLOUDFLARED_VERSION} publishes no Windows ARM64 artifact"),
+                Some("Set WEBCODEX_CLOUDFLARED_BIN to a trusted compatible cloudflared binary, or use webcodex share --tunnel openai / --tunnel none."),
+            ))
+        }
         _ => {
             return Err(ProductError::new(
                 "tunnel_unavailable",
@@ -383,15 +401,20 @@ fn cloudflared_asset_for(os: &str, arch: &str) -> Result<CloudflaredAsset, Produ
 }
 
 fn managed_cloudflared_root() -> Result<PathBuf, ProductError> {
+    let local_app_data = cfg!(windows)
+        .then(|| std::env::var_os("LOCALAPPDATA"))
+        .flatten();
     managed_cloudflared_root_from(
         std::env::var_os("XDG_STATE_HOME").as_deref(),
         std::env::var_os("HOME").as_deref(),
+        local_app_data.as_deref(),
     )
 }
 
 fn managed_cloudflared_root_from(
     xdg_state_home: Option<&OsStr>,
     home: Option<&OsStr>,
+    local_app_data: Option<&OsStr>,
 ) -> Result<PathBuf, ProductError> {
     if let Some(path) = xdg_state_home.filter(|value| !value.is_empty()) {
         let path = PathBuf::from(path);
@@ -407,10 +430,17 @@ fn managed_cloudflared_root_from(
         }
         return Ok(path.join(".local/state/webcodex/tools/cloudflared"));
     }
+    if let Some(path) = local_app_data.filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(path);
+        if !path.is_absolute() {
+            return Err(managed_user_root_error("LOCALAPPDATA"));
+        }
+        return Ok(path.join("WebCodex/tools/cloudflared"));
+    }
     Err(ProductError::new(
         "tunnel_unavailable",
         "WebCodex cannot choose a private user directory for managed cloudflared",
-        Some("Set HOME or XDG_STATE_HOME, set WEBCODEX_CLOUDFLARED_BIN, or use webcodex share --tunnel none."),
+        Some("Set HOME/XDG_STATE_HOME, ensure LOCALAPPDATA is available on Windows, set WEBCODEX_CLOUDFLARED_BIN, or use webcodex share --tunnel none."),
     ))
 }
 
@@ -426,6 +456,8 @@ async fn ensure_managed_cloudflared_at(
     url: &str,
 ) -> Result<PathBuf, ProductError> {
     let destination = managed_binary_path(root, asset);
+    let install_dir = destination.parent().ok_or_else(managed_tool_path_error)?;
+    create_private_tool_dir(install_dir)?;
     if managed_binary_is_valid(&destination, asset).await {
         return Ok(destination);
     }
@@ -433,8 +465,6 @@ async fn ensure_managed_cloudflared_at(
     eprintln!(
         "WebCodex: cloudflared was not found; downloading verified Cloudflare Tunnel {CLOUDFLARED_VERSION}..."
     );
-    let install_dir = destination.parent().ok_or_else(managed_tool_path_error)?;
-    create_private_tool_dir(install_dir)?;
     let temporary = install_dir.join(format!(".install-{}", uuid::Uuid::new_v4().simple()));
     create_private_tool_dir(&temporary)?;
 
@@ -485,6 +515,10 @@ async fn managed_binary_is_valid(path: &Path, asset: CloudflaredAsset) -> bool {
     if !metadata.file_type().is_file() {
         return false;
     }
+    #[cfg(windows)]
+    if super::windows_private_state::protect_private_file(path).is_err() {
+        return false;
+    }
     if sha256_file(path).ok().as_deref() != Some(asset.binary_sha256) {
         return false;
     }
@@ -510,6 +544,14 @@ fn create_private_tool_dir(path: &Path) -> Result<(), ProductError> {
             )
         })?;
     }
+    #[cfg(windows)]
+    super::windows_private_state::protect_private_directory(path).map_err(|_| {
+        ProductError::new(
+            "tunnel_unavailable",
+            "WebCodex could not protect its managed cloudflared directory on Windows",
+            Some("Check user-state filesystem permissions and reparse points, then retry webcodex share."),
+        )
+    })?;
     Ok(())
 }
 
@@ -567,27 +609,40 @@ async fn download_cloudflared_asset_with_network(
 }
 
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), ProductError> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
+    #[cfg(windows)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        return super::windows_private_state::write_new_private_file(path, bytes).map_err(|_| {
+            ProductError::new(
+                "tunnel_unavailable",
+                "WebCodex could not securely create the temporary cloudflared download on Windows",
+                Some("Check user-state filesystem permissions and reparse points, then retry webcodex share."),
+            )
+        });
     }
-    let mut file = options.open(path).map_err(|_| {
-        ProductError::new(
-            "tunnel_unavailable",
-            "WebCodex could not create the temporary cloudflared download",
-            Some("Check user-state filesystem permissions, then retry webcodex share."),
-        )
-    })?;
-    file.write_all(bytes).map_err(|_| {
-        ProductError::new(
-            "tunnel_unavailable",
-            "WebCodex could not write the temporary cloudflared download",
-            Some("Check user-state filesystem permissions, then retry webcodex share."),
-        )
-    })
+    #[cfg(not(windows))]
+    {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path).map_err(|_| {
+            ProductError::new(
+                "tunnel_unavailable",
+                "WebCodex could not create the temporary cloudflared download",
+                Some("Check user-state filesystem permissions, then retry webcodex share."),
+            )
+        })?;
+        file.write_all(bytes).map_err(|_| {
+            ProductError::new(
+                "tunnel_unavailable",
+                "WebCodex could not write the temporary cloudflared download",
+                Some("Check user-state filesystem permissions, then retry webcodex share."),
+            )
+        })
+    }
 }
 
 async fn extract_cloudflared_archive(archive: &Path, directory: &Path) -> Result<(), ProductError> {
@@ -638,6 +693,8 @@ fn verify_sha256(path: &Path, expected: &str, label: &str) -> Result<(), Product
 }
 
 fn make_private_executable(path: &Path) -> Result<(), ProductError> {
+    #[cfg(windows)]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

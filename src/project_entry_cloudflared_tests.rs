@@ -91,9 +91,19 @@ fn release_assets_are_pinned_per_supported_platform() {
         "f35c50089cd25f77a4cb5a2152036bc26db15aa31fbe11f7995d2e42a4ed6257"
     );
 
-    let error = cloudflared_asset_for("windows", "x86_64").unwrap_err();
-    assert_eq!(error.code, "tunnel_unavailable");
-    assert!(error.message.contains("unsupported"));
+    let windows_amd64 = cloudflared_asset_for("windows", "x86_64").unwrap();
+    assert_eq!(windows_amd64.file_name, "cloudflared-windows-amd64.exe");
+    assert_eq!(windows_amd64.target, "windows-amd64");
+    assert_eq!(
+        windows_amd64.binary_sha256,
+        "8635da433b6df8194746e88ed9d2589566c20e38bfc2a80e431a348b7c765841"
+    );
+    assert_eq!(windows_amd64.archive_sha256, windows_amd64.binary_sha256);
+    assert!(!windows_amd64.gzip_archive);
+
+    let windows_arm64 = cloudflared_asset_for("windows", "aarch64").unwrap_err();
+    assert_eq!(windows_arm64.code, "tunnel_unavailable");
+    assert!(windows_arm64.message.contains("no Windows ARM64 artifact"));
 }
 
 #[test]
@@ -125,26 +135,43 @@ fn explicit_override_is_authoritative_then_path_is_used() {
 #[test]
 fn managed_root_prefers_xdg_then_home_and_requires_private_user_base() {
     assert_eq!(
-        managed_cloudflared_root_from(Some(OsStr::new("/state")), Some(OsStr::new("/home/user")))
-            .unwrap(),
+        managed_cloudflared_root_from(
+            Some(OsStr::new("/state")),
+            Some(OsStr::new("/home/user")),
+            Some(OsStr::new("/local")),
+        )
+        .unwrap(),
         PathBuf::from("/state/webcodex/tools/cloudflared")
     );
     assert_eq!(
-        managed_cloudflared_root_from(None, Some(OsStr::new("/home/user"))).unwrap(),
+        managed_cloudflared_root_from(
+            None,
+            Some(OsStr::new("/home/user")),
+            Some(OsStr::new("/local")),
+        )
+        .unwrap(),
         PathBuf::from("/home/user/.local/state/webcodex/tools/cloudflared")
     );
-    let error = managed_cloudflared_root_from(None, None).unwrap_err();
+    assert_eq!(
+        managed_cloudflared_root_from(None, None, Some(OsStr::new("/local"))).unwrap(),
+        PathBuf::from("/local/WebCodex/tools/cloudflared")
+    );
+    let error = managed_cloudflared_root_from(None, None, None).unwrap_err();
     assert_eq!(error.code, "tunnel_unavailable");
     assert!(error.message.contains("private user directory"));
     let relative_xdg = managed_cloudflared_root_from(
         Some(OsStr::new("relative-state")),
         Some(OsStr::new("/home/user")),
+        None,
     )
     .unwrap_err();
     assert!(relative_xdg.message.contains("XDG_STATE_HOME"));
     let relative_home =
-        managed_cloudflared_root_from(None, Some(OsStr::new("relative-home"))).unwrap_err();
+        managed_cloudflared_root_from(None, Some(OsStr::new("relative-home")), None).unwrap_err();
     assert!(relative_home.message.contains("HOME"));
+    let relative_local =
+        managed_cloudflared_root_from(None, None, Some(OsStr::new("relative-local"))).unwrap_err();
+    assert!(relative_local.message.contains("LOCALAPPDATA"));
 }
 
 #[test]

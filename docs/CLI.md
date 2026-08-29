@@ -20,15 +20,7 @@ The CLI produces three binaries when built from source:
 `webcodex --help` lists the top-level namespaces. The sections below explain
 what each namespace is for.
 
-For a first ChatGPT connection on Linux/macOS, running bare `webcodex` in an
-interactive Git checkout is a convenience shortcut for `webcodex share`. The
-explicit `share` command remains the deterministic/script-friendly entry. It performs project setup, starts the local
-Server and Runner, and exposes a temporary HTTPS MCP endpoint. For the default
-Quick Tunnel, WebCodex prefers `WEBCODEX_CLOUDFLARED_BIN`, then `cloudflared` on
-`PATH`, and otherwise acquires a pinned, verified managed copy before creating
-project/share state. Windows does not support `share`, but it does support an explicit
-local foreground Server with `webcodex server init` and `webcodex server run --env-file
-<path>`. Use `webcodex connect <server-url>` when connecting the Runner to an existing Server.
+For a first ChatGPT connection, explicit `webcodex share` is the deterministic/script-friendly entry on Linux, macOS, and Windows. Running bare `webcodex` in an interactive Git checkout remains a Linux/macOS-only convenience shortcut; W2 does not change Windows no-command auto-dispatch. `share` performs project setup, starts the local Server and Runner, and exposes a temporary HTTPS MCP endpoint. For the default Quick Tunnel, WebCodex prefers `WEBCODEX_CLOUDFLARED_BIN`, then `cloudflared` on `PATH`, and otherwise acquires a pinned, verified managed copy before creating project/share state. Managed Cloudflare acquisition supports Windows x64; the pinned Cloudflare release has no official Windows ARM64 artifact, so Windows ARM64 Cloudflare use requires a trusted explicit/PATH binary. Managed OpenAI `tunnel-client` supports Windows x64 and arm64.
 
 ## Command map
 
@@ -39,7 +31,7 @@ These commands work on the current Git project.
 | Command | Purpose | Notes |
 | --- | --- | --- |
 | `webcodex` (no command) | Fast interactive first-run shortcut | Only auto-dispatches to `share` on Linux/macOS when stdin/stdout are terminals and the current directory is inside a Git checkout; otherwise normal help is shown. |
-| `webcodex share` | Share the current project for ChatGPT/MCP over HTTPS | Linux/macOS first-run path; includes setup, starts the local Server + Runner, auto-manages verified `cloudflared` when needed, and best-effort copies the public MCP URL. Unavailable on Windows. |
+| `webcodex share` | Share the current project for ChatGPT/MCP over HTTPS | Explicit first-run path on Linux/macOS/Windows; includes setup, local Server + Runner, `cloudflare|openai|none`, managed tunnel acquisition when available, and bounded foreground cleanup. |
 | `webcodex connect <server>` | Connect the current project to an existing Server | Long-lived path when you already have a Server URL; defaults to hosted shared-key. |
 | `webcodex status` | Concise project coding readiness | Short summary; `doctor` is the full diagnostic check. |
 | `webcodex doctor` | Read-only readiness checks for the current project | Diagnostics/manual workflow; reports a stable `next action`. |
@@ -117,7 +109,7 @@ keep their detached-process behavior when `--scope` is omitted.
 | `webcodex server logs` | Read the Server service journal |
 | `webcodex server uninstall` | Stop, disable, and remove the managed socket/service pair |
 
-On Windows, `server init` and foreground `server run` are supported. The managed service lifecycle (`install`, `start`, `stop`, `restart`, `logs`, `uninstall`) is Linux-only; `share` also remains unavailable on Windows.
+On Windows, `server init`, foreground `server run`, and explicit `share` are supported. The managed service lifecycle (`install`, `start`, `stop`, `restart`, `logs`, `uninstall`) remains Linux-only.
 
 `webcodex server install --service-file /path/name.service` derives the sibling
 `/path/name.socket`. Use the same `--service-file` on `start`, `stop`, `restart`,

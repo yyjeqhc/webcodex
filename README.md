@@ -8,11 +8,11 @@ Ask your assistant to inspect a repository, modify code, run tests, use Git, or 
 
 ## Quick start
 
-On Linux or macOS, with Node.js 18+ and Git installed:
+With Node.js 18+ and Git installed on Linux, macOS, or Windows x64:
 
 ```bash
 cd /path/to/your/repository
-npx --yes @yyjeqhc/webcodex
+npx --yes @yyjeqhc/webcodex share
 ```
 
 When WebCodex reports **WebCodex ready**, keep the terminal open. The **MCP URL** is normally copied to your clipboard; press **Enter** in the terminal to open ChatGPT App settings, or open **Settings -> Apps -> Create** manually. Then:
@@ -78,7 +78,7 @@ For the internal Server/Runner architecture, protocol surfaces, and authority bo
 
 - **Linux x64/arm64** — local `share`, Server, and Runner workflows.
 - **macOS x64/arm64** — local `share` and Runner workflows.
-- **Windows x64/arm64** — CLI + Runner, plus an explicit local foreground Server via `webcodex server init` and `webcodex server run --env-file <path>`. WebCodex-managed Windows Server services and local `webcodex share` are not supported yet.
+- **Windows x64/arm64** — CLI + Runner, local foreground Server, and explicit `webcodex share --tunnel cloudflare|openai|none`. Windows x64 can auto-manage the pinned Cloudflare Quick Tunnel binary; OpenAI `tunnel-client` is managed on both x64 and arm64. Cloudflare does not publish a Windows ARM64 artifact for the pinned release, so Windows ARM64 Cloudflare sharing requires a trusted explicit/PATH `cloudflared`. WebCodex-managed Windows Server services remain unsupported.
 
 Windows and long-lived deployments are covered in [Deployment](docs/DEPLOYMENT.md) and [MCP](docs/MCP.md).
 

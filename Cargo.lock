@@ -5151,6 +5151,7 @@ dependencies = [
  "webcodex-runner-config",
  "webcodex-sandbox",
  "webcodex-workspace",
+ "windows-sys 0.61.2",
  "zip",
  "zstd",
 ]

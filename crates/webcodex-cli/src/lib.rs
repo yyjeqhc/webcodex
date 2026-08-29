@@ -2453,10 +2453,10 @@ where
 
 /// Windows release boundary, evaluated before any command dispatch.
 ///
-/// Windows supports explicit local foreground Server initialization/execution.
-/// Service-managed Server lifecycle operations, project `share`, and Runner
-/// service install remain unsupported and fail before platform-specific service
-/// logic. `--help` is exempt so help output still renders normally.
+/// Windows supports explicit local foreground Server initialization/execution
+/// and the platform-neutral project `share` path. Service-managed Server lifecycle
+/// operations and Runner service install remain unsupported and fail before
+/// platform-specific service logic. `--help` is exempt so help still renders.
 #[cfg(windows)]
 fn windows_unsupported_platform_action(args: &[String]) -> Option<&'static str> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -2471,10 +2471,6 @@ fn windows_unsupported_platform_action(args: &[String]) -> Option<&'static str> 
             ),
             _ => None,
         },
-        Some("share") => Some(
-            "`webcodex share` is not supported on Windows yet.\n\
-             Run `webcodex server run` for a local foreground Server or use `webcodex connect` with an existing Server.",
-        ),
         Some("runner") if args.get(1).map(String::as_str) == Some("install") => Some(
             "Automatic Windows Runner startup is not supported yet.\n\
              Use `webcodex connect` or `webcodex runner start --profile <name>.",

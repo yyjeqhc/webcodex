@@ -35,7 +35,7 @@ Advanced / compatibility:\n\
 Options:\n\
   -h, --help                    Print help and exit\n\
   -V, --version                 Print version and exit\n\n\
-First ChatGPT connection: Linux/macOS -> run `webcodex` inside a Git repo (or explicit `webcodex share`); Windows -> use `webcodex connect <server-url>` for sharing, or `webcodex server init` + `webcodex server run --env-file <path>` for a local foreground Server.\n"
+First ChatGPT connection: run explicit `webcodex share` on Linux/macOS/Windows. Bare interactive `webcodex` auto-share remains Linux/macOS-only. Windows x64 supports managed Cloudflare; Windows ARM64 Cloudflare requires a trusted explicit/PATH binary.\n"
 }
 
 pub(crate) fn connect_usage() -> &'static str {

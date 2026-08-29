@@ -12,13 +12,15 @@ or OAuth scope ceilings unless the user's chosen path actually requires them.
 
 ## Choose the smallest path
 
-Check the platform before choosing the path. Windows does not support the local
-Server runtime used by `webcodex share`; on Windows, use `connect` when a remote
-Linux Server already exists, or guide the user through Linux Server deployment
-first. Do not recommend `share` on Windows.
+Check the platform before choosing the path. Windows supports the same explicit
+`webcodex share` path as Linux/macOS; do not invent a remote Linux Server as a
+Windows prerequisite. Keep the no-command interactive shortcut Linux/macOS-only.
+On Windows ARM64, explain that the pinned Cloudflare release has no official ARM64
+artifact if the user selects/defaults to Cloudflare; a trusted explicit/PATH
+`cloudflared`, OpenAI tunnel, or local-only `none` is required instead.
 
-1. On Linux/macOS, the user has one local repository and wants to try ChatGPT/MCP
-   now, with no existing WebCodex Server URL: use **`webcodex share`**.
+1. The user has one local repository and wants to try ChatGPT/MCP now, with no
+   existing WebCodex Server URL: use **`webcodex share`**.
 2. The user already has a WebCodex Server URL and wants a persistent repository
    connection: use **`webcodex connect <server>`**.
 3. The user needs separate identity, independent revocation, audit, or managed

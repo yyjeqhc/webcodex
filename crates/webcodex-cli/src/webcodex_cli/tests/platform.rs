@@ -40,15 +40,6 @@ mod windows_guard {
     }
 
     #[test]
-    fn share_fails_closed_on_windows() {
-        let message = windows_unsupported_platform_action(&args(&["share"]))
-            .expect("share must be blocked on Windows");
-        assert!(message.contains("webcodex share"), "{message}");
-        assert!(message.contains("not supported on Windows"), "{message}");
-        assert!(message.contains("webcodex server run"), "{message}");
-    }
-
-    #[test]
     fn runner_install_fails_closed_on_windows() {
         for command in [
             vec!["runner", "install"],
@@ -89,6 +80,10 @@ mod windows_guard {
             vec!["server", "run"],
             vec!["server", "run", "--env-file", "C:\\temp\\webcodex.env"],
             vec!["server", "status"],
+            vec!["share"],
+            vec!["share", "--tunnel", "cloudflare"],
+            vec!["share", "--tunnel", "openai"],
+            vec!["share", "--tunnel", "none"],
             vec!["connect", "https://server.example.com"],
             vec!["login", "https://server.example.com", "--code", "wc_pair_x"],
             vec!["runner", "status"],

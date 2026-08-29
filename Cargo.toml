@@ -71,6 +71,17 @@ rustls-pemfile = "2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Narrow Windows-native ACL support for project/share private state and managed
+# tunnel executable caches. This is intentionally not a generic filesystem API.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }
+
 # Release binaries ship via the npm wrapper; optimize for size without
 # changing runtime behavior (panic unwinding stays enabled).
 [profile.release]

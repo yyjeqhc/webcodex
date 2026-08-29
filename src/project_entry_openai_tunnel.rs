@@ -4,8 +4,12 @@ use super::{
 use reqwest::header::USER_AGENT;
 use sha2::{Digest, Sha256};
 use std::ffi::OsStr;
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+#[cfg(not(windows))]
+use std::fs::OpenOptions;
+use std::fs::{self, File};
+use std::io::Read;
+#[cfg(any(not(windows), test))]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -18,7 +22,6 @@ const TUNNEL_CLIENT_MAX_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
 const TUNNEL_CLIENT_MAX_BINARY_BYTES: u64 = 64 * 1024 * 1024;
 const TUNNEL_CLIENT_VERIFY_TIMEOUT: Duration = Duration::from_secs(10);
 const TUNNEL_CLIENT_DOCTOR_TIMEOUT: Duration = Duration::from_secs(30);
-const TUNNEL_CLIENT_READY_TIMEOUT: Duration = Duration::from_secs(45);
 const TUNNEL_CLIENT_READY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const TUNNEL_CLIENT_HEALTH_URL_BYTES: usize = 512;
 const TUNNEL_CLIENT_OVERRIDE: &str = "WEBCODEX_TUNNEL_CLIENT_BIN";
@@ -29,6 +32,7 @@ struct TunnelClientAsset {
     file_name: &'static str,
     archive_sha256: &'static str,
     binary_sha256: &'static str,
+    member_name: &'static str,
 }
 
 #[derive(Debug)]
@@ -73,8 +77,9 @@ pub(super) async fn start_openai_tunnel(
     mcp_url: &str,
     authorization_file: &Path,
     session_dir: &Path,
+    deadline: Instant,
 ) -> Result<OpenAiTunnel, ProductError> {
-    run_doctor(prerequisites, mcp_url, authorization_file).await?;
+    run_doctor(prerequisites, mcp_url, authorization_file, deadline).await?;
 
     let health_url_file = session_dir.join("openai-tunnel-health-url");
     let log_file = session_dir.join("openai-tunnel.log");
@@ -100,7 +105,7 @@ pub(super) async fn start_openai_tunnel(
         .spawn()
         .map_err(|_| tunnel_runtime_error("OpenAI tunnel-client could not start"))?;
 
-    if let Err(error) = wait_until_ready(&mut child, &health_url_file).await {
+    if let Err(error) = wait_until_ready(&mut child, &health_url_file, deadline).await {
         let _ = child.start_kill();
         let _ = child.wait().await;
         return Err(error);
@@ -134,6 +139,7 @@ async fn run_doctor(
     prerequisites: &OpenAiTunnelPrerequisites,
     mcp_url: &str,
     authorization_file: &Path,
+    deadline: Instant,
 ) -> Result<(), ProductError> {
     let mut command = Command::new(&prerequisites.binary);
     command.arg("doctor");
@@ -146,14 +152,35 @@ async fn run_doctor(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    let status = tokio::time::timeout(TUNNEL_CLIENT_DOCTOR_TIMEOUT, command.status())
-        .await
-        .map_err(|_| {
-            tunnel_runtime_error(
-                "OpenAI tunnel-client doctor timed out before validating the connection",
-            )
-        })?
+    let mut child = command
+        .spawn()
         .map_err(|_| tunnel_runtime_error("OpenAI tunnel-client doctor could not start"))?;
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+        return Err(tunnel_runtime_error(
+            "OpenAI tunnel-client doctor had no startup budget remaining",
+        ));
+    }
+    let budget = remaining.min(TUNNEL_CLIENT_DOCTOR_TIMEOUT);
+    let status = match tokio::time::timeout(budget, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(_)) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(tunnel_runtime_error(
+                "OpenAI tunnel-client doctor could not be supervised",
+            ));
+        }
+        Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(tunnel_runtime_error(
+                "OpenAI tunnel-client doctor timed out before validating the connection",
+            ));
+        }
+    };
     if !status.success() {
         return Err(ProductError::new(
             "tunnel_unavailable",
@@ -164,7 +191,11 @@ async fn run_doctor(
     Ok(())
 }
 
-async fn wait_until_ready(child: &mut Child, health_url_file: &Path) -> Result<(), ProductError> {
+async fn wait_until_ready(
+    child: &mut Child,
+    health_url_file: &Path,
+    deadline: Instant,
+) -> Result<(), ProductError> {
     let client = reqwest::Client::builder()
         .connect_timeout(TUNNEL_CLIENT_READY_PROBE_TIMEOUT)
         .timeout(TUNNEL_CLIENT_READY_PROBE_TIMEOUT)
@@ -173,7 +204,6 @@ async fn wait_until_ready(child: &mut Child, health_url_file: &Path) -> Result<(
         .map_err(|_| {
             tunnel_runtime_error("WebCodex could not initialize the local tunnel readiness probe")
         })?;
-    let deadline = Instant::now() + TUNNEL_CLIENT_READY_TIMEOUT;
     let mut health_base = None;
 
     loop {
@@ -192,9 +222,17 @@ async fn wait_until_ready(child: &mut Child, health_url_file: &Path) -> Result<(
             health_base = read_loopback_health_url(health_url_file).ok();
         }
         if let Some(base) = health_base.as_ref() {
-            if let Ok(response) = client.get(format!("{base}/readyz")).send().await {
-                if response.status().is_success() {
-                    return Ok(());
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if !remaining.is_zero() {
+                if let Ok(Ok(response)) = tokio::time::timeout(
+                    remaining.min(TUNNEL_CLIENT_READY_PROBE_TIMEOUT),
+                    client.get(format!("{base}/readyz")).send(),
+                )
+                .await
+                {
+                    if response.status().is_success() {
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -206,7 +244,12 @@ async fn wait_until_ready(child: &mut Child, health_url_file: &Path) -> Result<(
                 Some("Check CONTROL_PLANE_TUNNEL_ID, CONTROL_PLANE_API_KEY, Tunnel workspace scope, and local MCP reachability, then retry."),
             ));
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(100)),
+        )
+        .await;
     }
 }
 
@@ -218,6 +261,14 @@ fn read_loopback_health_url(path: &Path) -> Result<String, ProductError> {
             "OpenAI tunnel-client health URL file is invalid",
         ));
     }
+    #[cfg(windows)]
+    let value = super::windows_private_state::read_private_bytes(path)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| {
+            tunnel_runtime_error("OpenAI tunnel-client health URL could not be read securely")
+        })?;
+    #[cfg(not(windows))]
     let value = fs::read_to_string(path)
         .map_err(|_| tunnel_runtime_error("OpenAI tunnel-client health URL could not be read"))?;
     let value = value.trim();
@@ -306,24 +357,42 @@ fn tunnel_client_asset_for(os: &str, arch: &str) -> Result<TunnelClientAsset, Pr
             file_name: "tunnel-client-v0.0.12-linux-amd64.zip",
             archive_sha256: "2bb693bd7b5cd28da7ce09cd9e309529dbb33b7cc9dc0058e62a064688f92c81",
             binary_sha256: "ee9d4a75bc0b42f36f345aa96231e0db1ab00488122f34ebc99d6db055b6603e",
+            member_name: "tunnel-client",
         },
         ("linux", "aarch64") => TunnelClientAsset {
             target: "linux-arm64",
             file_name: "tunnel-client-v0.0.12-linux-arm64.zip",
             archive_sha256: "6813878a3edb82ebebb32fe5a859bc6327a81cce5bc7b635a2313174d26365d6",
             binary_sha256: "0a48e6696de0df5951c013e40be81ce775e6644e209758c48795a0ecbda06406",
+            member_name: "tunnel-client",
         },
         ("macos", "x86_64") => TunnelClientAsset {
             target: "darwin-amd64",
             file_name: "tunnel-client-v0.0.12-darwin-amd64.zip",
             archive_sha256: "33de53aec680faafedc795f8f8268d6861577bddb871cb2d49529c91f88c2009",
             binary_sha256: "4133dab2575223252732a998210c34b7ed96a51765cf5ea835a8e24cf2be1272",
+            member_name: "tunnel-client",
         },
         ("macos", "aarch64") => TunnelClientAsset {
             target: "darwin-arm64",
             file_name: "tunnel-client-v0.0.12-darwin-arm64.zip",
             archive_sha256: "42fb3138dc9c081d5777cb7e8bd1e041cc48b67c4978dbab3c5167ca1aabca02",
             binary_sha256: "b1757220cf4722cec9085ee4a908cf0ee4c1a499a33bd99979b9a9c7669e29b1",
+            member_name: "tunnel-client",
+        },
+        ("windows", "x86_64") => TunnelClientAsset {
+            target: "windows-amd64",
+            file_name: "tunnel-client-v0.0.12-windows-amd64.zip",
+            archive_sha256: "2a2804933924e38a502d62b61f0266cb80d56d65744f4c29876b2bf9c1544356",
+            binary_sha256: "6649169733686805ca16cccd91774594d0c017fd729c37ad4ce1cd18323d9ae8",
+            member_name: "tunnel-client.exe",
+        },
+        ("windows", "aarch64") => TunnelClientAsset {
+            target: "windows-arm64",
+            file_name: "tunnel-client-v0.0.12-windows-arm64.zip",
+            archive_sha256: "65ab54221554481bb1c23b6015b99abe0b7f79b08593f4fb17a9e2e25532281d",
+            binary_sha256: "480684ec1031fc2985c7e87f9d669e7dfda4012a8ecdab21eabe1b5deafdd656",
+            member_name: "tunnel-client.exe",
         },
         _ => {
             return Err(ProductError::new(
@@ -337,15 +406,20 @@ fn tunnel_client_asset_for(os: &str, arch: &str) -> Result<TunnelClientAsset, Pr
 }
 
 fn managed_tunnel_client_root() -> Result<PathBuf, ProductError> {
+    let local_app_data = cfg!(windows)
+        .then(|| std::env::var_os("LOCALAPPDATA"))
+        .flatten();
     managed_tunnel_client_root_from(
         std::env::var_os("XDG_STATE_HOME").as_deref(),
         std::env::var_os("HOME").as_deref(),
+        local_app_data.as_deref(),
     )
 }
 
 fn managed_tunnel_client_root_from(
     xdg_state_home: Option<&OsStr>,
     home: Option<&OsStr>,
+    local_app_data: Option<&OsStr>,
 ) -> Result<PathBuf, ProductError> {
     if let Some(path) = xdg_state_home.filter(|value| !value.is_empty()) {
         let path = PathBuf::from(path);
@@ -361,10 +435,17 @@ fn managed_tunnel_client_root_from(
         }
         return Ok(path.join(".local/state/webcodex/tools/tunnel-client"));
     }
+    if let Some(path) = local_app_data.filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(path);
+        if !path.is_absolute() {
+            return Err(managed_user_root_error("LOCALAPPDATA"));
+        }
+        return Ok(path.join("WebCodex/tools/tunnel-client"));
+    }
     Err(ProductError::new(
         "tunnel_unavailable",
         "WebCodex cannot choose a private user directory for managed OpenAI tunnel-client",
-        Some("Set HOME or XDG_STATE_HOME, set WEBCODEX_TUNNEL_CLIENT_BIN, or use another WebCodex tunnel provider."),
+        Some("Set HOME/XDG_STATE_HOME, ensure LOCALAPPDATA is available on Windows, set WEBCODEX_TUNNEL_CLIENT_BIN, or use another WebCodex tunnel provider."),
     ))
 }
 
@@ -379,6 +460,8 @@ async fn ensure_managed_tunnel_client_at(
     asset: TunnelClientAsset,
 ) -> Result<PathBuf, ProductError> {
     let destination = managed_binary_path(root, asset);
+    let install_dir = destination.parent().ok_or_else(managed_tool_path_error)?;
+    create_private_tool_dir(install_dir)?;
     if managed_binary_is_valid(&destination, asset).await {
         return Ok(destination);
     }
@@ -386,8 +469,6 @@ async fn ensure_managed_tunnel_client_at(
     eprintln!(
         "WebCodex: tunnel-client was not found; downloading verified OpenAI tunnel-client {TUNNEL_CLIENT_VERSION}..."
     );
-    let install_dir = destination.parent().ok_or_else(managed_tool_path_error)?;
-    create_private_tool_dir(install_dir)?;
     let temporary = install_dir.join(format!(".install-{}", uuid::Uuid::new_v4().simple()));
     create_private_tool_dir(&temporary)?;
     let result = async {
@@ -396,7 +477,7 @@ async fn ensure_managed_tunnel_client_at(
         download_tunnel_client_asset(&url, &archive).await?;
         verify_sha256(&archive, asset.archive_sha256, "downloaded tunnel-client archive")?;
         let candidate = temporary.join(executable_name("tunnel-client"));
-        extract_tunnel_client(&archive, &candidate)?;
+        extract_tunnel_client(&archive, &candidate, asset.member_name)?;
         verify_sha256(&candidate, asset.binary_sha256, "downloaded tunnel-client binary")?;
         make_private_executable(&candidate)?;
         verify_tunnel_client_version(&candidate).await?;
@@ -423,6 +504,10 @@ async fn managed_binary_is_valid(path: &Path, asset: TunnelClientAsset) -> bool 
         Err(_) => return false,
     };
     if !metadata.file_type().is_file() {
+        return false;
+    }
+    #[cfg(windows)]
+    if super::windows_private_state::protect_private_file(path).is_err() {
         return false;
     }
     if sha256_file(path).ok().as_deref() != Some(asset.binary_sha256) {
@@ -487,13 +572,17 @@ async fn download_tunnel_client_asset(url: &str, destination: &Path) -> Result<(
     write_private_file(destination, &bytes)
 }
 
-fn extract_tunnel_client(archive: &Path, destination: &Path) -> Result<(), ProductError> {
+fn extract_tunnel_client(
+    archive: &Path,
+    destination: &Path,
+    member_name: &str,
+) -> Result<(), ProductError> {
     let file = File::open(archive).map_err(|_| extraction_error("archive could not be opened"))?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|_| extraction_error("verified archive is not a valid ZIP file"))?;
-    let mut entry = archive
-        .by_name("tunnel-client")
-        .map_err(|_| extraction_error("verified archive does not contain tunnel-client"))?;
+    let mut entry = archive.by_name(member_name).map_err(|_| {
+        extraction_error("verified archive does not contain the expected tunnel-client executable")
+    })?;
     if !entry.is_file() || entry.size() > TUNNEL_CLIENT_MAX_BINARY_BYTES {
         return Err(extraction_error("tunnel-client archive member is invalid"));
     }
@@ -517,22 +606,35 @@ fn create_private_tool_dir(path: &Path) -> Result<(), ProductError> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
             .map_err(|_| managed_tool_path_error())?;
     }
+    #[cfg(windows)]
+    super::windows_private_state::protect_private_directory(path)
+        .map_err(|_| managed_tool_path_error())?;
     Ok(())
 }
 
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), ProductError> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
+    #[cfg(windows)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        return super::windows_private_state::write_new_private_file(path, bytes)
+            .map_err(|_| managed_tool_path_error());
     }
-    let mut file = options.open(path).map_err(|_| managed_tool_path_error())?;
-    file.write_all(bytes).map_err(|_| managed_tool_path_error())
+    #[cfg(not(windows))]
+    {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path).map_err(|_| managed_tool_path_error())?;
+        file.write_all(bytes).map_err(|_| managed_tool_path_error())
+    }
 }
 
 fn make_private_executable(path: &Path) -> Result<(), ProductError> {
+    #[cfg(windows)]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

@@ -9,7 +9,9 @@ use crate::runner_config::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(not(windows))]
 use std::fs::OpenOptions;
+#[cfg(not(windows))]
 use std::io::Write;
 use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
@@ -224,6 +226,10 @@ pub(crate) fn resolve_local_task_state(
 
 pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, ProductError> {
     let (mut expected, paths) = ProjectConfig::resolve(options)?;
+    // Establish the private-state boundary before reading or creating any
+    // project/share state. On Windows this replaces inherited broad DACLs with
+    // a protected current-user + SYSTEM boundary; on Unix it preserves 0700.
+    paths.create()?;
     let config = match read_toml_optional::<ProjectConfig>(&paths.config)? {
         Some(existing) => {
             validate_product_config(&expected, &existing)?;
@@ -239,7 +245,6 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
     if paths.agent_config.exists() {
         validate_agent_authentication(&config, &paths)?;
     }
-    paths.create()?;
 
     let mut changed = Vec::new();
     if paths.connector_key.is_file() {
@@ -919,22 +924,55 @@ fn state_path_unavailable() -> ProductError {
 }
 
 fn default_state_base() -> Result<PathBuf, ProductError> {
-    if let Some(path) = std::env::var_os("XDG_STATE_HOME").filter(|value| !value.is_empty()) {
+    default_state_base_from(
+        std::env::var_os("XDG_STATE_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+        if cfg!(windows) {
+            std::env::var_os("LOCALAPPDATA")
+        } else {
+            None
+        }
+        .as_deref(),
+    )
+}
+
+pub(super) fn default_state_base_from(
+    xdg_state_home: Option<&std::ffi::OsStr>,
+    home: Option<&std::ffi::OsStr>,
+    local_app_data: Option<&std::ffi::OsStr>,
+) -> Result<PathBuf, ProductError> {
+    if let Some(path) = xdg_state_home.filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(path).join("webcodex/projects"));
     }
-    let home = std::env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            ProductError::new(
-                "project_not_configured",
-                "HOME is unavailable and no --state-dir was provided",
-                Some("Set HOME or pass an absolute --state-dir."),
-            )
-        })?;
-    Ok(PathBuf::from(home).join(".local/state/webcodex/projects"))
+    // Preserve the historical HOME path when it exists. Native Windows shells
+    // commonly lack HOME, so LOCALAPPDATA is the compatibility fallback rather
+    // than a migration of existing profiles.
+    if let Some(path) = home.filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path).join(".local/state/webcodex/projects"));
+    }
+    if let Some(path) = local_app_data.filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path).join("WebCodex/state/projects"));
+    }
+    Err(ProductError::new(
+        "project_not_configured",
+        "no private user state directory is available and no --state-dir was provided",
+        Some("Set HOME/XDG_STATE_HOME, ensure LOCALAPPDATA is available on Windows, or pass an absolute --state-dir."),
+    ))
 }
 
 fn read_toml<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, ProductError> {
+    #[cfg(windows)]
+    let content = super::windows_private_state::read_private_bytes(path)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| {
+            ProductError::new(
+                "project_registration_invalid",
+                "a WebCodex configuration file is unreadable or not protected",
+                Some("Restore protected private state, then retry."),
+            )
+        })?;
+    #[cfg(not(windows))]
     let content = std::fs::read_to_string(path).map_err(|_| {
         ProductError::new(
             "project_registration_invalid",
@@ -998,7 +1036,15 @@ pub(super) fn read_project_agent_token(path: &Path) -> Result<String, ProductErr
 }
 
 fn read_private_value_with_code(path: &Path, code: &str) -> Result<String, ProductError> {
-    crate::auth::read_protected_secret(path)
+    #[cfg(windows)]
+    let protected = super::windows_private_state::read_private_bytes(path).and_then(|bytes| {
+        String::from_utf8(bytes)
+            .map(|value| value.trim().to_string())
+            .map_err(|_| "private authentication material is unreadable".to_string())
+    });
+    #[cfg(not(windows))]
+    let protected = crate::auth::read_protected_secret(path);
+    protected
         .and_then(|value| {
             (!value.is_empty())
                 .then_some(value)
@@ -1032,6 +1078,14 @@ pub(super) fn create_private_dir(path: &Path) -> Result<(), ProductError> {
             )
         })?;
     }
+    #[cfg(windows)]
+    super::windows_private_state::protect_private_directory(path).map_err(|_| {
+        ProductError::new(
+            "project_registration_invalid",
+            "WebCodex could not protect its private Windows state directory",
+            Some("Check local filesystem permissions and reparse points, then retry."),
+        )
+    })?;
     Ok(())
 }
 
@@ -1039,25 +1093,49 @@ pub(super) fn write_new_private(path: &Path, content: &[u8]) -> Result<(), Produ
     if let Some(parent) = path.parent() {
         create_private_dir(parent)?;
     }
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
+    #[cfg(windows)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        return super::windows_private_state::write_new_private_file(path, content).map_err(
+            |message| {
+                let conflict = message.contains("overwrite");
+                ProductError::new(
+                    "project_registration_invalid",
+                    if conflict {
+                        "WebCodex refused to overwrite existing project state"
+                    } else {
+                        "WebCodex could not securely write private Windows project state"
+                    },
+                    Some(if conflict {
+                        "Resolve the existing state conflict, then retry."
+                    } else {
+                        "Check local filesystem permissions and reparse points, then retry."
+                    }),
+                )
+            },
+        );
     }
-    let mut file = options.open(path).map_err(|_| {
-        ProductError::new(
-            "project_registration_invalid",
-            "WebCodex refused to overwrite existing project state",
-            Some("Resolve the existing state conflict, then retry."),
-        )
-    })?;
-    file.write_all(content).map_err(|_| {
-        ProductError::new(
-            "project_registration_invalid",
-            "WebCodex could not write private project state",
-            Some("Check local filesystem permissions, then retry."),
-        )
-    })
+    #[cfg(not(windows))]
+    {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path).map_err(|_| {
+            ProductError::new(
+                "project_registration_invalid",
+                "WebCodex refused to overwrite existing project state",
+                Some("Resolve the existing state conflict, then retry."),
+            )
+        })?;
+        file.write_all(content).map_err(|_| {
+            ProductError::new(
+                "project_registration_invalid",
+                "WebCodex could not write private project state",
+                Some("Check local filesystem permissions, then retry."),
+            )
+        })
+    }
 }

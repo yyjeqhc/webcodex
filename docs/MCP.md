@@ -9,10 +9,7 @@ reference material, not onboarding prerequisites.
 
 ## ChatGPT Developer Mode: first connection
 
-The self-contained `share` path below requires a local WebCodex Server and is
-supported on Linux/macOS. Windows does not support `share`; it may run a local Server
-explicitly in the foreground with `webcodex server init` + `webcodex server run --env-file
-<path>`, or connect the Runner to an existing Server with `webcodex connect <server-url>`.
+The self-contained explicit `share` path below is supported on Linux, macOS, and Windows and owns a local foreground Server + Runner for the session. Windows x64 can use the managed default Cloudflare Quick Tunnel; Windows ARM64 needs a trusted explicit/PATH `cloudflared` because the pinned Cloudflare release publishes no official ARM64 artifact. Managed OpenAI `tunnel-client` supports both Windows x64 and arm64.
 
 For the default temporary public path, WebCodex reuses an explicit/PATH
 `cloudflared` or downloads its pinned verified managed copy automatically, then run:

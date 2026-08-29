@@ -15,6 +15,8 @@
 #   - webcodex.exe --version / --help and webcodex-runner.exe --version work
 #   - packaged `server init` + foreground `server run --env-file` reaches HTTP readiness
 #     with an isolated local config/data root and leaves no Server process behind
+#   - packaged explicit `share --tunnel none` reaches local MCP readiness with
+#     isolated project state and exact tracked Server/Runner children
 #   - an install failure does not break the previous binary set
 #   - staging/temporary files are cleaned up
 #
@@ -364,7 +366,147 @@ try {
     }
 
     # -----------------------------------------------------------------------
-    # 7. An install failure must not break the previous binary set.
+    # 7. Explicit Windows share with no tunnel. This is the deterministic CI
+    #    share lane: installed CLI -> private state -> Server -> Runner -> MCP.
+    #    Public Cloudflare/OpenAI E2E remains native dogfood evidence.
+    # -----------------------------------------------------------------------
+    $ShareSmokeRoot = Join-Path $TempRoot "share-none"
+    $ShareRepo = Join-Path $ShareSmokeRoot "repo"
+    $ShareState = Join-Path $ShareSmokeRoot "state"
+    $ShareStdout = Join-Path $ShareSmokeRoot "share.stdout.log"
+    $ShareStderr = Join-Path $ShareSmokeRoot "share.stderr.log"
+    New-Item -ItemType Directory -Force -Path $ShareRepo | Out-Null
+    & git -C $ShareRepo init --quiet
+    if ($LASTEXITCODE -ne 0) {
+        throw "could not initialize isolated Git repo for Windows share smoke"
+    }
+
+    $ShareEnvNames = @(
+        "CONTROL_PLANE_API_KEY",
+        "CONTROL_PLANE_TUNNEL_ID",
+        "OPENAI_ADMIN_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_TUNNEL_TOKEN",
+        "WEBCODEX_AGENT_BIN",
+        "WEBCODEX_AGENT_TOKEN",
+        "WEBCODEX_CLOUDFLARED_BIN",
+        "WEBCODEX_TUNNEL_CLIENT_BIN",
+        "WEBCODEX_ENV_FILE",
+        "WEBCODEX_ADDR",
+        "WEBCODEX_DATA",
+        "WEBCODEX_TOKEN",
+        "WEBCODEX_SHARED_KEY_ENABLED",
+        "WEBCODEX_ALLOW_ANONYMOUS",
+        "WEBCODEX_PUBLIC_URL",
+        "WEBCODEX_OAUTH2_ENABLED",
+        "WEBCODEX_OAUTH2_ISSUER",
+        "WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE"
+    )
+    $SavedShareEnv = @{}
+    foreach ($name in $ShareEnvNames) {
+        $item = Get-Item "Env:$name" -ErrorAction SilentlyContinue
+        if ($null -ne $item) { $SavedShareEnv[$name] = $item.Value }
+        Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+    }
+
+    $ShareCliProcess = $null
+    $ShareServerPid = $null
+    $ShareRunnerPid = $null
+    $ShareServerExe = Join-Path $VendorBin "webcodex-server.exe"
+    $ShareRunnerExe = Join-Path $VendorBin "webcodex-runner.exe"
+    try {
+        $quotedShareRepo = '"' + $ShareRepo.Replace('"', '\"') + '"'
+        $quotedShareState = '"' + $ShareState.Replace('"', '\"') + '"'
+        $ShareCliProcess = Start-Process -FilePath $cli `
+            -ArgumentList @("share", "--root", $quotedShareRepo, "--state-dir", $quotedShareState, "--tunnel", "none", "--no-copy-url") `
+            -RedirectStandardOutput $ShareStdout -RedirectStandardError $ShareStderr `
+            -PassThru -WindowStyle Hidden
+
+        $shareDeadline = [System.Diagnostics.Stopwatch]::StartNew()
+        $shareReady = $false
+        $shareOutput = ""
+        while ($shareDeadline.Elapsed -lt [TimeSpan]::FromSeconds(65)) {
+            if ($ShareCliProcess.HasExited) {
+                throw "webcodex share --tunnel none exited before readiness (exit $($ShareCliProcess.ExitCode))"
+            }
+            $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($ShareCliProcess.Id)" -ErrorAction SilentlyContinue)
+            if ($null -eq $ShareServerPid) {
+                $serverChild = $children | Where-Object { $_.Name -eq "webcodex-server.exe" -and $_.ExecutablePath -eq $ShareServerExe } | Select-Object -First 1
+                if ($null -ne $serverChild) { $ShareServerPid = [int]$serverChild.ProcessId }
+            }
+            if ($null -eq $ShareRunnerPid) {
+                $runnerChild = $children | Where-Object { $_.Name -eq "webcodex-runner.exe" -and $_.ExecutablePath -eq $ShareRunnerExe } | Select-Object -First 1
+                if ($null -ne $runnerChild) { $ShareRunnerPid = [int]$runnerChild.ProcessId }
+            }
+            if (Test-Path -LiteralPath $ShareStdout -PathType Leaf) {
+                $shareOutput = [System.IO.File]::ReadAllText($ShareStdout)
+                if ($shareOutput.Contains("WebCodex ready")) {
+                    $shareReady = $true
+                    break
+                }
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        if (-not $shareReady) {
+            throw "Windows share --tunnel none did not become ready before the absolute smoke deadline"
+        }
+        if ($null -eq $ShareServerPid -or $null -eq $ShareRunnerPid) {
+            throw "Windows share readiness did not expose the expected exact Server + Runner child processes"
+        }
+
+        $mcpMatch = [regex]::Match($shareOutput, 'http://127\.0\.0\.1:\d+/mcp')
+        $credentialMatch = [regex]::Match($shareOutput, '(?m)^\d+\. Credential \(this share only\): (.+)$')
+        if (-not $mcpMatch.Success -or -not $credentialMatch.Success) {
+            throw "Windows share output did not contain the local MCP endpoint and temporary Bearer contract"
+        }
+        $shareCredential = $credentialMatch.Groups[1].Value.Trim()
+        if ([string]::IsNullOrWhiteSpace($shareCredential)) {
+            throw "Windows share printed an empty temporary Bearer credential"
+        }
+        $initialize = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"windows-package-smoke","version":"1"}}}'
+        $headers = @{
+            Authorization = "Bearer $shareCredential"
+            Accept = "application/json, text/event-stream"
+            "MCP-Protocol-Version" = "2025-06-18"
+        }
+        $response = Invoke-WebRequest -UseBasicParsing -Method Post -Uri $mcpMatch.Value `
+            -Headers $headers -ContentType "application/json" -Body $initialize -TimeoutSec 3
+        if ($response.StatusCode -ne 200) {
+            throw "Windows share local MCP initialize returned HTTP $($response.StatusCode)"
+        }
+        if (-not (Test-Path -LiteralPath $ShareState -PathType Container)) {
+            throw "Windows share did not create isolated project state"
+        }
+    } finally {
+        # CI termination is containment only; native MSI dogfood separately proves
+        # Ctrl-C/foreground cleanup. Never kill by process name.
+        if ($null -ne $ShareServerPid) {
+            Stop-Process -Id $ShareServerPid -Force -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $ShareRunnerPid) {
+            Stop-Process -Id $ShareRunnerPid -Force -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $ShareCliProcess -and -not $ShareCliProcess.HasExited) {
+            Stop-Process -Id $ShareCliProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $ShareCliProcess) {
+            try { $ShareCliProcess.WaitForExit(5000) | Out-Null } catch {}
+        }
+        foreach ($trackedPid in @($ShareServerPid, $ShareRunnerPid)) {
+            if ($null -ne $trackedPid -and $null -ne (Get-Process -Id $trackedPid -ErrorAction SilentlyContinue)) {
+                throw "Windows share smoke left a tracked child process running"
+            }
+        }
+        foreach ($name in $ShareEnvNames) {
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+            if ($SavedShareEnv.ContainsKey($name)) {
+                Set-Item "Env:$name" $SavedShareEnv[$name]
+            }
+        }
+    }
+
+    # -----------------------------------------------------------------------
+    # 8. An install failure must not break the previous binary set.
     # -----------------------------------------------------------------------
     $badArtifacts = [ordered]@{}
     $badArtifacts[$Platform] = [ordered]@{
@@ -397,7 +539,7 @@ try {
     }
 
     # -----------------------------------------------------------------------
-    # 8. Staging/temporary cleanup.
+    # 9. Staging/temporary cleanup.
     # -----------------------------------------------------------------------
     $leftovers = Get-ChildItem -LiteralPath $env:TEMP -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like "webcodex-artifact-*" -or $_.Name -like "webcodex-manifest-*" -or $_.Name -like "webcodex-npm-test-*" } |

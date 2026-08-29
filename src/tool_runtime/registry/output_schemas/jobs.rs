@@ -320,7 +320,7 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
             "sync_wait_secs",
             schema_type(
                 "integer",
-                "Internal synchronous grace in seconds; this is not a second timeout budget. Omitted from ordinary synchronous terminal run_process/run_script success.",
+                "Effective synchronous grace before durable Job handoff for this execution path; it never extends the total runtime timeout or causes work to rerun. Omitted from ordinary synchronous terminal run_process/run_script success.",
             ),
         ),
         (

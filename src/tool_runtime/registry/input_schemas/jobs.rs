@@ -11,6 +11,7 @@ use crate::shell_protocol::{
 use crate::tool_runtime::sessions::{
     MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, TOOL_ASSERTION_NAME_FIELD,
 };
+use crate::tool_runtime::structured_execution::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;
 
 fn with_optional_validation_assertion(mut schema: Value) -> Value {
     schema["properties"][TOOL_ASSERTION_NAME_FIELD] = json!({
@@ -56,6 +57,12 @@ pub(crate) fn run_process_input_schema() -> Value {
             false,
         ),
         (
+            "sync_wait_secs",
+            "integer",
+            "Optional synchronous grace before durable Job handoff. Omit to use 10 seconds bounded by the total timeout; explicit values are 1..=60 and must not exceed timeout_secs. It only controls how long the Server waits for the already-started execution before exposing that same execution as a Job; it does not extend the total runtime timeout or rerun work.",
+            false,
+        ),
+        (
             "purpose",
             "string",
             "Declared execution intent: validation, test, build, format, release, diagnostic, operation, or other. This records evidence and never changes authorization.",
@@ -78,6 +85,9 @@ pub(crate) fn run_process_input_schema() -> Value {
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
     schema["properties"]["timeout_secs"]["maximum"] = json!(PROCESS_TIMEOUT_MAX_SECS);
     schema["properties"]["timeout_secs"]["default"] = json!(60);
+    schema["properties"]["sync_wait_secs"]["minimum"] = json!(1);
+    schema["properties"]["sync_wait_secs"]["maximum"] =
+        json!(STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS);
     schema["properties"]["purpose"]["enum"] = json!([
         "validation",
         "test",
@@ -97,6 +107,10 @@ pub(crate) fn run_detached_process_input_schema() -> Value {
         .as_object_mut()
         .expect("run_process schema properties")
         .remove(TOOL_ASSERTION_NAME_FIELD);
+    schema["properties"]
+        .as_object_mut()
+        .expect("run_process schema properties")
+        .remove("sync_wait_secs");
     schema["properties"]["idempotency_key"] = json!({
         "type": "string",
         "minLength": 1,
@@ -156,6 +170,12 @@ pub(crate) fn run_script_input_schema() -> Value {
             false,
         ),
         (
+            "sync_wait_secs",
+            "integer",
+            "Optional synchronous grace before durable Job handoff. Omit to use 10 seconds bounded by the total timeout; explicit values are 1..=60 and must not exceed timeout_secs. It only controls how long the Server waits for the already-started execution before exposing that same execution as a Job; it does not extend the total runtime timeout or rerun work.",
+            false,
+        ),
+        (
             "purpose",
             "string",
             "Declared execution intent: validation, test, build, format, release, diagnostic, operation, or other. This records evidence and never changes authorization.",
@@ -182,6 +202,9 @@ pub(crate) fn run_script_input_schema() -> Value {
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
     schema["properties"]["timeout_secs"]["maximum"] = json!(SCRIPT_TIMEOUT_MAX_SECS);
     schema["properties"]["timeout_secs"]["default"] = json!(60);
+    schema["properties"]["sync_wait_secs"]["minimum"] = json!(1);
+    schema["properties"]["sync_wait_secs"]["maximum"] =
+        json!(STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS);
     schema["properties"]["purpose"]["enum"] = json!([
         "validation",
         "test",

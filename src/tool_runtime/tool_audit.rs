@@ -3164,6 +3164,7 @@ impl ToolCall {
                 args,
                 stdin,
                 timeout_secs,
+                sync_wait_secs,
                 cwd,
                 purpose,
                 ..
@@ -3185,6 +3186,7 @@ impl ToolCall {
                         args.iter().map(String::as_str),
                     ),
                     "timeout_secs": timeout_secs,
+                    "sync_wait_secs": sync_wait_secs,
                     "cwd": cwd,
                     "purpose": purpose,
                 });
@@ -3232,6 +3234,7 @@ impl ToolCall {
                 args,
                 stdin,
                 timeout_secs,
+                sync_wait_secs,
                 cwd,
                 purpose,
                 ..
@@ -3251,6 +3254,7 @@ impl ToolCall {
                     "arg_count": args.len(),
                     "stdin_present": stdin.is_some(),
                     "timeout_secs": timeout_secs,
+                    "sync_wait_secs": sync_wait_secs,
                     "cwd": cwd,
                     "purpose": purpose,
                 });

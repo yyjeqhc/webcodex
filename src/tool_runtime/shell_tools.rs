@@ -20,6 +20,7 @@ impl ToolRuntime {
                 stdin,
                 session_id,
                 timeout_secs,
+                sync_wait_secs,
                 cwd,
                 purpose,
             } => {
@@ -29,6 +30,7 @@ impl ToolRuntime {
                     args,
                     stdin,
                     timeout_secs,
+                    sync_wait_secs,
                     cwd,
                     purpose,
                     sandbox,
@@ -74,6 +76,7 @@ impl ToolRuntime {
                 stdin,
                 session_id,
                 timeout_secs,
+                sync_wait_secs,
                 cwd,
                 purpose,
             } => {
@@ -84,6 +87,7 @@ impl ToolRuntime {
                     args,
                     stdin,
                     timeout_secs,
+                    sync_wait_secs,
                     cwd,
                     purpose,
                     sandbox,

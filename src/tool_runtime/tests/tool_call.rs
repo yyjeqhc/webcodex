@@ -218,6 +218,7 @@ fn from_tool_name_parses_structured_run_process_boundaries() {
             "cwd": ".",
             "stdin": "input\n",
             "timeout_secs": 60,
+            "sync_wait_secs": 45,
             "purpose": "diagnostic",
             "session_id": "wc_sess_process"
         }),
@@ -231,6 +232,7 @@ fn from_tool_name_parses_structured_run_process_boundaries() {
             cwd,
             stdin,
             timeout_secs,
+            sync_wait_secs,
             purpose,
             session_id,
         } => {
@@ -243,6 +245,7 @@ fn from_tool_name_parses_structured_run_process_boundaries() {
             assert_eq!(cwd.as_deref(), Some("."));
             assert_eq!(stdin.as_deref(), Some("input\n"));
             assert_eq!(timeout_secs, Some(60));
+            assert_eq!(sync_wait_secs, Some(45));
             assert_eq!(purpose, Some(ExecutionPurpose::Diagnostic));
             assert_eq!(session_id.as_deref(), Some("wc_sess_process"));
         }

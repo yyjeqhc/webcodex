@@ -324,6 +324,7 @@ impl ToolRuntime {
         args: Vec<String>,
         stdin: Option<String>,
         timeout_secs: Option<u64>,
+        sync_wait_secs: Option<u64>,
         cwd: Option<String>,
         purpose: Option<ExecutionPurpose>,
         sandbox: Option<&str>,
@@ -338,6 +339,7 @@ impl ToolRuntime {
             args,
             stdin,
             timeout_secs,
+            sync_wait_secs,
             cwd,
             purpose,
             sandbox,
@@ -603,6 +605,7 @@ impl ToolRuntime {
             None,
             Some(timeout_secs),
             None,
+            None,
             Some(ExecutionPurpose::Operation),
             None,
             None,
@@ -622,6 +625,7 @@ impl ToolRuntime {
         args: Vec<String>,
         stdin: Option<String>,
         timeout_secs: Option<u64>,
+        sync_wait_secs: Option<u64>,
         cwd: Option<String>,
         purpose: Option<ExecutionPurpose>,
         sandbox: Option<&str>,
@@ -631,13 +635,14 @@ impl ToolRuntime {
         validation_assertion_name: Option<&str>,
         allow_async_handoff: bool,
     ) -> ToolResult {
-        let budget = match StructuredExecutionBudget::resolve(timeout_secs) {
+        let budget =
+            match StructuredExecutionBudget::resolve_with_sync_wait(timeout_secs, sync_wait_secs) {
             Ok(budget) => budget,
             Err(error) => {
                 return process_tool_failure_result(
                     command_rejected_message(
                         format!("run_process {error}"),
-                        "pass timeout_secs between 1 and 3600, or omit it for the default of 60 seconds.",
+                        "pass timeout_secs between 1 and 3600 and sync_wait_secs between 1 and 60 without exceeding timeout_secs; both may be omitted for their defaults.",
                     ),
                     "invalid_arguments",
                     ShellCommandExecutionState::NotStarted,

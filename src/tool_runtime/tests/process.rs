@@ -65,6 +65,7 @@ fn process_call(project: String, session_id: Option<String>) -> ToolCall {
         stdin: Some("input\n".to_string()),
         session_id,
         timeout_secs: Some(30),
+        sync_wait_secs: None,
         cwd: None,
         purpose: Some(ExecutionPurpose::Diagnostic),
     }
@@ -1149,6 +1150,7 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
             stdin: Some("input\n".to_string()),
             session_id: None,
             timeout_secs: Some(121),
+            sync_wait_secs: Some(45),
             cwd: None,
             purpose: Some(ExecutionPurpose::Diagnostic),
         },
@@ -1182,7 +1184,7 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
     assert_eq!(handoff.output["command_started"], true);
     assert_eq!(handoff.output["command_completed"], false);
     assert_eq!(handoff.output["effective_timeout_secs"], 121);
-    assert_eq!(handoff.output["sync_wait_secs"], 10);
+    assert_eq!(handoff.output["sync_wait_secs"], 45);
     let job_id = handoff.output["job_id"].as_str().unwrap().to_string();
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
 
@@ -1256,6 +1258,92 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
     assert!(probe_patch_agent_request(&runtime, "process-slow-job")
         .await
         .is_none());
+}
+
+#[tokio::test]
+async fn run_process_sync_wait_validation_fails_before_execution_start() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_process_job_agent(&runtime, "process-sync-wait-bounds", temp.path()).await;
+
+    for (timeout_secs, sync_wait_secs) in [(60, 0), (60, 61), (5, 6)] {
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunProcess {
+                    project: project.clone(),
+                    executable: "argv-helper".to_string(),
+                    args: Vec::new(),
+                    stdin: None,
+                    session_id: None,
+                    timeout_secs: Some(timeout_secs),
+                    sync_wait_secs: Some(sync_wait_secs),
+                    cwd: None,
+                    purpose: None,
+                },
+                Some(&auth_context(None, true)),
+            )
+            .await;
+        assert!(!result.success);
+        assert_eq!(result.output["execution_state"], "not_started");
+        assert_eq!(result.output["command_started"], false);
+        assert_eq!(result.output["failure_kind"], "invalid_arguments");
+    }
+    assert!(
+        probe_patch_agent_request(&runtime, "process-sync-wait-bounds")
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn run_process_short_timeout_stays_direct_without_job_headroom() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project = register_process_job_agent(&runtime, "process-short-timeout", temp.path()).await;
+    let auth = auth_context(None, true);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::RunProcess {
+                        project,
+                        executable: "argv-helper".to_string(),
+                        args: Vec::new(),
+                        stdin: None,
+                        session_id: None,
+                        timeout_secs: Some(1),
+                        sync_wait_secs: None,
+                        cwd: None,
+                        purpose: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, "process-short-timeout").await;
+    assert_eq!(request.kind, "run_process");
+    assert!(request.job_id.is_none());
+    complete_process_lifecycle(
+        &runtime,
+        "process-short-timeout",
+        request.request_id,
+        ShellCommandExecutionState::Completed,
+        Some(0),
+        "done\n",
+        "",
+        None,
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["execution_state"], "completed");
+    assert!(result.output.get("promoted_to_job").is_none());
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
 }
 
 #[tokio::test]
@@ -1430,6 +1518,7 @@ async fn b2_process_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
                         stdin: None,
                         session_id: None,
                         timeout_secs: Some(120),
+                        sync_wait_secs: Some(45),
                         cwd: None,
                         purpose: None,
                     },
@@ -1491,6 +1580,7 @@ async fn b2_process_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
                 stdin: None,
                 session_id: None,
                 timeout_secs: Some(121),
+                sync_wait_secs: None,
                 cwd: None,
                 purpose: None,
             },
@@ -1525,6 +1615,7 @@ async fn run_process_preserves_large_typed_argv_without_shell_parsing() {
                         stdin: None,
                         session_id: None,
                         timeout_secs: Some(30),
+                        sync_wait_secs: None,
                         cwd: None,
                         purpose: None,
                     },
@@ -1863,6 +1954,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             stdin: None,
             session_id: None,
             timeout_secs: Some(30),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1873,6 +1965,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             stdin: None,
             session_id: None,
             timeout_secs: Some(30),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1883,6 +1976,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             stdin: None,
             session_id: None,
             timeout_secs: Some(30),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1893,6 +1987,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             stdin: None,
             session_id: None,
             timeout_secs: Some(30),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1903,6 +1998,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             stdin: None,
             session_id: None,
             timeout_secs: Some(30),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1913,6 +2009,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             stdin: None,
             session_id: None,
             timeout_secs: Some(0),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1923,6 +2020,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             stdin: None,
             session_id: None,
             timeout_secs: Some(30),
+            sync_wait_secs: None,
             cwd: Some("bad\0cwd".to_string()),
             purpose: None,
         },
@@ -1933,6 +2031,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             stdin: Some("x".repeat(65_537)),
             session_id: None,
             timeout_secs: Some(30),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1955,6 +2054,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
                 stdin: None,
                 session_id: None,
                 timeout_secs: Some(121),
+                sync_wait_secs: None,
                 cwd: None,
                 purpose: None,
             },

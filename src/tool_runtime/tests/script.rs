@@ -31,6 +31,7 @@ fn script_call(
         stdin: Some("independent stdin\n".to_string()),
         session_id,
         timeout_secs: Some(30),
+        sync_wait_secs: None,
         cwd: None,
         purpose: Some(ExecutionPurpose::Operation),
     }
@@ -366,6 +367,78 @@ async fn run_script_fast_success_projects_back_and_removes_the_hidden_job() {
 }
 
 #[tokio::test]
+async fn run_script_explicit_sync_wait_captures_terminal_after_old_ten_second_threshold() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_script_job_agent(&runtime, "script-extended-sync-wait", temp.path()).await;
+    let auth = auth_context(None, true);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::RunScript {
+                        project,
+                        language: ShellScriptLanguage::Sh,
+                        script: "printf 'done\\n'\n".to_string(),
+                        args: Vec::new(),
+                        stdin: None,
+                        session_id: None,
+                        timeout_secs: Some(60),
+                        sync_wait_secs: Some(45),
+                        cwd: None,
+                        purpose: Some(ExecutionPurpose::Operation),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, "script-extended-sync-wait").await;
+    assert_eq!(request.kind, "start_script_job");
+    update_script_job(
+        &runtime,
+        "script-extended-sync-wait",
+        &request,
+        "running",
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(10_250)).await;
+    update_script_job(
+        &runtime,
+        "script-extended-sync-wait",
+        &request,
+        "completed",
+        Some(ShellCommandExecutionState::Completed),
+        Some(0),
+        Some("done\n"),
+        None,
+        None,
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["execution_state"], "completed");
+    assert_eq!(result.output["command_completed"], true);
+    assert!(result.output.get("job_id").is_none());
+    assert!(result.output.get("promoted_to_job").is_none());
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(
+        probe_patch_agent_request(&runtime, "script-extended-sync-wait")
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn run_script_fast_missing_interpreter_retains_not_started_through_the_hidden_job() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));
@@ -458,6 +531,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
                         stdin: Some(stdin),
                         session_id: Some(session_id),
                         timeout_secs: Some(60),
+                        sync_wait_secs: None,
                         cwd: None,
                         purpose: Some(ExecutionPurpose::Operation),
                     },
@@ -647,6 +721,7 @@ async fn b2_script_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
                         stdin: None,
                         session_id: None,
                         timeout_secs: Some(120),
+                        sync_wait_secs: Some(45),
                         cwd: None,
                         purpose: None,
                     },
@@ -692,6 +767,7 @@ async fn b2_script_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
                 stdin: None,
                 session_id: None,
                 timeout_secs: Some(121),
+                sync_wait_secs: None,
                 cwd: None,
                 purpose: None,
             },
@@ -1189,6 +1265,7 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
             stdin: None,
             session_id: None,
             timeout_secs: Some(60),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1200,6 +1277,7 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
             stdin: None,
             session_id: None,
             timeout_secs: Some(60),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1211,6 +1289,7 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
             stdin: None,
             session_id: None,
             timeout_secs: Some(60),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1222,6 +1301,7 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
             stdin: None,
             session_id: None,
             timeout_secs: Some(60),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1233,6 +1313,7 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
             stdin: None,
             session_id: None,
             timeout_secs: Some(60),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1244,6 +1325,7 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
             stdin: Some("x".repeat(65_537)),
             session_id: None,
             timeout_secs: Some(60),
+            sync_wait_secs: None,
             cwd: None,
             purpose: None,
         },
@@ -1255,7 +1337,44 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
             stdin: None,
             session_id: None,
             timeout_secs: Some(60),
+            sync_wait_secs: None,
             cwd: Some("bad\0cwd".to_string()),
+            purpose: None,
+        },
+        ToolCall::RunScript {
+            project: project.clone(),
+            language: ShellScriptLanguage::Sh,
+            script: "true".to_string(),
+            args: Vec::new(),
+            stdin: None,
+            session_id: None,
+            timeout_secs: Some(60),
+            sync_wait_secs: Some(0),
+            cwd: None,
+            purpose: None,
+        },
+        ToolCall::RunScript {
+            project: project.clone(),
+            language: ShellScriptLanguage::Sh,
+            script: "true".to_string(),
+            args: Vec::new(),
+            stdin: None,
+            session_id: None,
+            timeout_secs: Some(60),
+            sync_wait_secs: Some(61),
+            cwd: None,
+            purpose: None,
+        },
+        ToolCall::RunScript {
+            project: project.clone(),
+            language: ShellScriptLanguage::Sh,
+            script: "true".to_string(),
+            args: Vec::new(),
+            stdin: None,
+            session_id: None,
+            timeout_secs: Some(5),
+            sync_wait_secs: Some(6),
+            cwd: None,
             purpose: None,
         },
     ];
@@ -1278,6 +1397,7 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
                 stdin: None,
                 session_id: None,
                 timeout_secs: Some(121),
+                sync_wait_secs: None,
                 cwd: None,
                 purpose: None,
             },

@@ -24,6 +24,39 @@ fn tool_specs_git_log_schema() {
 }
 
 #[test]
+fn tool_specs_generic_sync_wait_is_bounded_and_scoped_to_process_and_script() {
+    let specs = registered_tool_specs();
+    for name in ["run_process", "run_script"] {
+        let spec = spec_named(&specs, name);
+        let props = spec.input_schema["properties"].as_object().unwrap();
+        let sync_wait = &props["sync_wait_secs"];
+        assert_eq!(sync_wait["type"], "integer", "{name}");
+        assert_eq!(sync_wait["minimum"], 1, "{name}");
+        assert_eq!(sync_wait["maximum"], 60, "{name}");
+        assert!(
+            !required_fields(spec).contains(&"sync_wait_secs".to_string()),
+            "{name} sync_wait_secs must remain optional"
+        );
+        let description = sync_wait["description"].as_str().unwrap();
+        assert!(description.contains("Omit to use 10 seconds"), "{name}");
+        assert!(
+            description.contains("does not extend the total runtime timeout"),
+            "{name}"
+        );
+        assert!(description.contains("rerun work"), "{name}");
+    }
+    for name in ["run_detached_process", "run_shell"] {
+        let props = spec_named(&specs, name).input_schema["properties"]
+            .as_object()
+            .unwrap();
+        assert!(
+            !props.contains_key("sync_wait_secs"),
+            "{name} must not expose generic sync wait control"
+        );
+    }
+}
+
+#[test]
 fn tool_specs_show_changes_schema() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "show_changes");

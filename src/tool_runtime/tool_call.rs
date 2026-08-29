@@ -601,6 +601,8 @@ pub enum ToolCall {
         #[serde(default)]
         timeout_secs: Option<u64>,
         #[serde(default)]
+        sync_wait_secs: Option<u64>,
+        #[serde(default)]
         cwd: Option<String>,
         #[serde(default)]
         purpose: Option<ExecutionPurpose>,
@@ -664,6 +666,8 @@ pub enum ToolCall {
         session_id: Option<String>,
         #[serde(default)]
         timeout_secs: Option<u64>,
+        #[serde(default)]
+        sync_wait_secs: Option<u64>,
         #[serde(default)]
         cwd: Option<String>,
         #[serde(default)]

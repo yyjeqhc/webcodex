@@ -134,8 +134,10 @@ pub struct ToolRuntime {
     #[cfg(test)]
     pub(crate) validation_terminal_reconciliation_test_hook:
         Arc<ValidationTerminalReconciliationTestHook>,
-    /// Internal synchronous grace for typed process/script Jobs. It controls
-    /// only when the existing execution is exposed, never its total timeout.
+    /// Runtime cap for the model-requested synchronous grace before typed
+    /// process/script Job handoff. Production permits the public maximum;
+    /// each call's StructuredExecutionBudget selects the actual wait. Tests
+    /// shrink this cap to exercise handoff without sleeping.
     pub(crate) structured_execution_sync_wait: Duration,
     /// Per-runtime secret used only to authenticate opaque committed-range
     /// git_diff_hunks continuation state. Clones share the same key; a runtime
@@ -185,7 +187,7 @@ impl ToolRuntime {
                 ValidationTerminalReconciliationTestHook::default(),
             ),
             structured_execution_sync_wait: Duration::from_secs(
-                super::structured_execution::STRUCTURED_EXECUTION_SYNC_WAIT_SECS,
+                super::structured_execution::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS,
             ),
             git_diff_hunks_continuation_mac_key: new_git_diff_hunks_continuation_mac_key(),
             permission_evaluator: PermissionEvaluator::from_env(),

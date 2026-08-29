@@ -451,6 +451,7 @@ impl ToolRuntime {
         let mut output = json!({
             "service": "webcodex",
             "model_surface": self.model_surface().name(),
+            "mcp_compact_schemas": crate::config::mcp_compact_schemas_enabled(),
             "version": env!("CARGO_PKG_VERSION"),
             "build": crate::build_info::runtime_build_info(),
             "server_time": now,
@@ -642,6 +643,7 @@ impl ToolRuntime {
         ToolResult::ok(json!({
             "service": "webcodex",
             "model_surface": self.model_surface().name(),
+            "mcp_compact_schemas": crate::config::mcp_compact_schemas_enabled(),
             "version": env!("CARGO_PKG_VERSION"),
             "build": server_build,
             "server_time": now,
@@ -689,6 +691,7 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
                 .get("model_surface")
                 .cloned()
                 .unwrap_or_else(|| json!(crate::model_surface::MODEL_SURFACE_LOCAL_CODING)),
+            "mcp_compact_schemas": status.get("mcp_compact_schemas").cloned().unwrap_or_else(|| json!(false)),
             "version": status.get("version").cloned().unwrap_or(Value::Null),
             "focus": status.get("focus").cloned().unwrap_or(Value::Null),
             "server": status.get("server").cloned().unwrap_or(Value::Null),
@@ -715,6 +718,7 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
             .get("model_surface")
             .cloned()
             .unwrap_or_else(|| json!(crate::model_surface::MODEL_SURFACE_LOCAL_CODING)),
+        "mcp_compact_schemas": status.get("mcp_compact_schemas").cloned().unwrap_or_else(|| json!(false)),
         "version": status.get("version").cloned().unwrap_or(Value::Null),
         "build": {
             "version": status.get("version").cloned().unwrap_or(Value::Null),

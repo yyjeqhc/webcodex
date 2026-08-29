@@ -1546,6 +1546,12 @@ fn runtime_status_input_schema_exposes_compact_flags() {
         .expect("runtime_status agents output description");
     assert!(agents_description.contains("stale_count"));
     assert!(!agents_description.contains("offline_count"));
+    let compact_schemas =
+        &output_schema["properties"]["output"]["properties"]["mcp_compact_schemas"];
+    assert_eq!(compact_schemas["type"], "boolean");
+    assert!(compact_schemas["description"]
+        .as_str()
+        .is_some_and(|description| description.contains("omits outputSchema")));
 
     let openapi = crate::openapi::build_openapi_spec();
     let tool_call_properties = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
@@ -2113,6 +2119,10 @@ async fn runtime_status_includes_build_metadata() {
         result.output["model_surface"],
         crate::model_surface::MODEL_SURFACE_FULL_OPERATOR_RUNTIME
     );
+    assert_eq!(
+        result.output["mcp_compact_schemas"],
+        crate::config::mcp_compact_schemas_enabled()
+    );
     let build = &result.output["build"];
     assert!(build.is_object());
     assert!(build.get("git_commit").is_some());
@@ -2148,6 +2158,10 @@ async fn runtime_status_reports_canonical_connector_surface_when_configured() {
     assert_eq!(
         compact.output["model_surface"],
         crate::model_surface::MODEL_SURFACE_CANONICAL_CONNECTOR
+    );
+    assert_eq!(
+        compact.output["mcp_compact_schemas"],
+        crate::config::mcp_compact_schemas_enabled()
     );
 }
 
@@ -2185,6 +2199,11 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
         assert!(result.success, "{:?}", result.error);
         let summary = &result.output;
         assert_eq!(summary["compact"], true, "arguments: {arguments}");
+        assert_eq!(
+            summary["mcp_compact_schemas"],
+            crate::config::mcp_compact_schemas_enabled(),
+            "arguments: {arguments}"
+        );
         for pointer in [
             "/service",
             "/version",

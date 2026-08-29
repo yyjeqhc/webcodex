@@ -16,6 +16,13 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "Configured MCP model surface: canonical_connector or full_operator_runtime.",
                 ),
             ),
+            (
+                "mcp_compact_schemas",
+                schema_type(
+                    "boolean",
+                    "Whether MCP tools/list omits outputSchema while retaining tool names, descriptions, inputSchema, and annotations.",
+                ),
+            ),
             ("version", schema_type("string", "Runtime version.")),
             (
                 "focus",

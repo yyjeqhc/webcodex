@@ -3,7 +3,7 @@ pub(crate) fn usage() -> &'static str {
 Unified command-line interface for WebCodex.\n\n\
 Start here:\n\
   (no command)                  Interactive Git repo shortcut for `share` on Linux/macOS\n\
-  share                         Share the current project for ChatGPT/MCP over HTTPS (Linux/macOS)\n\
+  share                         Share the current project for ChatGPT/MCP over HTTPS (Linux/macOS/Windows)\n\
   connect                       Connect the current project to an existing Server\n\
   status                        Show concise project coding readiness\n\
   doctor                        Diagnose project readiness\n\n\

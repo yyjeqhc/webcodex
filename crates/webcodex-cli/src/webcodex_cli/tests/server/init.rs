@@ -321,7 +321,7 @@ fn server_init_json_output_does_not_include_full_token() {
 #[test]
 fn server_init_secret_env_file_has_protected_windows_dacl() {
     let tmp = tempfile::tempdir().unwrap();
-    let env_file = tmp.path().join("webcodex.env");
+    let env_file = tmp.path().join("config/webcodex.env");
     let data_dir = tmp.path().join("data");
     let opts = parse_server_init(&args(&[
         "--listen",

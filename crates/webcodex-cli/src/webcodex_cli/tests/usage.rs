@@ -171,8 +171,14 @@ fn top_level_help_prioritizes_first_run_without_hiding_advanced_commands() {
     let operator = out.find("Operator / service management:").unwrap();
     assert!(start_here < share && share < connect && connect < operator);
     assert!(out.contains("(no command)"));
-    assert!(out.contains("run `webcodex` inside a Git repo"));
-    assert!(out.contains("Windows -> use `webcodex connect <server-url>`"));
+    assert!(out.contains("Interactive Git repo shortcut for `share` on Linux/macOS"));
+    assert!(
+        out.contains("Share the current project for ChatGPT/MCP over HTTPS (Linux/macOS/Windows)")
+    );
+    assert!(out.contains(
+        "First ChatGPT connection: run explicit `webcodex share` on Linux/macOS/Windows"
+    ));
+    assert!(!out.contains("Windows -> use `webcodex connect <server-url>`"));
     assert!(!out.contains("historical `agent` namespace"));
     assert!(out.contains("agent-tokens create|"));
 }

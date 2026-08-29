@@ -83,6 +83,16 @@ fn write_windows_secret_text_file(
     content: &str,
     overwrite: bool,
 ) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            super::connections::ensure_real_directory_tree(parent).map_err(|error| {
+                format!(
+                    "failed to prepare secret file directory {}: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
     use std::io::{Seek, SeekFrom, Write};
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;

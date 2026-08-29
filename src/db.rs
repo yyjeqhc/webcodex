@@ -12,6 +12,7 @@ mod accounts;
 mod activity;
 mod admin_project_lifecycle;
 mod audit;
+mod communication;
 mod execution_model;
 mod executions;
 mod memory;
@@ -21,6 +22,11 @@ mod task_kernel;
 
 pub use self::activity::WorkspaceActivityStore;
 pub(crate) use self::admin_project_lifecycle::AdminProjectAudit;
+pub(crate) use self::communication::{
+    AgentProfilePatch, CommunicationPrincipal, CommunicationStoreError, ConversationAccess,
+    NewAgentEndpoint, NewAgentIdentity, NewConversation, NewConversationMessage,
+    COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
+};
 #[cfg(test)]
 pub(crate) use self::execution_model::ConnectorExecutionContinuationIntent;
 pub(crate) use self::execution_model::{
@@ -74,6 +80,10 @@ impl Database {
         self.conn.lock().unwrap()
     }
 }
+
+#[cfg(test)]
+#[path = "db/communication_tests.rs"]
+mod communication_tests;
 
 #[cfg(test)]
 #[path = "db/continuation_delivery_tests.rs"]

@@ -119,11 +119,47 @@ h4 { margin-bottom: 5px; color: var(--muted); font-size: .72rem; text-transform:
 .timeline-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
 .timeline-kind { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
 .timeline-body { margin-top: 4px; overflow-wrap: anywhere; }
+.communication-panel .panel-head { align-items: flex-start; }
+.communication-panel .panel-head > div { min-width: 0; }
+.communication-panel .panel-head h2 { margin-bottom: 3px; }
+.communication-grid { display: grid; grid-template-columns: minmax(300px, .9fr) minmax(420px, 1.6fr); gap: 14px; align-items: start; }
+.communication-agents, .communication-conversations { display: grid; gap: 10px; min-width: 0; }
+.communication-section { min-width: 0; border: 1px solid var(--border); border-radius: 7px; padding: 10px; background: var(--bg); }
+.communication-section h3 { font-size: .88rem; margin-bottom: 8px; }
+.stack-form { display: grid; gap: 7px; margin-bottom: 9px; }
+.stack-form > label, .compact-field-grid > label { display: grid; gap: 3px; color: var(--muted); font-size: .76rem; }
+.stack-form input, .stack-form textarea { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; background: var(--panel); color: var(--text); }
+.stack-form textarea { resize: vertical; }
+.compact-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 7px; }
+.form-actions .muted { margin-right: auto; }
+.communication-list { display: grid; gap: 6px; max-height: 270px; overflow: auto; }
+.communication-row { appearance: none; width: 100%; min-width: 0; text-align: left; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px; cursor: pointer; }
+.communication-row.selected { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.communication-row-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.communication-row-title { font-weight: 680; overflow-wrap: anywhere; }
+.communication-row-meta, .communication-id { display: block; color: var(--muted); font-size: .72rem; overflow-wrap: anywhere; }
+.communication-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; user-select: all; }
+.communication-description { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.communication-participants { margin: 8px 0; }
+.conversation-list { max-height: 220px; }
+.conversation-transcript { display: grid; gap: 7px; min-height: 120px; max-height: 480px; overflow: auto; margin: 9px 0; }
+.conversation-message { min-width: 0; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; padding: 8px 9px; background: var(--panel); }
+.conversation-message.agent-authored { border-left-color: var(--pass); }
+.conversation-message-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.conversation-message-author { font-weight: 700; overflow-wrap: anywhere; }
+.conversation-message-body { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.conversation-message-meta, .conversation-message-deliveries { margin-top: 4px; color: var(--muted); font-size: .72rem; overflow-wrap: anywhere; }
+.inbox-delivery { cursor: default; }
+.inbox-message-preview { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 6rem; overflow: auto; }
+.conversation-composer { border-top: 1px solid var(--border); padding-top: 9px; margin-top: 9px; margin-bottom: 0; }
 @media (max-width: 900px) { .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 980px) { .communication-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) {
   #runtime-page { width: min(100% - 20px, 1240px); padding-top: 14px; }
   .topbar { align-items: flex-start; }
   .session-grid, .overview, .metric-grid, .recent-session-row, .fleet-row, .session-identity { grid-template-columns: 1fr; }
+  .compact-field-grid { grid-template-columns: 1fr; }
   .project-search-row, .project-row { grid-template-columns: 1fr; }
   .project-identity { text-align: left; }
   .project-row-facts, .recent-session-signals, .fleet-row-signals { justify-content: flex-start; }

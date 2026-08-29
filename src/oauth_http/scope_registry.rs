@@ -9,6 +9,8 @@ use super::OAuthAuthorizeError;
 const OAUTH_SCOPES_SUPPORTED: &[&str] = &[
     scopes::SCOPE_RUNTIME_READ,
     scopes::SCOPE_SESSION_COLLABORATE,
+    scopes::SCOPE_COMMUNICATION_READ,
+    scopes::SCOPE_COMMUNICATION_MANAGE,
     scopes::SCOPE_PROJECT_READ,
     scopes::SCOPE_PROJECT_WRITE,
     scopes::SCOPE_MEMORY_READ,

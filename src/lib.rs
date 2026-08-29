@@ -255,6 +255,7 @@ only for local/trusted-network demos."
         tool_runtime::ToolRuntime::new(shell_registry.clone(), runtime_info.clone())
             .with_model_surface(model_surface)
             .with_memory_database(db.clone())
+            .with_communication_database(db.clone())
             .with_checkpoint_state_dir(runtime_state_dir.clone())
             .with_session_ledger(config.session_ledger_path())
             .with_persistent_coding_agent_observation_state(&runtime_state_dir)

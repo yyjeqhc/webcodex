@@ -158,6 +158,9 @@ pub struct ToolRuntime {
     /// the server from the existing webcodex.db handle; Runner-native project
     /// filesystems never own Memory v1 persistence.
     pub(crate) memory_db: Option<Arc<crate::Database>>,
+    /// Optional Control-owned durable Agent and Conversation store. It shares
+    /// the Server SQLite handle with other durable domains but owns independent tables.
+    pub(crate) communication_db: Option<Arc<crate::Database>>,
 }
 
 impl ToolRuntime {
@@ -194,6 +197,7 @@ impl ToolRuntime {
             activity: Arc::new(NoopActivityRecorder),
             observations: Arc::new(RuntimeObservations::default()),
             memory_db: None,
+            communication_db: None,
         }
     }
 
@@ -217,6 +221,11 @@ impl ToolRuntime {
 
     pub(crate) fn with_memory_database(mut self, db: Arc<crate::Database>) -> Self {
         self.memory_db = Some(db);
+        self
+    }
+
+    pub(crate) fn with_communication_database(mut self, db: Arc<crate::Database>) -> Self {
+        self.communication_db = Some(db);
         self
     }
 

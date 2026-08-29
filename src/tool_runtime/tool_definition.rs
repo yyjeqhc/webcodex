@@ -8,6 +8,7 @@
 mod artifacts;
 mod checkpoints;
 mod coding_agents;
+mod communication;
 mod computer;
 mod discovery;
 mod edits;
@@ -279,6 +280,7 @@ pub(crate) const TOOL_CATEGORY_ARTIFACT: &str = "artifact";
 pub(crate) const TOOL_CATEGORY_CHECKPOINT: &str = "checkpoint";
 pub(crate) const TOOL_CATEGORY_CODING_AGENT: &str = "coding_agent";
 pub(crate) const TOOL_CATEGORY_COMPUTER: &str = "computer";
+pub(crate) const TOOL_CATEGORY_COMMUNICATION: &str = "communication";
 pub(crate) const TOOL_CATEGORY_CLEANUP: &str = "cleanup";
 pub(crate) const TOOL_CATEGORY_EDIT: &str = "edit";
 pub(crate) const TOOL_CATEGORY_FILE: &str = "file";
@@ -503,6 +505,7 @@ pub(crate) fn tool_definitions() -> impl Iterator<Item = &'static ToolDefinition
 const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     TOOL_DEFINITION_HEAD,
     sessions::DEFINITIONS,
+    communication::DEFINITIONS,
     memory::DEFINITIONS,
     skills::DEFINITIONS,
     hygiene::DEFINITIONS,

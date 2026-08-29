@@ -1010,6 +1010,98 @@ pub(super) fn context_result_summary_for_tool_result(
                 "kind",
             ],
         ),
+        "create_agent_identity" | "update_agent_identity" => output.as_object().map(|source| {
+            json!({
+                "agent_id": output.pointer("/agent/agent_id").cloned().unwrap_or(Value::Null),
+                "profile_revision": output.pointer("/agent/profile_revision").cloned().unwrap_or(Value::Null),
+                "created": source.get("created").cloned().unwrap_or(Value::Null),
+                "replayed": source.get("replayed").cloned().unwrap_or(Value::Null),
+                "state_changed": source.get("state_changed").cloned().unwrap_or(Value::Null),
+                "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "list_agent_identities" => output.as_object().map(|source| {
+            json!({
+                "total_count": source.get("total_count").cloned().unwrap_or(Value::Null),
+                "returned_count": source.get("agents").and_then(Value::as_array).map(Vec::len),
+                "offset": source.get("offset").cloned().unwrap_or(Value::Null),
+                "next_offset": source.get("next_offset").cloned().unwrap_or(Value::Null),
+                "truncated": source.get("truncated").cloned().unwrap_or(Value::Null),
+                "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "attach_agent_endpoint" | "detach_agent_endpoint" => output.as_object().map(|source| {
+            json!({
+                "endpoint_id": output.pointer("/endpoint/endpoint_id").cloned().unwrap_or(Value::Null),
+                "agent_id": output.pointer("/endpoint/agent_id").cloned().unwrap_or(Value::Null),
+                "created": source.get("created").cloned().unwrap_or(Value::Null),
+                "replayed": source.get("replayed").cloned().unwrap_or(Value::Null),
+                "state_changed": source.get("state_changed").cloned().unwrap_or(Value::Null),
+                "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "create_conversation" => output.as_object().map(|source| {
+            json!({
+                "conversation_id": output.pointer("/conversation/conversation/conversation_id").cloned().unwrap_or(Value::Null),
+                "participant_count": output.pointer("/conversation/participants").and_then(Value::as_array).map(Vec::len),
+                "created": source.get("created").cloned().unwrap_or(Value::Null),
+                "replayed": source.get("replayed").cloned().unwrap_or(Value::Null),
+                "state_changed": source.get("state_changed").cloned().unwrap_or(Value::Null),
+                "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "list_conversations" => output.as_object().map(|source| {
+            json!({
+                "total_count": source.get("total_count").cloned().unwrap_or(Value::Null),
+                "returned_count": source.get("conversations").and_then(Value::as_array).map(Vec::len),
+                "offset": source.get("offset").cloned().unwrap_or(Value::Null),
+                "next_offset": source.get("next_offset").cloned().unwrap_or(Value::Null),
+                "truncated": source.get("truncated").cloned().unwrap_or(Value::Null),
+                "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "read_conversation" => output.as_object().map(|source| {
+            json!({
+                "conversation_id": output.pointer("/conversation/conversation_id").cloned().unwrap_or(Value::Null),
+                "participant_count": source.get("participants").and_then(Value::as_array).map(Vec::len),
+                "message_count": source.get("messages").and_then(Value::as_array).map(Vec::len),
+                "after_seq": source.get("after_seq").cloned().unwrap_or(Value::Null),
+                "next_after_seq": source.get("next_after_seq").cloned().unwrap_or(Value::Null),
+                "truncated": source.get("truncated").cloned().unwrap_or(Value::Null),
+                "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "post_conversation_message" => output.as_object().map(|source| {
+            json!({
+                "message_id": output.pointer("/message/message_id").cloned().unwrap_or(Value::Null),
+                "conversation_id": output.pointer("/message/conversation_id").cloned().unwrap_or(Value::Null),
+                "seq": output.pointer("/message/seq").cloned().unwrap_or(Value::Null),
+                "delivery_count": output.pointer("/message/deliveries").and_then(Value::as_array).map(Vec::len),
+                "replayed": source.get("replayed").cloned().unwrap_or(Value::Null),
+                "state_changed": source.get("state_changed").cloned().unwrap_or(Value::Null),
+                "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "list_agent_inbox" => output.as_object().map(|source| {
+            json!({
+                "agent_id": source.get("agent_id").cloned().unwrap_or(Value::Null),
+                "total_queued_count": source.get("total_queued_count").cloned().unwrap_or(Value::Null),
+                "returned_count": source.get("deliveries").and_then(Value::as_array).map(Vec::len),
+                "after_delivery_order": source.get("after_delivery_order").cloned().unwrap_or(Value::Null),
+                "next_after_delivery_order": source.get("next_after_delivery_order").cloned().unwrap_or(Value::Null),
+                "truncated": source.get("truncated").cloned().unwrap_or(Value::Null),
+                "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "consume_agent_deliveries" => output.as_object().map(|source| {
+            json!({
+                "agent_id": source.get("agent_id").cloned().unwrap_or(Value::Null),
+                "consumed_count": source.get("consumed_delivery_ids").and_then(Value::as_array).map(Vec::len),
+                "already_consumed_count": source.get("already_consumed_delivery_ids").and_then(Value::as_array).map(Vec::len),
+                "state_changed": source.get("state_changed").cloned().unwrap_or(Value::Null),
+                "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
+            })
+        }),
         "memory_search" => selected(
             output,
             &[

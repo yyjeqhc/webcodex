@@ -4,7 +4,10 @@
 //! runtime project authorization and the existing Workflow Session console
 //! projection without creating a second store, parser, or observation authority.
 
-use crate::auth::{AuthContext, SCOPE_PROJECT_READ, SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE};
+use crate::auth::{
+    AuthContext, SCOPE_COMMUNICATION_MANAGE, SCOPE_COMMUNICATION_READ, SCOPE_PROJECT_READ,
+    SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE,
+};
 use crate::tool_runtime::sessions::{
     aggregate_console_list, is_valid_session_id, SessionMessageKind, SessionMessagePriority,
     WorkflowSessionConsoleAggregate, WorkflowSessionConsoleAttentionOverview,
@@ -71,6 +74,52 @@ pub(crate) fn routes() -> Router {
                 RouteId::RuntimeConsoleWorkflowSessionReplaceMessage,
             ))
             .post(workflow_session_replace_message),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationAgents))
+                .post(communication_agents),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationAgentCreate))
+                .post(communication_agent_create),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationAgentUpdate))
+                .post(communication_agent_update),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationEndpointAttach))
+                .post(communication_endpoint_attach),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationEndpointDetach))
+                .post(communication_endpoint_detach),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationConversations))
+                .post(communication_conversations),
+        )
+        .push(
+            Router::with_path(api_path(
+                RouteId::RuntimeConsoleCommunicationConversationCreate,
+            ))
+            .post(communication_conversation_create),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationConversation))
+                .post(communication_conversation),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationMessagePost))
+                .post(communication_message_post),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationInbox))
+                .post(communication_inbox),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationInboxConsume))
+                .post(communication_inbox_consume),
         )
 }
 
@@ -166,6 +215,135 @@ struct WorkflowSessionReplaceMessageInput {
     session_id: String,
     message_id: String,
     message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationAgentsInput {
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationAgentCreateInput {
+    handle: String,
+    display_name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    specialty_labels: Vec<String>,
+    idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationAgentUpdateInput {
+    agent_id: String,
+    expected_profile_revision: i64,
+    #[serde(default)]
+    handle: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    specialty_labels: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationEndpointAttachInput {
+    agent_id: String,
+    host: String,
+    #[serde(default)]
+    client_attachment_id: Option<String>,
+    #[serde(default)]
+    wake_capable: bool,
+    #[serde(default)]
+    controller_generation: Option<String>,
+    idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationEndpointDetachInput {
+    endpoint_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationConversationsInput {
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    endpoint_id: Option<String>,
+    #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationConversationCreateInput {
+    #[serde(default)]
+    title: Option<String>,
+    agent_ids: Vec<String>,
+    idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationConversationInput {
+    conversation_id: String,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    endpoint_id: Option<String>,
+    #[serde(default)]
+    after_seq: Option<i64>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationMessagePostInput {
+    conversation_id: String,
+    body: String,
+    #[serde(default)]
+    author_agent_id: Option<String>,
+    #[serde(default)]
+    endpoint_id: Option<String>,
+    #[serde(default)]
+    recipient_agent_ids: Option<Vec<String>>,
+    #[serde(default)]
+    reply_to: Option<String>,
+    idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationInboxInput {
+    agent_id: String,
+    endpoint_id: String,
+    #[serde(default)]
+    after_delivery_order: Option<i64>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationInboxConsumeInput {
+    agent_id: String,
+    endpoint_id: String,
+    delivery_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -476,6 +654,62 @@ fn require_session_collaborate(auth: &AuthContext) -> Result<(), RuntimeConsoleE
             message: "Session collaboration access required",
         })
     }
+}
+
+fn require_communication_read(auth: &AuthContext) -> Result<(), RuntimeConsoleError> {
+    if auth.has_scope(SCOPE_COMMUNICATION_READ) {
+        Ok(())
+    } else {
+        Err(RuntimeConsoleError::Request {
+            status: 403,
+            message: "Communication read access required",
+        })
+    }
+}
+
+fn require_communication_manage(auth: &AuthContext) -> Result<(), RuntimeConsoleError> {
+    if auth.has_scope(SCOPE_COMMUNICATION_READ) && auth.has_scope(SCOPE_COMMUNICATION_MANAGE) {
+        Ok(())
+    } else {
+        Err(RuntimeConsoleError::Request {
+            status: 403,
+            message: "Communication read and manage access required",
+        })
+    }
+}
+
+fn render_communication_result(res: &mut Response, result: crate::tool_runtime::ToolResult) {
+    if result.success {
+        res.render(Json(result.output));
+        return;
+    }
+    let error_kind = result
+        .output
+        .get("error_kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let status = match error_kind {
+        "communication_store_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
+        "communication_idempotency_conflict" | "agent_profile_changed" | "conversation_closed" => {
+            StatusCode::CONFLICT
+        }
+        "agent_not_found"
+        | "endpoint_not_found"
+        | "conversation_not_found"
+        | "message_not_found"
+        | "reply_message_not_found"
+        | "delivery_not_found"
+        | "agent_not_owned"
+        | "endpoint_not_owned"
+        | "delivery_not_owned"
+        | "conversation_access_denied"
+        | "human_not_conversation_participant"
+        | "agent_not_conversation_participant" => StatusCode::NOT_FOUND,
+        "communication_principal_unavailable" => StatusCode::FORBIDDEN,
+        _ => StatusCode::BAD_REQUEST,
+    };
+    res.status_code(status);
+    res.render(Json(result.output));
 }
 
 fn require_project_read(auth: &AuthContext) -> Result<(), RuntimeConsoleError> {
@@ -1772,6 +2006,283 @@ async fn workflow_session_replace_message(
     }
 }
 
+#[handler]
+async fn communication_agents(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_read(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req.parse_json::<CommunicationAgentsInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.list_agent_identities(Some(&auth), input.agent_id, input.offset, input.limit),
+    );
+}
+
+#[handler]
+async fn communication_agent_create(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_manage(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req.parse_json::<CommunicationAgentCreateInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.create_agent_identity(
+            Some(&auth),
+            input.handle,
+            input.display_name,
+            input.description,
+            input.specialty_labels,
+            input.idempotency_key,
+        ),
+    );
+}
+
+#[handler]
+async fn communication_agent_update(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_manage(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req.parse_json::<CommunicationAgentUpdateInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.update_agent_identity(
+            Some(&auth),
+            input.agent_id,
+            input.expected_profile_revision,
+            input.handle,
+            input.display_name,
+            input.description,
+            input.specialty_labels,
+        ),
+    );
+}
+
+#[handler]
+async fn communication_endpoint_attach(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_manage(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req.parse_json::<CommunicationEndpointAttachInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.attach_agent_endpoint(
+            Some(&auth),
+            input.agent_id,
+            input.host,
+            input.client_attachment_id,
+            input.wake_capable,
+            input.controller_generation,
+            input.idempotency_key,
+        ),
+    );
+}
+
+#[handler]
+async fn communication_endpoint_detach(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_manage(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req.parse_json::<CommunicationEndpointDetachInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.detach_agent_endpoint(Some(&auth), input.endpoint_id),
+    );
+}
+
+#[handler]
+async fn communication_conversations(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_read(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req.parse_json::<CommunicationConversationsInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.list_conversations(
+            Some(&auth),
+            input.agent_id,
+            input.endpoint_id,
+            input.offset,
+            input.limit,
+        ),
+    );
+}
+
+#[handler]
+async fn communication_conversation_create(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_manage(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req
+        .parse_json::<CommunicationConversationCreateInput>()
+        .await
+    {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.create_conversation(
+            Some(&auth),
+            input.title,
+            input.agent_ids,
+            input.idempotency_key,
+        ),
+    );
+}
+
+#[handler]
+async fn communication_conversation(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_read(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req.parse_json::<CommunicationConversationInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.read_conversation(
+            Some(&auth),
+            input.conversation_id,
+            input.agent_id,
+            input.endpoint_id,
+            input.after_seq,
+            input.limit,
+        ),
+    );
+}
+
+#[handler]
+async fn communication_message_post(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_manage(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req.parse_json::<CommunicationMessagePostInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.post_conversation_message(
+            Some(&auth),
+            input.conversation_id,
+            input.body,
+            input.author_agent_id,
+            input.endpoint_id,
+            input.recipient_agent_ids,
+            input.reply_to,
+            input.idempotency_key,
+        ),
+    );
+}
+
+#[handler]
+async fn communication_inbox(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_read(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req.parse_json::<CommunicationInboxInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.list_agent_inbox(
+            Some(&auth),
+            input.agent_id,
+            input.endpoint_id,
+            input.after_delivery_order,
+            input.limit,
+        ),
+    );
+}
+
+#[handler]
+async fn communication_inbox_consume(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_manage(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req.parse_json::<CommunicationInboxConsumeInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.consume_agent_deliveries(
+            Some(&auth),
+            input.agent_id,
+            input.endpoint_id,
+            input.delivery_ids,
+        ),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1786,6 +2297,7 @@ mod tests {
     use crate::tool_runtime::{RuntimeInfo, SessionMode};
     use salvo::test::{ResponseExt, TestClient};
     use salvo::Service;
+    use serde_json::json;
 
     fn project(id: &str, private_path: &str) -> ShellAgentProjectSummary {
         ShellAgentProjectSummary {
@@ -1920,6 +2432,49 @@ mod tests {
                     .push(routes()),
             );
         (tmp, Service::new(router))
+    }
+
+    fn hosted_communication_service(shared_key: &str) -> (tempfile::TempDir, Service) {
+        let config = crate::test_support::test_config(Some(shared_key));
+        let (tmp, db) = crate::test_support::test_db();
+        let runtime = Arc::new(
+            ToolRuntime::new(
+                Arc::new(crate::ShellClientRegistry::default()),
+                Arc::new(RuntimeInfo::default()),
+            )
+            .with_communication_database(db.clone()),
+        );
+        let router = Router::new()
+            .hoop(affix_state::inject(config))
+            .hoop(affix_state::inject(db))
+            .hoop(affix_state::inject(runtime))
+            .hoop(affix_state::inject(
+                crate::connector_runtime::ConnectorRuntimeSlot::default(),
+            ))
+            .push(
+                Router::with_path("api")
+                    .hoop(crate::AuthMiddleware)
+                    .push(routes()),
+            );
+        (tmp, Service::new(router))
+    }
+
+    async fn post_communication(
+        service: &Service,
+        shared_key: &str,
+        route: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
+        let mut response = TestClient::post(format!(
+            "http://localhost/api/runtime-console/communication/{route}"
+        ))
+        .bearer_auth(shared_key)
+        .json(&body)
+        .send(service)
+        .await;
+        let status = response.status_code.unwrap_or(StatusCode::OK);
+        let body = response.take_json::<Value>().await.unwrap_or_default();
+        (status, body)
     }
 
     fn recent_test_row(
@@ -2198,6 +2753,317 @@ mod tests {
         assert_eq!(row.agent_protocol_version.as_deref(), Some("polling-v2"));
         assert_eq!(row.protocol_compatibility.as_deref(), Some("v1"));
         assert_eq!(row.project_inventory_strategy.as_deref(), Some("paged"));
+    }
+
+    #[test]
+    fn communication_scope_checks_are_independent_from_project_and_session_authority() {
+        let project_and_session = scoped_oauth(&[
+            SCOPE_PROJECT_READ,
+            SCOPE_RUNTIME_READ,
+            SCOPE_SESSION_COLLABORATE,
+        ]);
+        assert_eq!(
+            require_communication_read(&project_and_session),
+            Err(RuntimeConsoleError::Request {
+                status: 403,
+                message: "Communication read access required",
+            })
+        );
+        assert_eq!(
+            require_communication_manage(&project_and_session),
+            Err(RuntimeConsoleError::Request {
+                status: 403,
+                message: "Communication read and manage access required",
+            })
+        );
+
+        let read_only = scoped_oauth(&[SCOPE_COMMUNICATION_READ]);
+        assert_eq!(require_communication_read(&read_only), Ok(()));
+        assert_eq!(
+            require_communication_manage(&read_only),
+            Err(RuntimeConsoleError::Request {
+                status: 403,
+                message: "Communication read and manage access required",
+            })
+        );
+
+        let communication = scoped_oauth(&[SCOPE_COMMUNICATION_READ, SCOPE_COMMUNICATION_MANAGE]);
+        assert_eq!(require_communication_read(&communication), Ok(()));
+        assert_eq!(require_communication_manage(&communication), Ok(()));
+    }
+
+    #[tokio::test]
+    async fn durable_agent_chat_http_vertical_slice_preserves_provenance_and_inbox_state() {
+        let shared_key = "communication-http-secret";
+        let (_tmp, service) = hosted_communication_service(shared_key);
+
+        let (status, first_agent) = post_communication(
+            &service,
+            shared_key,
+            "agent/create",
+            json!({
+                "handle": "reviewer",
+                "display_name": "Reviewer",
+                "description": "Reviews durable architecture",
+                "specialty_labels": ["rust", "architecture"],
+                "idempotency_key": "http-agent-a"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let agent_a = first_agent["agent"]["agent_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let (status, second_agent) = post_communication(
+            &service,
+            shared_key,
+            "agent/create",
+            json!({
+                "handle": "reviewer",
+                "display_name": "Reviewer",
+                "description": "Same mutable card, different canonical identity",
+                "specialty_labels": ["review"],
+                "idempotency_key": "http-agent-b"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let agent_b = second_agent["agent"]["agent_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_ne!(agent_a, agent_b);
+
+        let (status, endpoint_a_body) = post_communication(
+            &service,
+            shared_key,
+            "endpoint/attach",
+            json!({
+                "agent_id": agent_a,
+                "host": "Runtime Console Test",
+                "client_attachment_id": "window-a",
+                "wake_capable": false,
+                "controller_generation": "manual-v1",
+                "idempotency_key": "http-endpoint-a"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let endpoint_a = endpoint_a_body["endpoint"]["endpoint_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let (status, endpoint_b_body) = post_communication(
+            &service,
+            shared_key,
+            "endpoint/attach",
+            json!({
+                "agent_id": agent_b,
+                "host": "Runtime Console Test",
+                "client_attachment_id": "window-b",
+                "wake_capable": false,
+                "controller_generation": "manual-v1",
+                "idempotency_key": "http-endpoint-b"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let endpoint_b = endpoint_b_body["endpoint"]["endpoint_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let (status, conversation_body) = post_communication(
+            &service,
+            shared_key,
+            "conversation/create",
+            json!({
+                "title": "HTTP architecture room",
+                "agent_ids": [agent_a, agent_b],
+                "idempotency_key": "http-conversation"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let conversation_id = conversation_body["conversation"]["conversation"]["conversation_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            conversation_body["conversation"]["participants"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+
+        let human_payload = json!({
+            "conversation_id": conversation_id,
+            "body": "Human to both Agents",
+            "idempotency_key": "http-human-message"
+        });
+        let (status, human_message) =
+            post_communication(&service, shared_key, "message/post", human_payload.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(human_message["message"]["seq"], 1);
+        assert_eq!(
+            human_message["message"]["author"]["participant_kind"],
+            "human"
+        );
+        assert_eq!(
+            human_message["message"]["deliveries"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let human_message_id = human_message["message"]["message_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let (status, replay) =
+            post_communication(&service, shared_key, "message/post", human_payload).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["state_changed"], false);
+        assert_eq!(replay["message"]["message_id"], human_message_id);
+
+        let (status, agent_message) = post_communication(
+            &service,
+            shared_key,
+            "message/post",
+            json!({
+                "conversation_id": conversation_id,
+                "body": "Agent A to Agent B",
+                "author_agent_id": agent_a,
+                "endpoint_id": endpoint_a,
+                "recipient_agent_ids": [agent_b],
+                "reply_to": human_message_id,
+                "idempotency_key": "http-agent-message"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(agent_message["message"]["seq"], 2);
+        assert_eq!(
+            agent_message["message"]["author"]["participant_kind"],
+            "agent"
+        );
+        assert_eq!(agent_message["message"]["author"]["agent_id"], agent_a);
+        assert_eq!(
+            agent_message["message"]["deliveries"][0]["recipient_agent_id"],
+            agent_b
+        );
+
+        let (status, transcript) = post_communication(
+            &service,
+            shared_key,
+            "conversation",
+            json!({
+                "conversation_id": conversation_id,
+                "after_seq": 0,
+                "limit": 10
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(transcript["conversation"]["message_count"], 2);
+        let sequences = transcript["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|message| message["seq"].as_i64().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(sequences, vec![1, 2]);
+
+        let (status, inbox) = post_communication(
+            &service,
+            shared_key,
+            "inbox",
+            json!({
+                "agent_id": agent_b,
+                "endpoint_id": endpoint_b,
+                "after_delivery_order": 0,
+                "limit": 10
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(inbox["total_queued_count"], 2);
+        let delivery_ids = inbox["deliveries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|delivery| delivery["delivery_id"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+
+        let consume_payload = json!({
+            "agent_id": agent_b,
+            "endpoint_id": endpoint_b,
+            "delivery_ids": delivery_ids
+        });
+        let (status, consumed) = post_communication(
+            &service,
+            shared_key,
+            "inbox/consume",
+            consume_payload.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(consumed["state_changed"], true);
+        assert_eq!(
+            consumed["consumed_delivery_ids"].as_array().unwrap().len(),
+            2
+        );
+        let (status, consumed_retry) =
+            post_communication(&service, shared_key, "inbox/consume", consume_payload).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(consumed_retry["state_changed"], false);
+        assert_eq!(
+            consumed_retry["already_consumed_delivery_ids"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let (status, agents) = post_communication(
+            &service,
+            shared_key,
+            "agents",
+            json!({"offset": 0, "limit": 10}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let agent_rows = agents["agents"].as_array().unwrap();
+        assert_eq!(
+            agent_rows
+                .iter()
+                .find(|agent| agent["agent_id"] == agent_a)
+                .unwrap()["queued_delivery_count"],
+            1
+        );
+        assert_eq!(
+            agent_rows
+                .iter()
+                .find(|agent| agent["agent_id"] == agent_b)
+                .unwrap()["queued_delivery_count"],
+            0
+        );
+
+        let cross_origin =
+            TestClient::post("http://localhost/api/runtime-console/communication/agents")
+                .bearer_auth(shared_key)
+                .add_header("host", "localhost", true)
+                .add_header("origin", "http://attacker.example", true)
+                .json(&json!({}))
+                .send(&service)
+                .await;
+        assert_eq!(cross_origin.status_code, Some(StatusCode::FORBIDDEN));
     }
 
     #[tokio::test]

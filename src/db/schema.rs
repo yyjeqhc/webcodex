@@ -585,6 +585,11 @@ impl Database {
             ",
         )?;
 
+        // Durable Agent identity and Conversation state are an independent
+        // communication domain. Workflow Session and project Memory ledgers
+        // remain separate authoritative stores.
+        Self::ensure_communication_schema(&mut conn)?;
+
         // Phase-4B project Memory is an additive migration with its own
         // transaction boundary. A failed table/index creation cannot expose a
         // partially initialized Memory store on an otherwise existing DB.

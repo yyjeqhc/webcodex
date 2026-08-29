@@ -11,6 +11,7 @@ mod checkpoint;
 mod coding_agent;
 mod coding_task;
 mod coding_task_tools;
+mod communication;
 mod computer_tools;
 pub(crate) mod context_projection;
 mod continuation_feedback;

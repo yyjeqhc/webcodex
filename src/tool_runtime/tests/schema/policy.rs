@@ -60,6 +60,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
                 ToolRisk::ProjectWrite
                     | ToolRisk::SkillManage
                     | ToolRisk::MemoryManage
+                    | ToolRisk::CommunicationManage
                     | ToolRisk::ComputerControl
             ),
             "{} write-like policy must derive from metadata",

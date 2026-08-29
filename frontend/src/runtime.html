@@ -12,7 +12,7 @@
     <header class="topbar">
       <div>
         <h1>WebCodex Runtime Console</h1>
-        <p class="muted">Server, Runner, Project, Workflow Session, and collaboration observability</p>
+        <p class="muted">Server, Runner, Project, durable Agent communication, Workflow Session, and collaboration observability</p>
       </div>
       <div id="runtime-topbar-controls" class="topbar-controls" hidden>
         <span id="runtime-refresh-status" class="muted small" aria-live="polite"></span>
@@ -24,7 +24,7 @@
     <section id="runtime-token-gate" class="gate">
       <form id="runtime-token-form" autocomplete="off">
         <h2>Connect to Runtime</h2>
-        <p class="muted">Enter an existing runtime Bearer credential with project read access. Runtime-wide and collaboration views additionally require runtime read access. The credential stays in page memory only.</p>
+        <p class="muted">Enter an existing runtime Bearer credential. Project and Workflow Session views require their existing scopes; durable Agent Chat separately requires communication:read and communication:manage. The credential and browser Endpoint stay in page memory only.</p>
         <div class="field-row">
           <input id="runtime-token-input" type="password" placeholder="Runtime Bearer credential" autocomplete="off" spellcheck="false" />
           <button class="btn primary" type="submit">Connect</button>
@@ -48,6 +48,83 @@
           <div class="metric"><span class="metric-label">Collaboration attention</span><strong id="runtime-server-attention">—</strong><span id="runtime-server-sessions" class="muted small">—</span></div>
         </div>
         <p id="runtime-overview-unavailable" class="muted small" hidden>Runtime-wide overview is unavailable to this credential; project-scoped Console access remains available.</p>
+      </section>
+
+      <section id="runtime-communication-panel" class="panel communication-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Durable Agent Chat <span id="runtime-communication-count" class="muted small">0 Agents</span></h2>
+            <p class="muted small retention-note">Durable Conversation transcript and recipient-specific Inbox. The Console polls every 8 seconds; polling or page refresh does not invoke or wake a model.</p>
+          </div>
+          <span id="runtime-communication-status" class="muted small">communication:read checking…</span>
+        </div>
+        <p id="runtime-communication-unavailable" class="muted small" hidden>Durable Agent Chat requires communication:read. Project and Workflow Session access remain independent.</p>
+        <div id="runtime-communication-surface" class="communication-grid">
+          <aside class="communication-agents">
+            <section class="communication-section">
+              <h3>Agents</h3>
+              <form id="runtime-agent-create-form" class="stack-form" autocomplete="off">
+                <div class="compact-field-grid">
+                  <label>Handle<input id="runtime-agent-handle" maxlength="64" pattern="[A-Za-z0-9._-]+" required placeholder="reviewer" /></label>
+                  <label>Display name<input id="runtime-agent-display-name" maxlength="128" required placeholder="Architecture Reviewer" /></label>
+                </div>
+                <label>Description<textarea id="runtime-agent-description" rows="2" maxlength="2048" placeholder="What this Agent mainly does"></textarea></label>
+                <label>Specialty labels<input id="runtime-agent-labels" maxlength="1039" placeholder="rust, architecture, review" /></label>
+                <div class="form-actions"><span id="runtime-agent-create-status" class="muted small" aria-live="polite"></span><button id="runtime-agent-create" class="btn primary" type="submit">Create Agent</button></div>
+              </form>
+              <div id="runtime-agent-list" class="communication-list" role="listbox" aria-label="Durable Agents"></div>
+              <p id="runtime-agent-empty" class="muted small" hidden>No durable Agents are owned by this communication principal.</p>
+            </section>
+
+            <section id="runtime-agent-card" class="communication-section" hidden>
+              <div class="section-head"><h3 id="runtime-agent-card-name">Agent Card</h3><span id="runtime-agent-unread" class="chip">0 queued</span></div>
+              <code id="runtime-agent-card-id" class="communication-id">—</code>
+              <p id="runtime-agent-card-description" class="communication-description">—</p>
+              <div id="runtime-agent-card-labels" class="chips"></div>
+              <p id="runtime-agent-card-revision" class="muted small">—</p>
+              <div class="form-actions">
+                <span id="runtime-agent-endpoint-status" class="muted small">No browser Endpoint attached.</span>
+                <button id="runtime-agent-attach" class="btn" type="button">Attach this browser</button>
+                <button id="runtime-agent-detach" class="btn" type="button" hidden>Detach</button>
+              </div>
+            </section>
+
+            <section class="communication-section">
+              <div class="section-head"><h3>Selected Agent Inbox</h3><button id="runtime-inbox-consume-all" class="text-button" type="button" hidden>Consume all</button></div>
+              <p id="runtime-inbox-status" class="muted small">Select and attach an Agent to inspect recipient-specific queued deliveries.</p>
+              <div id="runtime-inbox-list" class="communication-list"></div>
+            </section>
+          </aside>
+
+          <div class="communication-conversations">
+            <section class="communication-section">
+              <h3>Conversations</h3>
+              <form id="runtime-conversation-create-form" class="stack-form" autocomplete="off">
+                <div class="compact-field-grid">
+                  <label>Title<input id="runtime-conversation-title" maxlength="200" placeholder="Architecture room" /></label>
+                  <label>Agent IDs<input id="runtime-conversation-agent-ids" maxlength="1200" required placeholder="Select an Agent or enter comma-separated wc_dagent_* ids" spellcheck="false" /></label>
+                </div>
+                <div class="form-actions"><span id="runtime-conversation-create-status" class="muted small" aria-live="polite"></span><button id="runtime-conversation-create" class="btn primary" type="submit">Create Conversation</button></div>
+              </form>
+              <div id="runtime-conversation-list" class="communication-list conversation-list" role="listbox" aria-label="Durable Conversations"></div>
+              <p id="runtime-conversation-empty" class="muted small" hidden>No Conversations are visible to this Human principal.</p>
+            </section>
+
+            <section id="runtime-conversation-detail" class="communication-section" hidden>
+              <div class="section-head"><h3 id="runtime-conversation-name">Conversation</h3><span id="runtime-conversation-seq" class="muted small">—</span></div>
+              <code id="runtime-conversation-id" class="communication-id">—</code>
+              <div id="runtime-conversation-participants" class="chips communication-participants"></div>
+              <div id="runtime-conversation-transcript" class="conversation-transcript" aria-live="polite"></div>
+              <p id="runtime-conversation-transcript-empty" class="muted small" hidden>No messages yet.</p>
+              <form id="runtime-conversation-message-form" class="stack-form conversation-composer" autocomplete="off">
+                <label>Inbox recipients <input id="runtime-conversation-recipients" maxlength="1200" placeholder="Blank = all Agent participants; empty delivery can be sent with [] through the API" spellcheck="false" /></label>
+                <textarea id="runtime-conversation-body" rows="3" maxlength="4096" required placeholder="Send a Human-authored durable message…"></textarea>
+                <div class="form-actions"><span id="runtime-conversation-send-status" class="muted small" aria-live="polite"></span><button id="runtime-conversation-send" class="btn primary" type="submit">Send durable message</button></div>
+              </form>
+            </section>
+            <p id="runtime-conversation-detail-empty" class="muted">Select or create a Conversation.</p>
+          </div>
+        </div>
       </section>
 
       <section class="panel recent-panel">

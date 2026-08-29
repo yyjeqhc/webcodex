@@ -498,6 +498,206 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 out.insert("instruction_present".to_string(), Value::Bool(true));
             }
         }
+        "create_agent_identity" => {
+            out.insert(
+                "handle_chars".to_string(),
+                Value::from(
+                    obj.get("handle")
+                        .and_then(Value::as_str)
+                        .map(str::chars)
+                        .map(Iterator::count)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "display_name_chars".to_string(),
+                Value::from(
+                    obj.get("display_name")
+                        .and_then(Value::as_str)
+                        .map(str::chars)
+                        .map(Iterator::count)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "description_bytes".to_string(),
+                Value::from(
+                    obj.get("description")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "specialty_label_count".to_string(),
+                Value::from(
+                    obj.get("specialty_labels")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+        "list_agent_identities" => {
+            copy_keys(obj, &mut out, &["agent_id", "offset", "limit"]);
+        }
+        "update_agent_identity" => {
+            copy_keys(obj, &mut out, &["agent_id", "expected_profile_revision"]);
+            for field in ["handle", "display_name", "description", "specialty_labels"] {
+                out.insert(
+                    format!("{field}_present"),
+                    Value::Bool(obj.get(field).is_some_and(|value| !value.is_null())),
+                );
+            }
+            out.insert(
+                "description_bytes".to_string(),
+                Value::from(
+                    obj.get("description")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "specialty_label_count".to_string(),
+                Value::from(
+                    obj.get("specialty_labels")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                ),
+            );
+        }
+        "attach_agent_endpoint" => {
+            copy_keys(obj, &mut out, &["agent_id", "host", "wake_capable"]);
+            out.insert(
+                "client_attachment_id_present".to_string(),
+                Value::Bool(
+                    obj.get("client_attachment_id")
+                        .is_some_and(|value| !value.is_null()),
+                ),
+            );
+            out.insert(
+                "controller_generation_present".to_string(),
+                Value::Bool(
+                    obj.get("controller_generation")
+                        .is_some_and(|value| !value.is_null()),
+                ),
+            );
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+        "detach_agent_endpoint" => {
+            copy_keys(obj, &mut out, &["endpoint_id"]);
+        }
+        "create_conversation" => {
+            out.insert(
+                "title_present".to_string(),
+                Value::Bool(obj.get("title").is_some_and(|value| !value.is_null())),
+            );
+            out.insert(
+                "agent_count".to_string(),
+                Value::from(
+                    obj.get("agent_ids")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+        "list_conversations" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["agent_id", "endpoint_id", "offset", "limit"],
+            );
+        }
+        "read_conversation" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "conversation_id",
+                    "agent_id",
+                    "endpoint_id",
+                    "after_seq",
+                    "limit",
+                ],
+            );
+        }
+        "post_conversation_message" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "conversation_id",
+                    "author_agent_id",
+                    "endpoint_id",
+                    "reply_to",
+                ],
+            );
+            out.insert(
+                "body_bytes".to_string(),
+                Value::from(
+                    obj.get("body")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "recipient_mode".to_string(),
+                Value::String(
+                    if obj.get("recipient_agent_ids").is_some_and(Value::is_array) {
+                        "explicit".to_string()
+                    } else {
+                        "all_agents_except_author".to_string()
+                    },
+                ),
+            );
+            out.insert(
+                "recipient_count".to_string(),
+                Value::from(
+                    obj.get("recipient_agent_ids")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+        "list_agent_inbox" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["agent_id", "endpoint_id", "after_delivery_order", "limit"],
+            );
+        }
+        "consume_agent_deliveries" => {
+            copy_keys(obj, &mut out, &["agent_id", "endpoint_id"]);
+            out.insert(
+                "delivery_count".to_string(),
+                Value::from(
+                    obj.get("delivery_ids")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                ),
+            );
+        }
         "memory_search" => {
             copy_keys(
                 obj,
@@ -1217,6 +1417,82 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "recent_answer_count": output.get("recent_answers").and_then(Value::as_array).map(Vec::len),
             "recent_completion_count": output.get("recent_completions").and_then(Value::as_array).map(Vec::len),
             "summary_only": output.get("summary_only").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "create_agent_identity" | "update_agent_identity" => serde_json::json!({
+            "agent_id": output.pointer("/agent/agent_id").cloned().unwrap_or(Value::Null),
+            "profile_revision": output.pointer("/agent/profile_revision").cloned().unwrap_or(Value::Null),
+            "created": output.get("created").cloned().unwrap_or(Value::Null),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "list_agent_identities" => serde_json::json!({
+            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
+            "returned_count": output.get("agents").and_then(Value::as_array).map(Vec::len),
+            "offset": output.get("offset").cloned().unwrap_or(Value::Null),
+            "next_offset": output.get("next_offset").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "attach_agent_endpoint" | "detach_agent_endpoint" => serde_json::json!({
+            "endpoint_id": output.pointer("/endpoint/endpoint_id").cloned().unwrap_or(Value::Null),
+            "agent_id": output.pointer("/endpoint/agent_id").cloned().unwrap_or(Value::Null),
+            "detached": output.pointer("/endpoint/detached_at_unix_ms").is_some_and(|value| !value.is_null()),
+            "created": output.get("created").cloned().unwrap_or(Value::Null),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "create_conversation" => serde_json::json!({
+            "conversation_id": output.pointer("/conversation/conversation/conversation_id").cloned().unwrap_or(Value::Null),
+            "participant_count": output.pointer("/conversation/participants").and_then(Value::as_array).map(Vec::len),
+            "message_count": output.pointer("/conversation/messages").and_then(Value::as_array).map(Vec::len),
+            "created": output.get("created").cloned().unwrap_or(Value::Null),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "list_conversations" => serde_json::json!({
+            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
+            "returned_count": output.get("conversations").and_then(Value::as_array).map(Vec::len),
+            "offset": output.get("offset").cloned().unwrap_or(Value::Null),
+            "next_offset": output.get("next_offset").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "read_conversation" => serde_json::json!({
+            "conversation_id": output.pointer("/conversation/conversation_id").cloned().unwrap_or(Value::Null),
+            "participant_count": output.get("participants").and_then(Value::as_array).map(Vec::len),
+            "message_count": output.get("messages").and_then(Value::as_array).map(Vec::len),
+            "after_seq": output.get("after_seq").cloned().unwrap_or(Value::Null),
+            "next_after_seq": output.get("next_after_seq").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "post_conversation_message" => serde_json::json!({
+            "message_id": output.pointer("/message/message_id").cloned().unwrap_or(Value::Null),
+            "conversation_id": output.pointer("/message/conversation_id").cloned().unwrap_or(Value::Null),
+            "seq": output.pointer("/message/seq").cloned().unwrap_or(Value::Null),
+            "delivery_count": output.pointer("/message/deliveries").and_then(Value::as_array).map(Vec::len),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "list_agent_inbox" => serde_json::json!({
+            "agent_id": output.get("agent_id").cloned().unwrap_or(Value::Null),
+            "total_queued_count": output.get("total_queued_count").cloned().unwrap_or(Value::Null),
+            "returned_count": output.get("deliveries").and_then(Value::as_array).map(Vec::len),
+            "after_delivery_order": output.get("after_delivery_order").cloned().unwrap_or(Value::Null),
+            "next_after_delivery_order": output.get("next_after_delivery_order").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "consume_agent_deliveries" => serde_json::json!({
+            "agent_id": output.get("agent_id").cloned().unwrap_or(Value::Null),
+            "consumed_count": output.get("consumed_delivery_ids").and_then(Value::as_array).map(Vec::len),
+            "already_consumed_count": output.get("already_consumed_delivery_ids").and_then(Value::as_array).map(Vec::len),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
             "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
         }),
         "memory_search" => serde_json::json!({
@@ -2141,6 +2417,77 @@ mod computer_privacy_tests {
         ] {
             assert!(!install_serialized.contains(private), "leaked {private}");
         }
+    }
+
+    #[test]
+    fn communication_audit_omits_profile_and_message_bodies() {
+        const PRIVATE_HANDLE: &str = "PRIVATE_HANDLE";
+        const PRIVATE_DISPLAY: &str = "PRIVATE DISPLAY";
+        const PRIVATE_DESCRIPTION: &str = "PRIVATE AGENT DESCRIPTION";
+        const PRIVATE_LABEL: &str = "PRIVATE_LABEL";
+        const PRIVATE_BODY: &str = "PRIVATE CONVERSATION BODY";
+        const PRIVATE_KEY: &str = "PRIVATE_IDEMPOTENCY_KEY";
+
+        let create = ToolCall::CreateAgentIdentity {
+            handle: PRIVATE_HANDLE.to_string(),
+            display_name: PRIVATE_DISPLAY.to_string(),
+            description: Some(PRIVATE_DESCRIPTION.to_string()),
+            specialty_labels: vec![PRIVATE_LABEL.to_string()],
+            idempotency_key: PRIVATE_KEY.to_string(),
+        }
+        .session_log_arguments();
+        let create_text = create.to_string();
+        for private in [
+            PRIVATE_HANDLE,
+            PRIVATE_DISPLAY,
+            PRIVATE_DESCRIPTION,
+            PRIVATE_LABEL,
+            PRIVATE_KEY,
+        ] {
+            assert!(
+                !create_text.contains(private),
+                "create audit leaked {private}"
+            );
+        }
+        assert_eq!(create["description_bytes"], PRIVATE_DESCRIPTION.len());
+        assert_eq!(create["specialty_label_count"], 1);
+        assert_eq!(create["idempotency_key_present"], true);
+
+        let post = ToolCall::PostConversationMessage {
+            conversation_id: "wc_conv_0123456789abcdef0123456789abcdef".to_string(),
+            body: PRIVATE_BODY.to_string(),
+            author_agent_id: None,
+            endpoint_id: None,
+            recipient_agent_ids: Some(vec![
+                "wc_dagent_0123456789abcdef0123456789abcdef".to_string()
+            ]),
+            reply_to: None,
+            idempotency_key: PRIVATE_KEY.to_string(),
+        }
+        .session_log_arguments();
+        let post_text = post.to_string();
+        assert!(!post_text.contains(PRIVATE_BODY));
+        assert!(!post_text.contains(PRIVATE_KEY));
+        assert_eq!(post["body_bytes"], PRIVATE_BODY.len());
+        assert_eq!(post["recipient_count"], 1);
+
+        let result = session_log_result_for_tool(
+            "post_conversation_message",
+            &json!({
+                "message": {
+                    "message_id": "wc_cmsg_0123456789abcdef0123456789abcdef",
+                    "conversation_id": "wc_conv_0123456789abcdef0123456789abcdef",
+                    "seq": 4,
+                    "body": PRIVATE_BODY,
+                    "deliveries": [{"delivery_id": "wc_delivery_0123456789abcdef0123456789abcdef"}]
+                },
+                "replayed": false,
+                "state_changed": true
+            }),
+        );
+        assert!(!result.to_string().contains(PRIVATE_BODY));
+        assert_eq!(result["seq"], 4);
+        assert_eq!(result["delivery_count"], 1);
     }
 
     #[test]
@@ -3679,6 +4026,158 @@ impl ToolCall {
                 "items": items,
                 "with_line_numbers": with_line_numbers,
             }),
+            Self::CreateAgentIdentity {
+                handle,
+                display_name,
+                description,
+                specialty_labels,
+                idempotency_key,
+            } => session_log_arguments_for_tool_request(
+                "create_agent_identity",
+                &serde_json::json!({
+                    "handle": handle,
+                    "display_name": display_name,
+                    "description": description,
+                    "specialty_labels": specialty_labels,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+            Self::ListAgentIdentities {
+                agent_id,
+                offset,
+                limit,
+            } => session_log_arguments_for_tool_request(
+                "list_agent_identities",
+                &serde_json::json!({"agent_id": agent_id, "offset": offset, "limit": limit}),
+            ),
+            Self::UpdateAgentIdentity {
+                agent_id,
+                expected_profile_revision,
+                handle,
+                display_name,
+                description,
+                specialty_labels,
+            } => session_log_arguments_for_tool_request(
+                "update_agent_identity",
+                &serde_json::json!({
+                    "agent_id": agent_id,
+                    "expected_profile_revision": expected_profile_revision,
+                    "handle": handle,
+                    "display_name": display_name,
+                    "description": description,
+                    "specialty_labels": specialty_labels,
+                }),
+            ),
+            Self::AttachAgentEndpoint {
+                agent_id,
+                host,
+                client_attachment_id,
+                wake_capable,
+                controller_generation,
+                idempotency_key,
+            } => session_log_arguments_for_tool_request(
+                "attach_agent_endpoint",
+                &serde_json::json!({
+                    "agent_id": agent_id,
+                    "host": host,
+                    "client_attachment_id": client_attachment_id,
+                    "wake_capable": wake_capable,
+                    "controller_generation": controller_generation,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+            Self::DetachAgentEndpoint { endpoint_id } => session_log_arguments_for_tool_request(
+                "detach_agent_endpoint",
+                &serde_json::json!({"endpoint_id": endpoint_id}),
+            ),
+            Self::CreateConversation {
+                title,
+                agent_ids,
+                idempotency_key,
+            } => session_log_arguments_for_tool_request(
+                "create_conversation",
+                &serde_json::json!({
+                    "title": title,
+                    "agent_ids": agent_ids,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+            Self::ListConversations {
+                agent_id,
+                endpoint_id,
+                offset,
+                limit,
+            } => session_log_arguments_for_tool_request(
+                "list_conversations",
+                &serde_json::json!({
+                    "agent_id": agent_id,
+                    "endpoint_id": endpoint_id,
+                    "offset": offset,
+                    "limit": limit,
+                }),
+            ),
+            Self::ReadConversation {
+                conversation_id,
+                agent_id,
+                endpoint_id,
+                after_seq,
+                limit,
+            } => session_log_arguments_for_tool_request(
+                "read_conversation",
+                &serde_json::json!({
+                    "conversation_id": conversation_id,
+                    "agent_id": agent_id,
+                    "endpoint_id": endpoint_id,
+                    "after_seq": after_seq,
+                    "limit": limit,
+                }),
+            ),
+            Self::PostConversationMessage {
+                conversation_id,
+                body,
+                author_agent_id,
+                endpoint_id,
+                recipient_agent_ids,
+                reply_to,
+                idempotency_key,
+            } => session_log_arguments_for_tool_request(
+                "post_conversation_message",
+                &serde_json::json!({
+                    "conversation_id": conversation_id,
+                    "body": body,
+                    "author_agent_id": author_agent_id,
+                    "endpoint_id": endpoint_id,
+                    "recipient_agent_ids": recipient_agent_ids,
+                    "reply_to": reply_to,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+            Self::ListAgentInbox {
+                agent_id,
+                endpoint_id,
+                after_delivery_order,
+                limit,
+            } => session_log_arguments_for_tool_request(
+                "list_agent_inbox",
+                &serde_json::json!({
+                    "agent_id": agent_id,
+                    "endpoint_id": endpoint_id,
+                    "after_delivery_order": after_delivery_order,
+                    "limit": limit,
+                }),
+            ),
+            Self::ConsumeAgentDeliveries {
+                agent_id,
+                endpoint_id,
+                delivery_ids,
+            } => session_log_arguments_for_tool_request(
+                "consume_agent_deliveries",
+                &serde_json::json!({
+                    "agent_id": agent_id,
+                    "endpoint_id": endpoint_id,
+                    "delivery_ids": delivery_ids,
+                }),
+            ),
             Self::MemorySearch {
                 project,
                 query,

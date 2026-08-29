@@ -23,6 +23,15 @@ pub const SCOPE_PROJECT_READ: &str = "project:read";
 pub const SCOPE_PROJECT_WRITE: &str = "project:write";
 pub const SCOPE_MEMORY_READ: &str = "memory:read";
 pub const SCOPE_MEMORY_MANAGE: &str = "memory:manage";
+pub const SCOPE_COMMUNICATION_READ: &str = "communication:read";
+pub const SCOPE_COMMUNICATION_MANAGE: &str = "communication:manage";
+/// Canonical durable Agent and Conversation read authority. Communication
+/// identity remains independent from Project, Session, Runner, and filesystem authority.
+pub(crate) const COMMUNICATION_READ_SCOPES: &[&str] = &[SCOPE_COMMUNICATION_READ];
+/// Canonical durable Agent and Conversation mutation authority. Reading is
+/// required as an explicit companion scope so mutations can return durable state.
+pub(crate) const COMMUNICATION_MANAGE_SCOPES: &[&str] =
+    &[SCOPE_COMMUNICATION_READ, SCOPE_COMMUNICATION_MANAGE];
 /// Canonical project Memory read authority. Both dimensions are required;
 /// neither a project grant nor Memory authority alone is sufficient.
 pub(crate) const MEMORY_READ_SCOPES: &[&str] = &[SCOPE_PROJECT_READ, SCOPE_MEMORY_READ];
@@ -76,6 +85,8 @@ pub(crate) const KNOWN_SCOPES: &[&str] = &[
     SCOPE_PROJECT_WRITE,
     SCOPE_MEMORY_READ,
     SCOPE_MEMORY_MANAGE,
+    SCOPE_COMMUNICATION_READ,
+    SCOPE_COMMUNICATION_MANAGE,
     SCOPE_JOB_RUN,
     SCOPE_JOB_DETACH,
     SCOPE_COMPUTER_READ,

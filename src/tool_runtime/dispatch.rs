@@ -1565,6 +1565,125 @@ impl ToolRuntime {
                 .await
             }
 
+            ToolCall::CreateAgentIdentity {
+                handle,
+                display_name,
+                description,
+                specialty_labels,
+                idempotency_key,
+            } => self.create_agent_identity(
+                auth,
+                handle,
+                display_name,
+                description,
+                specialty_labels,
+                idempotency_key,
+            ),
+
+            ToolCall::ListAgentIdentities {
+                agent_id,
+                offset,
+                limit,
+            } => self.list_agent_identities(auth, agent_id, offset, limit),
+
+            ToolCall::UpdateAgentIdentity {
+                agent_id,
+                expected_profile_revision,
+                handle,
+                display_name,
+                description,
+                specialty_labels,
+            } => self.update_agent_identity(
+                auth,
+                agent_id,
+                expected_profile_revision,
+                handle,
+                display_name,
+                description,
+                specialty_labels,
+            ),
+
+            ToolCall::AttachAgentEndpoint {
+                agent_id,
+                host,
+                client_attachment_id,
+                wake_capable,
+                controller_generation,
+                idempotency_key,
+            } => self.attach_agent_endpoint(
+                auth,
+                agent_id,
+                host,
+                client_attachment_id,
+                wake_capable,
+                controller_generation,
+                idempotency_key,
+            ),
+
+            ToolCall::DetachAgentEndpoint { endpoint_id } => {
+                self.detach_agent_endpoint(auth, endpoint_id)
+            }
+
+            ToolCall::CreateConversation {
+                title,
+                agent_ids,
+                idempotency_key,
+            } => self.create_conversation(auth, title, agent_ids, idempotency_key),
+
+            ToolCall::ListConversations {
+                agent_id,
+                endpoint_id,
+                offset,
+                limit,
+            } => self.list_conversations(auth, agent_id, endpoint_id, offset, limit),
+
+            ToolCall::ReadConversation {
+                conversation_id,
+                agent_id,
+                endpoint_id,
+                after_seq,
+                limit,
+            } => self.read_conversation(
+                auth,
+                conversation_id,
+                agent_id,
+                endpoint_id,
+                after_seq,
+                limit,
+            ),
+
+            ToolCall::PostConversationMessage {
+                conversation_id,
+                body,
+                author_agent_id,
+                endpoint_id,
+                recipient_agent_ids,
+                reply_to,
+                idempotency_key,
+            } => self.post_conversation_message(
+                auth,
+                conversation_id,
+                body,
+                author_agent_id,
+                endpoint_id,
+                recipient_agent_ids,
+                reply_to,
+                idempotency_key,
+            ),
+
+            ToolCall::ListAgentInbox {
+                agent_id,
+                endpoint_id,
+                after_delivery_order,
+                limit,
+            } => self.list_agent_inbox(auth, agent_id, endpoint_id, after_delivery_order, limit),
+
+            ToolCall::ConsumeAgentDeliveries {
+                agent_id,
+                endpoint_id,
+                delivery_ids,
+            } => self.consume_agent_deliveries(auth, agent_id, endpoint_id, delivery_ids),
+
             ToolCall::MemorySearch {
                 query,
                 tags,

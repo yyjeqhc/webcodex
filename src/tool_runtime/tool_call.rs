@@ -1006,6 +1006,124 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Create a durable Server-owned Agent identity and mutable self-description card.
+    CreateAgentIdentity {
+        handle: String,
+        display_name: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        specialty_labels: Vec<String>,
+        idempotency_key: String,
+    },
+
+    /// List Agent identities owned by the current communication principal.
+    ListAgentIdentities {
+        #[serde(default)]
+        agent_id: Option<String>,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// CAS-update mutable Agent Card metadata without changing canonical identity.
+    UpdateAgentIdentity {
+        agent_id: String,
+        expected_profile_revision: i64,
+        #[serde(default)]
+        handle: Option<String>,
+        #[serde(default)]
+        display_name: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        specialty_labels: Option<Vec<String>>,
+    },
+
+    /// Attach a current Host/Client Endpoint to a durable Agent.
+    AttachAgentEndpoint {
+        agent_id: String,
+        host: String,
+        #[serde(default)]
+        client_attachment_id: Option<String>,
+        #[serde(default)]
+        wake_capable: bool,
+        #[serde(default)]
+        controller_generation: Option<String>,
+        idempotency_key: String,
+    },
+
+    /// Detach an Endpoint while preserving the durable Agent.
+    DetachAgentEndpoint {
+        endpoint_id: String,
+    },
+
+    /// Create a durable Conversation with the current Human principal and Agents.
+    CreateConversation {
+        #[serde(default)]
+        title: Option<String>,
+        agent_ids: Vec<String>,
+        idempotency_key: String,
+    },
+
+    /// List Conversations for a Human view or an explicitly attached Agent view.
+    ListConversations {
+        #[serde(default)]
+        agent_id: Option<String>,
+        #[serde(default)]
+        endpoint_id: Option<String>,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Read an ordered append-only Conversation transcript page.
+    ReadConversation {
+        conversation_id: String,
+        #[serde(default)]
+        agent_id: Option<String>,
+        #[serde(default)]
+        endpoint_id: Option<String>,
+        #[serde(default)]
+        after_seq: Option<i64>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Atomically append a Message and recipient-specific Agent deliveries.
+    PostConversationMessage {
+        conversation_id: String,
+        body: String,
+        #[serde(default)]
+        author_agent_id: Option<String>,
+        #[serde(default)]
+        endpoint_id: Option<String>,
+        #[serde(default)]
+        recipient_agent_ids: Option<Vec<String>>,
+        #[serde(default)]
+        reply_to: Option<String>,
+        idempotency_key: String,
+    },
+
+    /// List queued deliveries for an Agent proven by an active Endpoint.
+    ListAgentInbox {
+        agent_id: String,
+        endpoint_id: String,
+        #[serde(default)]
+        after_delivery_order: Option<i64>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Mark exact recipient-specific Agent deliveries consumed.
+    ConsumeAgentDeliveries {
+        agent_id: String,
+        endpoint_id: String,
+        delivery_ids: Vec<String>,
+    },
+
     /// Search/list explicit durable project Memory. Model-hidden globally and
     /// exposed only by the capable Stateless MCP Full Operator surface.
     MemorySearch {
@@ -2328,6 +2446,17 @@ impl ToolCall {
             Self::SkillInstall { .. } => "skill_install",
             Self::SkillActivate { .. } => "skill_activate",
             Self::SkillRemoveRevision { .. } => "skill_remove_revision",
+            Self::CreateAgentIdentity { .. } => "create_agent_identity",
+            Self::ListAgentIdentities { .. } => "list_agent_identities",
+            Self::UpdateAgentIdentity { .. } => "update_agent_identity",
+            Self::AttachAgentEndpoint { .. } => "attach_agent_endpoint",
+            Self::DetachAgentEndpoint { .. } => "detach_agent_endpoint",
+            Self::CreateConversation { .. } => "create_conversation",
+            Self::ListConversations { .. } => "list_conversations",
+            Self::ReadConversation { .. } => "read_conversation",
+            Self::PostConversationMessage { .. } => "post_conversation_message",
+            Self::ListAgentInbox { .. } => "list_agent_inbox",
+            Self::ConsumeAgentDeliveries { .. } => "consume_agent_deliveries",
             Self::MemorySearch { .. } => "memory_search",
             Self::MemoryRead { .. } => "memory_read",
             Self::MemorySet { .. } => "memory_set",

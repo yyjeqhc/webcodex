@@ -704,6 +704,22 @@ let knownProjectDevices = [];
 let selectedProjectSnapshot = null;
 let sessionRows = [];
 const state = initialRuntimeConsoleState();
+let communicationAgents = [];
+let communicationConversations = [];
+let communicationDetail = null;
+let communicationInbox = [];
+let selectedCommunicationAgentId = "";
+let selectedCommunicationConversationId = "";
+let communicationReadAvailable = null;
+let communicationManageAvailable = null;
+let communicationRefreshInFlight = false;
+let communicationGeneration = 0;
+const communicationEndpoints = new Map();
+const pendingEndpointAttach = new Map();
+let pendingAgentCreate = null;
+let pendingConversationCreate = null;
+let pendingConversationMessage = null;
+const pageAttachmentId = "runtime-console-" + operationKey("page");
 function el(id) {
     return document.getElementById(id);
 }
@@ -796,6 +812,7 @@ function clearSessionSurface() {
     resetCollaborationComposerUi();
 }
 function lock(message = "") {
+    detachCommunicationEndpointsBestEffort();
     token = "";
     abortAll();
     invalidateRuntimeCredential(state);
@@ -810,6 +827,7 @@ function lock(message = "") {
     projectSearch = "";
     collaborationReplyTo = "";
     clearSessionSurface();
+    resetCommunicationSurface();
     clearNode(el("runtime-project-list"));
     clearNode(el("runtime-recent-session-list"));
     clearNode(el("runtime-runner-list"));
@@ -2276,6 +2294,720 @@ async function postHumanCollaborationMessage(event) {
     setText("runtime-message-send-status", "Sent.");
     renderCollaboration();
 }
+function operationKey(prefix) {
+    const random = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    return prefix + "-" + random;
+}
+function communicationTimeLabel(value) {
+    if (typeof value !== "number" || !Number.isFinite(value))
+        return "time unavailable";
+    return new Date(value).toLocaleString();
+}
+function parseAgentIds(value) {
+    const ids = value
+        .split(/[\s,]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    return Array.from(new Set(ids));
+}
+function communicationAgent(agentId) {
+    return communicationAgents.find((agent) => String(agent?.agent_id || "") === agentId) || null;
+}
+function selectedCommunicationAgent() {
+    return communicationAgent(selectedCommunicationAgentId);
+}
+function selectedCommunicationConversation() {
+    return communicationConversations.find((conversation) => String(conversation?.conversation_id || "") === selectedCommunicationConversationId) || null;
+}
+function communicationEndpointId(agentId = selectedCommunicationAgentId) {
+    return communicationEndpoints.get(agentId) || "";
+}
+function idempotencyKeyFor(pending, fingerprint, prefix) {
+    return pending && pending.fingerprint === fingerprint
+        ? pending
+        : { fingerprint, key: operationKey(prefix) };
+}
+function resetCommunicationSurface() {
+    communicationGeneration += 1;
+    communicationAgents = [];
+    communicationConversations = [];
+    communicationDetail = null;
+    communicationInbox = [];
+    selectedCommunicationAgentId = "";
+    selectedCommunicationConversationId = "";
+    communicationReadAvailable = null;
+    communicationManageAvailable = null;
+    communicationRefreshInFlight = false;
+    communicationEndpoints.clear();
+    pendingEndpointAttach.clear();
+    pendingAgentCreate = null;
+    pendingConversationCreate = null;
+    pendingConversationMessage = null;
+    clearNode(el("runtime-agent-list"));
+    clearNode(el("runtime-conversation-list"));
+    clearNode(el("runtime-conversation-transcript"));
+    clearNode(el("runtime-conversation-participants"));
+    clearNode(el("runtime-inbox-list"));
+    renderCommunicationSurface();
+}
+function detachCommunicationEndpointsBestEffort() {
+    if (!token || communicationEndpoints.size === 0)
+        return;
+    const credential = token;
+    for (const endpointId of communicationEndpoints.values()) {
+        void fetch(API_BASE + "communication/endpoint/detach", {
+            method: "POST",
+            headers: { Authorization: "Bearer " + credential, "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint_id: endpointId }),
+            keepalive: true,
+        }).catch(() => undefined);
+    }
+    communicationEndpoints.clear();
+}
+function renderCommunicationAvailability() {
+    const available = communicationReadAvailable !== false;
+    show("runtime-communication-unavailable", !available);
+    show("runtime-communication-surface", available);
+    const access = communicationReadAvailable === null
+        ? "communication:read checking…"
+        : available
+            ? "communication:read" + (communicationManageAvailable === false ? " · read only" : " · polling every 8s")
+            : "communication:read unavailable";
+    setText("runtime-communication-status", access);
+}
+function renderCommunicationAgents() {
+    setText("runtime-communication-count", countLabel(communicationAgents.length, "Agent"));
+    const list = el("runtime-agent-list");
+    clearNode(list);
+    show("runtime-agent-empty", communicationReadAvailable === true && communicationAgents.length === 0);
+    if (!list)
+        return;
+    for (const agent of communicationAgents) {
+        const agentId = String(agent?.agent_id || "");
+        if (!agentId)
+            continue;
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "communication-row" + (agentId === selectedCommunicationAgentId ? " selected" : "");
+        row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", agentId === selectedCommunicationAgentId ? "true" : "false");
+        const head = document.createElement("div");
+        head.className = "communication-row-head";
+        const title = document.createElement("span");
+        title.className = "communication-row-title";
+        title.textContent = String(agent?.display_name || agent?.handle || "Agent") + " · @" + String(agent?.handle || "agent");
+        const unread = document.createElement("span");
+        unread.className = "chip" + (Number(agent?.queued_delivery_count || 0) > 0 ? " tone-warn" : "");
+        unread.textContent = countLabel(agent?.queued_delivery_count, "queued delivery");
+        head.appendChild(title);
+        head.appendChild(unread);
+        row.appendChild(head);
+        const meta = document.createElement("span");
+        meta.className = "communication-row-meta";
+        meta.textContent = agentId + " · profile r" + String(agent?.profile_revision || 0) + " · " + countLabel(agent?.active_endpoint_count, "active Endpoint");
+        row.appendChild(meta);
+        row.addEventListener("click", () => {
+            selectedCommunicationAgentId = agentId;
+            communicationInbox = [];
+            const participants = el("runtime-conversation-agent-ids");
+            if (participants && !participants.value.trim())
+                participants.value = agentId;
+            renderCommunicationAgents();
+            renderCommunicationAgentCard();
+            renderCommunicationInbox();
+            if (communicationEndpointId(agentId))
+                void fetchCommunicationInbox(communicationGeneration);
+        });
+        list.appendChild(row);
+    }
+}
+function renderCommunicationAgentCard() {
+    const agent = selectedCommunicationAgent();
+    show("runtime-agent-card", !!agent);
+    if (!agent)
+        return;
+    const agentId = String(agent.agent_id || "");
+    setText("runtime-agent-card-name", String(agent.display_name || agent.handle || "Agent Card") + " · @" + String(agent.handle || "agent"));
+    setText("runtime-agent-card-id", agentId);
+    setText("runtime-agent-card-description", String(agent.description || "No description."));
+    setText("runtime-agent-card-revision", "Profile revision " + String(agent.profile_revision || 0) + " · updated " + communicationTimeLabel(agent.updated_at_unix_ms));
+    setText("runtime-agent-unread", countLabel(agent.queued_delivery_count, "queued"));
+    const labels = el("runtime-agent-card-labels");
+    clearNode(labels);
+    if (labels) {
+        for (const label of Array.isArray(agent.specialty_labels) ? agent.specialty_labels : []) {
+            appendChip(labels, String(label));
+        }
+    }
+    const endpointId = communicationEndpointId(agentId);
+    setText("runtime-agent-endpoint-status", endpointId
+        ? "Browser Endpoint " + endpointId + " · attachment only, no execution authority"
+        : "No browser Endpoint attached. Agent identity remains durable.");
+    show("runtime-agent-attach", !endpointId);
+    show("runtime-agent-detach", !!endpointId);
+}
+function renderCommunicationConversations() {
+    const list = el("runtime-conversation-list");
+    clearNode(list);
+    show("runtime-conversation-empty", communicationReadAvailable === true && communicationConversations.length === 0);
+    if (!list)
+        return;
+    for (const conversation of communicationConversations) {
+        const conversationId = String(conversation?.conversation_id || "");
+        if (!conversationId)
+            continue;
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "communication-row" + (conversationId === selectedCommunicationConversationId ? " selected" : "");
+        row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", conversationId === selectedCommunicationConversationId ? "true" : "false");
+        const head = document.createElement("div");
+        head.className = "communication-row-head";
+        const title = document.createElement("span");
+        title.className = "communication-row-title";
+        title.textContent = String(conversation?.title || "Untitled Conversation");
+        const count = document.createElement("span");
+        count.className = "chip";
+        count.textContent = countLabel(conversation?.message_count, "message");
+        head.appendChild(title);
+        head.appendChild(count);
+        row.appendChild(head);
+        const meta = document.createElement("span");
+        meta.className = "communication-row-meta";
+        meta.textContent = conversationId + " · " + countLabel(conversation?.participant_count, "participant") + " · seq " + String(conversation?.last_seq || 0);
+        row.appendChild(meta);
+        row.addEventListener("click", () => {
+            selectedCommunicationConversationId = conversationId;
+            communicationDetail = null;
+            renderCommunicationConversations();
+            renderCommunicationConversation();
+            void fetchCommunicationConversation(communicationGeneration);
+        });
+        list.appendChild(row);
+    }
+}
+function deliveryAgentLabel(agentId) {
+    const agent = communicationAgent(agentId);
+    return agent ? String(agent.display_name || agent.handle || agentId) : agentId;
+}
+function renderCommunicationConversation() {
+    const detail = communicationDetail;
+    const summary = detail?.conversation || selectedCommunicationConversation();
+    const available = !!summary && String(summary?.conversation_id || "") === selectedCommunicationConversationId;
+    show("runtime-conversation-detail", available);
+    show("runtime-conversation-detail-empty", !available);
+    const transcript = el("runtime-conversation-transcript");
+    clearNode(transcript);
+    clearNode(el("runtime-conversation-participants"));
+    if (!available || !detail)
+        return;
+    setText("runtime-conversation-name", String(summary.title || "Untitled Conversation"));
+    setText("runtime-conversation-id", String(summary.conversation_id || ""));
+    setText("runtime-conversation-seq", "seq " + String(summary.last_seq || 0) + " · " + countLabel(summary.message_count, "message") + (detail.truncated ? " · bounded page" : ""));
+    const participants = el("runtime-conversation-participants");
+    if (participants) {
+        for (const participant of Array.isArray(detail.participants) ? detail.participants : []) {
+            const kind = String(participant?.participant_kind || "participant");
+            const label = kind === "agent"
+                ? "Agent · " + String(participant?.display_name || participant?.handle || participant?.agent_id || "unknown")
+                : "Human · " + String(participant?.principal_kind || "credential principal");
+            appendChip(participants, label, kind === "agent" ? "tone-pass" : "tone-runtime");
+        }
+    }
+    const messages = Array.isArray(detail.messages) ? detail.messages : [];
+    show("runtime-conversation-transcript-empty", messages.length === 0);
+    if (!transcript)
+        return;
+    for (const message of messages) {
+        const author = message?.author || {};
+        const agentAuthored = String(author.participant_kind || "") === "agent";
+        const card = document.createElement("article");
+        card.className = "conversation-message" + (agentAuthored ? " agent-authored" : "");
+        const head = document.createElement("div");
+        head.className = "conversation-message-head";
+        const name = document.createElement("span");
+        name.className = "conversation-message-author";
+        name.textContent = agentAuthored
+            ? "Agent · " + String(author.display_name || author.handle || author.agent_id || "unknown")
+            : "Human · " + String(author.principal_kind || "credential principal");
+        const seq = document.createElement("span");
+        seq.className = "muted small";
+        seq.textContent = "#" + String(message?.seq || 0) + " · " + communicationTimeLabel(message?.created_at_unix_ms);
+        head.appendChild(name);
+        head.appendChild(seq);
+        card.appendChild(head);
+        const meta = document.createElement("div");
+        meta.className = "conversation-message-meta";
+        const metaParts = [String(message?.message_id || "")];
+        if (author.agent_id)
+            metaParts.push(String(author.agent_id));
+        if (message?.reply_to)
+            metaParts.push("reply to " + String(message.reply_to));
+        meta.textContent = metaParts.join(" · ");
+        card.appendChild(meta);
+        const body = document.createElement("div");
+        body.className = "conversation-message-body";
+        body.textContent = String(message?.body || "");
+        card.appendChild(body);
+        const deliveries = Array.isArray(message?.deliveries) ? message.deliveries : [];
+        const delivery = document.createElement("div");
+        delivery.className = "conversation-message-deliveries";
+        delivery.textContent = deliveries.length
+            ? "Agent Inbox: " + deliveries.map((item) => deliveryAgentLabel(String(item?.recipient_agent_id || "")) + " " + String(item?.state || "unknown")).join(" · ")
+            : "No Agent Inbox delivery · transcript / Human room only";
+        card.appendChild(delivery);
+        transcript.appendChild(card);
+    }
+    transcript.scrollTop = transcript.scrollHeight;
+}
+function renderCommunicationInbox() {
+    const list = el("runtime-inbox-list");
+    clearNode(list);
+    const agent = selectedCommunicationAgent();
+    const endpointId = communicationEndpointId();
+    show("runtime-inbox-consume-all", !!endpointId && communicationInbox.length > 0);
+    if (!agent) {
+        setText("runtime-inbox-status", "Select an Agent to inspect recipient-specific queued deliveries.");
+        return;
+    }
+    if (!endpointId) {
+        setText("runtime-inbox-status", "Attach this browser as an Endpoint. Queued deliveries remain durable while offline.");
+        return;
+    }
+    setText("runtime-inbox-status", countLabel(communicationInbox.length, "queued delivery") + " · reading does not consume or wake a model");
+    if (!list)
+        return;
+    for (const item of communicationInbox) {
+        const row = document.createElement("article");
+        row.className = "communication-row inbox-delivery";
+        const head = document.createElement("div");
+        head.className = "communication-row-head";
+        const title = document.createElement("span");
+        title.className = "communication-row-title";
+        title.textContent = String(item?.conversation_title || "Untitled Conversation") + " · #" + String(item?.message?.seq || 0);
+        const consume = document.createElement("button");
+        consume.type = "button";
+        consume.className = "text-button";
+        consume.textContent = "Consume";
+        consume.addEventListener("click", () => void consumeCommunicationDeliveries([String(item?.delivery_id || "")]));
+        head.appendChild(title);
+        head.appendChild(consume);
+        row.appendChild(head);
+        const meta = document.createElement("span");
+        meta.className = "communication-row-meta";
+        meta.textContent = String(item?.delivery_id || "") + " · from " + (item?.message?.author?.participant_kind === "agent" ? deliveryAgentLabel(String(item.message.author.agent_id || "")) : "Human");
+        row.appendChild(meta);
+        const body = document.createElement("div");
+        body.className = "inbox-message-preview";
+        body.textContent = String(item?.message?.body || "");
+        row.appendChild(body);
+        list.appendChild(row);
+    }
+}
+function renderCommunicationSurface() {
+    renderCommunicationAvailability();
+    renderCommunicationAgents();
+    renderCommunicationAgentCard();
+    renderCommunicationConversations();
+    renderCommunicationConversation();
+    renderCommunicationInbox();
+}
+async function fetchCommunicationAgents(generation) {
+    const response = await api("communication/agents", { offset: 0, limit: 100 });
+    if (generation !== communicationGeneration || !response)
+        return false;
+    if (response.status === 401) {
+        lock("Credential rejected.");
+        return false;
+    }
+    if (response.status === 403) {
+        communicationReadAvailable = false;
+        communicationAgents = [];
+        communicationConversations = [];
+        communicationDetail = null;
+        communicationInbox = [];
+        renderCommunicationSurface();
+        return true;
+    }
+    if (!response.ok || !response.data)
+        return false;
+    communicationReadAvailable = true;
+    communicationAgents = Array.isArray(response.data.agents) ? response.data.agents : [];
+    if (!communicationAgents.some((agent) => String(agent?.agent_id || "") === selectedCommunicationAgentId)) {
+        selectedCommunicationAgentId = String(communicationAgents[0]?.agent_id || "");
+        communicationInbox = [];
+    }
+    renderCommunicationAgents();
+    renderCommunicationAgentCard();
+    return true;
+}
+async function fetchCommunicationConversations(generation) {
+    const response = await api("communication/conversations", { offset: 0, limit: 100 });
+    if (generation !== communicationGeneration || !response)
+        return false;
+    if (response.status === 401) {
+        lock("Credential rejected.");
+        return false;
+    }
+    if (response.status === 403) {
+        communicationReadAvailable = false;
+        renderCommunicationSurface();
+        return true;
+    }
+    if (!response.ok || !response.data)
+        return false;
+    communicationReadAvailable = true;
+    communicationConversations = Array.isArray(response.data.conversations) ? response.data.conversations : [];
+    if (!communicationConversations.some((conversation) => String(conversation?.conversation_id || "") === selectedCommunicationConversationId)) {
+        selectedCommunicationConversationId = String(communicationConversations[0]?.conversation_id || "");
+        communicationDetail = null;
+    }
+    renderCommunicationConversations();
+    return true;
+}
+async function fetchCommunicationConversation(generation) {
+    const conversationId = selectedCommunicationConversationId;
+    if (!conversationId) {
+        communicationDetail = null;
+        renderCommunicationConversation();
+        return true;
+    }
+    const response = await api("communication/conversation", {
+        conversation_id: conversationId,
+        after_seq: 0,
+        limit: 100,
+    });
+    if (generation !== communicationGeneration || conversationId !== selectedCommunicationConversationId || !response)
+        return false;
+    if (response.status === 401) {
+        lock("Credential rejected.");
+        return false;
+    }
+    if (response.status === 403) {
+        communicationReadAvailable = false;
+        renderCommunicationSurface();
+        return true;
+    }
+    if (response.status === 404) {
+        communicationDetail = null;
+        selectedCommunicationConversationId = "";
+        renderCommunicationConversation();
+        return false;
+    }
+    if (!response.ok || !response.data)
+        return false;
+    communicationDetail = response.data;
+    renderCommunicationConversation();
+    return true;
+}
+async function fetchCommunicationInbox(generation) {
+    const agentId = selectedCommunicationAgentId;
+    const endpointId = communicationEndpointId(agentId);
+    if (!agentId || !endpointId) {
+        communicationInbox = [];
+        renderCommunicationInbox();
+        return true;
+    }
+    const response = await api("communication/inbox", {
+        agent_id: agentId,
+        endpoint_id: endpointId,
+        after_delivery_order: 0,
+        limit: 100,
+    });
+    if (generation !== communicationGeneration || agentId !== selectedCommunicationAgentId || endpointId !== communicationEndpointId(agentId) || !response)
+        return false;
+    if (response.status === 401) {
+        lock("Credential rejected.");
+        return false;
+    }
+    if (response.status === 403) {
+        communicationReadAvailable = false;
+        renderCommunicationSurface();
+        return true;
+    }
+    if (response.status === 404 || response.status === 400) {
+        communicationEndpoints.delete(agentId);
+        communicationInbox = [];
+        renderCommunicationAgentCard();
+        renderCommunicationInbox();
+        return false;
+    }
+    if (!response.ok || !response.data)
+        return false;
+    communicationInbox = Array.isArray(response.data.deliveries) ? response.data.deliveries : [];
+    renderCommunicationInbox();
+    return true;
+}
+async function refreshCommunication() {
+    if (!token || communicationRefreshInFlight)
+        return true;
+    communicationRefreshInFlight = true;
+    const generation = ++communicationGeneration;
+    setText("runtime-communication-status", "Refreshing durable communication…");
+    try {
+        const agentsOk = await fetchCommunicationAgents(generation);
+        if (generation !== communicationGeneration || !agentsOk || communicationReadAvailable !== true)
+            return agentsOk;
+        const conversationsOk = await fetchCommunicationConversations(generation);
+        if (generation !== communicationGeneration || !conversationsOk || communicationReadAvailable !== true)
+            return agentsOk && conversationsOk;
+        const [conversationOk, inboxOk] = await Promise.all([
+            fetchCommunicationConversation(generation),
+            fetchCommunicationInbox(generation),
+        ]);
+        renderCommunicationSurface();
+        return agentsOk && conversationsOk && conversationOk && inboxOk;
+    }
+    finally {
+        if (generation === communicationGeneration)
+            communicationRefreshInFlight = false;
+    }
+}
+async function createCommunicationAgent(event) {
+    event.preventDefault();
+    const handle = el("runtime-agent-handle")?.value.trim() || "";
+    const displayName = el("runtime-agent-display-name")?.value.trim() || "";
+    const description = el("runtime-agent-description")?.value.trim() || "";
+    const labels = parseAgentIds(el("runtime-agent-labels")?.value || "");
+    if (!handle || !displayName) {
+        setText("runtime-agent-create-status", "Handle and display name are required.");
+        return;
+    }
+    const fingerprint = JSON.stringify({ handle, displayName, description, labels });
+    pendingAgentCreate = idempotencyKeyFor(pendingAgentCreate, fingerprint, "runtime-agent");
+    setText("runtime-agent-create-status", "Creating durable Agent…");
+    const response = await api("communication/agent/create", {
+        handle,
+        display_name: displayName,
+        description,
+        specialty_labels: labels,
+        idempotency_key: pendingAgentCreate.key,
+    });
+    if (response?.status === 401) {
+        lock("Credential rejected.");
+        return;
+    }
+    if (response?.status === 403) {
+        communicationManageAvailable = false;
+        setText("runtime-agent-create-status", "communication:manage required.");
+        renderCommunicationAvailability();
+        return;
+    }
+    if (!response || response.status === 0 || response.status === 503) {
+        setText("runtime-agent-create-status", "Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key, or refresh before deciding.");
+        return;
+    }
+    if (!response.ok || !response.data?.agent) {
+        setText("runtime-agent-create-status", String(response.data?.message || "Agent creation failed."));
+        return;
+    }
+    communicationManageAvailable = true;
+    selectedCommunicationAgentId = String(response.data.agent.agent_id || "");
+    pendingAgentCreate = null;
+    for (const id of ["runtime-agent-handle", "runtime-agent-display-name", "runtime-agent-description", "runtime-agent-labels"]) {
+        const input = el(id);
+        if (input)
+            input.value = "";
+    }
+    setText("runtime-agent-create-status", response.data.replayed ? "Existing idempotent Agent replayed." : "Agent created.");
+    await refreshCommunication();
+}
+async function attachCommunicationEndpoint() {
+    const agentId = selectedCommunicationAgentId;
+    if (!agentId)
+        return;
+    let pending = pendingEndpointAttach.get(agentId);
+    if (!pending) {
+        pending = { key: operationKey("runtime-endpoint"), attachmentId: pageAttachmentId + "-" + agentId.slice(-8) };
+        pendingEndpointAttach.set(agentId, pending);
+    }
+    setText("runtime-agent-endpoint-status", "Attaching browser Endpoint…");
+    const response = await api("communication/endpoint/attach", {
+        agent_id: agentId,
+        host: "Runtime Console",
+        client_attachment_id: pending.attachmentId,
+        wake_capable: false,
+        controller_generation: "a1-bounded-polling-v1",
+        idempotency_key: pending.key,
+    });
+    if (response?.status === 401) {
+        lock("Credential rejected.");
+        return;
+    }
+    if (response?.status === 403) {
+        communicationManageAvailable = false;
+        setText("runtime-agent-endpoint-status", "communication:manage required.");
+        return;
+    }
+    if (!response || response.status === 0 || response.status === 503) {
+        setText("runtime-agent-endpoint-status", "Outcome uncertain. Retry Attach to replay the same idempotency key; do not create a new attachment.");
+        return;
+    }
+    if (!response.ok || !response.data?.endpoint?.endpoint_id) {
+        setText("runtime-agent-endpoint-status", String(response.data?.message || "Endpoint attach failed."));
+        return;
+    }
+    communicationManageAvailable = true;
+    communicationEndpoints.set(agentId, String(response.data.endpoint.endpoint_id));
+    pendingEndpointAttach.delete(agentId);
+    renderCommunicationAgentCard();
+    await fetchCommunicationInbox(communicationGeneration);
+}
+async function detachCommunicationEndpoint() {
+    const agentId = selectedCommunicationAgentId;
+    const endpointId = communicationEndpointId(agentId);
+    if (!agentId || !endpointId)
+        return;
+    setText("runtime-agent-endpoint-status", "Detaching browser Endpoint…");
+    const response = await api("communication/endpoint/detach", { endpoint_id: endpointId });
+    if (response?.status === 401) {
+        lock("Credential rejected.");
+        return;
+    }
+    if (response?.status === 403) {
+        communicationManageAvailable = false;
+        setText("runtime-agent-endpoint-status", "communication:manage required.");
+        return;
+    }
+    if (!response || response.status === 0 || response.status === 503) {
+        setText("runtime-agent-endpoint-status", "Detach outcome uncertain. Refresh before retry; the durable Agent and Inbox are unaffected.");
+        return;
+    }
+    if (!response.ok) {
+        setText("runtime-agent-endpoint-status", String(response.data?.message || "Endpoint detach failed."));
+        return;
+    }
+    communicationEndpoints.delete(agentId);
+    communicationInbox = [];
+    renderCommunicationAgentCard();
+    renderCommunicationInbox();
+    await refreshCommunication();
+}
+async function createCommunicationConversation(event) {
+    event.preventDefault();
+    const title = el("runtime-conversation-title")?.value.trim() || "";
+    const idsInput = el("runtime-conversation-agent-ids")?.value || "";
+    const agentIds = parseAgentIds(idsInput || selectedCommunicationAgentId);
+    if (agentIds.length === 0) {
+        setText("runtime-conversation-create-status", "At least one Agent id is required.");
+        return;
+    }
+    const fingerprint = JSON.stringify({ title, agentIds: [...agentIds].sort() });
+    pendingConversationCreate = idempotencyKeyFor(pendingConversationCreate, fingerprint, "runtime-conversation");
+    setText("runtime-conversation-create-status", "Creating durable Conversation…");
+    const response = await api("communication/conversation/create", {
+        title: title || null,
+        agent_ids: agentIds,
+        idempotency_key: pendingConversationCreate.key,
+    });
+    if (response?.status === 401) {
+        lock("Credential rejected.");
+        return;
+    }
+    if (response?.status === 403) {
+        communicationManageAvailable = false;
+        setText("runtime-conversation-create-status", "communication:manage required.");
+        return;
+    }
+    if (!response || response.status === 0 || response.status === 503) {
+        setText("runtime-conversation-create-status", "Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key.");
+        return;
+    }
+    if (!response.ok || !response.data?.conversation?.conversation?.conversation_id) {
+        setText("runtime-conversation-create-status", String(response.data?.message || "Conversation creation failed."));
+        return;
+    }
+    communicationManageAvailable = true;
+    selectedCommunicationConversationId = String(response.data.conversation.conversation.conversation_id);
+    pendingConversationCreate = null;
+    const titleInput = el("runtime-conversation-title");
+    const agentsInput = el("runtime-conversation-agent-ids");
+    if (titleInput)
+        titleInput.value = "";
+    if (agentsInput)
+        agentsInput.value = selectedCommunicationAgentId;
+    setText("runtime-conversation-create-status", response.data.replayed ? "Existing idempotent Conversation replayed." : "Conversation created.");
+    await refreshCommunication();
+}
+async function postCommunicationMessage(event) {
+    event.preventDefault();
+    const conversationId = selectedCommunicationConversationId;
+    const bodyNode = el("runtime-conversation-body");
+    const recipientsNode = el("runtime-conversation-recipients");
+    const body = bodyNode?.value.trim() || "";
+    const recipientsText = recipientsNode?.value.trim() || "";
+    if (!conversationId || !body) {
+        setText("runtime-conversation-send-status", "Select a Conversation and enter a message.");
+        return;
+    }
+    const recipientAgentIds = recipientsText ? parseAgentIds(recipientsText) : null;
+    const fingerprint = JSON.stringify({ conversationId, body, recipientAgentIds });
+    pendingConversationMessage = idempotencyKeyFor(pendingConversationMessage, fingerprint, "runtime-message");
+    setText("runtime-conversation-send-status", "Appending Message and Agent deliveries atomically…");
+    const response = await api("communication/message/post", {
+        conversation_id: conversationId,
+        body,
+        recipient_agent_ids: recipientAgentIds,
+        idempotency_key: pendingConversationMessage.key,
+    });
+    if (response?.status === 401) {
+        lock("Credential rejected.");
+        return;
+    }
+    if (response?.status === 403) {
+        communicationManageAvailable = false;
+        setText("runtime-conversation-send-status", "communication:manage required.");
+        return;
+    }
+    if (!response || response.status === 0 || response.status === 503) {
+        setText("runtime-conversation-send-status", "Outcome uncertain. Keep the message unchanged and retry only to replay the same idempotency key, or refresh the transcript first.");
+        return;
+    }
+    if (!response.ok || !response.data?.message) {
+        setText("runtime-conversation-send-status", String(response.data?.message || "Message append failed."));
+        return;
+    }
+    communicationManageAvailable = true;
+    pendingConversationMessage = null;
+    if (bodyNode)
+        bodyNode.value = "";
+    setText("runtime-conversation-send-status", response.data.replayed ? "Existing Message replayed without duplicate delivery." : "Durable Message sent.");
+    await refreshCommunication();
+}
+async function consumeCommunicationDeliveries(deliveryIds) {
+    const agentId = selectedCommunicationAgentId;
+    const endpointId = communicationEndpointId(agentId);
+    const ids = deliveryIds.filter(Boolean);
+    if (!agentId || !endpointId || ids.length === 0)
+        return;
+    setText("runtime-inbox-status", "Consuming recipient state…");
+    const response = await api("communication/inbox/consume", {
+        agent_id: agentId,
+        endpoint_id: endpointId,
+        delivery_ids: ids,
+    });
+    if (response?.status === 401) {
+        lock("Credential rejected.");
+        return;
+    }
+    if (response?.status === 403) {
+        communicationManageAvailable = false;
+        setText("runtime-inbox-status", "communication:manage required to consume deliveries.");
+        return;
+    }
+    if (!response || response.status === 0 || response.status === 503) {
+        setText("runtime-inbox-status", "Consume outcome uncertain. Refresh before retry; desired-state replay is safe.");
+        return;
+    }
+    if (!response.ok) {
+        setText("runtime-inbox-status", String(response.data?.message || "Delivery consume failed."));
+        return;
+    }
+    communicationManageAvailable = true;
+    await refreshCommunication();
+}
 function setRefreshBusy(active) {
     refreshInFlight = active;
     const button = el("runtime-refresh");
@@ -2293,13 +3025,14 @@ async function refreshAll() {
     const overviewRequest = refreshRuntimeOverview(state);
     const projectsRequest = refreshRuntimeProjects(state, projectSearch);
     try {
-        const [overviewOk, projectsOk] = await Promise.all([
+        const [overviewOk, projectsOk, communicationOk] = await Promise.all([
             fetchOverview(overviewRequest),
             fetchProjects(projectsRequest),
+            refreshCommunication(),
         ]);
         if (!token)
             return;
-        if (overviewOk && projectsOk) {
+        if (overviewOk && projectsOk && communicationOk) {
             setText("runtime-refresh-status", "Refreshed " + new Date().toLocaleTimeString());
         }
         else {
@@ -2324,6 +3057,7 @@ function startAuto() {
         const request = refreshRuntimeSessionList(state);
         if (request)
             void fetchSessions(request);
+        void refreshCommunication();
     }, REFRESH_MS);
 }
 function stopAuto() { if (timer)
@@ -2342,6 +3076,15 @@ el("runtime-token-form")?.addEventListener("submit", (event) => {
     const request = beginRuntimeCredential(state);
     void fetchOverview(refreshRuntimeOverview(state));
     void fetchProjects(request, true);
+    void refreshCommunication();
+});
+el("runtime-agent-create-form")?.addEventListener("submit", (event) => void createCommunicationAgent(event));
+el("runtime-agent-attach")?.addEventListener("click", () => void attachCommunicationEndpoint());
+el("runtime-agent-detach")?.addEventListener("click", () => void detachCommunicationEndpoint());
+el("runtime-conversation-create-form")?.addEventListener("submit", (event) => void createCommunicationConversation(event));
+el("runtime-conversation-message-form")?.addEventListener("submit", (event) => void postCommunicationMessage(event));
+el("runtime-inbox-consume-all")?.addEventListener("click", () => {
+    void consumeCommunicationDeliveries(communicationInbox.map((item) => String(item?.delivery_id || "")).filter(Boolean));
 });
 el("runtime-device-select")?.addEventListener("change", () => {
     const select = el("runtime-device-select");
@@ -2379,5 +3122,11 @@ el("runtime-timeline")?.addEventListener("scroll", () => {
     syncFollowUi();
 });
 syncAckComposer();
-window.addEventListener("pagehide", () => { token = ""; abortAll(); stopAuto(); });
+window.addEventListener("pagehide", () => {
+    detachCommunicationEndpointsBestEffort();
+    token = "";
+    abortAll();
+    resetCommunicationSurface();
+    stopAuto();
+});
 lock();

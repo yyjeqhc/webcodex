@@ -4,6 +4,7 @@ pub(crate) enum ToolRisk {
     ProjectWrite,
     SkillManage,
     MemoryManage,
+    CommunicationManage,
     ComputerControl,
     JobRun,
     /// Reserved for account-control tools; the current runtime manifest has
@@ -20,6 +21,7 @@ impl ToolRisk {
             ToolRisk::ProjectWrite => "project_write",
             ToolRisk::SkillManage => "skill_manage",
             ToolRisk::MemoryManage => "memory_manage",
+            ToolRisk::CommunicationManage => "communication_manage",
             ToolRisk::ComputerControl => "computer_control",
             ToolRisk::JobRun => "job_run",
             ToolRisk::AccountManage => "account_manage",
@@ -80,6 +82,8 @@ pub(crate) struct ToolMetadata {
 
 pub(crate) const RUNTIME_READ: &str = crate::auth::SCOPE_RUNTIME_READ;
 pub(crate) const SESSION_COLLABORATE: &str = crate::auth::SCOPE_SESSION_COLLABORATE;
+pub(crate) const COMMUNICATION_READ: &str = crate::auth::SCOPE_COMMUNICATION_READ;
+pub(crate) const COMMUNICATION_MANAGE: &str = crate::auth::SCOPE_COMMUNICATION_MANAGE;
 pub(crate) const PROJECT_READ: &str = crate::auth::SCOPE_PROJECT_READ;
 pub(crate) const PROJECT_WRITE: &str = crate::auth::SCOPE_PROJECT_WRITE;
 pub(crate) const ADMIN: &str = crate::auth::SCOPE_ADMIN;

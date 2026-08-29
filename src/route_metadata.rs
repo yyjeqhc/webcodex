@@ -136,6 +136,17 @@ pub(crate) enum RouteId {
     RuntimeConsoleWorkflowSessionPostMessage,
     RuntimeConsoleWorkflowSessionWithdrawMessage,
     RuntimeConsoleWorkflowSessionReplaceMessage,
+    RuntimeConsoleCommunicationAgents,
+    RuntimeConsoleCommunicationAgentCreate,
+    RuntimeConsoleCommunicationAgentUpdate,
+    RuntimeConsoleCommunicationEndpointAttach,
+    RuntimeConsoleCommunicationEndpointDetach,
+    RuntimeConsoleCommunicationConversations,
+    RuntimeConsoleCommunicationConversationCreate,
+    RuntimeConsoleCommunicationConversation,
+    RuntimeConsoleCommunicationMessagePost,
+    RuntimeConsoleCommunicationInbox,
+    RuntimeConsoleCommunicationInboxConsume,
     AdminDashboard,
     AdminProjectsRegister,
     AdminProjectsCreate,
@@ -437,7 +448,7 @@ mod tests {
             AdminWebStylesCss as usize + 1,
             "canonical iteration must cover every RouteId exactly once",
         );
-        assert_eq!(iter_routes().count(), 125, "R2 canonical route closure");
+        assert_eq!(iter_routes().count(), 136, "A1 canonical route closure");
         assert_eq!(lookup("GET", "/mcp").unwrap().id, McpGet);
         assert_eq!(lookup("POST", "/mcp").unwrap().id, McpPost);
     }
@@ -475,7 +486,7 @@ mod tests {
             );
             references += 1;
         }
-        assert_eq!(references, 125, "R2 production leaf RouteId closure");
+        assert_eq!(references, 136, "A1 production leaf RouteId closure");
     }
 
     #[test]
@@ -546,6 +557,49 @@ mod tests {
         }
         for spec in iter_routes().filter(|spec| spec.surface == RuntimeConsole) {
             assert_eq!(spec.openapi_visibility, Hidden, "{:?}", spec.id);
+        }
+    }
+
+    #[test]
+    fn communication_routes_use_independent_read_and_manage_authority() {
+        let reads = [
+            RuntimeConsoleCommunicationAgents,
+            RuntimeConsoleCommunicationConversations,
+            RuntimeConsoleCommunicationConversation,
+            RuntimeConsoleCommunicationInbox,
+        ];
+        for id in reads {
+            assert_eq!(
+                spec(id).scope_policy,
+                Require(crate::auth::scopes::SCOPE_COMMUNICATION_READ),
+                "{id:?} must require communication read authority"
+            );
+        }
+        let mutations = [
+            RuntimeConsoleCommunicationAgentCreate,
+            RuntimeConsoleCommunicationAgentUpdate,
+            RuntimeConsoleCommunicationEndpointAttach,
+            RuntimeConsoleCommunicationEndpointDetach,
+            RuntimeConsoleCommunicationConversationCreate,
+            RuntimeConsoleCommunicationMessagePost,
+            RuntimeConsoleCommunicationInboxConsume,
+        ];
+        for id in mutations {
+            assert_eq!(
+                spec(id).scope_policy,
+                Require(crate::auth::scopes::SCOPE_COMMUNICATION_MANAGE),
+                "{id:?} must require communication manage authority"
+            );
+            assert_ne!(
+                spec(id).scope_policy,
+                Require(crate::auth::scopes::SCOPE_PROJECT_READ),
+                "communication identity must not inherit Project authority"
+            );
+            assert_ne!(
+                spec(id).scope_policy,
+                Require(crate::auth::scopes::SCOPE_SESSION_COLLABORATE),
+                "Conversation must remain distinct from Workflow Session collaboration"
+            );
         }
     }
 

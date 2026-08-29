@@ -37,6 +37,7 @@ impl ToolDefinition {
             ToolRisk::ProjectWrite
                 | ToolRisk::SkillManage
                 | ToolRisk::MemoryManage
+                | ToolRisk::CommunicationManage
                 | ToolRisk::ComputerControl
         )
     }
@@ -112,6 +113,7 @@ fn permission_risk_from_metadata(metadata: ToolMetadata) -> &'static str {
             | ToolRisk::SkillManage
             | ToolRisk::MemoryManage
             | ToolRisk::ComputerControl
+            | ToolRisk::CommunicationManage
             | ToolRisk::AccountManage
     ) {
         return PERMISSION_RISK_WRITE;
@@ -209,6 +211,7 @@ pub(crate) fn runtime_tool_is_write_like(name: &str) -> bool {
             ToolRisk::ProjectWrite
                 | ToolRisk::SkillManage
                 | ToolRisk::MemoryManage
+                | ToolRisk::CommunicationManage
                 | ToolRisk::ComputerControl
         ),
     }

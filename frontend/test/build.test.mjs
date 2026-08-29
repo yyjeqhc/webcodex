@@ -78,6 +78,12 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(runtimeHtml, /runtime-collaboration-form/);
   assert.match(runtimeHtml, /runtime-refresh-status/);
   assert.match(runtimeHtml, /runtime-token-form/);
+  assert.match(runtimeHtml, /runtime-communication-panel/);
+  assert.match(runtimeHtml, /runtime-agent-create-form/);
+  assert.match(runtimeHtml, /runtime-conversation-transcript/);
+  assert.match(runtimeHtml, /runtime-inbox-list/);
+  assert.match(runtimeHtml, /polls every 8 seconds/);
+  assert.match(runtimeHtml, /does not invoke or wake a model/);
   assert.match(runtimeHtml, /Jump to latest/);
   assert.match(runtimeHtml, /Reported progress/);
   assert.match(runtimeHtml, /Model-reported; informational only\./);
@@ -95,6 +101,12 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(runtime, /appendPreview\(item, "Last"/);
   assert.match(runtime, /workflowSessionScrollTopAfterRender/);
   assert.match(runtime, /jumpWorkflowSessionToLatest/);
+  assert.match(runtime, /communication\/agent\/create/);
+  assert.match(runtime, /communication\/conversation\/create/);
+  assert.match(runtime, /communication\/message\/post/);
+  assert.match(runtime, /communication\/inbox\/consume/);
+  assert.match(runtime, /pendingConversationMessage/);
+  assert.match(runtime, /detachCommunicationEndpointsBestEffort/);
   assert.match(runtime, /textContent/);
   assert.equal(/localStorage|sessionStorage|document\.cookie/.test(runtime), false);
   assert.equal(/\.innerHTML\b|\binnerHTML\s*=/.test(runtime), false);

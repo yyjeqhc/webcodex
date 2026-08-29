@@ -5,6 +5,7 @@ mod checkpoints;
 mod coding_agents;
 mod coding_tasks;
 mod common;
+mod communication;
 mod computer;
 mod discovery;
 mod edits;
@@ -26,6 +27,9 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
         return schema;
     }
     if let Some(schema) = computer::output_schema_for_tool(name) {
+        return schema;
+    }
+    if let Some(schema) = communication::output_schema_for_tool(name) {
         return schema;
     }
     if let Some(schema) = jobs::output_schema_for_tool(name) {

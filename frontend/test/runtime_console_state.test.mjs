@@ -8,6 +8,7 @@ import {
   filterAndSortRuntimeProjects,
   runtimeProjectIdentityText,
   preferredRuntimeProjectSelection,
+  runtimeCommunicationTranscriptAfterSeq,
   beginRuntimeCredential,
   refreshRuntimeOverview,
   isCurrentRuntimeOverviewRequest,
@@ -42,6 +43,16 @@ import {
   completeRuntimeCollaborationMutationRecovery,
   takeRuntimeCollaborationMutationNotice,
 } from "../dist/runtime_console_state.js";
+
+test("communication transcript window follows the latest bounded page", () => {
+  assert.equal(runtimeCommunicationTranscriptAfterSeq(0), 0);
+  assert.equal(runtimeCommunicationTranscriptAfterSeq(100), 0);
+  assert.equal(runtimeCommunicationTranscriptAfterSeq(101), 1);
+  assert.equal(runtimeCommunicationTranscriptAfterSeq(250), 150);
+  assert.equal(runtimeCommunicationTranscriptAfterSeq(250, 50), 200);
+  assert.equal(runtimeCommunicationTranscriptAfterSeq(-1), 0);
+  assert.equal(runtimeCommunicationTranscriptAfterSeq(Number.NaN), 0);
+});
 
 test("runtime credential and project generations fence stale project responses", () => {
   const state = initialRuntimeConsoleState();

@@ -2,6 +2,13 @@ import { initialWorkflowSessionState, selectWorkflowSession, refreshWorkflowSess
 function compareText(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
+export function runtimeCommunicationTranscriptAfterSeq(lastSeq, limit = 100) {
+    const normalizedLastSeq = typeof lastSeq === "number" && Number.isSafeInteger(lastSeq)
+        ? Math.max(0, lastSeq)
+        : 0;
+    const normalizedLimit = Number.isSafeInteger(limit) && limit > 0 ? limit : 100;
+    return Math.max(0, normalizedLastSeq - normalizedLimit);
+}
 function emptyCollaborationState() {
     return {
         generation: 0,

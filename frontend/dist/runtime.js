@@ -250,6 +250,13 @@ function shouldFollowWorkflowSessionLatest(state) {
 function compareText(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
+function runtimeCommunicationTranscriptAfterSeq(lastSeq, limit = 100) {
+    const normalizedLastSeq = typeof lastSeq === "number" && Number.isSafeInteger(lastSeq)
+        ? Math.max(0, lastSeq)
+        : 0;
+    const normalizedLimit = Number.isSafeInteger(limit) && limit > 0 ? limit : 100;
+    return Math.max(0, normalizedLastSeq - normalizedLimit);
+}
 function emptyCollaborationState() {
     return {
         generation: 0,
@@ -2505,7 +2512,7 @@ function renderCommunicationConversation() {
         return;
     setText("runtime-conversation-name", String(summary.title || "Untitled Conversation"));
     setText("runtime-conversation-id", String(summary.conversation_id || ""));
-    setText("runtime-conversation-seq", "seq " + String(summary.last_seq || 0) + " · " + countLabel(summary.message_count, "message") + (detail.truncated ? " · bounded page" : ""));
+    setText("runtime-conversation-seq", "seq " + String(summary.last_seq || 0) + " · " + countLabel(summary.message_count, "message") + ((Number(detail?.after_seq || 0) > 0 || detail.truncated) ? " · recent bounded page" : ""));
     const participants = el("runtime-conversation-participants");
     if (participants) {
         for (const participant of Array.isArray(detail.participants) ? detail.participants : []) {
@@ -2576,7 +2583,8 @@ function renderCommunicationInbox() {
         setText("runtime-inbox-status", "Attach this browser as an Endpoint. Queued deliveries remain durable while offline.");
         return;
     }
-    setText("runtime-inbox-status", countLabel(communicationInbox.length, "queued delivery") + " · reading does not consume or wake a model");
+    const totalQueued = Number(agent.queued_delivery_count || 0);
+    setText("runtime-inbox-status", countLabel(totalQueued, "queued delivery") + (communicationInbox.length < totalQueued ? " · showing " + String(communicationInbox.length) : "") + " · reading does not consume or wake a model");
     if (!list)
         return;
     for (const item of communicationInbox) {
@@ -2674,9 +2682,10 @@ async function fetchCommunicationConversation(generation) {
         renderCommunicationConversation();
         return true;
     }
+    const afterSeq = runtimeCommunicationTranscriptAfterSeq(selectedCommunicationConversation()?.last_seq, 100);
     const response = await api("communication/conversation", {
         conversation_id: conversationId,
-        after_seq: 0,
+        after_seq: afterSeq,
         limit: 100,
     });
     if (generation !== communicationGeneration || conversationId !== selectedCommunicationConversationId || !response)

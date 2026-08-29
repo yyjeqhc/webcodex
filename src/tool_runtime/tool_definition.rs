@@ -85,7 +85,7 @@ pub(crate) enum AgentCapability {
     /// Project-scoped native tools that do not require an agent capability but
     /// still need the agent owner boundary when the project is agent-backed.
     OwnerOnly,
-    /// `run_shell`, `apply_patch` (agent path runs `git apply` via shell).
+    /// `run_shell`, `apply_unified_diff` (agent path runs `git apply` via shell).
     Shell,
     /// General native process + argv execution. This must never be inferred
     /// from shell or structured-validation support.

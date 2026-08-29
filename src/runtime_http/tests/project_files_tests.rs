@@ -219,29 +219,6 @@ async fn http_projects_git_diff_rejects_server_configured_project() {
 }
 
 // =========================================================================
-// applyProjectPatch
-// =========================================================================
-
-#[tokio::test]
-async fn http_projects_apply_patch_rejects_server_configured_project() {
-    let config = super::test_config(Some("secret"));
-    let (_tmp, db) = super::test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let runtime = Arc::new(super::runtime_with_local_project(tmp_proj.path(), "demo"));
-    let service = Service::new(super::build_projects_router(config, db, runtime));
-
-    let mut resp = TestClient::post("http://localhost/api/projects/apply_patch")
-        .bearer_auth("secret")
-        .json(&json!({"project": "demo", "patch": "diff"}))
-        .send(&service)
-        .await;
-    assert_eq!(super::effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], false);
-    assert!(body["error"].as_str().unwrap().contains("unknown_project"));
-}
-
-// =========================================================================
 // Phase A read-only console REST wrappers (wiring + auth gate)
 // =========================================================================
 
@@ -278,7 +255,13 @@ async fn http_console_routes_require_bearer_auth() {
 #[tokio::test]
 async fn retired_edit_compatibility_routes_are_unreachable() {
     let (_tmp, service) = super::phase2_service();
-    for path in ["/api/projects/replace_in_file", "/api/projects/write_file"] {
+    for path in [
+        "/api/projects/replace_in_file",
+        "/api/projects/write_file",
+        "/api/projects/apply_patch",
+        "/api/projects/apply_patch_checked",
+        "/api/projects/validate_patch",
+    ] {
         let resp = TestClient::post(format!("http://localhost{path}"))
             .bearer_auth("secret")
             .json(&json!({}))

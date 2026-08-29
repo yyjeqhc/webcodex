@@ -153,6 +153,39 @@ async fn apply_unified_diff_timestamped_sensitive_header_is_blocked_before_shell
 }
 
 #[tokio::test]
+async fn apply_unified_diff_rename_extended_header_cannot_bypass_sensitive_policy() {
+    let client_id = "unified-sensitive-rename";
+    let runtime = runtime_with_unified_diff_agent(client_id).await;
+    let project = agent_test_project_id(client_id);
+    // Git accepts this deliberately inconsistent diff --git header and follows
+    // the extended rename target, so policy must inspect the extended header.
+    let diff = "diff --git a/safe.txt b/safe.txt\nsimilarity index 100%\nrename from safe.txt\nrename to .env\n";
+
+    let analysis = analyze_unified_diff(diff).expect("rename-only git diff");
+    assert_eq!(analysis.affected_files, vec![".env", "safe.txt"]);
+    assert!(analysis.has_sensitive_paths);
+
+    let result = runtime
+        .apply_unified_diff(project, diff.to_string(), None)
+        .await;
+    assert!(result.success);
+    assert_eq!(result.output["applied"], false);
+    assert_eq!(result.output["policy_blocked"], true);
+    assert_eq!(result.output["state_changed"], false);
+    assert!(probe_patch_agent_request(&runtime, client_id)
+        .await
+        .is_none());
+}
+
+#[test]
+fn unified_diff_hunk_content_that_looks_like_file_headers_is_not_parsed_as_paths() {
+    let diff = "diff --git a/HEADER_LIKE.md b/HEADER_LIKE.md\n--- a/HEADER_LIKE.md\n+++ b/HEADER_LIKE.md\n@@ -1 +1 @@\n--- .env\n+++ safe\n";
+    let analysis = analyze_unified_diff(diff).expect("valid header-like hunk content");
+    assert_eq!(analysis.affected_files, vec!["HEADER_LIKE.md"]);
+    assert!(!analysis.has_sensitive_paths);
+}
+
+#[tokio::test]
 async fn apply_unified_diff_rejects_wrapper_paths_nul_and_size_before_dispatch() {
     let client_id = "unified-input-reject";
     let runtime = runtime_with_unified_diff_agent(client_id).await;
@@ -171,6 +204,7 @@ async fn apply_unified_diff_rejects_wrapper_paths_nul_and_size_before_dispatch()
     for diff in [
         "diff --git /etc/passwd /etc/passwd\n--- /etc/passwd\n+++ /etc/passwd\n@@ -1 +1 @@\n-a\n+b\n".to_string(),
         "diff --git a/../outside b/../outside\n--- a/../outside\n+++ b/../outside\n@@ -1 +1 @@\n-a\n+b\n".to_string(),
+        "diff --git a/safe.txt b/safe.txt\nsimilarity index 100%\nrename from safe.txt\nrename to ../outside\n".to_string(),
         "diff --git a/src/x b/src/x\n--- a/src/x\n+++ b/src/x\n@@ -1 +1 @@\n-a\n+b\0\n".to_string(),
         "x".repeat(MAX_UNIFIED_DIFF_BYTES + 1),
     ] {

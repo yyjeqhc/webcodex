@@ -104,20 +104,21 @@ fn is_cross_platform_absolute_path(path: &str) -> bool {
             .is_some_and(|byte| matches!(*byte, b'\\' | b'/'))
 }
 
-fn normalize_diff_path(raw: &str) -> Result<Option<String>, UnifiedDiffInputError> {
-    let decoded = decode_git_quoted_path(raw).ok_or_else(|| {
-        invalid_unified_diff(
-            "Unified diff contains an invalid or unsupported quoted path",
-            "regenerate_unified_diff",
-        )
-    })?;
+fn normalize_decoded_diff_path(
+    decoded: &str,
+    strip_git_prefix: bool,
+) -> Result<Option<String>, UnifiedDiffInputError> {
     if decoded == "/dev/null" {
         return Ok(None);
     }
-    let path = decoded
-        .strip_prefix("a/")
-        .or_else(|| decoded.strip_prefix("b/"))
-        .unwrap_or(decoded.as_str());
+    let path = if strip_git_prefix {
+        decoded
+            .strip_prefix("a/")
+            .or_else(|| decoded.strip_prefix("b/"))
+            .unwrap_or(decoded)
+    } else {
+        decoded
+    };
     if path.is_empty() || path == "." {
         return Err(invalid_unified_diff(
             "Unified diff path cannot be empty or '.'",
@@ -143,6 +144,31 @@ fn normalize_diff_path(raw: &str) -> Result<Option<String>, UnifiedDiffInputErro
         ));
     }
     Ok(Some(path.to_string()))
+}
+
+fn normalize_diff_path(raw: &str) -> Result<Option<String>, UnifiedDiffInputError> {
+    let decoded = decode_git_quoted_path(raw).ok_or_else(|| {
+        invalid_unified_diff(
+            "Unified diff contains an invalid or unsupported quoted path",
+            "regenerate_unified_diff",
+        )
+    })?;
+    normalize_decoded_diff_path(&decoded, true)
+}
+
+fn normalize_extended_header_path(raw: &str) -> Result<Option<String>, UnifiedDiffInputError> {
+    let raw = raw.strip_suffix('\r').unwrap_or(raw);
+    let decoded = if raw.starts_with('"') {
+        decode_git_quoted_path(raw).ok_or_else(|| {
+            invalid_unified_diff(
+                "Unified diff contains an invalid or unsupported quoted extended-header path",
+                "regenerate_unified_diff",
+            )
+        })?
+    } else {
+        raw.to_string()
+    };
+    normalize_decoded_diff_path(&decoded, false)
 }
 
 fn sensitive_path_warning(path: &str) -> Option<String> {
@@ -185,6 +211,22 @@ fn insert_normalized_path(
     Ok(())
 }
 
+fn insert_extended_header_path(
+    paths: &mut BTreeSet<String>,
+    raw: &str,
+) -> Result<(), UnifiedDiffInputError> {
+    if raw.is_empty() {
+        return Err(invalid_unified_diff(
+            "Unified diff extended header path cannot be empty",
+            "fix_diff_paths",
+        ));
+    }
+    if let Some(path) = normalize_extended_header_path(raw)? {
+        paths.insert(path);
+    }
+    Ok(())
+}
+
 fn parse_diff_git_paths(
     line: &str,
     paths: &mut BTreeSet<String>,
@@ -214,6 +256,66 @@ fn parse_diff_git_paths(
 
 fn diff_file_header_path(raw: &str) -> &str {
     raw.split_once('\t').map_or(raw, |(path, _timestamp)| path)
+}
+
+fn parse_extended_header_path(
+    line: &str,
+    paths: &mut BTreeSet<String>,
+) -> Result<bool, UnifiedDiffInputError> {
+    for prefix in ["rename from ", "rename to ", "copy from ", "copy to "] {
+        if let Some(raw) = line.strip_prefix(prefix) {
+            insert_extended_header_path(paths, raw)?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn parse_hunk_range_count(token: &str, prefix: char) -> Option<usize> {
+    let range = token.strip_prefix(prefix)?;
+    let (start, count) = match range.split_once(',') {
+        Some((start, count)) => (start, count.parse::<usize>().ok()?),
+        None => (range, 1),
+    };
+    start.parse::<usize>().ok()?;
+    Some(count)
+}
+
+fn parse_unified_hunk_counts(line: &str) -> Option<(usize, usize)> {
+    let rest = line.strip_prefix("@@ ")?;
+    let (ranges, _context) = rest.split_once(" @@")?;
+    let mut tokens = ranges.split_whitespace();
+    let old_count = parse_hunk_range_count(tokens.next()?, '-')?;
+    let new_count = parse_hunk_range_count(tokens.next()?, '+')?;
+    if tokens.next().is_some() {
+        return None;
+    }
+    Some((old_count, new_count))
+}
+
+fn consume_unified_hunk_line(
+    line: &str,
+    old_remaining: &mut usize,
+    new_remaining: &mut usize,
+) -> Result<(), UnifiedDiffInputError> {
+    if line.starts_with('\\') {
+        return Ok(());
+    }
+    match line.as_bytes().first().copied() {
+        Some(b' ') if *old_remaining > 0 && *new_remaining > 0 => {
+            *old_remaining -= 1;
+            *new_remaining -= 1;
+        }
+        Some(b'-') if *old_remaining > 0 => *old_remaining -= 1,
+        Some(b'+') if *new_remaining > 0 => *new_remaining -= 1,
+        _ => {
+            return Err(invalid_unified_diff(
+                "Unified diff hunk body does not match its declared line counts",
+                "regenerate_unified_diff",
+            ))
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn analyze_unified_diff(
@@ -251,9 +353,32 @@ pub(crate) fn analyze_unified_diff(
 
     let lines: Vec<&str> = diff.lines().collect();
     let mut paths = BTreeSet::new();
+    let mut hunk_remaining: Option<(usize, usize)> = None;
     for (index, line) in lines.iter().enumerate() {
+        if let Some((old_remaining, new_remaining)) = hunk_remaining.as_mut() {
+            consume_unified_hunk_line(line, old_remaining, new_remaining)?;
+            if *old_remaining == 0 && *new_remaining == 0 {
+                hunk_remaining = None;
+            }
+            continue;
+        }
         if line.starts_with("diff --git ") {
             parse_diff_git_paths(line, &mut paths)?;
+            continue;
+        }
+        if parse_extended_header_path(line, &mut paths)? {
+            continue;
+        }
+        if line.starts_with("@@ ") {
+            let counts = parse_unified_hunk_counts(line).ok_or_else(|| {
+                invalid_unified_diff(
+                    "Unified diff contains an invalid hunk header",
+                    "regenerate_unified_diff",
+                )
+            })?;
+            if counts != (0, 0) {
+                hunk_remaining = Some(counts);
+            }
             continue;
         }
         if let Some(old_path) = line.strip_prefix("--- ") {
@@ -265,6 +390,12 @@ pub(crate) fn analyze_unified_diff(
                 insert_normalized_path(&mut paths, diff_file_header_path(new_path))?;
             }
         }
+    }
+    if hunk_remaining.is_some() {
+        return Err(invalid_unified_diff(
+            "Unified diff ended before a hunk's declared line counts were satisfied",
+            "regenerate_unified_diff",
+        ));
     }
     if paths.is_empty() {
         return Err(invalid_unified_diff(

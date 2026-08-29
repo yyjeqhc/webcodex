@@ -713,6 +713,9 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
     let revision = format!("wc_memrev_{}", "a".repeat(64));
     let catalog_revision = format!("wc_memcat_{}", "b".repeat(64));
     let private_principal_digest = format!("wc_memprincipal_{}", "c".repeat(64));
+    let scope_id = format!("wc_memscope_{}", "d".repeat(64));
+    let private_root_fingerprint = format!("wc_memroot_{}", "e".repeat(64));
+    let private_native_root = "/PRIVATE/NATIVE/MEMORY/ROOT";
 
     let set_args = super::super::ToolCall::MemorySet {
         project: project.to_string(),
@@ -832,6 +835,72 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
         None,
     );
 
+    let scope_list_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Mcp,
+        "memory_scope_list",
+        &json!({"offset": 0, "limit": 50}),
+    );
+    store.record_model_facing_tool_call_finished(
+        scope_list_start,
+        true,
+        &json!({
+            "total_count": 1,
+            "returned_count": 1,
+            "offset": 0,
+            "next_offset": null,
+            "truncated": false,
+            "scopes": [{
+                "memory_scope_id": scope_id,
+                "identity_state": "attributed",
+                "current_status": "not_current",
+                "project_runtime_id": project,
+                "runner_client_id": "private-runner",
+                "root_fingerprint": private_root_fingerprint,
+                "catalog_revision": catalog_revision,
+                "summary": private_summary,
+                "body": private_body,
+                "native_root": private_native_root,
+                "principal_digest": private_principal_digest
+            }]
+        }),
+        None,
+        None,
+    );
+
+    let purge_args = super::super::ToolCall::MemoryScopePurge {
+        memory_scope_id: scope_id.clone(),
+        expected_catalog_revision: catalog_revision.clone(),
+        confirm: true,
+    }
+    .session_log_arguments();
+    assert!(purge_args.get("confirm").is_none());
+    let purge_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Mcp,
+        "memory_scope_purge",
+        &purge_args,
+    );
+    store.record_model_facing_tool_call_finished(
+        purge_start,
+        true,
+        &json!({
+            "memory_scope_id": scope_id,
+            "catalog_revision": catalog_revision,
+            "purged_count": 1,
+            "purged": true,
+            "state_changed": true,
+            "summary": private_summary,
+            "body": private_body,
+            "tags": [private_tag],
+            "native_root": private_native_root,
+            "root_fingerprint": private_root_fingerprint,
+            "principal_digest": private_principal_digest
+        }),
+        None,
+        None,
+    );
+
     let restored = flush_and_restore(&store, ledger.clone());
     let raw = std::fs::read_to_string(&ledger).unwrap();
     for private in [
@@ -840,14 +909,21 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
         private_body,
         private_tag,
         private_principal_digest.as_str(),
+        private_root_fingerprint.as_str(),
+        private_native_root,
     ] {
         assert!(!raw.contains(private), "ledger leaked {private}");
     }
     assert!(raw.contains(memory_id));
     assert!(raw.contains(&revision));
     assert!(raw.contains(&catalog_revision));
+    assert!(raw.contains(&scope_id));
     assert!(raw.contains("returned_body_bytes"));
+    assert!(raw.contains("purged_count"));
     assert!(!raw.contains("\"memories\""));
+    assert!(!raw.contains("\"scopes\""));
+    assert!(!raw.contains("\"confirm\""));
+    assert!(!raw.contains("\"purged\""));
 
     let recovery =
         serde_json::to_string(&restored.summary(&session.session_id, Some(30)).unwrap()).unwrap();
@@ -857,6 +933,8 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
         private_body,
         private_tag,
         private_principal_digest.as_str(),
+        private_root_fingerprint.as_str(),
+        private_native_root,
     ] {
         assert!(!recovery.contains(private), "recovery leaked {private}");
     }

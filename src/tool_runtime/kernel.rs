@@ -65,8 +65,9 @@ pub(crate) struct ToolProtocolCapabilities {
     pub(crate) context_sidecar: bool,
     pub(crate) skill_runtime: bool,
     pub(crate) skill_management: bool,
-    /// Protocol-surface support for the Control-owned Memory runtime. Read vs
-    /// manage authority is expressed only by canonical credential scopes.
+    /// Protocol-surface support for the Control-owned Memory runtime. Per-tool
+    /// read, manage, and administrator authority comes only from canonical
+    /// ToolDefinition metadata.
     pub(crate) memory_surface: bool,
 }
 
@@ -266,8 +267,8 @@ impl ToolRuntime {
         // inner business ledger pairs inherit it, but it never affects execution.
         recorder_metadata.assign_logical_invocation();
         // Project Memory tools are kernel-known but globally model-hidden. One
-        // explicit protocol-surface capability gates all four tools; canonical
-        // memory:read/manage + project scopes below decide caller authority.
+        // explicit protocol-surface capability gates all six fixed tools; their
+        // canonical ToolDefinition authority decides caller access below.
         if (super::memory::is_memory_runtime_tool_name(&request.tool_name)
             || super::memory::is_memory_management_tool_name(&request.tool_name))
             && !capabilities.memory_surface

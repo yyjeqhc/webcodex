@@ -1237,13 +1237,34 @@ impl ShellClientRegistry {
             .collect()
     }
 
-    /// Hold the authoritative Runner/Project registry snapshot stable while one
-    /// bounded synchronous Control operation decides against that inventory.
-    /// This is intentionally narrow: callers must not await inside `f`.
-    pub(crate) async fn with_client_semantic_views_for_auth_locked<R>(
+    /// Return a complete canonical Runner/Project observation only when both
+    /// caller-supplied cardinality bounds hold. `None` means the observation is
+    /// incomplete and must never support a negative authority conclusion.
+    pub(crate) async fn list_bounded_client_semantic_views_for_auth(
         &self,
         auth: Option<&crate::auth::AuthContext>,
-        f: impl FnOnce(Vec<ShellClientSemanticView>) -> R,
+        max_clients: usize,
+        max_projects: usize,
+    ) -> Option<Vec<ShellClientSemanticView>> {
+        let now = now_ts();
+        let mut inner = self.inner.lock().await;
+        self.prune_expired_shared_key_clients_locked(&mut inner, now);
+        for client in inner.clients.values_mut() {
+            expire_staging(client, now);
+        }
+        Self::bounded_client_semantic_views_for_auth_locked(&inner, auth, max_clients, max_projects)
+    }
+
+    /// Hold one bounded authoritative Runner/Project registry observation stable
+    /// while a synchronous Control operation decides against it. `None` is an
+    /// incomplete observation; callers must fail closed. Callers must not await
+    /// inside `f`.
+    pub(crate) async fn with_bounded_client_semantic_views_for_auth_locked<R>(
+        &self,
+        auth: Option<&crate::auth::AuthContext>,
+        max_clients: usize,
+        max_projects: usize,
+        f: impl FnOnce(Option<Vec<ShellClientSemanticView>>) -> R,
     ) -> R {
         let now = now_ts();
         let mut inner = self.inner.lock().await;
@@ -1251,19 +1272,12 @@ impl ShellClientRegistry {
         for client in inner.clients.values_mut() {
             expire_staging(client, now);
         }
-        let mut ids = inner.clients.keys().cloned().collect::<Vec<_>>();
-        ids.sort();
-        let views = ids
-            .into_iter()
-            .filter(|id| {
-                inner
-                    .clients
-                    .get(id)
-                    .map(|client| shell_client_visible_to_auth(auth, client))
-                    .unwrap_or(false)
-            })
-            .filter_map(|id| Self::client_semantic_view_locked(&inner, &id))
-            .collect();
+        let views = Self::bounded_client_semantic_views_for_auth_locked(
+            &inner,
+            auth,
+            max_clients,
+            max_projects,
+        );
         let result = f(views);
         drop(inner);
         result
@@ -1427,6 +1441,36 @@ impl ShellClientRegistry {
             .get(client_id)
             .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
         assert_shell_client_access(auth, client)
+    }
+
+    fn bounded_client_semantic_views_for_auth_locked(
+        inner: &ShellClientRegistryInner,
+        auth: Option<&crate::auth::AuthContext>,
+        max_clients: usize,
+        max_projects: usize,
+    ) -> Option<Vec<ShellClientSemanticView>> {
+        // Check the backing registry before allocating/sorting identifiers. This
+        // is conservative for non-admin callers, but lifecycle tools are
+        // administrator-only and a conservative incomplete result is fail-closed.
+        if inner.clients.len() > max_clients {
+            return None;
+        }
+        let mut ids = Vec::with_capacity(inner.clients.len());
+        let mut project_count = 0usize;
+        for (id, client) in &inner.clients {
+            if !shell_client_visible_to_auth(auth, client) {
+                continue;
+            }
+            project_count = project_count.checked_add(client.projects.len())?;
+            if project_count > max_projects {
+                return None;
+            }
+            ids.push(id.clone());
+        }
+        ids.sort();
+        ids.into_iter()
+            .map(|id| Self::client_semantic_view_locked(inner, &id))
+            .collect()
     }
 
     fn client_semantic_view_locked(

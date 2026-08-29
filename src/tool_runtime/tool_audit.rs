@@ -580,7 +580,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             copy_keys(
                 obj,
                 &mut out,
-                &["memory_scope_id", "expected_catalog_revision", "confirm"],
+                &["memory_scope_id", "expected_catalog_revision"],
             );
         }
         "skill_list" => {
@@ -1270,7 +1270,6 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "catalog_revision": output.get("catalog_revision").cloned().unwrap_or(Value::Null),
             "current_catalog_revision": output.get("current_catalog_revision").cloned().unwrap_or(Value::Null),
             "purged_count": output.get("purged_count").cloned().unwrap_or(Value::Null),
-            "purged": output.get("purged").cloned().unwrap_or(Value::Null),
             "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
             "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
         }),
@@ -2282,6 +2281,27 @@ mod computer_privacy_tests {
         let private_native_root = "/PRIVATE/NATIVE/MEMORY/ROOT";
         let scope_id = format!("wc_memscope_{}", "c".repeat(64));
         let catalog_revision = format!("wc_memcat_{}", "e".repeat(64));
+        let purge_args = session_log_arguments_for_tool_request(
+            "memory_scope_purge",
+            &json!({
+                "memory_scope_id": scope_id,
+                "expected_catalog_revision": catalog_revision,
+                "confirm": true,
+                "body": private_body,
+            }),
+        );
+        assert_eq!(purge_args["memory_scope_id"], scope_id);
+        assert_eq!(purge_args["expected_catalog_revision"], catalog_revision);
+        assert!(purge_args.get("confirm").is_none());
+        assert!(!purge_args.to_string().contains(private_body));
+        let typed_purge = ToolCall::MemoryScopePurge {
+            memory_scope_id: scope_id.clone(),
+            expected_catalog_revision: catalog_revision.clone(),
+            confirm: true,
+        }
+        .session_log_arguments();
+        assert!(typed_purge.get("confirm").is_none());
+
         let scope_list = session_log_result_for_tool(
             "memory_scope_list",
             &json!({
@@ -2338,6 +2358,7 @@ mod computer_privacy_tests {
         assert_eq!(purge["memory_scope_id"], scope_id);
         assert_eq!(purge["catalog_revision"], catalog_revision);
         assert_eq!(purge["purged_count"], 1);
+        assert!(purge.get("purged").is_none());
         assert_eq!(purge["state_changed"], true);
         for private in [
             private_summary,
@@ -3742,13 +3763,12 @@ impl ToolCall {
             Self::MemoryScopePurge {
                 memory_scope_id,
                 expected_catalog_revision,
-                confirm,
+                ..
             } => session_log_arguments_for_tool_request(
                 "memory_scope_purge",
                 &serde_json::json!({
                     "memory_scope_id": memory_scope_id,
                     "expected_catalog_revision": expected_catalog_revision,
-                    "confirm": confirm,
                 }),
             ),
             Self::SkillList {

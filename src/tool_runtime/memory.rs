@@ -5,14 +5,19 @@ use crate::db::{
     canonicalize_memory_tags, memory_catalog_revision, valid_memory_catalog_revision,
     validate_memory_query, validate_memory_scope_id, MemoryPrincipalAttribution, MemoryPriority,
     MemoryScopeAttribution, MemorySetInput, MemoryStoreError, ProjectMemoryRecord,
-    ProjectMemoryScopeRecord, MAX_MEMORY_BOOTSTRAP_BYTES, MAX_MEMORY_SCOPE_LIST_LIMIT,
-    MAX_MEMORY_SEARCH_LIMIT, MAX_MEMORY_SEARCH_RESULT_BYTES,
+    ProjectMemoryScopeRecord, MAX_MEMORIES_GLOBAL, MAX_MEMORY_BOOTSTRAP_BYTES,
+    MAX_MEMORY_SCOPE_LIST_LIMIT, MAX_MEMORY_SEARCH_LIMIT, MAX_MEMORY_SEARCH_RESULT_BYTES,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 const DEFAULT_MEMORY_SEARCH_LIMIT: usize = 20;
+/// Independent cap for lifecycle inventory projection. Project summaries are
+/// separately capped by the global Memory row ceiling below; exceeding either
+/// bound makes status unknown rather than turning a partial view into deletion
+/// authority.
+const MAX_MEMORY_SCOPE_INVENTORY_CLIENTS: usize = 1_024;
 
 pub(crate) fn is_memory_runtime_tool_name(name: &str) -> bool {
     matches!(name, "memory_search" | "memory_read")
@@ -106,8 +111,11 @@ struct MemoryInventoryObservation {
 }
 
 fn memory_inventory_observation(
-    views: &[crate::shell_client::ShellClientSemanticView],
+    views: Option<&[crate::shell_client::ShellClientSemanticView]>,
 ) -> MemoryInventoryObservation {
+    let Some(views) = views else {
+        return MemoryInventoryObservation::default();
+    };
     let mut current_projects = BTreeMap::new();
     let mut client_inventory_complete = BTreeMap::new();
     for semantic in views {
@@ -558,9 +566,13 @@ impl ToolRuntime {
         };
         let views = self
             .shell_clients
-            .list_client_semantic_views_for_auth(auth)
+            .list_bounded_client_semantic_views_for_auth(
+                auth,
+                MAX_MEMORY_SCOPE_INVENTORY_CLIENTS,
+                MAX_MEMORIES_GLOBAL,
+            )
             .await;
-        let inventory = memory_inventory_observation(&views);
+        let inventory = memory_inventory_observation(views.as_deref());
         let normalized_offset = offset.min(total_count);
         let mut scopes = Vec::with_capacity(snapshots.len());
         for snapshot in snapshots {
@@ -657,34 +669,41 @@ impl ToolRuntime {
         };
 
         self.shell_clients
-            .with_client_semantic_views_for_auth_locked(auth, |views| {
-                let inventory = memory_inventory_observation(&views);
-                match memory_scope_current_status(&scope_record.scope, &inventory) {
-                    MemoryScopeCurrentStatus::Current => {
-                        return memory_lifecycle_error(
-                            "memory_scope_current",
-                            json!({"memory_scope_id": memory_scope_id}),
-                        )
+            .with_bounded_client_semantic_views_for_auth_locked(
+                auth,
+                MAX_MEMORY_SCOPE_INVENTORY_CLIENTS,
+                MAX_MEMORIES_GLOBAL,
+                |views| {
+                    let inventory = memory_inventory_observation(views.as_deref());
+                    match memory_scope_current_status(&scope_record.scope, &inventory) {
+                        MemoryScopeCurrentStatus::Current => {
+                            return memory_lifecycle_error(
+                                "memory_scope_current",
+                                json!({"memory_scope_id": memory_scope_id}),
+                            )
+                        }
+                        MemoryScopeCurrentStatus::Unknown => {
+                            return memory_lifecycle_error(
+                                "memory_scope_status_unknown",
+                                json!({"memory_scope_id": memory_scope_id}),
+                            )
+                        }
+                        MemoryScopeCurrentStatus::NotCurrent => {}
                     }
-                    MemoryScopeCurrentStatus::Unknown => {
-                        return memory_lifecycle_error(
-                            "memory_scope_status_unknown",
-                            json!({"memory_scope_id": memory_scope_id}),
-                        )
+                    match db
+                        .purge_project_memory_scope(&memory_scope_id, &expected_catalog_revision)
+                    {
+                        Ok(outcome) => ToolResult::ok(json!({
+                            "memory_scope_id": outcome.memory_scope_id,
+                            "catalog_revision": outcome.catalog_revision,
+                            "purged_count": outcome.purged_count,
+                            "purged": outcome.purged,
+                            "state_changed": outcome.state_changed,
+                        })),
+                        Err(error) => memory_lifecycle_store_error(error),
                     }
-                    MemoryScopeCurrentStatus::NotCurrent => {}
-                }
-                match db.purge_project_memory_scope(&memory_scope_id, &expected_catalog_revision) {
-                    Ok(outcome) => ToolResult::ok(json!({
-                        "memory_scope_id": outcome.memory_scope_id,
-                        "catalog_revision": outcome.catalog_revision,
-                        "purged_count": outcome.purged_count,
-                        "purged": outcome.purged,
-                        "state_changed": outcome.state_changed,
-                    })),
-                    Err(error) => memory_lifecycle_store_error(error),
-                }
-            })
+                },
+            )
             .await
     }
 
@@ -775,6 +794,37 @@ mod tests {
         assert!(a.starts_with("wc_memscope_"));
         assert!(!a.contains("registered"));
         assert!(!a.contains("runner"));
+    }
+
+    #[test]
+    fn incomplete_bounded_inventory_never_proves_not_current() {
+        let attributed = ProjectMemoryScopeRecord {
+            memory_scope_id: format!("wc_memscope_{}", "a".repeat(64)),
+            identity_state: "attributed".to_string(),
+            project_runtime_id: Some("agent:runner:demo".to_string()),
+            runner_client_id: Some("runner".to_string()),
+            root_fingerprint: Some(format!("wc_memroot_{}", "b".repeat(64))),
+            created_at_unix_ms: 1,
+            last_mutated_at_unix_ms: 1,
+        };
+        let legacy = ProjectMemoryScopeRecord {
+            memory_scope_id: format!("wc_memscope_{}", "c".repeat(64)),
+            identity_state: "legacy_unattributed".to_string(),
+            project_runtime_id: None,
+            runner_client_id: None,
+            root_fingerprint: None,
+            created_at_unix_ms: 1,
+            last_mutated_at_unix_ms: 1,
+        };
+        let incomplete = memory_inventory_observation(None);
+        assert_eq!(
+            memory_scope_current_status(&attributed, &incomplete),
+            MemoryScopeCurrentStatus::Unknown
+        );
+        assert_eq!(
+            memory_scope_current_status(&legacy, &incomplete),
+            MemoryScopeCurrentStatus::Unknown
+        );
     }
 
     #[test]

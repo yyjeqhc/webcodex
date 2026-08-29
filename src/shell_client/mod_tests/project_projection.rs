@@ -1,6 +1,51 @@
 use super::*;
 
 #[tokio::test]
+async fn bounded_semantic_inventory_fails_closed_on_client_or_project_overflow() {
+    let registry = ShellClientRegistry::default();
+    for index in 0..2 {
+        registry
+            .register(runner_registration(
+                &format!("bounded-{index}"),
+                &format!("bounded-instance-{index}"),
+                vec![project_summary(
+                    &format!("project-{index}"),
+                    &format!("/tmp/project-{index}"),
+                )],
+            ))
+            .await
+            .unwrap();
+    }
+    let admin = auth_context(None, true);
+    assert_eq!(
+        registry
+            .list_bounded_client_semantic_views_for_auth(Some(&admin), 2, 2)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(registry
+        .list_bounded_client_semantic_views_for_auth(Some(&admin), 1, 2)
+        .await
+        .is_none());
+    assert!(registry
+        .list_bounded_client_semantic_views_for_auth(Some(&admin), 2, 1)
+        .await
+        .is_none());
+    let locked_count = registry
+        .with_bounded_client_semantic_views_for_auth_locked(Some(&admin), 2, 2, |views| {
+            views.map(|views| views.len())
+        })
+        .await;
+    assert_eq!(locked_count, Some(2));
+    let locked_overflow = registry
+        .with_bounded_client_semantic_views_for_auth_locked(Some(&admin), 1, 2, |views| views)
+        .await;
+    assert!(locked_overflow.is_none());
+}
+
+#[tokio::test]
 async fn project_cardinality_does_not_reject_runner_liveness_or_dynamic_upsert() {
     let registry = ShellClientRegistry::default();
     let shared = crate::auth::shared_key::shared_key_context("project-scale-shared");

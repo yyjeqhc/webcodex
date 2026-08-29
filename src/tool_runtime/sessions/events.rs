@@ -1075,7 +1075,6 @@ pub(super) fn context_result_summary_for_tool_result(
                 "catalog_revision",
                 "current_catalog_revision",
                 "purged_count",
-                "purged",
                 "error_kind",
                 "state_changed",
             ],

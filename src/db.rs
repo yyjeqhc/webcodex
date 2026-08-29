@@ -31,15 +31,15 @@ pub(crate) use self::memory::{
     canonicalize_memory_tags, memory_catalog_revision, valid_memory_catalog_revision,
     validate_memory_query, validate_memory_revision, validate_memory_scope_id,
     MemoryPrincipalAttribution, MemoryPriority, MemoryScopeAttribution, MemorySetInput,
-    MemoryStoreError, ProjectMemoryRecord, ProjectMemoryScopeRecord, MAX_MEMORY_BODY_BYTES,
-    MAX_MEMORY_BOOTSTRAP_BYTES, MAX_MEMORY_KEY_CHARS, MAX_MEMORY_QUERY_CHARS,
-    MAX_MEMORY_SCOPE_LIST_LIMIT, MAX_MEMORY_SEARCH_LIMIT, MAX_MEMORY_SEARCH_RESULT_BYTES,
-    MAX_MEMORY_SUMMARY_CHARS, MAX_MEMORY_TAGS, MAX_MEMORY_TAG_CHARS,
+    MemoryStoreError, ProjectMemoryRecord, ProjectMemoryScopeRecord, MAX_MEMORIES_GLOBAL,
+    MAX_MEMORY_BODY_BYTES, MAX_MEMORY_BOOTSTRAP_BYTES, MAX_MEMORY_KEY_CHARS,
+    MAX_MEMORY_QUERY_CHARS, MAX_MEMORY_SCOPE_LIST_LIMIT, MAX_MEMORY_SEARCH_LIMIT,
+    MAX_MEMORY_SEARCH_RESULT_BYTES, MAX_MEMORY_SUMMARY_CHARS, MAX_MEMORY_TAGS,
+    MAX_MEMORY_TAG_CHARS,
 };
 #[cfg(test)]
 pub(crate) use self::memory::{
-    validate_memory_body, validate_memory_key, validate_memory_summary, MAX_MEMORIES_GLOBAL,
-    MAX_MEMORIES_PER_PROJECT,
+    validate_memory_body, validate_memory_key, validate_memory_summary, MAX_MEMORIES_PER_PROJECT,
 };
 pub use self::oauth::RotateResult;
 pub(crate) use self::task_kernel::{

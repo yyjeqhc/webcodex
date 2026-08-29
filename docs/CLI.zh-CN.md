@@ -21,8 +21,9 @@ Server API 完成。
 它会完成项目设置、启动本地 Server 与 Runner，并暴露临时 HTTPS
 MCP endpoint。默认 Quick Tunnel 会依次优先使用 `WEBCODEX_CLOUDFLARED_BIN`、`PATH`
 中的 `cloudflared`；两者都没有时，会在创建项目/share 状态之前自动获取固定版本、完成
-校验并使用 WebCodex 管理的副本。Windows 不支持这条本地 Server/share 路径，请改用
-`webcodex connect <server-url>` 连接远程 Linux Server。
+校验并使用 WebCodex 管理的副本。Windows 仍不支持 `share`，但已经支持显式的本地前台
+Server：先执行 `webcodex server init`，再执行 `webcodex server run --env-file <path>`。
+需要把 Runner 接到已有 Server 时，继续使用 `webcodex connect <server-url>`。
 
 ## 命令总览
 
@@ -102,12 +103,14 @@ detached-process 行为。
 | --- | --- |
 | `webcodex server init` | 初始化或更新 Server env 文件（创建 bootstrap token） |
 | `webcodex server install` | 安装 Linux systemd `webcodex.socket` + `webcodex.service` pair |
-| `webcodex server run` | 前台运行 `webcodex-server`（direct bind） |
+| `webcodex server run [--env-file PATH]` | 前台运行 `webcodex-server`（direct bind）；`--env-file` 通过 `WEBCODEX_ENV_FILE` 精确传递路径 |
 | `webcodex server start` / `stop` | 一致地启动或停止 socket activation 与 Server process |
 | `webcodex server restart` | 只 restart Server process，保持受管 listener socket active |
 | `webcodex server status` | 检查 authoritative socket/service 状态、HTTP 可达性与构建版本 |
 | `webcodex server logs` | 读取 Server service journal |
 | `webcodex server uninstall` | stop/disable/remove 受管 socket/service pair |
+
+Windows 支持 `server init` 与前台 `server run`。受管 service 生命周期（`install`、`start`、`stop`、`restart`、`logs`、`uninstall`）仍只支持 Linux；Windows 上 `share` 也仍不可用。
 
 使用 `webcodex server install --service-file /path/name.service` 时，会派生同目录的
 `/path/name.socket`。后续 `start`、`stop`、`restart`、`status`、`logs` 和 `uninstall`

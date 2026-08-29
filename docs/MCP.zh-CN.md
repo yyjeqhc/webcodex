@@ -9,8 +9,9 @@ reference，不是 onboarding 前置知识。
 ## ChatGPT Developer Mode：第一次接入
 
 下面的 self-contained `share` 路径需要本地 WebCodex Server，只支持 Linux/macOS。
-Windows 用户应改用 `webcodex connect <server-url>`，把 Runner 连接到已有的远程
-Linux Server。
+Windows 仍不支持 `share`，但可以用 `webcodex server init` + `webcodex server run --env-file
+<path>` 显式以前台方式运行本地 Server；也可以用 `webcodex connect <server-url>` 把 Runner
+接到已有 Server。
 
 默认临时公网路径会复用显式指定/`PATH` 中的 `cloudflared`，否则由 WebCodex 自动下载并校验
 固定的 managed 副本，然后执行：

@@ -22,8 +22,9 @@ npm install -g @yyjeqhc/webcodex
 ```
 
 支持 Linux x64、Linux arm64、macOS x64、macOS arm64、Windows x64 与 Windows arm64。
-Windows x64/arm64 支持针对远程 Linux Server 的 CLI + Runner 工作流；不支持长期
-运行的 Windows Server。npm 包装器要求 Node.js 18 或更新。从 v0.3.5 起，Linux x64
+Windows x64/arm64 支持 CLI + Runner，也支持显式的本地前台 Server：先执行
+`webcodex server init`，再执行 `webcodex server run --env-file <path>`。WebCodex 尚不支持
+Windows Server service 托管生命周期，也不支持 `webcodex share`。npm 包装器要求 Node.js 18 或更新。从 v0.3.5 起，Linux x64
 native artifact 以
 glibc 2.17 或更新为兼容基线。
 

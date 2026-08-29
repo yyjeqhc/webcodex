@@ -18,7 +18,7 @@ Account / identity (advanced):\n\
   auth status                   Show login status\n\n\
 Operator / service management:\n\
   server init|install|run|start|stop|restart|status|logs|uninstall\n\
-                                Configure and manage the Server service\n\
+                                Configure/run the Server; managed lifecycle is Linux-only\n\
   runner init|install|run|start|stop|restart|status|logs|uninstall\n\
                                 Manage the Runner lifecycle and service\n\
   ops status|agents|runner|projects|smoke-preflight\n\
@@ -35,7 +35,7 @@ Advanced / compatibility:\n\
 Options:\n\
   -h, --help                    Print help and exit\n\
   -V, --version                 Print version and exit\n\n\
-First ChatGPT connection: Linux/macOS -> run `webcodex` inside a Git repo (or explicit `webcodex share`); Windows -> use `webcodex connect <server-url>` with a remote Linux Server.\n"
+First ChatGPT connection: Linux/macOS -> run `webcodex` inside a Git repo (or explicit `webcodex share`); Windows -> use `webcodex connect <server-url>` for sharing, or `webcodex server init` + `webcodex server run --env-file <path>` for a local foreground Server.\n"
 }
 
 pub(crate) fn connect_usage() -> &'static str {
@@ -268,14 +268,15 @@ pub(crate) fn server_usage() -> &'static str {
     "Usage: webcodex server <COMMAND>\n\n\
 Commands:\n\
   init        Initialize or update Server configuration\n\
-  install     Install, enable, and start the systemd socket/service pair\n\
+  install     Install, enable, and start the Linux systemd socket/service pair\n\
   run         Run webcodex-server directly in the foreground\n\
-  start       Start the listener socket, then the Server service\n\
-  stop        Stop socket activation and the Server service\n\
-  restart     Restart only the Server service while the socket stays active\n\
+  start       Start the Linux listener socket, then the Server service\n\
+  stop        Stop Linux socket activation and the Server service\n\
+  restart     Restart only the Linux Server service while the socket stays active\n\
   status      Check socket/service state, HTTP reachability, and build revisions\n\
-  logs        Read bounded Server service journal logs or explicitly follow them\n\
-  uninstall   Remove only the systemd socket/service pair; requires --confirm\n\n\
+  logs        Read bounded Linux Server service journal logs or explicitly follow them\n\
+  uninstall   Remove only the Linux systemd socket/service pair; requires --confirm\n\n\
+Windows supports `server init` and foreground `server run`; WebCodex-managed Windows Server services are not supported yet.\n\
 For start/stop/restart/logs/uninstall, --service-file PATH targets a custom managed service unit and derives its sibling .socket.\n"
 }
 

@@ -44,7 +44,7 @@ Paste the complete `/mcp?token=...` URL and choose **No authentication**. This f
 
 - Linux x64/arm64: local one-command `share`, Server, and Runner workflows.
 - macOS x64/arm64: local one-command `share` and Runner workflows.
-- Windows x64/arm64: CLI + Runner against a remote Linux Server; local `share` is not supported in this release.
+- Windows x64/arm64: CLI + Runner and an explicit local foreground Server (`webcodex server init`, then `webcodex server run --env-file <path>`); managed Windows Server services and local `share` are not supported yet.
 
 For Windows, permanent/self-hosted setup, OAuth, private tunnels, proxy settings, and troubleshooting, use the [WebCodex documentation](https://github.com/yyjeqhc/webcodex/tree/main/docs). The [Quick Start](https://github.com/yyjeqhc/webcodex/blob/main/docs/QUICK_START.md) stays focused on the first successful connection.
 

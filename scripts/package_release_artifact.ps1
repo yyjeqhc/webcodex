@@ -9,9 +9,9 @@
 #
 #   webcodex.exe webcodex-server.exe webcodex-runner.exe
 #
-# webcodex-server.exe is packaged to keep the artifact/manifest contract
-# intact; it is NOT a statement that a long-running Windows Server runtime is
-# supported (it is not, in this release).
+# webcodex-server.exe is a supported local foreground runtime on Windows.
+# WebCodex-managed Windows Server service lifecycle and `webcodex share` remain
+# unsupported; packaging this binary does not claim Windows service/Tunnel parity.
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\package_release_artifact.ps1

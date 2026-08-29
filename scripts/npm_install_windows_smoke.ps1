@@ -13,6 +13,8 @@
 #   - version and build identity are consistent
 #   - the npm wrapper finds webcodex.exe
 #   - webcodex.exe --version / --help and webcodex-runner.exe --version work
+#   - packaged `server init` + foreground `server run --env-file` reaches HTTP readiness
+#     with an isolated local config/data root and leaves no Server process behind
 #   - an install failure does not break the previous binary set
 #   - staging/temporary files are cleaned up
 #
@@ -216,7 +218,146 @@ try {
     }
 
     # -----------------------------------------------------------------------
-    # 6. An install failure must not break the previous binary set.
+    # 6. Windows foreground Server runtime. Exercise the installed CLI so this
+    #    proves sibling webcodex-server.exe discovery and WEBCODEX_ENV_FILE
+    #    propagation, not merely that the Server binary itself starts.
+    # -----------------------------------------------------------------------
+    $ServerSmokeRoot = Join-Path $TempRoot "foreground-server"
+    $ServerData = Join-Path $ServerSmokeRoot "data"
+    $ServerEnv = Join-Path $ServerSmokeRoot "webcodex.env"
+    $ServerStdout = Join-Path $ServerSmokeRoot "server.stdout.log"
+    $ServerStderr = Join-Path $ServerSmokeRoot "server.stderr.log"
+    New-Item -ItemType Directory -Force -Path $ServerSmokeRoot | Out-Null
+
+    $PortProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $PortProbe.Start()
+    try {
+        $ServerPort = ([System.Net.IPEndPoint]$PortProbe.LocalEndpoint).Port
+    } finally {
+        $PortProbe.Stop()
+    }
+    $Listen = "127.0.0.1:$ServerPort"
+
+    # The explicit env file is the only Server startup-env source for this smoke.
+    # Do not let CI/operator control-plane or tunnel credentials participate.
+    $SensitiveEnvNames = @(
+        "CONTROL_PLANE_API_KEY",
+        "CONTROL_PLANE_TUNNEL_ID",
+        "OPENAI_TUNNEL_TOKEN",
+        "WEBCODEX_ENV_FILE",
+        "WEBCODEX_TOKEN",
+        "WEBCODEX_LISTEN",
+        "WEBCODEX_DATA_DIR"
+    )
+    $SavedSensitiveEnv = @{}
+    foreach ($name in $SensitiveEnvNames) {
+        $item = Get-Item "Env:$name" -ErrorAction SilentlyContinue
+        if ($null -ne $item) { $SavedSensitiveEnv[$name] = $item.Value }
+        Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+    }
+
+    $ServerCliProcess = $null
+    $ServerChildPid = $null
+    $ServerExe = Join-Path $VendorBin "webcodex-server.exe"
+    $BaselineServerPids = @(
+        Get-CimInstance Win32_Process -Filter "Name='webcodex-server.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.ExecutablePath -eq $ServerExe } |
+            Select-Object -ExpandProperty ProcessId
+    )
+    try {
+        $initOutput = @(& $cli server init --listen $Listen --data-dir $ServerData --env-file $ServerEnv --json)
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $ServerEnv -PathType Leaf)) {
+            throw "Windows foreground server init failed with exit code $LASTEXITCODE"
+        }
+        $envText = [System.IO.File]::ReadAllText($ServerEnv)
+        $tokenMatch = [regex]::Match($envText, '(?m)^WEBCODEX_TOKEN=(.+)$')
+        if (-not $tokenMatch.Success -or [string]::IsNullOrWhiteSpace($tokenMatch.Groups[1].Value)) {
+            throw "server init did not write WEBCODEX_TOKEN to the isolated env file"
+        }
+        $secretToken = $tokenMatch.Groups[1].Value.Trim()
+        if (($initOutput -join "`n").Contains($secretToken)) {
+            throw "server init leaked WEBCODEX_TOKEN to stdout"
+        }
+
+        $quotedEnvFile = '"' + $ServerEnv.Replace('"', '\"') + '"'
+        $ServerCliProcess = Start-Process -FilePath $cli `
+            -ArgumentList @("server", "run", "--env-file", $quotedEnvFile) `
+            -RedirectStandardOutput $ServerStdout -RedirectStandardError $ServerStderr `
+            -PassThru -WindowStyle Hidden
+
+        $ready = $false
+        $deadline = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($deadline.Elapsed -lt [TimeSpan]::FromSeconds(20)) {
+            if ($ServerCliProcess.HasExited) {
+                throw "foreground webcodex CLI exited before Server readiness (exit $($ServerCliProcess.ExitCode))"
+            }
+            if ($null -eq $ServerChildPid) {
+                $child = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($ServerCliProcess.Id)" -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -eq "webcodex-server.exe" -and $_.ExecutablePath -eq $ServerExe } |
+                    Select-Object -First 1
+                if ($null -ne $child) { $ServerChildPid = [int]$child.ProcessId }
+            }
+            try {
+                $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$ServerPort/openapi.json" -TimeoutSec 1
+                if ($response.StatusCode -eq 200) {
+                    $ready = $true
+                    break
+                }
+            } catch {
+                # Startup connection failures are expected until the one absolute deadline.
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        if (-not $ready) {
+            throw "foreground Windows Server did not reach /openapi.json readiness before the absolute deadline"
+        }
+        while ($null -eq $ServerChildPid -and $deadline.Elapsed -lt [TimeSpan]::FromSeconds(20)) {
+            $child = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($ServerCliProcess.Id)" -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -eq "webcodex-server.exe" -and $_.ExecutablePath -eq $ServerExe } |
+                Select-Object -First 1
+            if ($null -ne $child) {
+                $ServerChildPid = [int]$child.ProcessId
+                break
+            }
+            Start-Sleep -Milliseconds 50
+        }
+        if ($null -eq $ServerChildPid) {
+            throw "foreground CLI readiness succeeded without observing its real webcodex-server.exe child before the same absolute deadline"
+        }
+    } finally {
+        if ($null -ne $ServerChildPid) {
+            Stop-Process -Id $ServerChildPid -Force -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $ServerCliProcess -and -not $ServerCliProcess.HasExited) {
+            Stop-Process -Id $ServerCliProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $ServerCliProcess) {
+            try { $ServerCliProcess.WaitForExit(5000) | Out-Null } catch {}
+        }
+        foreach ($name in $SensitiveEnvNames) {
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+            if ($SavedSensitiveEnv.ContainsKey($name)) {
+                Set-Item "Env:$name" $SavedSensitiveEnv[$name]
+            }
+        }
+        $newServerProcesses = @(
+            Get-CimInstance Win32_Process -Filter "Name='webcodex-server.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.ExecutablePath -eq $ServerExe -and $_.ProcessId -notin $BaselineServerPids }
+        )
+        foreach ($process in $newServerProcesses) {
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        if ($newServerProcesses.Count -gt 0) {
+            Start-Sleep -Milliseconds 200
+            $leftRunning = @($newServerProcesses | Where-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue })
+            if ($leftRunning.Count -gt 0) {
+                throw "foreground Windows Server smoke left webcodex-server.exe running"
+            }
+        }
+    }
+
+    # -----------------------------------------------------------------------
+    # 7. An install failure must not break the previous binary set.
     # -----------------------------------------------------------------------
     $badArtifacts = [ordered]@{}
     $badArtifacts[$Platform] = [ordered]@{
@@ -249,7 +390,7 @@ try {
     }
 
     # -----------------------------------------------------------------------
-    # 7. Staging/temporary cleanup.
+    # 8. Staging/temporary cleanup.
     # -----------------------------------------------------------------------
     $leftovers = Get-ChildItem -LiteralPath $env:TEMP -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like "webcodex-artifact-*" -or $_.Name -like "webcodex-manifest-*" -or $_.Name -like "webcodex-npm-test-*" } |

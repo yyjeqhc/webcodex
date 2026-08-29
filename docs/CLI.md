@@ -26,8 +26,9 @@ explicit `share` command remains the deterministic/script-friendly entry. It per
 Server and Runner, and exposes a temporary HTTPS MCP endpoint. For the default
 Quick Tunnel, WebCodex prefers `WEBCODEX_CLOUDFLARED_BIN`, then `cloudflared` on
 `PATH`, and otherwise acquires a pinned, verified managed copy before creating
-project/share state. Windows does not support this local Server/share path; use
-`webcodex connect <server-url>` against a remote Linux Server there.
+project/share state. Windows does not support `share`, but it does support an explicit
+local foreground Server with `webcodex server init` and `webcodex server run --env-file
+<path>`. Use `webcodex connect <server-url>` when connecting the Runner to an existing Server.
 
 ## Command map
 
@@ -109,12 +110,14 @@ keep their detached-process behavior when `--scope` is omitted.
 | --- | --- |
 | `webcodex server init` | Initialize or update the Server env file (creates the bootstrap token) |
 | `webcodex server install` | Install the Linux systemd `webcodex.socket` + `webcodex.service` pair |
-| `webcodex server run` | Run `webcodex-server` in the foreground (direct bind) |
+| `webcodex server run [--env-file PATH]` | Run `webcodex-server` in the foreground (direct bind); `--env-file` passes the exact path via `WEBCODEX_ENV_FILE` |
 | `webcodex server start` / `stop` | Start or stop socket activation and the Server process coherently |
 | `webcodex server restart` | Restart only the Server process; keep the managed listener socket active |
 | `webcodex server status` | Check authoritative socket/service state, HTTP reachability, and build revisions |
 | `webcodex server logs` | Read the Server service journal |
 | `webcodex server uninstall` | Stop, disable, and remove the managed socket/service pair |
+
+On Windows, `server init` and foreground `server run` are supported. The managed service lifecycle (`install`, `start`, `stop`, `restart`, `logs`, `uninstall`) is Linux-only; `share` also remains unavailable on Windows.
 
 `webcodex server install --service-file /path/name.service` derives the sibling
 `/path/name.socket`. Use the same `--service-file` on `start`, `stop`, `restart`,

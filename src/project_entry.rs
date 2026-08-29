@@ -246,7 +246,7 @@ starting services. `run` is the explicit foreground local runtime step. Its opti
 `--console-assets-dir` enables loopback-only development assets for that run.\n\
 `--auth query-token` is a temporary share-only convenience for MCP clients that\n\
 cannot configure a Bearer header; `--auth oauth` adds project-bound OAuth.\n\
-On Windows, local Server/share runtime is unsupported; use `webcodex connect <server-url>` with a remote Linux Server.\n"
+On Windows, `webcodex share` remains unsupported. Use `webcodex server init` + `webcodex server run --env-file <path>` for a standalone local foreground Server, or `webcodex connect <server-url>` with an existing Server.\n"
 }
 
 pub(crate) fn readiness_with_probe(

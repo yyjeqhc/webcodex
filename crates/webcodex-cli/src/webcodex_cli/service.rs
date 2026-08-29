@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1696,9 +1697,14 @@ pub(crate) fn run_logs_for_scope(
     )
 }
 
-pub(crate) fn run_internal_binary(path: &Path, args: &[String]) -> Result<i32, String> {
+pub(crate) fn run_internal_binary(
+    path: &Path,
+    args: &[String],
+    env: &[(OsString, OsString)],
+) -> Result<i32, String> {
     let mut command = Command::new(path);
     command.args(args);
+    command.envs(env.iter().cloned());
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

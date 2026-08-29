@@ -42,7 +42,25 @@ pub(crate) fn write_text_file(
                 .map_err(|e| format!("failed to set permissions on {}: {}", path.display(), e))?;
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        if secret {
+            write_windows_secret_text_file(path, content, overwrite)?;
+        } else if overwrite {
+            std::fs::write(path, content)
+                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+        } else {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+            use std::io::Write;
+            file.write_all(content.as_bytes())
+                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+        }
+    }
+    #[cfg(all(not(unix), not(windows)))]
     {
         let _ = secret;
         if overwrite {
@@ -60,6 +78,278 @@ pub(crate) fn write_text_file(
         }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn write_windows_secret_text_file(
+    path: &Path,
+    content: &str,
+    overwrite: bool,
+) -> Result<(), String> {
+    use std::io::{Seek, SeekFrom, Write};
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::GENERIC_WRITE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_FLAG_OPEN_REPARSE_POINT,
+    };
+
+    // WRITE_DAC is deliberately requested on the same handle that will receive
+    // the secret. The DACL is hardened before truncation/write, so an ACL
+    // failure cannot leave newly written token material under inherited access.
+    const WRITE_DAC: u32 = 0x0004_0000;
+    let existed = path.exists();
+    let mut options = std::fs::OpenOptions::new();
+    options
+        .write(true)
+        .access_mode(GENERIC_WRITE | WRITE_DAC)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    if overwrite {
+        options.create(true);
+    } else {
+        options.create_new(true);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|e| format!("failed to open secret file {}: {}", path.display(), e))?;
+    let result = (|| {
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
+            return Err(format!(
+                "failed to inspect secret file {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(format!(
+                "refusing to write secret file through a reparse point: {}",
+                path.display()
+            ));
+        }
+        protect_windows_secret_handle(file.as_raw_handle() as _, path)?;
+        file.set_len(0)
+            .map_err(|e| format!("failed to truncate {}: {}", path.display(), e))?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|e| format!("failed to seek {}: {}", path.display(), e))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+        file.sync_all()
+            .map_err(|e| format!("failed to sync {}: {}", path.display(), e))?;
+        Ok(())
+    })();
+    drop(file);
+    if result.is_err() && !existed {
+        let _ = std::fs::remove_file(path);
+    }
+    result
+}
+
+#[cfg(windows)]
+fn protect_windows_secret_handle(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    path: &Path,
+) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+        SetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        GetSecurityDescriptorDacl, GetTokenInformation, TokenUser, DACL_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let mut token = std::ptr::null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err(format!(
+            "failed to open current Windows token while protecting {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    let result = (|| {
+        let mut required = 0u32;
+        unsafe { GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut required) };
+        if required == 0 {
+            return Err(format!(
+                "failed to size current Windows user identity while protecting {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        let words = (required as usize).div_ceil(std::mem::size_of::<usize>());
+        let mut buffer = vec![0usize; words];
+        if unsafe {
+            GetTokenInformation(
+                token,
+                TokenUser,
+                buffer.as_mut_ptr().cast(),
+                required,
+                &mut required,
+            )
+        } == 0
+        {
+            return Err(format!(
+                "failed to read current Windows user identity while protecting {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        let token_user = unsafe { &*(buffer.as_ptr().cast::<TOKEN_USER>()) };
+        let mut sid_text_ptr = std::ptr::null_mut();
+        if unsafe { ConvertSidToStringSidW(token_user.User.Sid, &mut sid_text_ptr) } == 0 {
+            return Err(format!(
+                "failed to encode current Windows user SID while protecting {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        let sid = unsafe {
+            let mut len = 0usize;
+            while *sid_text_ptr.add(len) != 0 {
+                len += 1;
+            }
+            let value = String::from_utf16_lossy(std::slice::from_raw_parts(sid_text_ptr, len));
+            LocalFree(sid_text_ptr as _);
+            value
+        };
+        let sddl = format!("D:P(A;;FA;;;{sid})(A;;FA;;;SY)");
+        let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut descriptor = std::ptr::null_mut();
+        if unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl_wide.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(format!(
+                "failed to construct protected Windows ACL for {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        let descriptor_result = (|| {
+            let mut present = 0;
+            let mut defaulted = 0;
+            let mut dacl = std::ptr::null_mut();
+            if unsafe {
+                GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted)
+            } == 0
+                || present == 0
+                || dacl.is_null()
+            {
+                return Err(format!(
+                    "failed to inspect protected Windows ACL for {}: {}",
+                    path.display(),
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let status = unsafe {
+                SetSecurityInfo(
+                    handle,
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    dacl,
+                    std::ptr::null_mut(),
+                )
+            };
+            if status != 0 {
+                return Err(format!(
+                    "failed to protect Windows secret file {}: OS error {}",
+                    path.display(),
+                    status
+                ));
+            }
+            Ok(())
+        })();
+        unsafe { LocalFree(descriptor as _) };
+        descriptor_result
+    })();
+    unsafe { CloseHandle(token) };
+    result
+}
+
+#[cfg(all(test, windows))]
+pub(crate) fn windows_dacl_sddl(path: &Path) -> Result<String, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
+        SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+
+    const READ_CONTROL: u32 = 0x0002_0000;
+    let file = std::fs::OpenOptions::new()
+        .access_mode(READ_CONTROL)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|e| {
+            format!(
+                "failed to open {} for ACL inspection: {}",
+                path.display(),
+                e
+            )
+        })?;
+    let mut descriptor = std::ptr::null_mut();
+    let status = unsafe {
+        GetSecurityInfo(
+            file.as_raw_handle() as _,
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    if status != 0 {
+        return Err(format!(
+            "failed to read Windows ACL for {}: OS error {}",
+            path.display(),
+            status
+        ));
+    }
+    let result = (|| {
+        let mut text = std::ptr::null_mut();
+        let mut text_len = 0u32;
+        if unsafe {
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor,
+                SDDL_REVISION_1,
+                DACL_SECURITY_INFORMATION,
+                &mut text,
+                &mut text_len,
+            )
+        } == 0
+        {
+            return Err(format!(
+                "failed to render Windows ACL for {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        let value = unsafe {
+            let value =
+                String::from_utf16_lossy(std::slice::from_raw_parts(text, text_len as usize));
+            LocalFree(text as _);
+            value
+        };
+        Ok(value)
+    })();
+    unsafe { LocalFree(descriptor as _) };
+    result
 }
 
 pub(crate) fn discover_internal_binary(name: &str) -> Option<PathBuf> {

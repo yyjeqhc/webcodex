@@ -317,6 +317,49 @@ fn server_init_json_output_does_not_include_full_token() {
     assert!(json.get("token").is_none());
 }
 
+#[cfg(windows)]
+#[test]
+fn server_init_secret_env_file_has_protected_windows_dacl() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = tmp.path().join("webcodex.env");
+    let data_dir = tmp.path().join("data");
+    let opts = parse_server_init(&args(&[
+        "--listen",
+        "127.0.0.1:0",
+        "--env-file",
+        env_file.to_str().unwrap(),
+        "--data-dir",
+        data_dir.to_str().unwrap(),
+        "--json",
+    ]))
+    .unwrap();
+    let output = run_server_init(opts).unwrap();
+    let content = std::fs::read_to_string(&env_file).unwrap();
+    let token = parse_env_content_value(&content, "WEBCODEX_TOKEN").unwrap();
+    assert!(!output.contains(&token));
+
+    let sddl = crate::webcodex_cli::system::windows_dacl_sddl(&env_file).unwrap();
+    assert!(sddl.starts_with("D:P"), "DACL must be protected: {sddl}");
+    assert!(sddl.contains(";;;SY)"), "SYSTEM access must remain: {sddl}");
+    assert_eq!(
+        sddl.matches("(A;").count(),
+        2,
+        "only the current user and SYSTEM should have allow ACEs: {sddl}"
+    );
+    assert!(
+        !sddl.contains(";;;WD)"),
+        "Everyone must not retain read access: {sddl}"
+    );
+    assert!(
+        !sddl.contains(";;;BU)"),
+        "Builtin Users must not retain read access: {sddl}"
+    );
+    assert!(
+        !sddl.contains(";;;BA)"),
+        "Builtin Administrators must not receive a direct allow ACE: {sddl}"
+    );
+}
+
 #[test]
 fn server_init_rejects_legacy_full_token_stdout_mode() {
     let result = parse_server_init(&args(&["--output", "-"]));

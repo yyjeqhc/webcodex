@@ -16,6 +16,7 @@
 //! execution remains in the separate `webcodex-server` and `webcodex-runner`
 //! binaries.
 
+use std::ffi::OsString;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -258,6 +259,7 @@ struct RunnerInstallServiceOptions {
 struct InternalRunOptions {
     bin: PathBuf,
     args: Vec<String>,
+    env: Vec<(OsString, OsString)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1462,7 +1464,7 @@ fn parse_server_subcommand(args: &[String]) -> CliAction {
         let help = match command {
             "init" => server_init_usage(),
             "install" => server_install_service_usage(),
-            "run" => "Usage: webcodex server run [--help|--version]\n\nRun webcodex-server directly in the foreground.\n",
+            "run" => "Usage: webcodex server run [--env-file PATH] [--help|--version]\n\nRun webcodex-server directly in the foreground. --env-file passes the exact path through WEBCODEX_ENV_FILE; the Server remains the authoritative env-file parser.\n",
             "start" | "stop" | "restart" => "Usage: webcodex server <start|stop|restart>\n",
             "status" => server_status_usage(),
             "logs" => "Usage: webcodex server logs [--lines N] [--since VALUE] [--follow]\n",
@@ -1497,8 +1499,22 @@ fn parse_server_subcommand(args: &[String]) -> CliAction {
 }
 
 fn parse_server_run(args: &[String]) -> Result<InternalRunOptions, String> {
-    if !args.is_empty() {
-        return Err(format!("unknown server run option: {}", args[0]));
+    let mut env_file: Option<PathBuf> = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--env-file" => {
+                if env_file.is_some() {
+                    return Err("--env-file may be specified only once".to_string());
+                }
+                let path = PathBuf::from(next_value(&mut iter, arg)?);
+                if path.as_os_str().is_empty() {
+                    return Err("--env-file cannot be empty".to_string());
+                }
+                env_file = Some(path);
+            }
+            other => return Err(format!("unknown server run option: {other}")),
+        }
     }
     let bin = discover_internal_binary("webcodex-server").ok_or_else(|| {
         "webcodex-server was not found beside webcodex or in an absolute PATH entry".to_string()
@@ -1506,6 +1522,9 @@ fn parse_server_run(args: &[String]) -> Result<InternalRunOptions, String> {
     Ok(InternalRunOptions {
         bin,
         args: Vec::new(),
+        env: env_file
+            .map(|path| vec![(OsString::from("WEBCODEX_ENV_FILE"), path.into_os_string())])
+            .unwrap_or_default(),
     })
 }
 
@@ -1537,6 +1556,7 @@ fn parse_runner_run(args: &[String]) -> Result<InternalRunOptions, String> {
     Ok(InternalRunOptions {
         bin,
         args: vec!["--config".to_string(), config.display().to_string()],
+        env: Vec::new(),
     })
 }
 
@@ -2433,22 +2453,27 @@ where
 
 /// Windows release boundary, evaluated before any command dispatch.
 ///
-/// The supported Windows surface is the CLI + hosted/local-profile Runner
-/// talking to a remote Linux WebCodex Server. Operations that require a
-/// long-running local Windows Server (`webcodex server ...`, `webcodex
-/// share`) or a systemd-style service install (`webcodex runner install`)
-/// fail here with a clear platform message instead of reaching server or
-/// service logic that cannot work on Windows. `--help` is exempt so help
-/// output still renders normally; only real execution is blocked.
+/// Windows supports explicit local foreground Server initialization/execution.
+/// Service-managed Server lifecycle operations, project `share`, and Runner
+/// service install remain unsupported and fail before platform-specific service
+/// logic. `--help` is exempt so help output still renders normally.
 #[cfg(windows)]
 fn windows_unsupported_platform_action(args: &[String]) -> Option<&'static str> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         return None;
     }
     match args.first().map(String::as_str) {
-        Some("server") | Some("share") => Some(
-            "Windows Server runtime is not supported in this release.\n\
-             Use `webcodex connect` with a remote WebCodex Server.",
+        Some("server") => match args.get(1).map(String::as_str) {
+            Some("init") | Some("run") => None,
+            Some("install" | "start" | "stop" | "restart" | "logs" | "uninstall") | None => Some(
+                "Windows service-managed Server lifecycle is not supported yet.\n\
+                 Use `webcodex server run` for foreground operation.",
+            ),
+            _ => None,
+        },
+        Some("share") => Some(
+            "`webcodex share` is not supported on Windows yet.\n\
+             Run `webcodex server run` for a local foreground Server or use `webcodex connect` with an existing Server.",
         ),
         Some("runner") if args.get(1).map(String::as_str) == Some("install") => Some(
             "Automatic Windows Runner startup is not supported yet.\n\
@@ -2660,7 +2685,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         CliAction::RunnerRun(opts) | CliAction::ServerRun(opts) => {
-            match run_internal_binary(&opts.bin, &opts.args) {
+            match run_internal_binary(&opts.bin, &opts.args, &opts.env) {
                 Ok(code) => std::process::exit(code),
                 Err(stderr) => {
                     eprintln!("{}", stderr);

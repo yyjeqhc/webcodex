@@ -136,6 +136,7 @@ fn execute_lsp(
                 supervisor,
                 query,
                 *limit,
+                operation_deadline,
             )?;
             Ok(AgentLspResultEnvelope::ok(result))
         }
@@ -552,6 +553,7 @@ fn workspace_symbols(
     supervisor: &LspSupervisor,
     query: &str,
     limit: usize,
+    operation_deadline: Instant,
 ) -> Result<WorkspaceSymbolsResult, AgentLspResultEnvelope> {
     let query = query.trim();
     if query.is_empty() || query.chars().count() > 200 {
@@ -571,11 +573,12 @@ fn workspace_symbols(
     // detected language's server. Multi-server fan-out is a follow-up.
     let profile = primary_profile(project_root);
     let (value, encoding) = supervisor
-        .request_with_position_encoding(
+        .request_workspace_with_position_encoding_until(
             project_root,
             profile.kind,
             "workspace/symbol",
             json!({"query": query}),
+            operation_deadline,
         )
         .map_err(map_lsp_error)?;
     let (mut symbols, total_results, external_results_omitted, invalid_results_omitted) =

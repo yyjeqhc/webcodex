@@ -92,6 +92,7 @@ fn run() -> io::Result<()> {
     let mut reader = BufReader::new(stdin.lock());
     let stdout = io::stdout();
     let mut writer = stdout.lock();
+    let mut server_status_requested = false;
     loop {
         let body = match read_frame(&mut reader)? {
             Some(body) => body,
@@ -101,6 +102,7 @@ fn run() -> io::Result<()> {
         let id = json_u64_field(&body, "id");
         match method.as_deref() {
             Some("initialize") => {
+                server_status_requested = body.contains("\"serverStatusNotification\":true");
                 if let Some(marker) = &marker {
                     append_marker(marker, &format!("initialize:{body}\n"))?;
                 }
@@ -148,7 +150,34 @@ fn run() -> io::Result<()> {
                     return Ok(());
                 }
             }
-            Some("initialized") => {}
+            Some("initialized") => {
+                if server_status_requested {
+                    let behavior = scenario_behavior(&scenario);
+                    match behavior {
+                        "workspace_readiness_timeout" => {
+                            write_server_status(&mut writer, "ok", false, None)?;
+                        }
+                        "workspace_readiness_restart" => {
+                            if start_count(marker.as_deref()) <= 1 {
+                                write_server_status(&mut writer, "ok", true, None)?;
+                            } else {
+                                write_server_status(&mut writer, "ok", false, None)?;
+                            }
+                        }
+                        "workspace_readiness_warning" => {
+                            write_server_status(
+                                &mut writer,
+                                "warning",
+                                true,
+                                Some("workspace incomplete at file:///secret/private.rs"),
+                            )?;
+                        }
+                        _ => {
+                            write_server_status(&mut writer, "ok", true, None)?;
+                        }
+                    }
+                }
+            }
             Some("textDocument/didOpen") => {
                 if let Some(marker) = &marker {
                     append_marker(
@@ -205,6 +234,14 @@ fn run() -> io::Result<()> {
                 }
             }
             Some(method) => {
+                if method == "workspace/symbol" {
+                    if let Some(marker) = &marker {
+                        append_marker(
+                            marker,
+                            &format!("workspace-request:{}\n", start_count(Some(marker))),
+                        )?;
+                    }
+                }
                 if scenario_behavior(&scenario).starts_with("call_hierarchy")
                     && matches!(
                         method,
@@ -268,6 +305,12 @@ fn run() -> io::Result<()> {
                             id.unwrap_or(0)
                         ),
                     )?
+                }
+                "workspace_readiness_restart" if method == "workspace/symbol" => {
+                    if start_count(marker.as_deref()) <= 1 {
+                        return Ok(());
+                    }
+                    write_result(&mut writer, id, method, &body)?;
                 }
                 "crash_request" | "restart_exhausted" => return Ok(()),
                 "restart_then_success" => {
@@ -408,6 +451,26 @@ fn maybe_publish_diagnostics(
         append_marker(marker, "diagnostics-publication\n")?;
     }
     Ok(())
+}
+
+fn write_server_status(
+    writer: &mut impl Write,
+    health: &str,
+    quiescent: bool,
+    message: Option<&str>,
+) -> io::Result<()> {
+    let message = message
+        .map(|message| format!(",\"message\":\"{}\"", json_escape(message)))
+        .unwrap_or_default();
+    write_frame(
+        writer,
+        &format!(
+            r#"{{"jsonrpc":"2.0","method":"experimental/serverStatus","params":{{"health":"{}","quiescent":{}{}}}}}"#,
+            json_escape(health),
+            if quiescent { "true" } else { "false" },
+            message
+        ),
+    )
 }
 
 fn start_count(marker: Option<&Path>) -> usize {

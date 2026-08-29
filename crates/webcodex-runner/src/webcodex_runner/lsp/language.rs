@@ -41,6 +41,11 @@ pub(crate) struct LanguageProfile {
     /// a per-language security boundary: starting the server must not execute
     /// repository code or fetch dependencies.
     pub(crate) initialization_options: fn() -> Value,
+    /// Whether the server supports rust-analyzer's bounded server-status
+    /// notification used to fence workspace-level queries until background
+    /// indexing is quiescent. Other language servers keep their existing
+    /// request semantics.
+    pub(crate) server_status_notification: bool,
     /// Profile-owned environment overrides applied to the language-server
     /// process itself. These are fixed safety settings, never caller input.
     pub(crate) process_env: &'static [(&'static str, &'static str)],
@@ -78,6 +83,7 @@ pub(crate) static LANGUAGES: &[LanguageProfile] = &[
         // rust-analyzer speaks LSP over stdio with no arguments.
         default_args: &[],
         initialization_options: rust_analyzer_read_only_initialization_options,
+        server_status_notification: true,
         process_env: &[],
         unusable_command_probe: Some(is_unusable_rustup_proxy),
         startup_stderr_classifier: Some(rust_analyzer_startup_stderr_classifier),
@@ -101,6 +107,7 @@ pub(crate) static LANGUAGES: &[LanguageProfile] = &[
         executable: "pyright-langserver",
         default_args: &["--stdio"],
         initialization_options: pyright_read_only_initialization_options,
+        server_status_notification: false,
         process_env: &[],
         // Pyright is a Node script on PATH; no rustup-style shim to detect.
         unusable_command_probe: None,
@@ -127,6 +134,7 @@ pub(crate) static LANGUAGES: &[LanguageProfile] = &[
         executable: "typescript-language-server",
         default_args: &["--stdio"],
         initialization_options: typescript_read_only_initialization_options,
+        server_status_notification: false,
         process_env: &[],
         unusable_command_probe: None,
         startup_stderr_classifier: None,
@@ -142,6 +150,7 @@ pub(crate) static LANGUAGES: &[LanguageProfile] = &[
         executable: "gopls",
         default_args: &[],
         initialization_options: gopls_read_only_initialization_options,
+        server_status_notification: false,
         // gopls invokes the Go command during workspace loading and current
         // gopls builds may also start the Go telemetry sidecar. Apply a closed
         // network environment to the server process itself, in addition to the

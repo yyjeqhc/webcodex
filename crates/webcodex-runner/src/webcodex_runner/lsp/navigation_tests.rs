@@ -144,7 +144,12 @@ impl NavFixture {
     }
 
     fn request(&self, payload: AgentLspPayload) -> Value {
-        let req = shell_lsp_request(payload);
+        self.request_with_timeout(payload, 60)
+    }
+
+    fn request_with_timeout(&self, payload: AgentLspPayload, timeout_secs: u64) -> Value {
+        let mut req = shell_lsp_request(payload);
+        req.timeout_secs = timeout_secs;
         let result = handle_lsp_request(&self.policy, &self.projects_dir, &self.supervisor, &req);
         assert!(result.error.is_none(), "{result:?}");
         let stdout = result.stdout.expect("stdout envelope");
@@ -1052,6 +1057,78 @@ fn workspace_symbols_supports_information_workspace_and_uri_only_shapes() {
     let empty = NavFixture::new("workspace_empty").workspace_symbols("Nothing", 50);
     assert_eq!(empty["result"]["symbols"], serde_json::json!([]));
     assert_eq!(empty["result"]["total_results"], 0);
+}
+
+#[test]
+fn cold_workspace_symbols_waits_for_quiescent_readiness_before_dispatch() {
+    let _serial = super::serialize_fake_lsp_test();
+    let fixture = NavFixture::new("workspace_readiness_timeout");
+    let started = Instant::now();
+    let result = fixture.request_with_timeout(
+        AgentLspPayload {
+            project_id: "demo".into(),
+            request: AgentLspRequest::WorkspaceSymbols {
+                query: "KnownSymbol".into(),
+                limit: 50,
+            },
+        },
+        1,
+    );
+    assert_eq!(result["success"], false, "{result}");
+    assert_eq!(result["error"]["code"], "lsp_request_timeout", "{result}");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    assert!(marker.contains("initialize:"), "{marker}");
+    assert!(!marker.contains("workspace-request"), "{marker}");
+}
+
+#[test]
+fn workspace_symbol_restart_reapplies_readiness_fence_before_retry() {
+    let _serial = super::serialize_fake_lsp_test();
+    let fixture = NavFixture::new("workspace_readiness_restart");
+    let started = Instant::now();
+    let result = fixture.request_with_timeout(
+        AgentLspPayload {
+            project_id: "demo".into(),
+            request: AgentLspRequest::WorkspaceSymbols {
+                query: "KnownSymbol".into(),
+                limit: 50,
+            },
+        },
+        1,
+    );
+    assert_eq!(result["success"], false, "{result}");
+    assert_eq!(result["error"]["code"], "lsp_request_timeout", "{result}");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    assert_eq!(
+        marker
+            .lines()
+            .filter(|line| line.starts_with("start:"))
+            .count(),
+        2,
+        "{marker}"
+    );
+    assert!(marker.contains("workspace-request:1"), "{marker}");
+    assert!(!marker.contains("workspace-request:2"), "{marker}");
+}
+
+#[test]
+fn quiescent_warning_fails_closed_without_workspace_dispatch_or_private_message() {
+    let _serial = super::serialize_fake_lsp_test();
+    let fixture = NavFixture::new("workspace_readiness_warning");
+    let result = fixture.workspace_symbols("KnownSymbol", 50);
+    assert_eq!(result["success"], false, "{result}");
+    assert_eq!(result["error"]["code"], "lsp_server_failed", "{result}");
+    assert_eq!(
+        result["error"]["message"],
+        "language server workspace is not ready (health=warning)"
+    );
+    let serialized = result.to_string();
+    assert!(!serialized.contains("file://"), "{serialized}");
+    assert!(!serialized.contains("/secret/"), "{serialized}");
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    assert!(!marker.contains("workspace-request"), "{marker}");
 }
 
 #[test]

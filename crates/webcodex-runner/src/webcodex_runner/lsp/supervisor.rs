@@ -111,6 +111,7 @@ pub(crate) enum LspError {
     },
     InvalidProjectRoot(String),
     CallHierarchyUnsupported,
+    WorkspaceNotReady(&'static str),
 }
 
 impl LspError {
@@ -156,6 +157,12 @@ impl fmt::Display for LspError {
             Self::InvalidProjectRoot(message) => write!(f, "invalid project root: {message}"),
             Self::CallHierarchyUnsupported => {
                 f.write_str("language server does not support call hierarchy")
+            }
+            Self::WorkspaceNotReady(health) => {
+                write!(
+                    f,
+                    "language server workspace is not ready (health={health})"
+                )
             }
         }
     }
@@ -585,12 +592,16 @@ impl LspSupervisor {
         self.request_with_timeout_inner(validated_project_root, kind, method, params, timeout, None)
     }
 
-    pub(crate) fn request_with_position_encoding(
+    /// Execute one workspace-level request under a single absolute deadline.
+    /// Servers with an explicit readiness signal must become quiescent on every
+    /// process attempt, including a restart after the business request fails.
+    pub(crate) fn request_workspace_with_position_encoding_until(
         &self,
         validated_project_root: &Path,
         kind: LspServerKind,
         method: &str,
         params: Value,
+        operation_deadline: Instant,
     ) -> Result<(Value, PositionEncoding), LspError> {
         self.request_with_timeout_and_encoding_inner(
             validated_project_root,
@@ -598,9 +609,10 @@ impl LspSupervisor {
             method,
             params,
             self.inner.config.request_timeout,
-            None,
+            Some(operation_deadline),
             None,
             false,
+            true,
         )
     }
 
@@ -631,6 +643,7 @@ impl LspSupervisor {
                 text,
             }),
             true,
+            false,
         )
     }
 
@@ -650,6 +663,7 @@ impl LspSupervisor {
             Some(operation_deadline),
             None,
             true,
+            false,
         )
     }
 
@@ -669,6 +683,7 @@ impl LspSupervisor {
             Some(operation_deadline),
             None,
             true,
+            false,
         )
     }
 
@@ -690,6 +705,7 @@ impl LspSupervisor {
             None,
             document,
             false,
+            false,
         )
         .map(|(value, _)| value)
     }
@@ -704,6 +720,7 @@ impl LspSupervisor {
         operation_deadline: Option<Instant>,
         document: Option<DocumentOpen<'_>>,
         require_call_hierarchy: bool,
+        require_workspace_readiness: bool,
     ) -> Result<(Value, PositionEncoding), LspError> {
         let key = ProcessKey {
             project_root: canonical_project_root(validated_project_root)?,
@@ -725,6 +742,22 @@ impl LspSupervisor {
             };
             if require_call_hierarchy && !server.call_hierarchy_supported() {
                 return Err(LspError::CallHierarchyUnsupported);
+            }
+            if require_workspace_readiness && profile_for_kind(kind).server_status_notification {
+                match server.wait_for_workspace_readiness(
+                    operation_deadline.expect("workspace readiness requires an operation deadline"),
+                ) {
+                    Ok(()) => {}
+                    Err(error) if attempt == 0 && error.permits_restart() => {
+                        last_error = Some(error);
+                        continue;
+                    }
+                    Err(error) if attempt == 1 && error.permits_restart() => {
+                        self.evict_unusable(&key);
+                        return Err(LspError::RestartExhausted(error.to_string()));
+                    }
+                    Err(error) => return Err(error),
+                }
             }
             if let Some(document) = document {
                 if let Err(error) = server.synchronize_document(document) {
@@ -1578,6 +1611,106 @@ pub(crate) struct DiagnosticsSnapshot {
     pub(crate) timed_out: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServerStatusHealth {
+    Ok,
+    Warning,
+    Error,
+}
+
+impl ServerStatusHealth {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Warning => "warning",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ServerStatusSnapshot {
+    health: ServerStatusHealth,
+    quiescent: bool,
+}
+
+#[derive(Default)]
+struct ServerStatusState {
+    latest: Option<ServerStatusSnapshot>,
+    closed: bool,
+}
+
+#[derive(Default)]
+struct ServerStatusCache {
+    state: Mutex<ServerStatusState>,
+    changed: Condvar,
+}
+
+impl ServerStatusCache {
+    fn record(&self, params: Option<&Value>) {
+        let parsed = params.and_then(Value::as_object).and_then(|params| {
+            let health = match params.get("health").and_then(Value::as_str) {
+                Some("ok") => ServerStatusHealth::Ok,
+                Some("warning") => ServerStatusHealth::Warning,
+                Some("error") => ServerStatusHealth::Error,
+                _ => return None,
+            };
+            let quiescent = params.get("quiescent").and_then(Value::as_bool)?;
+            Some(ServerStatusSnapshot { health, quiescent })
+        });
+        let mut state = lock_unpoison(&self.state);
+        // A malformed status can never preserve an older ready=true snapshot:
+        // that would turn an unparseable current server state into a false
+        // authoritative readiness signal. Clear it and let the bounded waiter
+        // require a later valid notification.
+        state.latest = parsed;
+        drop(state);
+        self.changed.notify_all();
+    }
+
+    fn wait_for_quiescent_ok(&self, deadline: Instant) -> Result<(), LspError> {
+        let mut state = lock_unpoison(&self.state);
+        loop {
+            if state.closed {
+                return Err(LspError::ServerExited);
+            }
+            if let Some(status) = state.latest {
+                if status.quiescent {
+                    return if status.health == ServerStatusHealth::Ok {
+                        Ok(())
+                    } else {
+                        Err(LspError::WorkspaceNotReady(status.health.label()))
+                    };
+                }
+            }
+            let remaining = remaining_until(deadline);
+            if remaining.is_zero() {
+                return Err(LspError::RequestTimeout {
+                    method: "workspace/readiness".to_string(),
+                    timeout: Duration::ZERO,
+                });
+            }
+            let waited = self.changed.wait_timeout(state, remaining);
+            let (next, wait_result) = match waited {
+                Ok(pair) => pair,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state = next;
+            if wait_result.timed_out() {
+                return Err(LspError::RequestTimeout {
+                    method: "workspace/readiness".to_string(),
+                    timeout: remaining,
+                });
+            }
+        }
+    }
+
+    fn mark_closed(&self) {
+        lock_unpoison(&self.state).closed = true;
+        self.changed.notify_all();
+    }
+}
+
 #[derive(Default)]
 struct DiagnosticsCacheState {
     generation: u64,
@@ -1791,6 +1924,7 @@ struct ServerInstance {
     call_hierarchy_supported: AtomicBool,
     open_documents: Mutex<HashMap<String, OpenDocumentState>>,
     diagnostics: Arc<DiagnosticsCache>,
+    server_status: Arc<ServerStatusCache>,
     last_used: Mutex<Instant>,
     stderr: Arc<Mutex<BoundedStderr>>,
     reader_thread: Mutex<Option<JoinHandle<()>>>,
@@ -1851,14 +1985,22 @@ impl ServerInstance {
             bytes: VecDeque::new(),
         }));
         let diagnostics = Arc::new(DiagnosticsCache::default());
+        let server_status = Arc::new(ServerStatusCache::default());
 
         let reader_connection = Arc::clone(&connection);
         let reader_writer = Arc::clone(&writer);
         let reader_diagnostics = Arc::clone(&diagnostics);
+        let reader_server_status = Arc::clone(&server_status);
         let reader_thread = match thread::Builder::new()
             .name("webcodex-lsp-reader".to_string())
             .spawn(move || {
-                reader_loop(stdout, reader_writer, reader_connection, reader_diagnostics)
+                reader_loop(
+                    stdout,
+                    reader_writer,
+                    reader_connection,
+                    reader_diagnostics,
+                    reader_server_status,
+                )
             }) {
             Ok(thread) => thread,
             Err(error) => {
@@ -1900,6 +2042,7 @@ impl ServerInstance {
             call_hierarchy_supported: AtomicBool::new(false),
             open_documents: Mutex::new(HashMap::new()),
             diagnostics,
+            server_status,
             last_used: Mutex::new(Instant::now()),
             stderr: stderr_buffer,
             reader_thread: Mutex::new(Some(reader_thread)),
@@ -1960,7 +2103,23 @@ impl ServerInstance {
         // scripts, proc macros, or dependency fetches. Each language profile
         // carries its constrained read-only `initializationOptions`, pinned
         // by security regression tests.
-        let initialization_options = (profile_for_kind(self.key.kind).initialization_options)();
+        let profile = profile_for_kind(self.key.kind);
+        let initialization_options = (profile.initialization_options)();
+        let mut capabilities = json!({
+            "general": {
+                "positionEncodings": ["utf-8", "utf-16", "utf-32"]
+            },
+            "textDocument": {
+                "callHierarchy": {
+                    "dynamicRegistration": false
+                }
+            }
+        });
+        if profile.server_status_notification {
+            capabilities["experimental"] = json!({
+                "serverStatusNotification": true
+            });
+        }
         let result = self.request_raw(
             "initialize",
             json!({
@@ -1968,16 +2127,7 @@ impl ServerInstance {
                 "clientInfo": {"name": "WebCodex agent"},
                 "rootUri": root_uri.to_string(),
                 "initializationOptions": initialization_options,
-                "capabilities": {
-                    "general": {
-                        "positionEncodings": ["utf-8", "utf-16", "utf-32"]
-                    },
-                    "textDocument": {
-                        "callHierarchy": {
-                            "dynamicRegistration": false
-                        }
-                    }
-                }
+                "capabilities": capabilities
             }),
             timeout,
             true,
@@ -1999,6 +2149,10 @@ impl ServerInstance {
         }
         *status = LspServerStatus::Running;
         Ok(())
+    }
+
+    fn wait_for_workspace_readiness(&self, deadline: Instant) -> Result<(), LspError> {
+        self.server_status.wait_for_quiescent_ok(deadline)
     }
 
     fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, LspError> {
@@ -2307,6 +2461,7 @@ fn reader_loop(
     writer: Arc<Mutex<ChildStdin>>,
     connection: Arc<ConnectionState>,
     diagnostics: Arc<DiagnosticsCache>,
+    server_status: Arc<ServerStatusCache>,
 ) {
     let mut reader = BufReader::new(stdout);
     loop {
@@ -2314,12 +2469,16 @@ fn reader_loop(
             Ok(message) => message,
             Err(error) => {
                 diagnostics.mark_closed();
+                server_status.mark_closed();
                 connection.fail_pending(framing_to_lsp_error(error));
                 return;
             }
         };
-        if let Err(error) = handle_incoming_message(&message, &writer, &connection, &diagnostics) {
+        if let Err(error) =
+            handle_incoming_message(&message, &writer, &connection, &diagnostics, &server_status)
+        {
             diagnostics.mark_closed();
+            server_status.mark_closed();
             connection.fail_pending(error);
             return;
         }
@@ -2331,6 +2490,7 @@ fn handle_incoming_message(
     writer: &Arc<Mutex<ChildStdin>>,
     connection: &Arc<ConnectionState>,
     diagnostics: &DiagnosticsCache,
+    server_status: &ServerStatusCache,
 ) -> Result<(), LspError> {
     if message.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
         return Err(LspError::ProtocolError(
@@ -2348,6 +2508,8 @@ fn handle_incoming_message(
                 .map_err(|error| LspError::WriterFailed(error.to_string()))?;
         } else if method == "textDocument/publishDiagnostics" {
             diagnostics.record_publish_diagnostics(message.get("params"));
+        } else if method == "experimental/serverStatus" {
+            server_status.record(message.get("params"));
         }
         return Ok(());
     }

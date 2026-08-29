@@ -373,8 +373,6 @@ try {
     $ShareSmokeRoot = Join-Path $TempRoot "share-none"
     $ShareRepo = Join-Path $ShareSmokeRoot "repo"
     $ShareState = Join-Path $ShareSmokeRoot "state"
-    $ShareStdout = Join-Path $ShareSmokeRoot "share.stdout.log"
-    $ShareStderr = Join-Path $ShareSmokeRoot "share.stderr.log"
     New-Item -ItemType Directory -Force -Path $ShareRepo | Out-Null
     & git -C $ShareRepo init --quiet
     if ($LASTEXITCODE -ne 0) {
@@ -412,22 +410,61 @@ try {
     $ShareCliProcess = $null
     $ShareServerPid = $null
     $ShareRunnerPid = $null
+    $ShareStdoutBuffer = [System.Text.StringBuilder]::new()
+    $ShareStderrBuffer = [System.Text.StringBuilder]::new()
+    $ShareStdoutTask = $null
+    $ShareStderrTask = $null
     $ShareServerExe = Join-Path $VendorBin "webcodex-server.exe"
     $ShareRunnerExe = Join-Path $VendorBin "webcodex-runner.exe"
     try {
         $quotedShareRepo = '"' + $ShareRepo.Replace('"', '\"') + '"'
         $quotedShareState = '"' + $ShareState.Replace('"', '\"') + '"'
-        $ShareCliProcess = Start-Process -FilePath $cli `
-            -ArgumentList @("share", "--root", $quotedShareRepo, "--state-dir", $quotedShareState, "--tunnel", "none", "--no-copy-url") `
-            -RedirectStandardOutput $ShareStdout -RedirectStandardError $ShareStderr `
-            -PassThru -WindowStyle Hidden
+        # Start-Process keeps -RedirectStandardOutput files exclusively open on
+        # Windows PowerShell while the child is alive. Observe the long-lived
+        # share process through redirected pipes instead so readiness can be read
+        # without racing the redirection file handle, and drain stderr in parallel
+        # so neither pipe can block the child.
+        $shareStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $shareStartInfo.FileName = $cli
+        $shareStartInfo.Arguments = "share --root $quotedShareRepo --state-dir $quotedShareState --tunnel none --no-copy-url"
+        $shareStartInfo.UseShellExecute = $false
+        $shareStartInfo.RedirectStandardOutput = $true
+        $shareStartInfo.RedirectStandardError = $true
+        $shareStartInfo.CreateNoWindow = $true
+        $ShareCliProcess = [System.Diagnostics.Process]::new()
+        $ShareCliProcess.StartInfo = $shareStartInfo
+        if (-not $ShareCliProcess.Start()) {
+            throw "could not start webcodex share --tunnel none"
+        }
+        $ShareStdoutTask = $ShareCliProcess.StandardOutput.ReadLineAsync()
+        $ShareStderrTask = $ShareCliProcess.StandardError.ReadLineAsync()
 
         $shareDeadline = [System.Diagnostics.Stopwatch]::StartNew()
         $shareReady = $false
         $shareOutput = ""
         while ($shareDeadline.Elapsed -lt [TimeSpan]::FromSeconds(65)) {
+            while ($null -ne $ShareStdoutTask -and $ShareStdoutTask.IsCompleted) {
+                $line = $ShareStdoutTask.Result
+                if ($null -eq $line) {
+                    $ShareStdoutTask = $null
+                    break
+                }
+                $null = $ShareStdoutBuffer.AppendLine($line)
+                $ShareStdoutTask = $ShareCliProcess.StandardOutput.ReadLineAsync()
+            }
+            while ($null -ne $ShareStderrTask -and $ShareStderrTask.IsCompleted) {
+                $line = $ShareStderrTask.Result
+                if ($null -eq $line) {
+                    $ShareStderrTask = $null
+                    break
+                }
+                $null = $ShareStderrBuffer.AppendLine($line)
+                $ShareStderrTask = $ShareCliProcess.StandardError.ReadLineAsync()
+            }
+            $shareOutput = $ShareStdoutBuffer.ToString()
             if ($ShareCliProcess.HasExited) {
-                throw "webcodex share --tunnel none exited before readiness (exit $($ShareCliProcess.ExitCode))"
+                $shareError = $ShareStderrBuffer.ToString().Trim()
+                throw "webcodex share --tunnel none exited before readiness (exit $($ShareCliProcess.ExitCode)): $shareError"
             }
             $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($ShareCliProcess.Id)" -ErrorAction SilentlyContinue)
             if ($null -eq $ShareServerPid) {
@@ -438,12 +475,9 @@ try {
                 $runnerChild = $children | Where-Object { $_.Name -eq "webcodex-runner.exe" -and $_.ExecutablePath -eq $ShareRunnerExe } | Select-Object -First 1
                 if ($null -ne $runnerChild) { $ShareRunnerPid = [int]$runnerChild.ProcessId }
             }
-            if (Test-Path -LiteralPath $ShareStdout -PathType Leaf) {
-                $shareOutput = [System.IO.File]::ReadAllText($ShareStdout)
-                if ($shareOutput.Contains("WebCodex ready")) {
-                    $shareReady = $true
-                    break
-                }
+            if ($shareOutput.Contains("WebCodex ready")) {
+                $shareReady = $true
+                break
             }
             Start-Sleep -Milliseconds 100
         }

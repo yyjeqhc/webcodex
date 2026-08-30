@@ -6,7 +6,7 @@ use rusqlite::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use uuid::Uuid;
 
 pub(crate) const DURABLE_AGENT_ID_PREFIX: &str = "wc_dagent_";
@@ -390,6 +390,10 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_wc_agent_endpoints_agent_active
                 ON wc_agent_endpoints(agent_id, detached_at_unix_ms, attached_at_unix_ms DESC);
+            CREATE INDEX IF NOT EXISTS idx_wc_agent_endpoints_agent_generation
+                ON wc_agent_endpoints(agent_id, lifecycle, controller_generation DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_wc_agent_endpoints_one_attached
+                ON wc_agent_endpoints(agent_id) WHERE lifecycle = 'attached';
 
             CREATE TABLE IF NOT EXISTS wc_conversations (
                 conversation_id TEXT PRIMARY KEY,
@@ -488,71 +492,6 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_wc_communication_idempotency_created
                 ON wc_communication_idempotency(created_at_unix_ms DESC);
             ",
-        )?;
-        let identity_columns = communication_table_columns(&transaction, "wc_agent_identities")?;
-        if !identity_columns.contains_key("current_controller_generation") {
-            transaction.execute_batch(
-                "ALTER TABLE wc_agent_identities
-                 ADD COLUMN current_controller_generation INTEGER NOT NULL DEFAULT 0
-                 CHECK(current_controller_generation >= 0);",
-            )?;
-        }
-
-        let mut endpoint_columns = communication_table_columns(&transaction, "wc_agent_endpoints")?;
-        if endpoint_columns
-            .get("controller_generation")
-            .is_some_and(|column_type| !column_type.eq_ignore_ascii_case("INTEGER"))
-        {
-            transaction.execute_batch(
-                "ALTER TABLE wc_agent_endpoints
-                 RENAME COLUMN controller_generation TO legacy_controller_generation;",
-            )?;
-            endpoint_columns = communication_table_columns(&transaction, "wc_agent_endpoints")?;
-        }
-        if !endpoint_columns.contains_key("controller_generation") {
-            transaction.execute_batch(
-                "ALTER TABLE wc_agent_endpoints
-                 ADD COLUMN controller_generation INTEGER NOT NULL DEFAULT 0;",
-            )?;
-        }
-        if !endpoint_columns.contains_key("lifecycle") {
-            transaction.execute_batch(
-                "ALTER TABLE wc_agent_endpoints
-                 ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'expired';",
-            )?;
-        }
-        if !endpoint_columns.contains_key("lease_expires_at_unix_ms") {
-            transaction.execute_batch(
-                "ALTER TABLE wc_agent_endpoints
-                 ADD COLUMN lease_expires_at_unix_ms INTEGER NOT NULL DEFAULT 0;",
-            )?;
-        }
-        if !endpoint_columns.contains_key("expired_at_unix_ms") {
-            transaction.execute_batch(
-                "ALTER TABLE wc_agent_endpoints ADD COLUMN expired_at_unix_ms INTEGER;",
-            )?;
-        }
-        transaction.execute_batch(
-            "UPDATE wc_agent_endpoints
-             SET lifecycle = CASE
-                    WHEN detached_at_unix_ms IS NULL THEN 'expired'
-                    ELSE 'detached'
-                 END,
-                 controller_generation = 0,
-                 lease_expires_at_unix_ms = CASE
-                    WHEN lease_expires_at_unix_ms <= 0 THEN last_seen_at_unix_ms
-                    ELSE lease_expires_at_unix_ms
-                 END,
-                 expired_at_unix_ms = CASE
-                    WHEN detached_at_unix_ms IS NULL
-                    THEN COALESCE(expired_at_unix_ms, last_seen_at_unix_ms)
-                    ELSE expired_at_unix_ms
-                 END
-             WHERE controller_generation = 0;
-             CREATE INDEX IF NOT EXISTS idx_wc_agent_endpoints_agent_generation
-                 ON wc_agent_endpoints(agent_id, lifecycle, controller_generation DESC);
-             CREATE UNIQUE INDEX IF NOT EXISTS idx_wc_agent_endpoints_one_attached
-                 ON wc_agent_endpoints(agent_id) WHERE lifecycle = 'attached';",
         )?;
         transaction.commit()?;
         Ok(())
@@ -2817,17 +2756,4 @@ pub(super) fn digest_text(domain: &str, value: &str) -> String {
 
 pub(super) fn now_unix_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
-}
-
-fn communication_table_columns(
-    conn: &Connection,
-    table_name: &str,
-) -> rusqlite::Result<BTreeMap<String, String>> {
-    let mut statement = conn.prepare(&format!("PRAGMA table_info({table_name})"))?;
-    let columns = statement
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-        })?
-        .collect();
-    columns
 }

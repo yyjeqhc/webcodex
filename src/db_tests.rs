@@ -3,69 +3,6 @@
 use super::*;
 
 #[test]
-fn open_drops_retired_legacy_tables() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("legacy.db");
-    // Seed a pre-cleanup database shape with tables the product no longer uses.
-    {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "
-            CREATE TABLE messages (id TEXT PRIMARY KEY);
-            CREATE TABLE command_requests (id TEXT PRIMARY KEY);
-            CREATE TABLE codex_goals (id TEXT PRIMARY KEY);
-            CREATE TABLE agent_specs (id TEXT PRIMARY KEY);
-            CREATE TABLE agent_model_profiles (id TEXT PRIMARY KEY);
-            CREATE TABLE desktop_tasks (id TEXT PRIMARY KEY);
-            CREATE TABLE desktop_task_events (id TEXT PRIMARY KEY);
-            ",
-        )
-        .unwrap();
-    }
-    let db = Database::open(&path).unwrap();
-    let conn = db.conn_for_tests();
-    for table in [
-        "messages",
-        "command_requests",
-        "codex_goals",
-        "agent_specs",
-        "agent_model_profiles",
-        "desktop_tasks",
-        "desktop_task_events",
-    ] {
-        let exists: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
-                [table],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(exists, 0, "legacy table {table} must be dropped on open");
-    }
-    // Active surface still exists.
-    for table in [
-        "users",
-        "api_keys",
-        "action_sessions",
-        "oauth_clients",
-        "wc_run_contexts",
-        "wc_task_results",
-        "wc_approvals",
-        "wc_edit_operations",
-        "wc_executions",
-    ] {
-        let exists: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
-                [table],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(exists, 1, "active table {table} must remain");
-    }
-}
-
-#[test]
 fn open_enables_wal_busy_timeout_and_foreign_keys() {
     let tmp = tempfile::tempdir().unwrap();
     let db = Database::open(&tmp.path().join("pragma.db")).unwrap();
@@ -82,122 +19,6 @@ fn open_enables_wal_busy_timeout_and_foreign_keys() {
         .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
         .unwrap();
     assert_eq!(busy_timeout, 5000);
-}
-
-#[test]
-fn open_migrates_connector_task_mode_constraint_to_inspect() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("pre-inspect.db");
-    {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "
-            CREATE TABLE wc_projects (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-            CREATE TABLE wc_tasks (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                owner_subject_id TEXT NOT NULL,
-                goal TEXT NOT NULL,
-                mode TEXT NOT NULL CHECK(mode IN ('normal', 'read_only')),
-                status TEXT NOT NULL
-                    CHECK(status IN ('active', 'ready_for_review', 'accepted', 'rejected')),
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                FOREIGN KEY(project_id) REFERENCES wc_projects(id)
-            );
-            INSERT INTO wc_projects VALUES ('project', 'Project', 1, 1);
-            INSERT INTO wc_tasks
-                (id, project_id, owner_subject_id, goal, mode, status, created_at, updated_at)
-            VALUES ('task', 'project', 'owner', 'keep me', 'read_only', 'active', 1, 1);
-            ",
-        )
-        .unwrap();
-    }
-
-    let db = Database::open(&path).unwrap();
-    let conn = db.conn_for_tests();
-    let schema: String = conn
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'wc_tasks'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert!(schema.contains("'inspect'"), "{schema}");
-    assert_eq!(
-        conn.query_row("SELECT mode FROM wc_tasks WHERE id = 'task'", [], |row| {
-            row.get::<_, String>(0)
-        })
-        .unwrap(),
-        "read_only"
-    );
-    conn.execute(
-        "INSERT INTO wc_tasks
-            (id, project_id, owner_subject_id, goal, mode, status,
-             created_at, updated_at, guidance_seen_seq)
-         VALUES ('inspect-task', 'project', 'owner', 'inspect', 'inspect',
-                 'active', 2, 2, 0)",
-        [],
-    )
-    .unwrap();
-    assert_eq!(
-        conn.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        1
-    );
-}
-
-#[test]
-fn execution_provenance_columns_are_fresh_additive_and_idempotent() {
-    let tmp = tempfile::tempdir().unwrap();
-    let upgrade = tmp.path().join("iteration-7.db");
-    {
-        let conn = rusqlite::Connection::open(&upgrade).unwrap();
-        conn.execute_batch(
-            "
-            CREATE TABLE wc_executions AS SELECT
-                'old-command' id, 'command' kind, 'task' task_id, 'run' run_id,
-                'succeeded' state, 1 submitted_at, NULL queued_at, 2 queue_deadline,
-                NULL started_at, NULL last_output_at, 3 finished_at,
-                1 stdout_cursor, 1 stderr_cursor, 0 exit_code,
-                NULL failure_source, NULL failure_code, NULL cancel_requested_at,
-                'exit_zero' terminal_reason, 'op' operation_id, 'hash' request_sha256,
-                NULL executor_reference, NULL first_status_failure_at,
-                NULL last_successful_observation_at, NULL status_failure_code,
-                NULL check_plan, 0 check_completed;
-            ",
-        )
-        .unwrap();
-    }
-    let fresh = tmp.path().join("fresh.db");
-    for path in [&upgrade, &fresh] {
-        for _ in 0..2 {
-            let db = Database::open(path).unwrap();
-            let columns: i64 = db
-                .conn_for_tests()
-                .query_row(
-                    "SELECT COUNT(*) FROM pragma_table_info('wc_executions')
-                     WHERE name IN ('check_workspace_sha256', 'validated_workspace_sha256',
-                                    'failed_check', 'assertion_evidence_json',
-                                    'check_recipe_json')",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert_eq!(columns, 5);
-            if path == &upgrade {
-                let command = db.connector_execution("old-command").unwrap();
-                assert_eq!(command.kind, "command");
-                assert!(command.validated_workspace_sha256.is_none());
-                assert!(command.assertion_evidence.is_none());
-            }
-        }
-    }
 }
 
 #[test]
@@ -666,10 +487,10 @@ fn phase2_token_lifecycle_hash_revoked_expired_disabled_last_used() {
     assert!(disabled_user.is_disabled());
 }
 
-/// Phase 3: existing user tokens default to kind="user" after migration,
-/// and the model helpers correctly distinguish user vs agent tokens.
+/// User API keys default to kind="user", and the model helpers distinguish
+/// user vs agent tokens without relying on an older persisted schema.
 #[test]
-fn phase3_existing_user_tokens_default_to_kind_user_after_migration() {
+fn api_key_default_user_kind_is_distinct_from_agent_tokens() {
     let tmp = tempfile::tempdir().unwrap();
     let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
     let now = chrono::Utc::now().timestamp();
@@ -684,8 +505,7 @@ fn phase3_existing_user_tokens_default_to_kind_user_after_migration() {
         updated_at: Some(now),
     })
     .unwrap();
-    // Simulate a legacy Phase 2 row by constructing an ApiKeyRecord with
-    // kind="user" (the migration default) and allowed_client_id=None.
+    // Construct the canonical default user-key shape directly.
     let key = ApiKeyRecord {
         id: "k-legacy".to_string(),
         user_id: "u-1".to_string(),
@@ -969,109 +789,6 @@ fn assert_oauth_subject_columns(conn: &Connection, table: &str) {
 }
 
 #[test]
-fn open_migrates_legacy_oauth_client_user_owner_to_multi_owner_schema() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("legacy-oauth-owner.db");
-    {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "
-            PRAGMA foreign_keys = ON;
-            CREATE TABLE users (
-                id TEXT PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE,
-                display_name TEXT,
-                role TEXT NOT NULL DEFAULT 'user',
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER,
-                disabled INTEGER NOT NULL DEFAULT 0,
-                disabled_at INTEGER
-            );
-            CREATE TABLE oauth_clients (
-                id TEXT PRIMARY KEY,
-                client_id TEXT NOT NULL UNIQUE,
-                client_secret_hash TEXT NOT NULL,
-                name TEXT NOT NULL,
-                owner_user_id TEXT NOT NULL,
-                redirect_uris TEXT NOT NULL DEFAULT '',
-                allowed_scopes TEXT NOT NULL DEFAULT '',
-                created_at INTEGER NOT NULL,
-                revoked_at INTEGER,
-                FOREIGN KEY(owner_user_id) REFERENCES users(id)
-            );
-            INSERT INTO users
-                (id, username, display_name, role, created_at, updated_at, disabled, disabled_at)
-            VALUES ('u-legacy', 'legacy', NULL, 'user', 1, 1, 0, NULL);
-            INSERT INTO oauth_clients
-                (id, client_id, client_secret_hash, name, owner_user_id,
-                 redirect_uris, allowed_scopes, created_at, revoked_at)
-            VALUES
-                ('oc-legacy', 'wc_client_legacy', 'hash', 'Legacy', 'u-legacy',
-                 'https://example.com/callback', 'runtime:read', 1, NULL);
-            ",
-        )
-        .unwrap();
-    }
-
-    let db = Database::open(&path).unwrap();
-    let client = db
-        .get_oauth_client_by_client_id("wc_client_legacy")
-        .unwrap()
-        .unwrap();
-    assert_eq!(client.owner_user_id.as_deref(), Some("u-legacy"));
-    assert_eq!(client.owner_project_grant_id, None);
-    assert_eq!(client.owner_shared_key_hash, None);
-    assert!(client.is_managed_user_owned());
-
-    let conn = db.conn_for_tests();
-    let columns = conn
-        .prepare("PRAGMA table_info(oauth_clients)")
-        .unwrap()
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
-        })
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert!(columns
-        .iter()
-        .any(|(name, _)| name == "owner_project_grant_id"));
-    assert!(columns
-        .iter()
-        .any(|(name, _)| name == "owner_shared_key_hash"));
-    assert_eq!(
-        columns
-            .iter()
-            .find(|(name, _)| name == "owner_user_id")
-            .map(|(_, not_null)| *not_null),
-        Some(0),
-        "owner_user_id must become nullable so project-owned clients are representable"
-    );
-    let project_owner_index: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_oauth_clients_project_owner'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(project_owner_index, 1);
-    let shared_key_owner_index: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_oauth_clients_shared_key_owner'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(shared_key_owner_index, 1);
-    let foreign_key_violations: i64 = conn
-        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    assert_eq!(foreign_key_violations, 0);
-}
-
-#[test]
 fn fresh_database_creates_oauth_tables() {
     let tmp = tempfile::tempdir().unwrap();
     let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
@@ -1207,48 +924,6 @@ fn can_insert_and_get_authorization_code_by_hash() {
     );
     assert_eq!(fetched.code_challenge_method.as_deref(), Some("S256"));
     assert!(fetched.shared_key_hash.is_none());
-}
-
-#[test]
-fn can_mark_authorization_code_used() {
-    let tmp = tempfile::tempdir().unwrap();
-    let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
-    let user = oauth_seed_user(&db, "alice");
-    let (client, _) = oauth_seed_client(&db, &user, "Test App");
-
-    let plaintext_code = crate::auth::generate_oauth_authorization_code();
-    let code_hash = crate::auth::hash_token(&plaintext_code);
-    let now = chrono::Utc::now().timestamp();
-    let record = OAuthAuthorizationCodeRecord {
-        id: uuid::Uuid::new_v4().to_string(),
-        code_hash: code_hash.clone(),
-        client_id: client.client_id.clone(),
-        subject_kind: "managed_user".to_string(),
-        subject_id: user.id.clone(),
-        user_id: Some(user.id.clone()),
-        redirect_uri: "https://example.com/callback".to_string(),
-        scopes: "runtime:read".to_string(),
-        code_challenge: None,
-        code_challenge_method: None,
-        resource: None,
-        shared_key_hash: None,
-        created_at: now,
-        expires_at: now + 300,
-        used_at: None,
-        revoked_at: None,
-    };
-    db.insert_oauth_authorization_code(&record, &code_hash)
-        .unwrap();
-
-    // Mark as used.
-    db.mark_oauth_authorization_code_used(&record.id, now + 10)
-        .unwrap();
-    let fetched = db
-        .get_oauth_authorization_code_by_hash(&code_hash)
-        .unwrap()
-        .unwrap();
-    assert!(fetched.is_used());
-    assert_eq!(fetched.used_at, Some(now + 10));
 }
 
 #[test]

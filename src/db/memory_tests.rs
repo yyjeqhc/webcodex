@@ -1,8 +1,7 @@
 use super::*;
 use crate::db::memory::{
-    legacy_memory_revision_v1, memory_definition_hash, memory_state_revision,
-    MemoryPrincipalAttribution, MemoryPriority, MemoryScopeAttribution, MemorySetInput,
-    MEMORY_PROVENANCE_LEGACY, MEMORY_SCOPE_IDENTITY_ATTRIBUTED, MEMORY_SCOPE_IDENTITY_LEGACY,
+    memory_definition_hash, memory_state_revision, MemoryPrincipalAttribution, MemoryPriority,
+    MemoryScopeAttribution, MemorySetInput, MEMORY_SCOPE_IDENTITY_ATTRIBUTED,
 };
 use rusqlite::{params, Connection};
 use std::sync::{Arc, Barrier};
@@ -36,32 +35,6 @@ fn principal(kind: &str, hex: char) -> MemoryPrincipalAttribution {
         kind: kind.to_string(),
         principal_digest: format!("wc_memprincipal_{}", hex.to_string().repeat(64)),
     }
-}
-
-fn create_current_v2_memory_schema(conn: &Connection) {
-    conn.execute_batch(
-        "CREATE TABLE project_memories (
-            memory_id TEXT PRIMARY KEY,
-            memory_scope_id TEXT NOT NULL,
-            memory_key TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            body TEXT NOT NULL,
-            priority TEXT NOT NULL CHECK(priority IN ('high', 'normal', 'low')),
-            bootstrap INTEGER NOT NULL CHECK(bootstrap IN (0, 1)),
-            tags_json TEXT NOT NULL,
-            definition_hash TEXT NOT NULL,
-            generation INTEGER NOT NULL CHECK(generation >= 1),
-            revision TEXT NOT NULL,
-            created_at_unix_ms INTEGER NOT NULL,
-            updated_at_unix_ms INTEGER NOT NULL,
-            UNIQUE(memory_scope_id, memory_key)
-        );
-        CREATE INDEX idx_project_memories_scope_key
-            ON project_memories(memory_scope_id, memory_key);
-        CREATE INDEX idx_project_memories_scope_bootstrap
-            ON project_memories(memory_scope_id, bootstrap, priority, memory_key);",
-    )
-    .unwrap();
 }
 
 #[test]
@@ -494,147 +467,6 @@ fn identical_definition_cas_update_does_not_advance_generation() {
 }
 
 #[test]
-fn current_203_memory_row_migrates_to_generation_one_state_revision() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("memory-v1.db");
-    let raw = Connection::open(&path).unwrap();
-    raw.execute_batch(
-        "CREATE TABLE project_memories (
-            memory_id TEXT PRIMARY KEY, memory_scope_id TEXT NOT NULL, memory_key TEXT NOT NULL,
-            summary TEXT NOT NULL, body TEXT NOT NULL, priority TEXT NOT NULL,
-            bootstrap INTEGER NOT NULL, tags_json TEXT NOT NULL, revision TEXT NOT NULL,
-            created_at_unix_ms INTEGER NOT NULL, updated_at_unix_ms INTEGER NOT NULL,
-            UNIQUE(memory_scope_id, memory_key));
-         CREATE INDEX idx_project_memories_scope_key ON project_memories(memory_scope_id, memory_key);
-         CREATE INDEX idx_project_memories_scope_bootstrap ON project_memories(memory_scope_id, bootstrap, priority, memory_key);",
-    )
-    .unwrap();
-    let memory_scope_id = scope('d');
-    let memory_id = "wc_mem_0123456789abcdef0123456789abcdef";
-    let tags = vec!["architecture".to_string(), "stable".to_string()];
-    let old_revision = legacy_memory_revision_v1(
-        "policy",
-        "summary",
-        "body",
-        MemoryPriority::High,
-        true,
-        &tags,
-    );
-    raw.execute(
-        "INSERT INTO project_memories VALUES (?1, ?2, 'policy', 'summary', 'body', 'high', 1, ?3, ?4, 10, 20)",
-        params![memory_id, memory_scope_id, serde_json::to_string(&tags).unwrap(), old_revision],
-    )
-    .unwrap();
-    drop(raw);
-
-    let db = Database::open(&path).unwrap();
-    let record = db
-        .get_project_memory(&memory_scope_id, "policy")
-        .unwrap()
-        .unwrap();
-    assert_eq!(record.memory_id, memory_id);
-    assert_eq!(record.summary, "summary");
-    assert_eq!(record.body, "body");
-    assert_eq!(record.generation, 1);
-    assert!(record.definition_hash.starts_with("wc_memdef_"));
-    assert_eq!(
-        record.revision,
-        memory_state_revision(&memory_scope_id, memory_id, 1, &record.definition_hash)
-    );
-}
-
-#[test]
-fn overlarge_203_memory_row_migration_fails_closed() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("memory-v1-overlarge.db");
-    let raw = Connection::open(&path).unwrap();
-    raw.execute_batch(
-        "CREATE TABLE project_memories (
-            memory_id TEXT PRIMARY KEY, memory_scope_id TEXT NOT NULL, memory_key TEXT NOT NULL,
-            summary TEXT NOT NULL, body TEXT NOT NULL, priority TEXT NOT NULL,
-            bootstrap INTEGER NOT NULL, tags_json TEXT NOT NULL, revision TEXT NOT NULL,
-            created_at_unix_ms INTEGER NOT NULL, updated_at_unix_ms INTEGER NOT NULL,
-            UNIQUE(memory_scope_id, memory_key));",
-    )
-    .unwrap();
-    let memory_scope_id = scope('e');
-    let memory_id = "wc_mem_0123456789abcdef0123456789abcdef";
-    let body = "x".repeat(MAX_MEMORY_BODY_BYTES + 1);
-    let old_revision = legacy_memory_revision_v1(
-        "policy",
-        "summary",
-        &body,
-        MemoryPriority::Normal,
-        false,
-        &[],
-    );
-    raw.execute(
-        "INSERT INTO project_memories VALUES (?1, ?2, 'policy', 'summary', ?3, 'normal', 0, '[]', ?4, 1, 1)",
-        params![memory_id, memory_scope_id, body, old_revision],
-    )
-    .unwrap();
-    drop(raw);
-
-    assert!(Database::open(&path).is_err());
-    let raw = Connection::open(&path).unwrap();
-    let columns = raw
-        .prepare("PRAGMA table_info(project_memories)")
-        .unwrap()
-        .query_map([], |row| row.get::<_, String>(1))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert!(!columns.iter().any(|column| column == "definition_hash"));
-    assert!(!columns.iter().any(|column| column == "generation"));
-}
-
-#[test]
-fn malformed_203_memory_row_migration_rolls_back() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("memory-v1-bad.db");
-    let raw = Connection::open(&path).unwrap();
-    raw.execute_batch(
-        "CREATE TABLE project_memories (
-            memory_id TEXT PRIMARY KEY, memory_scope_id TEXT NOT NULL, memory_key TEXT NOT NULL,
-            summary TEXT NOT NULL, body TEXT NOT NULL, priority TEXT NOT NULL,
-            bootstrap INTEGER NOT NULL, tags_json TEXT NOT NULL, revision TEXT NOT NULL,
-            created_at_unix_ms INTEGER NOT NULL, updated_at_unix_ms INTEGER NOT NULL,
-            UNIQUE(memory_scope_id, memory_key));
-         CREATE INDEX idx_project_memories_scope_key ON project_memories(memory_scope_id, memory_key);
-         CREATE INDEX idx_project_memories_scope_bootstrap ON project_memories(memory_scope_id, bootstrap, priority, memory_key);",
-    )
-    .unwrap();
-    raw.execute(
-        "INSERT INTO project_memories VALUES (?1, ?2, 'policy', 'summary', 'body', 'normal', 0, '[]', ?3, 1, 1)",
-        params![
-            "wc_mem_0123456789abcdef0123456789abcdef",
-            scope('e'),
-            format!("wc_memrev_{}", "0".repeat(64))
-        ],
-    )
-    .unwrap();
-    drop(raw);
-
-    assert!(Database::open(&path).is_err());
-    let raw = Connection::open(&path).unwrap();
-    let columns = raw
-        .prepare("PRAGMA table_info(project_memories)")
-        .unwrap()
-        .query_map([], |row| row.get::<_, String>(1))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert!(!columns.iter().any(|column| column == "definition_hash"));
-    assert!(!columns.iter().any(|column| column == "generation"));
-    let count: i64 = raw
-        .query_row("SELECT COUNT(*) FROM project_memories", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    assert_eq!(count, 1);
-}
-
-#[test]
 fn corrupted_persisted_memory_rows_fail_closed_before_projection() {
     let cases: Vec<(&str, Box<dyn Fn(&Connection)>)> = vec![
         (
@@ -744,137 +576,6 @@ fn corrupted_persisted_memory_rows_fail_closed_before_projection() {
             "{label} list"
         );
     }
-}
-
-#[test]
-fn current_205_rows_migrate_scope_metadata_and_legacy_provenance_without_revision_churn() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("memory-v2.db");
-    let raw = Connection::open(&path).unwrap();
-    create_current_v2_memory_schema(&raw);
-    let memory_scope_id = scope('a');
-    let mut expected_revisions = Vec::new();
-    for (index, (key, summary, created, updated)) in [
-        ("policy-a", "first", 10_i64, 20_i64),
-        ("policy-b", "second", 30_i64, 40_i64),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let memory_id = format!("wc_mem_{:032x}", index + 1);
-        let definition_hash =
-            memory_definition_hash(key, summary, "body", MemoryPriority::Normal, false, &[]);
-        let revision = memory_state_revision(&memory_scope_id, &memory_id, 1, &definition_hash);
-        raw.execute(
-            "INSERT INTO project_memories
-             (memory_id, memory_scope_id, memory_key, summary, body, priority, bootstrap,
-              tags_json, definition_hash, generation, revision,
-              created_at_unix_ms, updated_at_unix_ms)
-             VALUES (?1, ?2, ?3, ?4, 'body', 'normal', 0, '[]', ?5, 1, ?6, ?7, ?8)",
-            params![
-                memory_id,
-                memory_scope_id,
-                key,
-                summary,
-                definition_hash,
-                revision,
-                created,
-                updated,
-            ],
-        )
-        .unwrap();
-        expected_revisions.push((key.to_string(), revision));
-    }
-    drop(raw);
-
-    let db = Database::open(&path).unwrap();
-    let snapshot = db
-        .get_project_memory_scope(&memory_scope_id)
-        .unwrap()
-        .expect("migrated scope");
-    assert_eq!(snapshot.scope.identity_state, MEMORY_SCOPE_IDENTITY_LEGACY);
-    assert!(snapshot.scope.project_runtime_id.is_none());
-    assert!(snapshot.scope.runner_client_id.is_none());
-    assert!(snapshot.scope.root_fingerprint.is_none());
-    assert_eq!(snapshot.scope.created_at_unix_ms, 10);
-    assert_eq!(snapshot.scope.last_mutated_at_unix_ms, 40);
-    assert_eq!(snapshot.memories.len(), 2);
-    for (key, revision) in expected_revisions {
-        let record = snapshot
-            .memories
-            .iter()
-            .find(|record| record.memory_key == key)
-            .unwrap();
-        assert_eq!(
-            record.revision, revision,
-            "migration must preserve #205 state ETag"
-        );
-        assert_eq!(record.generation, 1);
-        assert_eq!(record.created_by_kind, MEMORY_PROVENANCE_LEGACY);
-        assert_eq!(record.updated_by_kind, MEMORY_PROVENANCE_LEGACY);
-        assert!(record.created_by_principal_digest.is_none());
-        assert!(record.updated_by_principal_digest.is_none());
-    }
-    drop(db);
-
-    let reopened = Database::open(&path).unwrap();
-    let durable = reopened
-        .get_project_memory_scope(&memory_scope_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(durable.scope.identity_state, MEMORY_SCOPE_IDENTITY_LEGACY);
-    assert_eq!(durable.memories.len(), 2);
-}
-
-#[test]
-fn malformed_current_205_row_migration_rolls_back_without_trusting_provenance() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("memory-v2-corrupt.db");
-    let raw = Connection::open(&path).unwrap();
-    create_current_v2_memory_schema(&raw);
-    let memory_scope_id = scope('b');
-    let memory_id = "wc_mem_0123456789abcdef0123456789abcdef";
-    let definition_hash = memory_definition_hash(
-        "policy",
-        "summary",
-        "body",
-        MemoryPriority::Normal,
-        false,
-        &[],
-    );
-    raw.execute(
-        "INSERT INTO project_memories
-         (memory_id, memory_scope_id, memory_key, summary, body, priority, bootstrap,
-          tags_json, definition_hash, generation, revision, created_at_unix_ms, updated_at_unix_ms)
-         VALUES (?1, ?2, 'policy', 'summary', 'body', 'normal', 0, '[]', ?3, 1, ?4, 1, 1)",
-        params![
-            memory_id,
-            memory_scope_id,
-            definition_hash,
-            format!("wc_memrev_{}", "0".repeat(64)),
-        ],
-    )
-    .unwrap();
-    drop(raw);
-
-    assert!(Database::open(&path).is_err());
-    let raw = Connection::open(&path).unwrap();
-    let columns = raw
-        .prepare("PRAGMA table_info(project_memories)")
-        .unwrap()
-        .query_map([], |row| row.get::<_, String>(1))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert!(!columns.iter().any(|column| column == "created_by_kind"));
-    let scope_table_count: i64 = raw
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_memory_scopes'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(scope_table_count, 0);
 }
 
 #[test]
@@ -1025,94 +726,6 @@ fn attributed_scope_and_provenance_track_real_mutations_without_noop_churn() {
 }
 
 #[test]
-fn legacy_scope_is_attributed_only_by_real_mutation_and_reads_remain_read_only() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("legacy-scope.db");
-    let raw = Connection::open(&path).unwrap();
-    create_current_v2_memory_schema(&raw);
-    let memory_scope_id = scope('d');
-    let memory_id = "wc_mem_11111111111111111111111111111111";
-    let definition_hash = memory_definition_hash(
-        "policy",
-        "summary",
-        "body",
-        MemoryPriority::Normal,
-        false,
-        &[],
-    );
-    let revision = memory_state_revision(&memory_scope_id, memory_id, 1, &definition_hash);
-    raw.execute(
-        "INSERT INTO project_memories VALUES (?1, ?2, 'policy', 'summary', 'body', 'normal', 0, '[]', ?3, 1, ?4, 10, 20)",
-        params![memory_id, memory_scope_id, definition_hash, revision],
-    )
-    .unwrap();
-    drop(raw);
-    let db = Database::open(&path).unwrap();
-    let before = db
-        .get_project_memory_scope(&memory_scope_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(before.scope.identity_state, MEMORY_SCOPE_IDENTITY_LEGACY);
-
-    let _ = db.list_project_memories(&memory_scope_id).unwrap();
-    let _ = db.get_project_memory(&memory_scope_id, "policy").unwrap();
-    let after_reads = db
-        .get_project_memory_scope(&memory_scope_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(after_reads.scope, before.scope);
-
-    let scope_meta = scope_attribution("agent:runner:demo", "runner", 'b');
-    let current = principal("shared-key", '3');
-    let noop = db
-        .set_project_memory_attributed(
-            &memory_scope_id,
-            &scope_meta,
-            &current,
-            MemorySetInput {
-                memory_key: "policy".to_string(),
-                summary: "summary".to_string(),
-                body: "body".to_string(),
-                priority: MemoryPriority::Normal,
-                bootstrap: false,
-                tags: vec![],
-                expected_revision: None,
-            },
-        )
-        .unwrap();
-    assert!(!noop.state_changed);
-    assert_eq!(
-        db.get_project_memory_scope(&memory_scope_id)
-            .unwrap()
-            .unwrap()
-            .scope
-            .identity_state,
-        MEMORY_SCOPE_IDENTITY_LEGACY
-    );
-
-    let mut real_update = MemorySetInput {
-        memory_key: "policy".to_string(),
-        summary: "changed".to_string(),
-        body: "body".to_string(),
-        priority: MemoryPriority::Normal,
-        bootstrap: false,
-        tags: vec![],
-        expected_revision: Some(revision),
-    };
-    let updated = db
-        .set_project_memory_attributed(&memory_scope_id, &scope_meta, &current, real_update.clone())
-        .unwrap();
-    real_update.expected_revision = Some(updated.record.revision.clone());
-    let after = db
-        .get_project_memory_scope(&memory_scope_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(after.scope.identity_state, MEMORY_SCOPE_IDENTITY_ATTRIBUTED);
-    assert_eq!(after.memories[0].created_by_kind, MEMORY_PROVENANCE_LEGACY);
-    assert_eq!(after.memories[0].updated_by_kind, current.kind);
-}
-
-#[test]
 fn purge_is_catalog_fenced_atomic_and_desired_state_idempotent() {
     let tmp = tempfile::tempdir().unwrap();
     let db = Database::open(&tmp.path().join("purge.db")).unwrap();
@@ -1249,7 +862,7 @@ fn corrupted_scope_or_provenance_metadata_fails_closed() {
         (
             "provenance_digest",
             "UPDATE project_memories
-             SET created_by_kind = 'shared-key', created_by_principal_digest = NULL;",
+             SET created_by_kind = 'shared-key', created_by_principal_digest = 'wc_memprincipal_bad';",
         ),
         (
             "provenance_kind",
@@ -1300,7 +913,7 @@ fn lifecycle_scope_list_fails_closed_when_scope_metadata_is_missing() {
 }
 
 #[test]
-fn memory_schema_migration_fails_closed_without_partial_indexes() {
+fn unsupported_memory_schema_fails_closed_without_partial_indexes() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("broken-memory-schema.db");
     let raw = Connection::open(&path).unwrap();
@@ -1331,12 +944,12 @@ fn memory_schema_migration_fails_closed_without_partial_indexes() {
         .unwrap();
     assert_eq!(
         index_count, 0,
-        "failed migration must not leave partial indexes"
+        "unsupported schema must not leave partial indexes"
     );
 }
 
 #[test]
-fn memory_schema_is_additive_and_preserves_existing_database_data() {
+fn memory_schema_initialization_preserves_unrelated_database_data() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("existing.db");
     let raw = Connection::open(&path).unwrap();

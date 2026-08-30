@@ -73,9 +73,6 @@ impl Database {
 
     fn init_tables(&self) -> anyhow::Result<()> {
         let mut conn = self.conn.lock().unwrap();
-        // Drop prototype tables that no longer have product callers.
-        Self::drop_legacy_tables(&conn)?;
-
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS users (
@@ -184,6 +181,10 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_action_events_session_started
                 ON action_events(session_id, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_action_events_principal_user_started
+                ON action_events(principal_user_id, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_action_events_oauth_client_started
+                ON action_events(oauth_client_id, started_at DESC);
 
             CREATE TABLE IF NOT EXISTS oauth_clients (
                 id TEXT PRIMARY KEY,
@@ -206,6 +207,10 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_oauth_clients_client_id ON oauth_clients(client_id);
             CREATE INDEX IF NOT EXISTS idx_oauth_clients_owner ON oauth_clients(owner_user_id);
+            CREATE INDEX IF NOT EXISTS idx_oauth_clients_project_owner
+                ON oauth_clients(owner_project_grant_id);
+            CREATE INDEX IF NOT EXISTS idx_oauth_clients_shared_key_owner
+                ON oauth_clients(owner_shared_key_hash);
 
             CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
                 id TEXT PRIMARY KEY,
@@ -315,6 +320,7 @@ impl Database {
                     CHECK(status IN ('active', 'ready_for_review', 'accepted', 'rejected')),
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
+                guidance_seen_seq INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(project_id) REFERENCES wc_projects(id)
             );
             CREATE INDEX IF NOT EXISTS idx_wc_tasks_owner_project
@@ -403,6 +409,7 @@ impl Database {
                 expires_at INTEGER NOT NULL,
                 decided_by TEXT,
                 decided_at INTEGER,
+                decision_reason TEXT,
                 consumed_at INTEGER,
                 CHECK(expires_at > requested_at),
                 UNIQUE(task_id, run_id, action_hash),
@@ -584,6 +591,8 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_workspace_activity_id
                 ON workspace_activity(id DESC);
+            CREATE INDEX IF NOT EXISTS idx_workspace_activity_scope
+                ON workspace_activity(scope_kind, scope_id, id DESC);
             ",
         )?;
 
@@ -596,55 +605,19 @@ impl Database {
         // all stable references are enforceable by foreign keys.
         Self::ensure_agent_wake_schema(&mut conn)?;
 
-        // Phase-4B project Memory is an additive migration with its own
-        // transaction boundary. A failed table/index creation cannot expose a
-        // partially initialized Memory store on an otherwise existing DB.
+        // Project Memory was introduced after v0.3.9. Only the current schema is
+        // supported; development-only intermediate shapes are rejected.
         Self::ensure_project_memory_schema(&mut conn)?;
 
-        // Optional additive columns for older single-file DBs that predate the
-        // current CREATE TABLE definitions. OAuth subject shape is not migrated:
-        // tables are always created with the current schema, and pre-subject
-        // layouts are unsupported (recreate the OAuth tables if needed).
-        Self::ensure_users_and_api_key_columns(&conn)?;
-        Self::ensure_oauth_client_owner_columns(&conn)?;
-        Self::ensure_action_event_attribution_columns(&conn)?;
-        Self::ensure_connector_execution_columns(&conn)?;
-        Self::ensure_connector_task_columns(&conn)?;
-        Self::ensure_connector_task_modes(&conn)?;
-        Self::ensure_activity_scope_columns(&conn)?;
+        // wc_executions already existed in v0.3.9. Preserve exactly that public
+        // upgrade boundary for fields added after the release; older or partial
+        // development shapes are unsupported.
+        Self::migrate_v039_execution_columns(&conn)?;
         Ok(())
     }
 
     fn ensure_project_memory_schema(conn: &mut Connection) -> anyhow::Result<()> {
-        const V1_COLUMNS: &[&str] = &[
-            "memory_id",
-            "memory_scope_id",
-            "memory_key",
-            "summary",
-            "body",
-            "priority",
-            "bootstrap",
-            "tags_json",
-            "revision",
-            "created_at_unix_ms",
-            "updated_at_unix_ms",
-        ];
-        const V2_COLUMNS: &[&str] = &[
-            "memory_id",
-            "memory_scope_id",
-            "memory_key",
-            "summary",
-            "body",
-            "priority",
-            "bootstrap",
-            "tags_json",
-            "definition_hash",
-            "generation",
-            "revision",
-            "created_at_unix_ms",
-            "updated_at_unix_ms",
-        ];
-        const V3_COLUMNS: &[&str] = &[
+        const MEMORY_COLUMNS: &[&str] = &[
             "memory_id",
             "memory_scope_id",
             "memory_key",
@@ -672,7 +645,7 @@ impl Database {
             "created_at_unix_ms",
             "last_mutated_at_unix_ms",
         ];
-        const CREATE_V3_TABLE: &str = "
+        const CREATE_TABLES: &str = "
             CREATE TABLE project_memories (
                 memory_id TEXT PRIMARY KEY,
                 memory_scope_id TEXT NOT NULL,
@@ -688,31 +661,19 @@ impl Database {
                 created_at_unix_ms INTEGER NOT NULL,
                 updated_at_unix_ms INTEGER NOT NULL,
                 created_by_kind TEXT NOT NULL,
-                created_by_principal_digest TEXT,
+                created_by_principal_digest TEXT NOT NULL,
                 updated_by_kind TEXT NOT NULL,
-                updated_by_principal_digest TEXT,
+                updated_by_principal_digest TEXT NOT NULL,
                 UNIQUE(memory_scope_id, memory_key)
-            );";
-        const CREATE_SCOPE_TABLE: &str = "
+            );
             CREATE TABLE project_memory_scopes (
                 memory_scope_id TEXT PRIMARY KEY,
-                identity_state TEXT NOT NULL CHECK(identity_state IN ('attributed', 'legacy_unattributed')),
-                project_runtime_id TEXT,
-                runner_client_id TEXT,
-                root_fingerprint TEXT,
+                identity_state TEXT NOT NULL CHECK(identity_state = 'attributed'),
+                project_runtime_id TEXT NOT NULL,
+                runner_client_id TEXT NOT NULL,
+                root_fingerprint TEXT NOT NULL,
                 created_at_unix_ms INTEGER NOT NULL,
-                last_mutated_at_unix_ms INTEGER NOT NULL,
-                CHECK(
-                    (identity_state = 'legacy_unattributed'
-                        AND project_runtime_id IS NULL
-                        AND runner_client_id IS NULL
-                        AND root_fingerprint IS NULL)
-                    OR
-                    (identity_state = 'attributed'
-                        AND project_runtime_id IS NOT NULL
-                        AND runner_client_id IS NOT NULL
-                        AND root_fingerprint IS NOT NULL)
-                )
+                last_mutated_at_unix_ms INTEGER NOT NULL
             );";
         const CREATE_INDEXES: &str = "
             CREATE INDEX IF NOT EXISTS idx_project_memories_scope_key
@@ -722,235 +683,30 @@ impl Database {
 
         let transaction = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .context("begin project Memory schema migration")?;
-        let columns = table_columns(&transaction, "project_memories")?;
-        let fresh = columns.is_empty();
-        let mut backfill_scope_metadata = false;
-        let matches_columns = |expected: &[&str]| {
-            columns
+            .context("begin project Memory schema initialization")?;
+        let memory_columns = table_columns(&transaction, "project_memories")?;
+        let scope_columns = table_columns(&transaction, "project_memory_scopes")?;
+        let memory_absent = memory_columns.is_empty();
+        let scope_absent = scope_columns.is_empty();
+
+        if memory_absent && scope_absent {
+            transaction
+                .execute_batch(CREATE_TABLES)
+                .context("create current project Memory schema")?;
+        } else {
+            let memory_shape_matches = memory_columns
                 .iter()
                 .map(String::as_str)
-                .eq(expected.iter().copied())
-        };
-
-        if columns.is_empty() {
-            transaction
-                .execute_batch(CREATE_V3_TABLE)
-                .context("create project Memory v3 table")?;
-        } else if matches_columns(V1_COLUMNS) {
-            backfill_scope_metadata = true;
-            // Current #203 schema. Rebuild instead of ALTERing nullable columns:
-            // every legacy row must be validated before it can acquire trusted
-            // v2 definition/state identities, and any failure rolls back the
-            // entire rename/copy/index sequence.
-            transaction.execute_batch(
-                "DROP INDEX IF EXISTS idx_project_memories_scope_key;
-                 DROP INDEX IF EXISTS idx_project_memories_scope_bootstrap;
-                 ALTER TABLE project_memories RENAME TO project_memories_v1;",
-            )?;
-            transaction
-                .execute_batch(CREATE_V3_TABLE)
-                .context("create project Memory v3 table during migration")?;
-
-            let rows = {
-                let mut statement = transaction.prepare(
-                    "SELECT memory_id, memory_scope_id, memory_key, summary, body, priority,
-                            bootstrap, tags_json, revision, created_at_unix_ms, updated_at_unix_ms,
-                            length(memory_id), length(memory_scope_id), length(memory_key),
-                            length(summary), length(CAST(body AS BLOB)), length(priority),
-                            length(CAST(tags_json AS BLOB)), length(revision)
-                     FROM project_memories_v1 ORDER BY memory_scope_id, memory_key",
-                )?;
-                let rows = statement
-                    .query_map([], |row| {
-                        super::memory::validate_legacy_memory_row_lengths(
-                            row.get::<_, i64>(11)?,
-                            row.get::<_, i64>(12)?,
-                            row.get::<_, i64>(13)?,
-                            row.get::<_, i64>(14)?,
-                            row.get::<_, i64>(15)?,
-                            row.get::<_, i64>(16)?,
-                            row.get::<_, i64>(17)?,
-                            row.get::<_, i64>(18)?,
-                        )
-                        .map_err(|_| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                11,
-                                rusqlite::types::Type::Integer,
-                                "legacy Memory row exceeds bounded shape".into(),
-                            )
-                        })?;
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                            row.get::<_, String>(4)?,
-                            row.get::<_, String>(5)?,
-                            row.get::<_, i64>(6)?,
-                            row.get::<_, String>(7)?,
-                            row.get::<_, String>(8)?,
-                            row.get::<_, i64>(9)?,
-                            row.get::<_, i64>(10)?,
-                        ))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-                rows
-            };
-            for (
-                memory_id,
-                memory_scope_id,
-                memory_key,
-                summary,
-                body,
-                priority,
-                bootstrap,
-                tags_json,
-                legacy_revision,
-                created_at_unix_ms,
-                updated_at_unix_ms,
-            ) in rows
-            {
-                let (definition_hash, revision) =
-                    super::memory::validate_legacy_memory_row_identity(
-                        &memory_id,
-                        &memory_scope_id,
-                        &memory_key,
-                        &summary,
-                        &body,
-                        &priority,
-                        bootstrap,
-                        &tags_json,
-                        &legacy_revision,
-                        created_at_unix_ms,
-                        updated_at_unix_ms,
-                    )
-                    .map_err(|_| anyhow::anyhow!("malformed #203 project Memory row"))?;
-                transaction.execute(
-                    "INSERT INTO project_memories
-                     (memory_id, memory_scope_id, memory_key, summary, body, priority, bootstrap,
-                      tags_json, definition_hash, generation, revision,
-                      created_at_unix_ms, updated_at_unix_ms,
-                      created_by_kind, created_by_principal_digest,
-                      updated_by_kind, updated_by_principal_digest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12,
-                             'legacy_unattributed', NULL, 'legacy_unattributed', NULL)",
-                    rusqlite::params![
-                        memory_id,
-                        memory_scope_id,
-                        memory_key,
-                        summary,
-                        body,
-                        priority,
-                        bootstrap,
-                        tags_json,
-                        definition_hash,
-                        revision,
-                        created_at_unix_ms,
-                        updated_at_unix_ms,
-                    ],
-                )?;
+                .eq(MEMORY_COLUMNS.iter().copied());
+            let scope_shape_matches = scope_columns
+                .iter()
+                .map(String::as_str)
+                .eq(SCOPE_COLUMNS.iter().copied());
+            if !memory_shape_matches || !scope_shape_matches {
+                anyhow::bail!(
+                    "unsupported project Memory schema shape; recreate post-v0.3.9 development state"
+                );
             }
-            transaction.execute_batch("DROP TABLE project_memories_v1;")?;
-        } else if matches_columns(V2_COLUMNS) {
-            backfill_scope_metadata = true;
-            {
-                let mut statement = transaction.prepare(
-                    "SELECT memory_id, memory_scope_id, memory_key, summary, body, priority,
-                            bootstrap, tags_json, definition_hash, generation, revision,
-                            created_at_unix_ms, updated_at_unix_ms,
-                            length(memory_id), length(memory_scope_id), length(memory_key),
-                            length(summary), length(CAST(body AS BLOB)), length(priority),
-                            length(CAST(tags_json AS BLOB)), length(definition_hash), length(revision)
-                     FROM project_memories ORDER BY memory_scope_id, memory_key",
-                )?;
-                statement
-                    .query_map([], |row| {
-                        super::memory::validate_current_memory_v2_row_lengths(
-                            row.get::<_, i64>(13)?,
-                            row.get::<_, i64>(14)?,
-                            row.get::<_, i64>(15)?,
-                            row.get::<_, i64>(16)?,
-                            row.get::<_, i64>(17)?,
-                            row.get::<_, i64>(18)?,
-                            row.get::<_, i64>(19)?,
-                            row.get::<_, i64>(20)?,
-                            row.get::<_, i64>(21)?,
-                        )
-                        .map_err(|_| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                13,
-                                rusqlite::types::Type::Integer,
-                                "current Memory row exceeds bounded shape".into(),
-                            )
-                        })?;
-                        super::memory::validate_current_memory_v2_row_identity(
-                            &row.get::<_, String>(0)?,
-                            &row.get::<_, String>(1)?,
-                            &row.get::<_, String>(2)?,
-                            &row.get::<_, String>(3)?,
-                            &row.get::<_, String>(4)?,
-                            &row.get::<_, String>(5)?,
-                            row.get::<_, i64>(6)?,
-                            &row.get::<_, String>(7)?,
-                            &row.get::<_, String>(8)?,
-                            row.get::<_, i64>(9)?,
-                            &row.get::<_, String>(10)?,
-                            row.get::<_, i64>(11)?,
-                            row.get::<_, i64>(12)?,
-                        )
-                        .map_err(|_| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                0,
-                                rusqlite::types::Type::Text,
-                                "malformed #205 project Memory row".into(),
-                            )
-                        })?;
-                        Ok(())
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-            }
-            transaction.execute_batch(
-                "ALTER TABLE project_memories
-                    ADD COLUMN created_by_kind TEXT NOT NULL DEFAULT 'legacy_unattributed';
-                 ALTER TABLE project_memories
-                    ADD COLUMN created_by_principal_digest TEXT;
-                 ALTER TABLE project_memories
-                    ADD COLUMN updated_by_kind TEXT NOT NULL DEFAULT 'legacy_unattributed';
-                 ALTER TABLE project_memories
-                    ADD COLUMN updated_by_principal_digest TEXT;",
-            )?;
-        } else if !matches_columns(V3_COLUMNS) {
-            anyhow::bail!("unsupported project Memory schema shape");
-        }
-
-        let scope_columns = table_columns(&transaction, "project_memory_scopes")?;
-        let scope_shape_matches = scope_columns
-            .iter()
-            .map(String::as_str)
-            .eq(SCOPE_COLUMNS.iter().copied());
-        if scope_columns.is_empty() {
-            if !fresh && !backfill_scope_metadata {
-                anyhow::bail!("project Memory scope metadata is missing");
-            }
-            transaction
-                .execute_batch(CREATE_SCOPE_TABLE)
-                .context("create project Memory scope metadata table")?;
-        } else if !scope_shape_matches {
-            anyhow::bail!("unsupported project Memory scope schema shape");
-        }
-
-        if backfill_scope_metadata {
-            transaction.execute(
-                "INSERT INTO project_memory_scopes
-                 (memory_scope_id, identity_state, project_runtime_id, runner_client_id,
-                  root_fingerprint, created_at_unix_ms, last_mutated_at_unix_ms)
-                 SELECT memory_scope_id, 'legacy_unattributed', NULL, NULL, NULL,
-                        MIN(created_at_unix_ms), MAX(updated_at_unix_ms)
-                 FROM project_memories
-                 GROUP BY memory_scope_id",
-                [],
-            )?;
         }
 
         transaction
@@ -958,410 +714,93 @@ impl Database {
             .context("create project Memory indexes")?;
         transaction
             .commit()
-            .context("commit project Memory schema migration")?;
+            .context("commit project Memory schema initialization")?;
         Ok(())
     }
 
-    /// Remove tables that belonged to retired product surfaces (inbox messages,
-    /// codex goals/commands, outbound agent specs with plaintext secrets, and
-    /// desktop task prototypes). No remaining code path reads or writes these.
-    fn drop_legacy_tables(conn: &Connection) -> anyhow::Result<()> {
-        conn.execute_batch(
-            "
-            DROP TABLE IF EXISTS messages;
-            DROP TABLE IF EXISTS command_requests;
-            DROP TABLE IF EXISTS codex_goals;
-            DROP TABLE IF EXISTS agent_specs;
-            DROP TABLE IF EXISTS agent_model_profiles;
-            DROP TABLE IF EXISTS desktop_tasks;
-            DROP TABLE IF EXISTS desktop_task_events;
-            ",
-        )?;
-        Ok(())
-    }
+    fn migrate_v039_execution_columns(conn: &Connection) -> anyhow::Result<()> {
+        const V039_REQUIRED_COLUMNS: &[&str] = &[
+            "id",
+            "kind",
+            "task_id",
+            "run_id",
+            "state",
+            "submitted_at",
+            "queued_at",
+            "queue_deadline",
+            "started_at",
+            "last_output_at",
+            "finished_at",
+            "stdout_cursor",
+            "stderr_cursor",
+            "exit_code",
+            "failure_source",
+            "failure_code",
+            "cancel_requested_at",
+            "terminal_reason",
+            "operation_id",
+            "request_sha256",
+            "executor_reference",
+            "first_status_failure_at",
+            "last_successful_observation_at",
+            "status_failure_code",
+            "check_plan",
+            "check_recipe_json",
+            "check_completed",
+            "check_workspace_sha256",
+            "validated_workspace_sha256",
+            "failed_check",
+            "assertion_evidence_json",
+        ];
+        const POST_V039_COLUMNS: &[&str] = &[
+            "terminal_continuation_intent",
+            "terminal_continuation_armed_at",
+            "terminal_continuation_delivery_state",
+            "terminal_continuation_claim_fence",
+            "mcp_task_materialized_at",
+            "mcp_task_result_finalized_at",
+            "mcp_task_output_tail_json",
+        ];
 
-    /// Ensure `users` / `api_keys` carry the current additive columns. Fresh DBs
-    /// already declare them in CREATE TABLE; this only backfills missing columns
-    /// on older files without rewriting rows.
-    fn ensure_users_and_api_key_columns(conn: &Connection) -> anyhow::Result<()> {
-        let user_cols = table_columns(conn, "users")?;
-        for (col, decl) in [
-            ("display_name", "TEXT"),
-            ("role", "TEXT NOT NULL DEFAULT 'user'"),
-            ("disabled_at", "INTEGER"),
-            ("updated_at", "INTEGER"),
-        ] {
-            if !user_cols.iter().any(|c| c == col) {
-                conn.execute(
-                    &format!("ALTER TABLE users ADD COLUMN {} {}", col, decl),
-                    [],
-                )?;
-            }
-        }
-        let key_cols = table_columns(conn, "api_keys")?;
-        for (col, decl) in [
-            ("scopes", "TEXT NOT NULL DEFAULT ''"),
-            ("expires_at", "INTEGER"),
-            ("kind", "TEXT NOT NULL DEFAULT 'user'"),
-            ("allowed_client_id", "TEXT"),
-        ] {
-            if !key_cols.iter().any(|c| c == col) {
-                conn.execute(
-                    &format!("ALTER TABLE api_keys ADD COLUMN {} {}", col, decl),
-                    [],
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Allow an OAuth client to be owned by exactly one managed user, project
-    /// grant, or shared-key group. Older schemas lack one or both alternative
-    /// owner columns, so changing the CHECK constraint requires a bounded SQLite
-    /// table rebuild. Existing rows preserve their current owner exactly.
-    fn ensure_oauth_client_owner_columns(conn: &Connection) -> anyhow::Result<()> {
-        let columns = table_columns(conn, "oauth_clients")?;
-        let has_project_owner = columns
-            .iter()
-            .any(|column| column == "owner_project_grant_id");
-        let has_shared_key_owner = columns
-            .iter()
-            .any(|column| column == "owner_shared_key_hash");
-        let table_sql: String = conn.query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'oauth_clients'",
-            [],
-            |row| row.get(0),
-        )?;
-        if has_project_owner
-            && has_shared_key_owner
-            && !table_sql.contains("owner_user_id TEXT NOT NULL")
-            && table_sql.contains("owner_shared_key_hash IS NOT NULL")
-        {
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_oauth_clients_project_owner
-                 ON oauth_clients(owner_project_grant_id)",
-                [],
-            )?;
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_oauth_clients_shared_key_owner
-                 ON oauth_clients(owner_shared_key_hash)",
-                [],
-            )?;
-            return Ok(());
-        }
-
-        conn.execute_batch("PRAGMA foreign_keys = OFF;")
-            .context("disable foreign keys for OAuth client owner migration")?;
-        let migration = (|| -> anyhow::Result<()> {
-            conn.execute_batch("BEGIN IMMEDIATE;")
-                .context("begin OAuth client owner migration")?;
-            conn.execute_batch(
-                "
-                CREATE TABLE oauth_clients_owner_migration (
-                    id TEXT PRIMARY KEY,
-                    client_id TEXT NOT NULL UNIQUE,
-                    client_secret_hash TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    owner_user_id TEXT,
-                    owner_project_grant_id TEXT,
-                    owner_shared_key_hash TEXT,
-                    redirect_uris TEXT NOT NULL DEFAULT '',
-                    allowed_scopes TEXT NOT NULL DEFAULT '',
-                    created_at INTEGER NOT NULL,
-                    revoked_at INTEGER,
-                    CHECK (
-                        (owner_user_id IS NOT NULL AND owner_project_grant_id IS NULL AND owner_shared_key_hash IS NULL)
-                        OR (owner_user_id IS NULL AND owner_project_grant_id IS NOT NULL AND owner_shared_key_hash IS NULL)
-                        OR (owner_user_id IS NULL AND owner_project_grant_id IS NULL AND owner_shared_key_hash IS NOT NULL)
-                    ),
-                    FOREIGN KEY(owner_user_id) REFERENCES users(id)
-                );
-                ",
-            )
-            .context("create OAuth client owner migration table")?;
-            let project_owner_expr = if has_project_owner {
-                "owner_project_grant_id"
-            } else {
-                "NULL"
-            };
-            let shared_key_owner_expr = if has_shared_key_owner {
-                "owner_shared_key_hash"
-            } else {
-                "NULL"
-            };
-            conn.execute_batch(&format!(
-                "INSERT INTO oauth_clients_owner_migration
-                    (id, client_id, client_secret_hash, name, owner_user_id,
-                     owner_project_grant_id, owner_shared_key_hash, redirect_uris,
-                     allowed_scopes, created_at, revoked_at)
-                 SELECT id, client_id, client_secret_hash, name, owner_user_id,
-                        {project_owner_expr}, {shared_key_owner_expr}, redirect_uris,
-                        allowed_scopes, created_at, revoked_at
-                 FROM oauth_clients;
-                 DROP TABLE oauth_clients;
-                 ALTER TABLE oauth_clients_owner_migration RENAME TO oauth_clients;
-                 CREATE INDEX idx_oauth_clients_client_id ON oauth_clients(client_id);
-                 CREATE INDEX idx_oauth_clients_owner ON oauth_clients(owner_user_id);
-                 CREATE INDEX idx_oauth_clients_project_owner ON oauth_clients(owner_project_grant_id);
-                 CREATE INDEX idx_oauth_clients_shared_key_owner ON oauth_clients(owner_shared_key_hash);"
-            ))
-            .context("rebuild oauth_clients for shared-key ownership")?;
-
-            let foreign_key_error = {
-                let mut statement = conn
-                    .prepare("PRAGMA foreign_key_check")
-                    .context("prepare OAuth client owner foreign key check")?;
-                statement
-                    .exists([])
-                    .context("query OAuth client owner foreign key check")?
-            };
-            if foreign_key_error {
-                anyhow::bail!("OAuth client owner migration foreign_key_check found a violation");
-            }
-            conn.execute_batch("COMMIT;")
-                .context("commit OAuth client owner migration")?;
-            Ok(())
-        })();
-
-        let migration = match migration {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let _ = conn.execute_batch("ROLLBACK;");
-                Err(error)
-            }
-        };
-        let restore = restore_foreign_keys(conn);
-        match (migration, restore) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(error), Ok(())) => Err(error),
-            (Ok(()), Err(error)) => Err(error),
-            (Err(error), Err(restore_error)) => Err(error.context(format!(
-                "restoring foreign keys also failed: {restore_error:#}"
-            ))),
-        }
-    }
-
-    /// Add exact authenticated-caller attribution to `action_events` on older
-    /// databases. Historical rows intentionally remain NULL: caller identity
-    /// cannot be reconstructed safely from session, target project, or client.
-    fn ensure_action_event_attribution_columns(conn: &Connection) -> anyhow::Result<()> {
-        let columns = table_columns(conn, "action_events")?;
-        for column in ["principal_kind", "principal_user_id", "oauth_client_id"] {
-            if !columns.iter().any(|existing| existing == column) {
-                conn.execute(
-                    &format!("ALTER TABLE action_events ADD COLUMN {} TEXT", column),
-                    [],
-                )?;
-            }
-        }
-        // Created after the additive migration because an existing table may not
-        // have these columns while the base CREATE TABLE batch is running.
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_action_events_principal_user_started
-             ON action_events(principal_user_id, started_at DESC)",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_action_events_oauth_client_started
-             ON action_events(oauth_client_id, started_at DESC)",
-            [],
-        )?;
-        Ok(())
-    }
-
-    /// Add durable attribution to `workspace_activity` on existing databases.
-    ///
-    /// Rows that predate these columns keep `legacy_unscoped`: which grant
-    /// produced them cannot be established after the fact, and guessing from
-    /// the client id is exactly the reinterpretation this is meant to stop. So
-    /// they stay readable to bootstrap/admin and invisible to any project
-    /// credential rather than being deleted or re-attributed.
-    fn ensure_activity_scope_columns(conn: &Connection) -> anyhow::Result<()> {
-        let columns = table_columns(conn, "workspace_activity")?;
-        if !columns.iter().any(|existing| existing == "scope_kind") {
-            conn.execute(
-                "ALTER TABLE workspace_activity
-                 ADD COLUMN scope_kind TEXT NOT NULL DEFAULT 'legacy_unscoped'",
-                [],
-            )?;
-        }
-        if !columns.iter().any(|existing| existing == "scope_id") {
-            conn.execute(
-                "ALTER TABLE workspace_activity ADD COLUMN scope_id TEXT",
-                [],
-            )?;
-        }
-        // Created here rather than in the base DDL: on an existing database the
-        // columns do not exist until the ALTERs above have run.
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_workspace_activity_scope
-             ON workspace_activity(scope_kind, scope_id, id DESC)",
-            [],
-        )?;
-        Ok(())
-    }
-
-    fn ensure_connector_task_columns(conn: &Connection) -> anyhow::Result<()> {
-        let columns = table_columns(conn, "wc_tasks")?;
-        // Watermark for deliver-once human guidance: capability responses
-        // attach guidance events above this sequence, then advance it.
-        if !columns
-            .iter()
-            .any(|existing| existing == "guidance_seen_seq")
-        {
-            conn.execute(
-                "ALTER TABLE wc_tasks ADD COLUMN guidance_seen_seq INTEGER NOT NULL DEFAULT 0",
-                [],
-            )?;
-        }
-        let activity_columns = table_columns(conn, "workspace_activity")?;
-        if !activity_columns.iter().any(|existing| existing == "client") {
-            conn.execute("ALTER TABLE workspace_activity ADD COLUMN client TEXT", [])?;
-        }
-        let approval_columns = table_columns(conn, "wc_approvals")?;
-        if !approval_columns
-            .iter()
-            .any(|existing| existing == "decision_reason")
-        {
-            conn.execute(
-                "ALTER TABLE wc_approvals ADD COLUMN decision_reason TEXT",
-                [],
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Expand the connector task-mode constraint on databases created before
-    /// `inspect` became a persisted mode. SQLite cannot alter a CHECK
-    /// constraint in place, so rebuild only this table while preserving rows
-    /// and the stable table name referenced by child tables.
-    fn ensure_connector_task_modes(conn: &Connection) -> anyhow::Result<()> {
-        let table_sql: String = conn.query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'wc_tasks'",
-            [],
-            |row| row.get(0),
-        )?;
-        if table_sql.contains("'inspect'") {
-            return Ok(());
-        }
-
-        let migration = match conn.execute_batch("PRAGMA foreign_keys = OFF;") {
-            Ok(()) => (|| -> anyhow::Result<()> {
-                conn.execute_batch("BEGIN IMMEDIATE;")
-                    .context("begin connector task mode migration")?;
-                conn.execute_batch(
-                    "
-                    CREATE TABLE wc_tasks_inspect_migration (
-                        id TEXT PRIMARY KEY,
-                        project_id TEXT NOT NULL,
-                        owner_subject_id TEXT NOT NULL,
-                        goal TEXT NOT NULL,
-                        mode TEXT NOT NULL CHECK(mode IN ('normal', 'inspect', 'read_only')),
-                        status TEXT NOT NULL
-                            CHECK(status IN ('active', 'ready_for_review', 'accepted', 'rejected')),
-                        created_at INTEGER NOT NULL,
-                        updated_at INTEGER NOT NULL,
-                        guidance_seen_seq INTEGER NOT NULL DEFAULT 0,
-                        FOREIGN KEY(project_id) REFERENCES wc_projects(id)
-                    );
-                    INSERT INTO wc_tasks_inspect_migration
-                        (id, project_id, owner_subject_id, goal, mode, status,
-                         created_at, updated_at, guidance_seen_seq)
-                    SELECT id, project_id, owner_subject_id, goal, mode, status,
-                           created_at, updated_at, guidance_seen_seq
-                    FROM wc_tasks;
-                    DROP TABLE wc_tasks;
-                    ALTER TABLE wc_tasks_inspect_migration RENAME TO wc_tasks;
-                    CREATE INDEX idx_wc_tasks_owner_project
-                        ON wc_tasks(owner_subject_id, project_id, updated_at DESC);
-                    ",
-                )
-                .context("rebuild wc_tasks for inspect task mode")?;
-
-                let foreign_key_error = {
-                    let mut statement = conn
-                        .prepare("PRAGMA foreign_key_check")
-                        .context("prepare connector task mode foreign key check")?;
-                    statement
-                        .exists([])
-                        .context("query connector task mode foreign key check")?
-                };
-                if foreign_key_error {
-                    anyhow::bail!(
-                        "connector task mode migration foreign_key_check found a violation"
-                    );
-                }
-                conn.execute_batch("COMMIT;")
-                    .context("commit connector task mode migration")?;
-                Ok(())
-            })(),
-            Err(error) => Err(anyhow::Error::new(error)
-                .context("disable foreign keys for connector task mode migration")),
-        };
-
-        let migration = match migration {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let rollback = conn.execute_batch("ROLLBACK;");
-                if let Err(rollback_error) = rollback {
-                    if !conn.is_autocommit() {
-                        Err(error.context(format!(
-                            "connector task mode rollback also failed: {rollback_error}"
-                        )))
-                    } else {
-                        Err(error)
-                    }
-                } else {
-                    Err(error)
-                }
-            }
-        };
-        let restore = restore_foreign_keys(conn);
-        match (migration, restore) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(error), Ok(())) => Err(error),
-            (Ok(()), Err(restore_error)) => Err(restore_error),
-            (Err(error), Err(restore_error)) => Err(error.context(format!(
-                "restoring foreign_keys after connector task mode migration also failed: \
-                 {restore_error:#}"
-            ))),
-        }
-    }
-
-    fn ensure_connector_execution_columns(conn: &Connection) -> anyhow::Result<()> {
         let columns = table_columns(conn, "wc_executions")?;
-        for (column, declaration) in [
-            ("check_plan", "TEXT"),
-            ("check_recipe_json", "TEXT"),
-            ("check_completed", "INTEGER NOT NULL DEFAULT 0"),
-            ("check_workspace_sha256", "TEXT"),
-            ("validated_workspace_sha256", "TEXT"),
-            ("failed_check", "TEXT"),
-            ("assertion_evidence_json", "TEXT"),
-            (
-                "terminal_continuation_intent",
-                "TEXT NOT NULL DEFAULT 'none' CHECK(terminal_continuation_intent IN ('none', 'armed_for_terminal'))",
-            ),
-            ("terminal_continuation_armed_at", "INTEGER"),
-            (
-                "terminal_continuation_delivery_state",
-                "TEXT NOT NULL DEFAULT 'unclaimed' CHECK(terminal_continuation_delivery_state IN ('unclaimed', 'claimed', 'dispatching', 'delivered', 'delivery_unknown'))",
-            ),
-            (
-                "terminal_continuation_claim_fence",
-                "TEXT CHECK(terminal_continuation_claim_fence IS NULL OR (length(terminal_continuation_claim_fence) BETWEEN 1 AND 80))",
-            ),
-            ("mcp_task_materialized_at", "INTEGER"),
-            ("mcp_task_result_finalized_at", "INTEGER"),
-            ("mcp_task_output_tail_json", "TEXT"),
-        ] {
-            if !columns.iter().any(|existing| existing == column) {
-                conn.execute(
-                    &format!("ALTER TABLE wc_executions ADD COLUMN {column} {declaration}"),
-                    [],
-                )?;
-            }
+        let v039_shape = V039_REQUIRED_COLUMNS
+            .iter()
+            .copied()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let current_shape = V039_REQUIRED_COLUMNS
+            .iter()
+            .chain(POST_V039_COLUMNS.iter())
+            .copied()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if columns == current_shape {
+            return Ok(());
         }
+        if columns != v039_shape {
+            anyhow::bail!(
+                "unsupported wc_executions schema; only v0.3.9 or the current shape is accepted"
+            );
+        }
+
+        conn.execute_batch(
+            "ALTER TABLE wc_executions
+                 ADD COLUMN terminal_continuation_intent TEXT NOT NULL DEFAULT 'none'
+                 CHECK(terminal_continuation_intent IN ('none', 'armed_for_terminal'));
+             ALTER TABLE wc_executions
+                 ADD COLUMN terminal_continuation_armed_at INTEGER;
+             ALTER TABLE wc_executions
+                 ADD COLUMN terminal_continuation_delivery_state TEXT NOT NULL DEFAULT 'unclaimed'
+                 CHECK(terminal_continuation_delivery_state IN
+                     ('unclaimed', 'claimed', 'dispatching', 'delivered', 'delivery_unknown'));
+             ALTER TABLE wc_executions
+                 ADD COLUMN terminal_continuation_claim_fence TEXT
+                 CHECK(terminal_continuation_claim_fence IS NULL OR
+                     (length(terminal_continuation_claim_fence) BETWEEN 1 AND 80));
+             ALTER TABLE wc_executions ADD COLUMN mcp_task_materialized_at INTEGER;
+             ALTER TABLE wc_executions ADD COLUMN mcp_task_result_finalized_at INTEGER;
+             ALTER TABLE wc_executions ADD COLUMN mcp_task_output_tail_json TEXT;",
+        )?;
         Ok(())
     }
 }
@@ -1376,35 +815,60 @@ fn table_columns(conn: &Connection, table: &str) -> anyhow::Result<Vec<String>> 
     Ok(cols)
 }
 
-fn restore_foreign_keys(conn: &Connection) -> anyhow::Result<()> {
-    conn.execute_batch("PRAGMA foreign_keys = ON;")
-        .context("restore foreign_keys after connector task mode migration")?;
-    let enabled: i64 = conn
-        .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
-        .context("verify foreign_keys after connector task mode migration")?;
-    if enabled != 1 {
-        anyhow::bail!(
-            "foreign_keys remained disabled after connector task mode migration (value {enabled})"
-        );
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod connector_execution_column_tests {
     use super::*;
 
-    #[test]
-    fn legacy_execution_rows_migrate_to_unarmed_terminal_continuation() {
-        let conn = Connection::open_in_memory().unwrap();
+    fn create_v039_execution_schema(conn: &Connection) {
         conn.execute_batch(
-            "CREATE TABLE wc_executions (id TEXT PRIMARY KEY, state TEXT NOT NULL);
-             INSERT INTO wc_executions (id, state) VALUES ('legacy', 'succeeded');",
+            "CREATE TABLE wc_executions (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                state TEXT NOT NULL,
+                submitted_at INTEGER NOT NULL,
+                queued_at INTEGER,
+                queue_deadline INTEGER NOT NULL,
+                started_at INTEGER,
+                last_output_at INTEGER,
+                finished_at INTEGER,
+                stdout_cursor INTEGER NOT NULL DEFAULT 1,
+                stderr_cursor INTEGER NOT NULL DEFAULT 1,
+                exit_code INTEGER,
+                failure_source TEXT,
+                failure_code TEXT,
+                cancel_requested_at INTEGER,
+                terminal_reason TEXT,
+                operation_id TEXT NOT NULL,
+                request_sha256 TEXT NOT NULL,
+                executor_reference TEXT,
+                first_status_failure_at INTEGER,
+                last_successful_observation_at INTEGER,
+                status_failure_code TEXT,
+                check_plan TEXT,
+                check_recipe_json TEXT,
+                check_completed INTEGER NOT NULL DEFAULT 0,
+                check_workspace_sha256 TEXT,
+                validated_workspace_sha256 TEXT,
+                failed_check TEXT,
+                assertion_evidence_json TEXT
+            );
+            INSERT INTO wc_executions (
+                id, kind, task_id, run_id, state, submitted_at, queue_deadline,
+                operation_id, request_sha256
+            ) VALUES ('released', 'command', 'task', 'run', 'succeeded', 1, 2, 'op', 'sha');",
         )
         .unwrap();
+    }
 
-        Database::ensure_connector_execution_columns(&conn).unwrap();
-        Database::ensure_connector_execution_columns(&conn).unwrap();
+    #[test]
+    fn v039_execution_rows_migrate_to_current_terminal_continuation_shape() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_v039_execution_schema(&conn);
+
+        Database::migrate_v039_execution_columns(&conn).unwrap();
+        Database::migrate_v039_execution_columns(&conn).unwrap();
 
         let restored: (
             String,
@@ -1421,7 +885,7 @@ mod connector_execution_column_tests {
                         terminal_continuation_delivery_state, terminal_continuation_claim_fence,
                         mcp_task_materialized_at, mcp_task_result_finalized_at,
                         mcp_task_output_tail_json
-                 FROM wc_executions WHERE id = 'legacy'",
+                 FROM wc_executions WHERE id = 'released'",
                 [],
                 |row| {
                     Ok((
@@ -1451,141 +915,18 @@ mod connector_execution_column_tests {
             )
         );
     }
-}
-
-#[cfg(test)]
-mod connector_task_mode_tests {
-    use super::*;
 
     #[test]
-    fn connector_task_mode_migration_rolls_back_foreign_key_failure() {
+    fn partial_post_v039_execution_schema_is_rejected() {
         let conn = Connection::open_in_memory().unwrap();
+        create_v039_execution_schema(&conn);
         conn.execute_batch(
-            "
-            PRAGMA foreign_keys = OFF;
-            CREATE TABLE wc_projects (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-            CREATE TABLE wc_tasks (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                owner_subject_id TEXT NOT NULL,
-                goal TEXT NOT NULL,
-                mode TEXT NOT NULL CHECK(mode IN ('normal', 'read_only')),
-                status TEXT NOT NULL
-                    CHECK(status IN ('active', 'ready_for_review', 'accepted', 'rejected')),
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                guidance_seen_seq INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY(project_id) REFERENCES wc_projects(id)
-            );
-            CREATE INDEX idx_wc_tasks_owner_project
-                ON wc_tasks(owner_subject_id, project_id, updated_at DESC);
-            INSERT INTO wc_tasks
-                (id, project_id, owner_subject_id, goal, mode, status,
-                 created_at, updated_at, guidance_seen_seq)
-            VALUES ('task', 'missing-project', 'owner', 'keep me', 'read_only',
-                    'active', 1, 1, 9);
-            PRAGMA foreign_keys = ON;
-            ",
+            "ALTER TABLE wc_executions
+             ADD COLUMN terminal_continuation_intent TEXT NOT NULL DEFAULT 'none';",
         )
         .unwrap();
-        assert_eq!(
-            conn.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            1
-        );
 
-        let error = Database::ensure_connector_task_modes(&conn).unwrap_err();
-        assert!(
-            format!("{error:#}").contains("foreign_key_check"),
-            "{error:#}"
-        );
-        let schema: String = conn
-            .query_row(
-                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'wc_tasks'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(!schema.contains("'inspect'"), "{schema}");
-        assert_eq!(
-            conn.query_row(
-                "SELECT project_id, goal, guidance_seen_seq FROM wc_tasks WHERE id = 'task'",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                },
-            )
-            .unwrap(),
-            ("missing-project".to_string(), "keep me".to_string(), 9)
-        );
-        assert_eq!(
-            conn.query_row(
-                "SELECT COUNT(*) FROM sqlite_master
-                 WHERE type = 'table' AND name = 'wc_tasks_inspect_migration'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap(),
-            0
-        );
-        assert_eq!(
-            conn.query_row(
-                "SELECT COUNT(*) FROM sqlite_master
-                 WHERE type = 'index' AND name = 'idx_wc_tasks_owner_project'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap(),
-            1
-        );
-        assert_eq!(
-            conn.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            1
-        );
-
-        conn.execute(
-            "INSERT INTO wc_projects VALUES ('missing-project', 'Project', 1, 1)",
-            [],
-        )
-        .unwrap();
-        Database::ensure_connector_task_modes(&conn).unwrap();
-        let schema: String = conn
-            .query_row(
-                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'wc_tasks'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(schema.contains("'inspect'"), "{schema}");
-        assert_eq!(
-            conn.query_row(
-                "SELECT mode, goal, guidance_seen_seq FROM wc_tasks WHERE id = 'task'",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                },
-            )
-            .unwrap(),
-            ("read_only".to_string(), "keep me".to_string(), 9)
-        );
-        assert_eq!(
-            conn.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            1
-        );
+        let error = Database::migrate_v039_execution_columns(&conn).unwrap_err();
+        assert!(format!("{error:#}").contains("only v0.3.9 or the current shape"));
     }
 }

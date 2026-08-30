@@ -25,7 +25,6 @@ const MEMORY_ROOT_FINGERPRINT_PREFIX: &str = "wc_memroot_";
 const MEMORY_PRINCIPAL_DIGEST_PREFIX: &str = "wc_memprincipal_";
 const MAX_MEMORY_TAGS_JSON_BYTES: usize = 4 * 1024;
 const MEMORY_PROVENANCE_KINDS: &[&str] = &[
-    MEMORY_PROVENANCE_LEGACY,
     "dev",
     "bootstrap",
     "api_token",
@@ -42,8 +41,6 @@ const MAX_MEMORY_PROJECT_RUNTIME_ID_CHARS: usize = 512;
 const MAX_MEMORY_RUNNER_CLIENT_ID_CHARS: usize = 128;
 
 pub(crate) const MEMORY_SCOPE_IDENTITY_ATTRIBUTED: &str = "attributed";
-pub(crate) const MEMORY_SCOPE_IDENTITY_LEGACY: &str = "legacy_unattributed";
-pub(crate) const MEMORY_PROVENANCE_LEGACY: &str = "legacy_unattributed";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -339,8 +336,7 @@ fn valid_memory_principal_kind(value: &str) -> bool {
 fn validate_principal_attribution(
     attribution: &MemoryPrincipalAttribution,
 ) -> Result<(), MemoryStoreError> {
-    if attribution.kind == MEMORY_PROVENANCE_LEGACY
-        || !valid_bounded_identity_text(&attribution.kind, MAX_MEMORY_PRINCIPAL_KIND_CHARS)
+    if !valid_bounded_identity_text(&attribution.kind, MAX_MEMORY_PRINCIPAL_KIND_CHARS)
         || !valid_memory_principal_kind(&attribution.kind)
         || !valid_memory_principal_digest(&attribution.principal_digest)
     {
@@ -430,22 +426,6 @@ pub(crate) fn memory_definition_hash(
     )
 }
 
-/// #203 stored the definition digest under the `wc_memrev_` prefix. Migration
-/// accepts only rows whose old revision exactly matches this legacy identity.
-pub(super) fn legacy_memory_revision_v1(
-    memory_key: &str,
-    summary: &str,
-    body: &str,
-    priority: MemoryPriority,
-    bootstrap: bool,
-    tags: &[String],
-) -> String {
-    format!(
-        "{MEMORY_REVISION_PREFIX}{:x}",
-        memory_definition_digest(memory_key, summary, body, priority, bootstrap, tags)
-    )
-}
-
 pub(crate) fn memory_state_revision(
     memory_scope_id: &str,
     memory_id: &str,
@@ -489,16 +469,8 @@ fn parse_canonical_tags_json(tags_json: &str) -> Result<Vec<String>, MemoryStore
 fn validate_provenance_pair(kind: &str, digest: Option<&str>) -> Result<(), MemoryStoreError> {
     if !valid_bounded_identity_text(kind, MAX_MEMORY_PRINCIPAL_KIND_CHARS)
         || !valid_memory_principal_kind(kind)
+        || !digest.is_some_and(valid_memory_principal_digest)
     {
-        return Err(MemoryStoreError::DatabaseUnavailable);
-    }
-    if kind == MEMORY_PROVENANCE_LEGACY {
-        if digest.is_some() {
-            return Err(MemoryStoreError::DatabaseUnavailable);
-        }
-        return Ok(());
-    }
-    if !digest.is_some_and(valid_memory_principal_digest) {
         return Err(MemoryStoreError::DatabaseUnavailable);
     }
     Ok(())
@@ -519,7 +491,7 @@ fn parse_scope_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectMemorySco
         (
             8,
             1,
-            MEMORY_SCOPE_IDENTITY_LEGACY.len(),
+            MEMORY_SCOPE_IDENTITY_ATTRIBUTED.len(),
             "invalid Memory scope identity_state length",
         ),
         (
@@ -570,10 +542,6 @@ fn parse_scope_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectMemorySco
         )
     })?;
     match identity_state.as_str() {
-        MEMORY_SCOPE_IDENTITY_LEGACY
-            if project_runtime_id.is_none()
-                && runner_client_id.is_none()
-                && root_fingerprint.is_none() => {}
         MEMORY_SCOPE_IDENTITY_ATTRIBUTED => {
             let attributed = MemoryScopeAttribution {
                 project_runtime_id: project_runtime_id.clone().ok_or_else(|| {
@@ -654,158 +622,6 @@ fn validate_scope_record_for_memories(
         return Err(MemoryStoreError::DatabaseUnavailable);
     }
     Ok(scope)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn validate_legacy_memory_row_lengths(
-    memory_id_chars: i64,
-    memory_scope_chars: i64,
-    memory_key_chars: i64,
-    summary_chars: i64,
-    body_bytes: i64,
-    priority_chars: i64,
-    tags_json_bytes: i64,
-    revision_chars: i64,
-) -> Result<(), MemoryStoreError> {
-    let exact = [
-        (memory_id_chars, MEMORY_ID_PREFIX.len() + 32),
-        (memory_scope_chars, "wc_memscope_".len() + 64),
-        (revision_chars, MEMORY_REVISION_PREFIX.len() + 64),
-    ];
-    if exact
-        .into_iter()
-        .any(|(actual, expected)| actual != expected as i64)
-    {
-        return Err(MemoryStoreError::DatabaseUnavailable);
-    }
-    let bounded = [
-        (memory_key_chars, MAX_MEMORY_KEY_CHARS),
-        (summary_chars, MAX_MEMORY_SUMMARY_CHARS),
-        (body_bytes, MAX_MEMORY_BODY_BYTES),
-        (priority_chars, 6usize),
-        (tags_json_bytes, MAX_MEMORY_TAGS_JSON_BYTES),
-    ];
-    if bounded
-        .into_iter()
-        .any(|(actual, maximum)| actual < 0 || actual as usize > maximum)
-    {
-        return Err(MemoryStoreError::DatabaseUnavailable);
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn validate_legacy_memory_row_identity(
-    memory_id: &str,
-    memory_scope_id: &str,
-    memory_key: &str,
-    summary: &str,
-    body: &str,
-    priority: &str,
-    bootstrap_raw: i64,
-    tags_json: &str,
-    legacy_revision: &str,
-    created_at_unix_ms: i64,
-    updated_at_unix_ms: i64,
-) -> Result<(String, String), MemoryStoreError> {
-    validate_memory_id(memory_id)?;
-    validate_scope(memory_scope_id)?;
-    validate_memory_key(memory_key).map_err(|_| MemoryStoreError::DatabaseUnavailable)?;
-    validate_memory_summary(summary).map_err(|_| MemoryStoreError::DatabaseUnavailable)?;
-    validate_memory_body(body).map_err(|_| MemoryStoreError::DatabaseUnavailable)?;
-    let priority =
-        MemoryPriority::parse(priority).map_err(|_| MemoryStoreError::DatabaseUnavailable)?;
-    let bootstrap = match bootstrap_raw {
-        0 => false,
-        1 => true,
-        _ => return Err(MemoryStoreError::DatabaseUnavailable),
-    };
-    let tags = parse_canonical_tags_json(tags_json)?;
-    validate_timestamp_pair(created_at_unix_ms, updated_at_unix_ms)?;
-    if validate_memory_revision(legacy_revision).is_err()
-        || legacy_memory_revision_v1(memory_key, summary, body, priority, bootstrap, &tags)
-            != legacy_revision
-    {
-        return Err(MemoryStoreError::DatabaseUnavailable);
-    }
-    let definition_hash =
-        memory_definition_hash(memory_key, summary, body, priority, bootstrap, &tags);
-    let revision = memory_state_revision(memory_scope_id, memory_id, 1, &definition_hash);
-    Ok((definition_hash, revision))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn validate_current_memory_v2_row_lengths(
-    memory_id_chars: i64,
-    memory_scope_chars: i64,
-    memory_key_chars: i64,
-    summary_chars: i64,
-    body_bytes: i64,
-    priority_chars: i64,
-    tags_json_bytes: i64,
-    definition_hash_chars: i64,
-    revision_chars: i64,
-) -> Result<(), MemoryStoreError> {
-    validate_legacy_memory_row_lengths(
-        memory_id_chars,
-        memory_scope_chars,
-        memory_key_chars,
-        summary_chars,
-        body_bytes,
-        priority_chars,
-        tags_json_bytes,
-        revision_chars,
-    )?;
-    if definition_hash_chars != (MEMORY_DEFINITION_HASH_PREFIX.len() + 64) as i64 {
-        return Err(MemoryStoreError::DatabaseUnavailable);
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn validate_current_memory_v2_row_identity(
-    memory_id: &str,
-    memory_scope_id: &str,
-    memory_key: &str,
-    summary: &str,
-    body: &str,
-    priority: &str,
-    bootstrap_raw: i64,
-    tags_json: &str,
-    definition_hash: &str,
-    generation_raw: i64,
-    revision: &str,
-    created_at_unix_ms: i64,
-    updated_at_unix_ms: i64,
-) -> Result<(), MemoryStoreError> {
-    validate_memory_id(memory_id)?;
-    validate_scope(memory_scope_id)?;
-    validate_memory_key(memory_key).map_err(|_| MemoryStoreError::DatabaseUnavailable)?;
-    validate_memory_summary(summary).map_err(|_| MemoryStoreError::DatabaseUnavailable)?;
-    validate_memory_body(body).map_err(|_| MemoryStoreError::DatabaseUnavailable)?;
-    let priority =
-        MemoryPriority::parse(priority).map_err(|_| MemoryStoreError::DatabaseUnavailable)?;
-    let bootstrap = match bootstrap_raw {
-        0 => false,
-        1 => true,
-        _ => return Err(MemoryStoreError::DatabaseUnavailable),
-    };
-    let tags = parse_canonical_tags_json(tags_json)?;
-    validate_memory_definition_hash(definition_hash)?;
-    let generation = u64::try_from(generation_raw)
-        .ok()
-        .filter(|generation| *generation >= 1)
-        .ok_or(MemoryStoreError::DatabaseUnavailable)?;
-    validate_memory_revision(revision).map_err(|_| MemoryStoreError::DatabaseUnavailable)?;
-    validate_timestamp_pair(created_at_unix_ms, updated_at_unix_ms)?;
-    if memory_definition_hash(memory_key, summary, body, priority, bootstrap, &tags)
-        != definition_hash
-        || memory_state_revision(memory_scope_id, memory_id, generation, definition_hash)
-            != revision
-    {
-        return Err(MemoryStoreError::DatabaseUnavailable);
-    }
-    Ok(())
 }
 
 pub(crate) fn memory_catalog_revision(records: &[ProjectMemoryRecord]) -> String {
@@ -1081,28 +897,6 @@ fn ensure_scope_for_mutation(
                     "UPDATE project_memory_scopes SET last_mutated_at_unix_ms = ?1
                      WHERE memory_scope_id = ?2",
                     params![now, memory_scope_id],
-                )
-                .map_err(|_| MemoryStoreError::DatabaseUnavailable)?;
-            if changed != 1 {
-                return Err(MemoryStoreError::DatabaseUnavailable);
-            }
-        }
-        Some(scope) if scope.identity_state == MEMORY_SCOPE_IDENTITY_LEGACY => {
-            let changed = tx
-                .execute(
-                    "UPDATE project_memory_scopes
-                     SET identity_state = ?1, project_runtime_id = ?2, runner_client_id = ?3,
-                         root_fingerprint = ?4, last_mutated_at_unix_ms = ?5
-                     WHERE memory_scope_id = ?6 AND identity_state = ?7",
-                    params![
-                        MEMORY_SCOPE_IDENTITY_ATTRIBUTED,
-                        attribution.project_runtime_id,
-                        attribution.runner_client_id,
-                        attribution.root_fingerprint,
-                        now,
-                        memory_scope_id,
-                        MEMORY_SCOPE_IDENTITY_LEGACY,
-                    ],
                 )
                 .map_err(|_| MemoryStoreError::DatabaseUnavailable)?;
             if changed != 1 {

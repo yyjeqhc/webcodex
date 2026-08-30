@@ -39,7 +39,7 @@ fn memory_scope_descriptor_schema() -> Value {
         "type":"object",
         "properties": {
             "memory_scope_id":{"type":"string","pattern":"^wc_memscope_[0-9a-f]{64}$"},
-            "identity_state":{"type":"string","enum":["attributed","legacy_unattributed"]},
+            "identity_state":{"type":"string","enum":["attributed"]},
             "current_status":{"type":"string","enum":["current","not_current","unknown"]},
             "project_runtime_id":{"type":["string","null"]},
             "runner_client_id":{"type":["string","null"]},

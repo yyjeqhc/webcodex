@@ -415,15 +415,6 @@ impl Database {
         }
     }
 
-    pub fn mark_oauth_authorization_code_used(&self, id: &str, ts: i64) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE oauth_authorization_codes SET used_at = ?2 WHERE id = ?1 AND used_at IS NULL",
-            params![id, ts],
-        )?;
-        Ok(())
-    }
-
     /// Atomically consume an authorization code by its hash. The code is
     /// consumed (used_at set) only if **all** of the following hold:
     ///
@@ -436,10 +427,8 @@ impl Database {
     /// On failure (already used, expired, revoked, or unknown), returns
     /// `Ok(None)`.
     ///
-    /// This is the preferred helper for `/oauth/token` code exchange because it
-    /// guarantees single-use semantics in a single SQL statement. The older
-    /// `mark_oauth_authorization_code_used()` is retained for backward
-    /// compatibility but should not be used for new token exchange flows.
+    /// `/oauth/token` uses this atomic helper so authorization-code single-use
+    /// semantics are enforced by one SQL statement.
     pub fn consume_oauth_authorization_code_by_hash(
         &self,
         code_hash: &str,

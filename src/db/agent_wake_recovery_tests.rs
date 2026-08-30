@@ -109,295 +109,44 @@ fn attach_wake_endpoint(
     .endpoint
 }
 
-fn wake_id_for(db: &Database, agent_id: &str) -> String {
-    db.conn_for_tests()
-        .query_row(
-            "SELECT wake_id FROM wc_agent_wakes WHERE target_agent_id = ?1
-             ORDER BY created_at_unix_ms, wake_id LIMIT 1",
-            [agent_id],
-            |row| row.get(0),
-        )
-        .unwrap()
-}
-
-fn wake_count_for(db: &Database, agent_id: &str) -> i64 {
-    db.conn_for_tests()
-        .query_row(
-            "SELECT COUNT(*) FROM wc_agent_wakes WHERE target_agent_id = ?1",
-            [agent_id],
-            |row| row.get(0),
-        )
-        .unwrap()
-}
-
-fn queued_delivery_facts(db: &Database, agent_id: &str) -> Vec<(i64, String, String, String)> {
-    let conn = db.conn_for_tests();
-    let mut statement = conn
-        .prepare(
-            "SELECT delivery_order, delivery_id, conversation_id, message_id
-             FROM wc_agent_deliveries
-             WHERE recipient_agent_id = ?1 AND state = 'queued'
-             ORDER BY delivery_order",
+#[test]
+fn pre_wake_delivery_state_is_rejected_instead_of_backfilled() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("pre-wake.db");
+    {
+        let db = Database::open(&path).unwrap();
+        let fixture = create_fixture(&db, 'a');
+        post_to_receiver(&db, &fixture, 0);
+    }
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "DROP TABLE wc_agent_wake_attempts;
+             DROP TABLE wc_agent_wakes;",
         )
         .unwrap();
-    statement
-        .query_map([agent_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap()
-}
+    }
 
-fn migration_marker_count(db: &Database) -> i64 {
-    db.conn_for_tests()
+    let error = match Database::open(&path) {
+        Ok(_) => panic!("wake-less persisted deliveries must be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        format!("{error:#}").contains("existing deliveries are not backfilled"),
+        "{error:#}"
+    );
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let wake_tables: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM wc_agent_wake_migrations
-             WHERE migration_key = 'a1_queued_delivery_backfill_v1'",
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name IN ('wc_agent_wakes', 'wc_agent_wake_attempts')",
             [],
             |row| row.get(0),
         )
-        .unwrap()
-}
-
-fn strip_a2_wake_schema(db: &Database) {
-    db.conn_for_tests()
-        .execute_batch(
-            "DROP TABLE wc_agent_wake_attempts;
-             DROP TABLE wc_agent_wakes;
-             DROP TABLE wc_agent_wake_migrations;",
-        )
-        .unwrap();
-}
-
-#[test]
-fn a1_queued_deliveries_backfill_once_with_exact_backlog_facts() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("a1-upgrade.db");
-    let db = Database::open(&path).unwrap();
-    let fixture = create_fixture(&db, 'a');
-    let message_ids = (0..3)
-        .map(|index| post_to_receiver(&db, &fixture, index))
-        .collect::<Vec<_>>();
-    let delivery_facts = queued_delivery_facts(&db, &fixture.receiver_agent_id);
-    assert_eq!(delivery_facts.len(), 3);
-    let message_count_before: i64 = db
-        .conn_for_tests()
-        .query_row("SELECT COUNT(*) FROM wc_conversation_messages", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    let delivery_count_before: i64 = db
-        .conn_for_tests()
-        .query_row("SELECT COUNT(*) FROM wc_agent_deliveries", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-
-    // Remove only A2 Wake schema/results. The remaining Agent, Conversation,
-    // Message, and Delivery tables are the durable A1 upgrade state.
-    strip_a2_wake_schema(&db);
-    drop(db);
-
-    let upgraded = Database::open(&path).unwrap();
-    assert_eq!(wake_count_for(&upgraded, &fixture.receiver_agent_id), 1);
-    assert_eq!(migration_marker_count(&upgraded), 1);
-    let wake_id = wake_id_for(&upgraded, &fixture.receiver_agent_id);
-    let wake = upgraded.agent_wake(&wake_id).unwrap().unwrap();
-    assert_eq!(wake.state, AgentWakeState::Pending);
-    assert_eq!(wake.first_triggering_delivery_id, delivery_facts[0].1);
-    assert_eq!(wake.latest_triggering_delivery_id, delivery_facts[2].1);
-    assert_eq!(wake.latest_conversation_id, delivery_facts[2].2);
-    assert_eq!(wake.latest_message_id, delivery_facts[2].3);
-    assert_eq!(wake.latest_message_id, message_ids[2]);
-    assert_eq!(wake.inbox_high_watermark, delivery_facts[2].0);
-    assert_eq!(wake.queued_delivery_count_snapshot, 3);
-    assert_eq!(
-        upgraded
-            .conn_for_tests()
-            .query_row("SELECT COUNT(*) FROM wc_conversation_messages", [], |row| {
-                row.get::<_, i64>(0)
-            })
-            .unwrap(),
-        message_count_before
-    );
-    assert_eq!(
-        upgraded
-            .conn_for_tests()
-            .query_row("SELECT COUNT(*) FROM wc_agent_deliveries", [], |row| row
-                .get::<_, i64>(0))
-            .unwrap(),
-        delivery_count_before
-    );
-
-    drop(upgraded);
-    let reopened = Database::open(&path).unwrap();
-    assert_eq!(wake_count_for(&reopened, &fixture.receiver_agent_id), 1);
-    drop(reopened);
-    let reopened_again = Database::open(&path).unwrap();
-    assert_eq!(
-        wake_count_for(&reopened_again, &fixture.receiver_agent_id),
-        1
-    );
-
-    let endpoint = attach_wake_endpoint(&reopened_again, &fixture, "migration-consume");
-    let claim = reopened_again
-        .claim_next_agent_wake(
-            &fixture.owner,
-            &fixture.receiver_agent_id,
-            &endpoint.endpoint_id,
-            endpoint.controller_generation,
-            "deterministic_fake",
-        )
-        .unwrap()
-        .unwrap();
-    reopened_again
-        .prepare_agent_wake_dispatch(
-            &fixture.owner,
-            &fixture.receiver_agent_id,
-            &endpoint.endpoint_id,
-            endpoint.controller_generation,
-            &claim.wake.wake_id,
-            &claim.attempt.attempt_id,
-            &claim.claim_fence,
-            &claim.consume_token,
-        )
-        .unwrap();
-    reopened_again
-        .complete_agent_wake_delivery(
-            &fixture.owner,
-            &fixture.receiver_agent_id,
-            &endpoint.endpoint_id,
-            endpoint.controller_generation,
-            &claim.wake.wake_id,
-            &claim.attempt.attempt_id,
-            &claim.claim_fence,
-        )
-        .unwrap();
-    reopened_again
-        .consume_agent_wake(
-            &fixture.owner,
-            &fixture.receiver_agent_id,
-            &endpoint.endpoint_id,
-            endpoint.controller_generation,
-            &claim.wake.wake_id,
-            &claim.consume_token,
-        )
         .unwrap();
     assert_eq!(
-        queued_delivery_facts(&reopened_again, &fixture.receiver_agent_id).len(),
-        3
-    );
-    drop(reopened_again);
-
-    let after_consumed_reopen = Database::open(&path).unwrap();
-    assert_eq!(
-        wake_count_for(&after_consumed_reopen, &fixture.receiver_agent_id),
-        1
-    );
-    assert_eq!(
-        after_consumed_reopen
-            .agent_wake(&wake_id)
-            .unwrap()
-            .unwrap()
-            .state,
-        AgentWakeState::Consumed
-    );
-}
-
-#[test]
-fn buggy_a2_tables_without_marker_still_run_backfill_once() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("buggy-a2-upgrade.db");
-    let db = Database::open(&path).unwrap();
-    let fixture = create_fixture(&db, 'b');
-    post_to_receiver(&db, &fixture, 0);
-    post_to_receiver(&db, &fixture, 1);
-    {
-        let conn = db.conn_for_tests();
-        conn.execute("DELETE FROM wc_agent_wakes", []).unwrap();
-        conn.execute("DELETE FROM wc_agent_wake_migrations", [])
-            .unwrap();
-    }
-    drop(db);
-
-    let upgraded = Database::open(&path).unwrap();
-    assert_eq!(wake_count_for(&upgraded, &fixture.receiver_agent_id), 1);
-    assert_eq!(migration_marker_count(&upgraded), 1);
-    drop(upgraded);
-    let reopened = Database::open(&path).unwrap();
-    assert_eq!(wake_count_for(&reopened, &fixture.receiver_agent_id), 1);
-}
-
-#[test]
-fn buggy_a2_without_marker_does_not_rewake_backlog_covered_by_historical_wake() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("buggy-a2-covered-backlog.db");
-    let db = Database::open(&path).unwrap();
-    let fixture = create_fixture(&db, '1');
-    post_to_receiver(&db, &fixture, 0);
-    let delivery_facts = queued_delivery_facts(&db, &fixture.receiver_agent_id);
-    assert_eq!(delivery_facts.len(), 1);
-    let wake_id = wake_id_for(&db, &fixture.receiver_agent_id);
-    let endpoint = attach_wake_endpoint(&db, &fixture, "covered-history");
-    let claim = db
-        .claim_next_agent_wake(
-            &fixture.owner,
-            &fixture.receiver_agent_id,
-            &endpoint.endpoint_id,
-            endpoint.controller_generation,
-            "deterministic_fake",
-        )
-        .unwrap()
-        .unwrap();
-    db.prepare_agent_wake_dispatch(
-        &fixture.owner,
-        &fixture.receiver_agent_id,
-        &endpoint.endpoint_id,
-        endpoint.controller_generation,
-        &claim.wake.wake_id,
-        &claim.attempt.attempt_id,
-        &claim.claim_fence,
-        &claim.consume_token,
-    )
-    .unwrap();
-    db.complete_agent_wake_delivery(
-        &fixture.owner,
-        &fixture.receiver_agent_id,
-        &endpoint.endpoint_id,
-        endpoint.controller_generation,
-        &claim.wake.wake_id,
-        &claim.attempt.attempt_id,
-        &claim.claim_fence,
-    )
-    .unwrap();
-    db.consume_agent_wake(
-        &fixture.owner,
-        &fixture.receiver_agent_id,
-        &endpoint.endpoint_id,
-        endpoint.controller_generation,
-        &claim.wake.wake_id,
-        &claim.consume_token,
-    )
-    .unwrap();
-    let consumed = db.agent_wake(&wake_id).unwrap().unwrap();
-    assert_eq!(consumed.state, AgentWakeState::Consumed);
-    assert_eq!(consumed.inbox_high_watermark, delivery_facts[0].0);
-    assert_eq!(
-        queued_delivery_facts(&db, &fixture.receiver_agent_id).len(),
-        1
-    );
-    db.conn_for_tests()
-        .execute("DELETE FROM wc_agent_wake_migrations", [])
-        .unwrap();
-    drop(db);
-
-    let reopened = Database::open(&path).unwrap();
-    assert_eq!(migration_marker_count(&reopened), 1);
-    assert_eq!(wake_count_for(&reopened, &fixture.receiver_agent_id), 1);
-    assert_eq!(
-        reopened.agent_wake(&wake_id).unwrap().unwrap().state,
-        AgentWakeState::Consumed
+        wake_tables, 0,
+        "rejected state must not be partially initialized"
     );
 }
 

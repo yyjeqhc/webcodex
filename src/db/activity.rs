@@ -456,59 +456,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_activity_rows_are_hidden_from_project_credentials() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("activity.db");
-        // A database written before the scope columns existed.
-        {
-            let db = Database::open(&path).unwrap();
-            let conn = db.conn.lock().unwrap();
-            conn.execute("DROP TABLE workspace_activity", []).unwrap();
-            conn.execute(
-                "CREATE TABLE workspace_activity (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at INTEGER NOT NULL,
-                    project TEXT,
-                    tool TEXT NOT NULL,
-                    surface TEXT NOT NULL,
-                    client TEXT,
-                    success INTEGER NOT NULL,
-                    session_id TEXT,
-                    command_preview TEXT,
-                    paths_json TEXT NOT NULL DEFAULT '[]',
-                    error_summary TEXT
-                )",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO workspace_activity
-                    (created_at, project, tool, surface, client, success, paths_json)
-                 VALUES (1, 'demo', 'run_shell', 'mcp', 'laptop', 1, '[]')",
-                [],
-            )
-            .unwrap();
-        }
-
-        // Reopening runs the migration.
-        let db = Database::open(&path).unwrap();
-        let kind: String = db
-            .conn
-            .lock()
-            .unwrap()
-            .query_row("SELECT scope_kind FROM workspace_activity", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(kind, "legacy_unscoped");
-
-        // Attribution cannot be established after the fact, so no project
-        // credential sees it — not even one whose live clients include `laptop`.
-        assert!(as_grant(&db, GRANT_A, &["laptop"]).is_empty());
-        assert!(as_grant(&db, GRANT_B, &["laptop"]).is_empty());
-    }
-
-    #[test]
     fn legacy_activity_rows_remain_visible_to_bootstrap() {
         let tmp = tempfile::tempdir().unwrap();
         let db = Database::open(&tmp.path().join("activity.db")).unwrap();

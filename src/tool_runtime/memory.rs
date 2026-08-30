@@ -153,13 +153,8 @@ fn memory_scope_current_status(
         return MemoryScopeCurrentStatus::Current;
     }
     let Some(client_id) = scope.runner_client_id.as_deref() else {
-        // Legacy opaque scopes have no persisted owning Runner identity. An exact
-        // current scope match above proves `current`, but absence from this
-        // process-local registry can never prove `not_current`: after Server
-        // restart or while another Runner is absent, unrelated complete
-        // inventories are not a durable global Runner roster. Keep destructive
-        // lifecycle decisions fail-closed until a real Memory mutation safely
-        // upgrades the scope to attributed metadata.
+        // Current persisted scopes are always attributed. Keep this defensive
+        // projection fail-closed if malformed in-memory state reaches it.
         return MemoryScopeCurrentStatus::Unknown;
     };
     if inventory.client_inventory_complete.get(client_id) == Some(&true) {
@@ -802,22 +797,9 @@ mod tests {
             created_at_unix_ms: 1,
             last_mutated_at_unix_ms: 1,
         };
-        let legacy = ProjectMemoryScopeRecord {
-            memory_scope_id: format!("wc_memscope_{}", "c".repeat(64)),
-            identity_state: "legacy_unattributed".to_string(),
-            project_runtime_id: None,
-            runner_client_id: None,
-            root_fingerprint: None,
-            created_at_unix_ms: 1,
-            last_mutated_at_unix_ms: 1,
-        };
         let incomplete = memory_inventory_observation(None);
         assert_eq!(
             memory_scope_current_status(&attributed, &incomplete),
-            MemoryScopeCurrentStatus::Unknown
-        );
-        assert_eq!(
-            memory_scope_current_status(&legacy, &incomplete),
             MemoryScopeCurrentStatus::Unknown
         );
     }

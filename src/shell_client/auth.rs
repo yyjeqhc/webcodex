@@ -74,7 +74,19 @@ pub(super) fn shell_client_visible_to_auth(
     match auth {
         None => true,
         Some(auth) if auth.is_admin() => true,
-        Some(_) => lightweight_group_matches(auth, client.auth_group.as_ref()),
+        Some(auth) if !lightweight_group_matches(Some(auth), client.auth_group.as_ref()) => false,
+        Some(_) if client.auth_group.is_some() => true,
+        Some(auth) => {
+            let username = auth
+                .username
+                .as_deref()
+                .filter(|username| !username.trim().is_empty());
+            let owner = client
+                .owner
+                .as_deref()
+                .filter(|owner| !owner.trim().is_empty());
+            username.is_some() && username == owner
+        }
     }
 }
 

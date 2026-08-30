@@ -111,6 +111,46 @@ async fn register_target_agent_for_auth(
         .unwrap();
 }
 
+fn managed_discovery_auth(username: &str) -> crate::auth::AuthContext {
+    let mut auth = auth_context(Some(username), false);
+    auth.scopes = vec![
+        crate::auth::SCOPE_RUNTIME_READ.to_string(),
+        crate::auth::SCOPE_PROJECT_READ.to_string(),
+    ];
+    auth
+}
+
+async fn register_managed_target_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    owner: &str,
+    project_id: &str,
+    project_path: &str,
+) {
+    runtime
+        .shell_clients
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: Some(4),
+            job_inventory: None,
+            coding_agent_providers: None,
+            coding_agent_inventory: None,
+            client_id: client_id.to_string(),
+            agent_instance_id: format!("inst-{client_id}"),
+            display_name: Some(format!("{owner} private runner")),
+            owner: Some(owner.to_string()),
+            hostname: Some(format!("{owner}-private-host")),
+            host_context: None,
+            capabilities: Some(ShellClientCapabilities::default()),
+            projects: Some(vec![registered_project(project_id, project_path)]),
+            agent_protocol_version: Some("polling-v1".to_string()),
+            policy: None,
+        })
+        .await
+        .unwrap();
+}
+
 fn large_fixture_projects(count: usize) -> Vec<crate::shell_protocol::ShellAgentProjectSummary> {
     (0..count)
         .map(|index| {
@@ -390,6 +430,132 @@ async fn list_projects_filters_only_after_authorization_visibility() {
         .await;
     assert!(!hidden_status.success);
     assert_eq!(hidden_status.output["error_kind"], "unknown_client_id");
+}
+
+#[tokio::test]
+async fn managed_users_discover_only_their_own_runner_project_metadata() {
+    let runtime = test_runtime();
+    let alice = managed_discovery_auth("alice");
+    let bob = managed_discovery_auth("bob");
+    let bootstrap = bootstrap_auth_context();
+
+    register_managed_target_agent(
+        &runtime,
+        "alice-laptop",
+        "alice",
+        "common",
+        "/home/alice/laptop/common",
+    )
+    .await;
+    register_managed_target_agent(
+        &runtime,
+        "alice-server",
+        "alice",
+        "common",
+        "/srv/alice/common",
+    )
+    .await;
+    register_managed_target_agent(
+        &runtime,
+        "bob-runner",
+        "bob",
+        "bob-private",
+        "/home/bob/private",
+    )
+    .await;
+
+    let alice_agents = runtime
+        .dispatch_with_auth(
+            list_agents_call(None, None, Some(true), false),
+            Some(&alice),
+        )
+        .await;
+    assert!(alice_agents.success, "{:?}", alice_agents.error);
+    assert_eq!(alice_agents.output["count"], 2);
+    let alice_agents_text = alice_agents.output.to_string();
+    assert!(!alice_agents_text.contains("bob-runner"));
+    assert!(!alice_agents_text.contains("bob-private"));
+    assert!(!alice_agents_text.contains("/home/bob/private"));
+    assert!(!alice_agents_text.contains("bob-private-host"));
+
+    let alice_projects = runtime
+        .dispatch_with_auth(
+            list_projects_call(None, None, None, None, false),
+            Some(&alice),
+        )
+        .await;
+    assert!(alice_projects.success, "{:?}", alice_projects.error);
+    assert_eq!(alice_projects.output["count"], 2);
+    assert!(!alice_projects.output.to_string().contains("bob-private"));
+
+    for call in [
+        list_projects_call(
+            None,
+            Some("agent:bob-runner:bob-private"),
+            None,
+            None,
+            false,
+        ),
+        list_projects_call(None, None, Some("bob-private"), None, false),
+        list_projects_call(Some("bob-runner"), None, None, None, false),
+    ] {
+        let hidden = runtime.dispatch_with_auth(call, Some(&alice)).await;
+        assert!(hidden.success, "{:?}", hidden.error);
+        assert_eq!(hidden.output["count"], 0);
+        assert_eq!(hidden.output["matched_count"], 0);
+    }
+
+    let hidden_agent = runtime
+        .dispatch_with_auth(
+            list_agents_call(Some("bob-runner"), None, Some(false), true),
+            Some(&alice),
+        )
+        .await;
+    assert!(hidden_agent.success);
+    assert_eq!(hidden_agent.output["count"], 0);
+
+    let alice_status = runtime
+        .dispatch_with_auth(runtime_status_call(None, true), Some(&alice))
+        .await;
+    assert!(alice_status.success, "{:?}", alice_status.error);
+    assert_eq!(alice_status.output["agents"]["count"], 2);
+    assert!(!alice_status.output.to_string().contains("bob-runner"));
+    let hidden_status = runtime
+        .dispatch_with_auth(runtime_status_call(Some("bob-runner"), true), Some(&alice))
+        .await;
+    assert!(!hidden_status.success);
+    assert_eq!(hidden_status.output["error_kind"], "unknown_client_id");
+
+    let ambiguous = runtime
+        .resolve_project_input_for_auth("common", Some(&alice))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        ambiguous.kind,
+        super::super::project_resolution::ProjectResolverErrorKind::AmbiguousProject
+    );
+    assert_eq!(ambiguous.candidates.len(), 2);
+    assert!(ambiguous
+        .candidates
+        .iter()
+        .all(|candidate| candidate.client_id.starts_with("alice-")));
+    assert!(!ambiguous.to_message().contains("bob"));
+
+    let bob_agents = runtime
+        .dispatch_with_auth(list_agents_call(None, None, Some(true), false), Some(&bob))
+        .await;
+    assert!(bob_agents.success, "{:?}", bob_agents.error);
+    assert_eq!(bob_agents.output["count"], 1);
+    assert_eq!(bob_agents.output["agents"][0]["client_id"], "bob-runner");
+
+    let admin_agents = runtime
+        .dispatch_with_auth(
+            list_agents_call(None, None, Some(false), true),
+            Some(&bootstrap),
+        )
+        .await;
+    assert!(admin_agents.success, "{:?}", admin_agents.error);
+    assert_eq!(admin_agents.output["count"], 3);
 }
 
 #[tokio::test]

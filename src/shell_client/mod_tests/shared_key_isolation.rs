@@ -27,6 +27,7 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
     let shared_hash = crate::auth::shared_key::shared_key_hash_of("token-a");
     let bridge_a = oauth_bridge_auth_context(&shared_hash, vec![]);
     let managed_oauth = managed_oauth_auth_context("alice", Some("hash-a"));
+    let managed_pat = auth_context(Some("alice"), false);
     let open = open_auth_context();
     let bootstrap = auth_context(None, true);
 
@@ -60,27 +61,33 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
             .await
             .unwrap();
     }
-    registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "managed".to_string(),
-            agent_instance_id: "inst-managed".to_string(),
-            display_name: None,
-            owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: Some(async_job_capabilities()),
-            projects: Some(vec![project_summary("managed", "/tmp/managed")]),
-            agent_protocol_version: Some("polling-v1".to_string()),
-            policy: None,
-        })
-        .await
-        .unwrap();
+    for (client_id, owner, project_path) in [
+        ("alice-laptop", "alice", "/tmp/alice-laptop"),
+        ("alice-server", "alice", "/tmp/alice-server"),
+        ("bob-runner", "bob", "/home/bob/private"),
+    ] {
+        registry
+            .register(ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+                client_id: client_id.to_string(),
+                agent_instance_id: format!("inst-{client_id}"),
+                display_name: None,
+                owner: Some(owner.to_string()),
+                hostname: None,
+                host_context: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: Some(vec![project_summary(client_id, project_path)]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            })
+            .await
+            .unwrap();
+    }
 
     let visible_to_a: Vec<String> = registry
         .list_clients_for_auth(Some(&shared_a))
@@ -143,22 +150,29 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
     assert!(bridge_a.is_oauth_shared_key_subject());
     assert_eq!(ShellClientAuthGroup::from_auth(&managed_oauth), None);
     assert!(!managed_oauth.is_oauth_shared_key_subject());
-    let visible_to_managed_oauth: Vec<String> = registry
-        .list_clients_for_auth(Some(&managed_oauth))
-        .await
-        .into_iter()
-        .map(|c| c.client_id)
-        .collect();
-    assert_eq!(visible_to_managed_oauth, vec!["managed"]);
-    assert!(registry
-        .assert_client_access(Some(&managed_oauth), "managed")
-        .await
-        .is_ok());
-    assert!(registry
-        .assert_client_access(Some(&managed_oauth), "shared-a")
-        .await
-        .unwrap_err()
-        .contains("unknown shell client"));
+    for managed_auth in [&managed_oauth, &managed_pat] {
+        let visible: Vec<String> = registry
+            .list_clients_for_auth(Some(managed_auth))
+            .await
+            .into_iter()
+            .map(|c| c.client_id)
+            .collect();
+        assert_eq!(visible, vec!["alice-laptop", "alice-server"]);
+        assert!(registry
+            .assert_client_access(Some(managed_auth), "alice-laptop")
+            .await
+            .is_ok());
+        assert!(registry
+            .assert_client_access(Some(managed_auth), "bob-runner")
+            .await
+            .unwrap_err()
+            .contains("unknown shell client"));
+        assert!(registry
+            .assert_client_access(Some(managed_auth), "shared-a")
+            .await
+            .unwrap_err()
+            .contains("unknown shell client"));
+    }
 
     let visible_to_bootstrap: Vec<String> = registry
         .list_clients_for_auth(Some(&bootstrap))
@@ -168,8 +182,101 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
         .collect();
     assert_eq!(
         visible_to_bootstrap,
-        vec!["managed", "open", "shared-a", "shared-b"]
+        vec![
+            "alice-laptop",
+            "alice-server",
+            "bob-runner",
+            "open",
+            "shared-a",
+            "shared-b"
+        ]
     );
+}
+
+#[tokio::test]
+async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
+    let registry = ShellClientRegistry::default();
+    let alice = auth_context(Some("alice"), false);
+    let bob = auth_context(Some("bob"), false);
+    let bootstrap = auth_context(None, true);
+
+    for (client_id, owner, run_id) in [
+        ("alice-runner", "alice", "wc_agent_run_alice"),
+        ("bob-runner", "bob", "wc_agent_run_bob"),
+    ] {
+        registry
+            .register(ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: Some(vec![
+                    webcodex_core::coding_agent::CodingAgentProvider {
+                        provider_id: "codex".to_string(),
+                        provider_instance_id: format!("provider-{owner}"),
+                        name: "Codex".to_string(),
+                    },
+                ]),
+                coding_agent_inventory: Some(
+                    webcodex_core::coding_agent::CodingAgentRunInventory {
+                        runs: vec![webcodex_core::coding_agent::CodingAgentRunSnapshot {
+                            run_id: run_id.to_string(),
+                            intent_fingerprint: format!("intent-{owner}"),
+                            authority_fingerprint: format!("auth_{owner}"),
+                            runtime_project_id: format!("agent:{client_id}:private"),
+                            provider_id: "codex".to_string(),
+                            provider_instance_id: format!("provider-{owner}"),
+                            state: webcodex_core::coding_agent::CodingAgentRunState::Running,
+                            execution_state:
+                                webcodex_core::coding_agent::CodingAgentExecutionState::Started,
+                            observation_revision: 1,
+                            created_at: 1,
+                            updated_at: 1,
+                            terminal: None,
+                        }],
+                    },
+                ),
+                client_id: client_id.to_string(),
+                agent_instance_id: format!("inst-{client_id}"),
+                display_name: None,
+                owner: Some(owner.to_string()),
+                hostname: None,
+                host_context: None,
+                capabilities: Some(ShellClientCapabilities {
+                    coding_agent_runs: true,
+                    ..Default::default()
+                }),
+                projects: Some(vec![project_summary(
+                    "private",
+                    &format!("/home/{owner}/private"),
+                )]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    assert!(registry
+        .coding_agent_run_for_client_for_auth(Some(&alice), "alice-runner", "wc_agent_run_alice",)
+        .await
+        .is_some());
+    assert!(registry
+        .coding_agent_run_for_client_for_auth(Some(&alice), "bob-runner", "wc_agent_run_bob")
+        .await
+        .is_none());
+    assert!(registry
+        .coding_agent_run_for_auth(Some(&alice), "wc_agent_run_bob")
+        .await
+        .is_none());
+    assert!(registry
+        .coding_agent_run_for_auth(Some(&bob), "wc_agent_run_alice")
+        .await
+        .is_none());
+    assert!(registry
+        .coding_agent_run_for_auth(Some(&bootstrap), "wc_agent_run_bob")
+        .await
+        .is_some());
 }
 
 #[tokio::test]

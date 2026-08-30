@@ -111,6 +111,12 @@ agent 连接 token。
 complete、replace、withdraw 或 close Workflow Session 协作状态时才额外授予
 `session:collaborate`。仅有 `runtime:read` 对这类协作状态保持只读观察能力。
 
+Managed user 的 discovery 按 owner 隔离。普通 PAT 或 managed OAuth token 若属于
+`alice`，只能发现 owner 为 `alice` 的 Runner、项目、Jobs 与派生 runtime 元数据；
+同一 username 在多台设备上的 Runner 仍可互相发现。Bootstrap/admin 保留现有全局
+可见能力。Shared-key 与 Project Credential 仍按原有 authorization group 隔离，不会
+与 managed username 混成同一身份模型。
+
 ## `wc_agent_xxx`（Runner 令牌）
 
 `wc_agent_xxx` 是用户本地生成的 Runner 令牌；server 只存其 hash，并绑定

@@ -2473,6 +2473,52 @@ async fn register_job_agent_for_auth(
         .unwrap();
 }
 
+fn managed_job_auth(username: &str) -> crate::auth::AuthContext {
+    let mut auth = auth_context(Some(username), false);
+    auth.scopes = vec![
+        crate::auth::SCOPE_RUNTIME_READ.to_string(),
+        crate::auth::SCOPE_PROJECT_READ.to_string(),
+        crate::auth::SCOPE_JOB_RUN.to_string(),
+    ];
+    auth
+}
+
+async fn register_managed_job_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project_id: &str,
+    owner: &str,
+) {
+    runtime
+        .shell_clients
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: Some(4),
+            job_inventory: None,
+            coding_agent_providers: None,
+            coding_agent_inventory: None,
+            client_id: client_id.to_string(),
+            agent_instance_id: "inst".to_string(),
+            display_name: None,
+            owner: Some(owner.to_string()),
+            hostname: None,
+            host_context: None,
+            capabilities: Some(ShellClientCapabilities {
+                async_shell_jobs: true,
+                ..Default::default()
+            }),
+            projects: Some(vec![registered_project(
+                project_id,
+                &format!("/tmp/{owner}/{project_id}"),
+            )]),
+            agent_protocol_version: Some("polling-v1".to_string()),
+            policy: None,
+        })
+        .await
+        .unwrap();
+}
+
 async fn start_agent_runtime_job(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -2586,6 +2632,79 @@ async fn agent_job_log_invalid_token_is_fix_input_not_unknown_job() {
     assert_eq!(result.output["recovery_kind"], "fix_input");
     assert!(result.output.get("recovery_tool").is_none());
     assert!(result.error.unwrap_or_default().contains("malformed"));
+}
+
+#[tokio::test]
+async fn managed_user_job_inventory_and_counts_do_not_cross_owner() {
+    let runtime = test_runtime();
+    let alice = managed_job_auth("alice");
+    let bob = managed_job_auth("bob");
+    let bootstrap = bootstrap_auth_context();
+
+    register_managed_job_agent(&runtime, "alice-runner", "alice-project", "alice").await;
+    register_managed_job_agent(&runtime, "bob-runner", "bob-project", "bob").await;
+
+    let alice_job =
+        start_agent_runtime_job(&runtime, "alice-runner", "alice-project", &alice).await;
+    let bob_job = start_agent_runtime_job(&runtime, "bob-runner", "bob-project", &bob).await;
+
+    let alice_list = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+                project: None,
+                session_id: None,
+            },
+            Some(&alice),
+        )
+        .await;
+    assert_eq!(listed_job_ids(&alice_list), vec![alice_job.clone()]);
+    assert!(!alice_list.output.to_string().contains(&bob_job));
+
+    let hidden_bob_job = runtime
+        .dispatch_with_auth(
+            ToolCall::JobStatus {
+                job_id: bob_job.clone(),
+                include_command_preview: false,
+            },
+            Some(&alice),
+        )
+        .await;
+    assert_unknown_job(hidden_bob_job);
+
+    let alice_status = runtime
+        .dispatch_with_auth(
+            ToolCall::RuntimeStatus {
+                compact: false,
+                summary_only: false,
+                client_id: None,
+            },
+            Some(&alice),
+        )
+        .await;
+    assert!(alice_status.success, "{:?}", alice_status.error);
+    assert_eq!(alice_status.output["agents"]["count"], 1);
+    assert_eq!(alice_status.output["jobs"]["active_count"], 1);
+    assert!(!alice_status.output.to_string().contains("bob-runner"));
+    assert!(!alice_status.output.to_string().contains(&bob_job));
+
+    let bootstrap_list = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+                project: None,
+                session_id: None,
+            },
+            Some(&bootstrap),
+        )
+        .await;
+    let mut bootstrap_ids = listed_job_ids(&bootstrap_list);
+    bootstrap_ids.sort();
+    let mut expected = vec![alice_job, bob_job];
+    expected.sort();
+    assert_eq!(bootstrap_ids, expected);
 }
 
 #[tokio::test]

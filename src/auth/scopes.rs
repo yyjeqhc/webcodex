@@ -844,6 +844,25 @@ mod tests {
                 OAuthToolScopePolicy::RequireAll(MEMORY_READ_SCOPES)
             } else if matches!(tool, "memory_set" | "memory_delete") {
                 OAuthToolScopePolicy::RequireAll(MEMORY_MANAGE_SCOPES)
+            } else if matches!(
+                tool,
+                "list_agent_identities"
+                    | "list_conversations"
+                    | "read_conversation"
+                    | "list_agent_inbox"
+            ) {
+                OAuthToolScopePolicy::RequireAll(COMMUNICATION_READ_SCOPES)
+            } else if matches!(
+                tool,
+                "create_agent_identity"
+                    | "update_agent_identity"
+                    | "attach_agent_endpoint"
+                    | "detach_agent_endpoint"
+                    | "create_conversation"
+                    | "post_conversation_message"
+                    | "consume_agent_deliveries"
+            ) {
+                OAuthToolScopePolicy::RequireAll(COMMUNICATION_MANAGE_SCOPES)
             } else if tool == "run_detached_process" {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_JOB_RUN, SCOPE_JOB_DETACH])
             } else if tool == "coding_agent_start" {

@@ -44,6 +44,8 @@ fn bridge_computer_scopes_use_explicit_closed_ceiling_without_changing_direct_au
             "project:write",
             "memory:read",
             "memory:manage",
+            "communication:read",
+            "communication:manage",
             "job:run",
             "computer:read",
             "computer:control",
@@ -1035,7 +1037,15 @@ async fn bridge_authorize_omitted_scope_grants_baseline_but_not_optional_permiss
         .1
         .into_owned();
     let record = auth_code_by_plaintext(&db, &code);
-    assert_eq!(record.scopes, bridge_oauth_scopes().join(" "));
+    let granted = record
+        .scopes
+        .split_whitespace()
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected = bridge_oauth_scopes()
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(granted, expected);
     for optional in [
         "computer:launch",
         "computer:display_read",

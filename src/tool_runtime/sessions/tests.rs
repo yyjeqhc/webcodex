@@ -1503,15 +1503,15 @@ fn legacy_session_events_without_call_id_restore() {
 }
 
 #[test]
-fn legacy_session_events_without_logical_invocation_correlation_restore_without_invention() {
+fn v039_session_events_upgrade_without_inventing_logical_correlation() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");
     let store = persistent_store(ledger.clone());
     let session = store.start_session(
         Some("agent:eval:demo".to_string()),
-        Some("legacy logical invocation".to_string()),
+        Some("v0.3.9 logical invocation boundary".to_string()),
     );
-    let arguments = json!({"project": "agent:eval:demo", "path": "src/legacy-logical.rs"});
+    let arguments = json!({"project": "agent:eval:demo", "path": "src/v039.rs"});
     let mut metadata = ToolCallRecorderMetadata::default();
     metadata.assign_logical_invocation();
     let start = store.record_tool_call_started_with_metadata(
@@ -1524,24 +1524,47 @@ fn legacy_session_events_without_logical_invocation_correlation_restore_without_
     );
     store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
     store.flush_persistence();
+    drop(store);
 
     let mut ledger_value: Value =
         serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
-    let events = ledger_value["sessions"][0]["events"]
-        .as_array_mut()
-        .unwrap();
-    assert!(events
-        .iter()
-        .any(|event| event.get("logical_invocation_id").is_some()));
-    for event in events.iter_mut() {
+    ledger_value["version"] = json!(SESSION_LEDGER_V1_VERSION);
+    ledger_value
+        .as_object_mut()
+        .unwrap()
+        .insert("durable_current_bindings".to_string(), json!([]));
+    let record = ledger_value["sessions"][0].as_object_mut().unwrap();
+    for field in [
+        "assignment_history_floors",
+        "assignment_history_tracking_complete",
+        "completion_assignment_fence_fingerprints",
+        "completion_assignment_fence_tracking_complete",
+    ] {
+        record.remove(field);
+    }
+    let events = record.get_mut("events").unwrap().as_array_mut().unwrap();
+    assert!(events.iter().all(|event| {
+        event.get("logical_invocation_id").is_some()
+            && event.get("logical_invocation_role").is_some()
+    }));
+    for (index, event) in events.iter_mut().enumerate() {
         let object = event.as_object_mut().unwrap();
         object.remove("logical_invocation_id");
         object.remove("logical_invocation_role");
+        if index == 0 {
+            object.insert(
+                "allow_cross_project_session_required".to_string(),
+                Value::Bool(true),
+            );
+            object.insert(
+                "allow_cross_project_session".to_string(),
+                Value::Bool(false),
+            );
+        }
     }
     std::fs::write(&ledger, serde_json::to_vec_pretty(&ledger_value).unwrap()).unwrap();
-    drop(store);
 
-    let restored = SessionStore::with_persistence(ledger, 10, 20);
+    let restored = SessionStore::with_persistence(ledger.clone(), 10, 20);
     let summary = restored.summary(&session.session_id, Some(20)).unwrap();
     assert_eq!(summary.counts.tool_calls, 1);
     assert!(summary
@@ -1556,8 +1579,31 @@ fn legacy_session_events_without_logical_invocation_correlation_restore_without_
     assert_eq!(
         canonical.len(),
         1,
-        "legacy uncorrelated facts remain conservative per-event evidence"
+        "v0.3.9 uncorrelated facts remain conservative per-event evidence"
     );
+
+    restored
+        .post_message(PostSessionMessageInput {
+            session_id: session.session_id.clone(),
+            kind: SessionMessageKind::Note,
+            message: "force canonical v2 rewrite".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::Normal,
+        })
+        .unwrap();
+    restored.flush_persistence();
+    let rewritten: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    assert_eq!(rewritten["version"], SESSION_LEDGER_VERSION);
+    assert!(rewritten.get("durable_current_bindings").is_none());
+    let rewritten_events = rewritten["sessions"][0]["events"].as_array().unwrap();
+    assert!(rewritten_events.iter().all(|event| {
+        event.get("logical_invocation_id").is_none()
+            && event.get("logical_invocation_role").is_none()
+            && event.get("allow_cross_project_session_required").is_none()
+            && event.get("allow_cross_project_session").is_none()
+    }));
 }
 
 #[test]
@@ -4046,6 +4092,137 @@ fn v2_missing_assignment_metadata_discards_only_that_row() {
     assert_eq!(restored.status().restored_sessions, 1);
     assert!(restored.summary(&bad.session_id, None).is_none());
     assert!(restored.summary(&good.session_id, None).is_some());
+    assert_eq!(restored.status().last_persist_error, None);
+}
+
+#[test]
+fn v2_event_and_message_shape_corruption_discards_only_affected_rows() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger_path = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger_path.clone());
+    let bad_missing = store.start_session(
+        Some("proj".to_string()),
+        Some("missing correlation key".to_string()),
+    );
+    let bad_retired = store.start_session(
+        Some("proj".to_string()),
+        Some("retired event field".to_string()),
+    );
+    let bad_message = store.start_session(
+        Some("proj".to_string()),
+        Some("unknown message field".to_string()),
+    );
+    let good = store.start_session(Some("proj".to_string()), Some("good".to_string()));
+
+    for session_id in [&bad_missing.session_id, &bad_retired.session_id] {
+        let mut metadata = ToolCallRecorderMetadata::default();
+        metadata.assign_logical_invocation();
+        let start = store.record_tool_call_started_with_metadata(
+            Some(session_id),
+            SessionTransport::Api,
+            "read_file",
+            &json!({"project": "proj", "path": "src/lib.rs"}),
+            Some("proj".to_string()),
+            metadata,
+        );
+        store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
+    }
+    store
+        .post_message(PostSessionMessageInput {
+            session_id: bad_message.session_id.clone(),
+            kind: SessionMessageKind::Note,
+            message: "message row".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::Normal,
+        })
+        .unwrap();
+    store.flush_persistence();
+    drop(store);
+
+    let mut ledger: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+    let records = ledger["sessions"].as_array_mut().unwrap();
+    let missing_record = records
+        .iter_mut()
+        .find(|record| record["session_id"] == bad_missing.session_id)
+        .unwrap();
+    let missing_event = missing_record["events"][0].as_object_mut().unwrap();
+    assert!(missing_event.contains_key("logical_invocation_id"));
+    assert!(missing_event.contains_key("logical_invocation_role"));
+    missing_event.remove("logical_invocation_role");
+
+    let retired_record = records
+        .iter_mut()
+        .find(|record| record["session_id"] == bad_retired.session_id)
+        .unwrap();
+    retired_record["events"][0]
+        .as_object_mut()
+        .unwrap()
+        .insert("allow_cross_project_session".to_string(), Value::Bool(true));
+
+    let message_record = records
+        .iter_mut()
+        .find(|record| record["session_id"] == bad_message.session_id)
+        .unwrap();
+    message_record["messages"][0]
+        .as_object_mut()
+        .unwrap()
+        .insert("post_v039_development_field".to_string(), Value::Bool(true));
+
+    std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+    let restored = persistent_store(ledger_path);
+    assert_eq!(restored.status().restored_sessions, 1);
+    assert!(restored.summary(&bad_missing.session_id, None).is_none());
+    assert!(restored.summary(&bad_retired.session_id, None).is_none());
+    assert!(restored.summary(&bad_message.session_id, None).is_none());
+    assert!(restored.summary(&good.session_id, None).is_some());
+    assert_eq!(restored.status().last_persist_error, None);
+}
+
+#[test]
+fn v1_rejects_v2_only_event_correlation_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger_path = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger_path.clone());
+    let session = store.start_session(Some("proj".to_string()), Some("v2 event".to_string()));
+    let mut metadata = ToolCallRecorderMetadata::default();
+    metadata.assign_logical_invocation();
+    let start = store.record_tool_call_started_with_metadata(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "read_file",
+        &json!({"project": "proj", "path": "src/lib.rs"}),
+        Some("proj".to_string()),
+        metadata,
+    );
+    store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
+    store.flush_persistence();
+    drop(store);
+
+    let mut ledger: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+    ledger["version"] = json!(SESSION_LEDGER_V1_VERSION);
+    ledger
+        .as_object_mut()
+        .unwrap()
+        .insert("durable_current_bindings".to_string(), json!([]));
+    let record = ledger["sessions"][0].as_object_mut().unwrap();
+    for field in [
+        "assignment_history_floors",
+        "assignment_history_tracking_complete",
+        "completion_assignment_fence_fingerprints",
+        "completion_assignment_fence_tracking_complete",
+    ] {
+        record.remove(field);
+    }
+    assert!(record["events"][0].get("logical_invocation_id").is_some());
+    assert!(record["events"][0].get("logical_invocation_role").is_some());
+    std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+
+    let restored = persistent_store(ledger_path);
+    assert_eq!(restored.status().restored_sessions, 0);
+    assert!(restored.summary(&session.session_id, None).is_none());
     assert_eq!(restored.status().last_persist_error, None);
 }
 

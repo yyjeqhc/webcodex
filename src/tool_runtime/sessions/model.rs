@@ -803,6 +803,7 @@ pub(crate) struct ToolEffectEventEvidence {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SessionEvent {
     pub(crate) event_id: String,
     /// Additive correlation only: it joins one tool-call start/finish pair and
@@ -975,6 +976,7 @@ pub(crate) enum SessionMessagePriority {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SessionMessage {
     pub(crate) message_id: String,
     pub(crate) session_id: String,

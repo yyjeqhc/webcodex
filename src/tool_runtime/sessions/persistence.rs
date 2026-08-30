@@ -67,7 +67,7 @@ struct PersistedSessionRecordV1 {
     lifecycle: SessionLifecycle,
     created_at: i64,
     updated_at: i64,
-    events: Vec<Arc<SessionEvent>>,
+    events: Vec<Value>,
     messages: Vec<Arc<SessionMessage>>,
     message_observation_revision: u64,
     message_observation_floor: u64,
@@ -82,6 +82,43 @@ struct PersistedSessionRecordV1 {
 enum PersistedLedgerSource {
     V039V1,
     CurrentV2,
+}
+
+fn upgrade_v039_session_events(values: Vec<Value>) -> Option<Vec<Arc<SessionEvent>>> {
+    values
+        .into_iter()
+        .map(|mut value| {
+            let object = value.as_object_mut()?;
+            // These two audit-only fields existed in the canonical v0.3.9 event
+            // shape and were removed later. They never carried Session authority.
+            object.remove("allow_cross_project_session_required");
+            object.remove("allow_cross_project_session");
+            // v0.3.9 predates logical invocation correlation. Reject a v2 event
+            // mislabeled as v1 instead of treating the version as an alias.
+            if object.contains_key("logical_invocation_id")
+                || object.contains_key("logical_invocation_role")
+            {
+                return None;
+            }
+            serde_json::from_value::<SessionEvent>(value)
+                .ok()
+                .map(Arc::new)
+        })
+        .collect()
+}
+
+fn v2_record_has_canonical_logical_invocation_shape(value: &Value) -> bool {
+    value
+        .get("events")
+        .and_then(Value::as_array)
+        .is_some_and(|events| {
+            events.iter().all(|event| {
+                event.as_object().is_some_and(|object| {
+                    object.contains_key("logical_invocation_id")
+                        == object.contains_key("logical_invocation_role")
+                })
+            })
+        })
 }
 
 impl PersistedSessionRecordV1 {
@@ -99,7 +136,7 @@ impl PersistedSessionRecordV1 {
             lifecycle: self.lifecycle,
             created_at: self.created_at,
             updated_at: self.updated_at,
-            events: self.events,
+            events: upgrade_v039_session_events(self.events)?,
             messages: self.messages,
             message_observation_revision: self.message_observation_revision,
             message_observation_floor: self.message_observation_floor,
@@ -607,6 +644,12 @@ pub(super) fn load_persisted_ledger(
                     .sessions
                     .into_iter()
                     .filter_map(|value| {
+                        if !v2_record_has_canonical_logical_invocation_shape(&value) {
+                            tracing::warn!(
+                                "discarding malformed v2 Session row: event correlation shape is partial"
+                            );
+                            return None;
+                        }
                         let record = match serde_json::from_value::<PersistedSessionRecord>(value) {
                             Ok(record) => record,
                             Err(err) => {

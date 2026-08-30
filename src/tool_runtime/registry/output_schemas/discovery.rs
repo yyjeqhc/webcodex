@@ -13,7 +13,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "model_surface",
                 schema_type(
                     "string",
-                    "Configured MCP model surface: canonical_connector or full_operator_runtime.",
+                    "Configured MCP model surface: canonical_connector, local_coding, adaptive_runtime, or full_operator_runtime.",
                 ),
             ),
             (

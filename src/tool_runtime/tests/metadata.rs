@@ -1549,6 +1549,21 @@ fn runtime_status_input_schema_exposes_compact_flags() {
         .expect("runtime_status agents output description");
     assert!(agents_description.contains("stale_count"));
     assert!(!agents_description.contains("offline_count"));
+    let model_surface_description = output_schema["properties"]["output"]["properties"]
+        ["model_surface"]["description"]
+        .as_str()
+        .expect("runtime_status model_surface output description");
+    for surface in [
+        crate::model_surface::MODEL_SURFACE_CANONICAL_CONNECTOR,
+        crate::model_surface::MODEL_SURFACE_LOCAL_CODING,
+        crate::model_surface::MODEL_SURFACE_ADAPTIVE_RUNTIME,
+        crate::model_surface::MODEL_SURFACE_FULL_OPERATOR_RUNTIME,
+    ] {
+        assert!(
+            model_surface_description.contains(surface),
+            "runtime_status model_surface output description missing {surface}"
+        );
+    }
     let compact_schemas =
         &output_schema["properties"]["output"]["properties"]["mcp_compact_schemas"];
     assert_eq!(compact_schemas["type"], "boolean");

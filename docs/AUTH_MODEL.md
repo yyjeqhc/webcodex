@@ -355,8 +355,9 @@ input, and `computer_text_input` for bounded text input.
 Element-state observation re-resolves the existing ephemeral handle and
 returns no AXValue; protected/secure elements suppress even `value_empty`. These
 capability checks are independent of OAuth consent. The canonical Connector surface
-still does not expose the full operator Computer tool set; on `full_operator_runtime`,
-OAuth `tools/list` is additionally projected by the token's actual runtime scope grant.
+still does not expose the full operator Computer tool set; on `adaptive_runtime` and
+`full_operator_runtime`, OAuth `tools/list` is additionally projected by the token's
+actual runtime scope grant.
 
 ## `client_id`
 

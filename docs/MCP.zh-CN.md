@@ -80,8 +80,13 @@ OAuth 仍是独立的高级身份路径。
 
 project-first 的 `webcodex run` / `webcodex share` 使用 project-bound
 `canonical_connector` surface。`webcodex connect <server>` 使用已有 Server 选择的 MCP
-surface；没有 Connector 配置时默认是更宽的 `local_coding`，operator 还可显式选择
-`full_operator_runtime`。这些名称描述 protocol/tool contract；第一次用户不需要先做选择。
+surface；没有 Connector 配置时默认是更宽的 `local_coding`。operator 可通过
+`WEBCODEX_MCP_MODEL_SURFACE=adaptive-runtime-v1` 显式选择 `adaptive_runtime`，或通过
+`WEBCODEX_MCP_MODEL_SURFACE=full-operator-v1` 选择 `full_operator_runtime`。`adaptive_runtime`
+只把高频 coding core 直接放进 `tools/list`，低频 runtime tool 则通过
+`call_runtime_tool` gateway 调用；gateway 只改变 model-facing schema admission，不改变
+目标 tool 原有的 OAuth scope、project authority、permission gate、参数校验、effect 或
+Session/ACK 语义。这些名称描述 protocol/tool contract；第一次用户不需要先做选择。
 
 Hosted client 需要公网 HTTPS：`share` 默认提供临时 Cloudflare Quick Tunnel，`connect` 使用
 已有 hosted Server，自托管部署则提供自己的稳定 HTTPS origin。不要把 bootstrap/admin token、
@@ -178,7 +183,7 @@ Grok Custom MCP UI 与可用范围以 xAI 的
 Server 以 project-first Connector 配置（`canonical_connector`）启动时，MCP
 `tools/list` 恰好包含以下十四个操作。这是 `webcodex run` 与 `webcodex share`
 使用的 surface；没有 Connector context 的普通 hosted/self-hosted Server 默认暴露
-`local_coding`（或显式的 `full_operator_runtime`）而不是这十四个操作：
+`local_coding`（也可显式选择 `adaptive_runtime` 或 `full_operator_runtime`）而不是这十四个操作：
 
 ```text
 task_start
@@ -293,9 +298,10 @@ validator 返回非零是断言失败。
 直到 execution 进入 terminal；需要停止时调用 `task_cancel`。不要为了轮询而重新
 执行同一个操作。
 
-更宽的 `local_coding` 与 `full_operator_runtime` MCP surface 才暴露
-`job_status`、`job_log`、`validation_summary`、`stop_job` 等原始 Job 工具；这些
-工具不属于十四个 Connector capability。
+`local_coding` 与 `full_operator_runtime` MCP surface 会直接暴露
+`job_status`、`job_log`、`validation_summary`、`stop_job` 等原始 Job 工具；
+`adaptive_runtime` 则把其中的低频工具保留在 `call_runtime_tool` gateway 后面。这些
+工具都不属于十四个 Connector capability。
 `job_log` / `observe_jobs` 返回的 observation token 必须原样回传：首次调用返回
 有界 baseline；后续 cursor-aware 调用只返回新增日志；如果无法证明连续性（包括
 Server 重启），`reset` 会返回有界 recovery tail。该 token 只是 observation

@@ -1006,19 +1006,13 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
-        let current =
-            load_endpoint_with_principal(&transaction, endpoint_id)?.ok_or_else(|| {
+        let current = load_endpoint_for_principal(&transaction, principal, endpoint_id)?
+            .ok_or_else(|| {
                 CommunicationStoreError::new("endpoint_not_found", "Agent Endpoint does not exist")
             })?;
-        if current.1 != principal.kind || current.2 != principal.digest {
-            return Err(CommunicationStoreError::new(
-                "endpoint_not_owned",
-                "Agent Endpoint is attached to a different communication principal",
-            ));
-        }
-        if current.0.lifecycle != "attached" {
+        if current.lifecycle != "attached" {
             return Ok(AgentEndpointMutation {
-                endpoint: current.0,
+                endpoint: current,
                 created: false,
                 replayed: false,
                 state_changed: false,
@@ -1027,16 +1021,16 @@ impl Database {
         require_current_endpoint(
             &transaction,
             principal,
-            &current.0.agent_id,
+            &current.agent_id,
             endpoint_id,
-            Some(current.0.controller_generation),
+            Some(current.controller_generation),
         )?;
-        let now = now_unix_ms().max(current.0.last_seen_at_unix_ms);
+        let now = now_unix_ms().max(current.last_seen_at_unix_ms);
         reconcile_wakes_for_endpoint_loss(
             &transaction,
-            &current.0.agent_id,
+            &current.agent_id,
             endpoint_id,
-            current.0.controller_generation,
+            current.controller_generation,
             now,
         )?;
         transaction
@@ -1079,20 +1073,14 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
-        let current =
-            load_endpoint_with_principal(&transaction, endpoint_id)?.ok_or_else(|| {
+        let current = load_endpoint_for_principal(&transaction, principal, endpoint_id)?
+            .ok_or_else(|| {
                 CommunicationStoreError::new("endpoint_not_found", "Agent Endpoint does not exist")
             })?;
-        if current.1 != principal.kind || current.2 != principal.digest {
-            return Err(CommunicationStoreError::new(
-                "endpoint_not_owned",
-                "Agent Endpoint is attached to a different communication principal",
-            ));
-        }
         require_current_endpoint(
             &transaction,
             principal,
-            &current.0.agent_id,
+            &current.agent_id,
             endpoint_id,
             Some(expected_controller_generation),
         )?;
@@ -1370,6 +1358,29 @@ impl Database {
             Some(agent_ids) => Some(canonicalize_agent_ids(agent_ids.clone(), false)?),
             None => None,
         };
+        let access = match input.author_agent_id.as_ref() {
+            Some(agent_id) => {
+                let endpoint_id = input.endpoint_id.as_ref().ok_or_else(|| {
+                    CommunicationStoreError::new(
+                        "endpoint_required",
+                        "Agent-authored messages require an active Endpoint",
+                    )
+                })?;
+                ConversationAccess::Agent {
+                    agent_id: agent_id.clone(),
+                    endpoint_id: endpoint_id.clone(),
+                }
+            }
+            None => {
+                if input.endpoint_id.is_some() {
+                    return Err(CommunicationStoreError::new(
+                        "unexpected_endpoint_id",
+                        "Human-authored messages must not provide endpoint_id",
+                    ));
+                }
+                ConversationAccess::Human
+            }
+        };
         // Hash the caller's canonical logical request rather than derived current
         // state. Exact replay can therefore recover the committed Message even
         // after its author Endpoint detached or the Conversation later closed.
@@ -1404,102 +1415,61 @@ impl Database {
                 state_changed: false,
             });
         }
-        let lifecycle: Option<String> = transaction
+        authorize_conversation_access(&transaction, principal, &access, &input.conversation_id)?;
+        let lifecycle: String = transaction
             .query_row(
                 "SELECT lifecycle FROM wc_conversations WHERE conversation_id = ?1",
                 params![input.conversation_id],
                 |row| row.get(0),
             )
-            .optional()
             .map_err(store_error)?;
-        match lifecycle.as_deref() {
-            None => {
-                return Err(CommunicationStoreError::new(
-                    "conversation_not_found",
-                    "Conversation does not exist",
-                ))
-            }
-            Some("open") => {}
-            Some(_) => {
-                return Err(CommunicationStoreError::new(
-                    "conversation_closed",
-                    "Conversation is closed",
-                ))
-            }
+        if lifecycle != "open" {
+            return Err(CommunicationStoreError::new(
+                "conversation_closed",
+                "Conversation is closed",
+            ));
         }
-        let (author_participant_id, author_agent_id) = if let Some(agent_id) = input.author_agent_id
-        {
-            let endpoint_id = input.endpoint_id.as_deref().ok_or_else(|| {
-                CommunicationStoreError::new(
-                    "endpoint_required",
-                    "Agent-authored messages require an active Endpoint",
-                )
-            })?;
-            require_current_endpoint(&transaction, principal, &agent_id, endpoint_id, None)?;
-            let participant_id: Option<String> = transaction
-                .query_row(
-                    "SELECT participant_id FROM wc_conversation_participants
-                     WHERE conversation_id = ?1 AND participant_kind = 'agent' AND agent_id = ?2",
-                    params![input.conversation_id, agent_id],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(store_error)?;
-            let participant_id = participant_id.ok_or_else(|| {
-                CommunicationStoreError::new(
-                    "agent_not_conversation_participant",
-                    "Agent is not a participant in this Conversation",
-                )
-            })?;
-            (participant_id, Some(agent_id))
-        } else {
-            if input.endpoint_id.is_some() {
-                return Err(CommunicationStoreError::new(
-                    "unexpected_endpoint_id",
-                    "Human-authored messages must not provide endpoint_id",
-                ));
+        let (author_participant_id, author_agent_id) = match &access {
+            ConversationAccess::Agent { agent_id, .. } => {
+                let participant_id: String = transaction
+                    .query_row(
+                        "SELECT participant_id FROM wc_conversation_participants
+                         WHERE conversation_id = ?1 AND participant_kind = 'agent' AND agent_id = ?2",
+                        params![input.conversation_id, agent_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(store_error)?;
+                (participant_id, Some(agent_id.clone()))
             }
-            let participant_id: Option<String> = transaction
-                .query_row(
-                    "SELECT participant_id FROM wc_conversation_participants
-                     WHERE conversation_id = ?1 AND participant_kind = 'human'
-                       AND principal_digest = ?2",
-                    params![input.conversation_id, principal.digest],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(store_error)?;
-            let participant_id = participant_id.ok_or_else(|| {
-                CommunicationStoreError::new(
-                    "human_not_conversation_participant",
-                    "Current communication principal is not a Human participant in this Conversation",
-                )
-            })?;
-            (participant_id, None)
+            ConversationAccess::Human => {
+                let participant_id: String = transaction
+                    .query_row(
+                        "SELECT participant_id FROM wc_conversation_participants
+                         WHERE conversation_id = ?1 AND participant_kind = 'human'
+                           AND principal_kind = ?2 AND principal_digest = ?3",
+                        params![input.conversation_id, principal.kind, principal.digest],
+                        |row| row.get(0),
+                    )
+                    .map_err(store_error)?;
+                (participant_id, None)
+            }
         };
         if let Some(reply_to) = reply_to.as_deref() {
-            let reply_conversation: Option<String> = transaction
+            let reply_exists: bool = transaction
                 .query_row(
-                    "SELECT conversation_id FROM wc_conversation_messages WHERE message_id = ?1",
-                    params![reply_to],
+                    "SELECT EXISTS(
+                        SELECT 1 FROM wc_conversation_messages
+                        WHERE message_id = ?1 AND conversation_id = ?2
+                     )",
+                    params![reply_to, input.conversation_id],
                     |row| row.get(0),
                 )
-                .optional()
                 .map_err(store_error)?;
-            match reply_conversation.as_deref() {
-                None => {
-                    return Err(CommunicationStoreError::new(
-                        "reply_message_not_found",
-                        "reply_to message does not exist",
-                    ))
-                }
-                Some(conversation_id) if conversation_id != input.conversation_id => {
-                    return Err(CommunicationStoreError::new(
-                        "reply_conversation_mismatch",
-                        "reply_to must reference a message in the same Conversation",
-                    ))
-                }
-                Some(_) => {}
+            if !reply_exists {
+                return Err(CommunicationStoreError::new(
+                    "reply_message_not_found",
+                    "reply_to message does not exist in this Conversation",
+                ));
             }
         }
         let recipient_agent_ids = match explicit_recipient_agent_ids {
@@ -1757,27 +1727,21 @@ impl Database {
         let mut consumed_delivery_ids = Vec::new();
         let mut already_consumed_delivery_ids = Vec::new();
         for delivery_id in &delivery_ids {
-            let row: Option<(String, String)> = transaction
+            let state: Option<String> = transaction
                 .query_row(
-                    "SELECT recipient_agent_id, state FROM wc_agent_deliveries
-                     WHERE delivery_id = ?1",
-                    params![delivery_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+                    "SELECT state FROM wc_agent_deliveries
+                     WHERE delivery_id = ?1 AND recipient_agent_id = ?2",
+                    params![delivery_id, agent_id],
+                    |row| row.get(0),
                 )
                 .optional()
                 .map_err(store_error)?;
-            let Some((recipient_agent_id, state)) = row else {
+            let Some(state) = state else {
                 return Err(CommunicationStoreError::new(
                     "delivery_not_found",
-                    format!("Agent delivery does not exist: {delivery_id}"),
+                    "Agent delivery does not exist",
                 ));
             };
-            if recipient_agent_id != agent_id {
-                return Err(CommunicationStoreError::new(
-                    "delivery_not_owned",
-                    "Agent delivery belongs to a different Agent Inbox",
-                ));
-            }
             if state == "consumed" {
                 already_consumed_delivery_ids.push(delivery_id.clone());
                 continue;
@@ -1785,10 +1749,10 @@ impl Database {
             transaction
                 .execute(
                     "UPDATE wc_agent_deliveries
-                     SET state = 'consumed', consumed_at_unix_ms = ?2,
-                         consumed_by_endpoint_id = ?3
-                     WHERE delivery_id = ?1 AND state = 'queued'",
-                    params![delivery_id, now, endpoint_id],
+                     SET state = 'consumed', consumed_at_unix_ms = ?3,
+                         consumed_by_endpoint_id = ?4
+                     WHERE delivery_id = ?1 AND recipient_agent_id = ?2 AND state = 'queued'",
+                    params![delivery_id, agent_id, now, endpoint_id],
                 )
                 .map_err(store_error)?;
             consumed_delivery_ids.push(delivery_id.clone());
@@ -1834,63 +1798,43 @@ fn authorize_conversation_access(
     access: &ConversationAccess,
     conversation_id: &str,
 ) -> Result<Option<String>, CommunicationStoreError> {
-    let exists: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM wc_conversations WHERE conversation_id = ?1)",
-            params![conversation_id],
-            |row| row.get(0),
-        )
-        .map_err(store_error)?;
-    if !exists {
+    let participant: bool = match access {
+        ConversationAccess::Human => conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM wc_conversation_participants
+                    WHERE conversation_id = ?1 AND participant_kind = 'human'
+                      AND principal_kind = ?2 AND principal_digest = ?3
+                 )",
+                params![conversation_id, principal.kind, principal.digest],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?,
+        ConversationAccess::Agent {
+            agent_id,
+            endpoint_id,
+        } => {
+            require_current_endpoint(conn, principal, agent_id, endpoint_id, None)?;
+            conn.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM wc_conversation_participants
+                    WHERE conversation_id = ?1 AND participant_kind = 'agent' AND agent_id = ?2
+                 )",
+                params![conversation_id, agent_id],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?
+        }
+    };
+    if !participant {
         return Err(CommunicationStoreError::new(
             "conversation_not_found",
             "Conversation does not exist",
         ));
     }
     match access {
-        ConversationAccess::Human => {
-            let participant: bool = conn
-                .query_row(
-                    "SELECT EXISTS(
-                        SELECT 1 FROM wc_conversation_participants
-                        WHERE conversation_id = ?1 AND participant_kind = 'human'
-                          AND principal_digest = ?2
-                     )",
-                    params![conversation_id, principal.digest],
-                    |row| row.get(0),
-                )
-                .map_err(store_error)?;
-            if !participant {
-                return Err(CommunicationStoreError::new(
-                    "conversation_access_denied",
-                    "Current communication principal is not a participant in this Conversation",
-                ));
-            }
-            Ok(None)
-        }
-        ConversationAccess::Agent {
-            agent_id,
-            endpoint_id,
-        } => {
-            require_current_endpoint(conn, principal, agent_id, endpoint_id, None)?;
-            let participant: bool = conn
-                .query_row(
-                    "SELECT EXISTS(
-                        SELECT 1 FROM wc_conversation_participants
-                        WHERE conversation_id = ?1 AND participant_kind = 'agent' AND agent_id = ?2
-                     )",
-                    params![conversation_id, agent_id],
-                    |row| row.get(0),
-                )
-                .map_err(store_error)?;
-            if !participant {
-                return Err(CommunicationStoreError::new(
-                    "conversation_access_denied",
-                    "Endpoint Agent is not a participant in this Conversation",
-                ));
-            }
-            Ok(Some(agent_id.clone()))
-        }
+        ConversationAccess::Human => Ok(None),
+        ConversationAccess::Agent { agent_id, .. } => Ok(Some(agent_id.clone())),
     }
 }
 
@@ -1994,25 +1938,22 @@ fn require_agent_owner(
     agent_id: &str,
 ) -> Result<(), CommunicationStoreError> {
     validate_id(agent_id, DURABLE_AGENT_ID_PREFIX, "invalid_agent_id")?;
-    let owner: Option<(String, String)> = conn
+    let owned: bool = conn
         .query_row(
-            "SELECT owner_principal_kind, owner_principal_digest
-             FROM wc_agent_identities WHERE agent_id = ?1",
-            params![agent_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            "SELECT EXISTS(
+                SELECT 1 FROM wc_agent_identities
+                WHERE agent_id = ?1
+                  AND owner_principal_kind = ?2
+                  AND owner_principal_digest = ?3
+             )",
+            params![agent_id, principal.kind, principal.digest],
+            |row| row.get(0),
         )
-        .optional()
         .map_err(store_error)?;
-    let Some((owner_kind, owner_digest)) = owner else {
+    if !owned {
         return Err(CommunicationStoreError::new(
             "agent_not_found",
             "Agent identity does not exist",
-        ));
-    };
-    if owner_kind != principal.kind || owner_digest != principal.digest {
-        return Err(CommunicationStoreError::new(
-            "agent_not_owned",
-            "Agent identity belongs to a different communication principal",
         ));
     }
     Ok(())
@@ -2033,22 +1974,16 @@ pub(super) fn require_current_endpoint(
             "expected_controller_generation must be at least 1",
         ));
     }
-    let row = load_endpoint_with_principal(conn, endpoint_id)?.ok_or_else(|| {
+    let row = load_endpoint_for_principal(conn, principal, endpoint_id)?.ok_or_else(|| {
         CommunicationStoreError::new("endpoint_not_found", "Agent Endpoint does not exist")
     })?;
-    if row.1 != principal.kind || row.2 != principal.digest {
-        return Err(CommunicationStoreError::new(
-            "endpoint_not_owned",
-            "Agent Endpoint is attached to a different communication principal",
-        ));
-    }
-    if row.0.agent_id != agent_id {
+    if row.agent_id != agent_id {
         return Err(CommunicationStoreError::new(
             "endpoint_agent_mismatch",
             "Agent Endpoint is attached to a different Agent",
         ));
     }
-    match row.0.lifecycle.as_str() {
+    match row.lifecycle.as_str() {
         "detached" => {
             return Err(CommunicationStoreError::new(
                 "endpoint_detached",
@@ -2069,7 +2004,7 @@ pub(super) fn require_current_endpoint(
             ));
         }
     }
-    if row.0.lease_expires_at_unix_ms <= now_unix_ms() {
+    if row.lease_expires_at_unix_ms <= now_unix_ms() {
         return Err(CommunicationStoreError::new(
             "endpoint_expired",
             "Agent Endpoint lease has expired",
@@ -2082,16 +2017,16 @@ pub(super) fn require_current_endpoint(
             |row| row.get(0),
         )
         .map_err(store_error)?;
-    if row.0.controller_generation != current_controller_generation
+    if row.controller_generation != current_controller_generation
         || expected_controller_generation
-            .is_some_and(|generation| generation != row.0.controller_generation)
+            .is_some_and(|generation| generation != row.controller_generation)
     {
         return Err(CommunicationStoreError::new(
             "endpoint_generation_stale",
             "Agent Endpoint controller generation is stale",
         ));
     }
-    Ok(row.0)
+    Ok(row)
 }
 
 fn load_agent(
@@ -2151,44 +2086,55 @@ fn load_endpoint(
     conn: &Connection,
     endpoint_id: &str,
 ) -> Result<Option<AgentEndpointRecord>, CommunicationStoreError> {
-    Ok(load_endpoint_with_principal(conn, endpoint_id)?.map(|row| row.0))
-}
-
-fn load_endpoint_with_principal(
-    conn: &Connection,
-    endpoint_id: &str,
-) -> Result<Option<(AgentEndpointRecord, String, String)>, CommunicationStoreError> {
     conn.query_row(
         "SELECT endpoint_id, agent_id, host, client_attachment_id, wake_capable,
                 controller_generation, lifecycle, attached_at_unix_ms,
                 last_seen_at_unix_ms, lease_expires_at_unix_ms,
-                expired_at_unix_ms, detached_at_unix_ms,
-                attachment_principal_kind, attachment_principal_digest
+                expired_at_unix_ms, detached_at_unix_ms
          FROM wc_agent_endpoints WHERE endpoint_id = ?1",
         params![endpoint_id],
-        |row| {
-            Ok((
-                AgentEndpointRecord {
-                    endpoint_id: row.get(0)?,
-                    agent_id: row.get(1)?,
-                    host: row.get(2)?,
-                    client_attachment_id: row.get(3)?,
-                    wake_capable: row.get::<_, i64>(4)? != 0,
-                    controller_generation: row.get(5)?,
-                    lifecycle: row.get(6)?,
-                    attached_at_unix_ms: row.get(7)?,
-                    last_seen_at_unix_ms: row.get(8)?,
-                    lease_expires_at_unix_ms: row.get(9)?,
-                    expired_at_unix_ms: row.get(10)?,
-                    detached_at_unix_ms: row.get(11)?,
-                },
-                row.get(12)?,
-                row.get(13)?,
-            ))
-        },
+        row_to_endpoint,
     )
     .optional()
     .map_err(store_error)
+}
+
+fn load_endpoint_for_principal(
+    conn: &Connection,
+    principal: &CommunicationPrincipal,
+    endpoint_id: &str,
+) -> Result<Option<AgentEndpointRecord>, CommunicationStoreError> {
+    conn.query_row(
+        "SELECT endpoint_id, agent_id, host, client_attachment_id, wake_capable,
+                controller_generation, lifecycle, attached_at_unix_ms,
+                last_seen_at_unix_ms, lease_expires_at_unix_ms,
+                expired_at_unix_ms, detached_at_unix_ms
+         FROM wc_agent_endpoints
+         WHERE endpoint_id = ?1
+           AND attachment_principal_kind = ?2
+           AND attachment_principal_digest = ?3",
+        params![endpoint_id, principal.kind, principal.digest],
+        row_to_endpoint,
+    )
+    .optional()
+    .map_err(store_error)
+}
+
+fn row_to_endpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentEndpointRecord> {
+    Ok(AgentEndpointRecord {
+        endpoint_id: row.get(0)?,
+        agent_id: row.get(1)?,
+        host: row.get(2)?,
+        client_attachment_id: row.get(3)?,
+        wake_capable: row.get::<_, i64>(4)? != 0,
+        controller_generation: row.get(5)?,
+        lifecycle: row.get(6)?,
+        attached_at_unix_ms: row.get(7)?,
+        last_seen_at_unix_ms: row.get(8)?,
+        lease_expires_at_unix_ms: row.get(9)?,
+        expired_at_unix_ms: row.get(10)?,
+        detached_at_unix_ms: row.get(11)?,
+    })
 }
 
 fn row_to_conversation_summary(

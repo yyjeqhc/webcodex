@@ -540,6 +540,23 @@ impl ToolRuntime {
 mod tests {
     use super::*;
     use crate::auth::shared_key_context;
+    use std::sync::Arc;
+
+    fn managed_user(user_id: &str) -> AuthContext {
+        let mut auth = AuthContext::new(AuthKind::ApiToken);
+        auth.user_id = Some(user_id.to_string());
+        auth.username = Some(user_id.to_string());
+        auth
+    }
+
+    fn assert_same_public_failure(foreign: ToolResult, missing: ToolResult, error_kind: &str) {
+        assert!(!foreign.success);
+        assert!(!missing.success);
+        assert_eq!(foreign.error, missing.error);
+        assert_eq!(foreign.output, missing.output);
+        assert_eq!(foreign.output["error_kind"], error_kind);
+        assert_eq!(foreign.output["recovery_kind"], "fix_input");
+    }
 
     #[test]
     fn stale_endpoint_and_wake_fences_require_reconciliation() {
@@ -586,6 +603,89 @@ mod tests {
         assert_eq!(
             communication_principal(Some(&direct)).unwrap(),
             communication_principal(Some(&oauth)).unwrap()
+        );
+    }
+
+    #[test]
+    fn foreign_resources_match_missing_at_tool_result_boundary() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(crate::db::Database::open(&temp.path().join("tool-privacy.db")).unwrap());
+        let runtime = ToolRuntime::new_for_tests().with_communication_database(db);
+        let alice = managed_user("alice");
+        let bob = managed_user("bob");
+
+        let created_agent = runtime.create_agent_identity(
+            Some(&bob),
+            "bob-agent".to_string(),
+            "Bob Agent".to_string(),
+            Some("private profile".to_string()),
+            vec!["privacy".to_string()],
+            "bob-agent-create".to_string(),
+        );
+        assert!(created_agent.success, "{:?}", created_agent.error);
+        let bob_agent_id = created_agent.output["agent"]["agent_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let missing_agent = format!("wc_dagent_{}", "9".repeat(32));
+
+        let foreign_agent = runtime.update_agent_identity(
+            Some(&alice),
+            bob_agent_id.clone(),
+            1,
+            None,
+            None,
+            Some("probe".to_string()),
+            None,
+        );
+        let missing_agent_result = runtime.update_agent_identity(
+            Some(&alice),
+            missing_agent,
+            1,
+            None,
+            None,
+            Some("probe".to_string()),
+            None,
+        );
+        assert_same_public_failure(foreign_agent, missing_agent_result, "agent_not_found");
+
+        let created_conversation = runtime.create_conversation(
+            Some(&bob),
+            Some("Bob private room".to_string()),
+            vec![bob_agent_id],
+            "bob-room-create".to_string(),
+        );
+        assert!(
+            created_conversation.success,
+            "{:?}",
+            created_conversation.error
+        );
+        let bob_conversation_id = created_conversation.output["conversation"]["conversation"]
+            ["conversation_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let missing_conversation = format!("wc_conv_{}", "8".repeat(32));
+        let foreign_conversation = runtime.read_conversation(
+            Some(&alice),
+            bob_conversation_id,
+            None,
+            None,
+            Some(0),
+            Some(10),
+        );
+        let missing_conversation_result = runtime.read_conversation(
+            Some(&alice),
+            missing_conversation,
+            None,
+            None,
+            Some(0),
+            Some(10),
+        );
+        assert_same_public_failure(
+            foreign_conversation,
+            missing_conversation_result,
+            "conversation_not_found",
         );
     }
 

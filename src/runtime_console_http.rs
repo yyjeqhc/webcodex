@@ -707,13 +707,7 @@ fn render_communication_result(res: &mut Response, result: crate::tool_runtime::
         | "conversation_not_found"
         | "message_not_found"
         | "reply_message_not_found"
-        | "delivery_not_found"
-        | "agent_not_owned"
-        | "endpoint_not_owned"
-        | "delivery_not_owned"
-        | "conversation_access_denied"
-        | "human_not_conversation_participant"
-        | "agent_not_conversation_participant" => StatusCode::NOT_FOUND,
+        | "delivery_not_found" => StatusCode::NOT_FOUND,
         "communication_principal_unavailable" => StatusCode::FORBIDDEN,
         _ => StatusCode::BAD_REQUEST,
     };
@@ -2325,7 +2319,7 @@ mod tests {
         CompleteSessionMessageInput, PostSessionMessageInput, SessionCreateOptions, SessionGuards,
         SessionMessageKind, SessionMessagePriority,
     };
-    use crate::tool_runtime::{RuntimeInfo, SessionMode};
+    use crate::tool_runtime::{RecoveryKind, RuntimeInfo, SessionMode, ToolResult};
     use salvo::test::{ResponseExt, TestClient};
     use salvo::Service;
     use serde_json::json;
@@ -2506,6 +2500,36 @@ mod tests {
         let status = response.status_code.unwrap_or(StatusCode::OK);
         let body = response.take_json::<Value>().await.unwrap_or_default();
         (status, body)
+    }
+
+    #[tokio::test]
+    async fn communication_canonical_not_found_errors_render_as_http_404() {
+        for error_kind in [
+            "agent_not_found",
+            "endpoint_not_found",
+            "conversation_not_found",
+            "message_not_found",
+            "reply_message_not_found",
+            "delivery_not_found",
+        ] {
+            let output = json!({
+                "error_kind": error_kind,
+                "message": "Communication resource does not exist",
+                "current_profile_revision": null,
+                "state_changed": false,
+            });
+            let result = ToolResult::err_with_output(
+                "Communication resource does not exist",
+                output.clone(),
+            )
+            .with_recovery(RecoveryKind::FixInput, None);
+            let expected_output = result.output.clone();
+            let mut response = Response::new();
+            render_communication_result(&mut response, result);
+            assert_eq!(response.status_code, Some(StatusCode::NOT_FOUND));
+            let body = response.take_json::<Value>().await.unwrap();
+            assert_eq!(body, expected_output, "{error_kind}");
+        }
     }
 
     fn recent_test_row(

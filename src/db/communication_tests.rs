@@ -8,6 +8,24 @@ fn principal(kind: &str, hex: char) -> CommunicationPrincipal {
     }
 }
 
+fn missing_id(prefix: &str, hex: char) -> String {
+    format!("{prefix}{}", hex.to_string().repeat(32))
+}
+
+fn assert_same_private_not_found(
+    foreign: CommunicationStoreError,
+    missing: CommunicationStoreError,
+    expected_code: &str,
+) {
+    assert_eq!(foreign.code(), expected_code);
+    assert_eq!(missing.code(), expected_code);
+    assert_eq!(foreign.message(), missing.message());
+    assert_eq!(
+        foreign.current_profile_revision(),
+        missing.current_profile_revision()
+    );
+}
+
 fn new_agent(handle: &str, display_name: &str, key: &str) -> NewAgentIdentity {
     NewAgentIdentity {
         handle: handle.to_string(),
@@ -152,7 +170,7 @@ fn durable_agent_identity_profile_collision_owner_and_reopen() {
         )
         .unwrap_err()
         .code(),
-        "agent_not_owned"
+        "agent_not_found"
     );
 
     assert_eq!(
@@ -201,7 +219,7 @@ fn endpoint_attachment_is_principal_bound_and_detach_preserves_agent() {
         db.attach_agent_endpoint(&other, endpoint(&agent.agent_id, "ChatGPT", "wrong"))
             .unwrap_err()
             .code(),
-        "agent_not_owned"
+        "agent_not_found"
     );
     let attached = db
         .attach_agent_endpoint(&owner, endpoint(&agent.agent_id, "ChatGPT", "window-a"))
@@ -225,7 +243,7 @@ fn endpoint_attachment_is_principal_bound_and_detach_preserves_agent() {
         db.detach_agent_endpoint(&other, &attached.endpoint.endpoint_id)
             .unwrap_err()
             .code(),
-        "endpoint_not_owned"
+        "endpoint_not_found"
     );
     let detached = db
         .detach_agent_endpoint(&owner, &attached.endpoint.endpoint_id)
@@ -290,7 +308,7 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
         )
         .unwrap_err()
         .code(),
-        "agent_not_owned"
+        "agent_not_found"
     );
 
     let created = db
@@ -531,7 +549,7 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
         )
         .unwrap_err()
         .code(),
-        "reply_conversation_mismatch"
+        "reply_message_not_found"
     );
 
     drop(db);
@@ -756,4 +774,458 @@ fn message_deliveries_and_wake_commit_atomically() {
         .query_row("SELECT COUNT(*) FROM wc_agent_wakes", [], |row| row.get(0))
         .unwrap();
     assert_eq!(wake_count, 1);
+}
+
+#[test]
+fn foreign_exact_communication_resources_match_missing_ids() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("principal-privacy.db")).unwrap();
+    let alice = principal("user", '1');
+    let bob = principal("user", '2');
+
+    let alice_agent = db
+        .create_agent_identity(
+            &alice,
+            new_agent("alice-agent", "Alice Agent", "alice-agent"),
+        )
+        .unwrap()
+        .agent;
+    let alice_endpoint = db
+        .attach_agent_endpoint(
+            &alice,
+            endpoint(&alice_agent.agent_id, "alice-host", "alice-endpoint"),
+        )
+        .unwrap()
+        .endpoint;
+    let alice_conversation = db
+        .create_conversation(
+            &alice,
+            conversation(vec![alice_agent.agent_id.clone()], "alice-conversation"),
+        )
+        .unwrap()
+        .conversation
+        .conversation
+        .conversation_id;
+    let alice_seed = db
+        .post_conversation_message(
+            &alice,
+            human_message(
+                &alice_conversation,
+                "Alice seed message",
+                None,
+                None,
+                "alice-seed-message",
+            ),
+        )
+        .unwrap();
+    let alice_delivery_id = alice_seed.message.deliveries[0].delivery_id.clone();
+    let alice_other_agent = db
+        .create_agent_identity(
+            &alice,
+            new_agent("alice-other", "Alice Other Agent", "alice-other-agent"),
+        )
+        .unwrap()
+        .agent;
+    let alice_other_conversation = db
+        .create_conversation(
+            &alice,
+            conversation(
+                vec![alice_other_agent.agent_id.clone()],
+                "alice-other-conversation",
+            ),
+        )
+        .unwrap()
+        .conversation
+        .conversation
+        .conversation_id;
+    let alice_other_delivery_id = db
+        .post_conversation_message(
+            &alice,
+            human_message(
+                &alice_other_conversation,
+                "Same principal, different Agent Inbox",
+                None,
+                None,
+                "alice-other-seed-message",
+            ),
+        )
+        .unwrap()
+        .message
+        .deliveries[0]
+        .delivery_id
+        .clone();
+
+    let bob_agent = db
+        .create_agent_identity(&bob, new_agent("bob-agent", "Bob Agent", "bob-agent"))
+        .unwrap()
+        .agent;
+    let bob_endpoint = db
+        .attach_agent_endpoint(
+            &bob,
+            endpoint(&bob_agent.agent_id, "bob-private-host", "bob-endpoint"),
+        )
+        .unwrap()
+        .endpoint;
+    let bob_conversation = db
+        .create_conversation(
+            &bob,
+            conversation(vec![bob_agent.agent_id.clone()], "bob-conversation"),
+        )
+        .unwrap()
+        .conversation
+        .conversation
+        .conversation_id;
+    let bob_seed = db
+        .post_conversation_message(
+            &bob,
+            human_message(
+                &bob_conversation,
+                "Bob private message",
+                None,
+                None,
+                "bob-seed-message",
+            ),
+        )
+        .unwrap();
+    let bob_message_id = bob_seed.message.message_id.clone();
+    let bob_delivery_id = bob_seed.message.deliveries[0].delivery_id.clone();
+
+    let missing_agent = missing_id(DURABLE_AGENT_ID_PREFIX, '9');
+    let missing_endpoint = missing_id(AGENT_ENDPOINT_ID_PREFIX, '8');
+    let missing_conversation = missing_id(CONVERSATION_ID_PREFIX, '7');
+    let missing_message = missing_id(CONVERSATION_MESSAGE_ID_PREFIX, '6');
+    let missing_delivery = missing_id(AGENT_DELIVERY_ID_PREFIX, '5');
+
+    assert_same_private_not_found(
+        db.update_agent_identity(
+            &alice,
+            &bob_agent.agent_id,
+            1,
+            AgentProfilePatch {
+                description: Some("must stay private".to_string()),
+                ..AgentProfilePatch::default()
+            },
+        )
+        .unwrap_err(),
+        db.update_agent_identity(
+            &alice,
+            &missing_agent,
+            1,
+            AgentProfilePatch {
+                description: Some("must stay private".to_string()),
+                ..AgentProfilePatch::default()
+            },
+        )
+        .unwrap_err(),
+        "agent_not_found",
+    );
+
+    assert_same_private_not_found(
+        db.attach_agent_endpoint(
+            &alice,
+            endpoint(&bob_agent.agent_id, "alice-host", "foreign-agent-attach"),
+        )
+        .unwrap_err(),
+        db.attach_agent_endpoint(
+            &alice,
+            endpoint(&missing_agent, "alice-host", "missing-agent-attach"),
+        )
+        .unwrap_err(),
+        "agent_not_found",
+    );
+
+    assert_same_private_not_found(
+        db.create_conversation(
+            &alice,
+            conversation(
+                vec![bob_agent.agent_id.clone()],
+                "foreign-agent-conversation",
+            ),
+        )
+        .unwrap_err(),
+        db.create_conversation(
+            &alice,
+            conversation(vec![missing_agent.clone()], "missing-agent-conversation"),
+        )
+        .unwrap_err(),
+        "agent_not_found",
+    );
+
+    assert_same_private_not_found(
+        db.detach_agent_endpoint(&alice, &bob_endpoint.endpoint_id)
+            .unwrap_err(),
+        db.detach_agent_endpoint(&alice, &missing_endpoint)
+            .unwrap_err(),
+        "endpoint_not_found",
+    );
+
+    assert_same_private_not_found(
+        db.list_conversations(
+            &alice,
+            &ConversationAccess::Agent {
+                agent_id: alice_agent.agent_id.clone(),
+                endpoint_id: bob_endpoint.endpoint_id.clone(),
+            },
+            0,
+            10,
+        )
+        .unwrap_err(),
+        db.list_conversations(
+            &alice,
+            &ConversationAccess::Agent {
+                agent_id: alice_agent.agent_id.clone(),
+                endpoint_id: missing_endpoint.clone(),
+            },
+            0,
+            10,
+        )
+        .unwrap_err(),
+        "endpoint_not_found",
+    );
+
+    assert_same_private_not_found(
+        db.list_agent_inbox(
+            &alice,
+            &alice_agent.agent_id,
+            &bob_endpoint.endpoint_id,
+            0,
+            10,
+        )
+        .unwrap_err(),
+        db.list_agent_inbox(&alice, &alice_agent.agent_id, &missing_endpoint, 0, 10)
+            .unwrap_err(),
+        "endpoint_not_found",
+    );
+
+    assert_same_private_not_found(
+        db.read_conversation(&alice, &ConversationAccess::Human, &bob_conversation, 0, 10)
+            .unwrap_err(),
+        db.read_conversation(
+            &alice,
+            &ConversationAccess::Human,
+            &missing_conversation,
+            0,
+            10,
+        )
+        .unwrap_err(),
+        "conversation_not_found",
+    );
+
+    assert_same_private_not_found(
+        db.read_conversation(
+            &alice,
+            &ConversationAccess::Agent {
+                agent_id: alice_agent.agent_id.clone(),
+                endpoint_id: alice_endpoint.endpoint_id.clone(),
+            },
+            &bob_conversation,
+            0,
+            10,
+        )
+        .unwrap_err(),
+        db.read_conversation(
+            &alice,
+            &ConversationAccess::Agent {
+                agent_id: alice_agent.agent_id.clone(),
+                endpoint_id: alice_endpoint.endpoint_id.clone(),
+            },
+            &missing_conversation,
+            0,
+            10,
+        )
+        .unwrap_err(),
+        "conversation_not_found",
+    );
+
+    assert_same_private_not_found(
+        db.post_conversation_message(
+            &alice,
+            human_message(
+                &bob_conversation,
+                "Alice must not learn whether Bob room is open",
+                None,
+                None,
+                "foreign-open-conversation",
+            ),
+        )
+        .unwrap_err(),
+        db.post_conversation_message(
+            &alice,
+            human_message(
+                &missing_conversation,
+                "Alice must not learn whether Bob room is open",
+                None,
+                None,
+                "missing-open-conversation",
+            ),
+        )
+        .unwrap_err(),
+        "conversation_not_found",
+    );
+
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_conversations SET lifecycle = 'closed' WHERE conversation_id = ?1",
+            [&bob_conversation],
+        )
+        .unwrap();
+    assert_same_private_not_found(
+        db.post_conversation_message(
+            &alice,
+            human_message(
+                &bob_conversation,
+                "Alice must not learn that Bob room is closed",
+                None,
+                None,
+                "foreign-closed-conversation",
+            ),
+        )
+        .unwrap_err(),
+        db.post_conversation_message(
+            &alice,
+            human_message(
+                &missing_conversation,
+                "Alice must not learn that Bob room is closed",
+                None,
+                None,
+                "missing-closed-conversation",
+            ),
+        )
+        .unwrap_err(),
+        "conversation_not_found",
+    );
+    assert_eq!(
+        db.post_conversation_message(
+            &bob,
+            human_message(
+                &bob_conversation,
+                "Bob can still observe own closed state",
+                None,
+                None,
+                "bob-authorized-closed",
+            ),
+        )
+        .unwrap_err()
+        .code(),
+        "conversation_closed"
+    );
+
+    assert_same_private_not_found(
+        db.post_conversation_message(
+            &alice,
+            human_message(
+                &alice_conversation,
+                "Cross-room reply must not prove Bob message exists",
+                None,
+                Some(bob_message_id),
+                "foreign-reply-target",
+            ),
+        )
+        .unwrap_err(),
+        db.post_conversation_message(
+            &alice,
+            human_message(
+                &alice_conversation,
+                "Cross-room reply must not prove Bob message exists",
+                None,
+                Some(missing_message),
+                "missing-reply-target",
+            ),
+        )
+        .unwrap_err(),
+        "reply_message_not_found",
+    );
+
+    assert_same_private_not_found(
+        db.consume_agent_deliveries(
+            &alice,
+            &alice_agent.agent_id,
+            &alice_endpoint.endpoint_id,
+            vec![bob_delivery_id],
+        )
+        .unwrap_err(),
+        db.consume_agent_deliveries(
+            &alice,
+            &alice_agent.agent_id,
+            &alice_endpoint.endpoint_id,
+            vec![missing_delivery.clone()],
+        )
+        .unwrap_err(),
+        "delivery_not_found",
+    );
+
+    assert_same_private_not_found(
+        db.consume_agent_deliveries(
+            &alice,
+            &alice_agent.agent_id,
+            &alice_endpoint.endpoint_id,
+            vec![alice_other_delivery_id],
+        )
+        .unwrap_err(),
+        db.consume_agent_deliveries(
+            &alice,
+            &alice_agent.agent_id,
+            &alice_endpoint.endpoint_id,
+            vec![missing_delivery],
+        )
+        .unwrap_err(),
+        "delivery_not_found",
+    );
+
+    let first_consume = db
+        .consume_agent_deliveries(
+            &alice,
+            &alice_agent.agent_id,
+            &alice_endpoint.endpoint_id,
+            vec![alice_delivery_id.clone()],
+        )
+        .unwrap();
+    assert!(first_consume.state_changed);
+    assert_eq!(
+        first_consume.consumed_delivery_ids,
+        vec![alice_delivery_id.clone()]
+    );
+    let consume_retry = db
+        .consume_agent_deliveries(
+            &alice,
+            &alice_agent.agent_id,
+            &alice_endpoint.endpoint_id,
+            vec![alice_delivery_id.clone()],
+        )
+        .unwrap();
+    assert!(!consume_retry.state_changed);
+    assert_eq!(
+        consume_retry.already_consumed_delivery_ids,
+        vec![alice_delivery_id]
+    );
+
+    assert_eq!(
+        db.update_agent_identity(
+            &alice,
+            &alice_agent.agent_id,
+            2,
+            AgentProfilePatch {
+                description: Some("stale revision remains diagnosable".to_string()),
+                ..AgentProfilePatch::default()
+            },
+        )
+        .unwrap_err()
+        .code(),
+        "agent_profile_changed"
+    );
+
+    db.detach_agent_endpoint(&alice, &alice_endpoint.endpoint_id)
+        .unwrap();
+    assert_eq!(
+        db.list_agent_inbox(
+            &alice,
+            &alice_agent.agent_id,
+            &alice_endpoint.endpoint_id,
+            0,
+            10,
+        )
+        .unwrap_err()
+        .code(),
+        "endpoint_detached"
+    );
 }

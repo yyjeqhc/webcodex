@@ -40,6 +40,7 @@ mod projects;
 mod route_metadata;
 mod runtime_console_http;
 mod runtime_http;
+mod server_instance;
 mod server_listener;
 mod server_shutdown;
 mod shell_client;
@@ -222,6 +223,12 @@ only for local/trusted-network demos."
     }
     std::fs::create_dir_all(config.uploads_dir())?;
     let db = Database::open(&config.db_path())?;
+    let server_instance_guard = server_instance::ServerInstanceGuard::acquire(&db)?;
+    db.recover_agent_wakes_for_server_takeover(
+        &server_instance_guard,
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .map_err(anyhow::Error::from)?;
     tracing::info!("Database initialized at {:?}", config.db_path());
 
     // Set max payload size to 2MB for text messages

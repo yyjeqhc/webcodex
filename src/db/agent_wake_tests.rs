@@ -674,7 +674,7 @@ fn dispatch_uncertainty_blocks_duplicate_and_preserves_successor_across_restart(
 }
 
 #[test]
-fn offline_and_claimed_pre_dispatch_work_reopens_as_same_pending_wake() {
+fn generic_reopen_preserves_live_pre_dispatch_claim_without_takeover() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("offline-restart.db");
     let db = Database::open(&path).unwrap();
@@ -686,23 +686,8 @@ fn offline_and_claimed_pre_dispatch_work_reopens_as_same_pending_wake() {
         "offline-message",
     );
     let wake_id = wake_id_for(&db, &fixture.receiver_agent_id);
-    assert_eq!(
-        db.agent_wake(&wake_id).unwrap().unwrap().state,
-        AgentWakeState::Pending
-    );
-    drop(db);
-
-    let reopened = Database::open(&path).unwrap();
-    assert_eq!(
-        queued_delivery_ids(&reopened, &fixture.receiver_agent_id).len(),
-        1
-    );
-    assert_eq!(
-        reopened.agent_wake(&wake_id).unwrap().unwrap().state,
-        AgentWakeState::Pending
-    );
-    let endpoint = attach_wake_endpoint(&reopened, &fixture, "restart-host", "restart-endpoint");
-    let first_claim = reopened
+    let endpoint = attach_wake_endpoint(&db, &fixture, "restart-host", "restart-endpoint");
+    let first_claim = db
         .claim_next_agent_wake(
             &fixture.owner,
             &fixture.receiver_agent_id,
@@ -713,36 +698,25 @@ fn offline_and_claimed_pre_dispatch_work_reopens_as_same_pending_wake() {
         .unwrap()
         .unwrap();
     assert_eq!(first_claim.wake.wake_id, wake_id);
-    drop(reopened);
 
-    let reopened_again = Database::open(&path).unwrap();
+    let reopened = Database::open(&path).unwrap();
     assert_eq!(
-        reopened_again.agent_wake(&wake_id).unwrap().unwrap().state,
-        AgentWakeState::Pending,
-        "startup may safely revoke a pre-dispatch claim and preserve the same logical Wake"
+        queued_delivery_ids(&reopened, &fixture.receiver_agent_id).len(),
+        1
     );
-    let attempts = reopened_again.agent_wake_attempts(&wake_id).unwrap();
+    assert_eq!(
+        reopened.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::Claimed,
+        "opening the database must not assert that a live Wake owner died"
+    );
+    let attempts = reopened.agent_wake_attempts(&wake_id).unwrap();
     assert_eq!(attempts.len(), 1);
-    assert_eq!(attempts[0].state, AgentWakeAttemptState::Revoked);
-    let second_claim = reopened_again
-        .claim_next_agent_wake(
-            &fixture.owner,
-            &fixture.receiver_agent_id,
-            &endpoint.endpoint_id,
-            endpoint.controller_generation,
-            "deterministic_fake",
-        )
-        .unwrap()
-        .unwrap();
-    assert_eq!(second_claim.wake.wake_id, wake_id);
-    assert_ne!(
-        second_claim.attempt.attempt_id,
-        first_claim.attempt.attempt_id
-    );
+    assert_eq!(attempts[0].state, AgentWakeAttemptState::Claimed);
+    assert_eq!(attempts[0].attempt_id, first_claim.attempt.attempt_id);
 }
 
 #[test]
-fn restart_after_dispatch_fence_becomes_delivery_unknown_not_pending() {
+fn generic_reopen_preserves_prepared_dispatch_without_inventing_takeover() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("prepared-restart.db");
     let db = Database::open(&path).unwrap();
@@ -770,7 +744,6 @@ fn restart_after_dispatch_fence_becomes_delivery_unknown_not_pending() {
         &claim.consume_token,
     )
     .unwrap();
-    drop(db);
 
     let reopened = Database::open(&path).unwrap();
     assert_eq!(
@@ -779,11 +752,11 @@ fn restart_after_dispatch_fence_becomes_delivery_unknown_not_pending() {
             .unwrap()
             .unwrap()
             .state,
-        AgentWakeState::DeliveryUnknown
+        AgentWakeState::Prepared
     );
     assert_eq!(
         reopened.agent_wake_attempts(&claim.wake.wake_id).unwrap()[0].state,
-        AgentWakeAttemptState::DeliveryUnknown
+        AgentWakeAttemptState::Prepared
     );
     assert!(
         reopened
@@ -796,7 +769,7 @@ fn restart_after_dispatch_fence_becomes_delivery_unknown_not_pending() {
             )
             .unwrap()
             .is_none(),
-        "a restart after the dispatch fence must not reset to pending or redispatch"
+        "a prepared Wake remains fenced until explicit authoritative recovery"
     );
 }
 

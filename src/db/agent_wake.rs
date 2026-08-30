@@ -17,6 +17,7 @@ pub(crate) const AGENT_WAKE_CONSUME_TOKEN_PREFIX: &str = "wc_wake_consume_";
 const DEFAULT_WAKE_CLAIM_LEASE_MS: i64 = 30_000;
 const MAX_ADAPTER_KIND_CHARS: usize = 64;
 const WAKE_TRIGGER_INBOX_CHANGED: &str = "inbox_changed";
+const A1_QUEUED_DELIVERY_BACKFILL_MIGRATION: &str = "a1_queued_delivery_backfill_v1";
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -183,6 +184,11 @@ impl Database {
         let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute_batch(
             "
+            CREATE TABLE IF NOT EXISTS wc_agent_wake_migrations (
+                migration_key TEXT PRIMARY KEY,
+                completed_at_unix_ms INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS wc_agent_wakes (
                 wake_id TEXT PRIMARY KEY,
                 target_agent_id TEXT NOT NULL,
@@ -264,14 +270,37 @@ impl Database {
                 ON wc_agent_wake_attempts(endpoint_id, controller_generation, state);
             ",
         )?;
+        let backfill_completed: bool = transaction.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM wc_agent_wake_migrations WHERE migration_key = ?1
+             )",
+            params![A1_QUEUED_DELIVERY_BACKFILL_MIGRATION],
+            |row| row.get(0),
+        )?;
+        if !backfill_completed {
+            let now = now_unix_ms();
+            backfill_a1_queued_deliveries(&transaction, now)?;
+            transaction.execute(
+                "INSERT INTO wc_agent_wake_migrations (migration_key, completed_at_unix_ms)
+                 VALUES (?1, ?2)",
+                params![A1_QUEUED_DELIVERY_BACKFILL_MIGRATION, now],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     }
 
-    pub(super) fn reconcile_agent_wake_startup(
+    pub(crate) fn recover_agent_wakes_for_server_takeover(
         &self,
+        ownership: &crate::server_instance::ServerInstanceGuard,
         now: i64,
     ) -> Result<(), CommunicationStoreError> {
+        if !ownership.owns_database(self) {
+            return Err(CommunicationStoreError::new(
+                "server_instance_ownership_mismatch",
+                "Server ownership proof does not match this database state",
+            ));
+        }
         let mut conn = self.conn.lock().unwrap();
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -926,6 +955,98 @@ impl Database {
             .map_err(store_error)?;
         Ok(attempts)
     }
+}
+
+fn backfill_a1_queued_deliveries(transaction: &Transaction<'_>, now: i64) -> anyhow::Result<()> {
+    let target_agent_ids = {
+        let mut statement = transaction.prepare(
+            "SELECT queued.recipient_agent_id
+             FROM (
+                 SELECT recipient_agent_id, MAX(delivery_order) AS queued_high_watermark
+                 FROM wc_agent_deliveries
+                 WHERE state = 'queued'
+                 GROUP BY recipient_agent_id
+             ) queued
+             LEFT JOIN (
+                 SELECT target_agent_id, MAX(inbox_high_watermark) AS wake_high_watermark
+                 FROM wc_agent_wakes
+                 GROUP BY target_agent_id
+             ) represented
+               ON represented.target_agent_id = queued.recipient_agent_id
+             WHERE queued.queued_high_watermark > COALESCE(represented.wake_high_watermark, -1)
+             ORDER BY queued.recipient_agent_id",
+        )?;
+        let target_agent_ids = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        target_agent_ids
+    };
+
+    for target_agent_id in target_agent_ids {
+        let (
+            first_delivery_id,
+            latest_delivery_id,
+            latest_conversation_id,
+            latest_message_id,
+            inbox_high_watermark,
+            queued_delivery_count,
+        ): (String, String, String, String, i64, i64) = transaction.query_row(
+            "SELECT
+                (SELECT first.delivery_id
+                 FROM wc_agent_deliveries first
+                 WHERE first.recipient_agent_id = ?1 AND first.state = 'queued'
+                 ORDER BY first.delivery_order ASC LIMIT 1),
+                latest.delivery_id,
+                latest.conversation_id,
+                latest.message_id,
+                latest.delivery_order,
+                (SELECT COUNT(*)
+                 FROM wc_agent_deliveries counted
+                 WHERE counted.recipient_agent_id = ?1 AND counted.state = 'queued')
+             FROM wc_agent_deliveries latest
+             WHERE latest.recipient_agent_id = ?1 AND latest.state = 'queued'
+             ORDER BY latest.delivery_order DESC LIMIT 1",
+            params![target_agent_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )?;
+        let wake_id = new_id(AGENT_WAKE_ID_PREFIX);
+        transaction.execute(
+            "INSERT INTO wc_agent_wakes (
+                wake_id, target_agent_id, trigger_kind,
+                first_triggering_delivery_id, latest_triggering_delivery_id,
+                latest_conversation_id, latest_message_id,
+                inbox_high_watermark, queued_delivery_count_snapshot,
+                state, revision, created_at_unix_ms, updated_at_unix_ms,
+                claimed_attempt_id, claimed_endpoint_id,
+                claimed_controller_generation, claim_lease_expires_at_unix_ms,
+                consumed_at_unix_ms, consumed_by_endpoint_id,
+                consumed_controller_generation
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+                       'pending', 1, ?10, ?10, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            params![
+                wake_id,
+                target_agent_id,
+                WAKE_TRIGGER_INBOX_CHANGED,
+                first_delivery_id,
+                latest_delivery_id,
+                latest_conversation_id,
+                latest_message_id,
+                inbox_high_watermark,
+                queued_delivery_count,
+                now,
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 pub(super) fn coalesce_agent_wake_for_delivery(

@@ -6,6 +6,7 @@ use crate::models::{
 };
 use rusqlite::Connection;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 mod accounts;
@@ -62,10 +63,17 @@ pub(crate) use self::task_kernel::{
 };
 pub struct Database {
     conn: Mutex<Connection>,
+    state_path: PathBuf,
     /// Ephemeral navigation only. Durable work stays in wc_tasks and
     /// wc_window_project_contexts; restarting never guesses a window's current
     /// project.
     window_projects: Mutex<HashMap<(String, String), String>>,
+}
+
+impl Database {
+    pub(crate) fn state_path(&self) -> &Path {
+        &self.state_path
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +97,10 @@ impl Database {
 #[cfg(test)]
 #[path = "db/agent_wake_tests.rs"]
 mod agent_wake_tests;
+
+#[cfg(test)]
+#[path = "db/agent_wake_recovery_tests.rs"]
+mod agent_wake_recovery_tests;
 
 #[cfg(test)]
 #[path = "db/communication_tests.rs"]

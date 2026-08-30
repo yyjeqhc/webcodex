@@ -18,13 +18,13 @@ impl Database {
             PRAGMA foreign_keys = ON;
             ",
         )?;
+        let state_path = std::fs::canonicalize(db_path).context("resolve database state path")?;
         let db = Self {
             conn: Mutex::new(conn),
+            state_path,
             window_projects: Mutex::new(std::collections::HashMap::new()),
         };
         db.init_tables()?;
-        db.reconcile_agent_wake_startup(chrono::Utc::now().timestamp_millis())
-            .map_err(anyhow::Error::from)?;
         // Personal-use instance: reclaim dead auth rows on every open rather
         // than running a background reaper.
         let now = chrono::Utc::now().timestamp();

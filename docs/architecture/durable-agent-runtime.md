@@ -114,6 +114,13 @@ is communication; converting or accepting a request into work must be an explici
 durable transition. An Agent Task may retain stable origin references such as `conversation_id` and
 `source_message_id`, but the Message body remains owned by the Conversation domain.
 
+A3 does not define a global work-stealing queue. Before an Agent Task can create an
+Attempt, it has an explicit current assignee Agent established by Task creation,
+acceptance, or a separate authorized reassignment transition. An unassigned Task may
+exist if a real UI/workflow needs it, but it is not claimable by arbitrary Agents.
+Changing the assignee is an explicit durable mutation; lease expiry alone never
+silently transfers work to a different Agent.
+
 Likewise, an Agent Task that references a Project does not receive Project authority.
 The Project reference identifies where work may need to occur; every actual execution
 still passes the normal Project/Runner/filesystem/permission checks.
@@ -125,7 +132,7 @@ are:
 AgentTask
   task_id
   creator / owner principal attribution
-  assignee_agent_id?
+  assignee_agent_id?  # must be explicit before creating an Attempt
   bounded title / instruction
   source_conversation_id?
   source_message_id?
@@ -179,8 +186,9 @@ AgentTaskAttempt
   terminal_at?
 ```
 
-The Attempt belongs to the durable Agent, not to a browser window. An Endpoint or
-other execution carrier is only a current way of executing that Attempt.
+The Attempt belongs to the durable Agent named by the Agent Task's current explicit
+assignment, not to a browser window. An Endpoint or other execution carrier is only
+a current way of executing that Attempt.
 
 ### Two different stale-execution fences
 
@@ -227,7 +235,7 @@ identity rather than weakening it into a generic controller token.
 
 ## Attempt authority and lease semantics
 
-Possession of an Attempt id, fence, lease timestamp, Agent id, or controller
+Possession of an Attempt id, fence, lease timestamp, Agent id, or Attempt controller
 generation is never sufficient authority by itself.
 
 The intended admission rule is conceptually:
@@ -245,12 +253,14 @@ normal caller authorization
 
 `attempt_fence` is conflict-detection/freshness metadata, not a bearer credential.
 A lease that is already expired cannot be renewed by the stale owner and cannot
-submit completion. A new claim after expiry creates a new Attempt.
+submit completion. A new authorized start/claim by the current assignee after expiry
+creates a new Attempt.
 
-Planner or scheduler output, if one is added later, is advisory. The authoritative
-claim/dispatch mutation must re-check current Agent Task state, Attempt state, lease,
-assignee, Project/executor authority, and any dependency rules that eventually
-exist.
+Planner or scheduler output, if one is added later, is advisory. In A3, assignment
+is explicit rather than selected by a scheduler. The authoritative Attempt
+start/claim and dispatch mutations must re-check current Agent Task state, current
+assignee, Attempt state, lease, Project/executor authority, and any dependency rules
+that eventually exist.
 
 ## Idempotency, replay, and uncertainty
 
@@ -384,8 +394,8 @@ Use concrete backends first.
 
 Establish durable Agent Task and TaskAttempt semantics only:
 
-- explicit work creation/acceptance;
-- atomic claim;
+- explicit work creation;
+- explicit assignment/acceptance and atomic Attempt start/claim by that assignee;
 - lease + exact Attempt fencing;
 - carrier/controller-generation fencing where needed;
 - exact heartbeat/completion/replay;
@@ -393,7 +403,8 @@ Establish durable Agent Task and TaskAttempt semantics only:
 - authority/privacy boundaries;
 - minimal observation/listing needed to dogfood the domain.
 
-A3 does **not** automatically spawn workers or choose execution capacity.
+A3 does **not** automatically choose an assignee, spawn workers, operate a global
+claimable queue, or choose execution capacity.
 
 ### A4a — TaskAttempt -> existing CodingAgentRun
 
@@ -421,7 +432,7 @@ or UI idle state.
 
 Useful future invariants include:
 
-- planning is advisory; claim remains authoritative;
+- planning is advisory; explicit assignment plus claim/dispatch remains authoritative;
 - runnable work and live execution reservations drive capacity decisions;
 - active execution reservations form a floor only for the carrier class they
   actually consume;
@@ -457,16 +468,17 @@ The first Agent Task foundation should close at least these cases:
 
 | Case | Required result |
 | --- | --- |
-| two Agents concurrently claim one Agent Task | exactly one authoritative Attempt is created/accepted |
-| exact claim retry | returns the same Attempt without redispatch |
+| two concurrent start/claim requests for one explicitly assigned Agent Task | exactly one authoritative Attempt is created/accepted |
+| exact start/claim retry | returns the same Attempt without redispatch |
 | heartbeat before lease expiry | succeeds only for exact current Attempt/controller |
 | heartbeat after lease expiry | rejected as stale |
 | completion after lease expiry | rejected as stale |
-| same Agent claims after expiry | creates a new Attempt |
-| different Agent claims after expiry | creates a new Attempt only if current assignment/authority makes that Agent eligible |
+| same assigned Agent starts again after expiry | creates a new Attempt |
+| different Agent tries after expiry without reassignment | rejected; lease expiry does not transfer assignment |
+| authorized explicit reassignment, then new assignee starts | creates a new Attempt for the new current assignee |
 | Attempt 1 responds after Attempt 2 exists | Attempt 1 remains permanently stale |
-| Endpoint replacement inside one Attempt | old controller generation is fenced |
-| Server restart | Task/Attempt truth and accepted replay identities survive |
+| Endpoint/carrier replacement inside one Attempt | old Attempt controller/binding is fenced |
+| Server restart | Agent Task/TaskAttempt truth and accepted replay identities survive |
 | Endpoint detach | Task/Attempt durable state does not disappear |
 | duplicate completion | exact replay, no repeated terminal side effect |
 | changed replay | idempotency conflict |

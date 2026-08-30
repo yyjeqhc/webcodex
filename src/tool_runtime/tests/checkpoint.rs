@@ -1268,6 +1268,8 @@ async fn checkpoint_metadata_tools_enforce_agent_owner_boundary() {
         .await;
     assert!(!result.success);
     let err = result.error.unwrap();
-    assert!(err.contains("owned by alice"), "{}", err);
-    assert!(err.contains("belongs to bob"), "{}", err);
+    assert_eq!(result.output["error_kind"], "unknown_project");
+    assert!(err.contains("unknown_project"), "{}", err);
+    assert!(!err.contains("owned by"), "{}", err);
+    assert!(!err.contains("belongs to"), "{}", err);
 }

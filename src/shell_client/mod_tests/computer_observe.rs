@@ -49,7 +49,8 @@ async fn computer_enqueue_requires_exact_owner_and_distinct_capability() {
         )
         .await
         .unwrap_err();
-    assert!(error.contains("owned by alice"));
+    assert!(error.contains("unknown shell client"), "{error}");
+    assert!(!error.contains("owned by"), "{error}");
 
     let (_request_id, _rx) = registry
         .enqueue_computer(

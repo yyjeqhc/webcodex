@@ -1500,14 +1500,17 @@ async fn agent_tool_authority_admission_matrix() {
             continue;
         }
         let error = result.error.unwrap_or_default();
-        assert!(error.contains("owned by alice"), "{label}: {error}");
         if label == "wrong owner" {
-            assert!(error.contains("belongs to bob"), "{error}");
-        } else {
-            assert!(
-                error.contains("belongs to anonymous") || error.contains("owned by alice"),
-                "{error}"
+            assert_eq!(
+                result.output["error_kind"], "unknown_project",
+                "{label}: {error}"
             );
+            assert!(error.contains("unknown_project"), "{label}: {error}");
+            assert!(!error.contains("owned by"), "{label}: {error}");
+            assert!(!error.contains("belongs to"), "{label}: {error}");
+        } else {
+            assert!(error.contains("owned by alice"), "{label}: {error}");
+            assert!(error.contains("belongs to anonymous"), "{label}: {error}");
         }
     }
 }

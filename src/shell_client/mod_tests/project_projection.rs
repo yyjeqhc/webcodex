@@ -282,6 +282,11 @@ async fn registry_project_owner_check_enforces_boundary() {
     let mismatch = assert_registry_client_owner(&registry, Some(&alice), "bob-client")
         .await
         .unwrap_err();
-    assert_eq!(mismatch.0, StatusCode::FORBIDDEN);
-    assert!(mismatch.1.contains("owned by bob"));
+    assert_eq!(mismatch.0, StatusCode::BAD_REQUEST);
+    assert!(
+        mismatch.1.contains("unknown shell client"),
+        "{}",
+        mismatch.1
+    );
+    assert!(!mismatch.1.contains("owned by"), "{}", mismatch.1);
 }

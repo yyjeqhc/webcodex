@@ -662,10 +662,17 @@ async fn validation_summary_rejects_unknown_mismatched_and_unauthorized_sessions
         .await;
     assert!(!unauthorized.success);
     let error = unauthorized.error.as_deref().unwrap_or_default();
+    assert_eq!(unauthorized.output["error_kind"], "unknown_project");
     assert!(
-        error.contains("forbidden")
-            || error.contains("owner")
-            || error.contains("unknown shell client"),
+        error.contains("unknown_project"),
+        "unexpected auth error: {error:?}"
+    );
+    assert!(
+        !error.contains("owned by"),
+        "unexpected auth error: {error:?}"
+    );
+    assert!(
+        !error.contains("belongs to"),
         "unexpected auth error: {error:?}"
     );
 }

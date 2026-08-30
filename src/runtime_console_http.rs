@@ -2369,7 +2369,7 @@ mod tests {
                     client_id: client_id.to_string(),
                     agent_instance_id: format!("inst-{client_id}"),
                     display_name: Some(format!("Device {client_id}")),
-                    owner: None,
+                    owner: auth.and_then(|auth| auth.username.clone()),
                     hostname: Some(format!("private-host-{client_id}")),
                     host_context: None,
                     capabilities: Some(ShellClientCapabilities::default()),

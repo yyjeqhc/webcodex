@@ -297,7 +297,9 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
     assert_eq!(context_request["items"]["type"], "string");
     assert!(context_request["items"].get("enum").is_none());
     let description = context_request["description"].as_str().unwrap();
-    assert!(description.contains("after this tool's main effect/observation is already complete"));
+    assert!(description.contains("after this tool's main effect/observation"));
+    assert!(description.contains("grants no authority"));
+    assert!(description.contains("retroactive precondition"));
     for key in [
         "project.instructions",
         "webcodex.workflow",

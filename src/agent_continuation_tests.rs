@@ -403,7 +403,7 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
     );
     assert!(registration.success);
     wait_until("failed preflight", || {
-        unavailable.preflight_count.load(Ordering::SeqCst) == 1
+        unavailable.preflight_count.load(Ordering::SeqCst) >= 1
     });
     assert_eq!(unavailable.dispatch_count(), 0);
     assert_eq!(

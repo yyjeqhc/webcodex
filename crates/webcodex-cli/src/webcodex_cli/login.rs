@@ -582,6 +582,7 @@ pub(crate) fn stage_connection(
 const ROOT_RUNNER_INSTALL_REASON: &str = "login ran as root; no safe systemd installation argv can be generated without explicitly selecting a non-root Runner user and validating access to the agent config, working directory, projects directory, and allowed roots";
 const ROOT_FOREGROUND_REASON: &str = "login ran as root; no foreground Runner argv is emitted because it would execute project commands as root";
 const WINDOWS_RUNNER_INSTALL_REASON: &str = "automatic Windows Runner service installation is not supported in this release; start the foreground Runner shown above instead";
+const NON_LINUX_RUNNER_INSTALL_REASON: &str = "managed Runner service installation is supported only on Linux; start the foreground Runner shown above instead";
 
 pub(crate) fn render_login_result(
     paths: &ConnectionPaths,
@@ -601,10 +602,8 @@ pub(crate) fn render_login_result(
             paths.agent_config.to_string_lossy().into_owned(),
         ]
     });
-    let runner_install_argv = if effective_root || cfg!(windows) {
-        None
-    } else {
-        Some(vec![
+    let runner_install_argv = (!effective_root && cfg!(target_os = "linux")).then(|| {
+        vec![
             "webcodex".to_string(),
             "runner".to_string(),
             "install".to_string(),
@@ -612,12 +611,14 @@ pub(crate) fn render_login_result(
             "user".to_string(),
             "--config".to_string(),
             paths.agent_config.to_string_lossy().into_owned(),
-        ])
-    };
+        ]
+    });
     let runner_install_reason = if effective_root {
         Some(ROOT_RUNNER_INSTALL_REASON)
     } else if cfg!(windows) {
         Some(WINDOWS_RUNNER_INSTALL_REASON)
+    } else if !cfg!(target_os = "linux") {
+        Some(NON_LINUX_RUNNER_INSTALL_REASON)
     } else {
         None
     };
@@ -2651,7 +2652,7 @@ mod tests {
         assert!(text.contains("Ctrl-C stops this Runner."), "{text}");
         assert_eq!(
             text.contains("webcodex runner install --scope user --config"),
-            !cfg!(windows),
+            cfg!(target_os = "linux"),
             "{text}"
         );
         assert!(!text.contains("runtime project"), "{text}");
@@ -2707,7 +2708,7 @@ mod tests {
         );
         assert_eq!(
             text.contains(&shell_command(&install_argv)),
-            !cfg!(windows),
+            cfg!(target_os = "linux"),
             "{text}"
         );
 
@@ -2729,23 +2730,28 @@ mod tests {
         assert!(value["foreground_reason"].is_null());
         assert_eq!(
             value["runner_install_argv"],
-            if cfg!(windows) {
-                serde_json::Value::Null
-            } else {
+            if cfg!(target_os = "linux") {
                 serde_json::json!(install_argv)
+            } else {
+                serde_json::Value::Null
             }
         );
         assert_eq!(
             value["runner_install_available"],
-            serde_json::json!(!cfg!(windows))
+            serde_json::json!(cfg!(target_os = "linux"))
         );
         if cfg!(windows) {
             assert_eq!(
                 value["runner_install_reason"],
                 serde_json::json!(WINDOWS_RUNNER_INSTALL_REASON)
             );
-        } else {
+        } else if cfg!(target_os = "linux") {
             assert!(value["runner_install_reason"].is_null());
+        } else {
+            assert_eq!(
+                value["runner_install_reason"],
+                serde_json::json!(NON_LINUX_RUNNER_INSTALL_REASON)
+            );
         }
         assert!(value["next_steps"][0]
             .as_str()
@@ -2760,19 +2766,19 @@ mod tests {
                 .get(2)
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or(""),
-            if cfg!(windows) {
-                String::new()
-            } else {
+            if cfg!(target_os = "linux") {
                 shell_command(&install_argv)
+            } else {
+                String::new()
             }
         );
         assert!(!json_text.contains(USER_TOKEN));
         assert!(!json_text.contains(AGENT_TOKEN));
 
-        let recommended_argv: Vec<String> = if cfg!(windows) {
-            install_argv.clone()
-        } else {
+        let recommended_argv: Vec<String> = if cfg!(target_os = "linux") {
             serde_json::from_value(value["runner_install_argv"].clone()).unwrap()
+        } else {
+            install_argv.clone()
         };
         let parser_env = tempfile::TempDir::new().unwrap();
         std::fs::write(parser_env.path().join("webcodex-runner"), "").unwrap();

@@ -320,6 +320,15 @@ pub(crate) fn read_project_files(
     Ok(projects)
 }
 
+pub(crate) fn read_enabled_project_count(projects_dir: &Path) -> Result<usize, String> {
+    read_project_files(projects_dir).map(|projects| {
+        projects
+            .into_iter()
+            .filter(|(_, project)| !project.disabled)
+            .count()
+    })
+}
+
 pub(super) fn stored_project_matches(project: &ProjectFile, canonical_project: &Path) -> bool {
     Path::new(&project.path).canonicalize().is_ok_and(|path| {
         // Windows `canonicalize` can return `\\?\`-prefixed extended paths and

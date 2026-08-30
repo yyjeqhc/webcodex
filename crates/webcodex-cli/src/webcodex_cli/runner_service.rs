@@ -2,7 +2,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-use super::connect::profile::read_project_files;
+use super::connect::profile::read_enabled_project_count;
 use super::http::{fetch_runtime_status, http_post_json_status, HttpStatusSummary};
 use super::{
     control_service_for_scope, encode_exec_argument, encode_exec_path_argument,
@@ -570,9 +570,7 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
     let projects_dir = metadata.projects_dir.clone().unwrap_or(
         webcodex_runner_config::paths::default_client_config_base_dir()?.join("projects.d"),
     );
-    let configured_project_count = read_project_files(&projects_dir)
-        .ok()
-        .map(|projects| projects.len());
+    let configured_project_count = read_enabled_project_count(&projects_dir).ok();
     let mut out = render_runner_readiness_summary(
         client_online,
         loaded_project_count,
@@ -779,6 +777,33 @@ mod tests {
             !unreadable_registry.contains("ready to use"),
             "{unreadable_registry}"
         );
+    }
+
+    #[test]
+    fn configured_project_count_matches_runner_enabled_project_semantics() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("projects.d");
+        std::fs::create_dir_all(&projects_dir).unwrap();
+        let enabled_path = tmp.path().join("enabled");
+        let disabled_path = tmp.path().join("disabled");
+        std::fs::write(
+            projects_dir.join("enabled.toml"),
+            format!(
+                "id = \"enabled\"\npath = {:?}\ndisabled = false\n",
+                enabled_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            projects_dir.join("disabled.toml"),
+            format!(
+                "id = \"disabled\"\npath = {:?}\ndisabled = true\n",
+                disabled_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(read_enabled_project_count(&projects_dir).unwrap(), 1);
     }
 
     #[test]

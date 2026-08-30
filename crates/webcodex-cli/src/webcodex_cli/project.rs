@@ -201,13 +201,13 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
             registration.path.display()
         ));
     }
-    let restart_guidance = if cfg!(windows) {
+    let restart_guidance = if cfg!(target_os = "linux") {
         format!(
-            "Next:\n  Stop the foreground Runner with Ctrl-C, then run:\n    {runner_command}\n"
+            "Next:\n  If the Runner is in the foreground, stop it with Ctrl-C, then run:\n    {runner_command}\n  If it is installed as a service, use the matching `webcodex runner restart` command instead.\n"
         )
     } else {
         format!(
-            "Next:\n  If the Runner is in the foreground, stop it with Ctrl-C, then run:\n    {runner_command}\n  If it is installed as a service, use the matching `webcodex runner restart` command instead.\n"
+            "Next:\n  Stop the foreground Runner with Ctrl-C, then run:\n    {runner_command}\n"
         )
     };
     Ok(format!(
@@ -300,6 +300,11 @@ mod tests {
         assert!(first.contains(&project.display().to_string()), "{first}");
         assert!(first.contains("Runner restart required."), "{first}");
         assert!(first.contains("webcodex runner run --config"), "{first}");
+        assert_eq!(
+            first.contains("installed as a service"),
+            cfg!(target_os = "linux"),
+            "{first}"
+        );
         assert!(!first.contains("projects registry"), "{first}");
         assert!(!first.contains("project record"), "{first}");
 

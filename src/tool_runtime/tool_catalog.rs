@@ -90,6 +90,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "post_conversation_message",
             "list_agent_inbox",
             "consume_agent_deliveries",
+            "consume_agent_wake",
         ],
     },
     ToolDiscoveryGroup {

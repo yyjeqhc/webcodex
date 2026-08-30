@@ -92,6 +92,10 @@ pub(crate) fn routes() -> Router {
                 .post(communication_endpoint_attach),
         )
         .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationEndpointRenew))
+                .post(communication_endpoint_renew),
+        )
+        .push(
             Router::with_path(api_path(RouteId::RuntimeConsoleCommunicationEndpointDetach))
                 .post(communication_endpoint_detach),
         )
@@ -264,8 +268,6 @@ struct CommunicationEndpointAttachInput {
     client_attachment_id: Option<String>,
     #[serde(default)]
     wake_capable: bool,
-    #[serde(default)]
-    controller_generation: Option<String>,
     idempotency_key: String,
 }
 
@@ -273,6 +275,13 @@ struct CommunicationEndpointAttachInput {
 #[serde(deny_unknown_fields)]
 struct CommunicationEndpointDetachInput {
     endpoint_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationEndpointRenewInput {
+    endpoint_id: String,
+    expected_controller_generation: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2099,8 +2108,30 @@ async fn communication_endpoint_attach(req: &mut Request, depot: &mut Depot, res
             input.host,
             input.client_attachment_id,
             input.wake_capable,
-            input.controller_generation,
             input.idempotency_key,
+        ),
+    );
+}
+
+#[handler]
+async fn communication_endpoint_renew(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    if let Err(error) = require_communication_manage(&auth) {
+        return render_error(res, error);
+    }
+    let input = match req.parse_json::<CommunicationEndpointRenewInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    render_communication_result(
+        res,
+        runtime.renew_agent_endpoint(
+            Some(&auth),
+            input.endpoint_id,
+            input.expected_controller_generation,
         ),
     );
 }
@@ -2845,7 +2876,6 @@ mod tests {
                 "host": "Runtime Console Test",
                 "client_attachment_id": "window-a",
                 "wake_capable": false,
-                "controller_generation": "manual-v1",
                 "idempotency_key": "http-endpoint-a"
             }),
         )
@@ -2865,7 +2895,6 @@ mod tests {
                 "host": "Runtime Console Test",
                 "client_attachment_id": "window-b",
                 "wake_capable": false,
-                "controller_generation": "manual-v1",
                 "idempotency_key": "http-endpoint-b"
             }),
         )

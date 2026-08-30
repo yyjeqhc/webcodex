@@ -28,13 +28,18 @@ fn agent_schema() -> Value {
             "profile_revision": schema_type("integer", "Monotonic Agent Card revision."),
             "created_at_unix_ms": schema_type("integer", "Creation time in Unix milliseconds."),
             "updated_at_unix_ms": schema_type("integer", "Latest profile update time in Unix milliseconds."),
-            "active_endpoint_count": schema_type("integer", "Current attached Endpoint count."),
-            "queued_delivery_count": schema_type("integer", "Queued Inbox deliveries for this Agent.")
+            "current_controller_generation": schema_type("integer", "Server-authoritative monotonic Endpoint generation. Zero means no A2 attachment has been issued yet."),
+            "active_endpoint_count": schema_type("integer", "Current unexpired generation-matching Endpoint count."),
+            "queued_delivery_count": schema_type("integer", "Queued Inbox deliveries for this Agent."),
+            "unresolved_wake_count": schema_type("integer", "Durable Wake Intents not yet consumed."),
+            "latest_wake_id": nullable_string("Most recently created durable Wake Intent, if any."),
+            "latest_wake_state": nullable_string("Latest Wake state, independent from Inbox Delivery state.")
         },
         "required": [
             "agent_id", "handle", "display_name", "description", "specialty_labels",
             "profile_revision", "created_at_unix_ms", "updated_at_unix_ms",
-            "active_endpoint_count", "queued_delivery_count"
+            "current_controller_generation", "active_endpoint_count", "queued_delivery_count",
+            "unresolved_wake_count", "latest_wake_id", "latest_wake_state"
         ]
     })
 }
@@ -48,16 +53,19 @@ fn endpoint_schema() -> Value {
             "agent_id": schema_type("string", "Durable Agent carried by this Endpoint."),
             "host": schema_type("string", "Host adapter name."),
             "client_attachment_id": nullable_string("Optional host-local attachment id."),
-            "wake_capable": schema_type("boolean", "Declared adapter capability only; it does not invoke model wake."),
-            "controller_generation": nullable_string("Optional continuation-controller generation metadata."),
+            "wake_capable": schema_type("boolean", "Registered adapter capability input only; never execution authority."),
+            "controller_generation": schema_type("integer", "Server-assigned monotonic continuation ownership generation."),
+            "lifecycle": {"type": "string", "enum": ["attached", "detached", "expired"]},
             "attached_at_unix_ms": schema_type("integer", "Attachment time in Unix milliseconds."),
-            "last_seen_at_unix_ms": schema_type("integer", "Latest communication activity time in Unix milliseconds."),
-            "detached_at_unix_ms": nullable_integer("Detach time, or null while active.")
+            "last_seen_at_unix_ms": schema_type("integer", "Latest infrastructure liveness or communication activity time."),
+            "lease_expires_at_unix_ms": schema_type("integer", "Bounded Endpoint lease expiry in Unix milliseconds."),
+            "expired_at_unix_ms": nullable_integer("Server-observed expiry time, or null when not expired."),
+            "detached_at_unix_ms": nullable_integer("Explicit detach time, or null when not detached.")
         },
         "required": [
             "endpoint_id", "agent_id", "host", "client_attachment_id", "wake_capable",
-            "controller_generation", "attached_at_unix_ms", "last_seen_at_unix_ms",
-            "detached_at_unix_ms"
+            "controller_generation", "lifecycle", "attached_at_unix_ms", "last_seen_at_unix_ms",
+            "lease_expires_at_unix_ms", "expired_at_unix_ms", "detached_at_unix_ms"
         ]
     })
 }
@@ -365,8 +373,16 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "state_changed",
-                schema_type("boolean", "True when at least one delivery changed."),
+                schema_type("boolean", "True when at least one delivery changed; Wake state is unaffected."),
             ),
+        ]),
+        "consume_agent_wake" => wrapped_output_schema(vec![
+            ("wake_id", schema_type("string", "Exact durable Wake Intent consumed.")),
+            ("target_agent_id", schema_type("string", "Exact target Agent bound to the Wake.")),
+            ("state", json!({"type": "string", "enum": ["consumed"]})),
+            ("already_consumed", schema_type("boolean", "True when this exact continuation had already been consumed by the same Endpoint generation.")),
+            ("consumed_at_unix_ms", schema_type("integer", "Stable consume time in Unix milliseconds.")),
+            ("state_changed", schema_type("boolean", "True only for the first exact consume; Inbox Delivery state is unaffected.")),
         ]),
         _ => return None,
     };

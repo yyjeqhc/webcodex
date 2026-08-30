@@ -140,6 +140,7 @@ pub(crate) enum RouteId {
     RuntimeConsoleCommunicationAgentCreate,
     RuntimeConsoleCommunicationAgentUpdate,
     RuntimeConsoleCommunicationEndpointAttach,
+    RuntimeConsoleCommunicationEndpointRenew,
     RuntimeConsoleCommunicationEndpointDetach,
     RuntimeConsoleCommunicationConversations,
     RuntimeConsoleCommunicationConversationCreate,
@@ -448,7 +449,7 @@ mod tests {
             AdminWebStylesCss as usize + 1,
             "canonical iteration must cover every RouteId exactly once",
         );
-        assert_eq!(iter_routes().count(), 136, "A1 canonical route closure");
+        assert_eq!(iter_routes().count(), 137, "A2 canonical route closure");
         assert_eq!(lookup("GET", "/mcp").unwrap().id, McpGet);
         assert_eq!(lookup("POST", "/mcp").unwrap().id, McpPost);
     }
@@ -579,6 +580,7 @@ mod tests {
             RuntimeConsoleCommunicationAgentCreate,
             RuntimeConsoleCommunicationAgentUpdate,
             RuntimeConsoleCommunicationEndpointAttach,
+            RuntimeConsoleCommunicationEndpointRenew,
             RuntimeConsoleCommunicationEndpointDetach,
             RuntimeConsoleCommunicationConversationCreate,
             RuntimeConsoleCommunicationMessagePost,

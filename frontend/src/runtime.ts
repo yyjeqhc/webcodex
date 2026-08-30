@@ -77,6 +77,19 @@ let selectedProjectSnapshot: any | null = null;
 let sessionRows: any[] = [];
 const state = initialRuntimeConsoleState();
 
+type RuntimeCommunicationEndpoint = {
+  endpoint_id: string;
+  agent_id: string;
+  wake_capable: boolean;
+  controller_generation: number;
+  lifecycle: "attached" | "detached" | "expired" | string;
+  attached_at_unix_ms: number;
+  last_seen_at_unix_ms: number;
+  lease_expires_at_unix_ms: number;
+  expired_at_unix_ms: number | null;
+  detached_at_unix_ms: number | null;
+};
+
 let communicationAgents: any[] = [];
 let communicationConversations: any[] = [];
 let communicationDetail: any | null = null;
@@ -87,7 +100,7 @@ let communicationReadAvailable: boolean | null = null;
 let communicationManageAvailable: boolean | null = null;
 let communicationRefreshInFlight = false;
 let communicationGeneration = 0;
-const communicationEndpoints = new Map<string, string>();
+const communicationEndpoints = new Map<string, RuntimeCommunicationEndpoint>();
 const pendingEndpointAttach = new Map<string, { key: string; attachmentId: string }>();
 let pendingAgentCreate: { fingerprint: string; key: string } | null = null;
 let pendingConversationCreate: { fingerprint: string; key: string } | null = null;
@@ -1401,8 +1414,12 @@ function selectedCommunicationConversation(): any | null {
   ) || null;
 }
 
+function communicationEndpoint(agentId = selectedCommunicationAgentId): RuntimeCommunicationEndpoint | null {
+  return communicationEndpoints.get(agentId) || null;
+}
+
 function communicationEndpointId(agentId = selectedCommunicationAgentId): string {
-  return communicationEndpoints.get(agentId) || "";
+  return communicationEndpoint(agentId)?.endpoint_id || "";
 }
 
 function idempotencyKeyFor(
@@ -1442,11 +1459,11 @@ function resetCommunicationSurface(): void {
 function detachCommunicationEndpointsBestEffort(): void {
   if (!token || communicationEndpoints.size === 0) return;
   const credential = token;
-  for (const endpointId of communicationEndpoints.values()) {
+  for (const endpoint of communicationEndpoints.values()) {
     void fetch(API_BASE + "communication/endpoint/detach", {
       method: "POST",
       headers: { Authorization: "Bearer " + credential, "Content-Type": "application/json" },
-      body: JSON.stringify({ endpoint_id: endpointId }),
+      body: JSON.stringify({ endpoint_id: endpoint.endpoint_id }),
       keepalive: true,
     }).catch(() => undefined);
   }
@@ -1460,7 +1477,7 @@ function renderCommunicationAvailability(): void {
   const access = communicationReadAvailable === null
     ? "communication:read checking…"
     : available
-      ? "communication:read" + (communicationManageAvailable === false ? " · read only" : " · polling every 8s")
+      ? "communication:read" + (communicationManageAvailable === false ? " · read only" : " · polling + lease renewal every 8s")
       : "communication:read unavailable";
   setText("runtime-communication-status", access);
 }
@@ -1492,7 +1509,11 @@ function renderCommunicationAgents(): void {
     row.appendChild(head);
     const meta = document.createElement("span");
     meta.className = "communication-row-meta";
-    meta.textContent = agentId + " · profile r" + String(agent?.profile_revision || 0) + " · " + countLabel(agent?.active_endpoint_count, "active Endpoint");
+    meta.textContent = agentId
+      + " · profile r" + String(agent?.profile_revision || 0)
+      + " · controller g" + String(agent?.current_controller_generation || 0)
+      + " · " + countLabel(agent?.active_endpoint_count, "active Endpoint")
+      + " · " + countLabel(agent?.unresolved_wake_count, "unresolved Wake");
     row.appendChild(meta);
     row.addEventListener("click", () => {
       selectedCommunicationAgentId = agentId;
@@ -1516,7 +1537,12 @@ function renderCommunicationAgentCard(): void {
   setText("runtime-agent-card-name", String(agent.display_name || agent.handle || "Agent Card") + " · @" + String(agent.handle || "agent"));
   setText("runtime-agent-card-id", agentId);
   setText("runtime-agent-card-description", String(agent.description || "No description."));
-  setText("runtime-agent-card-revision", "Profile revision " + String(agent.profile_revision || 0) + " · updated " + communicationTimeLabel(agent.updated_at_unix_ms));
+  setText(
+    "runtime-agent-card-revision",
+    "Profile revision " + String(agent.profile_revision || 0)
+      + " · controller generation " + String(agent.current_controller_generation || 0)
+      + " · updated " + communicationTimeLabel(agent.updated_at_unix_ms)
+  );
   setText("runtime-agent-unread", countLabel(agent.queued_delivery_count, "queued"));
   const labels = el("runtime-agent-card-labels");
   clearNode(labels);
@@ -1525,15 +1551,27 @@ function renderCommunicationAgentCard(): void {
       appendChip(labels, String(label));
     }
   }
-  const endpointId = communicationEndpointId(agentId);
+  const unresolvedWakeCount = Number(agent.unresolved_wake_count || 0);
+  const latestWakeState = String(agent.latest_wake_state || "none");
+  setText(
+    "runtime-agent-wake-status",
+    countLabel(unresolvedWakeCount, "unresolved Wake")
+      + " · latest " + latestWakeState
+      + " · Inbox Delivery and Wake consumption remain independent"
+  );
+  const endpoint = communicationEndpoint(agentId);
   setText(
     "runtime-agent-endpoint-status",
-    endpointId
-      ? "Browser Endpoint " + endpointId + " · attachment only, no execution authority"
-      : "No browser Endpoint attached. Agent identity remains durable."
+    endpoint
+      ? "Browser Endpoint " + endpoint.endpoint_id
+        + " · " + endpoint.lifecycle
+        + " · generation " + String(endpoint.controller_generation)
+        + " · lease " + communicationTimeLabel(endpoint.lease_expires_at_unix_ms)
+        + " · polling only (wake_capable=" + String(endpoint.wake_capable) + "), no execution authority"
+      : "No browser Endpoint attached. Agent identity, Inbox deliveries, and Wake Intents remain durable."
   );
-  show("runtime-agent-attach", !endpointId);
-  show("runtime-agent-detach", !!endpointId);
+  show("runtime-agent-attach", !endpoint);
+  show("runtime-agent-detach", !!endpoint);
 }
 
 function renderCommunicationConversations(): void {
@@ -1818,22 +1856,51 @@ async function fetchCommunicationInbox(generation: number): Promise<boolean> {
   return true;
 }
 
+async function renewCommunicationEndpoints(generation: number): Promise<boolean> {
+  if (communicationEndpoints.size === 0 || communicationManageAvailable === false) return true;
+  for (const [agentId, endpoint] of Array.from(communicationEndpoints.entries())) {
+    const response = await api("communication/endpoint/renew", {
+      endpoint_id: endpoint.endpoint_id,
+      expected_controller_generation: endpoint.controller_generation,
+    });
+    if (generation !== communicationGeneration) return false;
+    if (!response) return false;
+    if (response.status === 401) { lock("Credential rejected."); return false; }
+    if (response.status === 403) {
+      communicationManageAvailable = false;
+      renderCommunicationAvailability();
+      return true;
+    }
+    if (response.status === 400 || response.status === 404) {
+      communicationEndpoints.delete(agentId);
+      if (agentId === selectedCommunicationAgentId) communicationInbox = [];
+      continue;
+    }
+    if (!response.ok || !response.data?.endpoint?.endpoint_id) return false;
+    communicationManageAvailable = true;
+    communicationEndpoints.set(agentId, response.data.endpoint as RuntimeCommunicationEndpoint);
+  }
+  return true;
+}
+
 async function refreshCommunication(): Promise<boolean> {
   if (!token || communicationRefreshInFlight) return true;
   communicationRefreshInFlight = true;
   const generation = ++communicationGeneration;
   setText("runtime-communication-status", "Refreshing durable communication…");
   try {
+    const endpointsOk = await renewCommunicationEndpoints(generation);
+    if (generation !== communicationGeneration) return false;
     const agentsOk = await fetchCommunicationAgents(generation);
-    if (generation !== communicationGeneration || !agentsOk || communicationReadAvailable !== true) return agentsOk;
+    if (generation !== communicationGeneration || !agentsOk || communicationReadAvailable !== true) return endpointsOk && agentsOk;
     const conversationsOk = await fetchCommunicationConversations(generation);
-    if (generation !== communicationGeneration || !conversationsOk || communicationReadAvailable !== true) return agentsOk && conversationsOk;
+    if (generation !== communicationGeneration || !conversationsOk || communicationReadAvailable !== true) return endpointsOk && agentsOk && conversationsOk;
     const [conversationOk, inboxOk] = await Promise.all([
       fetchCommunicationConversation(generation),
       fetchCommunicationInbox(generation),
     ]);
     renderCommunicationSurface();
-    return agentsOk && conversationsOk && conversationOk && inboxOk;
+    return endpointsOk && agentsOk && conversationsOk && conversationOk && inboxOk;
   } finally {
     if (generation === communicationGeneration) communicationRefreshInFlight = false;
   }
@@ -1896,7 +1963,6 @@ async function attachCommunicationEndpoint(): Promise<void> {
     host: "Runtime Console",
     client_attachment_id: pending.attachmentId,
     wake_capable: false,
-    controller_generation: "a1-bounded-polling-v1",
     idempotency_key: pending.key,
   });
   if (response?.status === 401) { lock("Credential rejected."); return; }
@@ -1914,7 +1980,7 @@ async function attachCommunicationEndpoint(): Promise<void> {
     return;
   }
   communicationManageAvailable = true;
-  communicationEndpoints.set(agentId, String(response.data.endpoint.endpoint_id));
+  communicationEndpoints.set(agentId, response.data.endpoint as RuntimeCommunicationEndpoint);
   pendingEndpointAttach.delete(agentId);
   renderCommunicationAgentCard();
   await fetchCommunicationInbox(communicationGeneration);

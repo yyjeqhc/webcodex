@@ -1102,6 +1102,17 @@ pub(super) fn context_result_summary_for_tool_result(
                 "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
             })
         }),
+        "consume_agent_wake" => output.as_object().map(|source| {
+            json!({
+                "wake_id": source.get("wake_id").cloned().unwrap_or(Value::Null),
+                "target_agent_id": source.get("target_agent_id").cloned().unwrap_or(Value::Null),
+                "state": source.get("state").cloned().unwrap_or(Value::Null),
+                "already_consumed": source.get("already_consumed").cloned().unwrap_or(Value::Null),
+                "consumed_at_unix_ms": source.get("consumed_at_unix_ms").cloned().unwrap_or(Value::Null),
+                "state_changed": source.get("state_changed").cloned().unwrap_or(Value::Null),
+                "error_kind": source.get("error_kind").cloned().unwrap_or(Value::Null),
+            })
+        }),
         "memory_search" => selected(
             output,
             &[

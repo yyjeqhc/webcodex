@@ -582,13 +582,6 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 ),
             );
             out.insert(
-                "controller_generation_present".to_string(),
-                Value::Bool(
-                    obj.get("controller_generation")
-                        .is_some_and(|value| !value.is_null()),
-                ),
-            );
-            out.insert(
                 "idempotency_key_present".to_string(),
                 Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
             );
@@ -696,6 +689,22 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                         .map(Vec::len)
                         .unwrap_or_default(),
                 ),
+            );
+        }
+        "consume_agent_wake" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "agent_id",
+                    "endpoint_id",
+                    "expected_controller_generation",
+                    "wake_id",
+                ],
+            );
+            out.insert(
+                "consume_token_present".to_string(),
+                Value::Bool(obj.get("consume_token").and_then(Value::as_str).is_some()),
             );
         }
         "memory_search" => {
@@ -1492,6 +1501,15 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "agent_id": output.get("agent_id").cloned().unwrap_or(Value::Null),
             "consumed_count": output.get("consumed_delivery_ids").and_then(Value::as_array).map(Vec::len),
             "already_consumed_count": output.get("already_consumed_delivery_ids").and_then(Value::as_array).map(Vec::len),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "consume_agent_wake" => serde_json::json!({
+            "wake_id": output.get("wake_id").cloned().unwrap_or(Value::Null),
+            "target_agent_id": output.get("target_agent_id").cloned().unwrap_or(Value::Null),
+            "state": output.get("state").cloned().unwrap_or(Value::Null),
+            "already_consumed": output.get("already_consumed").cloned().unwrap_or(Value::Null),
+            "consumed_at_unix_ms": output.get("consumed_at_unix_ms").cloned().unwrap_or(Value::Null),
             "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
             "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
         }),
@@ -2488,6 +2506,77 @@ mod computer_privacy_tests {
         assert!(!result.to_string().contains(PRIVATE_BODY));
         assert_eq!(result["seq"], 4);
         assert_eq!(result["delivery_count"], 1);
+    }
+
+    #[test]
+    fn agent_wake_consume_audit_omits_raw_consume_token_and_payload_fields() {
+        const PRIVATE_TOKEN: &str = "wc_wake_consume_PRIVATE_TOKEN_MUST_NOT_PERSIST";
+        const PRIVATE_BODY: &str = "PRIVATE_WAKE_PAYLOAD_BODY";
+        const PRIVATE_DESCRIPTION: &str = "PRIVATE_AGENT_DESCRIPTION";
+        const PRIVATE_DIGEST: &str = "PRIVATE_PRINCIPAL_DIGEST";
+        const PRIVATE_KEY: &str = "PRIVATE_IDEMPOTENCY_KEY";
+
+        let request = session_log_arguments_for_tool_request(
+            "consume_agent_wake",
+            &json!({
+                "agent_id": "wc_dagent_0123456789abcdef0123456789abcdef",
+                "endpoint_id": "wc_endpoint_0123456789abcdef0123456789abcdef",
+                "expected_controller_generation": 7,
+                "wake_id": "wc_wake_0123456789abcdef0123456789abcdef",
+                "consume_token": PRIVATE_TOKEN,
+                "body": PRIVATE_BODY,
+                "description": PRIVATE_DESCRIPTION,
+                "principal_digest": PRIVATE_DIGEST,
+                "idempotency_key": PRIVATE_KEY
+            }),
+        );
+        assert_eq!(request["consume_token_present"], true);
+        assert_eq!(request["expected_controller_generation"], 7);
+        let request_text = request.to_string();
+        for private in [
+            PRIVATE_TOKEN,
+            PRIVATE_BODY,
+            PRIVATE_DESCRIPTION,
+            PRIVATE_DIGEST,
+            PRIVATE_KEY,
+        ] {
+            assert!(
+                !request_text.contains(private),
+                "wake consume audit leaked {private}"
+            );
+        }
+
+        let result = session_log_result_for_tool(
+            "consume_agent_wake",
+            &json!({
+                "wake_id": "wc_wake_0123456789abcdef0123456789abcdef",
+                "target_agent_id": "wc_dagent_0123456789abcdef0123456789abcdef",
+                "state": "consumed",
+                "already_consumed": false,
+                "consumed_at_unix_ms": 123,
+                "state_changed": true,
+                "consume_token": PRIVATE_TOKEN,
+                "body": PRIVATE_BODY,
+                "description": PRIVATE_DESCRIPTION,
+                "principal_digest": PRIVATE_DIGEST,
+                "idempotency_key": PRIVATE_KEY
+            }),
+        );
+        let result_text = result.to_string();
+        for private in [
+            PRIVATE_TOKEN,
+            PRIVATE_BODY,
+            PRIVATE_DESCRIPTION,
+            PRIVATE_DIGEST,
+            PRIVATE_KEY,
+        ] {
+            assert!(
+                !result_text.contains(private),
+                "wake consume result audit leaked {private}"
+            );
+        }
+        assert_eq!(result["state"], "consumed");
+        assert_eq!(result["state_changed"], true);
     }
 
     #[test]
@@ -4073,7 +4162,6 @@ impl ToolCall {
                 host,
                 client_attachment_id,
                 wake_capable,
-                controller_generation,
                 idempotency_key,
             } => session_log_arguments_for_tool_request(
                 "attach_agent_endpoint",
@@ -4082,7 +4170,6 @@ impl ToolCall {
                     "host": host,
                     "client_attachment_id": client_attachment_id,
                     "wake_capable": wake_capable,
-                    "controller_generation": controller_generation,
                     "idempotency_key": idempotency_key,
                 }),
             ),
@@ -4176,6 +4263,22 @@ impl ToolCall {
                     "agent_id": agent_id,
                     "endpoint_id": endpoint_id,
                     "delivery_ids": delivery_ids,
+                }),
+            ),
+            Self::ConsumeAgentWake {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                wake_id,
+                consume_token,
+            } => session_log_arguments_for_tool_request(
+                "consume_agent_wake",
+                &serde_json::json!({
+                    "agent_id": agent_id,
+                    "endpoint_id": endpoint_id,
+                    "expected_controller_generation": expected_controller_generation,
+                    "wake_id": wake_id,
+                    "consume_token_present": !consume_token.is_empty(),
                 }),
             ),
             Self::MemorySearch {

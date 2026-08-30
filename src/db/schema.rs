@@ -23,6 +23,8 @@ impl Database {
             window_projects: Mutex::new(std::collections::HashMap::new()),
         };
         db.init_tables()?;
+        db.reconcile_agent_wake_startup(chrono::Utc::now().timestamp_millis())
+            .map_err(anyhow::Error::from)?;
         // Personal-use instance: reclaim dead auth rows on every open rather
         // than running a background reaper.
         let now = chrono::Utc::now().timestamp();
@@ -589,6 +591,10 @@ impl Database {
         // communication domain. Workflow Session and project Memory ledgers
         // remain separate authoritative stores.
         Self::ensure_communication_schema(&mut conn)?;
+        // Agent Wake is a distinct durable continuation/outbox domain. It is
+        // initialized only after Agent, Endpoint, Message, and Inbox tables so
+        // all stable references are enforceable by foreign keys.
+        Self::ensure_agent_wake_schema(&mut conn)?;
 
         // Phase-4B project Memory is an additive migration with its own
         // transaction boundary. A failed table/index creation cannot expose a

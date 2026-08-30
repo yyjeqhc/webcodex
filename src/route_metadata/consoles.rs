@@ -423,6 +423,17 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         false,
     ),
     route(
+        RuntimeConsoleCommunicationEndpointRenew,
+        Post,
+        "/api/runtime-console/communication/endpoint/renew",
+        Require(SCOPE_COMMUNICATION_MANAGE),
+        RuntimeConsole,
+        Hidden,
+        Other,
+        AuthMiddleware,
+        false,
+    ),
+    route(
         RuntimeConsoleCommunicationEndpointDetach,
         Post,
         "/api/runtime-console/communication/endpoint/detach",

@@ -54,7 +54,7 @@
         <div class="panel-head">
           <div>
             <h2>Durable Agent Chat <span id="runtime-communication-count" class="muted small">0 Agents</span></h2>
-            <p class="muted small retention-note">Durable Conversation transcript and recipient-specific Inbox. The Console polls every 8 seconds; polling or page refresh does not invoke or wake a model.</p>
+            <p class="muted small retention-note">Durable Conversation transcript, recipient-specific Inbox, and coalesced Wake Intent state. The Console polls and renews its bounded Endpoint lease every 8 seconds; polling, renewal, refresh, or unload cleanup does not invoke or wake a model.</p>
           </div>
           <span id="runtime-communication-status" class="muted small">communication:read checking…</span>
         </div>
@@ -82,6 +82,7 @@
               <p id="runtime-agent-card-description" class="communication-description">—</p>
               <div id="runtime-agent-card-labels" class="chips"></div>
               <p id="runtime-agent-card-revision" class="muted small">—</p>
+              <p id="runtime-agent-wake-status" class="muted small">—</p>
               <div class="form-actions">
                 <span id="runtime-agent-endpoint-status" class="muted small">No browser Endpoint attached.</span>
                 <button id="runtime-agent-attach" class="btn" type="button">Attach this browser</button>

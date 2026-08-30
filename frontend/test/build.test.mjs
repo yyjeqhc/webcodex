@@ -82,7 +82,7 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(runtimeHtml, /runtime-agent-create-form/);
   assert.match(runtimeHtml, /runtime-conversation-transcript/);
   assert.match(runtimeHtml, /runtime-inbox-list/);
-  assert.match(runtimeHtml, /polls every 8 seconds/);
+  assert.match(runtimeHtml, /renews its bounded Endpoint lease every 8 seconds/);
   assert.match(runtimeHtml, /does not invoke or wake a model/);
   assert.match(runtimeHtml, /Jump to latest/);
   assert.match(runtimeHtml, /Reported progress/);

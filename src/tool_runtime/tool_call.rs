@@ -1049,8 +1049,6 @@ pub enum ToolCall {
         client_attachment_id: Option<String>,
         #[serde(default)]
         wake_capable: bool,
-        #[serde(default)]
-        controller_generation: Option<String>,
         idempotency_key: String,
     },
 
@@ -1122,6 +1120,15 @@ pub enum ToolCall {
         agent_id: String,
         endpoint_id: String,
         delivery_ids: Vec<String>,
+    },
+
+    /// Consume one exact durable Agent Wake continuation without consuming Inbox deliveries.
+    ConsumeAgentWake {
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        wake_id: String,
+        consume_token: String,
     },
 
     /// Search/list explicit durable project Memory. Model-hidden globally and
@@ -2457,6 +2464,7 @@ impl ToolCall {
             Self::PostConversationMessage { .. } => "post_conversation_message",
             Self::ListAgentInbox { .. } => "list_agent_inbox",
             Self::ConsumeAgentDeliveries { .. } => "consume_agent_deliveries",
+            Self::ConsumeAgentWake { .. } => "consume_agent_wake",
             Self::MemorySearch { .. } => "memory_search",
             Self::MemoryRead { .. } => "memory_read",
             Self::MemorySet { .. } => "memory_set",

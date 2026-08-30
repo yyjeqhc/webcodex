@@ -5,6 +5,8 @@ const ENDPOINT_ID_PATTERN: &str = "^wc_endpoint_[0-9a-f]{32}$";
 const CONVERSATION_ID_PATTERN: &str = "^wc_conv_[0-9a-f]{32}$";
 const MESSAGE_ID_PATTERN: &str = "^wc_cmsg_[0-9a-f]{32}$";
 const DELIVERY_ID_PATTERN: &str = "^wc_delivery_[0-9a-f]{32}$";
+const WAKE_ID_PATTERN: &str = "^wc_wake_[0-9a-f]{32}$";
+const WAKE_CONSUME_TOKEN_PATTERN: &str = "^wc_wake_consume_[0-9a-f]{32}$";
 
 fn bounded_string(description: &str, max_length: usize) -> Value {
     json!({
@@ -167,12 +169,7 @@ pub(crate) fn attach_agent_endpoint_input_schema() -> Value {
             "wake_capable": {
                 "type": "boolean",
                 "default": false,
-                "description": "Endpoint capability metadata only. A true value does not invoke or authorize automatic model wake."
-            },
-            "controller_generation": {
-                "type": "string",
-                "maxLength": 128,
-                "description": "Optional continuation-controller generation metadata."
+                "description": "Whether this attachment has a registered adapter capable of resuming a model turn. Capability alone grants no communication, Project, filesystem, Runner, or Workflow Session authority and does not itself dispatch a wake."
             },
             "idempotency_key": idempotency_key()
         },
@@ -300,6 +297,28 @@ pub(crate) fn list_agent_inbox_input_schema() -> Value {
             "limit": optional_limit()
         },
         "required": ["agent_id", "endpoint_id"],
+        "additionalProperties": false
+    })
+}
+
+pub(crate) fn consume_agent_wake_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "agent_id": canonical_id(AGENT_ID_PATTERN, "Exact target Agent named by the durable Wake Intent."),
+            "endpoint_id": canonical_id(ENDPOINT_ID_PATTERN, "Exact current wake-capable Endpoint that received this continuation."),
+            "expected_controller_generation": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Server-assigned Endpoint generation carried by this exact continuation. Stale generations fail closed."
+            },
+            "wake_id": canonical_id(WAKE_ID_PATTERN, "Exact durable Wake Intent to consume. This is not a caller-generated retry key."),
+            "consume_token": canonical_id(WAKE_CONSUME_TOKEN_PATTERN, "Opaque exact-continuation token delivered by the Host adapter. It is bound to wake_id, target Agent, Endpoint, and generation; never substitute a new token or retry key.")
+        },
+        "required": [
+            "agent_id", "endpoint_id", "expected_controller_generation",
+            "wake_id", "consume_token"
+        ],
         "additionalProperties": false
     })
 }

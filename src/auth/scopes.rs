@@ -861,6 +861,7 @@ mod tests {
                     | "create_conversation"
                     | "post_conversation_message"
                     | "consume_agent_deliveries"
+                    | "consume_agent_wake"
             ) {
                 OAuthToolScopePolicy::RequireAll(COMMUNICATION_MANAGE_SCOPES)
             } else if tool == "run_detached_process" {

@@ -2328,8 +2328,11 @@ function selectedCommunicationAgent() {
 function selectedCommunicationConversation() {
     return communicationConversations.find((conversation) => String(conversation?.conversation_id || "") === selectedCommunicationConversationId) || null;
 }
+function communicationEndpoint(agentId = selectedCommunicationAgentId) {
+    return communicationEndpoints.get(agentId) || null;
+}
 function communicationEndpointId(agentId = selectedCommunicationAgentId) {
-    return communicationEndpoints.get(agentId) || "";
+    return communicationEndpoint(agentId)?.endpoint_id || "";
 }
 function idempotencyKeyFor(pending, fingerprint, prefix) {
     return pending && pending.fingerprint === fingerprint
@@ -2363,11 +2366,11 @@ function detachCommunicationEndpointsBestEffort() {
     if (!token || communicationEndpoints.size === 0)
         return;
     const credential = token;
-    for (const endpointId of communicationEndpoints.values()) {
+    for (const endpoint of communicationEndpoints.values()) {
         void fetch(API_BASE + "communication/endpoint/detach", {
             method: "POST",
             headers: { Authorization: "Bearer " + credential, "Content-Type": "application/json" },
-            body: JSON.stringify({ endpoint_id: endpointId }),
+            body: JSON.stringify({ endpoint_id: endpoint.endpoint_id }),
             keepalive: true,
         }).catch(() => undefined);
     }
@@ -2380,7 +2383,7 @@ function renderCommunicationAvailability() {
     const access = communicationReadAvailable === null
         ? "communication:read checking…"
         : available
-            ? "communication:read" + (communicationManageAvailable === false ? " · read only" : " · polling every 8s")
+            ? "communication:read" + (communicationManageAvailable === false ? " · read only" : " · polling + lease renewal every 8s")
             : "communication:read unavailable";
     setText("runtime-communication-status", access);
 }
@@ -2413,7 +2416,11 @@ function renderCommunicationAgents() {
         row.appendChild(head);
         const meta = document.createElement("span");
         meta.className = "communication-row-meta";
-        meta.textContent = agentId + " · profile r" + String(agent?.profile_revision || 0) + " · " + countLabel(agent?.active_endpoint_count, "active Endpoint");
+        meta.textContent = agentId
+            + " · profile r" + String(agent?.profile_revision || 0)
+            + " · controller g" + String(agent?.current_controller_generation || 0)
+            + " · " + countLabel(agent?.active_endpoint_count, "active Endpoint")
+            + " · " + countLabel(agent?.unresolved_wake_count, "unresolved Wake");
         row.appendChild(meta);
         row.addEventListener("click", () => {
             selectedCommunicationAgentId = agentId;
@@ -2439,7 +2446,9 @@ function renderCommunicationAgentCard() {
     setText("runtime-agent-card-name", String(agent.display_name || agent.handle || "Agent Card") + " · @" + String(agent.handle || "agent"));
     setText("runtime-agent-card-id", agentId);
     setText("runtime-agent-card-description", String(agent.description || "No description."));
-    setText("runtime-agent-card-revision", "Profile revision " + String(agent.profile_revision || 0) + " · updated " + communicationTimeLabel(agent.updated_at_unix_ms));
+    setText("runtime-agent-card-revision", "Profile revision " + String(agent.profile_revision || 0)
+        + " · controller generation " + String(agent.current_controller_generation || 0)
+        + " · updated " + communicationTimeLabel(agent.updated_at_unix_ms));
     setText("runtime-agent-unread", countLabel(agent.queued_delivery_count, "queued"));
     const labels = el("runtime-agent-card-labels");
     clearNode(labels);
@@ -2448,12 +2457,21 @@ function renderCommunicationAgentCard() {
             appendChip(labels, String(label));
         }
     }
-    const endpointId = communicationEndpointId(agentId);
-    setText("runtime-agent-endpoint-status", endpointId
-        ? "Browser Endpoint " + endpointId + " · attachment only, no execution authority"
-        : "No browser Endpoint attached. Agent identity remains durable.");
-    show("runtime-agent-attach", !endpointId);
-    show("runtime-agent-detach", !!endpointId);
+    const unresolvedWakeCount = Number(agent.unresolved_wake_count || 0);
+    const latestWakeState = String(agent.latest_wake_state || "none");
+    setText("runtime-agent-wake-status", countLabel(unresolvedWakeCount, "unresolved Wake")
+        + " · latest " + latestWakeState
+        + " · Inbox Delivery and Wake consumption remain independent");
+    const endpoint = communicationEndpoint(agentId);
+    setText("runtime-agent-endpoint-status", endpoint
+        ? "Browser Endpoint " + endpoint.endpoint_id
+            + " · " + endpoint.lifecycle
+            + " · generation " + String(endpoint.controller_generation)
+            + " · lease " + communicationTimeLabel(endpoint.lease_expires_at_unix_ms)
+            + " · polling only (wake_capable=" + String(endpoint.wake_capable) + "), no execution authority"
+        : "No browser Endpoint attached. Agent identity, Inbox deliveries, and Wake Intents remain durable.");
+    show("runtime-agent-attach", !endpoint);
+    show("runtime-agent-detach", !!endpoint);
 }
 function renderCommunicationConversations() {
     const list = el("runtime-conversation-list");
@@ -2749,6 +2767,40 @@ async function fetchCommunicationInbox(generation) {
     renderCommunicationInbox();
     return true;
 }
+async function renewCommunicationEndpoints(generation) {
+    if (communicationEndpoints.size === 0 || communicationManageAvailable === false)
+        return true;
+    for (const [agentId, endpoint] of Array.from(communicationEndpoints.entries())) {
+        const response = await api("communication/endpoint/renew", {
+            endpoint_id: endpoint.endpoint_id,
+            expected_controller_generation: endpoint.controller_generation,
+        });
+        if (generation !== communicationGeneration)
+            return false;
+        if (!response)
+            return false;
+        if (response.status === 401) {
+            lock("Credential rejected.");
+            return false;
+        }
+        if (response.status === 403) {
+            communicationManageAvailable = false;
+            renderCommunicationAvailability();
+            return true;
+        }
+        if (response.status === 400 || response.status === 404) {
+            communicationEndpoints.delete(agentId);
+            if (agentId === selectedCommunicationAgentId)
+                communicationInbox = [];
+            continue;
+        }
+        if (!response.ok || !response.data?.endpoint?.endpoint_id)
+            return false;
+        communicationManageAvailable = true;
+        communicationEndpoints.set(agentId, response.data.endpoint);
+    }
+    return true;
+}
 async function refreshCommunication() {
     if (!token || communicationRefreshInFlight)
         return true;
@@ -2756,18 +2808,21 @@ async function refreshCommunication() {
     const generation = ++communicationGeneration;
     setText("runtime-communication-status", "Refreshing durable communication…");
     try {
+        const endpointsOk = await renewCommunicationEndpoints(generation);
+        if (generation !== communicationGeneration)
+            return false;
         const agentsOk = await fetchCommunicationAgents(generation);
         if (generation !== communicationGeneration || !agentsOk || communicationReadAvailable !== true)
-            return agentsOk;
+            return endpointsOk && agentsOk;
         const conversationsOk = await fetchCommunicationConversations(generation);
         if (generation !== communicationGeneration || !conversationsOk || communicationReadAvailable !== true)
-            return agentsOk && conversationsOk;
+            return endpointsOk && agentsOk && conversationsOk;
         const [conversationOk, inboxOk] = await Promise.all([
             fetchCommunicationConversation(generation),
             fetchCommunicationInbox(generation),
         ]);
         renderCommunicationSurface();
-        return agentsOk && conversationsOk && conversationOk && inboxOk;
+        return endpointsOk && agentsOk && conversationsOk && conversationOk && inboxOk;
     }
     finally {
         if (generation === communicationGeneration)
@@ -2838,7 +2893,6 @@ async function attachCommunicationEndpoint() {
         host: "Runtime Console",
         client_attachment_id: pending.attachmentId,
         wake_capable: false,
-        controller_generation: "a1-bounded-polling-v1",
         idempotency_key: pending.key,
     });
     if (response?.status === 401) {
@@ -2859,7 +2913,7 @@ async function attachCommunicationEndpoint() {
         return;
     }
     communicationManageAvailable = true;
-    communicationEndpoints.set(agentId, String(response.data.endpoint.endpoint_id));
+    communicationEndpoints.set(agentId, response.data.endpoint);
     pendingEndpointAttach.delete(agentId);
     renderCommunicationAgentCard();
     await fetchCommunicationInbox(communicationGeneration);

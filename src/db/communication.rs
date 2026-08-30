@@ -1,3 +1,4 @@
+use super::agent_wake::{coalesce_agent_wake_for_delivery, reconcile_wakes_for_endpoint_loss};
 use super::Database;
 use rusqlite::{
     params, types::Type, Connection, OptionalExtension, Transaction, TransactionBehavior,
@@ -5,7 +6,7 @@ use rusqlite::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 pub(crate) const DURABLE_AGENT_ID_PREFIX: &str = "wc_dagent_";
@@ -23,7 +24,6 @@ pub(crate) const MAX_AGENT_SPECIALTY_LABELS: usize = 16;
 pub(crate) const MAX_AGENT_SPECIALTY_LABEL_CHARS: usize = 64;
 pub(crate) const MAX_ENDPOINT_HOST_CHARS: usize = 64;
 pub(crate) const MAX_ENDPOINT_ATTACHMENT_CHARS: usize = 128;
-pub(crate) const MAX_ENDPOINT_CONTROLLER_GENERATION_CHARS: usize = 128;
 pub(crate) const MAX_CONVERSATION_TITLE_CHARS: usize = 200;
 pub(crate) const MAX_CONVERSATION_AGENT_PARTICIPANTS: usize = 16;
 pub(crate) const MAX_CONVERSATION_MESSAGE_BYTES: usize = 4_096;
@@ -32,8 +32,9 @@ pub(crate) const MAX_COMMUNICATION_LIST_LIMIT: usize = 100;
 pub(crate) const MAX_DELIVERY_CONSUME_ITEMS: usize = 100;
 const MAX_COMMUNICATION_PRINCIPAL_KIND_CHARS: usize = 64;
 
+pub(crate) const DEFAULT_ENDPOINT_LEASE_MS: i64 = 120_000;
+
 const MAX_DURABLE_AGENTS: i64 = 4_096;
-const MAX_ACTIVE_ENDPOINTS_PER_AGENT: i64 = 8;
 const MAX_CONVERSATIONS: i64 = 8_192;
 const MAX_MESSAGES_PER_CONVERSATION: i64 = 100_000;
 
@@ -50,7 +51,7 @@ pub(crate) struct CommunicationStoreError {
 }
 
 impl CommunicationStoreError {
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub(super) fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -89,7 +90,7 @@ impl std::fmt::Display for CommunicationStoreError {
 
 impl std::error::Error for CommunicationStoreError {}
 
-fn store_error(error: rusqlite::Error) -> CommunicationStoreError {
+pub(super) fn store_error(error: rusqlite::Error) -> CommunicationStoreError {
     tracing::warn!(error = %error, "durable communication store operation failed");
     CommunicationStoreError::new(
         "communication_store_unavailable",
@@ -126,7 +127,6 @@ pub(crate) struct NewAgentEndpoint {
     pub(crate) host: String,
     pub(crate) client_attachment_id: Option<String>,
     pub(crate) wake_capable: bool,
-    pub(crate) controller_generation: Option<String>,
     pub(crate) idempotency_key: String,
 }
 
@@ -169,8 +169,12 @@ pub(crate) struct DurableAgentIdentity {
     pub(crate) profile_revision: i64,
     pub(crate) created_at_unix_ms: i64,
     pub(crate) updated_at_unix_ms: i64,
+    pub(crate) current_controller_generation: i64,
     pub(crate) active_endpoint_count: i64,
     pub(crate) queued_delivery_count: i64,
+    pub(crate) unresolved_wake_count: i64,
+    pub(crate) latest_wake_id: Option<String>,
+    pub(crate) latest_wake_state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -197,9 +201,12 @@ pub(crate) struct AgentEndpointRecord {
     pub(crate) host: String,
     pub(crate) client_attachment_id: Option<String>,
     pub(crate) wake_capable: bool,
-    pub(crate) controller_generation: Option<String>,
+    pub(crate) controller_generation: i64,
+    pub(crate) lifecycle: String,
     pub(crate) attached_at_unix_ms: i64,
     pub(crate) last_seen_at_unix_ms: i64,
+    pub(crate) lease_expires_at_unix_ms: i64,
+    pub(crate) expired_at_unix_ms: Option<i64>,
     pub(crate) detached_at_unix_ms: Option<i64>,
 }
 
@@ -342,7 +349,8 @@ impl Database {
                 specialty_labels_json TEXT NOT NULL,
                 profile_revision INTEGER NOT NULL CHECK(profile_revision >= 1),
                 created_at_unix_ms INTEGER NOT NULL,
-                updated_at_unix_ms INTEGER NOT NULL
+                updated_at_unix_ms INTEGER NOT NULL,
+                current_controller_generation INTEGER NOT NULL DEFAULT 0 CHECK(current_controller_generation >= 0)
             );
             CREATE INDEX IF NOT EXISTS idx_wc_agent_identities_updated
                 ON wc_agent_identities(updated_at_unix_ms DESC, agent_id);
@@ -357,10 +365,18 @@ impl Database {
                 host TEXT NOT NULL,
                 client_attachment_id TEXT,
                 wake_capable INTEGER NOT NULL CHECK(wake_capable IN (0, 1)),
-                controller_generation TEXT,
+                controller_generation INTEGER NOT NULL CHECK(controller_generation >= 0),
+                lifecycle TEXT NOT NULL CHECK(lifecycle IN ('attached', 'detached', 'expired')),
                 attached_at_unix_ms INTEGER NOT NULL,
                 last_seen_at_unix_ms INTEGER NOT NULL,
+                lease_expires_at_unix_ms INTEGER NOT NULL,
+                expired_at_unix_ms INTEGER,
                 detached_at_unix_ms INTEGER,
+                CHECK(
+                    (lifecycle = 'attached' AND expired_at_unix_ms IS NULL AND detached_at_unix_ms IS NULL)
+                    OR (lifecycle = 'expired' AND expired_at_unix_ms IS NOT NULL)
+                    OR (lifecycle = 'detached' AND detached_at_unix_ms IS NOT NULL)
+                ),
                 FOREIGN KEY(agent_id) REFERENCES wc_agent_identities(agent_id)
             );
             CREATE INDEX IF NOT EXISTS idx_wc_agent_endpoints_agent_active
@@ -463,6 +479,71 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_wc_communication_idempotency_created
                 ON wc_communication_idempotency(created_at_unix_ms DESC);
             ",
+        )?;
+        let identity_columns = communication_table_columns(&transaction, "wc_agent_identities")?;
+        if !identity_columns.contains_key("current_controller_generation") {
+            transaction.execute_batch(
+                "ALTER TABLE wc_agent_identities
+                 ADD COLUMN current_controller_generation INTEGER NOT NULL DEFAULT 0
+                 CHECK(current_controller_generation >= 0);",
+            )?;
+        }
+
+        let mut endpoint_columns = communication_table_columns(&transaction, "wc_agent_endpoints")?;
+        if endpoint_columns
+            .get("controller_generation")
+            .is_some_and(|column_type| !column_type.eq_ignore_ascii_case("INTEGER"))
+        {
+            transaction.execute_batch(
+                "ALTER TABLE wc_agent_endpoints
+                 RENAME COLUMN controller_generation TO legacy_controller_generation;",
+            )?;
+            endpoint_columns = communication_table_columns(&transaction, "wc_agent_endpoints")?;
+        }
+        if !endpoint_columns.contains_key("controller_generation") {
+            transaction.execute_batch(
+                "ALTER TABLE wc_agent_endpoints
+                 ADD COLUMN controller_generation INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
+        if !endpoint_columns.contains_key("lifecycle") {
+            transaction.execute_batch(
+                "ALTER TABLE wc_agent_endpoints
+                 ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'expired';",
+            )?;
+        }
+        if !endpoint_columns.contains_key("lease_expires_at_unix_ms") {
+            transaction.execute_batch(
+                "ALTER TABLE wc_agent_endpoints
+                 ADD COLUMN lease_expires_at_unix_ms INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
+        if !endpoint_columns.contains_key("expired_at_unix_ms") {
+            transaction.execute_batch(
+                "ALTER TABLE wc_agent_endpoints ADD COLUMN expired_at_unix_ms INTEGER;",
+            )?;
+        }
+        transaction.execute_batch(
+            "UPDATE wc_agent_endpoints
+             SET lifecycle = CASE
+                    WHEN detached_at_unix_ms IS NULL THEN 'expired'
+                    ELSE 'detached'
+                 END,
+                 controller_generation = 0,
+                 lease_expires_at_unix_ms = CASE
+                    WHEN lease_expires_at_unix_ms <= 0 THEN last_seen_at_unix_ms
+                    ELSE lease_expires_at_unix_ms
+                 END,
+                 expired_at_unix_ms = CASE
+                    WHEN detached_at_unix_ms IS NULL
+                    THEN COALESCE(expired_at_unix_ms, last_seen_at_unix_ms)
+                    ELSE expired_at_unix_ms
+                 END
+             WHERE controller_generation = 0;
+             CREATE INDEX IF NOT EXISTS idx_wc_agent_endpoints_agent_generation
+                 ON wc_agent_endpoints(agent_id, lifecycle, controller_generation DESC);
+             CREATE UNIQUE INDEX IF NOT EXISTS idx_wc_agent_endpoints_one_attached
+                 ON wc_agent_endpoints(agent_id) WHERE lifecycle = 'attached';",
         )?;
         transaction.commit()?;
         Ok(())
@@ -606,14 +687,25 @@ impl Database {
             .prepare(
                 "SELECT agent_id, handle, display_name, description, specialty_labels_json,
                         profile_revision, created_at_unix_ms, updated_at_unix_ms,
+                        current_controller_generation,
                         (SELECT COUNT(*) FROM wc_agent_endpoints e
-                         WHERE e.agent_id = a.agent_id AND e.detached_at_unix_ms IS NULL),
+                         WHERE e.agent_id = a.agent_id AND e.lifecycle = 'attached'
+                           AND e.controller_generation = a.current_controller_generation
+                           AND e.lease_expires_at_unix_ms > ?3),
                         (SELECT COUNT(*) FROM wc_agent_deliveries d
-                         WHERE d.recipient_agent_id = a.agent_id AND d.state = 'queued')
+                         WHERE d.recipient_agent_id = a.agent_id AND d.state = 'queued'),
+                        (SELECT COUNT(*) FROM wc_agent_wakes w
+                         WHERE w.target_agent_id = a.agent_id AND w.state != 'consumed'),
+                        (SELECT w.wake_id FROM wc_agent_wakes w
+                         WHERE w.target_agent_id = a.agent_id
+                         ORDER BY w.created_at_unix_ms DESC, w.wake_id DESC LIMIT 1),
+                        (SELECT w.state FROM wc_agent_wakes w
+                         WHERE w.target_agent_id = a.agent_id
+                         ORDER BY w.created_at_unix_ms DESC, w.wake_id DESC LIMIT 1)
                  FROM wc_agent_identities a
                  WHERE owner_principal_kind = ?1 AND owner_principal_digest = ?2
                  ORDER BY updated_at_unix_ms DESC, agent_id
-                 LIMIT ?3 OFFSET ?4",
+                 LIMIT ?4 OFFSET ?5",
             )
             .map_err(store_error)?;
         let agents = statement
@@ -621,6 +713,7 @@ impl Database {
                 params![
                     principal.kind,
                     principal.digest,
+                    now_unix_ms(),
                     limit as i64,
                     offset as i64
                 ],
@@ -758,21 +851,15 @@ impl Database {
             "invalid_client_attachment_id",
             "client_attachment_id",
         )?;
-        let controller_generation = validate_optional_chars(
-            input.controller_generation.as_deref(),
-            MAX_ENDPOINT_CONTROLLER_GENERATION_CHARS,
-            "invalid_controller_generation",
-            "controller_generation",
-        )?;
         let idempotency_key = validate_idempotency_key(&input.idempotency_key)?;
         let request_hash = digest_json(&json!({
             "agent_id": input.agent_id,
             "host": host,
             "client_attachment_id": client_attachment_id,
             "wake_capable": input.wake_capable,
-            "controller_generation": controller_generation,
         }));
         let now = now_unix_ms();
+        let lease_expires_at_unix_ms = now.saturating_add(DEFAULT_ENDPOINT_LEASE_MS);
         let mut conn = self.conn.lock().unwrap();
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -798,29 +885,82 @@ impl Database {
             });
         }
         require_agent_owner(&transaction, principal, &input.agent_id)?;
-        let active_count: i64 = transaction
+        let current_controller_generation: i64 = transaction
             .query_row(
-                "SELECT COUNT(*) FROM wc_agent_endpoints
-                 WHERE agent_id = ?1 AND detached_at_unix_ms IS NULL",
+                "SELECT current_controller_generation FROM wc_agent_identities WHERE agent_id = ?1",
                 params![input.agent_id],
                 |row| row.get(0),
             )
             .map_err(store_error)?;
-        if active_count >= MAX_ACTIVE_ENDPOINTS_PER_AGENT {
-            return Err(CommunicationStoreError::new(
-                "agent_endpoint_capacity_exceeded",
-                "Agent already has the maximum number of active Endpoints",
-            ));
+        let controller_generation =
+            current_controller_generation
+                .checked_add(1)
+                .ok_or_else(|| {
+                    CommunicationStoreError::new(
+                        "controller_generation_exhausted",
+                        "Agent controller generation is exhausted",
+                    )
+                })?;
+        let previous_endpoints = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT endpoint_id, controller_generation FROM wc_agent_endpoints
+                     WHERE agent_id = ?1 AND lifecycle = 'attached'",
+                )
+                .map_err(store_error)?;
+            let endpoints = statement
+                .query_map(params![input.agent_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .map_err(store_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(store_error)?;
+            endpoints
+        };
+        for (previous_endpoint_id, previous_generation) in &previous_endpoints {
+            reconcile_wakes_for_endpoint_loss(
+                &transaction,
+                &input.agent_id,
+                previous_endpoint_id,
+                *previous_generation,
+                now,
+            )?;
         }
+        transaction
+            .execute(
+                "UPDATE wc_agent_endpoints
+                 SET lifecycle = 'expired',
+                     expired_at_unix_ms = COALESCE(expired_at_unix_ms, ?2),
+                     last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?2),
+                     lease_expires_at_unix_ms = ?2
+                 WHERE agent_id = ?1 AND lifecycle = 'attached'",
+                params![input.agent_id, now],
+            )
+            .map_err(store_error)?;
+        transaction
+            .execute(
+                "UPDATE wc_agent_identities
+                 SET current_controller_generation = ?2
+                 WHERE agent_id = ?1 AND current_controller_generation = ?3",
+                params![
+                    input.agent_id,
+                    controller_generation,
+                    current_controller_generation,
+                ],
+            )
+            .map_err(store_error)?;
         let endpoint_id = new_id(AGENT_ENDPOINT_ID_PREFIX);
         transaction
             .execute(
                 "INSERT INTO wc_agent_endpoints (
                     endpoint_id, agent_id, attachment_principal_kind,
                     attachment_principal_digest, host, client_attachment_id,
-                    wake_capable, controller_generation, attached_at_unix_ms,
-                    last_seen_at_unix_ms, detached_at_unix_ms
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, NULL)",
+                    wake_capable, controller_generation, lifecycle,
+                    attached_at_unix_ms, last_seen_at_unix_ms,
+                    lease_expires_at_unix_ms, expired_at_unix_ms,
+                    detached_at_unix_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'attached',
+                           ?9, ?9, ?10, NULL, NULL)",
                 params![
                     endpoint_id,
                     input.agent_id,
@@ -831,6 +971,7 @@ impl Database {
                     input.wake_capable as i64,
                     controller_generation,
                     now,
+                    lease_expires_at_unix_ms,
                 ],
             )
             .map_err(store_error)?;
@@ -875,7 +1016,7 @@ impl Database {
                 "Agent Endpoint is attached to a different communication principal",
             ));
         }
-        if current.0.detached_at_unix_ms.is_some() {
+        if current.0.lifecycle != "attached" {
             return Ok(AgentEndpointMutation {
                 endpoint: current.0,
                 created: false,
@@ -883,17 +1024,89 @@ impl Database {
                 state_changed: false,
             });
         }
+        require_current_endpoint(
+            &transaction,
+            principal,
+            &current.0.agent_id,
+            endpoint_id,
+            Some(current.0.controller_generation),
+        )?;
         let now = now_unix_ms().max(current.0.last_seen_at_unix_ms);
+        reconcile_wakes_for_endpoint_loss(
+            &transaction,
+            &current.0.agent_id,
+            endpoint_id,
+            current.0.controller_generation,
+            now,
+        )?;
         transaction
             .execute(
                 "UPDATE wc_agent_endpoints
-                 SET detached_at_unix_ms = ?2, last_seen_at_unix_ms = ?2
-                 WHERE endpoint_id = ?1 AND detached_at_unix_ms IS NULL",
+                 SET lifecycle = 'detached', detached_at_unix_ms = ?2,
+                     last_seen_at_unix_ms = ?2, lease_expires_at_unix_ms = ?2
+                 WHERE endpoint_id = ?1 AND lifecycle = 'attached'",
                 params![endpoint_id, now],
             )
             .map_err(store_error)?;
         let endpoint = load_endpoint(&transaction, endpoint_id)?
             .expect("detached Endpoint must remain readable");
+        transaction.commit().map_err(store_error)?;
+        Ok(AgentEndpointMutation {
+            endpoint,
+            created: false,
+            replayed: false,
+            state_changed: true,
+        })
+    }
+
+    pub(crate) fn renew_agent_endpoint(
+        &self,
+        principal: &CommunicationPrincipal,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+    ) -> Result<AgentEndpointMutation, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        validate_id(endpoint_id, AGENT_ENDPOINT_ID_PREFIX, "invalid_endpoint_id")?;
+        if expected_controller_generation < 1 {
+            return Err(CommunicationStoreError::new(
+                "invalid_controller_generation",
+                "expected_controller_generation must be at least 1",
+            ));
+        }
+        let now = now_unix_ms();
+        let lease_expires_at_unix_ms = now.saturating_add(DEFAULT_ENDPOINT_LEASE_MS);
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        let current =
+            load_endpoint_with_principal(&transaction, endpoint_id)?.ok_or_else(|| {
+                CommunicationStoreError::new("endpoint_not_found", "Agent Endpoint does not exist")
+            })?;
+        if current.1 != principal.kind || current.2 != principal.digest {
+            return Err(CommunicationStoreError::new(
+                "endpoint_not_owned",
+                "Agent Endpoint is attached to a different communication principal",
+            ));
+        }
+        require_current_endpoint(
+            &transaction,
+            principal,
+            &current.0.agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )?;
+        transaction
+            .execute(
+                "UPDATE wc_agent_endpoints
+                 SET last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?2),
+                     lease_expires_at_unix_ms = MAX(lease_expires_at_unix_ms, ?3)
+                 WHERE endpoint_id = ?1 AND lifecycle = 'attached'",
+                params![endpoint_id, now, lease_expires_at_unix_ms],
+            )
+            .map_err(store_error)?;
+        let endpoint = load_endpoint(&transaction, endpoint_id)?
+            .expect("renewed Endpoint must remain readable");
         transaction.commit().map_err(store_error)?;
         Ok(AgentEndpointMutation {
             endpoint,
@@ -1222,7 +1435,7 @@ impl Database {
                     "Agent-authored messages require an active Endpoint",
                 )
             })?;
-            require_active_endpoint(&transaction, principal, &agent_id, endpoint_id)?;
+            require_current_endpoint(&transaction, principal, &agent_id, endpoint_id, None)?;
             let participant_id: Option<String> = transaction
                 .query_row(
                     "SELECT participant_id FROM wc_conversation_participants
@@ -1371,6 +1584,7 @@ impl Database {
             )
             .map_err(store_error)?;
         for recipient_agent_id in &recipient_agent_ids {
+            let delivery_id = new_id(AGENT_DELIVERY_ID_PREFIX);
             transaction
                 .execute(
                     "INSERT INTO wc_agent_deliveries (
@@ -1379,7 +1593,7 @@ impl Database {
                         consumed_at_unix_ms, consumed_by_endpoint_id
                      ) VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6, NULL, NULL)",
                     params![
-                        new_id(AGENT_DELIVERY_ID_PREFIX),
+                        delivery_id,
                         message_id,
                         input.conversation_id,
                         next_seq,
@@ -1388,6 +1602,16 @@ impl Database {
                     ],
                 )
                 .map_err(store_error)?;
+            let delivery_order = transaction.last_insert_rowid();
+            coalesce_agent_wake_for_delivery(
+                &transaction,
+                recipient_agent_id,
+                &delivery_id,
+                &input.conversation_id,
+                &message_id,
+                delivery_order,
+                now,
+            )?;
         }
         transaction
             .execute(
@@ -1402,8 +1626,8 @@ impl Database {
         {
             transaction
                 .execute(
-                    "UPDATE wc_agent_endpoints SET last_seen_at_unix_ms = ?3
-                     WHERE endpoint_id = ?1 AND agent_id = ?2 AND detached_at_unix_ms IS NULL",
+                    "UPDATE wc_agent_endpoints SET last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?3)
+                     WHERE endpoint_id = ?1 AND agent_id = ?2 AND lifecycle = 'attached'",
                     params![endpoint_id, agent_id, now],
                 )
                 .map_err(store_error)?;
@@ -1444,7 +1668,7 @@ impl Database {
         }
         let limit = bounded_limit(limit)?;
         let conn = self.conn.lock().unwrap();
-        require_active_endpoint(&conn, principal, agent_id, endpoint_id)?;
+        require_current_endpoint(&conn, principal, agent_id, endpoint_id, None)?;
         let total_queued_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM wc_agent_deliveries
@@ -1528,7 +1752,7 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
-        require_active_endpoint(&transaction, principal, agent_id, endpoint_id)?;
+        require_current_endpoint(&transaction, principal, agent_id, endpoint_id, None)?;
         let now = now_unix_ms();
         let mut consumed_delivery_ids = Vec::new();
         let mut already_consumed_delivery_ids = Vec::new();
@@ -1571,8 +1795,8 @@ impl Database {
         }
         transaction
             .execute(
-                "UPDATE wc_agent_endpoints SET last_seen_at_unix_ms = ?2
-                 WHERE endpoint_id = ?1 AND detached_at_unix_ms IS NULL",
+                "UPDATE wc_agent_endpoints SET last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?2)
+                 WHERE endpoint_id = ?1 AND lifecycle = 'attached'",
                 params![endpoint_id, now],
             )
             .map_err(store_error)?;
@@ -1598,7 +1822,7 @@ fn authorize_list_access(
             agent_id,
             endpoint_id,
         } => {
-            require_active_endpoint(conn, principal, agent_id, endpoint_id)?;
+            require_current_endpoint(conn, principal, agent_id, endpoint_id, None)?;
             Ok(Some(agent_id.clone()))
         }
     }
@@ -1648,7 +1872,7 @@ fn authorize_conversation_access(
             agent_id,
             endpoint_id,
         } => {
-            require_active_endpoint(conn, principal, agent_id, endpoint_id)?;
+            require_current_endpoint(conn, principal, agent_id, endpoint_id, None)?;
             let participant: bool = conn
                 .query_row(
                     "SELECT EXISTS(
@@ -1794,33 +2018,77 @@ fn require_agent_owner(
     Ok(())
 }
 
-fn require_active_endpoint(
+pub(super) fn require_current_endpoint(
     conn: &Connection,
     principal: &CommunicationPrincipal,
     agent_id: &str,
     endpoint_id: &str,
+    expected_controller_generation: Option<i64>,
 ) -> Result<AgentEndpointRecord, CommunicationStoreError> {
     validate_id(agent_id, DURABLE_AGENT_ID_PREFIX, "invalid_agent_id")?;
     validate_id(endpoint_id, AGENT_ENDPOINT_ID_PREFIX, "invalid_endpoint_id")?;
+    if expected_controller_generation.is_some_and(|generation| generation < 1) {
+        return Err(CommunicationStoreError::new(
+            "invalid_controller_generation",
+            "expected_controller_generation must be at least 1",
+        ));
+    }
     let row = load_endpoint_with_principal(conn, endpoint_id)?.ok_or_else(|| {
         CommunicationStoreError::new("endpoint_not_found", "Agent Endpoint does not exist")
     })?;
+    if row.1 != principal.kind || row.2 != principal.digest {
+        return Err(CommunicationStoreError::new(
+            "endpoint_not_owned",
+            "Agent Endpoint is attached to a different communication principal",
+        ));
+    }
     if row.0.agent_id != agent_id {
         return Err(CommunicationStoreError::new(
             "endpoint_agent_mismatch",
             "Agent Endpoint is attached to a different Agent",
         ));
     }
-    if row.0.detached_at_unix_ms.is_some() {
+    match row.0.lifecycle.as_str() {
+        "detached" => {
+            return Err(CommunicationStoreError::new(
+                "endpoint_detached",
+                "Agent Endpoint is detached",
+            ));
+        }
+        "expired" => {
+            return Err(CommunicationStoreError::new(
+                "endpoint_expired",
+                "Agent Endpoint is expired or stale",
+            ));
+        }
+        "attached" => {}
+        _ => {
+            return Err(CommunicationStoreError::new(
+                "endpoint_not_active",
+                "Agent Endpoint is not active",
+            ));
+        }
+    }
+    if row.0.lease_expires_at_unix_ms <= now_unix_ms() {
         return Err(CommunicationStoreError::new(
-            "endpoint_detached",
-            "Agent Endpoint is detached",
+            "endpoint_expired",
+            "Agent Endpoint lease has expired",
         ));
     }
-    if row.1 != principal.kind || row.2 != principal.digest {
+    let current_controller_generation: i64 = conn
+        .query_row(
+            "SELECT current_controller_generation FROM wc_agent_identities WHERE agent_id = ?1",
+            params![agent_id],
+            |row| row.get(0),
+        )
+        .map_err(store_error)?;
+    if row.0.controller_generation != current_controller_generation
+        || expected_controller_generation
+            .is_some_and(|generation| generation != row.0.controller_generation)
+    {
         return Err(CommunicationStoreError::new(
-            "endpoint_not_owned",
-            "Agent Endpoint is attached to a different communication principal",
+            "endpoint_generation_stale",
+            "Agent Endpoint controller generation is stale",
         ));
     }
     Ok(row.0)
@@ -1833,12 +2101,23 @@ fn load_agent(
     conn.query_row(
         "SELECT agent_id, handle, display_name, description, specialty_labels_json,
                 profile_revision, created_at_unix_ms, updated_at_unix_ms,
+                current_controller_generation,
                 (SELECT COUNT(*) FROM wc_agent_endpoints e
-                 WHERE e.agent_id = a.agent_id AND e.detached_at_unix_ms IS NULL),
+                 WHERE e.agent_id = a.agent_id AND e.lifecycle = 'attached'
+                   AND e.controller_generation = a.current_controller_generation
+                   AND e.lease_expires_at_unix_ms > ?2),
                 (SELECT COUNT(*) FROM wc_agent_deliveries d
-                 WHERE d.recipient_agent_id = a.agent_id AND d.state = 'queued')
+                 WHERE d.recipient_agent_id = a.agent_id AND d.state = 'queued'),
+                (SELECT COUNT(*) FROM wc_agent_wakes w
+                 WHERE w.target_agent_id = a.agent_id AND w.state != 'consumed'),
+                (SELECT w.wake_id FROM wc_agent_wakes w
+                 WHERE w.target_agent_id = a.agent_id
+                 ORDER BY w.created_at_unix_ms DESC, w.wake_id DESC LIMIT 1),
+                (SELECT w.state FROM wc_agent_wakes w
+                 WHERE w.target_agent_id = a.agent_id
+                 ORDER BY w.created_at_unix_ms DESC, w.wake_id DESC LIMIT 1)
          FROM wc_agent_identities a WHERE agent_id = ?1",
-        params![agent_id],
+        params![agent_id, now_unix_ms()],
         row_to_agent,
     )
     .optional()
@@ -1859,8 +2138,12 @@ fn row_to_agent(row: &rusqlite::Row<'_>) -> rusqlite::Result<DurableAgentIdentit
         profile_revision: row.get(5)?,
         created_at_unix_ms: row.get(6)?,
         updated_at_unix_ms: row.get(7)?,
-        active_endpoint_count: row.get(8)?,
-        queued_delivery_count: row.get(9)?,
+        current_controller_generation: row.get(8)?,
+        active_endpoint_count: row.get(9)?,
+        queued_delivery_count: row.get(10)?,
+        unresolved_wake_count: row.get(11)?,
+        latest_wake_id: row.get(12)?,
+        latest_wake_state: row.get(13)?,
     })
 }
 
@@ -1877,9 +2160,10 @@ fn load_endpoint_with_principal(
 ) -> Result<Option<(AgentEndpointRecord, String, String)>, CommunicationStoreError> {
     conn.query_row(
         "SELECT endpoint_id, agent_id, host, client_attachment_id, wake_capable,
-                controller_generation, attached_at_unix_ms, last_seen_at_unix_ms,
-                detached_at_unix_ms, attachment_principal_kind,
-                attachment_principal_digest
+                controller_generation, lifecycle, attached_at_unix_ms,
+                last_seen_at_unix_ms, lease_expires_at_unix_ms,
+                expired_at_unix_ms, detached_at_unix_ms,
+                attachment_principal_kind, attachment_principal_digest
          FROM wc_agent_endpoints WHERE endpoint_id = ?1",
         params![endpoint_id],
         |row| {
@@ -1891,12 +2175,15 @@ fn load_endpoint_with_principal(
                     client_attachment_id: row.get(3)?,
                     wake_capable: row.get::<_, i64>(4)? != 0,
                     controller_generation: row.get(5)?,
-                    attached_at_unix_ms: row.get(6)?,
-                    last_seen_at_unix_ms: row.get(7)?,
-                    detached_at_unix_ms: row.get(8)?,
+                    lifecycle: row.get(6)?,
+                    attached_at_unix_ms: row.get(7)?,
+                    last_seen_at_unix_ms: row.get(8)?,
+                    lease_expires_at_unix_ms: row.get(9)?,
+                    expired_at_unix_ms: row.get(10)?,
+                    detached_at_unix_ms: row.get(11)?,
                 },
-                row.get(9)?,
-                row.get(10)?,
+                row.get(12)?,
+                row.get(13)?,
             ))
         },
     )
@@ -2081,7 +2368,7 @@ fn record_idempotent_resource(
     Ok(())
 }
 
-fn validate_communication_principal(
+pub(super) fn validate_communication_principal(
     principal: &CommunicationPrincipal,
 ) -> Result<(), CommunicationStoreError> {
     let kind = principal.kind.trim();
@@ -2302,7 +2589,7 @@ fn bounded_limit(limit: usize) -> Result<usize, CommunicationStoreError> {
     Ok(limit)
 }
 
-fn validate_id(
+pub(super) fn validate_id(
     value: &str,
     prefix: &str,
     code: &'static str,
@@ -2323,7 +2610,7 @@ fn validate_id(
     Ok(())
 }
 
-fn new_id(prefix: &str) -> String {
+pub(super) fn new_id(prefix: &str) -> String {
     format!("{prefix}{}", Uuid::new_v4().simple())
 }
 
@@ -2334,7 +2621,7 @@ fn digest_json(value: &Value) -> String {
     )
 }
 
-fn digest_text(domain: &str, value: &str) -> String {
+pub(super) fn digest_text(domain: &str, value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(domain.as_bytes());
     hasher.update(b"\0");
@@ -2342,6 +2629,19 @@ fn digest_text(domain: &str, value: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn now_unix_ms() -> i64 {
+pub(super) fn now_unix_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+fn communication_table_columns(
+    conn: &Connection,
+    table_name: &str,
+) -> rusqlite::Result<BTreeMap<String, String>> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table_name})"))?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })?
+        .collect();
+    columns
 }

@@ -24,7 +24,6 @@ fn endpoint(agent_id: &str, host: &str, key: &str) -> NewAgentEndpoint {
         host: host.to_string(),
         client_attachment_id: Some(format!("attachment-{key}")),
         wake_capable: false,
-        controller_generation: Some("manual-v1".to_string()),
         idempotency_key: key.to_string(),
     }
 }
@@ -212,6 +211,9 @@ fn endpoint_attachment_is_principal_bound_and_detach_preserves_agent() {
         .endpoint
         .endpoint_id
         .starts_with(AGENT_ENDPOINT_ID_PREFIX));
+    assert_eq!(attached.endpoint.controller_generation, 1);
+    assert_eq!(attached.endpoint.lifecycle, "attached");
+    assert!(attached.endpoint.lease_expires_at_unix_ms > attached.endpoint.attached_at_unix_ms);
 
     let replay = db
         .attach_agent_endpoint(&owner, endpoint(&agent.agent_id, "ChatGPT", "window-a"))
@@ -229,6 +231,7 @@ fn endpoint_attachment_is_principal_bound_and_detach_preserves_agent() {
         .detach_agent_endpoint(&owner, &attached.endpoint.endpoint_id)
         .unwrap();
     assert!(detached.state_changed);
+    assert_eq!(detached.endpoint.lifecycle, "detached");
     assert!(detached.endpoint.detached_at_unix_ms.is_some());
     let desired_state_retry = db
         .detach_agent_endpoint(&owner, &attached.endpoint.endpoint_id)
@@ -252,6 +255,16 @@ fn endpoint_attachment_is_principal_bound_and_detach_preserves_agent() {
         attached.endpoint.endpoint_id
     );
     assert_eq!(replacement.endpoint.agent_id, agent.agent_id);
+    assert_eq!(replacement.endpoint.controller_generation, 2);
+    assert_eq!(replacement.endpoint.lifecycle, "attached");
+    let after_replacement = db
+        .list_agent_identities(&owner, Some(&agent.agent_id), 0, 10)
+        .unwrap()
+        .agents
+        .pop()
+        .unwrap();
+    assert_eq!(after_replacement.current_controller_generation, 2);
+    assert_eq!(after_replacement.active_endpoint_count, 1);
 }
 
 #[test]
@@ -652,7 +665,7 @@ fn exact_message_replay_survives_endpoint_detach_without_duplicate_delivery() {
 }
 
 #[test]
-fn message_and_deliveries_commit_atomically_after_dispatch_uncertainty() {
+fn message_deliveries_and_wake_commit_atomically() {
     let temp = tempfile::tempdir().unwrap();
     let db = Database::open(&temp.path().join("atomic.db")).unwrap();
     let owner = principal("user", '9');
@@ -667,11 +680,19 @@ fn message_and_deliveries_commit_atomically_after_dispatch_uncertainty() {
         .conversation
         .conversation_id;
 
+    let idempotency_count_before: i64 = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*) FROM wc_communication_idempotency",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     db.conn_for_tests()
         .execute_batch(
-            "CREATE TRIGGER fail_delivery_insert
-             BEFORE INSERT ON wc_agent_deliveries
-             BEGIN SELECT RAISE(ABORT, 'forced delivery failure'); END;",
+            "CREATE TRIGGER fail_wake_insert
+             BEFORE INSERT ON wc_agent_wakes
+             BEGIN SELECT RAISE(ABORT, 'forced wake failure'); END;",
         )
         .unwrap();
     assert_eq!(
@@ -695,6 +716,16 @@ fn message_and_deliveries_commit_atomically_after_dispatch_uncertainty() {
                 row.get(0)
             })
             .unwrap();
+        let wake_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM wc_agent_wakes", [], |row| row.get(0))
+            .unwrap();
+        let idempotency_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM wc_communication_idempotency",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         let next_seq: i64 = conn
             .query_row(
                 "SELECT next_seq FROM wc_conversations WHERE conversation_id = ?1",
@@ -702,10 +733,14 @@ fn message_and_deliveries_commit_atomically_after_dispatch_uncertainty() {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!((message_count, delivery_count, next_seq), (0, 0, 1));
+        assert_eq!(
+            (message_count, delivery_count, wake_count, next_seq),
+            (0, 0, 0, 1)
+        );
+        assert_eq!(idempotency_count, idempotency_count_before);
     }
     db.conn_for_tests()
-        .execute_batch("DROP TRIGGER fail_delivery_insert;")
+        .execute_batch("DROP TRIGGER fail_wake_insert;")
         .unwrap();
 
     let retry = db
@@ -716,4 +751,9 @@ fn message_and_deliveries_commit_atomically_after_dispatch_uncertainty() {
         .unwrap();
     assert_eq!(retry.message.seq, 1);
     assert_eq!(retry.message.deliveries.len(), 1);
+    let conn = db.conn_for_tests();
+    let wake_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM wc_agent_wakes", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(wake_count, 1);
 }

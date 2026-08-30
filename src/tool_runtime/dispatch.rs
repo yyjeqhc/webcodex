@@ -1608,7 +1608,6 @@ impl ToolRuntime {
                 host,
                 client_attachment_id,
                 wake_capable,
-                controller_generation,
                 idempotency_key,
             } => self.attach_agent_endpoint(
                 auth,
@@ -1616,7 +1615,6 @@ impl ToolRuntime {
                 host,
                 client_attachment_id,
                 wake_capable,
-                controller_generation,
                 idempotency_key,
             ),
 
@@ -1683,6 +1681,21 @@ impl ToolRuntime {
                 endpoint_id,
                 delivery_ids,
             } => self.consume_agent_deliveries(auth, agent_id, endpoint_id, delivery_ids),
+
+            ToolCall::ConsumeAgentWake {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                wake_id,
+                consume_token,
+            } => self.consume_agent_wake(
+                auth,
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                wake_id,
+                consume_token,
+            ),
 
             ToolCall::MemorySearch {
                 query,

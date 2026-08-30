@@ -30,47 +30,19 @@ const RUNTIME_COLLABORATION_MUTABLE_KINDS = new Set(["note", "guidance", "questi
 export function runtimeCollaborationMessageCanMutate(message) {
     return !!message && message.status === "open" && RUNTIME_COLLABORATION_MUTABLE_KINDS.has(String(message.kind || ""));
 }
-export function runtimeCollaborationMessageSides(messages) {
-    const byId = new Map();
+export function runtimeCollaborationMessageSides(messages, locallyAuthoredMessageIds = new Set()) {
+    const sides = new Map();
     for (const message of Array.isArray(messages) ? messages : []) {
         const id = typeof message?.message_id === "string" ? message.message_id : "";
-        if (id)
-            byId.set(id, message);
+        if (!id)
+            continue;
+        const side = message?.author_session_id
+            ? "incoming"
+            : locallyAuthoredMessageIds.has(id)
+                ? "outgoing"
+                : "neutral";
+        sides.set(id, side);
     }
-    const sides = new Map();
-    const resolving = new Set();
-    const resolve = (message) => {
-        const id = String(message?.message_id || "");
-        const known = sides.get(id);
-        if (known)
-            return known;
-        if (message?.author_session_id || String(message?.kind || "") === "answer") {
-            if (id)
-                sides.set(id, "incoming");
-            return "incoming";
-        }
-        const parentId = typeof message?.reply_to === "string" ? message.reply_to : "";
-        if (!parentId) {
-            if (id)
-                sides.set(id, "outgoing");
-            return "outgoing";
-        }
-        const parent = byId.get(parentId);
-        if (!parent || resolving.has(id)) {
-            if (id)
-                sides.set(id, "incoming");
-            return "incoming";
-        }
-        resolving.add(id);
-        const parentSide = resolve(parent);
-        resolving.delete(id);
-        const side = parentSide === "outgoing" ? "incoming" : "outgoing";
-        if (id)
-            sides.set(id, side);
-        return side;
-    };
-    for (const message of byId.values())
-        resolve(message);
     return sides;
 }
 function collaborationMessageById(state, messageId) {

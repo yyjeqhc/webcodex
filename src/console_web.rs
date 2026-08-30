@@ -491,8 +491,14 @@ mod tests {
         assert!(RUNTIME_HTML.contains("/runtime/styles.css"));
         assert!(RUNTIME_APP_JS.contains("/api/runtime-console/"));
         assert!(!RUNTIME_APP_JS.contains("/api/console/"));
-        assert!(!RUNTIME_APP_JS.contains("localStorage"));
-        assert!(!RUNTIME_APP_JS.contains("sessionStorage"));
+        // Runtime UI preferences may use localStorage, while tab-scoped drafts and the
+        // optional remembered Bearer credential use sessionStorage. Credentials must
+        // never move into durable localStorage or cookies.
+        assert!(RUNTIME_APP_JS.contains("localStorage"));
+        assert!(RUNTIME_APP_JS.contains("sessionStorage"));
+        assert!(RUNTIME_APP_JS.contains("RUNTIME_CREDENTIAL_SESSION_KEY"));
+        assert!(RUNTIME_APP_JS.contains("sessionStorage.setItem(RUNTIME_CREDENTIAL_SESSION_KEY"));
+        assert!(!RUNTIME_APP_JS.contains("localStorage.setItem(RUNTIME_CREDENTIAL_SESSION_KEY"));
         assert!(!RUNTIME_APP_JS.contains("document.cookie"));
         assert!(!RUNTIME_APP_JS.contains(".innerHTML"));
         assert!(!CONSOLE_HTML.contains("Transport"));

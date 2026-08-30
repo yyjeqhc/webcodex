@@ -67,12 +67,12 @@ Navigation answers “where am I?”, conversation answers “what was said?”,
 
 ### Conversation
 
-- Human messages are outgoing/right. Agent or reply messages are incoming/left.
+- Messages submitted by the current browser tab may be presented as outgoing/right using a tab-local presentation hint. Messages with trusted `author_session_id` provenance are incoming/left. Retained messages without either signal remain neutral; reply topology and message kind never invent authorship.
 - The bubble contains message content only.
-- Incoming bubbles use a quiet neutral surface; outgoing bubbles use a restrained true blue rather than the violet selection accent. Both themes preserve this semantic distinction without using status colors as message fills.
+- Trusted incoming and provenance-neutral bubbles use a quiet neutral surface; current-tab outgoing bubbles use a restrained true blue rather than the violet selection accent. Both themes preserve this semantic distinction without using status colors as message fills.
 - Bubbles shrink to their content and stop at a bounded conversational measure. A uniform `22 px` radius, earlier wrapping, and no hard outline keep short messages capsule-like and prevent long messages from reading as rectangular cards.
 - Author, exceptional kind/status, time, reply context, acknowledgement, resolution, and actions live outside the bubble. Default note/normal/open metadata and raw message IDs are not rendered as visible labels.
-- Identity is carried by a compact author line at the beginning of each same-side message group. Conversation rows do not repeat avatars or author labels, keeping both sides visually light and leaving the content as the primary signal.
+- Identity is carried by a compact author line at the beginning of each same-side message group. `Agent` is shown only for trusted author provenance and `You` only for a current-tab presentation hint; otherwise the row is labelled as retained without claiming an author. Presentation hints never grant mutation authority.
 - Consecutive messages from the same side use a tighter gap; a side change creates a larger conversational beat.
 - Reply depth is communicated by a small context line, not growing horizontal indentation.
 - Opening or switching a Session positions the transcript at its latest retained message. Newly observed messages follow smoothly; a poll with no new message preserves the reader's current history position.
@@ -87,6 +87,13 @@ Navigation answers “where am I?”, conversation answers “what was said?”,
 - The send action becomes visually active only when content exists. Native selects remain native for keyboard and mobile reliability, but share the same disclosed control shell and focus treatment.
 - Focus lifts the composer by one pixel and strengthens its edge/shadow; opening options, reply/edit context, and newly retained messages use short transform-and-opacity transitions.
 - Each Project/Session pair owns a tab-scoped draft. Switching Sessions and refreshing the page restores that draft; editing an existing retained message temporarily replaces the field and restores the draft when editing ends.
+
+### Browser storage and credentials
+
+- Web Storage is an intentional Runtime Console dependency. Non-secret UI preferences such as language, appearance, workspace view, and disclosure state may use `localStorage` so refreshes preserve the workspace.
+- When **Keep me signed in for this tab** is enabled, the Runtime Bearer credential is stored only in tab-scoped `sessionStorage`; it is never written to `localStorage` or cookies. **Lock** removes it, and closing the tab ends that browser-session storage.
+- Session drafts use `sessionStorage`. Current-tab message presentation hints stay in page memory and may disappear on refresh or Session switching. Neither value becomes authentication, authorization, durable author provenance, or Workflow Session identity.
+- Web Storage is readable by same-origin page script. On a shared or untrusted browser profile, disable credential retention or use **Lock** before handing the browser to another person.
 
 ### Runtime and Session context
 

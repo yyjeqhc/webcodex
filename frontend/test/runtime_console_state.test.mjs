@@ -470,21 +470,21 @@ test("only eligible open Human Join kinds expose mutation actions and ACK is not
   assert.equal(runtimeCollaborationMessageCanMutate({ kind: "todo", status: "resolved", closure_kind: "superseded" }), false);
 });
 
-test("conversation presentation keeps outgoing messages right and replies alternating left", () => {
+test("conversation presentation never infers authorship from reply topology or message kind", () => {
   const sides = runtimeCollaborationMessageSides([
     { message_id: "user-root", kind: "note", message: "hello" },
-    { message_id: "agent-reply", kind: "note", reply_to: "user-root", message: "received" },
-    { message_id: "user-reply", kind: "question", reply_to: "agent-reply", message: "why" },
+    { message_id: "reply-without-provenance", kind: "note", reply_to: "user-root", message: "received" },
+    { message_id: "local-reply", kind: "question", reply_to: "reply-without-provenance", message: "why" },
     { message_id: "trusted-agent", kind: "progress", author_session_id: "wc_sess_worker", message: "working" },
-    { message_id: "legacy-answer", kind: "answer", message: "done" },
+    { message_id: "answer-without-provenance", kind: "answer", message: "done" },
     { message_id: "retained-reply", kind: "note", reply_to: "missing", message: "retained" },
-  ]);
+  ], new Set(["user-root", "local-reply"]));
   assert.equal(sides.get("user-root"), "outgoing");
-  assert.equal(sides.get("agent-reply"), "incoming");
-  assert.equal(sides.get("user-reply"), "outgoing");
+  assert.equal(sides.get("reply-without-provenance"), "neutral");
+  assert.equal(sides.get("local-reply"), "outgoing");
   assert.equal(sides.get("trusted-agent"), "incoming");
-  assert.equal(sides.get("legacy-answer"), "incoming");
-  assert.equal(sides.get("retained-reply"), "incoming");
+  assert.equal(sides.get("answer-without-provenance"), "neutral");
+  assert.equal(sides.get("retained-reply"), "neutral");
 });
 
 test("runtime collaboration rendering uses textContent and explicitly reloads on history loss", async () => {
@@ -560,6 +560,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(css, /--sidebar-width:\s*clamp\(300px,\s*21vw,\s*356px\)/);
   assert.match(css, /--content-width:\s*1120px/);
   assert.match(css, /\.message-card\.message-incoming\s*\{[^}]*width:\s*fit-content[^}]*max-width:\s*min\(82%,\s*880px\)/);
+  assert.match(css, /\.message-card\.message-neutral\s*\{[^}]*width:\s*fit-content[^}]*max-width:\s*min\(82%,\s*880px\)/);
   assert.match(css, /\.message-card\.message-outgoing\s*\{[^}]*max-width:\s*min\(68%,\s*680px\)[^}]*align-self:\s*flex-end/);
   assert.match(css, /--message-bubble-radius:\s*22px/);
   assert.doesNotMatch(css, /message-avatar/);
@@ -593,7 +594,9 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(source, /selectRuntimeSessionLocation/);
   assert.doesNotMatch(source, /project-row-path/);
   assert.match(source, /runtimeProjectIdentityText\(project\)/);
-  assert.match(source, /runtimeCollaborationMessageSides\(messages\)/);
+  assert.match(source, /runtimeCollaborationMessageSides\(messages, locallyAuthoredCollaborationMessageIds\)/);
+  assert.match(source, /provenance-unknown/);
+  assert.match(source, /rememberLocalCollaborationMessage/);
   assert.match(source, /message-group-continuation/);
   assert.match(source, /syncCollaborationComposerLayout/);
   assert.match(source, /scrollCollaborationToLatest/);
@@ -635,6 +638,10 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(source, /workflow-session-post-message/);
   assert.match(source, /workflow-session-withdraw-message/);
   assert.match(source, /workflow-session-replace-message/);
+  const collaborationRenderStart = source.indexOf("function renderCollaboration");
+  const collaborationRenderEnd = source.indexOf("async function confirmCollaborationMutationDurability", collaborationRenderStart);
+  const collaborationRender = source.slice(collaborationRenderStart, collaborationRenderEnd);
+  assert.doesNotMatch(collaborationRender, /messageSide === "outgoing" && runtimeCollaborationMessageCanMutate/);
   assert.match(source, /sessionCollaborationAuthorityFailure/);
   assert.match(source, /response\?\.status !== 403/);
   assert.match(source, /This credential can still read the Session; add session:collaborate to send, edit, or withdraw messages\./);

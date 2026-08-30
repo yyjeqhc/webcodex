@@ -248,6 +248,8 @@ const RUNTIME_ZH_TEXT: Record<string, string> = {
   "Original message unavailable": "原消息不可用",
   "You": "你",
   "Agent": "Agent",
+  "Retained message": "保留消息",
+  "Author provenance unavailable": "作者来源不可用",
   "Edit": "编辑",
   "Delete": "删除",
   "Consume": "消费",
@@ -452,6 +454,7 @@ let projectDeviceFilter = "";
 let projectSearchTimer = 0;
 let collaborationReplyTo = "";
 let renderedCollaborationMessageIds = new Set<string>();
+let locallyAuthoredCollaborationMessageIds = new Set<string>();
 let workspaceView: RuntimeWorkspaceView = "sessions";
 let collaborationFollowLatest = true;
 let collaborationPendingMessages = 0;
@@ -1101,6 +1104,12 @@ function clearRuntimeDrafts(): void {
   } catch { /* No-op in hardened browser contexts. */ }
 }
 
+function rememberLocalCollaborationMessage(messageId: unknown): void {
+  const id = typeof messageId === "string" ? messageId : "";
+  if (!/^wc_msg_[A-Za-z0-9_]+$/.test(id)) return;
+  locallyAuthoredCollaborationMessageIds.add(id);
+}
+
 function deviceDisclosureStorageKey(clientId: string): string {
   return DEVICE_DISCLOSURE_STORAGE_PREFIX + encodeURIComponent(clientId);
 }
@@ -1195,6 +1204,7 @@ function clearSessionSurface(): void {
   clearNode(el("runtime-session-list"));
   show("runtime-sessions-empty", false);
   clearRuntimeWorkflowSession(state);
+  locallyAuthoredCollaborationMessageIds = new Set<string>();
   abortCollaboration();
   hideDetail();
   resetCollaborationComposerUi();
@@ -2037,6 +2047,7 @@ function selectSession(sessionId: string): void {
   abort(detailAbort); detailAbort = null; abortCollaboration(); hideDetail();
   setHumanJoinSendEnabled(false);
   const request = selectRuntimeWorkflowSession(state, sessionId);
+  locallyAuthoredCollaborationMessageIds = new Set<string>();
   resetCollaborationComposerUi();
   restoreCurrentDraft();
   renderSessionList(sessionRows, { total: sessionRows.length, truncated: false });
@@ -2311,7 +2322,7 @@ function renderCollaboration(statusText?: string, consumeMutationNotice = true):
       const list = children.get(parent) || []; list.push(message); children.set(parent, list);
     }
   }
-  const messageSides = runtimeCollaborationMessageSides(messages);
+  const messageSides = runtimeCollaborationMessageSides(messages, locallyAuthoredCollaborationMessageIds);
   const visited = new Set<string>();
   let previousRenderedSide = "";
   let previousRenderedDay = "";
@@ -2319,8 +2330,8 @@ function renderCollaboration(statusText?: string, consumeMutationNotice = true):
     const id = String(message?.message_id || ""); if (!id || visited.has(id)) return; visited.add(id);
     const card = document.createElement("article");
     card.className = "message-card " + String(message?.kind || "note") + (String(message?.status || "") === "resolved" ? " resolved" : "") + (parentUnavailable ? " retained-reply" : "");
-    card.classList.add(message?.author_session_id ? "agent-authored" : "human-authored");
-    const messageSide = messageSides.get(id) || "outgoing";
+    const messageSide = messageSides.get(id) || "neutral";
+    card.classList.add(messageSide === "incoming" ? "agent-authored" : messageSide === "outgoing" ? "human-authored" : "provenance-unknown");
     const createdAt = typeof message?.created_at === "number" ? message.created_at : 0;
     const createdDate = createdAt ? new Date(createdAt * 1000) : null;
     const dayKey = createdDate ? [createdDate.getFullYear(), createdDate.getMonth(), createdDate.getDate()].join("-") : "";
@@ -2334,15 +2345,17 @@ function renderCollaboration(statusText?: string, consumeMutationNotice = true):
       previousRenderedDay = dayKey;
       previousRenderedSide = "";
     }
-    card.classList.add(messageSide === "incoming" ? "message-incoming" : "message-outgoing");
+    card.classList.add(messageSide === "incoming" ? "message-incoming" : messageSide === "outgoing" ? "message-outgoing" : "message-neutral");
     if (!previouslyRenderedMessageIds.has(id)) card.classList.add("message-entering");
     if (previousRenderedSide === messageSide) card.classList.add("message-group-continuation");
     previousRenderedSide = messageSide;
     if (depth > 0) card.classList.add("message-thread");
     const content = document.createElement("div"); content.className = "message-content";
     const author = document.createElement("div"); author.className = "message-author";
-    const authorName = document.createElement("span"); authorName.className = "message-author-name"; authorName.textContent = messageSide === "incoming" ? tr("Agent") : tr("You");
+    const authorName = document.createElement("span"); authorName.className = "message-author-name";
+    authorName.textContent = messageSide === "incoming" ? tr("Agent") : messageSide === "outgoing" ? tr("You") : tr("Retained message");
     if (message?.author_session_id) authorName.title = String(message.author_session_id);
+    else if (messageSide === "neutral") authorName.title = tr("Author provenance unavailable");
     author.appendChild(authorName); content.appendChild(author);
     if (message?.reply_to) {
       const replyContext = document.createElement("div"); replyContext.className = "message-reply-context";
@@ -2417,7 +2430,7 @@ function renderCollaboration(statusText?: string, consumeMutationNotice = true):
     }
     const actions = document.createElement("div"); actions.className = "message-actions";
     actions.appendChild(createMessageAction(tr("Reply"), "reply", () => setCollaborationReplyTarget(id)));
-    if (messageSide === "outgoing" && runtimeCollaborationMessageCanMutate(message) && state.collaboration.phase === "live" && !state.collaboration.uncertainMutation) {
+    if (runtimeCollaborationMessageCanMutate(message) && state.collaboration.phase === "live" && !state.collaboration.uncertainMutation) {
       const editLabel = runtimeLanguage === "zh-CN" ? "替换这条保留消息，同时保留其历史记录。" : "Replace this retained message while preserving its history.";
       const deleteLabel = runtimeLanguage === "zh-CN" ? "撤回这条保留消息；历史记录仍会保留。" : "Withdraw this retained message; history is preserved.";
       actions.appendChild(createMessageAction(editLabel, "edit", () => beginCollaborationEdit(message)));
@@ -2725,6 +2738,7 @@ async function postHumanCollaborationMessage(event: Event): Promise<void> {
       return;
     }
     clearRuntimeCollaborationEditTarget(state);
+    rememberLocalCollaborationMessage(response.data.replacement?.message_id);
     adoptRuntimeCollaborationObservation(state, request, {
       messages: [response.data.original, response.data.replacement],
     });
@@ -2757,6 +2771,7 @@ async function postHumanCollaborationMessage(event: Event): Promise<void> {
   const authorityFailure = sessionCollaborationAuthorityFailure(response);
   if (authorityFailure) { setText("runtime-message-send-status", authorityFailure); return; }
   if (!response?.ok || !response.data) { setText("runtime-message-send-status", tr("Send failed.")); return; }
+  rememberLocalCollaborationMessage(response.data?.message_id);
   adoptRuntimeCollaborationObservation(state, request, { messages: [response.data] });
   if (body) body.value = "";
   clearCurrentDraft();

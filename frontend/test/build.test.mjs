@@ -162,6 +162,8 @@ async function assertRequiredAssets(outputDirectory) {
   assert.doesNotMatch(runtime, /localStorage\.(?:getItem|setItem)\(RUNTIME_CREDENTIAL_SESSION_KEY/);
   assert.match(runtime, /sessionStorage/);
   assert.match(runtime, /RUNTIME_CREDENTIAL_SESSION_KEY/);
+  assert.match(runtime, /sessionStorage\.setItem\(RUNTIME_CREDENTIAL_SESSION_KEY/);
+  assert.doesNotMatch(runtime, /localStorage\.setItem\(RUNTIME_CREDENTIAL_SESSION_KEY/);
   assert.match(runtime, /lock\("", false\)/);
   assert.match(runtime, /clearRememberedRuntimeCredential/);
   assert.match(runtime, /sessionsPanel\?\.remove\(\);\s*clearNode\(projectList\);\s*if \(projectList && sessionsPanel\)/);

@@ -46,42 +46,23 @@ export function runtimeCollaborationMessageCanMutate(message: any): boolean {
   return !!message && message.status === "open" && RUNTIME_COLLABORATION_MUTABLE_KINDS.has(String(message.kind || ""));
 }
 
-export type RuntimeCollaborationMessageSide = "incoming" | "outgoing";
+export type RuntimeCollaborationMessageSide = "incoming" | "outgoing" | "neutral";
 
-export function runtimeCollaborationMessageSides(messages: any[]): Map<string, RuntimeCollaborationMessageSide> {
-  const byId = new Map<string, any>();
+export function runtimeCollaborationMessageSides(
+  messages: any[],
+  locallyAuthoredMessageIds: ReadonlySet<string> = new Set(),
+): Map<string, RuntimeCollaborationMessageSide> {
+  const sides = new Map<string, RuntimeCollaborationMessageSide>();
   for (const message of Array.isArray(messages) ? messages : []) {
     const id = typeof message?.message_id === "string" ? message.message_id : "";
-    if (id) byId.set(id, message);
+    if (!id) continue;
+    const side: RuntimeCollaborationMessageSide = message?.author_session_id
+      ? "incoming"
+      : locallyAuthoredMessageIds.has(id)
+        ? "outgoing"
+        : "neutral";
+    sides.set(id, side);
   }
-  const sides = new Map<string, RuntimeCollaborationMessageSide>();
-  const resolving = new Set<string>();
-  const resolve = (message: any): RuntimeCollaborationMessageSide => {
-    const id = String(message?.message_id || "");
-    const known = sides.get(id);
-    if (known) return known;
-    if (message?.author_session_id || String(message?.kind || "") === "answer") {
-      if (id) sides.set(id, "incoming");
-      return "incoming";
-    }
-    const parentId = typeof message?.reply_to === "string" ? message.reply_to : "";
-    if (!parentId) {
-      if (id) sides.set(id, "outgoing");
-      return "outgoing";
-    }
-    const parent = byId.get(parentId);
-    if (!parent || resolving.has(id)) {
-      if (id) sides.set(id, "incoming");
-      return "incoming";
-    }
-    resolving.add(id);
-    const parentSide = resolve(parent);
-    resolving.delete(id);
-    const side = parentSide === "outgoing" ? "incoming" : "outgoing";
-    if (id) sides.set(id, side);
-    return side;
-  };
-  for (const message of byId.values()) resolve(message);
   return sides;
 }
 

@@ -1,7 +1,7 @@
 use super::messages::encode_observation_token;
 use super::model::{
     SessionMessageObservationOutcome, DEFAULT_MAX_MESSAGES_PER_SESSION,
-    MESSAGE_COMPLETION_FINGERPRINT_HEX_CHARS,
+    MESSAGE_COMPLETION_FINGERPRINT_HEX_CHARS, SESSION_LEDGER_V1_VERSION,
 };
 use super::*;
 use serde_json::Value;
@@ -334,7 +334,7 @@ async fn observe_session_messages_retention_reports_history_loss_for_protected_t
 }
 
 #[tokio::test]
-async fn observe_session_messages_token_survives_restart_and_legacy_restore_baselines_safely() {
+async fn observe_session_messages_token_survives_restart_and_v039_upgrade() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = dir.path().join("sessions.json");
     let store = SessionStore::with_persistence(&ledger, 10, 50);
@@ -384,6 +384,11 @@ async fn observe_session_messages_token_survives_restart_and_legacy_restore_base
     restored.flush_persistence();
     drop(restored);
     let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    raw["version"] = Value::from(SESSION_LEDGER_V1_VERSION);
+    raw.as_object_mut().unwrap().insert(
+        "durable_current_bindings".to_string(),
+        serde_json::json!([]),
+    );
     let record = raw["sessions"]
         .as_array_mut()
         .unwrap()
@@ -392,32 +397,40 @@ async fn observe_session_messages_token_survives_restart_and_legacy_restore_base
         .unwrap()
         .as_object_mut()
         .unwrap();
-    record.remove("message_observation_revision");
-    record.remove("message_observation_floor");
-    record.remove("message_observation_revisions");
+    for field in [
+        "assignment_history_floors",
+        "assignment_history_tracking_complete",
+        "completion_assignment_fence_fingerprints",
+        "completion_assignment_fence_tracking_complete",
+    ] {
+        record.remove(field);
+    }
     std::fs::write(&ledger, serde_json::to_vec(&raw).unwrap()).unwrap();
-    let legacy = SessionStore::with_persistence(&ledger, 10, 50);
-    let legacy_baseline = baseline(&legacy, &session.session_id).await;
-    assert!(legacy_baseline.messages.is_empty());
-    assert!(!legacy_baseline.changed);
-    let post_legacy = post(
-        &legacy,
+    let v039 = SessionStore::with_persistence(&ledger, 10, 50);
+    let v039_baseline = baseline(&v039, &session.session_id).await;
+    assert!(v039_baseline.messages.is_empty());
+    assert!(!v039_baseline.changed);
+    let post_upgrade = post(
+        &v039,
         &session.session_id,
         SessionMessageKind::Note,
-        "after legacy restore",
+        "after v0.3.9 upgrade",
         SessionMessagePriority::Normal,
     );
-    let legacy_delta = legacy
+    let upgraded_delta = v039
         .observe_messages(
             &session.session_id,
-            Some(&legacy_baseline.observation_token),
+            Some(&v039_baseline.observation_token),
             None,
             None,
         )
         .await
         .unwrap();
-    assert_eq!(legacy_delta.messages.len(), 1);
-    assert_eq!(legacy_delta.messages[0].message_id, post_legacy.message_id);
+    assert_eq!(upgraded_delta.messages.len(), 1);
+    assert_eq!(
+        upgraded_delta.messages[0].message_id,
+        post_upgrade.message_id
+    );
 }
 
 #[tokio::test]
@@ -949,7 +962,7 @@ fn collaboration_session_message_exact_lookup_finds_old_retained_todo() {
 }
 
 #[test]
-fn collaboration_session_message_completion_replays_after_restart_and_legacy_defaults() {
+fn collaboration_session_message_completion_replays_after_restart_and_v039_upgrade() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = dir.path().join("sessions.json");
     let store = SessionStore::with_persistence(&ledger, 10, 50);
@@ -1000,39 +1013,44 @@ fn collaboration_session_message_completion_replays_after_restart_and_legacy_def
     restored.flush_persistence();
     drop(restored);
     let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
-    let messages = raw["sessions"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|session| session["session_id"] == coordinator.session_id)
-        .unwrap()["messages"]
-        .as_array_mut()
-        .unwrap();
-    let answer = messages
-        .iter_mut()
-        .find(|message| message["message_id"] == first.answer.message_id)
-        .unwrap()
-        .as_object_mut()
-        .unwrap();
-    answer.remove("author_session_id");
-    answer.remove("resolved_by_message_id");
-    answer.remove("completion_id");
+    raw["version"] = Value::from(SESSION_LEDGER_V1_VERSION);
+    raw.as_object_mut().unwrap().insert(
+        "durable_current_bindings".to_string(),
+        serde_json::json!([]),
+    );
+    for record in raw["sessions"].as_array_mut().unwrap() {
+        let record = record.as_object_mut().unwrap();
+        for field in [
+            "assignment_history_floors",
+            "assignment_history_tracking_complete",
+            "completion_assignment_fence_fingerprints",
+            "completion_assignment_fence_tracking_complete",
+        ] {
+            record.remove(field);
+        }
+    }
     std::fs::write(&ledger, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
-    let legacy = SessionStore::with_persistence(&ledger, 10, 50);
-    let legacy_answer = legacy
+    let v039 = SessionStore::with_persistence(&ledger, 10, 50);
+    let v039_answer = v039
         .list_messages(
             &coordinator.session_id,
             ListSessionMessagesFilter {
-                message_id: Some(first.answer.message_id),
+                message_id: Some(first.answer.message_id.clone()),
                 ..Default::default()
             },
         )
         .unwrap()
         .pop()
         .unwrap();
-    assert_eq!(legacy_answer.author_session_id, None);
-    assert_eq!(legacy_answer.resolved_by_message_id, None);
-    assert_eq!(legacy_answer.completion_id, None);
+    assert_eq!(
+        v039_answer.author_session_id,
+        first.answer.author_session_id
+    );
+    assert_eq!(
+        v039_answer.resolved_by_message_id,
+        first.answer.resolved_by_message_id
+    );
+    assert_eq!(v039_answer.completion_id, first.answer.completion_id);
 }
 
 #[test]

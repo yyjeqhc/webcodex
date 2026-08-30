@@ -4,7 +4,7 @@ use super::super::project_instructions::{
     ProjectInstructionsSnapshot, ProjectInstructionsSummarySnapshot,
 };
 use super::super::tool_inputs::{ExecutionShell, SessionMode};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{value::RawValue, Value};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
@@ -40,7 +40,8 @@ pub(crate) const MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS: usize =
 pub(super) const MAX_INPUT_OBJECT_KEYS: usize = 16;
 pub(super) const MAX_INPUT_ARRAY_ITEMS: usize = 8;
 pub(crate) const MAX_VALIDATION_EXCERPT_CHARS: usize = 800;
-pub(super) const SESSION_LEDGER_VERSION: u32 = 1;
+pub(super) const SESSION_LEDGER_V1_VERSION: u32 = 1;
+pub(super) const SESSION_LEDGER_VERSION: u32 = 2;
 pub(crate) const MESSAGE_ID_PREFIX: &str = "wc_msg_";
 pub(crate) const DEFAULT_MAX_MESSAGES_PER_SESSION: usize = 200;
 pub(crate) const MAX_CODING_INSTRUCTION_CHARS: usize = 4000;
@@ -245,20 +246,6 @@ impl SessionLifecycle {
             Self::Closed => "closed",
         }
     }
-}
-
-fn deserialize_persisted_session_lifecycle<'de, D>(
-    deserializer: D,
-) -> Result<Option<SessionLifecycle>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Value::deserialize(deserializer)?;
-    Ok(match value.as_str() {
-        Some("active") => Some(SessionLifecycle::Active),
-        Some("closed") => Some(SessionLifecycle::Closed),
-        _ => None,
-    })
 }
 
 /// Result of an explicit close attempt on a known session.
@@ -600,67 +587,37 @@ impl PersistedSessionSnapshot {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct PersistedSessionRecord {
     pub(super) session_id: String,
     pub(super) project: Option<String>,
-    /// Historical field name retained for JSON compatibility. Canonical writers
-    /// always store a domain-separated authority-group fingerprint; missing or
-    /// malformed values are rejected row-local during restore.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) owner_authority_fingerprint: Option<String>,
+    /// Historical field name retained on disk, but v2 requires the canonical
+    /// domain-separated authority-group fingerprint on every persisted row.
+    pub(super) owner_authority_fingerprint: String,
     pub(super) title: Option<String>,
     pub(super) mode: SessionMode,
     pub(super) guards: SessionGuards,
-    /// Additive ledger-v1 field. Older ledgers restore an empty context.
-    #[serde(default)]
     pub(super) execution_context: SessionExecutionContext,
-    /// Canonical writers always persist an explicit lifecycle. Missing, unknown,
-    /// or removed values deserialize as `None` so restore can discard only that
-    /// row instead of poisoning the whole ledger.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_persisted_session_lifecycle",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub(super) lifecycle: Option<SessionLifecycle>,
+    pub(super) lifecycle: SessionLifecycle,
     pub(super) created_at: i64,
     pub(super) updated_at: i64,
     pub(super) events: Vec<Arc<SessionEvent>>,
     pub(super) messages: Vec<Arc<SessionMessage>>,
-    #[serde(default)]
     pub(super) message_observation_revision: u64,
-    #[serde(default)]
     pub(super) message_observation_floor: u64,
-    #[serde(default)]
     pub(super) message_observation_revisions: BTreeMap<String, u64>,
-    /// Additive E3 field: relevant retention floor keyed by exact todo id.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    /// v2 requires exact per-todo retention metadata. Compatibility inference is
+    /// isolated to the explicit v0.3.9 ledger-v1 upgrade path.
     pub(super) assignment_history_floors: BTreeMap<String, u64>,
-    /// Additive E3 proof bit. Missing legacy field is fail-closed unless the
-    /// restore path can independently prove no message was ever evicted.
-    #[serde(default)]
     pub(super) assignment_history_tracking_complete: bool,
-    /// Additive completion replay metadata. Raw assignment fences are never
-    /// persisted here; canonical live rows store SHA-256 fingerprints, while
-    /// historical null values remain representable only for read-only compatibility.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(super) completion_assignment_fence_fingerprints: BTreeMap<String, Option<String>>,
-    /// Missing historical metadata remains distinguishable so restore/query can
-    /// preserve old rows without fabricating a fence; live replay still fails closed.
-    #[serde(default)]
+    /// Raw assignment fences are never persisted. v2 stores only canonical
+    /// SHA-256 fingerprints; v1 no-fence history upgrades to an empty map with
+    /// incomplete tracking rather than encoding a synthetic/null fence.
+    pub(super) completion_assignment_fence_fingerprints: BTreeMap<String, String>,
     pub(super) completion_assignment_fence_tracking_complete: bool,
-    /// Additive v1 field. Cumulative number of events ever appended, including
-    /// those the per-session event cap has evicted. Older ledgers omit it and
-    /// deserialize to 0; the restore path treats 0 as "retain exactly the
-    /// persisted events" for legacy compatibility.
-    #[serde(default)]
     pub(super) events_observed: u64,
-    /// Additive ledger-v1 model-facing continuity watermark. Legacy rows
-    /// deserialize to zero and begin issuing revisions only after upgrade.
-    #[serde(default)]
     pub(super) context_revision: u64,
-    /// Additive ledger-v1 field. Exact identities are sanitized and bounded on
-    /// restore; old ledgers deserialize to an empty set.
+    /// v0.3.9 and v2 both omit this bounded list when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) materialized_validation_job_ids: Vec<String>,
 }

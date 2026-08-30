@@ -6,9 +6,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::super::helpers::is_safe_job_id;
 use super::super::project_instructions::ProjectInstructionsSummarySnapshot;
+use super::super::tool_inputs::SessionMode;
 use super::assignment::is_valid_assignment_fence_fingerprint;
 use super::events::{
     context_result_summary_for_tool_result, exploration_tool_kind, is_valid_session_id,
@@ -17,11 +19,12 @@ use super::events::{
     sanitize_tool_execution_state, session_input_summary_for_tool,
 };
 use super::model::{
-    ColdSessionRecord, PersistedSessionLedger, PersistedSessionRecord, SessionEvent, SessionGuards,
-    SessionMessage, SessionRecord, StoredSession, DEFAULT_MAX_MESSAGES_PER_SESSION,
-    EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS,
-    MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_MESSAGE_CHARS, MAX_MESSAGE_RESOLUTION_CHARS,
-    MESSAGE_ID_PREFIX, SESSION_LEDGER_VERSION,
+    ColdSessionRecord, PersistedSessionLedger, PersistedSessionRecord, SessionEvent,
+    SessionExecutionContext, SessionGuards, SessionLifecycle, SessionMessage, SessionRecord,
+    StoredSession, DEFAULT_MAX_MESSAGES_PER_SESSION, EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS,
+    MAX_INPUT_ARRAY_ITEMS, MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_MESSAGE_CHARS,
+    MAX_MESSAGE_RESOLUTION_CHARS, MESSAGE_ID_PREFIX, SESSION_LEDGER_V1_VERSION,
+    SESSION_LEDGER_VERSION,
 };
 use super::query::{is_valid_completion_id, validate_message_tags};
 use super::util::{
@@ -29,9 +32,87 @@ use super::util::{
 };
 
 #[derive(Deserialize)]
-struct LoadedSessionLedger {
+struct SessionLedgerVersionProbe {
     version: u32,
-    sessions: Vec<PersistedSessionRecord>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoadedSessionLedgerV2 {
+    version: u32,
+    sessions: Vec<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoadedSessionLedgerV1 {
+    version: u32,
+    sessions: Vec<Value>,
+    /// v0.3.9 always serialized this now-retired index. Its entries no longer
+    /// carry authority, so the v1 upgrade validates only the canonical array
+    /// envelope and intentionally discards the contents.
+    durable_current_bindings: Vec<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedSessionRecordV1 {
+    session_id: String,
+    project: Option<String>,
+    owner_authority_fingerprint: Option<String>,
+    title: Option<String>,
+    mode: SessionMode,
+    guards: SessionGuards,
+    execution_context: SessionExecutionContext,
+    lifecycle: SessionLifecycle,
+    created_at: i64,
+    updated_at: i64,
+    events: Vec<Arc<SessionEvent>>,
+    messages: Vec<Arc<SessionMessage>>,
+    message_observation_revision: u64,
+    message_observation_floor: u64,
+    message_observation_revisions: BTreeMap<String, u64>,
+    events_observed: u64,
+    context_revision: u64,
+    #[serde(default)]
+    materialized_validation_job_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PersistedLedgerSource {
+    V039V1,
+    CurrentV2,
+}
+
+impl PersistedSessionRecordV1 {
+    fn upgrade(self) -> Option<PersistedSessionRecord> {
+        Some(PersistedSessionRecord {
+            session_id: self.session_id,
+            project: self.project,
+            owner_authority_fingerprint: sanitize_owner_authority_fingerprint(
+                self.owner_authority_fingerprint?,
+            )?,
+            title: self.title,
+            mode: self.mode,
+            guards: self.guards,
+            execution_context: self.execution_context,
+            lifecycle: self.lifecycle,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            events: self.events,
+            messages: self.messages,
+            message_observation_revision: self.message_observation_revision,
+            message_observation_floor: self.message_observation_floor,
+            message_observation_revisions: self.message_observation_revisions,
+            assignment_history_floors: BTreeMap::new(),
+            assignment_history_tracking_complete: false,
+            completion_assignment_fence_fingerprints: BTreeMap::new(),
+            completion_assignment_fence_tracking_complete: false,
+            events_observed: self.events_observed,
+            context_revision: self.context_revision,
+            materialized_validation_job_ids: self.materialized_validation_job_ids,
+        })
+    }
 }
 
 impl PersistedSessionRecord {
@@ -58,12 +139,12 @@ impl PersistedSessionRecord {
         Self {
             session_id: record.session_id.clone(),
             project: record.project.clone(),
-            owner_authority_fingerprint: Some(record.owner_authority_fingerprint.clone()),
+            owner_authority_fingerprint: record.owner_authority_fingerprint.clone(),
             title: record.title.clone(),
             mode: record.mode,
             guards: record.guards,
             execution_context: record.execution_context.clone(),
-            lifecycle: Some(record.lifecycle),
+            lifecycle: record.lifecycle,
             created_at: record.created_at,
             updated_at: record.updated_at,
             events,
@@ -82,7 +163,13 @@ impl PersistedSessionRecord {
             assignment_history_tracking_complete: record.assignment_history_tracking_complete,
             completion_assignment_fence_fingerprints: record
                 .completion_assignment_fence_fingerprints
-                .clone(),
+                .iter()
+                .filter_map(|(todo_id, fingerprint)| {
+                    fingerprint
+                        .as_ref()
+                        .map(|fingerprint| (todo_id.clone(), fingerprint.clone()))
+                })
+                .collect(),
             completion_assignment_fence_tracking_complete: record
                 .completion_assignment_fence_tracking_complete,
         }
@@ -91,13 +178,12 @@ impl PersistedSessionRecord {
     pub(super) fn still_matches_record(&self, record: &SessionRecord) -> bool {
         self.session_id == record.session_id
             && self.project == record.project
-            && self.owner_authority_fingerprint.as_deref()
-                == Some(record.owner_authority_fingerprint.as_str())
+            && self.owner_authority_fingerprint == record.owner_authority_fingerprint
             && self.title == record.title
             && self.mode == record.mode
             && self.guards == record.guards
             && self.execution_context == record.execution_context
-            && self.lifecycle == Some(record.lifecycle)
+            && self.lifecycle == record.lifecycle
             && self.created_at == record.created_at
             && self.updated_at == record.updated_at
             && self.events_observed == record.events_observed
@@ -112,8 +198,18 @@ impl PersistedSessionRecord {
             && self.assignment_history_floors == record.assignment_history_floors
             && self.assignment_history_tracking_complete
                 == record.assignment_history_tracking_complete
-            && self.completion_assignment_fence_fingerprints
-                == record.completion_assignment_fence_fingerprints
+            && self.completion_assignment_fence_fingerprints.len()
+                == record.completion_assignment_fence_fingerprints.len()
+            && self
+                .completion_assignment_fence_fingerprints
+                .iter()
+                .all(|(todo_id, fingerprint)| {
+                    record
+                        .completion_assignment_fence_fingerprints
+                        .get(todo_id)
+                        .and_then(Option::as_ref)
+                        == Some(fingerprint)
+                })
             && self.completion_assignment_fence_tracking_complete
                 == record.completion_assignment_fence_tracking_complete
             && self.events.len() == record.events.len()
@@ -130,17 +226,21 @@ impl PersistedSessionRecord {
                 .all(|(snapshot, live)| Arc::ptr_eq(snapshot, live))
     }
 
-    pub(super) fn into_record(self, max_events_per_session: usize) -> Option<SessionRecord> {
+    fn into_record(
+        self,
+        max_events_per_session: usize,
+        source: PersistedLedgerSource,
+    ) -> Option<SessionRecord> {
         let session_id = self.session_id.trim().to_string();
         if !is_valid_session_id(&session_id) {
             return None;
         }
         // Canonical authority and lifecycle are required before any restored row
-        // can enter the in-memory Session store. Missing, malformed, unknown, or
-        // removed historical values fail closed by discarding only this row.
+        // can enter the in-memory Session store. v2 structural omissions never
+        // reach this point; v1 still fails closed on missing/malformed authority.
         let owner_authority_fingerprint =
             sanitize_owner_authority_fingerprint(self.owner_authority_fingerprint)?;
-        let lifecycle = self.lifecycle?;
+        let lifecycle = self.lifecycle;
         let events: VecDeque<Arc<SessionEvent>> = self
             .events
             .into_iter()
@@ -180,7 +280,8 @@ impl PersistedSessionRecord {
         let duplicate_retained_message_ids = !duplicate_message_ids.is_empty();
         let all_persisted_messages_restored =
             !duplicate_retained_message_ids && messages.len() == persisted_message_count;
-        let legacy_no_eviction_proven = all_persisted_messages_restored
+        let v1_no_eviction_proven = source == PersistedLedgerSource::V039V1
+            && all_persisted_messages_restored
             && persisted_message_count < DEFAULT_MAX_MESSAGES_PER_SESSION;
         if duplicate_retained_message_ids {
             messages.retain(|message| !duplicate_message_ids.contains(&message.message_id));
@@ -270,13 +371,18 @@ impl PersistedSessionRecord {
                 }
                 assignment_history_floors.insert(todo_id, revision);
             }
+            let source_tracking_complete = match source {
+                PersistedLedgerSource::V039V1 => observation_floor == 0 && v1_no_eviction_proven,
+                PersistedLedgerSource::CurrentV2 => self.assignment_history_tracking_complete,
+            };
             assignment_history_tracking_complete = all_persisted_messages_restored
                 && !assignment_metadata_inconsistent
-                && (self.assignment_history_tracking_complete
-                    || (observation_floor == 0 && legacy_no_eviction_proven));
+                && source_tracking_complete;
         } else {
-            // Pre-feature ledgers never issued observation tokens. Their retained
-            // messages therefore become safe baseline state at revision zero.
+            // v0.3.9 ledgers never persisted assignment-history metadata. Their
+            // retained messages form a safe revision-zero baseline only when the
+            // released v1 bounds prove that no message was evicted. v2 never
+            // infers completeness from a missing/zero revision.
             observation_revisions.extend(
                 retained_message_ids
                     .iter()
@@ -284,11 +390,15 @@ impl PersistedSessionRecord {
                     .map(|message_id| (message_id, 0)),
             );
             observation_floor = 0;
-            assignment_history_tracking_complete = legacy_no_eviction_proven;
+            assignment_history_tracking_complete = match source {
+                PersistedLedgerSource::V039V1 => v1_no_eviction_proven,
+                PersistedLedgerSource::CurrentV2 => {
+                    all_persisted_messages_restored && self.assignment_history_tracking_complete
+                }
+            };
         }
-        // Completion-fence optionality is historical representation only. Restore
-        // preserves missing/null metadata exactly enough for query compatibility;
-        // live completion never fabricates a fence or accepts a no-fence replay.
+        // v0.3.9 predates durable completion-fence metadata. Its explicit upgrade
+        // keeps tracking incomplete. v2 carries only canonical non-null fingerprints.
         let retained_completed_todo_ids = messages
             .iter()
             .filter(|message| {
@@ -303,16 +413,16 @@ impl PersistedSessionRecord {
         let mut completion_fence_metadata_inconsistent = false;
         for (todo_id, fingerprint) in self.completion_assignment_fence_fingerprints {
             if !retained_completed_todo_ids.contains(&todo_id)
-                || fingerprint
-                    .as_deref()
-                    .is_some_and(|value| !is_valid_assignment_fence_fingerprint(value))
+                || !is_valid_assignment_fence_fingerprint(&fingerprint)
             {
                 completion_fence_metadata_inconsistent = true;
                 continue;
             }
-            completion_assignment_fence_fingerprints.insert(todo_id, fingerprint);
+            completion_assignment_fence_fingerprints.insert(todo_id, Some(fingerprint));
         }
-        if self.completion_assignment_fence_tracking_complete
+        let persisted_completion_tracking_complete = source == PersistedLedgerSource::CurrentV2
+            && self.completion_assignment_fence_tracking_complete;
+        if persisted_completion_tracking_complete
             && retained_completed_todo_ids
                 .iter()
                 .any(|todo_id| !completion_assignment_fence_fingerprints.contains_key(todo_id))
@@ -320,7 +430,7 @@ impl PersistedSessionRecord {
             completion_fence_metadata_inconsistent = true;
         }
         let completion_assignment_fence_tracking_complete = all_persisted_messages_restored
-            && self.completion_assignment_fence_tracking_complete
+            && persisted_completion_tracking_complete
             && !completion_fence_metadata_inconsistent;
         let materialized_validation_job_ids =
             sanitize_materialized_validation_job_ids(self.materialized_validation_job_ids);
@@ -390,8 +500,7 @@ fn sanitize_materialized_validation_job_ids(values: Vec<String>) -> VecDeque<Str
     newest.into()
 }
 
-fn sanitize_owner_authority_fingerprint(value: Option<String>) -> Option<String> {
-    let value = value?;
+fn sanitize_owner_authority_fingerprint(value: String) -> Option<String> {
     is_lower_hex_sha256(&value).then_some(value)
 }
 
@@ -417,15 +526,10 @@ pub(super) fn cold_session_from_persisted(
             .ok_or_else(|| {
                 serde_json::Error::io(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "persisted Session is missing canonical authority",
+                    "persisted Session has invalid canonical authority",
                 ))
             })?;
-    let lifecycle = persisted.lifecycle.ok_or_else(|| {
-        serde_json::Error::io(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "persisted Session is missing canonical lifecycle",
-        ))
-    })?;
+    let lifecycle = persisted.lifecycle;
     let raw = Arc::from(serde_json::value::to_raw_value(persisted)?);
     Ok(ColdSessionRecord {
         session_id: persisted.session_id.clone(),
@@ -447,7 +551,7 @@ pub(super) fn materialize_cold_session(
 ) -> Option<SessionRecord> {
     serde_json::from_str::<PersistedSessionRecord>(record.raw.get())
         .ok()?
-        .into_record(max_events_per_session)
+        .into_record(max_events_per_session, PersistedLedgerSource::CurrentV2)
 }
 
 pub(super) struct RestoredSessionLedger {
@@ -484,8 +588,8 @@ pub(super) fn load_persisted_ledger(
             return RestoredSessionLedger::empty(Some(error));
         }
     };
-    let ledger = match serde_json::from_str::<LoadedSessionLedger>(&content) {
-        Ok(ledger) => ledger,
+    let version = match serde_json::from_str::<SessionLedgerVersionProbe>(&content) {
+        Ok(probe) => probe.version,
         Err(err) => {
             let error = bound_summary_string(&format!(
                 "restore_failed: invalid session ledger JSON: {err}"
@@ -494,18 +598,63 @@ pub(super) fn load_persisted_ledger(
             return RestoredSessionLedger::empty(Some(error));
         }
     };
-    if ledger.version != SESSION_LEDGER_VERSION {
-        let error = format!(
-            "restore_failed: unsupported session ledger version {}",
-            ledger.version
-        );
-        tracing::warn!("session ledger restore failed: {}", error);
-        return RestoredSessionLedger::empty(Some(error));
-    }
-    let mut records: Vec<StoredSession> = ledger
-        .sessions
+    let restored_records: Result<Vec<SessionRecord>, String> = match version {
+        SESSION_LEDGER_VERSION => serde_json::from_str::<LoadedSessionLedgerV2>(&content)
+            .map_err(|err| format!("invalid v2 session ledger: {err}"))
+            .map(|ledger| {
+                debug_assert_eq!(ledger.version, SESSION_LEDGER_VERSION);
+                ledger
+                    .sessions
+                    .into_iter()
+                    .filter_map(|value| {
+                        let record = match serde_json::from_value::<PersistedSessionRecord>(value) {
+                            Ok(record) => record,
+                            Err(err) => {
+                                tracing::warn!("discarding malformed v2 Session row: {err}");
+                                return None;
+                            }
+                        };
+                        record.into_record(max_events_per_session, PersistedLedgerSource::CurrentV2)
+                    })
+                    .collect()
+            }),
+        SESSION_LEDGER_V1_VERSION => serde_json::from_str::<LoadedSessionLedgerV1>(&content)
+            .map_err(|err| format!("invalid v0.3.9 session ledger v1: {err}"))
+            .map(|ledger| {
+                debug_assert_eq!(ledger.version, SESSION_LEDGER_V1_VERSION);
+                let _retired_binding_count = ledger.durable_current_bindings.len();
+                ledger
+                    .sessions
+                    .into_iter()
+                    .filter_map(|value| {
+                        let record = match serde_json::from_value::<PersistedSessionRecordV1>(value)
+                        {
+                            Ok(record) => record,
+                            Err(err) => {
+                                tracing::warn!(
+                                    "discarding non-canonical v0.3.9 Session row: {err}"
+                                );
+                                return None;
+                            }
+                        };
+                        record
+                            .upgrade()?
+                            .into_record(max_events_per_session, PersistedLedgerSource::V039V1)
+                    })
+                    .collect()
+            }),
+        other => Err(format!("unsupported session ledger version {other}")),
+    };
+    let restored_records = match restored_records {
+        Ok(records) => records,
+        Err(err) => {
+            let error = bound_summary_string(&format!("restore_failed: {err}"));
+            tracing::warn!("session ledger restore failed: {}", error);
+            return RestoredSessionLedger::empty(Some(error));
+        }
+    };
+    let mut records: Vec<StoredSession> = restored_records
         .into_iter()
-        .filter_map(|record| record.into_record(max_events_per_session))
         .map(|record| {
             if record.lifecycle.allows_mutation() {
                 StoredSession::Hot(record)

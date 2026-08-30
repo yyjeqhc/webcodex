@@ -1,4 +1,7 @@
-use super::model::{DEFAULT_MAX_MESSAGES_PER_SESSION, MAX_SESSION_ASSIGNMENT_DIRECT_REPLIES};
+use super::model::{
+    DEFAULT_MAX_MESSAGES_PER_SESSION, MAX_SESSION_ASSIGNMENT_DIRECT_REPLIES,
+    SESSION_LEDGER_V1_VERSION,
+};
 use super::*;
 use serde_json::Value;
 use std::sync::Arc;
@@ -721,73 +724,66 @@ fn oversized_direct_reply_set_fails_closed_without_partial_fence() {
 }
 
 #[test]
-fn historical_no_fence_completion_restores_for_query_but_cannot_replay() {
-    for explicit_historical_null in [false, true] {
-        let dir = tempfile::tempdir().unwrap();
-        let ledger = dir.path().join("sessions.json");
-        let store = SessionStore::with_persistence(&ledger, 10, 50);
-        let session = store.start_session(None, None);
-        let todo = todo(&store, &session.session_id, "historical completion");
-        let snapshot = store
-            .get_assignment(&session.session_id, &todo.message_id)
-            .unwrap();
-        let input = fenced_completion(
-            &session.session_id,
-            &todo.message_id,
-            &"5".repeat(64),
-            snapshot.assignment_fence,
-        );
-        let first = store.complete_message(input.clone()).unwrap();
-        store.flush_persistence();
-        drop(store);
+fn v039_no_fence_completion_restores_for_query_but_cannot_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let session = store.start_session(None, None);
+    let todo = todo(&store, &session.session_id, "v0.3.9 completion");
+    let snapshot = store
+        .get_assignment(&session.session_id, &todo.message_id)
+        .unwrap();
+    let input = fenced_completion(
+        &session.session_id,
+        &todo.message_id,
+        &"5".repeat(64),
+        snapshot.assignment_fence,
+    );
+    let first = store.complete_message(input.clone()).unwrap();
+    store.flush_persistence();
+    drop(store);
 
-        let mut raw: Value =
-            serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
-        let record = raw["sessions"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .find(|record| record["session_id"] == session.session_id)
-            .unwrap()
-            .as_object_mut()
-            .unwrap();
-        if explicit_historical_null {
-            record.insert(
-                "completion_assignment_fence_fingerprints".to_string(),
-                serde_json::json!({ todo.message_id.clone(): Value::Null }),
-            );
-            record.insert(
-                "completion_assignment_fence_tracking_complete".to_string(),
-                Value::Bool(true),
-            );
-        } else {
-            record.remove("completion_assignment_fence_fingerprints");
-            record.remove("completion_assignment_fence_tracking_complete");
-        }
-        std::fs::write(&ledger, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
-        let before_replay = std::fs::read(&ledger).unwrap();
-
-        let restored = SessionStore::with_persistence(&ledger, 10, 50);
-        let restored_todo = exact(&restored, &session.session_id, &todo.message_id);
-        assert_eq!(restored_todo.status, SessionMessageStatus::Resolved);
-        assert_eq!(
-            restored_todo.resolved_by_message_id.as_deref(),
-            Some(first.answer.message_id.as_str())
-        );
-        assert_eq!(
-            answer_count(&restored, &session.session_id, &todo.message_id),
-            1
-        );
-        assert!(matches!(
-            restored.complete_message(input.clone()),
-            Err(SessionMessageError::IdempotencyConflict)
-        ));
-        assert_eq!(std::fs::read(&ledger).unwrap(), before_replay);
-        assert_eq!(
-            answer_count(&restored, &session.session_id, &todo.message_id),
-            1
-        );
+    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    raw["version"] = Value::from(SESSION_LEDGER_V1_VERSION);
+    raw.as_object_mut().unwrap().insert(
+        "durable_current_bindings".to_string(),
+        serde_json::json!([]),
+    );
+    let record = raw["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|record| record["session_id"] == session.session_id)
+        .unwrap()
+        .as_object_mut()
+        .unwrap();
+    for field in [
+        "assignment_history_floors",
+        "assignment_history_tracking_complete",
+        "completion_assignment_fence_fingerprints",
+        "completion_assignment_fence_tracking_complete",
+    ] {
+        record.remove(field);
     }
+    std::fs::write(&ledger, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
+    let before_replay = std::fs::read(&ledger).unwrap();
+
+    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let restored_todo = exact(&restored, &session.session_id, &todo.message_id);
+    assert_eq!(restored_todo.status, SessionMessageStatus::Resolved);
+    assert_eq!(
+        restored_todo.resolved_by_message_id.as_deref(),
+        Some(first.answer.message_id.as_str())
+    );
+    assert_eq!(
+        answer_count(&restored, &session.session_id, &todo.message_id),
+        1
+    );
+    assert!(matches!(
+        restored.complete_message(input),
+        Err(SessionMessageError::IdempotencyConflict)
+    ));
+    assert_eq!(std::fs::read(&ledger).unwrap(), before_replay);
 }
 
 #[test]

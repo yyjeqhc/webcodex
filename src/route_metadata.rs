@@ -487,7 +487,7 @@ mod tests {
             );
             references += 1;
         }
-        assert_eq!(references, 136, "A1 production leaf RouteId closure");
+        assert_eq!(references, 137, "A2 production leaf RouteId closure");
     }
 
     #[test]

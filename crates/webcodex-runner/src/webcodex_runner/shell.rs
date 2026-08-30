@@ -24,6 +24,8 @@ use webcodex_process::{GracefulTermination, ManagedChild};
 
 const SHELL_PROFILE_PREPARE_TIMEOUT_SECS: u64 = 30;
 const PROCESS_GROUP_TERMINATION_GRACE: Duration = Duration::from_millis(50);
+const PROCESS_TREE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(1);
+const PROCESS_PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const PROFILE_PREPARE_PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 const RAW_TAIL_CAPTURE_ALLOWANCE: usize = 4;
 
@@ -1348,7 +1350,7 @@ fn with_cleanup_error(base: impl Into<String>, cleanup: Option<String>) -> Strin
 /// Unix, a kill-on-close Job Object on Windows. No pid/pgid is handled here
 /// directly.
 fn terminate_child_process_tree(child: &mut ManagedChild) -> Result<(), String> {
-    terminate_child_process_tree_until(child, Instant::now() + Duration::from_secs(1))
+    terminate_child_process_tree_until(child, Instant::now() + PROCESS_TREE_CLEANUP_TIMEOUT)
 }
 
 /// Terminate the managed command tree within one overall cleanup deadline.
@@ -1512,7 +1514,7 @@ impl ContinuousPipeDrain {
                 format!("{stream_name} reader did not finish before cleanup deadline")
             })?
         };
-        // Always give both already-running readers the shared cleanup deadline.
+        // Always give both already-running readers the same drain deadline.
         // A read error on one stream must not short-circuit collection of the
         // other stream and turn an otherwise bounded reader into a detached one.
         let stdout = receive(stdout_rx, "stdout");
@@ -1555,14 +1557,21 @@ fn wait_child_until(
 /// continuously since immediately after spawn. Tree termination still happens
 /// before waiting for reader EOF so a descendant that inherited a pipe cannot
 /// keep the readers alive after direct-child exit, stop, or timeout.
+///
+/// Tree cleanup/reaping and pipe drain are separate bounded phases. A saturated
+/// CI/runtime scheduler can consume the tree-cleanup budget after the child has
+/// already exited; reusing that expired deadline for readers would incorrectly
+/// turn a known terminal status into `OutcomeUnknown`. stdout/stderr still share
+/// one drain deadline, so neither stream receives an independently reset budget.
 fn terminate_and_collect_pipes(
     mut child: ManagedChild,
     drains: ContinuousPipeDrain,
 ) -> Result<(std::process::ExitStatus, BoundedPipeTail, BoundedPipeTail), String> {
-    let deadline = Instant::now() + Duration::from_secs(1);
-    let cleanup = terminate_child_process_tree_until(&mut child, deadline).err();
-    let status = wait_child_until(&mut child, deadline);
-    let output = drains.finish_until(deadline);
+    let cleanup_deadline = Instant::now() + PROCESS_TREE_CLEANUP_TIMEOUT;
+    let cleanup = terminate_child_process_tree_until(&mut child, cleanup_deadline).err();
+    let status = wait_child_until(&mut child, cleanup_deadline);
+    let drain_deadline = Instant::now() + PROCESS_PIPE_DRAIN_TIMEOUT;
+    let output = drains.finish_until(drain_deadline);
     let mut errors = Vec::new();
     if let Some(cleanup) = cleanup {
         errors.push(format!(

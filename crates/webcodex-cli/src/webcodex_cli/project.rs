@@ -297,7 +297,11 @@ mod tests {
         })
         .unwrap();
         assert!(first.contains("Project added:"), "{first}");
-        assert!(first.contains(&project.display().to_string()), "{first}");
+        let canonical_project = project.canonicalize().unwrap();
+        assert!(
+            first.contains(&canonical_project.display().to_string()),
+            "{first}"
+        );
         assert!(first.contains("Runner restart required."), "{first}");
         assert!(first.contains("webcodex runner run --config"), "{first}");
         assert_eq!(

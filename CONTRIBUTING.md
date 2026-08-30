@@ -55,6 +55,12 @@ For repository testing guidance, see [docs/TESTING.md](docs/TESTING.md). For the
 coding workflow and closeout conventions, see
 [docs/CODING_WORKFLOW.md](docs/CODING_WORKFLOW.md).
 
+On developer machines, ordinary `dev` and `test` Cargo profiles intentionally omit
+source-line debuginfo to keep large test binaries and links smaller. Linux developers
+may optionally run Cargo through `bash scripts/cargo_fast.sh <cargo-args>`; the wrapper
+runs Cargo under `mold -run` only when mold is available. Missing mold falls back to
+normal Cargo, and the wrapper never changes the macOS or Windows linker.
+
 ## Pull requests
 
 A pull request should explain what changed, why the change is needed, and what

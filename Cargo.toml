@@ -83,6 +83,15 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
 ] }
 
+# Developer builds favor iteration speed and compact artifacts. WebCodex does
+# not rely on source-line debug information in ordinary local/CI diagnostics;
+# debug assertions remain enabled independently of debuginfo.
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0
+
 # Release binaries ship via the npm wrapper; optimize for size without
 # changing runtime behavior (panic unwinding stays enabled).
 [profile.release]

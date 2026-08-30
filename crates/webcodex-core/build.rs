@@ -7,6 +7,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=WEBCODEX_GIT_COMMIT");
     println!("cargo:rerun-if-env-changed=WEBCODEX_GIT_DIRTY");
     println!("cargo:rerun-if-env-changed=WEBCODEX_BUILT_AT");
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 
     let head_path = git_metadata_path(&repo_root, "HEAD")
         .unwrap_or_else(|| repo_root.join(".git").join("HEAD"));
@@ -24,7 +25,15 @@ fn main() {
         env_value("WEBCODEX_GIT_COMMIT").unwrap_or_else(|| git_commit_from_git(&repo_root));
     let git_dirty =
         env_value("WEBCODEX_GIT_DIRTY").unwrap_or_else(|| git_dirty_from_git(&repo_root));
-    let built_at = env_value("WEBCODEX_BUILT_AT").unwrap_or_else(current_unix_timestamp);
+    // Release workflows pin WEBCODEX_BUILT_AT explicitly. For ordinary Git
+    // worktrees, prefer stable inputs so the same commit does not invalidate
+    // compiler caches merely because it was built at a different wall-clock
+    // time. SOURCE_DATE_EPOCH remains an explicit reproducible-build override;
+    // non-Git source trees retain the historical current-time fallback.
+    let built_at = env_value("WEBCODEX_BUILT_AT")
+        .or_else(|| env_value("SOURCE_DATE_EPOCH"))
+        .or_else(|| git_commit_timestamp_from_git(&repo_root))
+        .unwrap_or_else(current_unix_timestamp);
 
     println!("cargo:rustc-env=WEBCODEX_BUILD_GIT_COMMIT={git_commit}");
     println!("cargo:rustc-env=WEBCODEX_BUILD_GIT_DIRTY={git_dirty}");
@@ -48,6 +57,10 @@ fn repository_root() -> PathBuf {
 fn git_commit_from_git(repo_root: &Path) -> String {
     command_stdout(repo_root, ["rev-parse", "--short=12", "HEAD"])
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn git_commit_timestamp_from_git(repo_root: &Path) -> Option<String> {
+    command_stdout(repo_root, ["show", "-s", "--format=%ct", "HEAD"])
 }
 
 fn current_head_ref(repo_root: &Path) -> Option<String> {

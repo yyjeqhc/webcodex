@@ -216,6 +216,7 @@ impl ConnectorRuntime {
         match (tools.model_surface(), context.is_some()) {
             (crate::model_surface::ModelSurface::CanonicalConnector, true)
             | (crate::model_surface::ModelSurface::LocalCoding, false)
+            | (crate::model_surface::ModelSurface::AdaptiveRuntime, false)
             | (crate::model_surface::ModelSurface::FullOperatorRuntime, false) => {}
             (surface, connector_present) => {
                 return Err(format!(

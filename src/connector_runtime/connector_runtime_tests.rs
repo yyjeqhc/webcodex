@@ -271,6 +271,20 @@ pub(super) fn connector() -> (tempfile::TempDir, ConnectorRuntime) {
     (temp, connector)
 }
 
+#[test]
+fn adaptive_runtime_allows_absent_connector_context() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Arc::new(Database::open(&temp.path().join("connector-slot.db")).unwrap());
+    let runtime = Arc::new(
+        ToolRuntime::new_for_tests()
+            .with_model_surface(crate::model_surface::ModelSurface::AdaptiveRuntime),
+    );
+
+    let slot = ConnectorRuntime::from_context(runtime, db, None)
+        .expect("adaptive runtime should not require Connector context");
+    assert!(slot.0.is_none());
+}
+
 async fn connector_with_lsp(
     lsp_read_only_navigation: bool,
 ) -> (

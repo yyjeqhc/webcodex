@@ -308,6 +308,7 @@ pub(crate) struct LoginOptions {
 pub(crate) struct LogoutOptions {
     pub(crate) server_url: String,
     pub(crate) username: Option<String>,
+    pub(crate) all: bool,
     pub(crate) base_dir: PathBuf,
     pub(crate) yes: bool,
     pub(crate) json: bool,
@@ -832,14 +833,17 @@ pub(crate) fn render_status(connections: &[Connection], json: bool) -> Result<St
 
 /// Connections a logout would remove.
 pub(crate) fn logout_targets(opts: &LogoutOptions) -> Vec<Connection> {
-    connections_for_server(&opts.base_dir, &opts.server_url)
-        .into_iter()
-        .filter(|connection| {
-            opts.username
-                .as_deref()
-                .is_none_or(|username| connection.username.eq_ignore_ascii_case(username))
-        })
-        .collect()
+    let candidates = connections_for_server(&opts.base_dir, &opts.server_url);
+    if let Some(username) = opts.username.as_deref() {
+        return candidates
+            .into_iter()
+            .filter(|connection| connection.username.eq_ignore_ascii_case(username))
+            .collect();
+    }
+    if opts.all || candidates.len() <= 1 {
+        return candidates;
+    }
+    Vec::new()
 }
 
 /// Remove one connection directory.
@@ -1082,6 +1086,33 @@ pub(crate) async fn run_login(opts: LoginOptions) -> Result<String, String> {
 
 pub(crate) fn run_logout(opts: LogoutOptions) -> Result<String, String> {
     canonical_server_url(&opts.server_url)?;
+    let candidates = connections_for_server(&opts.base_dir, &opts.server_url);
+    if opts.username.is_none() && !opts.all && candidates.len() > 1 {
+        let mut users = candidates
+            .iter()
+            .map(|connection| connection.username.clone())
+            .collect::<Vec<_>>();
+        users.sort_by_key(|username| username.to_ascii_lowercase());
+        users.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        let server_url = candidates
+            .first()
+            .map(|connection| connection.server_url.as_str())
+            .unwrap_or(opts.server_url.as_str());
+        if opts.json {
+            let output = serde_json::to_string_pretty(&serde_json::json!({
+                "error": "multiple_users",
+                "server_url": server_url,
+                "users": users,
+                "hint": "Choose one user with --user USER, or explicitly choose every saved user with --all."
+            }))
+            .map_err(|error| error.to_string())?;
+            return Err(output);
+        }
+        return Err(format!(
+            "multiple local users are logged in to {server_url}:\n  {}\n\nChoose one user:\n  webcodex logout {server_url} --user <USER>\n\nOr explicitly choose every saved user:\n  webcodex logout {server_url} --all",
+            users.join("\n  ")
+        ));
+    }
     let targets = logout_targets(&opts);
     if targets.is_empty() {
         return Err(format!("not logged in to {}", opts.server_url));
@@ -1528,7 +1559,7 @@ mod tests {
     }
 
     #[test]
-    fn logout_without_username_targets_every_user_on_that_server() {
+    fn logout_with_multiple_users_requires_explicit_user_or_all() {
         let temp = tempfile::TempDir::new().unwrap();
         let base = temp.path();
         seed_connection(base, "https://api.example.com", "alice");
@@ -1538,11 +1569,19 @@ mod tests {
         let opts = LogoutOptions {
             server_url: "https://api.example.com".to_string(),
             username: None,
+            all: false,
             base_dir: base.to_path_buf(),
             yes: true,
             json: false,
         };
-        assert_eq!(logout_targets(&opts).len(), 2);
+        assert!(logout_targets(&opts).is_empty());
+        let error = run_logout(opts.clone()).unwrap_err();
+        assert!(error.contains("multiple local users"));
+        assert!(error.contains("alice"));
+        assert!(error.contains("bob"));
+        assert!(error.contains("--user <USER>"));
+        assert!(error.contains("--all"));
+        assert_eq!(all_connections(base).len(), 3);
 
         let scoped = LogoutOptions {
             username: Some("bob".to_string()),
@@ -1551,11 +1590,43 @@ mod tests {
         let targets = logout_targets(&scoped);
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].username, "bob");
+        run_logout(scoped).unwrap();
 
-        run_logout(opts).unwrap();
+        let all = LogoutOptions { all: true, ..opts };
+        let targets = logout_targets(&all);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].username, "alice");
+        run_logout(all).unwrap();
+
         let left = all_connections(base);
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].server_url, "https://other.example.com");
+    }
+
+    #[test]
+    fn logout_json_multiple_user_ambiguity_is_structured_and_secret_free() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let base = temp.path();
+        seed_connection(base, "https://api.example.com", "alice");
+        seed_connection(base, "https://api.example.com", "bob");
+
+        let error = run_logout(LogoutOptions {
+            server_url: "https://api.example.com".to_string(),
+            username: None,
+            all: false,
+            base_dir: base.to_path_buf(),
+            yes: true,
+            json: true,
+        })
+        .unwrap_err();
+        let value: serde_json::Value = serde_json::from_str(&error).unwrap();
+        assert_eq!(value["error"], "multiple_users");
+        assert_eq!(value["users"], serde_json::json!(["alice", "bob"]));
+        assert!(value.get("token").is_none());
+        assert!(value.get("path").is_none());
+        assert!(!error.contains(USER_TOKEN));
+        assert!(!error.contains(AGENT_TOKEN));
+        assert_eq!(all_connections(base).len(), 2);
     }
 
     #[test]
@@ -1569,6 +1640,7 @@ mod tests {
         run_logout(LogoutOptions {
             server_url: "https://api.example.com".to_string(),
             username: None,
+            all: false,
             base_dir: base.to_path_buf(),
             yes: true,
             json: false,
@@ -1590,6 +1662,7 @@ mod tests {
         run_logout(LogoutOptions {
             server_url: "https://api.example.com:8443".to_string(),
             username: None,
+            all: false,
             base_dir: base.to_path_buf(),
             yes: true,
             json: false,

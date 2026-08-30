@@ -67,7 +67,7 @@ Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS
 | `webcodex project register --config PATH <PROJECT>` | 给现有 Runner 再添加一个项目 | 写入该 Runner 的项目配置；不要求 Server 在线即可持久化，运行中的 Runner 是否需 reload 以命令输出为准。 |
 | `webcodex pairing create` | Server/admin 侧：创建短期 pairing code | 需要 server bootstrap/admin 认证。 |
 | `webcodex client enroll` | 高级客户端接入，可显式指定 `--client-id` | 高级入口；普通用户应使用 `login`，它会自动派生 client id 并一步写入规范的 server/user 本地连接布局。 |
-| `webcodex logout <server-url>` | 移除本机对某 Server 的凭据 | |
+| `webcodex logout <server-url> [--user USER|--all]` | 移除本机对某 Server 的凭据 | 只有一个 saved user 时自动选择；多个 saved user 时必须用 `--user USER` 选择一个，或显式用 `--all` 选择全部；真正删除仍遵守现有 confirmation/`--yes` 流程。 |
 
 ### Runner 生命周期
 

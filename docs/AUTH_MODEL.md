@@ -145,6 +145,11 @@ Bootstrap/admin callers retain their existing global visibility. Shared-key and
 Project Credential callers remain isolated by their existing authorization
 groups rather than by managed usernames.
 
+Local saved identities are also selected explicitly at logout time. If one
+Server has several saved usernames on the same machine, `webcodex logout
+<server-url>` is ambiguous and removes nothing; use `--user USER` for one
+identity or `--all` for every saved identity on that exact Server URL.
+
 ## `wc_agent_xxx` (Runner token)
 
 `wc_agent_xxx` is a Runner token generated locally by the user; the server

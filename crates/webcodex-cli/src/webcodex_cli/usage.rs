@@ -454,12 +454,14 @@ pub(crate) fn logout_usage() -> &'static str {
     "Usage: webcodex logout <SERVER-URL> [OPTIONS]\n\n\
      Remove this device's stored credentials for a server.\n\n\
      Options:\n\
-     \x20\x20--user NAME    Only log out this user [default: every user on that server]\n\
+     \x20\x20--user NAME    Log out one saved user\n\
+     \x20\x20--all          Log out every saved user on this server (mutually exclusive with --user)\n\
      \x20\x20--dir PATH     Where connections are stored [default: ~/.config/webcodex]\n\
      \x20\x20-y, --yes      Confirm removal\n\
      \x20\x20--json         Print machine-readable output\n\
      \x20\x20-h, --help     Print help and exit\n\n\
-     Without --yes this only reports what would be removed.\n"
+     With one saved user, no selector is needed. With several saved users, choose\n\
+     --user NAME or --all. Without --yes this only reports what would be removed.\n"
 }
 
 pub(crate) fn status_usage() -> &'static str {

@@ -868,6 +868,7 @@ fn parse_logout(args: &[String]) -> CliAction {
     }
     let mut server_url: Option<String> = None;
     let mut username: Option<String> = None;
+    let mut all = false;
     let mut base_dir: Option<PathBuf> = None;
     let mut yes = false;
     let mut json = false;
@@ -890,6 +891,7 @@ fn parse_logout(args: &[String]) -> CliAction {
                 }
             }
             "--yes" | "-y" => yes = true,
+            "--all" => all = true,
             "--json" => json = true,
             other if other.starts_with('-') => {
                 return cli_parse_error(format!("unknown flag {other}"))
@@ -903,6 +905,9 @@ fn parse_logout(args: &[String]) -> CliAction {
         }
         index += 1;
     }
+    if username.is_some() && all {
+        return cli_parse_error("--user and --all are mutually exclusive".to_string());
+    }
     let Some(server_url) = server_url else {
         return cli_parse_error("logout needs a server URL".to_string());
     };
@@ -914,6 +919,7 @@ fn parse_logout(args: &[String]) -> CliAction {
         server_url,
         username,
         base_dir,
+        all,
         yes,
         json,
     })

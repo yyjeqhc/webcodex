@@ -117,6 +117,11 @@ Managed user 的 discovery 按 owner 隔离。普通 PAT 或 managed OAuth token
 可见能力。Shared-key 与 Project Credential 仍按原有 authorization group 隔离，不会
 与 managed username 混成同一身份模型。
 
+本地 logout 也显式选择 saved identity。同一台机器若为同一 Server 保存了多个
+username，`webcodex logout <server-url>` 视为歧义并且不删除任何连接；用
+`--user USER` 选择单个身份，或用 `--all` 显式选择该 Server URL 下的全部 saved
+identity。
+
 ## `wc_agent_xxx`（Runner 令牌）
 
 `wc_agent_xxx` 是用户本地生成的 Runner 令牌；server 只存其 hash，并绑定

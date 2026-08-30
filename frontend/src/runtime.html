@@ -2,266 +2,524 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#0b0d12" />
+  <script>
+    (() => {
+      const key = "webcodex.runtime.appearance.v1";
+      const languageKey = "webcodex.runtime.language.v1";
+      let preference = "system";
+      let language = navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+      try {
+        const stored = window.localStorage.getItem(key);
+        if (stored === "light" || stored === "dark" || stored === "system") preference = stored;
+        const storedLanguage = window.localStorage.getItem(languageKey);
+        if (storedLanguage === "en" || storedLanguage === "zh-CN") language = storedLanguage;
+      } catch {}
+      const resolved = preference === "system"
+        ? (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+        : preference;
+      document.documentElement.dataset.theme = preference;
+      document.documentElement.dataset.resolvedTheme = resolved;
+      document.documentElement.dataset.language = language;
+      document.documentElement.lang = language;
+      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", resolved === "light" ? "#f4f4f1" : "#090a0d");
+    })();
+  </script>
   <title>WebCodex — Runtime Console</title>
   <link rel="stylesheet" href="/runtime/styles.css" />
 </head>
 <body>
   <main id="runtime-page">
-    <header class="topbar">
-      <div>
-        <h1>WebCodex Runtime Console</h1>
-        <p class="muted">Server, Runner, Project, durable Agent communication, Workflow Session, and collaboration observability</p>
+    <header class="auth-topbar">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true">W</span>
+        <div>
+          <h1>WebCodex Runtime Console</h1>
+          <p class="muted">A local workspace for Projects, Sessions, and collaboration</p>
+        </div>
       </div>
-      <div id="runtime-topbar-controls" class="topbar-controls" hidden>
-        <span id="runtime-refresh-status" class="muted small" aria-live="polite"></span>
-        <button id="runtime-refresh" class="btn" type="button">Refresh</button>
-        <button id="runtime-lock" class="btn" type="button">Lock</button>
+      <div class="auth-preferences">
+        <button class="icon-btn language-toggle" type="button" data-language-toggle title="Switch to Chinese" aria-label="Switch to Chinese"><span data-language-toggle-label>中</span></button>
+        <details class="theme-menu" data-theme-menu>
+          <summary class="icon-btn theme-trigger" title="Appearance" aria-label="Choose appearance">
+            <svg class="theme-icon theme-icon-system" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M8 21h8m-4-3v3" /></svg>
+            <svg class="theme-icon theme-icon-light" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+            <svg class="theme-icon theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.1A8.5 8.5 0 0 1 8.9 4a8.5 8.5 0 1 0 11.1 11.1Z" /></svg>
+          </summary>
+          <div class="theme-popover" role="group" aria-label="Color mode">
+            <span class="theme-popover-label">Appearance</span>
+            <button class="theme-option" type="button" data-theme-option="system" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M8 21h8m-4-3v3" /></svg><span>System</span><i aria-hidden="true"></i></button>
+            <button class="theme-option" type="button" data-theme-option="light" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg><span>Light</span><i aria-hidden="true"></i></button>
+            <button class="theme-option" type="button" data-theme-option="dark" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.1A8.5 8.5 0 0 1 8.9 4a8.5 8.5 0 1 0 11.1 11.1Z" /></svg><span>Dark</span><i aria-hidden="true"></i></button>
+          </div>
+        </details>
       </div>
     </header>
 
     <section id="runtime-token-gate" class="gate">
       <form id="runtime-token-form" autocomplete="off">
-        <h2>Connect to Runtime</h2>
-        <p class="muted">Enter an existing runtime Bearer credential. Project and Workflow Session views require their existing scopes; durable Agent Chat separately requires communication:read and communication:manage. The credential and browser Endpoint stay in page memory only.</p>
+        <div class="gate-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" role="img"><path d="M7 11V8a5 5 0 0 1 10 0v3m-11 0h12a2 2 0 0 1 2 2v7H4v-7a2 2 0 0 1 2-2Z" /></svg>
+        </div>
+        <p class="eyebrow">Local runtime</p>
+        <h2>Connect to your workspace</h2>
+        <p class="muted">Enter an existing runtime Bearer credential. Project and Workflow Session views require their existing scopes; durable Agent Chat separately requires communication:read and communication:manage.</p>
         <div class="field-row">
           <input id="runtime-token-input" type="password" placeholder="Runtime Bearer credential" autocomplete="off" spellcheck="false" />
           <button class="btn primary" type="submit">Connect</button>
         </div>
+        <label class="remember-credential"><input id="runtime-token-remember" type="checkbox" checked /> Keep me signed in for this tab (survives refresh, clears on Lock or tab close)</label>
         <p id="runtime-token-error" class="error" role="alert"></p>
       </form>
     </section>
 
-    <section id="runtime-console" hidden>
-      <p id="runtime-error" class="banner error" role="alert" hidden></p>
-
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Server overview</h2>
-          <span id="runtime-overview-access" class="muted small">runtime:read checking…</span>
-        </div>
-        <div id="runtime-server-overview" class="metric-grid">
-          <div class="metric"><span class="metric-label">Server</span><strong id="runtime-server-identity">—</strong><span id="runtime-server-build" class="muted small">—</span></div>
-          <div class="metric"><span class="metric-label">Runners</span><strong id="runtime-server-runners">—</strong><span id="runtime-server-alignment" class="muted small">—</span></div>
-          <div class="metric"><span class="metric-label">Projects</span><strong id="runtime-server-projects">—</strong><span id="runtime-server-jobs" class="muted small">—</span></div>
-          <div class="metric"><span class="metric-label">Collaboration attention</span><strong id="runtime-server-attention">—</strong><span id="runtime-server-sessions" class="muted small">—</span></div>
-        </div>
-        <p id="runtime-overview-unavailable" class="muted small" hidden>Runtime-wide overview is unavailable to this credential; project-scoped Console access remains available.</p>
-      </section>
-
-      <section id="runtime-communication-panel" class="panel communication-panel">
-        <div class="panel-head">
-          <div>
-            <h2>Durable Agent Chat <span id="runtime-communication-count" class="muted small">0 Agents</span></h2>
-            <p class="muted small retention-note">Choose “Continue as this Agent” to bind this browser window to one durable Agent. The Console can poll and renew that bounded Endpoint lease, but it has no production model-resume adapter: pending Wake Intents remain durable until an explicit Host/model activation.</p>
+    <section id="runtime-console" class="runtime-shell" hidden>
+      <aside id="runtime-sidebar" class="workspace-sidebar" aria-label="Project and Session navigation">
+        <header class="sidebar-brand">
+          <div class="sidebar-brand-lockup">
+            <span class="sidebar-logo" aria-hidden="true">W</span>
+            <strong>WebCodex</strong>
           </div>
-          <span id="runtime-communication-status" class="muted small">communication:read checking…</span>
-        </div>
-        <p id="runtime-communication-unavailable" class="muted small" hidden>Durable Agent Chat requires communication:read. Project and Workflow Session access remain independent.</p>
-        <div id="runtime-communication-surface" class="communication-grid">
-          <aside class="communication-agents">
-            <section class="communication-section">
-              <h3>Agents</h3>
-              <form id="runtime-agent-create-form" class="stack-form" autocomplete="off">
-                <div class="compact-field-grid">
-                  <label>Handle<input id="runtime-agent-handle" maxlength="64" pattern="[A-Za-z0-9._-]+" required placeholder="reviewer" /></label>
-                  <label>Display name<input id="runtime-agent-display-name" maxlength="128" required placeholder="Architecture Reviewer" /></label>
-                </div>
-                <label>Description<textarea id="runtime-agent-description" rows="2" maxlength="2048" placeholder="What this Agent mainly does"></textarea></label>
-                <label>Specialty labels<input id="runtime-agent-labels" maxlength="1039" placeholder="rust, architecture, review" /></label>
-                <div class="form-actions"><span id="runtime-agent-create-status" class="muted small" aria-live="polite"></span><button id="runtime-agent-create" class="btn primary" type="submit">Create Agent</button></div>
-              </form>
-              <div id="runtime-agent-list" class="communication-list" role="listbox" aria-label="Durable Agents"></div>
-              <p id="runtime-agent-empty" class="muted small" hidden>No durable Agents are owned by this communication principal.</p>
-            </section>
+          <div class="sidebar-brand-tools">
+            <span class="sidebar-runtime-status"><i aria-hidden="true"></i><span>Local</span></span>
+            <button id="runtime-mobile-nav-close" class="mobile-nav-control" type="button" aria-label="Close project navigation">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+            </button>
+          </div>
+        </header>
 
-            <section id="runtime-agent-card" class="communication-section" hidden>
-              <div class="section-head"><h3 id="runtime-agent-card-name">Agent Card</h3><span id="runtime-agent-unread" class="chip">0 queued</span></div>
-              <code id="runtime-agent-card-id" class="communication-id">—</code>
-              <p id="runtime-agent-card-description" class="communication-description">—</p>
-              <div id="runtime-agent-card-labels" class="chips"></div>
-              <p id="runtime-agent-card-revision" class="muted small">—</p>
-              <p id="runtime-agent-wake-status" class="muted small">—</p>
-              <form id="runtime-agent-update-form" class="stack-form card-edit-form" autocomplete="off">
-                <div class="compact-field-grid">
-                  <label>Handle<input id="runtime-agent-update-handle" maxlength="64" pattern="[A-Za-z0-9._-]+" required /></label>
-                  <label>Display name<input id="runtime-agent-update-display-name" maxlength="128" required /></label>
-                </div>
-                <label>Description<textarea id="runtime-agent-update-description" rows="2" maxlength="2048"></textarea></label>
-                <label>Specialty labels<input id="runtime-agent-update-labels" maxlength="1039" placeholder="rust, architecture, review" /></label>
-                <div class="form-actions"><span id="runtime-agent-update-status" class="muted small" aria-live="polite"></span><button id="runtime-agent-update" class="btn" type="submit">Update Agent Card</button></div>
-              </form>
-              <div class="form-actions">
-                <span id="runtime-agent-endpoint-status" class="muted small">No browser Endpoint attached.</span>
-                <button id="runtime-agent-attach" class="btn primary" type="button">Continue as this Agent</button>
-                <button id="runtime-agent-detach" class="btn" type="button" hidden>Detach</button>
+        <nav class="sidebar-view-switch" aria-label="Workspace views">
+          <button id="runtime-view-sessions" class="sidebar-view-item selected" type="button" data-runtime-view="sessions" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v12H9l-4 3V5Z" /><path d="M12 8v6m-3-3h6" /></svg>
+            <span>Projects &amp; Sessions</span>
+            <span class="sidebar-connection"><i aria-hidden="true"></i><span>Connected</span></span>
+          </button>
+          <button id="runtime-view-operations" class="sidebar-view-item" type="button" data-runtime-view="operations">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /><circle cx="8" cy="10" r="1" /><path d="M11 10h6" /></svg>
+            <span>Runtime &amp; Agents</span>
+            <span id="runtime-navigation-health" class="sidebar-view-meta">Live</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-scroll">
+          <div id="runtime-navigation-sessions" class="sidebar-view-panel">
+          <section class="sidebar-section projects-panel">
+            <div class="sidebar-section-head">
+              <h2>Projects</h2>
+              <span id="runtime-project-status" class="muted small">—</span>
+            </div>
+            <div class="sidebar-filter-row">
+              <label class="runner-filter" for="runtime-device-select">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></svg>
+                <span class="visually-hidden">Runner</span>
+                <select id="runtime-device-select" aria-label="Runner"><option value="">All Runners</option></select>
+              </label>
+              <span id="runtime-device-status" class="muted small sidebar-status">—</span>
+            </div>
+            <div class="sidebar-search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
+              <input id="runtime-project-search" type="search" maxlength="200" placeholder="Filter by Project name, id, Runner, or workspace path" autocomplete="off" spellcheck="false" />
+            </div>
+            <span id="runtime-selected-project" class="selected-project muted small">No project selected</span>
+            <div id="runtime-project-list" class="project-list" role="group" aria-label="Projects"></div>
+            <p id="runtime-projects-empty" class="muted small empty-copy" hidden>No Projects match this filter.</p>
+          </section>
+
+          <section id="runtime-workflow-sessions-panel" class="sidebar-section sessions-panel">
+            <div class="sidebar-section-head">
+              <h2>Sessions</h2>
+              <span id="runtime-sessions-count" class="count-badge">0</span>
+            </div>
+            <ul id="runtime-session-list" class="session-list" aria-label="Workflow Sessions"></ul>
+            <p id="runtime-sessions-empty" class="muted small empty-copy" hidden>No retained Workflow Sessions for this project.</p>
+          </section>
+
+          <details class="sidebar-details recent-panel">
+            <summary>
+              <span>Working &amp; Recently Updated Sessions</span>
+              <span id="runtime-recent-status" class="muted small">—</span>
+            </summary>
+            <div id="runtime-recent-session-list" class="recent-session-list" role="group" aria-label="Working and recently updated Workflow Sessions"></div>
+            <p id="runtime-recent-empty" class="muted small" hidden>No recent Workflow Sessions are visible.</p>
+            <p id="runtime-recent-unavailable" class="muted small" hidden>Fleet-wide recent Sessions require runtime:read. Project-scoped Session access remains available.</p>
+          </details>
+          </div>
+
+          <div id="runtime-navigation-operations" class="sidebar-view-panel" hidden>
+            <section class="sidebar-section operations-navigation">
+              <div class="sidebar-section-head">
+                <h2>Runtime workspace</h2>
+                <span class="muted small">Local</span>
               </div>
+              <p class="operations-navigation-copy muted small">Inspect infrastructure and manage durable Agents without mixing administration into the current Session.</p>
+              <button class="operations-nav-item selected" type="button" data-operations-target="runtime-operations-overview">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2" /></svg>
+                <span><strong>Overview</strong><small>Server health and fleet capacity</small></span>
+              </button>
+              <button class="operations-nav-item" type="button" data-operations-target="runtime-operations-runners">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></svg>
+                <span><strong>Runner fleet</strong><small>Devices, builds and current load</small></span>
+              </button>
+              <button class="operations-nav-item" type="button" data-operations-target="runtime-operations-agents">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+                <span><strong>Durable Agents</strong><small>Agents, inboxes and conversations</small></span>
+              </button>
             </section>
-
-            <section class="communication-section">
-              <div class="section-head"><h3>Selected Agent Inbox</h3><button id="runtime-inbox-consume-all" class="text-button" type="button" hidden>Consume visible</button></div>
-              <p id="runtime-inbox-status" class="muted small">Select and attach an Agent to inspect recipient-specific queued deliveries.</p>
-              <div id="runtime-inbox-list" class="communication-list"></div>
-            </section>
-          </aside>
-
-          <div class="communication-conversations">
-            <section class="communication-section">
-              <h3>Conversations</h3>
-              <form id="runtime-conversation-create-form" class="stack-form" autocomplete="off">
-                <div class="compact-field-grid">
-                  <label>Title<input id="runtime-conversation-title" maxlength="200" placeholder="Architecture room" /></label>
-                  <label>Agent IDs<input id="runtime-conversation-agent-ids" maxlength="1200" required placeholder="Select an Agent or enter comma-separated wc_dagent_* ids" spellcheck="false" /></label>
-                </div>
-                <div class="form-actions"><span id="runtime-conversation-create-status" class="muted small" aria-live="polite"></span><button id="runtime-conversation-create" class="btn primary" type="submit">Create Conversation</button></div>
-              </form>
-              <div id="runtime-conversation-list" class="communication-list conversation-list" role="listbox" aria-label="Durable Conversations"></div>
-              <p id="runtime-conversation-empty" class="muted small" hidden>No Conversations are visible to this Human principal.</p>
-            </section>
-
-            <section id="runtime-conversation-detail" class="communication-section" hidden>
-              <div class="section-head"><h3 id="runtime-conversation-name">Conversation</h3><span id="runtime-conversation-seq" class="muted small">—</span></div>
-              <code id="runtime-conversation-id" class="communication-id">—</code>
-              <div id="runtime-conversation-participants" class="chips communication-participants"></div>
-              <div id="runtime-conversation-transcript" class="conversation-transcript" aria-live="polite"></div>
-              <p id="runtime-conversation-transcript-empty" class="muted small" hidden>No messages yet.</p>
-              <form id="runtime-conversation-message-form" class="stack-form conversation-composer" autocomplete="off">
-                <label>Inbox recipients <input id="runtime-conversation-recipients" maxlength="1200" placeholder="Blank = all Agent participants; empty delivery can be sent with [] through the API" spellcheck="false" /></label>
-                <label class="inline-choice"><input id="runtime-conversation-send-as-agent" type="checkbox" /> Send as the selected Agent through its exact attached Endpoint</label>
-                <textarea id="runtime-conversation-body" rows="3" maxlength="4096" required placeholder="Send a durable message…"></textarea>
-                <div class="form-actions"><span id="runtime-conversation-send-status" class="muted small" aria-live="polite"></span><button id="runtime-conversation-send" class="btn primary" type="submit">Send durable message</button></div>
-              </form>
-            </section>
-            <p id="runtime-conversation-detail-empty" class="muted">Select or create a Conversation.</p>
           </div>
         </div>
-      </section>
 
-      <section class="panel recent-panel">
-        <div class="panel-head"><h2>Working &amp; Recently Updated Sessions</h2><span id="runtime-recent-status" class="muted small">—</span></div>
-        <div id="runtime-recent-session-list" class="recent-session-list" role="listbox" aria-label="Working and recently updated Workflow Sessions"></div>
-        <p id="runtime-recent-empty" class="muted small" hidden>No recent Workflow Sessions are visible.</p>
-        <p id="runtime-recent-unavailable" class="muted small" hidden>Fleet-wide recent Sessions require runtime:read. Project-scoped Session access remains available.</p>
-      </section>
+        <footer class="sidebar-footer">
+          <span class="local-avatar" aria-hidden="true">W</span>
+          <span><strong>Local Runtime</strong><small>Credential stays in this tab only</small></span>
+        </footer>
+      </aside>
 
-      <section class="panel runner-panel">
-        <div class="panel-head"><h2>Runner Fleet <span id="runtime-runner-count" class="muted small">0</span></h2><span id="runtime-runner-access" class="muted small">—</span></div>
-        <div id="runtime-runner-list" class="fleet-list" role="listbox" aria-label="Runner Fleet"></div>
-        <p id="runtime-runners-empty" class="muted small" hidden>No caller-visible Runners.</p>
-        <p id="runtime-runner-unavailable" class="muted small" hidden>Runtime-wide Runner facts require runtime:read.</p>
-      </section>
+      <button id="runtime-mobile-nav-backdrop" class="mobile-nav-backdrop" type="button" tabindex="-1" aria-label="Close project navigation"></button>
 
-      <section class="panel projects-panel">
-        <div class="panel-head">
-          <h2>Projects</h2>
-          <span id="runtime-project-status" class="muted small">—</span>
-        </div>
-        <div class="project-filter-row">
-          <label class="filter-field" for="runtime-device-select"><span>Runner filter</span><select id="runtime-device-select"><option value="">All Runners</option></select></label>
-          <span id="runtime-device-status" class="muted small">—</span>
-        </div>
-        <div class="project-search-row">
-          <input id="runtime-project-search" type="search" maxlength="200" placeholder="Filter by Project name, id, Runner, or workspace path" autocomplete="off" spellcheck="false" />
-          <span id="runtime-selected-project" class="project-identity small">No project selected</span>
-        </div>
-        <div id="runtime-project-list" class="project-list" role="listbox" aria-label="Projects"></div>
-        <p id="runtime-projects-empty" class="muted small" hidden>No Projects match this filter.</p>
-      </section>
-
-      <section id="runtime-workflow-sessions-panel" class="panel">
-        <div class="panel-head">
-          <h2>Workflow Sessions <span id="runtime-sessions-count" class="muted small">0</span></h2>
-        </div>
-        <div class="session-grid">
-          <div>
-            <ul id="runtime-session-list" class="session-list"></ul>
-            <p id="runtime-sessions-empty" class="muted small" hidden>No retained Workflow Sessions for this project.</p>
+      <section class="workspace-main">
+        <header class="workspace-topbar">
+          <button id="runtime-mobile-nav-toggle" class="mobile-nav-control mobile-nav-toggle" type="button" aria-label="Open project navigation" aria-controls="runtime-sidebar" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </button>
+          <div class="workspace-heading">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v10H3V6Z" /></svg>
+            <div class="workspace-heading-copy">
+              <div class="workspace-breadcrumb" aria-label="Current location">
+                <span id="runtime-breadcrumb-runner">Fleet</span>
+                <i aria-hidden="true">/</i>
+                <span id="runtime-breadcrumb-project">Projects</span>
+              </div>
+              <strong id="runtime-session-title">Select a Session</strong>
+            </div>
           </div>
-          <div class="detail-column">
-            <div id="runtime-session-detail-empty" class="muted">Select a Workflow Session.</div>
-            <div id="runtime-session-detail" hidden>
-              <h3 id="runtime-session-title" class="detail-title">—</h3>
-              <div class="chips">
-                <span id="runtime-session-lifecycle" class="chip">—</span>
-                <span id="runtime-session-mode" class="chip">—</span>
-                <span id="runtime-session-running" class="chip">—</span>
+          <div id="runtime-topbar-controls" class="topbar-controls" hidden>
+            <span id="runtime-refresh-status" class="muted small" aria-live="polite"></span>
+            <div class="chips session-state-chips">
+              <span id="runtime-session-lifecycle" class="chip">—</span>
+              <span id="runtime-session-mode" class="chip">—</span>
+              <span id="runtime-session-running" class="chip">—</span>
+            </div>
+            <details id="runtime-topbar-more" class="topbar-more">
+              <summary class="icon-btn topbar-more-trigger" title="More actions" aria-label="More actions">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg>
+              </summary>
+              <div class="topbar-more-popover">
+                <button class="icon-btn language-toggle" type="button" data-language-toggle title="Switch to Chinese" aria-label="Switch to Chinese"><span data-language-toggle-label>中</span><span class="topbar-action-label">Language</span></button>
+                <details class="theme-menu" data-theme-menu>
+                  <summary class="icon-btn theme-trigger" title="Appearance" aria-label="Choose appearance">
+                    <svg class="theme-icon theme-icon-system" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M8 21h8m-4-3v3" /></svg>
+                    <svg class="theme-icon theme-icon-light" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+                    <svg class="theme-icon theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.1A8.5 8.5 0 0 1 8.9 4a8.5 8.5 0 1 0 11.1 11.1Z" /></svg>
+                    <span class="topbar-action-label">Appearance</span>
+                  </summary>
+                  <div class="theme-popover" role="group" aria-label="Color mode">
+                    <span class="theme-popover-label">Appearance</span>
+                    <button class="theme-option" type="button" data-theme-option="system" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M8 21h8m-4-3v3" /></svg><span>System</span><i aria-hidden="true"></i></button>
+                    <button class="theme-option" type="button" data-theme-option="light" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg><span>Light</span><i aria-hidden="true"></i></button>
+                    <button class="theme-option" type="button" data-theme-option="dark" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.1A8.5 8.5 0 0 1 8.9 4a8.5 8.5 0 1 0 11.1 11.1Z" /></svg><span>Dark</span><i aria-hidden="true"></i></button>
+                  </div>
+                </details>
+                <button id="runtime-refresh" class="icon-btn" type="button" title="Refresh runtime" aria-label="Refresh runtime">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5" /><path d="M18.2 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.8 15" /></svg><span class="topbar-action-label">Refresh</span>
+                </button>
+                <button id="runtime-lock" class="btn subtle lock-button" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 11V8a5 5 0 0 1 10 0v3m-11 0h12a2 2 0 0 1 2 2v7H4v-7a2 2 0 0 1 2-2Z" /></svg>
+                  <span>Lock</span>
+                </button>
               </div>
-              <div class="session-identity" aria-label="Workflow Session identity">
-                <div class="session-identity-fact">
-                  <span class="muted small">Session ID</span>
-                  <code id="runtime-session-id" class="session-identity-value">—</code>
-                </div>
-                <div class="session-identity-fact">
-                  <span class="muted small">Created</span>
-                  <span id="runtime-session-created" class="session-identity-value small">—</span>
-                </div>
-                <div class="session-identity-fact">
-                  <span class="muted small">Updated</span>
-                  <span id="runtime-session-updated" class="session-identity-value small">—</span>
-                </div>
-              </div>
-              <p id="runtime-session-workspace" class="workspace-identity muted small">—</p>
+            </details>
+          </div>
+        </header>
 
-              <div class="overview" aria-label="Workflow Session overview">
-                <section class="overview-card runtime-fact"><h4>Work</h4><p id="runtime-overview-work">—</p></section>
-                <section id="runtime-overview-validation-card" class="overview-card validation-fact"><h4>Validation</h4><p id="runtime-overview-validation">—</p></section>
-                <section id="runtime-overview-attention-card" class="overview-card attention-fact"><h4>Attention</h4><p id="runtime-overview-attention">—</p></section>
-                <section class="overview-card reported-card"><h4>Reported progress</h4><p class="muted small">Model-reported; informational only.</p><p id="runtime-overview-progress" class="muted">—</p></section>
-              </div>
+        <p id="runtime-error" class="banner error" role="alert" hidden></p>
 
-              <section class="detail-section" aria-labelledby="runtime-collaboration-heading">
-                <div class="section-head"><strong id="runtime-collaboration-heading">Collaboration</strong><span id="runtime-collaboration-status" class="muted small">—</span></div>
-                <p id="runtime-collaboration-unavailable" class="muted small" hidden>Collaboration messages require runtime:read. Existing project/session observability remains available.</p>
-                <form id="runtime-collaboration-form" class="collaboration-composer">
-                  <div class="composer-fields">
-                    <label>Kind
-                      <select id="runtime-message-kind">
-                        <option value="note">Note</option>
-                        <option value="guidance">Guidance</option>
-                        <option value="question">Question</option>
-                        <option value="todo">Todo</option>
-                      </select>
-                    </label>
-                    <label>Priority
-                      <select id="runtime-message-priority">
-                        <option value="low">Low</option>
-                        <option value="normal" selected>Normal</option>
-                        <option value="high">High</option>
-                      </select>
-                    </label>
-                    <label id="runtime-message-ack-label" class="ack-field" hidden>
-                      <input id="runtime-message-requires-ack" type="checkbox" /> Require acknowledgement
-                    </label>
-                  </div>
-                  <div id="runtime-message-reply" class="reply-target muted small" hidden>
-                    <span id="runtime-message-reply-text"></span>
-                    <button id="runtime-message-reply-clear" class="text-button" type="button">Clear reply</button>
-                  </div>
-                  <div id="runtime-message-edit" class="edit-target muted small" hidden>
-                    <span id="runtime-message-edit-text"></span>
-                    <button id="runtime-message-edit-clear" class="text-button" type="button">Cancel Edit</button>
-                  </div>
-                  <textarea id="runtime-message-body" rows="3" maxlength="4000" placeholder="Join this Session collaboration…"></textarea>
-                  <div class="composer-actions">
-                    <span id="runtime-message-send-status" class="muted small" aria-live="polite"></span>
-                    <button id="runtime-message-send" class="btn primary" type="submit">Send</button>
-                  </div>
-                </form>
-                <div id="runtime-collaboration-board" class="collaboration-board"></div>
-                <p id="runtime-collaboration-empty" class="muted small" hidden>No retained collaboration messages.</p>
-                <p class="muted small retention-note">Retained board only; this is not a permanent or complete chat history. ACK observed is server-side evidence of an explicit echo, not a delivery or read receipt.</p>
+        <div id="runtime-conversation-stage" class="conversation-stage">
+          <div id="runtime-session-detail-empty" class="conversation-empty">
+            <div class="empty-orbit" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M5 5h14v11H9l-4 3V5Z" /><path d="M9 9h6m-6 3h4" /></svg>
+            </div>
+            <h2>Select a Session</h2>
+            <p>Choose a project and Workflow Session from the sidebar to inspect its context and continue the collaboration.</p>
+          </div>
+
+          <article id="runtime-session-detail" class="session-conversation" hidden>
+            <section class="session-chat" aria-labelledby="runtime-collaboration-heading">
+              <div class="chat-section-head">
+                <strong id="runtime-collaboration-heading" class="visually-hidden">Conversation</strong>
+                <span id="runtime-collaboration-status" class="muted small">—</span>
+              </div>
+              <p id="runtime-collaboration-unavailable" class="muted small unavailable-note" hidden>Collaboration messages require runtime:read. Existing project/session observability remains available.</p>
+              <div id="runtime-chat-scroll" class="chat-scroll">
+                <div id="runtime-collaboration-board" class="collaboration-board" role="log" aria-label="Session conversation"></div>
+                <div id="runtime-collaboration-empty" class="chat-empty" hidden>
+                  <span aria-hidden="true">✦</span>
+                  <strong id="runtime-collaboration-empty-title">Start this Session conversation</strong>
+                  <p id="runtime-collaboration-empty-copy" class="muted small">Messages posted here are retained on the Session collaboration board.</p>
+                </div>
+              </div>
+              <button id="runtime-new-messages" class="new-messages-button" type="button" hidden>
+                <span id="runtime-new-messages-label">New messages</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14m-6-6 6 6 6-6" /></svg>
+              </button>
+              <span id="runtime-message-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></span>
+              <p class="muted small retention-note chat-retention">Retained board only; this is not a permanent or complete chat history. ACK observed is server-side evidence of an explicit echo, not a delivery or read receipt.</p>
+            </section>
+
+            <form id="runtime-collaboration-form" class="collaboration-composer" autocomplete="off">
+              <div id="runtime-message-reply" class="reply-target muted small" hidden>
+                <span id="runtime-message-reply-text"></span>
+                <button id="runtime-message-reply-clear" class="text-button" type="button">Clear reply</button>
+              </div>
+              <div id="runtime-message-edit" class="edit-target muted small" hidden>
+                <span id="runtime-message-edit-text"></span>
+                <button id="runtime-message-edit-clear" class="text-button" type="button">Cancel Edit</button>
+              </div>
+              <textarea id="runtime-message-body" rows="1" maxlength="4000" enterkeyhint="send" placeholder="Message this Session…"></textarea>
+              <div class="composer-toolbar">
+                <div class="composer-fields">
+                  <details id="runtime-message-options" class="composer-options">
+                    <summary class="composer-tools-trigger" title="Message options" aria-label="Message options">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                      <span id="runtime-message-options-label">Options</span>
+                    </summary>
+                    <div class="composer-options-popover">
+                      <div class="composer-options-head">
+                        <strong>Message options</strong>
+                        <span class="muted small">Applied to this message</span>
+                      </div>
+                      <div class="composer-option-fields">
+                        <label class="composer-control"><span>Kind</span>
+                          <select id="runtime-message-kind">
+                            <option value="note">Note</option>
+                            <option value="guidance">Guidance</option>
+                            <option value="question">Question</option>
+                            <option value="todo">Todo</option>
+                          </select>
+                        </label>
+                        <label class="composer-control"><span>Priority</span>
+                          <select id="runtime-message-priority">
+                            <option value="low">Low</option>
+                            <option value="normal" selected>Normal</option>
+                            <option value="high">High</option>
+                          </select>
+                        </label>
+                        <label id="runtime-message-ack-label" class="ack-field composer-check" hidden>
+                          <input id="runtime-message-requires-ack" type="checkbox" /> <span>Require acknowledgement</span>
+                        </label>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+                <div class="composer-actions">
+                  <span id="runtime-message-send-status" class="muted small" aria-live="polite"></span>
+                  <button id="runtime-message-send" class="send-btn" type="submit" title="Send message" aria-label="Send message">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </article>
+        </div>
+
+        <section id="runtime-operations-stage" class="operations-stage" aria-labelledby="runtime-operations-heading" hidden>
+          <div class="operations-scroll">
+            <header class="operations-heading">
+              <div>
+                <p class="eyebrow">Local control plane</p>
+                <h2 id="runtime-operations-heading">Runtime &amp; Agents</h2>
+                <p class="muted">Server health, Runner capacity, durable Agent identity, inboxes, and conversations.</p>
+              </div>
+              <span class="operations-live"><i aria-hidden="true"></i><span>Live updates</span></span>
+            </header>
+
+            <div class="operations-layout">
+              <section id="runtime-operations-overview" class="operations-card operations-overview" tabindex="-1">
+                <div class="operations-card-head">
+                  <div><span class="eyebrow">Infrastructure</span><h3>Server overview</h3></div>
+                  <span id="runtime-overview-access" class="muted small">runtime:read checking…</span>
+                </div>
+                <div id="runtime-server-overview" class="metric-grid operations-metrics">
+                  <div class="metric"><span class="metric-label">Server</span><strong id="runtime-server-identity">—</strong><span id="runtime-server-build" class="muted small">—</span></div>
+                  <div class="metric"><span class="metric-label">Runners</span><strong id="runtime-server-runners">—</strong><span id="runtime-server-alignment" class="muted small">—</span></div>
+                  <div class="metric"><span class="metric-label">Projects</span><strong id="runtime-server-projects">—</strong><span id="runtime-server-jobs" class="muted small">—</span></div>
+                  <div class="metric"><span class="metric-label">Collaboration attention</span><strong id="runtime-server-attention">—</strong><span id="runtime-server-sessions" class="muted small">—</span></div>
+                </div>
+                <p id="runtime-overview-unavailable" class="muted small" hidden>Runtime-wide overview is unavailable to this credential; project-scoped Console access remains available.</p>
               </section>
 
-              <section class="detail-section" aria-labelledby="runtime-activity-heading">
-                <div class="timeline-controls"><strong id="runtime-activity-heading">Activity</strong><button id="runtime-jump-latest" class="btn" type="button" hidden>Jump to latest</button></div>
-                <ol id="runtime-timeline" class="timeline"></ol>
-                <p id="runtime-timeline-empty" class="muted small" hidden>No bounded activity is available.</p>
+              <section id="runtime-operations-runners" class="operations-card operations-runners" tabindex="-1">
+                <div class="operations-card-head">
+                  <div><span class="eyebrow">Devices</span><h3>Runner fleet <span id="runtime-runner-count" class="muted small">0</span></h3></div>
+                  <span id="runtime-runner-access" class="muted small">—</span>
+                </div>
+                <div id="runtime-runner-list" class="fleet-list" role="group" aria-label="Runner Fleet"></div>
+                <p id="runtime-runners-empty" class="muted small" hidden>No caller-visible Runners.</p>
+                <p id="runtime-runner-unavailable" class="muted small" hidden>Runtime-wide Runner facts require runtime:read.</p>
+              </section>
+
+              <section id="runtime-operations-agents" class="operations-card operations-agents" tabindex="-1">
+                <div class="operations-card-head">
+                  <div><span class="eyebrow">Durable communication</span><h3>Agents &amp; Conversations <span id="runtime-communication-count" class="muted small">0 Agents</span></h3></div>
+                  <span id="runtime-communication-status" class="muted small">communication:read checking…</span>
+                </div>
+                <p class="muted small retention-note">Choose “Continue as this Agent” to bind this browser window to one durable Agent. The Console can poll and renew that bounded Endpoint lease, but it has no production model-resume adapter: pending Wake Intents remain durable until an explicit Host/model activation.</p>
+                <p id="runtime-communication-unavailable" class="muted small" hidden>Durable Agent Chat requires communication:read. Project and Workflow Session access remain independent.</p>
+                <div id="runtime-communication-surface" class="communication-grid">
+                  <aside class="communication-agents">
+                    <section class="communication-section">
+                      <h3>Agents</h3>
+                      <form id="runtime-agent-create-form" class="stack-form" autocomplete="off">
+                        <div class="compact-field-grid">
+                          <label>Handle<input id="runtime-agent-handle" maxlength="64" pattern="[A-Za-z0-9._-]+" required placeholder="reviewer" /></label>
+                          <label>Display name<input id="runtime-agent-display-name" maxlength="128" required placeholder="Architecture Reviewer" /></label>
+                        </div>
+                        <label>Description<textarea id="runtime-agent-description" rows="2" maxlength="2048" placeholder="What this Agent mainly does"></textarea></label>
+                        <label>Specialty labels<input id="runtime-agent-labels" maxlength="1039" placeholder="rust, architecture, review" /></label>
+                        <div class="form-actions"><span id="runtime-agent-create-status" class="muted small" aria-live="polite"></span><button id="runtime-agent-create" class="btn primary" type="submit">Create Agent</button></div>
+                      </form>
+                      <div id="runtime-agent-list" class="communication-list" role="group" aria-label="Durable Agents"></div>
+                      <p id="runtime-agent-empty" class="muted small" hidden>No durable Agents are owned by this communication principal.</p>
+                    </section>
+
+                    <section id="runtime-agent-card" class="communication-section" hidden>
+                      <div class="section-head"><h3 id="runtime-agent-card-name">Agent Card</h3><span id="runtime-agent-unread" class="chip">0 queued</span></div>
+                      <code id="runtime-agent-card-id" class="communication-id">—</code>
+                      <p id="runtime-agent-card-description" class="communication-description">—</p>
+                      <div id="runtime-agent-card-labels" class="chips"></div>
+                      <p id="runtime-agent-card-revision" class="muted small">—</p>
+                      <p id="runtime-agent-wake-status" class="muted small">—</p>
+                      <form id="runtime-agent-update-form" class="stack-form card-edit-form" autocomplete="off">
+                        <div class="compact-field-grid">
+                          <label>Handle<input id="runtime-agent-update-handle" maxlength="64" pattern="[A-Za-z0-9._-]+" required /></label>
+                          <label>Display name<input id="runtime-agent-update-display-name" maxlength="128" required /></label>
+                        </div>
+                        <label>Description<textarea id="runtime-agent-update-description" rows="2" maxlength="2048"></textarea></label>
+                        <label>Specialty labels<input id="runtime-agent-update-labels" maxlength="1039" placeholder="rust, architecture, review" /></label>
+                        <div class="form-actions"><span id="runtime-agent-update-status" class="muted small" aria-live="polite"></span><button id="runtime-agent-update" class="btn" type="submit">Update Agent Card</button></div>
+                      </form>
+                      <div class="form-actions">
+                        <span id="runtime-agent-endpoint-status" class="muted small">No browser Endpoint attached.</span>
+                        <button id="runtime-agent-attach" class="btn primary" type="button">Continue as this Agent</button>
+                        <button id="runtime-agent-detach" class="btn" type="button" hidden>Detach</button>
+                      </div>
+                    </section>
+
+                    <section class="communication-section">
+                      <div class="section-head"><h3>Selected Agent Inbox</h3><button id="runtime-inbox-consume-all" class="text-button" type="button" hidden>Consume visible</button></div>
+                      <p id="runtime-inbox-status" class="muted small">Select and attach an Agent to inspect recipient-specific queued deliveries.</p>
+                      <div id="runtime-inbox-list" class="communication-list"></div>
+                    </section>
+                  </aside>
+
+                  <div class="communication-conversations">
+                    <section class="communication-section">
+                      <h3>Conversations</h3>
+                      <form id="runtime-conversation-create-form" class="stack-form" autocomplete="off">
+                        <div class="compact-field-grid">
+                          <label>Title<input id="runtime-conversation-title" maxlength="200" placeholder="Architecture room" /></label>
+                          <label>Agent IDs<input id="runtime-conversation-agent-ids" maxlength="1200" required placeholder="Select an Agent or enter comma-separated wc_dagent_* ids" spellcheck="false" /></label>
+                        </div>
+                        <div class="form-actions"><span id="runtime-conversation-create-status" class="muted small" aria-live="polite"></span><button id="runtime-conversation-create" class="btn primary" type="submit">Create Conversation</button></div>
+                      </form>
+                      <div id="runtime-conversation-list" class="communication-list conversation-list" role="group" aria-label="Durable Conversations"></div>
+                      <p id="runtime-conversation-empty" class="muted small" hidden>No Conversations are visible to this Human principal.</p>
+                    </section>
+
+                    <section id="runtime-conversation-detail" class="communication-section" hidden>
+                      <div class="section-head"><h3 id="runtime-conversation-name">Conversation</h3><span id="runtime-conversation-seq" class="muted small">—</span></div>
+                      <code id="runtime-conversation-id" class="communication-id">—</code>
+                      <div id="runtime-conversation-participants" class="chips communication-participants"></div>
+                      <div id="runtime-conversation-transcript" class="conversation-transcript" role="log" aria-label="Durable Conversation transcript"></div>
+                      <p id="runtime-conversation-transcript-empty" class="muted small" hidden>No messages yet.</p>
+                      <form id="runtime-conversation-message-form" class="stack-form conversation-composer" autocomplete="off">
+                        <label>Inbox recipients <input id="runtime-conversation-recipients" maxlength="1200" placeholder="Blank = all Agent participants; empty delivery can be sent with [] through the API" spellcheck="false" /></label>
+                        <label class="inline-choice"><input id="runtime-conversation-send-as-agent" type="checkbox" /> Send as the selected Agent through its exact attached Endpoint</label>
+                        <textarea id="runtime-conversation-body" rows="3" maxlength="4096" required placeholder="Send a durable message…"></textarea>
+                        <div class="form-actions"><span id="runtime-conversation-send-status" class="muted small" aria-live="polite"></span><button id="runtime-conversation-send" class="btn primary" type="submit">Send durable message</button></div>
+                      </form>
+                    </section>
+                    <p id="runtime-conversation-detail-empty" class="muted">Select or create a Conversation.</p>
+                  </div>
+                </div>
               </section>
             </div>
           </div>
-        </div>
+        </section>
       </section>
+
+      <details class="runtime-inspector">
+        <summary class="context-trigger" title="Session context" aria-label="Session context" aria-controls="runtime-inspector-panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /><circle cx="8" cy="6" r="1.5" /><circle cx="16" cy="12" r="1.5" /><circle cx="10" cy="18" r="1.5" /></svg>
+        </summary>
+        <button id="runtime-inspector-backdrop" class="inspector-backdrop" type="button" tabindex="-1" aria-label="Close runtime details"></button>
+        <div id="runtime-inspector-panel" class="inspector-popover">
+          <header class="inspector-header">
+            <div>
+              <span class="eyebrow">Context</span>
+              <strong>Session context</strong>
+            </div>
+            <span class="live-pill"><i aria-hidden="true"></i> Live</span>
+          </header>
+
+          <div class="inspector-scroll">
+          <section id="runtime-session-context" class="inspector-card session-context" hidden>
+            <div class="inspector-card-head">
+              <h2>Session</h2>
+            </div>
+            <div class="overview context-primary-overview" aria-label="Workflow Session overview">
+              <section class="overview-card runtime-fact"><h4>Work</h4><p id="runtime-overview-work">—</p></section>
+              <section id="runtime-overview-attention-card" class="overview-card attention-fact"><h4>Attention</h4><p id="runtime-overview-attention">—</p></section>
+            </div>
+
+            <details class="session-evidence">
+              <summary>
+                <span>Details &amp; activity</span>
+                <span class="muted small">IDs, validation, timeline</span>
+              </summary>
+              <div class="session-evidence-body">
+                <div class="session-identity" aria-label="Workflow Session identity">
+                  <div class="session-identity-fact">
+                    <span class="muted small">Session ID</span>
+                    <code id="runtime-session-id" class="session-identity-value">—</code>
+                  </div>
+                  <div class="session-identity-fact">
+                    <span class="muted small">Lifecycle</span>
+                    <span id="runtime-session-context-lifecycle" class="session-identity-value small">—</span>
+                  </div>
+                  <div class="session-identity-fact">
+                    <span class="muted small">Mode</span>
+                    <span id="runtime-session-context-mode" class="session-identity-value small">—</span>
+                  </div>
+                  <div class="session-identity-fact">
+                    <span class="muted small">Created</span>
+                    <span id="runtime-session-created" class="session-identity-value small">—</span>
+                  </div>
+                  <div class="session-identity-fact">
+                    <span class="muted small">Updated</span>
+                    <span id="runtime-session-updated" class="session-identity-value small">—</span>
+                  </div>
+                </div>
+                <p id="runtime-session-workspace" class="workspace-identity muted small">—</p>
+
+                <div class="overview context-secondary-overview">
+                  <section id="runtime-overview-validation-card" class="overview-card validation-fact"><h4>Validation</h4><p id="runtime-overview-validation">—</p></section>
+                  <section class="overview-card reported-card"><h4>Reported progress</h4><p class="muted small">Model-reported; informational only.</p><p id="runtime-overview-progress" class="muted">—</p></section>
+                </div>
+
+                <div class="activity-section" aria-labelledby="runtime-activity-heading">
+                  <div class="timeline-controls"><strong id="runtime-activity-heading">Activity</strong><button id="runtime-jump-latest" class="text-button" type="button" hidden>Jump to latest</button></div>
+                  <ol id="runtime-timeline" class="timeline"></ol>
+                  <p id="runtime-timeline-empty" class="muted small" hidden>No bounded activity is available.</p>
+                </div>
+              </div>
+            </details>
+          </section>
+
+          </div>
+        </div>
+      </details>
     </section>
   </main>
   <script src="/runtime/app.js" defer></script>

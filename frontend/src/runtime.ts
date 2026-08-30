@@ -1,5 +1,4 @@
 import {
-  workflowSessionListOverviewFacts,
   workflowSessionOverviewPresentation,
   workflowSessionLivenessPresentation,
   updateWorkflowSessionFollowFromScroll,
@@ -40,6 +39,7 @@ import {
   runtimeCollaborationNeedsRefreshRecovery,
   runtimeCollaborationObservationAction,
   runtimeCollaborationMessageCanMutate,
+  runtimeCollaborationMessageSides,
   setRuntimeCollaborationReplyTarget,
   setRuntimeCollaborationEditTarget,
   clearRuntimeCollaborationEditTarget,
@@ -54,8 +54,387 @@ const API_BASE = "/api/runtime-console/";
 const REFRESH_MS = 8000;
 const COLLABORATION_WAIT_SECS = 25;
 const PROJECT_SEARCH_DEBOUNCE_MS = 200;
+const RUNTIME_CREDENTIAL_SESSION_KEY = "webcodex.runtime.credential.v1";
+const APPEARANCE_STORAGE_KEY = "webcodex.runtime.appearance.v1";
+const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
+const WORKSPACE_VIEW_STORAGE_KEY = "webcodex.runtime.workspace-view.v1";
+const DRAFT_STORAGE_PREFIX = "webcodex.runtime.draft.v1.";
+const DEVICE_DISCLOSURE_STORAGE_PREFIX = "webcodex.runtime.runner-open.v1.";
+const APPEARANCE_MEDIA_QUERY = "(prefers-color-scheme: light)";
+const MOBILE_NAVIGATION_MEDIA = "(max-width: 900px)";
+const WIDE_CONTEXT_MEDIA = "(min-width: 1600px)";
+
+type AppearancePreference = "system" | "light" | "dark";
+type RuntimeLanguage = "en" | "zh-CN";
+type RuntimeWorkspaceView = "sessions" | "operations";
+
+const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "WebCodex — Runtime Console": "WebCodex — 运行控制台",
+  "WebCodex Runtime Console": "WebCodex 运行控制台",
+  "A local workspace for Projects, Sessions, and collaboration": "用于管理项目、会话与协作的本地工作空间",
+  "Appearance": "外观",
+  "Choose appearance": "选择外观",
+  "Color mode": "颜色模式",
+  "System": "跟随系统",
+  "Light": "浅色",
+  "Dark": "深色",
+  "Local runtime": "本地运行时",
+  "Connect to your workspace": "连接到你的工作空间",
+  "Enter an existing runtime Bearer credential. Project and Workflow Session views require their existing scopes; durable Agent Chat separately requires communication:read and communication:manage.": "输入已有的运行时 Bearer 凭证。项目和工作流会话视图需要相应权限；持久 Agent 对话还需要 communication:read 和 communication:manage。",
+  "Runtime Bearer credential": "运行时 Bearer 凭证",
+  "Connect": "连接",
+  "Keep me signed in for this tab (survives refresh, clears on Lock or tab close)": "在此标签页保持登录（刷新后仍有效，锁定或关闭标签页时清除）",
+  "Project and Session navigation": "项目与会话导航",
+  "Local": "本地",
+  "Close project navigation": "关闭项目导航",
+  "Projects & Sessions": "项目与会话",
+  "Workspace views": "工作空间视图",
+  "Connected": "已连接",
+  "Runtime & Agents": "运行时与 Agent",
+  "Runtime workspace": "运行时工作区",
+  "Inspect infrastructure and manage durable Agents without mixing administration into the current Session.": "检查基础设施并管理持久 Agent，同时避免将管理操作混入当前会话。",
+  "Overview": "概览",
+  "Server health and fleet capacity": "服务器健康状态与设备群容量",
+  "Runner fleet": "运行器设备群",
+  "Devices, builds and current load": "设备、构建与当前负载",
+  "Agents, inboxes and conversations": "Agent、收件箱与对话",
+  "Local control plane": "本地控制平面",
+  "Server health, Runner capacity, durable Agent identity, inboxes, and conversations.": "查看服务器健康状态、运行器容量、持久 Agent 标识、收件箱与对话。",
+  "Live updates": "实时更新",
+  "Infrastructure": "基础设施",
+  "Devices": "设备",
+  "Durable communication": "持久通信",
+  "Agents & Conversations": "Agent 与对话",
+  "Session conversation": "会话对话",
+  "New messages": "新消息",
+  "new message": "条新消息",
+  "new messages": "条新消息",
+  "Show full message": "展开完整消息",
+  "Collapse message": "收起消息",
+  "Copy code": "复制代码",
+  "Code copied": "代码已复制",
+  "Unable to copy code": "无法复制代码",
+  "connected": "已连接",
+  "Projects": "项目",
+  "Runner": "运行器",
+  "All Runners": "全部运行器",
+  "Filter by Project name, id, Runner, or workspace path": "按项目名称、ID、运行器或工作空间路径筛选",
+  "No project selected": "尚未选择项目",
+  "No Projects match this filter.": "没有符合当前筛选条件的项目。",
+  "Sessions": "会话",
+  "Workflow Sessions": "工作流会话",
+  "No retained Workflow Sessions for this project.": "此项目没有保留的工作流会话。",
+  "Working & Recently Updated Sessions": "正在工作与最近更新的会话",
+  "Working and recently updated Workflow Sessions": "正在工作与最近更新的工作流会话",
+  "No recent Workflow Sessions are visible.": "当前没有可见的最近工作流会话。",
+  "Fleet-wide recent Sessions require runtime:read. Project-scoped Session access remains available.": "查看整个设备群的最近会话需要 runtime:read；仍可访问项目范围内的会话。",
+  "Local Runtime": "本地运行时",
+  "Credential stays in this tab only": "凭证仅保留在此标签页",
+  "Open project navigation": "打开项目导航",
+  "Current location": "当前位置",
+  "Fleet": "设备群",
+  "Select a Session": "选择一个会话",
+  "Refresh runtime": "刷新运行时",
+  "Lock": "锁定",
+  "Choose a project and Workflow Session from the sidebar to inspect its context and continue the collaboration.": "从侧边栏选择项目和工作流会话，以查看上下文并继续协作。",
+  "Conversation": "对话",
+  "Collaboration messages require runtime:read. Existing project/session observability remains available.": "协作消息需要 runtime:read；现有的项目和会话观察能力仍可使用。",
+  "Start this Session conversation": "开始此会话的对话",
+  "Messages posted here are retained on the Session collaboration board.": "此处发送的消息会保留在会话协作板中。",
+  "Retained board only; this is not a permanent or complete chat history. ACK observed is server-side evidence of an explicit echo, not a delivery or read receipt.": "这里只展示保留的协作板内容，并非永久或完整的聊天记录。已观察到 ACK 仅表示服务端收到明确回显，不代表送达或已读。",
+  "Clear reply": "清除回复",
+  "Cancel Edit": "取消编辑",
+  "Message this Session…": "给此会话发送消息…",
+  "Options": "选项",
+  "Message options": "消息选项",
+  "Applied to this message": "应用于本条消息",
+  "Kind": "类型",
+  "Note": "备注",
+  "Guidance": "指导",
+  "Question": "问题",
+  "Todo": "待办",
+  "Priority": "优先级",
+  "Low": "低",
+  "Normal": "普通",
+  "High": "高",
+  "Require acknowledgement": "需要确认",
+  "Send message": "发送消息",
+  "More actions": "更多操作",
+  "Language": "语言",
+  "Refresh": "刷新",
+  "Runtime details": "运行时详情",
+  "Session context": "会话上下文",
+  "Close runtime details": "关闭运行时详情",
+  "Context": "上下文",
+  "Live": "实时",
+  "Session": "会话",
+  "Selected context": "已选上下文",
+  "Workflow Session identity": "工作流会话标识",
+  "Session ID": "会话 ID",
+  "Lifecycle": "生命周期",
+  "Mode": "模式",
+  "Created": "创建时间",
+  "Updated": "更新时间",
+  "Workflow Session overview": "工作流会话概览",
+  "Details & activity": "详情与活动",
+  "IDs, validation, timeline": "标识、验证与时间线",
+  "Work": "工作",
+  "Validation": "验证",
+  "Attention": "待处理",
+  "Reported progress": "已报告进度",
+  "Model-reported; informational only.": "由模型报告，仅供参考。",
+  "Activity": "活动",
+  "Jump to latest": "跳到最新",
+  "No bounded activity is available.": "没有可用的有界活动记录。",
+  "Server overview": "服务器概览",
+  "Server": "服务器",
+  "Runners": "运行器",
+  "Collaboration attention": "协作待处理项",
+  "Runtime-wide overview is unavailable to this credential; project-scoped Console access remains available.": "此凭证无法查看运行时全局概览；仍可使用项目范围的控制台访问。",
+  "Runner Fleet": "运行器设备群",
+  "No caller-visible Runners.": "没有调用方可见的运行器。",
+  "Runtime-wide Runner facts require runtime:read.": "运行时全局运行器信息需要 runtime:read。",
+  "Durable Agent Chat": "持久 Agent 对话",
+  "Durable Conversation transcript, recipient-specific Inbox, and coalesced Wake Intent state. The Console polls and renews its bounded Endpoint lease every 8 seconds; polling, renewal, refresh, or unload cleanup does not invoke or wake a model.": "展示持久对话记录、收件人专属收件箱与合并后的唤醒意图状态。控制台每 8 秒轮询并续期有界端点租约；轮询、续期、刷新或卸载清理都不会调用或唤醒模型。",
+  "Choose “Continue as this Agent” to bind this browser window to one durable Agent. The Console can poll and renew that bounded Endpoint lease, but it has no production model-resume adapter: pending Wake Intents remain durable until an explicit Host/model activation.": "选择“以此 Agent 继续”可将当前浏览器窗口绑定到一个持久 Agent。控制台可以轮询并续期该有界端点租约，但没有生产模型恢复适配器；待处理的唤醒意图会一直持久保留，直到主机或模型被明确激活。",
+  "Durable Agent Chat requires communication:read. Project and Workflow Session access remain independent.": "持久 Agent 对话需要 communication:read；项目与工作流会话访问彼此独立。",
+  "Agents": "Agent",
+  "Handle": "标识名",
+  "Display name": "显示名称",
+  "Description": "描述",
+  "What this Agent mainly does": "此 Agent 的主要职责",
+  "Specialty labels": "专长标签",
+  "Create Agent": "创建 Agent",
+  "Durable Agents": "持久 Agent",
+  "No durable Agents are owned by this communication principal.": "此通信主体尚未拥有持久 Agent。",
+  "Agent Card": "Agent 卡片",
+  "Update Agent Card": "更新 Agent 卡片",
+  "No browser Endpoint attached.": "尚未附加浏览器端点。",
+  "Attach this browser": "附加此浏览器",
+  "Continue as this Agent": "以此 Agent 继续",
+  "Detach": "分离",
+  "Selected Agent Inbox": "所选 Agent 收件箱",
+  "Consume visible": "消费可见项",
+  "Select and attach an Agent to inspect recipient-specific queued deliveries.": "选择并附加一个 Agent，以查看收件人专属的排队投递。",
+  "Conversations": "对话",
+  "Title": "标题",
+  "Agent IDs": "Agent ID",
+  "Select an Agent or enter comma-separated wc_dagent_* ids": "选择 Agent，或输入以逗号分隔的 wc_dagent_* ID",
+  "Create Conversation": "创建对话",
+  "Durable Conversations": "持久对话",
+  "No Conversations are visible to this Human principal.": "此人工主体目前没有可见对话。",
+  "No messages yet.": "暂无消息。",
+  "Inbox recipients": "收件箱接收方",
+  "Blank = all Agent participants; empty delivery can be sent with [] through the API": "留空表示所有 Agent 参与者；可通过 API 使用 [] 发送不投递到收件箱的消息",
+  "Send a Human-authored durable message…": "发送一条由人工撰写的持久消息…",
+  "Send as the selected Agent through its exact attached Endpoint": "通过精确附加的端点，以所选 Agent 身份发送",
+  "Send a durable message…": "发送一条持久消息…",
+  "Send durable message": "发送持久消息",
+  "Select or create a Conversation.": "选择或创建一个对话。",
+  "Show more": "展开更多",
+  "Recent Sessions": "最近会话",
+  "Switch to Chinese": "切换到中文",
+  "System appearance": "跟随系统外观",
+  "Light appearance": "浅色外观",
+  "Dark appearance": "深色外观",
+  "No retained pending attention": "没有保留的待处理项",
+  "No visible Projects": "没有可见项目",
+  "Conversation access unavailable": "对话访问不可用",
+  "This credential can inspect the Project and Session, but retained messages require runtime:read.": "此凭证可以查看项目和会话，但查看保留消息需要 runtime:read。",
+  "Conversation access requires runtime:read": "对话访问需要 runtime:read",
+  "Replace message": "替换消息",
+  "Reply": "回复",
+  "Replying to": "回复",
+  "Original message unavailable": "原消息不可用",
+  "You": "你",
+  "Agent": "Agent",
+  "Edit": "编辑",
+  "Delete": "删除",
+  "Consume": "消费",
+  "Untitled Conversation": "未命名对话",
+  "No description.": "暂无描述。",
+  "time unavailable": "时间不可用",
+  "working": "工作中",
+  "recently active": "最近活跃",
+  "idle · pending attention": "空闲 · 有待处理项",
+  "idle": "空闲",
+  "WebCodex activity only; host/model state is unknown.": "仅反映 WebCodex 活动；主机与模型状态未知。",
+  "Now": "当前",
+  "Last": "上次",
+  "Reconnecting": "正在重连",
+  "Paused": "已暂停",
+  "Idle": "空闲",
+  "OFFLINE": "离线",
+  "online": "在线",
+  "offline": "离线",
+  "stale": "状态过期",
+  "unknown": "未知",
+  "note": "备注",
+  "guidance": "指导",
+  "question": "问题",
+  "todo": "待办",
+  "low": "低",
+  "normal": "普通",
+  "high": "高",
+  "open": "开放",
+  "resolved": "已解决",
+  "Acknowledgement required": "需要确认",
+  "Acknowledged": "已确认",
+  "Withdrawn": "已撤回",
+  "Replaced": "已替换",
+  "Resolved": "已解决",
+  "active": "活跃",
+  "completed": "已完成",
+  "none": "无",
+  "attached": "已附加",
+  "detached": "已分离",
+  "expired": "已过期",
+  "queued": "排队中",
+  "consumed": "已消费",
+  "passed": "已通过",
+  "failed": "失败",
+  "runtime:read unavailable": "runtime:read 不可用",
+  "refresh unavailable": "刷新不可用",
+  "project:read unavailable": "project:read 不可用",
+  "build unavailable": "构建信息不可用",
+  "Credential rejected.": "凭证已被拒绝。",
+  "Credential does not have Runtime Console project access.": "此凭证没有运行控制台的项目访问权限。",
+  "Runtime Console is unavailable.": "运行控制台当前不可用。",
+  "Could not refresh projects.": "无法刷新项目。",
+  "Selected project is no longer available.": "所选项目已不可用。",
+  "Could not refresh Workflow Sessions.": "无法刷新工作流会话。",
+  "Could not refresh Workflow Session detail.": "无法刷新工作流会话详情。",
+  "Enter a runtime Bearer credential.": "请输入运行时 Bearer 凭证。",
+  "Searching…": "正在搜索…",
+  "Refreshing…": "正在刷新…",
+  "Refreshed": "已刷新",
+  "Refresh failed · showing previous data": "刷新失败 · 正在显示之前的数据",
+  "Refreshing runtime": "正在刷新运行时",
+  "Restoring this tab…": "正在恢复此标签页…",
+  "Reply target cleared.": "已清除回复目标。",
+  "Edit cancelled.": "已取消编辑。",
+  "Enter a message.": "请输入消息。",
+  "Sending…": "正在发送…",
+  "Sent.": "已发送。",
+  "Send failed.": "发送失败。",
+  "Delete failed.": "删除失败。",
+  "Replace failed.": "替换失败。",
+  "Withdrawing retained message…": "正在撤回保留消息…",
+  "Message changed before Delete. Refresh retained messages before retrying.": "删除前消息已发生变化。请刷新保留消息后再重试。",
+  "Retained message withdrawn.": "保留消息已撤回。",
+  "Replacing retained message…": "正在替换保留消息…",
+  "Message changed before Replace. Refresh retained messages before retrying.": "替换前消息已发生变化。请刷新保留消息后再重试。",
+  "Send outcome unknown. Refresh and review retained messages before retrying.": "发送结果未知。请先刷新并检查保留消息，再决定是否重试。",
+  "Refreshing durable communication…": "正在刷新持久通信…",
+  "Handle and display name are required.": "标识名和显示名称不能为空。",
+  "Creating durable Agent…": "正在创建持久 Agent…",
+  "Updating Agent Card…": "正在更新 Agent 卡片…",
+  "Outcome uncertain. Refresh the Card before deciding whether to retry.": "操作结果不确定。请刷新 Agent 卡片后再决定是否重试。",
+  "Agent Card update failed; refresh before retrying a stale revision.": "Agent 卡片更新失败；请刷新后再重试，避免使用过期版本。",
+  "Agent Card updated.": "Agent 卡片已更新。",
+  "Releasing this window’s previous Agent Endpoint…": "正在释放此窗口之前的 Agent 端点…",
+  "Previous Endpoint detach is uncertain. Refresh before switching this window to another Agent.": "之前端点的分离结果不确定。请刷新后再将此窗口切换到其他 Agent。",
+  "Could not release the previous Agent Endpoint.": "无法释放之前的 Agent 端点。",
+  "The exact Attach replay was already replaced. Choose “Continue as this Agent” again to create a fresh Endpoint generation.": "这次精确附加重放已被替代。请再次选择“以此 Agent 继续”，创建新的端点代数。",
+  "communication:manage required.": "需要 communication:manage 权限。",
+  "Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key, or refresh before deciding.": "操作结果不确定。请保持输入不变并重试以复用同一幂等键，或先刷新再决定。",
+  "Attaching browser Endpoint…": "正在附加浏览器端点…",
+  "Outcome uncertain. Retry Attach to replay the same idempotency key; do not create a new attachment.": "附加结果不确定。请重试附加以复用同一幂等键，不要创建新的附加记录。",
+  "Detaching browser Endpoint…": "正在分离浏览器端点…",
+  "Detach outcome uncertain. Refresh before retry; the durable Agent and Inbox are unaffected.": "分离结果不确定。请刷新后再重试；持久 Agent 和收件箱不受影响。",
+  "At least one Agent id is required.": "至少需要一个 Agent ID。",
+  "Creating durable Conversation…": "正在创建持久对话…",
+  "Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key.": "操作结果不确定。请保持输入不变并重试以复用同一幂等键。",
+  "Select a Conversation and enter a message.": "请选择一个对话并输入消息。",
+  "Select an Agent and choose “Continue as this Agent” before sending as it.": "请先选择一个 Agent 并点击“以此 Agent 继续”，然后再以其身份发送。",
+  "Appending Message and Agent deliveries atomically…": "正在以原子方式写入消息和 Agent 投递…",
+  "Outcome uncertain. Keep the message unchanged and retry only to replay the same idempotency key, or refresh the transcript first.": "操作结果不确定。请保持消息不变，仅在复用同一幂等键时重试，或先刷新对话记录。",
+  "Consuming recipient state…": "正在消费接收方状态…",
+  "communication:manage required to consume deliveries.": "消费投递需要 communication:manage 权限。",
+  "Consume outcome uncertain. Refresh before retry; desired-state replay is safe.": "消费结果不确定。请刷新后再重试；目标状态重放是安全的。",
+  "Delivery consume failed.": "消费投递失败。",
+  "Existing idempotent Agent replayed.": "已重放现有的幂等 Agent。",
+  "Agent created.": "Agent 已创建。",
+  "Existing idempotent Conversation replayed.": "已重放现有的幂等对话。",
+  "Conversation created.": "对话已创建。",
+  "Existing Message replayed without duplicate delivery.": "已重放现有消息，未产生重复投递。",
+  "Durable Message sent.": "持久消息已发送。",
+  "Confirming replacement durability…": "正在确认替换操作的持久性…",
+  "Confirming withdrawal durability…": "正在确认撤回操作的持久性…",
+  "Replacement already retained.": "替换消息已保留。",
+  "Message replaced.": "消息已替换。",
+  "Withdraw observed after refresh; exact replay required to confirm durability.": "刷新后已观察到撤回结果；仍需精确重放以确认持久性。",
+  "Replacement observed after refresh; exact replay required to confirm durability.": "刷新后已观察到替换结果；仍需精确重放以确认持久性。",
+  "Outcome not observed in retained messages; exact replay required before live observation resumes.": "保留消息中未观察到操作结果；恢复实时观察前需要精确重放。",
+  "Message changed while editing; current retained state was refreshed.": "编辑期间消息已变化；当前保留状态已刷新。",
+  "Outcome unknown; refresh retained messages before retrying.": "操作结果未知；请刷新保留消息后再重试。",
+  "Replacement durably confirmed after exact replay.": "精确重放后已确认替换操作持久保存。",
+  "Withdraw durably confirmed after exact replay.": "精确重放后已确认撤回操作持久保存。",
+  "durability confirmation still uncertain · refresh before retry": "持久性确认仍不确定 · 请刷新后再重试",
+  "message changed during durability confirmation · refresh retained state": "持久性确认期间消息已变化 · 请刷新保留状态",
+  "durability confirmation failed · refresh before retry": "持久性确认失败 · 请刷新后再重试",
+  "establishing retained baseline": "正在建立保留消息基线",
+  "Session unavailable": "会话不可用",
+  "observation unavailable": "观察接口不可用",
+  "retained snapshot failed": "保留消息快照获取失败",
+  "bounded long-poll": "有界长轮询",
+  "request failed": "请求失败",
+  "retention changed · reloading": "保留窗口已变化 · 正在重新加载",
+  "delta drain failed": "增量排空失败",
+  "withdraw outcome unknown · refresh before retry": "撤回结果未知 · 请刷新后再重试",
+  "message changed · refresh retained state": "消息已变化 · 请刷新保留状态",
+  "replace outcome unknown · refresh before retry": "替换结果未知 · 请刷新后再重试",
+  "send outcome unknown · refresh before retry": "发送结果未知 · 请刷新后再重试",
+  "RUNNING": "运行中",
+  "ATTENTION": "待处理",
+  "STALE": "状态过期",
+  "SOURCE DIFFERENT": "源码不一致",
+  "BUILD DIFFERENT": "构建不一致",
+  "DIRTY": "有未提交更改",
+  "SESSION SCAN PARTIAL": "会话扫描不完整",
+};
+
+const ZH_COUNT_LABELS: Record<string, string> = {
+  "Runner": "台运行器",
+  "authorized Runner": "台已授权运行器",
+  "Project": "个项目",
+  "visible Project": "个可见项目",
+  "matching Project": "个匹配项目",
+  "Session": "个会话",
+  "retained Session": "个保留会话",
+  "active Session": "个活跃会话",
+  "running Session": "个运行中会话",
+  "Agent": "个 Agent",
+  "active Endpoint": "个活跃端点",
+  "active Job": "个活跃任务",
+  "running Job": "个运行中任务",
+  "queued Job": "个排队任务",
+  "retained message": "条保留消息",
+  "message": "条消息",
+  "participant": "位参与者",
+  "queued delivery": "条排队投递",
+  "queued": "条排队项",
+  "unresolved Wake": "个未解决唤醒",
+  "risk": "个风险",
+  "todo": "个待办",
+  "question": "个问题",
+  "guidance": "条指导",
+  "online": "台在线",
+  "stale": "台状态过期",
+  "unavailable": "台不可用",
+  "RUNNING": "个运行中",
+};
+
+type StaticTextSource = { node: Text; source: string };
+type StaticAttributeSource = { node: Element; name: string; source: string };
+
+const appearanceMedia = window.matchMedia(APPEARANCE_MEDIA_QUERY);
+let runtimeLanguage: RuntimeLanguage = languagePreference(document.documentElement.dataset.language);
+const staticTextSources: StaticTextSource[] = [];
+const staticAttributeSources: StaticAttributeSource[] = [];
 
 let token = "";
+let rememberCredentialForTab = true;
 let timer = 0;
 let overviewAbort: AbortController | null = null;
 let projectsAbort: AbortController | null = null;
@@ -66,9 +445,16 @@ let projectRows: any[] = [];
 let homeProjectRows: any[] = [];
 let runnerRows: any[] = [];
 let recentSessionRows: any[] = [];
+let runtimeOverviewSnapshot: any | null = null;
+let recentSessionMetaSnapshot: any | null = null;
 let projectSearch = "";
+let projectDeviceFilter = "";
 let projectSearchTimer = 0;
 let collaborationReplyTo = "";
+let renderedCollaborationMessageIds = new Set<string>();
+let workspaceView: RuntimeWorkspaceView = "sessions";
+let collaborationFollowLatest = true;
+let collaborationPendingMessages = 0;
 let refreshInFlight = false;
 let projectRowsTotal = 0;
 let projectRowsTruncated = false;
@@ -113,7 +499,7 @@ function el(id: string): HTMLElement | null {
 
 function setText(id: string, value: unknown): void {
   const node = el(id);
-  if (node) node.textContent = value === null || value === undefined || value === "" ? "—" : String(value);
+  if (node) node.textContent = value === null || value === undefined ? "—" : String(value);
 }
 
 function show(id: string, visible: boolean): void {
@@ -121,8 +507,614 @@ function show(id: string, visible: boolean): void {
   if (node) node.hidden = !visible;
 }
 
+function languagePreference(value: unknown): RuntimeLanguage {
+  return value === "zh-CN" ? "zh-CN" : "en";
+}
+
+function loadLanguagePreference(): RuntimeLanguage {
+  try {
+    const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (stored === "en" || stored === "zh-CN") return stored;
+  } catch { /* Fall through to the browser language. */ }
+  return navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+}
+
+function tr(source: string): string {
+  return runtimeLanguage === "zh-CN" ? (RUNTIME_ZH_TEXT[source] || source) : source;
+}
+
+function translatedStaticNodeValue(source: string): string {
+  const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(source);
+  if (!match) return source;
+  return match[1] + tr(match[2]) + match[3];
+}
+
+function captureStaticUiSources(): void {
+  if (staticTextSources.length || staticAttributeSources.length) return;
+  const root = el("runtime-page");
+  if (!root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    const textNode = node as Text;
+    const source = textNode.nodeValue || "";
+    if (source.trim()) staticTextSources.push({ node: textNode, source });
+    node = walker.nextNode();
+  }
+  for (const element of Array.from(root.querySelectorAll<Element>("*"))) {
+    for (const name of ["placeholder", "title", "aria-label"]) {
+      const source = element.getAttribute(name);
+      if (source) staticAttributeSources.push({ node: element, name, source });
+    }
+  }
+}
+
+function renderLanguageSensitiveUi(): void {
+  renderRuntimeOverviewMetrics(runtimeOverviewSnapshot);
+  if (projectRows.length || knownProjectDevices.length || runnerRows.length) {
+    renderProjectSelectors(projectRows, projectRowsTruncated);
+  } else {
+    renderSelectedProjectIdentity();
+  }
+  renderRunnerFleet(runnerRows);
+  renderRecentSessions(recentSessionRows, recentSessionMetaSnapshot);
+  if (state.selectedProject) renderSessionList(sessionRows, { total: sessionRows.length, truncated: false });
+  const snapshot = state.workflow?.snapshot;
+  if (snapshot) renderDetail(snapshot, false);
+  else if (!state.workflow?.selectedSessionId) hideDetail();
+  if (!snapshot) renderCollaboration(undefined, false);
+  renderCommunicationSurface();
+  syncCollaborationComposer();
+  renderWorkspaceHeading();
+  setRuntimeConnectionState(token ? "connected" : "disconnected");
+}
+
+function applyLanguage(language: RuntimeLanguage, persist = true, rerender = true): void {
+  runtimeLanguage = languagePreference(language);
+  document.documentElement.lang = runtimeLanguage;
+  document.documentElement.dataset.language = runtimeLanguage;
+  document.title = tr("WebCodex — Runtime Console");
+  for (const source of staticTextSources) source.node.nodeValue = translatedStaticNodeValue(source.source);
+  for (const source of staticAttributeSources) source.node.setAttribute(source.name, tr(source.source));
+  const nextLanguageLabel = runtimeLanguage === "zh-CN" ? "EN" : "中";
+  const nextLanguageTitle = runtimeLanguage === "zh-CN" ? "切换到英文" : "Switch to Chinese";
+  document.querySelectorAll<HTMLElement>("[data-language-toggle-label]").forEach((label) => {
+    label.textContent = nextLanguageLabel;
+  });
+  document.querySelectorAll<HTMLElement>("[data-language-toggle]").forEach((button) => {
+    button.title = nextLanguageTitle;
+    button.setAttribute("aria-label", nextLanguageTitle);
+  });
+  applyAppearance(appearancePreference(document.documentElement.dataset.theme), false);
+  if (persist) {
+    try { window.localStorage.setItem(LANGUAGE_STORAGE_KEY, runtimeLanguage); }
+    catch { /* Language remains active when storage is unavailable. */ }
+  }
+  if (rerender) renderLanguageSensitiveUi();
+}
+
+function appearancePreference(value: unknown): AppearancePreference {
+  return value === "light" || value === "dark" || value === "system" ? value : "system";
+}
+
+function loadAppearancePreference(): AppearancePreference {
+  try { return appearancePreference(window.localStorage.getItem(APPEARANCE_STORAGE_KEY)); }
+  catch { return "system"; }
+}
+
+function resolvedAppearance(preference: AppearancePreference): "light" | "dark" {
+  if (preference !== "system") return preference;
+  return appearanceMedia.matches ? "light" : "dark";
+}
+
+function applyAppearance(preference: AppearancePreference, persist = true): void {
+  const resolved = resolvedAppearance(preference);
+  document.documentElement.dataset.theme = preference;
+  document.documentElement.dataset.resolvedTheme = resolved;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute(
+    "content",
+    resolved === "light" ? "#f4f4f1" : "#090a0d"
+  );
+  document.querySelectorAll<HTMLButtonElement>("[data-theme-option]").forEach((button) => {
+    button.setAttribute("aria-pressed", button.dataset.themeOption === preference ? "true" : "false");
+  });
+  const label = preference === "system" ? tr("System appearance") : preference === "light" ? tr("Light appearance") : tr("Dark appearance");
+  document.querySelectorAll<HTMLElement>(".theme-trigger").forEach((trigger) => {
+    trigger.title = label;
+    trigger.setAttribute("aria-label", runtimeLanguage === "zh-CN" ? label + "。" + tr("Choose appearance") : label + ". " + tr("Choose appearance"));
+  });
+  if (!persist) return;
+  try { window.localStorage.setItem(APPEARANCE_STORAGE_KEY, preference); }
+  catch { /* Appearance remains active when storage is unavailable. */ }
+}
+
+function workspaceViewPreference(value: unknown): RuntimeWorkspaceView {
+  return value === "operations" ? "operations" : "sessions";
+}
+
+function loadWorkspaceViewPreference(): RuntimeWorkspaceView {
+  try { return workspaceViewPreference(window.localStorage.getItem(WORKSPACE_VIEW_STORAGE_KEY)); }
+  catch { return "sessions"; }
+}
+
+function renderWorkspaceHeading(): void {
+  if (workspaceView === "operations") {
+    setText("runtime-breadcrumb-runner", tr("Runtime workspace"));
+    setText("runtime-breadcrumb-project", tr("Local control plane"));
+    setText("runtime-session-title", tr("Runtime & Agents"));
+    return;
+  }
+  renderWorkspaceBreadcrumb();
+  const snapshot = state.workflow?.snapshot;
+  setText("runtime-session-title", snapshot?.title ? String(snapshot.title) : tr("Select a Session"));
+}
+
+function applyWorkspaceView(view: RuntimeWorkspaceView, persist = true): void {
+  workspaceView = workspaceViewPreference(view);
+  const operations = workspaceView === "operations";
+  const shell = el("runtime-console");
+  if (shell) shell.dataset.workspaceView = workspaceView;
+  document.body.classList.toggle("runtime-operations-view", operations);
+  show("runtime-navigation-sessions", !operations);
+  show("runtime-navigation-operations", operations);
+  show("runtime-conversation-stage", !operations);
+  show("runtime-operations-stage", operations);
+  document.querySelectorAll<HTMLButtonElement>("[data-runtime-view]").forEach((button) => {
+    const selected = button.dataset.runtimeView === workspaceView;
+    button.classList.toggle("selected", selected);
+    if (selected) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  if (operations) {
+    const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
+    if (inspector) inspector.open = false;
+  }
+  renderWorkspaceHeading();
+  syncResponsiveNavigation();
+  setMobileNavigationOpen(false, false);
+  if (persist) {
+    try { window.localStorage.setItem(WORKSPACE_VIEW_STORAGE_KEY, workspaceView); }
+    catch { /* The selected view remains active when storage is unavailable. */ }
+  }
+}
+
+function revealOperationsSection(targetId: string): void {
+  applyWorkspaceView("operations");
+  document.querySelectorAll<HTMLButtonElement>("[data-operations-target]").forEach((button) => {
+    button.classList.toggle("selected", button.dataset.operationsTarget === targetId);
+  });
+  const target = el(targetId);
+  window.requestAnimationFrame(() => {
+    target?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+    target?.focus({ preventScroll: true });
+  });
+}
+
+type RuntimeConnectionState = "connected" | "connecting" | "stale" | "disconnected";
+
+function setRuntimeConnectionState(connection: RuntimeConnectionState): void {
+  const label = connection === "connected"
+    ? tr("Connected")
+    : connection === "connecting"
+      ? tr("Reconnecting")
+      : connection === "stale"
+        ? tr("STALE")
+        : tr("offline");
+  document.querySelectorAll<HTMLElement>(".sidebar-runtime-status, .sidebar-connection, .operations-live").forEach((node) => {
+    node.dataset.connection = connection;
+  });
+  const connectionLabel = document.querySelector<HTMLElement>(".sidebar-connection > span");
+  if (connectionLabel) connectionLabel.textContent = label;
+  setText("runtime-navigation-health", label);
+}
+
+function closeAppearanceMenus(restoreFocus = false, except: HTMLDetailsElement | null = null): boolean {
+  let closed = false;
+  document.querySelectorAll<HTMLDetailsElement>("details.theme-menu[open]").forEach((menu) => {
+    if (menu === except) return;
+    menu.open = false;
+    closed = true;
+    if (restoreFocus) (menu.querySelector("summary") as HTMLElement | null)?.focus();
+  });
+  return closed;
+}
+
+function closeTopbarMore(restoreFocus = false): boolean {
+  const menu = el("runtime-topbar-more") as HTMLDetailsElement | null;
+  if (!menu?.open) return false;
+  menu.open = false;
+  if (restoreFocus) (menu.querySelector(":scope > summary") as HTMLElement | null)?.focus();
+  return true;
+}
+
+function closeComposerOptions(restoreFocus = false): boolean {
+  const options = el("runtime-message-options") as HTMLDetailsElement | null;
+  if (!options?.open) return false;
+  options.open = false;
+  if (restoreFocus) (options.querySelector("summary") as HTMLElement | null)?.focus();
+  return true;
+}
+
+function mobileNavigationViewport(): boolean {
+  return window.matchMedia(MOBILE_NAVIGATION_MEDIA).matches;
+}
+
+function closeRuntimeInspector(restoreFocus = false): void {
+  if (el("runtime-console")?.classList.contains("context-docked")) return;
+  const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
+  if (!inspector?.open) return;
+  inspector.open = false;
+  if (restoreFocus) (inspector.querySelector(".context-trigger") as HTMLElement | null)?.focus();
+}
+
+function setMobileNavigationOpen(open: boolean, restoreFocus = false): void {
+  const shell = el("runtime-console");
+  const sidebar = el("runtime-sidebar");
+  const toggle = el("runtime-mobile-nav-toggle") as HTMLButtonElement | null;
+  const close = el("runtime-mobile-nav-close") as HTMLButtonElement | null;
+  const mobile = mobileNavigationViewport();
+  const nextOpen = mobile && open;
+  shell?.classList.toggle("mobile-nav-open", nextOpen);
+  toggle?.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+  if (sidebar) {
+    if (mobile) sidebar.setAttribute("aria-hidden", nextOpen ? "false" : "true");
+    else sidebar.removeAttribute("aria-hidden");
+  }
+  if (nextOpen) {
+    closeAppearanceMenus(false);
+    closeTopbarMore(false);
+    closeRuntimeInspector(false);
+    window.setTimeout(() => close?.focus(), 260);
+  } else if (restoreFocus && mobile) {
+    window.setTimeout(() => toggle?.focus(), 0);
+  }
+}
+
+function syncResponsiveNavigation(): void {
+  const shell = el("runtime-console");
+  const sidebar = el("runtime-sidebar");
+  const toggle = el("runtime-mobile-nav-toggle") as HTMLButtonElement | null;
+  const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
+  const wasContextDocked = !!shell?.classList.contains("context-docked");
+  const contextDocked = workspaceView === "sessions"
+    && !!state.workflow?.selectedSessionId
+    && window.matchMedia(WIDE_CONTEXT_MEDIA).matches;
+  shell?.classList.toggle("context-docked", contextDocked);
+  if (contextDocked && inspector) inspector.open = true;
+  else if (wasContextDocked && inspector) inspector.open = false;
+  if (!mobileNavigationViewport()) {
+    shell?.classList.remove("mobile-nav-open");
+    sidebar?.removeAttribute("aria-hidden");
+    toggle?.setAttribute("aria-expanded", "false");
+    return;
+  }
+  const open = !!shell?.classList.contains("mobile-nav-open");
+  sidebar?.setAttribute("aria-hidden", open ? "false" : "true");
+  if (!open && sidebar?.contains(document.activeElement)) toggle?.focus();
+}
+
+function visibleFocusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])'
+  )).filter((node) => node.offsetParent !== null);
+}
+
 function clearNode(node: any): void {
   while (node && node.firstChild) node.removeChild(node.firstChild);
+}
+
+type RuntimeIconName = "folder" | "monitor" | "message" | "reply" | "edit" | "trash" | "copy";
+
+const RUNTIME_ICON_PATHS: Record<RuntimeIconName, string[]> = {
+  folder: ["M3 6h7l2 2h9v10H3V6Z"],
+  monitor: ["M4 5h16v12H4V5Z", "M8 21h8", "M12 17v4"],
+  message: ["M5 5h14v12H9l-4 3V5Z", "M9 9h6", "M9 13h4"],
+  reply: ["m10 8-5 4 5 4", "M5 12h7a6 6 0 0 1 6 6"],
+  edit: ["m4 16-.5 4.5L8 20l10.5-10.5-4-4L4 16Z", "m12.5 7.5 4 4"],
+  trash: ["M4 7h16", "M9 7V4h6v3", "m7 7 1 13h8l1-13", "M10 11v5", "M14 11v5"],
+  copy: ["M8 8h11v11H8V8Z", "M5 16H4V4h12v1"],
+};
+
+function runtimeIcon(name: RuntimeIconName, className = ""): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  if (className) svg.setAttribute("class", className);
+  for (const pathData of RUNTIME_ICON_PATHS[name]) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", pathData);
+    svg.appendChild(path);
+  }
+  return svg;
+}
+
+function createMessageAction(
+  label: string,
+  iconName: "reply" | "edit" | "trash",
+  action: () => void,
+  danger = false,
+): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "message-action" + (danger ? " danger" : "");
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.appendChild(runtimeIcon(iconName));
+  button.addEventListener("click", action);
+  return button;
+}
+
+function syncNewMessageIndicator(): void {
+  const visible = collaborationPendingMessages > 0 && !collaborationFollowLatest;
+  show("runtime-new-messages", visible);
+  if (!visible) return;
+  const label = runtimeLanguage === "zh-CN"
+    ? String(collaborationPendingMessages) + " 条新消息"
+    : String(collaborationPendingMessages) + " " + (collaborationPendingMessages === 1 ? "new message" : "new messages");
+  setText("runtime-new-messages-label", label);
+}
+
+function chatIsNearLatest(): boolean {
+  const scroll = el("runtime-chat-scroll");
+  if (!scroll) return true;
+  return scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 96;
+}
+
+function updateCollaborationFollowFromScroll(): void {
+  collaborationFollowLatest = chatIsNearLatest();
+  if (collaborationFollowLatest) collaborationPendingMessages = 0;
+  syncNewMessageIndicator();
+}
+
+function announceNewCollaborationMessages(count: number): void {
+  if (count <= 0) return;
+  const label = runtimeLanguage === "zh-CN"
+    ? String(count) + " 条新消息"
+    : String(count) + " " + (count === 1 ? "new message" : "new messages");
+  setText("runtime-message-announcer", label);
+}
+
+function appendLinkifiedText(parent: HTMLElement, text: string): void {
+  const pattern = /https?:\/\/[^\s<>{}\[\]]+/g;
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index || 0;
+    if (index > cursor) parent.appendChild(document.createTextNode(text.slice(cursor, index)));
+    let href = match[0];
+    let trailing = "";
+    while (/[.,;:!?)]$/.test(href)) {
+      trailing = href.slice(-1) + trailing;
+      href = href.slice(0, -1);
+    }
+    const link = document.createElement("a");
+    link.href = href;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = href;
+    parent.appendChild(link);
+    if (trailing) parent.appendChild(document.createTextNode(trailing));
+    cursor = index + match[0].length;
+  }
+  if (cursor < text.length) parent.appendChild(document.createTextNode(text.slice(cursor)));
+}
+
+function messageLineStartsBlock(line: string): boolean {
+  return /^```/.test(line)
+    || /^#{1,3}\s+/.test(line)
+    || /^>\s?/.test(line)
+    || /^\s*[-*+]\s+/.test(line)
+    || /^\s*\d+[.)]\s+/.test(line);
+}
+
+function appendMessageParagraph(parent: HTMLElement, lines: string[]): void {
+  if (!lines.length) return;
+  const paragraph = document.createElement("p");
+  paragraph.className = "message-paragraph";
+  lines.forEach((line, index) => {
+    if (index) paragraph.appendChild(document.createElement("br"));
+    appendLinkifiedText(paragraph, line);
+  });
+  parent.appendChild(paragraph);
+}
+
+function appendMessageCode(parent: HTMLElement, language: string, codeText: string): void {
+  const block = document.createElement("section");
+  block.className = "message-code";
+  const header = document.createElement("header");
+  const label = document.createElement("span");
+  label.textContent = language || "code";
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "message-code-copy";
+  copy.appendChild(runtimeIcon("copy"));
+  const copyLabel = document.createElement("span");
+  copyLabel.textContent = tr("Copy code");
+  copy.appendChild(copyLabel);
+  copy.title = tr("Copy code");
+  copy.setAttribute("aria-label", tr("Copy code"));
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(codeText);
+      copyLabel.textContent = tr("Code copied");
+      setText("runtime-message-announcer", tr("Code copied"));
+      window.setTimeout(() => { copyLabel.textContent = tr("Copy code"); }, 1400);
+    } catch {
+      copyLabel.textContent = tr("Unable to copy code");
+      setText("runtime-message-announcer", tr("Unable to copy code"));
+      window.setTimeout(() => { copyLabel.textContent = tr("Copy code"); }, 1800);
+    }
+  });
+  header.appendChild(label);
+  header.appendChild(copy);
+  const pre = document.createElement("pre");
+  const code = document.createElement("code");
+  if (language) code.dataset.language = language;
+  code.textContent = codeText;
+  pre.appendChild(code);
+  block.appendChild(header);
+  block.appendChild(pre);
+  parent.appendChild(block);
+}
+
+function appendRichMessage(bubble: HTMLElement, sourceValue: unknown): void {
+  const source = String(sourceValue || "").replace(/\r\n?/g, "\n");
+  const lines = source.split("\n");
+  const body = document.createElement("div");
+  body.className = "message-body";
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) { index += 1; continue; }
+    const fence = /^```\s*([^\s`]*)/.exec(line);
+    if (fence) {
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^```\s*$/.test(lines[index])) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      appendMessageCode(body, fence[1] || "", codeLines.join("\n"));
+      continue;
+    }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    if (heading) {
+      const title = document.createElement(heading[1].length === 1 ? "h3" : heading[1].length === 2 ? "h4" : "h5");
+      title.className = "message-heading";
+      appendLinkifiedText(title, heading[2]);
+      body.appendChild(title);
+      index += 1;
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      const quote = document.createElement("blockquote");
+      const quoteLines: string[] = [];
+      while (index < lines.length && /^>\s?/.test(lines[index])) {
+        quoteLines.push(lines[index].replace(/^>\s?/, ""));
+        index += 1;
+      }
+      appendMessageParagraph(quote, quoteLines);
+      body.appendChild(quote);
+      continue;
+    }
+    const unordered = /^\s*[-*+]\s+/.test(line);
+    const ordered = /^\s*\d+[.)]\s+/.test(line);
+    if (unordered || ordered) {
+      const list = document.createElement(ordered ? "ol" : "ul");
+      const pattern = ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*+]\s+/;
+      while (index < lines.length && pattern.test(lines[index])) {
+        const item = document.createElement("li");
+        appendLinkifiedText(item, lines[index].replace(pattern, ""));
+        list.appendChild(item);
+        index += 1;
+      }
+      body.appendChild(list);
+      continue;
+    }
+    const paragraphLines: string[] = [];
+    while (index < lines.length && lines[index].trim() && !messageLineStartsBlock(lines[index])) {
+      paragraphLines.push(lines[index]);
+      index += 1;
+    }
+    if (!paragraphLines.length) {
+      paragraphLines.push(line);
+      index += 1;
+    }
+    appendMessageParagraph(body, paragraphLines);
+  }
+  bubble.appendChild(body);
+  if (source.length <= 2200 && lines.length <= 36) return;
+  body.classList.add("is-collapsed");
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "message-expand";
+  toggle.textContent = tr("Show full message");
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.addEventListener("click", () => {
+    const expanded = body.classList.toggle("is-expanded");
+    body.classList.toggle("is-collapsed", !expanded);
+    toggle.textContent = tr(expanded ? "Collapse message" : "Show full message");
+    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  });
+  bubble.appendChild(toggle);
+}
+
+function loadRememberedRuntimeCredential(): string {
+  try { return window.sessionStorage.getItem(RUNTIME_CREDENTIAL_SESSION_KEY)?.trim() || ""; }
+  catch { return ""; }
+}
+
+function persistRuntimeCredentialForTab(): void {
+  try {
+    if (rememberCredentialForTab && token) window.sessionStorage.setItem(RUNTIME_CREDENTIAL_SESSION_KEY, token);
+    else window.sessionStorage.removeItem(RUNTIME_CREDENTIAL_SESSION_KEY);
+  } catch { /* Storage can be unavailable in hardened browser contexts. */ }
+}
+
+function clearRememberedRuntimeCredential(): void {
+  try { window.sessionStorage.removeItem(RUNTIME_CREDENTIAL_SESSION_KEY); }
+  catch { /* Storage can be unavailable in hardened browser contexts. */ }
+}
+
+function currentDraftStorageKey(project = state.selectedProject, sessionId = state.workflow?.selectedSessionId): string {
+  const projectId = String(project || "");
+  const workflowSessionId = String(sessionId || "");
+  return projectId && workflowSessionId
+    ? DRAFT_STORAGE_PREFIX + encodeURIComponent(projectId) + "." + encodeURIComponent(workflowSessionId)
+    : "";
+}
+
+function saveCurrentDraft(): void {
+  const key = currentDraftStorageKey();
+  const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+  if (!key || !body) return;
+  try {
+    if (body.value) window.sessionStorage.setItem(key, body.value);
+    else window.sessionStorage.removeItem(key);
+  } catch { /* Draft remains available in the current input when storage is unavailable. */ }
+}
+
+function restoreCurrentDraft(): void {
+  const key = currentDraftStorageKey();
+  const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+  if (!key || !body) return;
+  try { body.value = window.sessionStorage.getItem(key) || ""; }
+  catch { body.value = ""; }
+  syncCollaborationComposerLayout();
+}
+
+function clearCurrentDraft(): void {
+  const key = currentDraftStorageKey();
+  if (!key) return;
+  try { window.sessionStorage.removeItem(key); }
+  catch { /* No-op in hardened browser contexts. */ }
+}
+
+function clearRuntimeDrafts(): void {
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index);
+      if (key?.startsWith(DRAFT_STORAGE_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) window.sessionStorage.removeItem(key);
+  } catch { /* No-op in hardened browser contexts. */ }
+}
+
+function deviceDisclosureStorageKey(clientId: string): string {
+  return DEVICE_DISCLOSURE_STORAGE_PREFIX + encodeURIComponent(clientId);
+}
+
+function storedDeviceDisclosure(clientId: string): boolean | null {
+  try {
+    const value = window.localStorage.getItem(deviceDisclosureStorageKey(clientId));
+    return value === "open" ? true : value === "closed" ? false : null;
+  } catch { return null; }
+}
+
+function persistDeviceDisclosure(clientId: string, open: boolean): void {
+  try { window.localStorage.setItem(deviceDisclosureStorageKey(clientId), open ? "open" : "closed"); }
+  catch { /* Disclosure remains active for the current render. */ }
 }
 
 function appendChip(parent: HTMLElement, text: string, extraClass = ""): HTMLElement {
@@ -182,14 +1174,23 @@ async function api(path: string, payload: any, signal?: AbortSignal): Promise<an
 }
 
 function hideDetail(): void {
+  document.body.classList.remove("runtime-has-session");
+  renderWorkspaceHeading();
   show("runtime-session-detail", false);
+  show("runtime-session-context", false);
   show("runtime-session-detail-empty", true);
   show("runtime-jump-latest", false);
   setText("runtime-session-workspace", "");
   clearNode(el("runtime-collaboration-board"));
+  renderedCollaborationMessageIds = new Set<string>();
+  collaborationFollowLatest = true;
+  collaborationPendingMessages = 0;
+  syncNewMessageIndicator();
+  syncResponsiveNavigation();
 }
 
 function clearSessionSurface(): void {
+  saveCurrentDraft();
   sessionRows = [];
   clearNode(el("runtime-session-list"));
   show("runtime-sessions-empty", false);
@@ -199,31 +1200,52 @@ function clearSessionSurface(): void {
   resetCollaborationComposerUi();
 }
 
-function lock(message = ""): void {
+function lock(message = "", clearRemembered = true): void {
+  setMobileNavigationOpen(false, false);
+  closeRuntimeInspector(false);
   detachCommunicationEndpointsBestEffort();
   token = "";
+  if (clearRemembered) {
+    clearRememberedRuntimeCredential();
+    clearRuntimeDrafts();
+  }
   abortAll();
   invalidateRuntimeCredential(state);
   projectRows = [];
   homeProjectRows = [];
   runnerRows = [];
   recentSessionRows = [];
+  runtimeOverviewSnapshot = null;
+  recentSessionMetaSnapshot = null;
   projectRowsTotal = 0;
   projectRowsTruncated = false;
   knownProjectDevices = [];
   selectedProjectSnapshot = null;
   projectSearch = "";
+  projectDeviceFilter = "";
   collaborationReplyTo = "";
+  collaborationFollowLatest = true;
+  collaborationPendingMessages = 0;
   clearSessionSurface();
   resetCommunicationSurface();
-  clearNode(el("runtime-project-list"));
+  const projectList = el("runtime-project-list");
+  const sessionsPanel = el("runtime-workflow-sessions-panel");
+  sessionsPanel?.remove();
+  clearNode(projectList);
+  if (projectList && sessionsPanel) {
+    sessionsPanel.hidden = true;
+    projectList.appendChild(sessionsPanel);
+  }
   clearNode(el("runtime-recent-session-list"));
   clearNode(el("runtime-runner-list"));
+  document.body.classList.remove("runtime-connected");
+  document.body.classList.remove("runtime-has-session");
   show("runtime-token-gate", true);
   show("runtime-console", false);
   show("runtime-topbar-controls", false);
   stopAuto();
-  setText("runtime-token-error", message);
+  setRuntimeConnectionState("disconnected");
+  setText("runtime-token-error", message ? tr(message) : "");
   setText("runtime-refresh-status", "");
   const input = el("runtime-token-input") as HTMLInputElement | null;
   if (input) { input.value = ""; input.focus(); }
@@ -232,21 +1254,32 @@ function lock(message = ""): void {
 }
 
 function unlockUi(): void {
+  persistRuntimeCredentialForTab();
+  document.body.classList.add("runtime-connected");
   show("runtime-token-gate", false);
   show("runtime-console", true);
   show("runtime-topbar-controls", true);
   setText("runtime-token-error", "");
+  setRuntimeConnectionState("connected");
+  applyWorkspaceView(workspaceView, false);
+  syncResponsiveNavigation();
   startAuto();
 }
 
 function showError(message: string): void {
-  setText("runtime-error", message);
+  setText("runtime-error", message ? tr(message) : "");
   show("runtime-error", !!message);
 }
 
 function countLabel(value: any, singular: string, plural = singular + "s"): string {
   const count = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  if (runtimeLanguage === "zh-CN") return count + " " + (ZH_COUNT_LABELS[singular] || RUNTIME_ZH_TEXT[singular] || singular);
   return count + " " + (count === 1 ? singular : plural);
+}
+
+function pendingAttentionCount(attention: any): number {
+  return ["open_risks", "open_todos", "open_questions", "open_guidance"]
+    .reduce((total, key) => total + (typeof attention?.[key] === "number" ? Math.max(0, Math.floor(attention[key])) : 0), 0);
 }
 
 function attentionLabel(attention: any): string {
@@ -255,7 +1288,28 @@ function attentionLabel(attention: any): string {
     const count = typeof attention?.[key] === "number" ? attention[key] : 0;
     if (count) parts.push(countLabel(count, singular));
   }
-  return parts.length ? parts.join(" · ") : "No retained pending attention";
+  return parts.length ? parts.join(" · ") : tr("No retained pending attention");
+}
+
+function renderRuntimeOverviewMetrics(data: any): void {
+  if (!data) return;
+  setText("runtime-server-identity", [data.service, data.version].filter(Boolean).join(" · "));
+  setText("runtime-server-build", data.build_git_commit
+    ? (runtimeLanguage === "zh-CN" ? "构建 " : "build ") + data.build_git_commit + (data.build_git_dirty ? (runtimeLanguage === "zh-CN" ? " · 有未提交更改" : " · dirty") : "")
+    : tr("build unavailable"));
+  setText("runtime-server-runners", countLabel(data.runner_count, "Runner"));
+  setText("runtime-server-alignment", countLabel(data.runners_online, "online") + " · " + countLabel(data.runners_stale, "stale") + " · " + countLabel(data.runners_unavailable, "unavailable"));
+  setText("runtime-server-projects", data.projects_available ? countLabel(data.visible_projects, "visible Project") + (data.projects_truncated ? (runtimeLanguage === "zh-CN" ? " · 不完整" : " · partial") : "") : tr("project:read unavailable"));
+  setText("runtime-server-jobs", countLabel(data.active_jobs, "active Job") + (data.mixed_builds_present ? (runtimeLanguage === "zh-CN" ? " · 存在混合构建" : " · mixed builds") : ""));
+  setText("runtime-server-attention", attentionLabel(data.workflow_sessions));
+  setText("runtime-server-sessions", countLabel(data.workflow_sessions?.active, "active Session") + " · " + countLabel(data.workflow_sessions?.running, "running Session") + (data.workflow_sessions?.truncated ? (runtimeLanguage === "zh-CN" ? " · 有界汇总" : " · bounded aggregate") : ""));
+  const recentMeta = data.recent_sessions || {};
+  setText(
+    "runtime-recent-status",
+    countLabel(recentMeta.returned, "Session") +
+      (recentMeta.truncated ? (runtimeLanguage === "zh-CN" ? " · 前 " : " · top ") + String(recentMeta.returned || 0) : "") +
+      (recentMeta.scan_truncated ? (runtimeLanguage === "zh-CN" ? " · 扫描不完整" : " · partial scan") : "")
+  );
 }
 
 async function fetchOverview(request: any): Promise<boolean> {
@@ -270,21 +1324,25 @@ async function fetchOverview(request: any): Promise<boolean> {
     homeProjectRows = [];
     runnerRows = [];
     recentSessionRows = [];
+    runtimeOverviewSnapshot = null;
+    recentSessionMetaSnapshot = null;
     show("runtime-overview-unavailable", true);
     show("runtime-runner-unavailable", true);
     show("runtime-recent-unavailable", true);
-    setText("runtime-overview-access", "runtime:read unavailable");
-    setText("runtime-runner-access", "runtime:read unavailable");
-    setText("runtime-recent-status", "runtime:read unavailable");
+    setText("runtime-overview-access", tr("runtime:read unavailable"));
+    setText("runtime-runner-access", tr("runtime:read unavailable"));
+    setText("runtime-recent-status", tr("runtime:read unavailable"));
     renderRunnerFleet([]);
     renderRecentSessions([], null);
     renderProjectSelectors(projectRows, projectRowsTruncated);
+    setRuntimeConnectionState("connected");
     return true;
   }
   if (!response.ok || !response.data) {
-    setText("runtime-overview-access", "refresh unavailable");
-    setText("runtime-runner-access", "refresh unavailable");
-    setText("runtime-recent-status", "refresh unavailable");
+    setText("runtime-overview-access", tr("refresh unavailable"));
+    setText("runtime-runner-access", tr("refresh unavailable"));
+    setText("runtime-recent-status", tr("refresh unavailable"));
+    setRuntimeConnectionState("stale");
     return false;
   }
   show("runtime-overview-unavailable", false);
@@ -293,27 +1351,17 @@ async function fetchOverview(request: any): Promise<boolean> {
   setText("runtime-overview-access", "runtime:read");
   setText("runtime-runner-access", "runtime:read");
   const data = response.data;
+  runtimeOverviewSnapshot = data;
   homeProjectRows = Array.isArray(data.projects) ? data.projects : [];
   runnerRows = Array.isArray(data.runners) ? data.runners : [];
   recentSessionRows = Array.isArray(data.recent_sessions?.sessions) ? data.recent_sessions.sessions : [];
-  setText("runtime-server-identity", [data.service, data.version].filter(Boolean).join(" · "));
-  setText("runtime-server-build", data.build_git_commit ? "build " + data.build_git_commit + (data.build_git_dirty ? " · dirty" : "") : "build unavailable");
-  setText("runtime-server-runners", countLabel(data.runner_count, "Runner"));
-  setText("runtime-server-alignment", countLabel(data.runners_online, "online") + " · " + countLabel(data.runners_stale, "stale") + " · " + countLabel(data.runners_unavailable, "unavailable"));
-  setText("runtime-server-projects", data.projects_available ? countLabel(data.visible_projects, "visible Project") + (data.projects_truncated ? " · partial" : "") : "project:read unavailable");
-  setText("runtime-server-jobs", countLabel(data.active_jobs, "active Job") + (data.mixed_builds_present ? " · mixed builds" : ""));
-  setText("runtime-server-attention", attentionLabel(data.workflow_sessions));
-  setText("runtime-server-sessions", countLabel(data.workflow_sessions?.active, "active Session") + " · " + countLabel(data.workflow_sessions?.running, "running Session") + (data.workflow_sessions?.truncated ? " · bounded aggregate" : ""));
   const recentMeta = data.recent_sessions || {};
-  setText(
-    "runtime-recent-status",
-    countLabel(recentMeta.returned, "Session") +
-      (recentMeta.truncated ? " · top " + String(recentMeta.returned || 0) : "") +
-      (recentMeta.scan_truncated ? " · partial scan" : "")
-  );
+  recentSessionMetaSnapshot = recentMeta;
+  renderRuntimeOverviewMetrics(data);
   renderRecentSessions(recentSessionRows, recentMeta);
   renderRunnerFleet(runnerRows);
   renderProjectSelectors(projectRows, projectRowsTruncated);
+  setRuntimeConnectionState("connected");
   return true;
 }
 
@@ -344,7 +1392,10 @@ async function fetchProjects(request: any, unlocking = false): Promise<boolean> 
   }
   if (!response.ok || !response.data) {
     if (unlocking) lock("Runtime Console is unavailable.");
-    else showError("Could not refresh projects.");
+    else {
+      showError("Could not refresh projects.");
+      setRuntimeConnectionState("stale");
+    }
     return false;
   }
   projectRows = Array.isArray(response.data.projects) ? response.data.projects : [];
@@ -364,6 +1415,7 @@ async function fetchProjects(request: any, unlocking = false): Promise<boolean> 
   );
   if (refreshedSelected) selectedProjectSnapshot = refreshedSelected;
   unlockUi();
+  setRuntimeConnectionState("connected");
   showError("");
 
   const currentDevice = String(state.selectedDevice || "");
@@ -434,12 +1486,43 @@ function selectedProjectRow(): any | null {
     : null;
 }
 
+function renderWorkspaceBreadcrumb(): void {
+  const project = selectedProjectRow();
+  setText(
+    "runtime-breadcrumb-runner",
+    project?.client_id ? String(project.client_id) : tr("Fleet"),
+  );
+  setText(
+    "runtime-breadcrumb-project",
+    project ? String(project.name || project.id || tr("Projects")) : tr("Projects"),
+  );
+}
+
 function renderSelectedProjectIdentity(): void {
-  setText("runtime-selected-project", runtimeProjectIdentityText(selectedProjectRow()));
+  const project = selectedProjectRow();
+  renderWorkspaceBreadcrumb();
+  if (runtimeLanguage !== "zh-CN") {
+    setText("runtime-selected-project", runtimeProjectIdentityText(project));
+    return;
+  }
+  if (!project || typeof project.id !== "string" || !project.id) {
+    setText("runtime-selected-project", tr("No project selected"));
+    return;
+  }
+  const runner = typeof project.client_id === "string" && project.client_id ? project.client_id : tr("unknown");
+  const path = typeof project.path === "string" && project.path ? project.path : "不可用";
+  setText("runtime-selected-project", "运行器：" + runner + " · 项目：" + project.id + " · 工作空间：" + path);
 }
 
 function renderSessionWorkspaceIdentity(): void {
-  setText("runtime-session-workspace", runtimeProjectIdentityText(selectedProjectRow()));
+  const project = selectedProjectRow();
+  if (runtimeLanguage !== "zh-CN") setText("runtime-session-workspace", runtimeProjectIdentityText(project));
+  else if (!project || typeof project.id !== "string" || !project.id) setText("runtime-session-workspace", tr("No project selected"));
+  else {
+    const runner = typeof project.client_id === "string" && project.client_id ? project.client_id : tr("unknown");
+    const path = typeof project.path === "string" && project.path ? project.path : "不可用";
+    setText("runtime-session-workspace", "运行器：" + runner + " · 项目：" + project.id + " · 工作空间：" + path);
+  }
 }
 
 function revealWorkflowSessionDetail(): void {
@@ -450,11 +1533,13 @@ function renderProjectSelectors(projects: any[], truncated: boolean): void {
   const deviceSelect = el("runtime-device-select") as HTMLSelectElement | null;
   const projectList = el("runtime-project-list");
   if (!deviceSelect || !projectList) return;
+  const sessionsPanel = el("runtime-workflow-sessions-panel");
+  sessionsPanel?.remove();
   const devices = projectSelectorDevices(projects);
   clearNode(deviceSelect);
   const all = document.createElement("option");
   all.value = "";
-  all.textContent = "All Runners";
+  all.textContent = tr("All Runners");
   deviceSelect.appendChild(all);
   for (const clientId of devices) {
     const option = document.createElement("option");
@@ -462,66 +1547,144 @@ function renderProjectSelectors(projects: any[], truncated: boolean): void {
     option.textContent = clientId;
     deviceSelect.appendChild(option);
   }
-  deviceSelect.value = String(state.selectedDevice || "");
+  deviceSelect.value = projectDeviceFilter;
   const effective = effectiveProjects(projects);
   const rows = filterAndSortRuntimeProjects(
     effective,
-    String(state.selectedDevice || ""),
+    projectDeviceFilter,
     "",
   );
   clearNode(projectList);
   show("runtime-projects-empty", rows.length === 0);
+  const projectsByDevice = new Map<string, any[]>();
   for (const project of rows) {
-    const row = document.createElement("div");
-    row.className = "project-row" + (project.id === state.selectedProject ? " selected" : "");
-    row.setAttribute("role", "option");
-    row.setAttribute("aria-selected", project.id === state.selectedProject ? "true" : "false");
-    row.tabIndex = 0;
-    const main = document.createElement("div"); main.className = "project-row-main";
-    const title = document.createElement("div"); title.className = "project-row-title"; title.textContent = project.name || project.id;
-    const id = document.createElement("div"); id.className = "project-row-id"; id.textContent = String(project.id || "");
-    const runner = document.createElement("div"); runner.className = "project-row-runner muted small"; runner.textContent = "Runner " + String(project.client_id || "unknown") + " · " + (project.connected ? String(project.agent_status || "online") : "offline");
-    main.appendChild(title); main.appendChild(id); main.appendChild(runner);
-    if (project.path) {
-      const path = document.createElement("div"); path.className = "project-row-path workspace-path muted small"; path.textContent = String(project.path); main.appendChild(path);
+    const clientId = String(project?.client_id || "unknown");
+    const deviceProjects = projectsByDevice.get(clientId) || [];
+    deviceProjects.push(project);
+    projectsByDevice.set(clientId, deviceProjects);
+  }
+  const visibleDevices = projectDeviceFilter ? [projectDeviceFilter] : devices;
+  let sessionsAttached = false;
+  for (const clientId of visibleDevices) {
+    const deviceProjects = projectsByDevice.get(clientId) || [];
+    const runner = runnerRows.find((candidate) => String(candidate?.client_id || "") === clientId);
+    const connected = runner ? runner.connected !== false : deviceProjects.some((project) => project?.connected);
+    const group = document.createElement("details");
+    group.className = "device-group" + (connected ? " online" : " offline");
+    group.setAttribute("aria-label", runtimeLanguage === "zh-CN" ? "设备 " + clientId : "Device " + clientId);
+    const storedDisclosure = storedDeviceDisclosure(clientId);
+    const containsSelectedProject = deviceProjects.some((project) => String(project?.id || "") === String(state.selectedProject || ""));
+    group.open = containsSelectedProject || (storedDisclosure === null
+      ? (projectDeviceFilter ? true : String(state.selectedDevice || "") === clientId || clientId === visibleDevices[0])
+      : storedDisclosure);
+    const deviceHead = document.createElement("summary"); deviceHead.className = "device-group-head";
+    const deviceIcon = document.createElement("span"); deviceIcon.className = "device-group-icon"; deviceIcon.setAttribute("aria-hidden", "true"); deviceIcon.appendChild(runtimeIcon("monitor"));
+    const deviceIdentity = document.createElement("div"); deviceIdentity.className = "device-group-identity";
+    const deviceName = document.createElement("strong"); deviceName.textContent = clientId;
+    const deviceMeta = document.createElement("span"); deviceMeta.className = "muted small";
+    const status = runner ? String(runner.status || (connected ? "online" : "offline")) : (connected ? "online" : "offline");
+    deviceMeta.textContent = tr(status) + " · " + countLabel(deviceProjects.length, "Project");
+    const deviceDot = document.createElement("span"); deviceDot.className = "device-group-dot"; deviceDot.title = tr(status);
+    deviceIdentity.appendChild(deviceName); deviceIdentity.appendChild(deviceMeta);
+    deviceHead.appendChild(deviceIcon); deviceHead.appendChild(deviceIdentity); deviceHead.appendChild(deviceDot);
+    group.appendChild(deviceHead);
+    group.addEventListener("toggle", () => persistDeviceDisclosure(clientId, group.open));
+
+    const deviceProjectList = document.createElement("div"); deviceProjectList.className = "device-project-list";
+    if (deviceProjects.length === 0) {
+      const empty = document.createElement("p"); empty.className = "device-project-empty muted small"; empty.textContent = tr("No visible Projects"); deviceProjectList.appendChild(empty);
     }
-    const facts = document.createElement("div"); facts.className = "project-row-facts";
-    if (!project.connected) appendChip(facts, "OFFLINE", "tone-fail");
-    else if (project.agent_status && project.agent_status !== "online") appendChip(facts, String(project.agent_status).toUpperCase(), "tone-warn");
-    if (project.sessions) {
-      if (project.sessions.running_sessions) appendChip(facts, countLabel(project.sessions.running_sessions, "RUNNING"), "tone-runtime");
-      const attention = attentionLabel(project.sessions.attention);
-      if (!attention.startsWith("No retained")) appendChip(facts, attention, "tone-warn");
-      if (project.sessions.sessions_truncated) appendChip(facts, "SESSION SCAN PARTIAL", "tone-warn");
-      const retained = document.createElement("span"); retained.className = "muted small";
-      retained.textContent = project.sessions.sessions_truncated
-        ? String(project.sessions.returned_sessions || 0) + " / " + String(project.sessions.retained_sessions || 0) + " Sessions projected · partial"
-        : countLabel(project.sessions.retained_sessions, "retained Session");
-      facts.appendChild(retained);
-      if (typeof project.sessions.latest_updated_at === "number") {
-        const updated = document.createElement("span"); updated.className = "muted small"; updated.textContent = "updated " + updatedLabel(project.sessions.latest_updated_at); facts.appendChild(updated);
+    for (const project of deviceProjects) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "project-row" + (project.id === state.selectedProject ? " selected" : "");
+      if (project.id === state.selectedProject) row.setAttribute("aria-current", "true");
+      const projectName = String(project.name || project.id || "");
+      const projectId = String(project.id || "");
+      const projectPath = String(project.path || "");
+      row.title = [projectName, projectId && projectId !== projectName ? projectId : "", projectPath].filter(Boolean).join(" · ");
+      row.setAttribute("aria-label", row.title || projectName);
+      const projectIcon = document.createElement("span"); projectIcon.className = "project-row-icon"; projectIcon.setAttribute("aria-hidden", "true"); projectIcon.appendChild(runtimeIcon("folder"));
+      const main = document.createElement("div"); main.className = "project-row-main";
+      const heading = document.createElement("div"); heading.className = "project-row-heading";
+      const title = document.createElement("div"); title.className = "project-row-title"; title.textContent = projectName;
+      const signals = document.createElement("div"); signals.className = "project-row-signals";
+      const addSignal = (text: string, tone: string, signalTitle = text): void => {
+        const signal = document.createElement("span");
+        signal.className = "project-row-state " + tone;
+        signal.textContent = text;
+        signal.title = signalTitle;
+        signals.appendChild(signal);
+      };
+      const runningSessions = Math.max(0, Number(project.sessions?.running_sessions || 0));
+      const projectAttention = pendingAttentionCount(project.sessions?.attention);
+      if (!project.connected) addSignal(tr("OFFLINE"), "tone-fail");
+      else if (project.agent_status && project.agent_status !== "online") addSignal(tr(String(project.agent_status).toUpperCase()), "tone-warn");
+      if (runningSessions > 0) {
+        addSignal(
+          runtimeLanguage === "zh-CN" ? "运行中 " + runningSessions : runningSessions + " running",
+          "tone-runtime",
+          countLabel(runningSessions, "running Session")
+        );
+      }
+      if (projectAttention > 0) {
+        addSignal(
+          runtimeLanguage === "zh-CN" ? "待处理 " + projectAttention : projectAttention + " attention",
+          "tone-warn",
+          attentionLabel(project.sessions?.attention)
+        );
+      }
+      heading.appendChild(title); heading.appendChild(signals); main.appendChild(heading);
+      const meta = document.createElement("div"); meta.className = "project-row-meta muted small";
+      const metaParts: string[] = [];
+      if (project.sessions) {
+        metaParts.push(project.sessions.sessions_truncated
+          ? runtimeLanguage === "zh-CN"
+            ? String(project.sessions.returned_sessions || 0) + " / " + String(project.sessions.retained_sessions || 0) + " 个会话"
+            : String(project.sessions.returned_sessions || 0) + " / " + String(project.sessions.retained_sessions || 0) + " Sessions"
+          : countLabel(project.sessions.retained_sessions, "Session"));
+        if (typeof project.sessions.latest_updated_at === "number") {
+          metaParts.push((runtimeLanguage === "zh-CN" ? "更新于 " : "updated ") + updatedLabel(project.sessions.latest_updated_at));
+        }
+        if (project.sessions.sessions_truncated) metaParts.push(runtimeLanguage === "zh-CN" ? "扫描不完整" : "scan partial");
+      }
+      meta.textContent = metaParts.join(" · ");
+      if (metaParts.length) main.appendChild(meta);
+      row.appendChild(projectIcon); row.appendChild(main);
+      const select = (): void => switchProject(String(project.client_id || ""), String(project.id || ""));
+      row.addEventListener("click", select);
+      deviceProjectList.appendChild(row);
+      if (project.id === state.selectedProject && sessionsPanel) {
+        sessionsPanel.hidden = false;
+        deviceProjectList.appendChild(sessionsPanel);
+        sessionsAttached = true;
       }
     }
-    row.appendChild(main); row.appendChild(facts);
-    const select = (): void => switchProject(String(project.client_id || ""), String(project.id || ""));
-    row.addEventListener("click", select);
-    row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } });
-    projectList.appendChild(row);
+    group.appendChild(deviceProjectList);
+    projectList.appendChild(group);
   }
-  const returnedProjects = runtimeProjectsForDevice(effective, String(state.selectedDevice || "")).length;
+  if (sessionsPanel && !sessionsAttached) {
+    sessionsPanel.hidden = true;
+    projectList.appendChild(sessionsPanel);
+  }
+  const returnedProjects = runtimeProjectsForDevice(effective, projectDeviceFilter).length;
   const totalProjects = Math.max(returnedProjects, projectRowsTotal);
-  const scope = state.selectedDevice ? " on " + state.selectedDevice : " across fleet";
+  const scope = runtimeLanguage === "zh-CN"
+    ? (projectDeviceFilter ? " · 位于 " + projectDeviceFilter : " · 跨全部设备")
+    : (projectDeviceFilter ? " on " + projectDeviceFilter : " across fleet");
   const queryActive = !!projectSearch.trim();
   setText(
     "runtime-device-status",
     devices.length
-      ? countLabel(devices.length, "authorized Runner") + (state.selectedDevice ? " · filtered" : " · All Runners")
-      : "No authorized Runners"
+      ? countLabel(devices.length, "authorized Runner") + (projectDeviceFilter ? (runtimeLanguage === "zh-CN" ? " · 已筛选" : " · filtered") : " · " + tr("All Runners"))
+      : (runtimeLanguage === "zh-CN" ? "没有已授权运行器" : "No authorized Runners")
   );
   setText(
     "runtime-project-status",
     truncated
-      ? String(returnedProjects) + " of " + String(totalProjects) + (queryActive ? " matching Projects shown" : " visible Projects shown") + scope + " · bounded"
+      ? runtimeLanguage === "zh-CN"
+        ? "已显示 " + String(returnedProjects) + " / " + String(totalProjects) + (queryActive ? " 个匹配项目" : " 个可见项目") + scope + " · 有界"
+        : String(returnedProjects) + " of " + String(totalProjects) + (queryActive ? " matching Projects shown" : " visible Projects shown") + scope + " · bounded"
       : countLabel(totalProjects, queryActive ? "matching Project" : "visible Project") + scope
   );
   renderSelectedProjectIdentity();
@@ -539,7 +1702,7 @@ function switchProject(device: string, project: string): void {
   renderRecentSessions(recentSessionRows, null);
   renderSelectedProjectIdentity();
   if (request) void fetchSessions(request);
-  if (token) void fetchProjects(refreshRuntimeProjects(state, projectSearch));
+  if (token) void fetchProjects(refreshRuntimeProjects(state, projectSearch, projectDeviceFilter));
 }
 
 function applyRunnerFilter(device: string): void {
@@ -548,12 +1711,13 @@ function applyRunnerFilter(device: string): void {
   collaborationReplyTo = "";
   clearSessionSurface();
   selectedProjectSnapshot = null;
+  projectDeviceFilter = device;
   selectRuntimeRunnerFilter(state, device);
   renderProjectSelectors(projectRows, projectRowsTruncated);
   renderRunnerFleet(runnerRows);
   renderRecentSessions(recentSessionRows, null);
   renderSelectedProjectIdentity();
-  if (token) void fetchProjects(refreshRuntimeProjects(state, projectSearch));
+  if (token) void fetchProjects(refreshRuntimeProjects(state, projectSearch, projectDeviceFilter));
 }
 
 function runnerAttentionCount(runner: any): number {
@@ -570,55 +1734,59 @@ function renderRunnerFleet(runners: any[]): void {
   for (const runner of runners) {
     const clientId = String(runner?.client_id || "");
     if (!clientId) continue;
-    const row = document.createElement("div");
+    const row = document.createElement("button");
+    row.type = "button";
     row.className = "fleet-row" + (clientId === state.selectedDevice ? " selected" : "");
-    row.setAttribute("role", "option");
-    row.setAttribute("aria-selected", clientId === state.selectedDevice ? "true" : "false");
-    row.tabIndex = 0;
+    if (clientId === state.selectedDevice) row.setAttribute("aria-current", "true");
     const main = document.createElement("div"); main.className = "fleet-row-main";
     const title = document.createElement("div"); title.className = "fleet-row-title"; title.textContent = clientId;
     const meta = document.createElement("div"); meta.className = "muted small fleet-row-meta";
     const metaParts = [
-      runner.connected ? String(runner.status || "online") : "offline",
-      runner.version ? "v" + String(runner.version) : "version unavailable",
-      runner.transport ? String(runner.transport) : "transport unavailable",
-      runner.source_alignment ? "source " + String(runner.source_alignment) : "source alignment unavailable",
-      typeof runner.last_seen_age_secs === "number" ? "seen " + String(runner.last_seen_age_secs) + "s ago" : "last seen unavailable",
+      tr(runner.connected ? String(runner.status || "online") : "offline"),
+      runner.version ? "v" + String(runner.version) : (runtimeLanguage === "zh-CN" ? "版本不可用" : "version unavailable"),
+      runner.transport ? String(runner.transport) : (runtimeLanguage === "zh-CN" ? "传输方式不可用" : "transport unavailable"),
+      runner.source_alignment
+        ? (runtimeLanguage === "zh-CN" ? "源码 " : "source ") + tr(String(runner.source_alignment))
+        : (runtimeLanguage === "zh-CN" ? "源码对齐状态不可用" : "source alignment unavailable"),
+      typeof runner.last_seen_age_secs === "number"
+        ? (runtimeLanguage === "zh-CN" ? String(runner.last_seen_age_secs) + " 秒前在线" : "seen " + String(runner.last_seen_age_secs) + "s ago")
+        : (runtimeLanguage === "zh-CN" ? "最后在线时间不可用" : "last seen unavailable"),
     ];
-    if (runner.build_git_commit) metaParts.push("build " + String(runner.build_git_commit));
+    if (runner.build_git_commit) metaParts.push((runtimeLanguage === "zh-CN" ? "构建 " : "build ") + String(runner.build_git_commit));
     meta.textContent = metaParts.join(" · ");
     main.appendChild(title); main.appendChild(meta);
 
     const signals = document.createElement("div"); signals.className = "fleet-row-signals";
     const working = Math.max(Number(runner.jobs_running || 0), Number(runner.sessions?.running_sessions || 0));
     const attention = runnerAttentionCount(runner);
-    if (working > 0) appendChip(signals, "RUNNING", "tone-runtime");
-    if (attention > 0) appendChip(signals, "ATTENTION " + attention, "tone-warn");
-    if (!runner.connected) appendChip(signals, "OFFLINE", "tone-fail");
-    else if (String(runner.status || "") === "stale") appendChip(signals, "STALE", "tone-warn");
-    if (runner.source_alignment === "different") appendChip(signals, "SOURCE DIFFERENT", "tone-fail");
-    if (runner.version_matches_server === false) appendChip(signals, "BUILD DIFFERENT", "tone-warn");
-    if (runner.build_git_dirty === true) appendChip(signals, "DIRTY", "tone-warn");
+    if (working > 0) appendChip(signals, tr("RUNNING"), "tone-runtime");
+    if (attention > 0) appendChip(signals, tr("ATTENTION") + " " + attention, "tone-warn");
+    if (!runner.connected) appendChip(signals, tr("OFFLINE"), "tone-fail");
+    else if (String(runner.status || "") === "stale") appendChip(signals, tr("STALE"), "tone-warn");
+    if (runner.source_alignment === "different") appendChip(signals, tr("SOURCE DIFFERENT"), "tone-fail");
+    if (runner.version_matches_server === false) appendChip(signals, tr("BUILD DIFFERENT"), "tone-warn");
+    if (runner.build_git_dirty === true) appendChip(signals, tr("DIRTY"), "tone-warn");
 
     const facts = document.createElement("div"); facts.className = "muted small fleet-row-facts";
     const projectFact = runner.projects_scan_partial
-      ? String(runner.projects_scanned || 0) + " Projects scanned"
+      ? runtimeLanguage === "zh-CN" ? String(runner.projects_scanned || 0) + " 个项目已扫描" : String(runner.projects_scanned || 0) + " Projects scanned"
       : countLabel(runner.projects_scanned, "visible Project");
     const factParts = [
       countLabel(runner.active_jobs, "active Job"),
       countLabel(runner.jobs_running, "running Job"),
       countLabel(runner.jobs_queued, "queued Job"),
-      typeof runner.job_concurrency_limit === "number" ? "limit " + runner.job_concurrency_limit : "limit unavailable",
+      typeof runner.job_concurrency_limit === "number"
+        ? (runtimeLanguage === "zh-CN" ? "并发上限 " : "limit ") + runner.job_concurrency_limit
+        : (runtimeLanguage === "zh-CN" ? "并发上限不可用" : "limit unavailable"),
       projectFact,
       countLabel(runner.sessions?.active_sessions, "active Session"),
     ];
-    if (runner.projects_scan_partial) factParts.push("fleet scan partial");
-    if (runner.sessions?.sessions_truncated) factParts.push("Session scan partial");
+    if (runner.projects_scan_partial) factParts.push(runtimeLanguage === "zh-CN" ? "设备群扫描不完整" : "fleet scan partial");
+    if (runner.sessions?.sessions_truncated) factParts.push(runtimeLanguage === "zh-CN" ? "会话扫描不完整" : "Session scan partial");
     facts.textContent = factParts.join(" · ");
     row.appendChild(main); row.appendChild(signals); row.appendChild(facts);
     const select = (): void => applyRunnerFilter(clientId);
     row.addEventListener("click", select);
-    row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } });
     node.appendChild(row);
   }
   setText("runtime-runner-count", countLabel(runners.length, "Runner"));
@@ -635,34 +1803,34 @@ function renderRecentSessions(sessions: any[], meta: any): void {
     const clientId = String(session?.client_id || "");
     if (!sessionId || !projectId || !clientId) continue;
     const selected = projectId === state.selectedProject && sessionId === state.workflow.selectedSessionId;
-    const row = document.createElement("div");
+    const row = document.createElement("button");
+    row.type = "button";
     row.className = "recent-session-row" + (selected ? " selected" : "");
-    row.setAttribute("role", "option");
-    row.setAttribute("aria-selected", selected ? "true" : "false");
-    row.tabIndex = 0;
+    if (selected) row.setAttribute("aria-current", "true");
     const main = document.createElement("div"); main.className = "recent-session-main";
     const title = document.createElement("div"); title.className = "session-title"; title.textContent = session.title ? String(session.title) : sessionId;
     const location = document.createElement("div"); location.className = "muted small recent-session-location";
     location.textContent = clientId + " · " + String(session.project_name || projectId) + (session.project_name && session.project_name !== projectId ? " · " + projectId : "");
     main.appendChild(title); main.appendChild(location);
     const signals = document.createElement("div"); signals.className = "recent-session-signals";
-    const liveness = workflowSessionLivenessPresentation(session);
-    if (liveness.state === "working") appendChip(signals, "RUNNING", "tone-runtime");
+    const liveness = localizedLivenessPresentation(session);
+    if (liveness.state === "working") appendChip(signals, tr("RUNNING"), "tone-runtime");
     const attention = attentionLabel(session.overview?.attention);
-    if (!attention.startsWith("No retained")) appendChip(signals, attention, "tone-warn");
-    const lifecycle = document.createElement("span"); lifecycle.className = "muted small"; lifecycle.textContent = [session.lifecycle, liveness.label, "updated " + updatedLabel(session.updated_at)].filter(Boolean).join(" · "); lifecycle.title = liveness.tooltip; signals.appendChild(lifecycle);
+    if (pendingAttentionCount(session.overview?.attention) > 0) appendChip(signals, attention, "tone-warn");
+    const lifecycle = document.createElement("span"); lifecycle.className = "muted small"; lifecycle.textContent = [tr(String(session.lifecycle || "")), liveness.label, (runtimeLanguage === "zh-CN" ? "更新于 " : "updated ") + updatedLabel(session.updated_at)].filter(Boolean).join(" · "); lifecycle.title = liveness.tooltip; signals.appendChild(lifecycle);
     row.appendChild(main); row.appendChild(signals);
-    appendPreview(row, "Now", session.current_activity);
-    appendPreview(row, "Last", session.last_activity);
+    appendPreview(row, tr("Now"), session.current_activity);
+    appendPreview(row, tr("Last"), session.last_activity);
     const select = (): void => selectRecentSession(session);
     row.addEventListener("click", select);
-    row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } });
     node.appendChild(row);
   }
   if (meta) {
     setText(
       "runtime-recent-status",
-      countLabel(meta.returned, "Session") + (meta.truncated ? " · top " + String(meta.returned || 0) : "") + (meta.scan_truncated ? " · partial scan" : "")
+      countLabel(meta.returned, "Session")
+        + (meta.truncated ? (runtimeLanguage === "zh-CN" ? " · 前 " : " · top ") + String(meta.returned || 0) : "")
+        + (meta.scan_truncated ? (runtimeLanguage === "zh-CN" ? " · 扫描不完整" : " · partial scan") : "")
     );
   }
 }
@@ -672,6 +1840,7 @@ function selectRecentSession(session: any): void {
   const projectId = String(session?.project_id || "");
   const sessionId = String(session?.session_id || "");
   if (!clientId || !projectId || !sessionId) return;
+  if (projectDeviceFilter && projectDeviceFilter !== clientId) projectDeviceFilter = "";
   const knownProject = effectiveProjects(projectRows).find((row) => String(row?.id || "") === projectId)
     || homeProjectRows.find((row) => String(row?.id || "") === projectId);
   selectedProjectSnapshot = knownProject || {
@@ -684,6 +1853,7 @@ function selectRecentSession(session: any): void {
   clearSessionSurface();
   setHumanJoinSendEnabled(false);
   const location = selectRuntimeSessionLocation(state, clientId, projectId, sessionId);
+  restoreCurrentDraft();
   renderProjectSelectors(projectRows, projectRowsTruncated);
   renderRunnerFleet(runnerRows);
   renderRecentSessions(recentSessionRows, null);
@@ -693,7 +1863,8 @@ function selectRecentSession(session: any): void {
   if (location.detailRequest) void fetchSessionDetail(location.detailRequest);
   const collaborationRequest = runtimeCollaborationRequest(state);
   if (collaborationRequest) void startCollaboration(collaborationRequest);
-  if (token) void fetchProjects(refreshRuntimeProjects(state, projectSearch));
+  if (token) void fetchProjects(refreshRuntimeProjects(state, projectSearch, projectDeviceFilter));
+  setMobileNavigationOpen(false, true);
 }
 
 async function fetchSessions(request: any): Promise<void> {
@@ -721,23 +1892,79 @@ async function fetchSessions(request: any): Promise<void> {
 }
 
 function updatedLabel(timestamp: any): string {
-  if (typeof timestamp !== "number") return "time unavailable";
-  return new Date(timestamp * 1000).toLocaleTimeString();
+  if (typeof timestamp !== "number") return tr("time unavailable");
+  return new Date(timestamp * 1000).toLocaleTimeString(runtimeLanguage === "zh-CN" ? "zh-CN" : "en");
 }
 
 function dateTimeLabel(timestamp: any): string {
-  if (typeof timestamp !== "number") return "time unavailable";
-  return new Date(timestamp * 1000).toLocaleString();
+  if (typeof timestamp !== "number") return tr("time unavailable");
+  return new Date(timestamp * 1000).toLocaleString(runtimeLanguage === "zh-CN" ? "zh-CN" : "en");
+}
+
+function localizedLivenessPresentation(session: any): any {
+  const presentation = workflowSessionLivenessPresentation(session);
+  if (runtimeLanguage !== "zh-CN") return presentation;
+  let label = tr(String(presentation.label || "idle"));
+  if (presentation.state === "idle" && String(presentation.label || "").startsWith("idle · ")) {
+    label = tr("idle") + " · " + String(presentation.label).slice("idle · ".length);
+  }
+  return { ...presentation, label, tooltip: tr(String(presentation.tooltip || "")) };
+}
+
+function localizedWorkflowText(value: unknown): string {
+  const source = String(value || "");
+  if (runtimeLanguage !== "zh-CN" || !source) return source;
+  const exact: Record<string, string> = {
+    "Latest retained validation passed": "最近保留的验证已通过",
+    "Latest validation passed": "最近验证已通过",
+    "Latest retained validation failed": "最近保留的验证失败",
+    "Latest validation failed": "最近验证失败",
+    "Validation not run": "尚未运行验证",
+    "Retained terminal validation evidence unavailable": "保留的最终验证证据不可用",
+    "Terminal validation evidence unavailable": "最终验证证据不可用",
+    "No work observations in retained events.": "保留事件中没有工作观察记录。",
+    "No tool activity observed.": "尚未观察到工具活动。",
+    "No retained open guidance, questions, risks, or todos.": "没有保留的开放指导、问题、风险或待办。",
+    "No retained model-reported progress.": "没有保留的模型报告进度。",
+  };
+  let text = exact[source] || source;
+  const prefixes: Array<[string, string]> = [
+    ["Recent observed work: ", "最近观察到的工作："],
+    ["Observed work: ", "已观察工作："],
+    ["Retained open messages: ", "保留的开放消息："],
+    ["Retained: ", "保留："],
+    ["Recent ", "最近 "],
+    ["latest ", "最近 "],
+  ];
+  for (const [english, chinese] of prefixes) {
+    if (text.startsWith(english)) {
+      text = chinese + text.slice(english.length);
+      break;
+    }
+  }
+  const nounMap: Record<string, string> = {
+    edit: "次编辑", edits: "次编辑", validation: "次验证", validations: "次验证",
+    exploration: "次探索", review: "次审查", reviews: "次审查", run: "次运行", runs: "次运行",
+    risk: "个风险", risks: "个风险", todo: "个待办", todos: "个待办",
+    question: "个问题", questions: "个问题", guidance: "条指导",
+    test: "次测试", tests: "次测试", "unresolved failure": "个未解决失败",
+    "unresolved failures": "个未解决失败", "unresolved validation failure": "个未解决的验证失败",
+    "unresolved validation failures": "个未解决的验证失败",
+  };
+  return text.replace(/(\d+) (unresolved validation failures?|unresolved failures?|edits?|validations?|exploration|reviews?|runs?|risks?|todos?|questions?|guidance|tests?)/g, (_match, count, noun) => {
+    return String(count) + " " + (nounMap[String(noun)] || noun);
+  });
 }
 
 function activityKindLabel(activity: any): string {
   const kind = String(activity && activity.kind || "Activity");
   if (activity && activity.job_handoff) {
-    if (kind === "Tested") return "Test";
-    if (kind === "Ran") return "Command";
+    if (kind === "Tested") return runtimeLanguage === "zh-CN" ? "测试" : "Test";
+    if (kind === "Ran") return runtimeLanguage === "zh-CN" ? "命令" : "Command";
   }
-  if (kind === "Explored" && activity && typeof activity.group_count === "number") return "Explored ×" + activity.group_count;
-  return kind;
+  if (kind === "Explored" && activity && typeof activity.group_count === "number") return (runtimeLanguage === "zh-CN" ? "探索 ×" : "Explored ×") + activity.group_count;
+  if (runtimeLanguage !== "zh-CN") return kind;
+  return ({ Activity: "活动", Progress: "进度", Explored: "探索", Edited: "编辑", Tested: "测试", Ran: "运行", Reviewed: "审查" } as Record<string, string>)[kind] || kind;
 }
 
 function activityFacts(activity: any, includeTiming: boolean): string[] {
@@ -746,13 +1973,13 @@ function activityFacts(activity: any, includeTiming: boolean): string[] {
     if (Array.isArray(activity.group_kinds) && activity.group_kinds.length) facts.push(activity.group_kinds.map(String).join(" / "));
     if (Array.isArray(activity.group_tools) && activity.group_tools.length) facts.push(activity.group_tools.map(String).join(", "));
   } else if (activity && activity.tool) facts.push(String(activity.tool));
-  if (activity && activity.kind === "Progress") facts.push("informational");
+  if (activity && activity.kind === "Progress") facts.push(runtimeLanguage === "zh-CN" ? "仅供参考" : "informational");
   else if (activity && activity.job_handoff) {
-    facts.push("handed off");
-    if (activity.execution_state) facts.push("execution " + String(activity.execution_state));
+    facts.push(runtimeLanguage === "zh-CN" ? "已移交" : "handed off");
+    if (activity.execution_state) facts.push((runtimeLanguage === "zh-CN" ? "执行 " : "execution ") + tr(String(activity.execution_state)));
   } else if (activity && activity.state) facts.push(String(activity.state));
   if (activity && activity.job_id) facts.push("job " + String(activity.job_id));
-  if (includeTiming && activity && typeof activity.started_at === "number") facts.push(new Date(activity.started_at * 1000).toLocaleTimeString());
+  if (includeTiming && activity && typeof activity.started_at === "number") facts.push(new Date(activity.started_at * 1000).toLocaleTimeString(runtimeLanguage === "zh-CN" ? "zh-CN" : "en"));
   return facts;
 }
 
@@ -781,40 +2008,43 @@ function renderSessionList(sessions: any[], payload: any): void {
   for (const session of sessions) {
     const id = String(session && session.session_id || "");
     if (!id) continue;
-    const item = document.createElement("li"); item.className = "session-card" + (id === selected ? " selected" : "");
-    item.setAttribute("role", "option"); item.setAttribute("aria-selected", id === selected ? "true" : "false"); item.tabIndex = 0;
+    const wrapper = document.createElement("li");
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "session-card" + (id === selected ? " selected" : "");
+    if (id === selected) item.setAttribute("aria-current", "true");
+    const icon = document.createElement("span"); icon.className = "session-card-icon"; icon.setAttribute("aria-hidden", "true"); icon.appendChild(runtimeIcon("message"));
+    const main = document.createElement("div"); main.className = "session-card-main";
     const title = document.createElement("div"); title.className = "session-title"; title.textContent = session.title ? String(session.title) : id;
-    const meta = document.createElement("div"); meta.className = "chips";
-    appendChip(meta, String(session.lifecycle || "unknown"));
-    const liveness = workflowSessionLivenessPresentation(session);
+    const meta = document.createElement("div"); meta.className = "chips session-meta";
+    const lifecycle = String(session.lifecycle || "unknown");
+    if (lifecycle !== "active") appendChip(meta, tr(lifecycle));
+    const liveness = localizedLivenessPresentation(session);
     const livenessChip = appendChip(meta, liveness.label, liveness.state === "working" ? "tone-runtime" : liveness.state === "attention" ? "tone-warn" : "");
     livenessChip.title = liveness.tooltip;
     appendChip(meta, updatedLabel(session.updated_at));
-    item.appendChild(title); item.appendChild(meta);
-    const facts = workflowSessionListOverviewFacts(session.overview);
-    if (facts.length) {
-      const summary = document.createElement("div"); summary.className = "summary-facts";
-      for (const fact of facts) appendChip(summary, fact.text, "tone-" + fact.tone);
-      item.appendChild(summary);
-    }
-    appendPreview(item, "Now", session.current_activity); appendPreview(item, "Last", session.last_activity);
+    main.appendChild(title); main.appendChild(meta);
+    item.appendChild(icon); item.appendChild(main);
     const select = (): void => selectSession(id);
     item.addEventListener("click", select);
-    item.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } });
-    node.appendChild(item);
+    wrapper.appendChild(item);
+    node.appendChild(wrapper);
   }
 }
 
 function selectSession(sessionId: string): void {
+  saveCurrentDraft();
   abort(detailAbort); detailAbort = null; abortCollaboration(); hideDetail();
   setHumanJoinSendEnabled(false);
   const request = selectRuntimeWorkflowSession(state, sessionId);
   resetCollaborationComposerUi();
+  restoreCurrentDraft();
   renderSessionList(sessionRows, { total: sessionRows.length, truncated: false });
   revealWorkflowSessionDetail();
   if (request) void fetchSessionDetail(request);
   const collaborationRequest = runtimeCollaborationRequest(state);
   if (collaborationRequest) void startCollaboration(collaborationRequest);
+  setMobileNavigationOpen(false, true);
 }
 
 async function fetchSessionDetail(request: any): Promise<void> {
@@ -837,30 +2067,35 @@ function setTone(id: string, tone: string): void {
 
 function renderOverview(overview: any): void {
   const view = workflowSessionOverviewPresentation(overview);
-  setText("runtime-overview-work", view.workText);
-  setText("runtime-overview-validation", view.validationText + (typeof view.validationAt === "number" ? " · " + updatedLabel(view.validationAt) : ""));
+  setText("runtime-overview-work", localizedWorkflowText(view.workText));
+  setText("runtime-overview-validation", localizedWorkflowText(view.validationText) + (typeof view.validationAt === "number" ? " · " + updatedLabel(view.validationAt) : ""));
   setTone("runtime-overview-validation-card", view.validationTone);
-  setText("runtime-overview-attention", view.attentionText); setTone("runtime-overview-attention-card", view.attentionTone);
-  setText("runtime-overview-progress", view.progressText + (typeof view.progressAt === "number" ? " · reported " + updatedLabel(view.progressAt) : ""));
+  setText("runtime-overview-attention", localizedWorkflowText(view.attentionText)); setTone("runtime-overview-attention-card", view.attentionTone);
+  setText("runtime-overview-progress", localizedWorkflowText(view.progressText) + (typeof view.progressAt === "number" ? (runtimeLanguage === "zh-CN" ? " · 报告于 " : " · reported ") + updatedLabel(view.progressAt) : ""));
 }
 
 function syncFollowUi(): void {
   show("runtime-jump-latest", !!state.workflow.selectedSessionId && !shouldFollowWorkflowSessionLatest(state.workflow));
 }
 
-function renderDetail(detail: any): void {
-  show("runtime-session-detail-empty", false); show("runtime-session-detail", true);
-  setText("runtime-session-title", detail.title); setText("runtime-session-lifecycle", detail.lifecycle);
-  setText("runtime-session-mode", "mode " + String(detail.mode || "unknown"));
-  const liveness = workflowSessionLivenessPresentation(detail);
+function renderDetail(detail: any, consumeCollaborationNotice = true): void {
+  document.body.classList.add("runtime-has-session");
+  show("runtime-session-detail-empty", false); show("runtime-session-detail", true); show("runtime-session-context", true);
+  renderWorkspaceHeading();
+  setText("runtime-session-lifecycle", tr(String(detail.lifecycle || "unknown")));
+  setText("runtime-session-mode", (runtimeLanguage === "zh-CN" ? "模式 " : "mode ") + tr(String(detail.mode || "unknown")));
+  setText("runtime-session-context-lifecycle", tr(String(detail.lifecycle || "unknown")));
+  setText("runtime-session-context-mode", tr(String(detail.mode || "unknown")));
+  const liveness = localizedLivenessPresentation(detail);
   setText("runtime-session-running", liveness.label);
   const livenessNode = el("runtime-session-running"); if (livenessNode) livenessNode.title = liveness.tooltip;
-  setText("runtime-session-id", String(detail.session_id || "session id unavailable"));
+  setText("runtime-session-id", String(detail.session_id || (runtimeLanguage === "zh-CN" ? "会话 ID 不可用" : "session id unavailable")));
   setText("runtime-session-created", dateTimeLabel(detail.created_at));
   setText("runtime-session-updated", dateTimeLabel(detail.updated_at));
   renderSessionWorkspaceIdentity();
   renderOverview(detail.overview);
-  renderCollaboration();
+  renderCollaboration(undefined, consumeCollaborationNotice);
+  syncResponsiveNavigation();
   const activities = Array.isArray(detail.activity) ? detail.activity : [];
   const node = el("runtime-timeline"); const previousScrollTop = node ? node.scrollTop : 0;
   clearNode(node); show("runtime-timeline-empty", activities.length === 0);
@@ -882,35 +2117,88 @@ function renderDetail(detail: any): void {
 
 function collaborationPhaseLabel(): string {
   switch (state.collaboration.phase) {
-    case "live": return "Live";
-    case "reconnecting": return "Reconnecting";
-    case "paused": return "Paused";
-    default: return "Idle";
+    case "live": return tr("Live");
+    case "reconnecting": return tr("Reconnecting");
+    case "paused": return tr("Paused");
+    default: return tr("Idle");
   }
 }
 
 function syncCollaborationComposer(): void {
   const edit = runtimeCollaborationEditTarget(state);
+  const unavailable = state.collaboration.available === false;
   const replyTargetId = String(state.collaboration.replyTargetId || "");
+  const body = el("runtime-message-body") as HTMLTextAreaElement | null;
   const kind = el("runtime-message-kind") as HTMLSelectElement | null;
   const priority = el("runtime-message-priority") as HTMLSelectElement | null;
   const checkbox = el("runtime-message-requires-ack") as HTMLInputElement | null;
   const send = el("runtime-message-send") as HTMLButtonElement | null;
+  if (unavailable) closeComposerOptions(false);
   show("runtime-message-reply", !!replyTargetId && !edit);
-  setText("runtime-message-reply-text", replyTargetId ? "Reply to " + replyTargetId : "");
+  setText("runtime-message-reply-text", replyTargetId ? (runtimeLanguage === "zh-CN" ? "回复 " : "Reply to ") + replyTargetId : "");
   show("runtime-message-edit", !!edit);
-  setText("runtime-message-edit-text", edit ? "Editing " + String(edit.message_id) : "");
+  setText("runtime-message-edit-text", edit ? (runtimeLanguage === "zh-CN" ? "正在编辑 " : "Editing ") + String(edit.message_id) : "");
+  if (body) {
+    body.disabled = unavailable;
+    body.placeholder = unavailable ? tr("Conversation access requires runtime:read") : tr("Message this Session…");
+  }
   if (kind) {
-    kind.disabled = !!edit;
+    kind.disabled = unavailable || !!edit;
     if (edit) kind.value = String(edit.kind || "note");
   }
   if (priority) {
-    priority.disabled = !!edit;
+    priority.disabled = unavailable || !!edit;
     if (edit) priority.value = String(edit.priority || "normal");
   }
   if (checkbox && edit) checkbox.checked = !!edit.requires_ack;
-  if (send) send.textContent = edit ? "Replace" : "Send";
+  if (send) {
+    const actionLabel = edit ? tr("Replace message") : tr("Send message");
+    send.title = actionLabel;
+    send.setAttribute("aria-label", actionLabel);
+    send.classList.toggle("replace-mode", !!edit);
+  }
   syncAckComposer();
+  syncCollaborationComposerLayout();
+  if (unavailable && checkbox) checkbox.disabled = true;
+}
+
+function syncCollaborationComposerLayout(): void {
+  const body = el("runtime-message-body") as HTMLTextAreaElement | null;
+  const composer = el("runtime-collaboration-form");
+  const send = el("runtime-message-send") as HTMLButtonElement | null;
+  const hasContent = !!body?.value.trim();
+  composer?.classList.toggle("has-content", hasContent);
+  send?.classList.toggle("is-ready", hasContent);
+  if (!body) return;
+  body.style.height = "0px";
+  const nextHeight = Math.min(Math.max(body.scrollHeight, 44), 180);
+  body.style.height = nextHeight + "px";
+  body.style.overflowY = body.scrollHeight > 180 ? "auto" : "hidden";
+}
+
+function scrollCollaborationToLatest(smooth: boolean): void {
+  const scroll = el("runtime-chat-scroll");
+  if (!scroll) return;
+  collaborationFollowLatest = true;
+  collaborationPendingMessages = 0;
+  syncNewMessageIndicator();
+  const behavior: ScrollBehavior = smooth && !window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "smooth" : "auto";
+  window.requestAnimationFrame(() => {
+    scroll.scrollTo({ top: scroll.scrollHeight, behavior });
+  });
+}
+
+function syncComposerOptionSummary(): void {
+  const kind = el("runtime-message-kind") as HTMLSelectElement | null;
+  const priority = el("runtime-message-priority") as HTMLSelectElement | null;
+  const checkbox = el("runtime-message-requires-ack") as HTMLInputElement | null;
+  const options = el("runtime-message-options");
+  const signals: string[] = [];
+  if (kind?.value && kind.value !== "note") signals.push(tr(kind.value));
+  if (priority?.value && priority.value !== "normal") signals.push(tr(priority.value));
+  if (checkbox?.checked) signals.push(runtimeLanguage === "zh-CN" ? "需确认" : "ACK");
+  setText("runtime-message-options-label", signals.length ? signals.join(" · ") : tr("Options"));
+  options?.classList.toggle("has-selection", signals.length > 0);
 }
 
 function setCollaborationReplyTarget(messageId: string): void {
@@ -921,14 +2209,17 @@ function setCollaborationReplyTarget(messageId: string): void {
   if (wasEditing && body) body.value = "";
   syncCollaborationComposer();
   if (messageId) {
-    setText("runtime-message-send-status", "Reply target selected. Your next message will reply to " + messageId + ".");
+    setText("runtime-message-send-status", runtimeLanguage === "zh-CN"
+      ? "已选择回复目标。下一条消息将回复 " + messageId + "。"
+      : "Reply target selected. Your next message will reply to " + messageId + ".");
     body?.focus();
   } else {
-    setText("runtime-message-send-status", "Reply target cleared.");
+    setText("runtime-message-send-status", tr("Reply target cleared."));
   }
 }
 
 function beginCollaborationEdit(message: any): void {
+  saveCurrentDraft();
   if (!setRuntimeCollaborationEditTarget(state, String(message?.message_id || ""))) return;
   collaborationReplyTo = "";
   const body = el("runtime-message-body") as HTMLTextAreaElement | null;
@@ -942,20 +2233,20 @@ function beginCollaborationEdit(message: any): void {
 
 function cancelCollaborationEdit(): void {
   clearRuntimeCollaborationEditTarget(state);
-  const body = el("runtime-message-body") as HTMLTextAreaElement | null;
-  if (body) body.value = "";
-  setText("runtime-message-send-status", "Edit cancelled.");
+  restoreCurrentDraft();
+  setText("runtime-message-send-status", tr("Edit cancelled."));
   syncCollaborationComposer();
 }
 
 function resetCollaborationComposerUi(): void {
   const body = el("runtime-message-body") as HTMLTextAreaElement | null;
   if (body) body.value = "";
+  closeComposerOptions(false);
   syncCollaborationComposer();
 }
 
-function renderCollaboration(statusText?: string): void {
-  const mutationNotice = takeRuntimeCollaborationMutationNotice(state);
+function renderCollaboration(statusText?: string, consumeMutationNotice = true): void {
+  const mutationNotice = consumeMutationNotice ? takeRuntimeCollaborationMutationNotice(state) : "";
   if (mutationNotice) {
     const editStillActive = !!runtimeCollaborationEditTarget(state);
     if (
@@ -967,8 +2258,9 @@ function renderCollaboration(statusText?: string): void {
       const body = el("runtime-message-body") as HTMLTextAreaElement | null;
       if (body) body.value = "";
     }
-    setText("runtime-message-send-status", mutationNotice);
-    statusText = [statusText, mutationNotice].filter(Boolean).join(" · ");
+    const localizedMutationNotice = tr(mutationNotice);
+    setText("runtime-message-send-status", localizedMutationNotice);
+    statusText = [statusText ? tr(statusText) : "", localizedMutationNotice].filter(Boolean).join(" · ");
   }
   const available = state.collaboration.available !== false;
   if (!available) {
@@ -976,16 +2268,38 @@ function renderCollaboration(statusText?: string): void {
     if (body) body.value = "";
   }
   show("runtime-collaboration-unavailable", !available);
-  show("runtime-collaboration-form", available);
+  show("runtime-collaboration-form", true);
+  el("runtime-collaboration-form")?.classList.toggle("is-unavailable", !available);
   const messages = available && Array.isArray(state.collaboration.messages) ? state.collaboration.messages : [];
-  show("runtime-collaboration-empty", available && messages.length === 0);
+  const scroll = el("runtime-chat-scroll");
+  const previousScrollTop = scroll?.scrollTop || 0;
+  const shouldFollowNewMessages = collaborationFollowLatest || chatIsNearLatest();
+  const previouslyRenderedMessageIds = renderedCollaborationMessageIds;
+  const nextRenderedMessageIds = new Set<string>(messages.map((message: any) => String(message?.message_id || "")).filter(Boolean));
+  const newMessageIds = Array.from(nextRenderedMessageIds).filter((id) => !previouslyRenderedMessageIds.has(id));
+  const hasNewMessages = newMessageIds.length > 0;
+  const firstRetainedRender = previouslyRenderedMessageIds.size === 0 && nextRenderedMessageIds.size > 0;
+  show("runtime-collaboration-board", messages.length > 0);
+  show("runtime-collaboration-empty", messages.length === 0);
+  setText("runtime-collaboration-empty-title", available ? tr("Start this Session conversation") : tr("Conversation access unavailable"));
+  setText(
+    "runtime-collaboration-empty-copy",
+    available
+      ? tr("Messages posted here are retained on the Session collaboration board.")
+      : tr("This credential can inspect the Project and Session, but retained messages require runtime:read.")
+  );
+  const localizedStatusText = statusText ? tr(statusText) : "";
   const status = available
-    ? "Collaboration: " + collaborationPhaseLabel() + " · " + countLabel(messages.length, "retained message") + (statusText ? " · " + statusText : "")
-    : "runtime:read unavailable";
+    ? (runtimeLanguage === "zh-CN" ? "协作：" : "Collaboration: ") + collaborationPhaseLabel() + " · " + countLabel(messages.length, "retained message") + (localizedStatusText ? " · " + localizedStatusText : "")
+    : (runtimeLanguage === "zh-CN" ? "runtime:read 不可用" : "runtime:read unavailable");
   setText("runtime-collaboration-status", status);
   const node = el("runtime-collaboration-board"); clearNode(node);
   syncCollaborationComposer();
-  if (!node || !available) return;
+  if (!available) setHumanJoinSendEnabled(false);
+  if (!node || !available) {
+    renderedCollaborationMessageIds = nextRenderedMessageIds;
+    return;
+  }
   const byId = new Map<string, any>();
   const children = new Map<string, any[]>();
   for (const message of messages) {
@@ -997,44 +2311,93 @@ function renderCollaboration(statusText?: string): void {
       const list = children.get(parent) || []; list.push(message); children.set(parent, list);
     }
   }
+  const messageSides = runtimeCollaborationMessageSides(messages);
   const visited = new Set<string>();
+  let previousRenderedSide = "";
+  let previousRenderedDay = "";
   const appendMessage = (message: any, depth: number, parentUnavailable: boolean): void => {
     const id = String(message?.message_id || ""); if (!id || visited.has(id)) return; visited.add(id);
     const card = document.createElement("article");
     card.className = "message-card " + String(message?.kind || "note") + (String(message?.status || "") === "resolved" ? " resolved" : "") + (parentUnavailable ? " retained-reply" : "");
+    card.classList.add(message?.author_session_id ? "agent-authored" : "human-authored");
+    const messageSide = messageSides.get(id) || "outgoing";
+    const createdAt = typeof message?.created_at === "number" ? message.created_at : 0;
+    const createdDate = createdAt ? new Date(createdAt * 1000) : null;
+    const dayKey = createdDate ? [createdDate.getFullYear(), createdDate.getMonth(), createdDate.getDate()].join("-") : "";
+    if (dayKey && dayKey !== previousRenderedDay) {
+      const separator = document.createElement("div");
+      separator.className = "message-date-separator";
+      const label = document.createElement("span");
+      label.textContent = createdDate?.toLocaleDateString(runtimeLanguage === "zh-CN" ? "zh-CN" : "en", { month: "short", day: "numeric", year: "numeric" }) || "";
+      separator.appendChild(label);
+      node.appendChild(separator);
+      previousRenderedDay = dayKey;
+      previousRenderedSide = "";
+    }
+    card.classList.add(messageSide === "incoming" ? "message-incoming" : "message-outgoing");
+    if (!previouslyRenderedMessageIds.has(id)) card.classList.add("message-entering");
+    if (previousRenderedSide === messageSide) card.classList.add("message-group-continuation");
+    previousRenderedSide = messageSide;
     if (depth > 0) card.classList.add("message-thread");
+    const content = document.createElement("div"); content.className = "message-content";
+    const author = document.createElement("div"); author.className = "message-author";
+    const authorName = document.createElement("span"); authorName.className = "message-author-name"; authorName.textContent = messageSide === "incoming" ? tr("Agent") : tr("You");
+    if (message?.author_session_id) authorName.title = String(message.author_session_id);
+    author.appendChild(authorName); content.appendChild(author);
+    if (message?.reply_to) {
+      const replyContext = document.createElement("div"); replyContext.className = "message-reply-context";
+      replyContext.appendChild(runtimeIcon("reply"));
+      const replyText = document.createElement("span");
+      const parent = byId.get(String(message.reply_to));
+      const preview = parent?.message ? String(parent.message).replace(/\s+/g, " ").trim().slice(0, 120) : tr("Original message unavailable");
+      replyText.textContent = tr("Replying to") + " · " + preview;
+      replyContext.appendChild(replyText); content.appendChild(replyContext);
+    }
+    const footer = document.createElement("div"); footer.className = "message-footer";
     const head = document.createElement("div"); head.className = "message-head";
-    const kind = document.createElement("span"); kind.className = "message-kind"; kind.textContent = String(message?.kind || "message") + " · " + String(message?.priority || "normal") + " · " + String(message?.status || "unknown");
+    const kindValue = String(message?.kind || "note");
+    const priorityValue = String(message?.priority || "normal");
+    const statusValue = String(message?.status || "open");
+    const messageSignals: string[] = [];
+    if (kindValue !== "note") messageSignals.push(tr(kindValue));
+    if (priorityValue !== "normal") messageSignals.push(tr(priorityValue));
+    if (statusValue && statusValue !== "open" && statusValue !== "resolved") messageSignals.push(tr(statusValue));
+    if (messageSignals.length) {
+      const kind = document.createElement("span"); kind.className = "message-kind"; kind.textContent = messageSignals.join(" · "); head.appendChild(kind);
+    }
     const time = document.createElement("span"); time.className = "muted small"; time.textContent = updatedLabel(message?.created_at);
-    head.appendChild(kind); head.appendChild(time); card.appendChild(head);
+    head.appendChild(time); footer.appendChild(head);
     const meta = document.createElement("div"); meta.className = "message-meta";
-    const metaParts = [id]; if (message?.author_session_id) metaParts.push("author " + String(message.author_session_id));
-    meta.textContent = metaParts.join(" · "); card.appendChild(meta);
-    if (parentUnavailable) { const unavailable = document.createElement("div"); unavailable.className = "message-links"; unavailable.textContent = "retained reply · parent unavailable"; card.appendChild(unavailable); }
-    else if (message?.reply_to) { const reply = document.createElement("div"); reply.className = "message-links"; reply.textContent = "reply to " + String(message.reply_to); card.appendChild(reply); }
+    const metaParts = [id]; if (message?.author_session_id) metaParts.push((runtimeLanguage === "zh-CN" ? "作者 " : "author ") + String(message.author_session_id));
+    if (parentUnavailable) metaParts.push(runtimeLanguage === "zh-CN" ? "保留的回复 · 上级消息不可用" : "retained reply · parent unavailable");
+    else if (message?.reply_to) metaParts.push((runtimeLanguage === "zh-CN" ? "回复 " : "reply to ") + String(message.reply_to));
     if (message?.superseded_by_message_id) {
-      const link = document.createElement("div"); link.className = "message-links";
       const replacementId = String(message.superseded_by_message_id);
-      link.textContent = byId.has(replacementId)
+      metaParts.push(byId.has(replacementId)
         ? "superseded by " + replacementId
-        : "superseded by " + replacementId + " · replacement unavailable / retained link only";
-      card.appendChild(link);
+        : "superseded by " + replacementId + " · replacement unavailable / retained link only");
     }
     if (message?.supersedes_message_id) {
-      const link = document.createElement("div"); link.className = "message-links";
       const originalId = String(message.supersedes_message_id);
-      link.textContent = byId.has(originalId)
+      metaParts.push(byId.has(originalId)
         ? "replaces " + originalId
-        : "replaces " + originalId + " · retained link only";
-      card.appendChild(link);
+        : "replaces " + originalId + " · retained link only");
     }
-    const body = document.createElement("div"); body.className = "message-body"; body.textContent = String(message?.message || ""); card.appendChild(body);
+    meta.textContent = metaParts.join(" · "); footer.appendChild(meta); footer.title = meta.textContent;
+    const bubble = document.createElement("div"); bubble.className = "message-bubble";
+    appendRichMessage(bubble, message?.message);
+    content.appendChild(bubble);
     if (message?.requires_ack) {
       const ack = document.createElement("div"); ack.className = "message-ack";
-      ack.textContent = typeof message?.first_ack_observed_at === "number"
+      const acknowledged = typeof message?.first_ack_observed_at === "number";
+      ack.classList.toggle("observed", acknowledged);
+      ack.textContent = acknowledged
+        ? tr("Acknowledged") + " · " + updatedLabel(message.first_ack_observed_at)
+        : tr("Acknowledgement required");
+      ack.title = acknowledged
         ? "ACK required · First ACK observed " + updatedLabel(message.first_ack_observed_at)
         : "ACK required";
-      card.appendChild(ack);
+      footer.appendChild(ack);
     }
     if (message?.resolved_at || message?.resolution || message?.resolved_by_message_id || message?.closure_kind) {
       const resolution = document.createElement("div"); resolution.className = "message-resolution";
@@ -1044,20 +2407,25 @@ function renderCollaboration(statusText?: string): void {
       else if (message.resolved_at) parts.push("resolved " + updatedLabel(message.resolved_at));
       if (message.resolution) parts.push(String(message.resolution));
       if (message.resolved_by_message_id) parts.push("by " + String(message.resolved_by_message_id));
-      resolution.textContent = parts.join(" · "); card.appendChild(resolution);
+      const resolutionLabel = message?.closure_kind === "withdrawn"
+        ? tr("Withdrawn")
+        : message?.closure_kind === "superseded"
+          ? tr("Replaced")
+          : tr("Resolved");
+      resolution.textContent = resolutionLabel + (message.resolved_at ? " · " + updatedLabel(message.resolved_at) : "");
+      resolution.title = parts.join(" · "); footer.appendChild(resolution);
     }
     const actions = document.createElement("div"); actions.className = "message-actions";
-    const replyButton = document.createElement("button"); replyButton.type = "button"; replyButton.className = "text-button"; replyButton.textContent = "Reply";
-    replyButton.addEventListener("click", () => setCollaborationReplyTarget(id));
-    actions.appendChild(replyButton);
-    if (runtimeCollaborationMessageCanMutate(message) && state.collaboration.phase === "live" && !state.collaboration.uncertainMutation) {
-      const editButton = document.createElement("button"); editButton.type = "button"; editButton.className = "text-button"; editButton.textContent = "Edit"; editButton.title = "Replace this retained message while preserving its history.";
-      editButton.addEventListener("click", () => beginCollaborationEdit(message));
-      const deleteButton = document.createElement("button"); deleteButton.type = "button"; deleteButton.className = "text-button"; deleteButton.textContent = "Delete"; deleteButton.title = "Withdraw this retained message; history is preserved.";
-      deleteButton.addEventListener("click", () => void withdrawHumanCollaborationMessage(id));
-      actions.appendChild(editButton); actions.appendChild(deleteButton);
+    actions.appendChild(createMessageAction(tr("Reply"), "reply", () => setCollaborationReplyTarget(id)));
+    if (messageSide === "outgoing" && runtimeCollaborationMessageCanMutate(message) && state.collaboration.phase === "live" && !state.collaboration.uncertainMutation) {
+      const editLabel = runtimeLanguage === "zh-CN" ? "替换这条保留消息，同时保留其历史记录。" : "Replace this retained message while preserving its history.";
+      const deleteLabel = runtimeLanguage === "zh-CN" ? "撤回这条保留消息；历史记录仍会保留。" : "Withdraw this retained message; history is preserved.";
+      actions.appendChild(createMessageAction(editLabel, "edit", () => beginCollaborationEdit(message)));
+      actions.appendChild(createMessageAction(deleteLabel, "trash", () => void withdrawHumanCollaborationMessage(id), true));
     }
-    card.appendChild(actions);
+    footer.appendChild(actions);
+    content.appendChild(footer);
+    card.appendChild(content);
     node.appendChild(card);
     for (const child of children.get(id) || []) appendMessage(child, depth + 1, false);
   };
@@ -1066,6 +2434,20 @@ function renderCollaboration(statusText?: string): void {
     if (!parent || !byId.has(parent)) appendMessage(message, 0, !!parent);
   }
   for (const message of messages) appendMessage(message, 0, false);
+  renderedCollaborationMessageIds = nextRenderedMessageIds;
+  if (hasNewMessages && !firstRetainedRender) announceNewCollaborationMessages(newMessageIds.length);
+  if (firstRetainedRender || (hasNewMessages && shouldFollowNewMessages)) {
+    scrollCollaborationToLatest(!firstRetainedRender);
+  } else {
+    window.requestAnimationFrame(() => {
+      if (scroll) scroll.scrollTop = previousScrollTop;
+    });
+    if (hasNewMessages) {
+      collaborationFollowLatest = false;
+      collaborationPendingMessages += newMessageIds.length;
+      syncNewMessageIndicator();
+    }
+  }
 }
 
 async function confirmCollaborationMutationDurability(
@@ -1080,9 +2462,9 @@ async function confirmCollaborationMutationDurability(
     message_id: String(mutation?.messageId || ""),
   };
   if (replacing) payload.message = String(mutation?.message || "");
-  setText("runtime-message-send-status", replacing
+  setText("runtime-message-send-status", tr(replacing
     ? "Confirming replacement durability…"
-    : "Confirming withdrawal durability…");
+    : "Confirming withdrawal durability…"));
   const response = await api(
     replacing ? "workflow-session-replace-message" : "workflow-session-withdraw-message",
     payload,
@@ -1240,22 +2622,24 @@ function syncAckComposer(): void {
   const edit = runtimeCollaborationEditTarget(state);
   const guidance = edit ? edit.kind === "guidance" : kind?.value === "guidance";
   show("runtime-message-ack-label", guidance);
-  if (!checkbox) return;
+  if (!checkbox) { syncComposerOptionSummary(); return; }
   if (edit) {
     checkbox.disabled = true;
     checkbox.checked = !!edit.requires_ack;
     checkbox.title = "Inherited from the original retained message.";
+    syncComposerOptionSummary();
     return;
   }
   checkbox.disabled = !guidance || priority?.value !== "high";
   if (checkbox.disabled) checkbox.checked = false;
   checkbox.title = guidance && priority?.value !== "high" ? "ACK requirement is available for High priority guidance." : "";
+  syncComposerOptionSummary();
 }
 
 async function withdrawHumanCollaborationMessage(messageId: string): Promise<void> {
   const request = runtimeCollaborationRequest(state);
   if (!request || state.collaboration.available === false) return;
-  setText("runtime-message-send-status", "Withdrawing retained message…");
+  setText("runtime-message-send-status", tr("Withdrawing retained message…"));
   const response = await api("workflow-session-withdraw-message", {
     project: request.project,
     session_id: request.sessionId,
@@ -1275,18 +2659,17 @@ async function withdrawHumanCollaborationMessage(messageId: string): Promise<voi
   if (response?.status === 409) {
     abortCollaboration();
     setRuntimeCollaborationPhase(state, request, "paused");
-    setText("runtime-message-send-status", "Message changed before Delete. Refresh retained messages before retrying.");
+    setText("runtime-message-send-status", tr("Message changed before Delete. Refresh retained messages before retrying."));
     renderCollaboration("message changed · refresh retained state");
     return;
   }
-  if (!response?.ok || !response.data?.message) { setText("runtime-message-send-status", "Delete failed."); return; }
+  if (!response?.ok || !response.data?.message) { setText("runtime-message-send-status", tr("Delete failed.")); return; }
   if (String(state.collaboration.editTargetId || "") === messageId) {
     clearRuntimeCollaborationEditTarget(state);
-    const body = el("runtime-message-body") as HTMLTextAreaElement | null;
-    if (body) body.value = "";
+    restoreCurrentDraft();
   }
   adoptRuntimeCollaborationObservation(state, request, { messages: [response.data.message] });
-  setText("runtime-message-send-status", "Retained message withdrawn.");
+  setText("runtime-message-send-status", tr("Retained message withdrawn."));
   renderCollaboration();
 }
 
@@ -1300,11 +2683,12 @@ async function postHumanCollaborationMessage(event: Event): Promise<void> {
   const checkbox = el("runtime-message-requires-ack") as HTMLInputElement | null;
   const send = el("runtime-message-send") as HTMLButtonElement | null;
   const message = body?.value.trim() || "";
-  if (!message) { setText("runtime-message-send-status", "Enter a message."); return; }
+  if (!message) { setText("runtime-message-send-status", tr("Enter a message.")); return; }
+  closeComposerOptions(false);
   const editTarget = runtimeCollaborationEditTarget(state);
   if (editTarget) {
     if (send) send.disabled = true;
-    setText("runtime-message-send-status", "Replacing retained message…");
+    setText("runtime-message-send-status", tr("Replacing retained message…"));
     const response = await api("workflow-session-replace-message", {
       project: request.project,
       session_id: request.sessionId,
@@ -1329,28 +2713,28 @@ async function postHumanCollaborationMessage(event: Event): Promise<void> {
     if (authorityFailure) { setText("runtime-message-send-status", authorityFailure); return; }
     if (response?.status === 409) {
       clearRuntimeCollaborationEditTarget(state);
-      if (body) body.value = "";
+      restoreCurrentDraft();
       abortCollaboration();
       setRuntimeCollaborationPhase(state, request, "paused");
-      setText("runtime-message-send-status", "Message changed before Replace. Refresh retained messages before retrying.");
+      setText("runtime-message-send-status", tr("Message changed before Replace. Refresh retained messages before retrying."));
       renderCollaboration("message changed · refresh retained state");
       return;
     }
     if (!response?.ok || !response.data?.original || !response.data?.replacement) {
-      setText("runtime-message-send-status", "Replace failed.");
+      setText("runtime-message-send-status", tr("Replace failed."));
       return;
     }
     clearRuntimeCollaborationEditTarget(state);
     adoptRuntimeCollaborationObservation(state, request, {
       messages: [response.data.original, response.data.replacement],
     });
-    if (body) body.value = "";
-    setText("runtime-message-send-status", response.data.replayed ? "Replacement already retained." : "Message replaced.");
+    restoreCurrentDraft();
+    setText("runtime-message-send-status", tr(response.data.replayed ? "Replacement already retained." : "Message replaced."));
     renderCollaboration();
     return;
   }
   if (send) send.disabled = true;
-  setText("runtime-message-send-status", "Sending…");
+  setText("runtime-message-send-status", tr("Sending…"));
   const response = await api("workflow-session-post-message", {
     project: request.project,
     session_id: request.sessionId,
@@ -1364,7 +2748,7 @@ async function postHumanCollaborationMessage(event: Event): Promise<void> {
   if (response?.status === 0) {
     abortCollaboration();
     setRuntimeCollaborationPhase(state, request, "paused");
-    setText("runtime-message-send-status", "Send outcome unknown. Refresh and review retained messages before retrying.");
+    setText("runtime-message-send-status", tr("Send outcome unknown. Refresh and review retained messages before retrying."));
     renderCollaboration("send outcome unknown · refresh before retry");
     return;
   }
@@ -1372,11 +2756,12 @@ async function postHumanCollaborationMessage(event: Event): Promise<void> {
   if (response?.status === 401) { lock("Credential rejected."); return; }
   const authorityFailure = sessionCollaborationAuthorityFailure(response);
   if (authorityFailure) { setText("runtime-message-send-status", authorityFailure); return; }
-  if (!response?.ok || !response.data) { setText("runtime-message-send-status", "Send failed."); return; }
+  if (!response?.ok || !response.data) { setText("runtime-message-send-status", tr("Send failed.")); return; }
   adoptRuntimeCollaborationObservation(state, request, { messages: [response.data] });
   if (body) body.value = "";
+  clearCurrentDraft();
   setCollaborationReplyTarget("");
-  setText("runtime-message-send-status", "Sent.");
+  setText("runtime-message-send-status", tr("Sent."));
   renderCollaboration();
 }
 
@@ -1388,8 +2773,8 @@ function operationKey(prefix: string): string {
 }
 
 function communicationTimeLabel(value: any): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "time unavailable";
-  return new Date(value).toLocaleString();
+  if (typeof value !== "number" || !Number.isFinite(value)) return tr("time unavailable");
+  return new Date(value).toLocaleString(runtimeLanguage === "zh-CN" ? "zh-CN" : "en");
 }
 
 function parseAgentIds(value: string): string[] {
@@ -1480,10 +2865,12 @@ function renderCommunicationAvailability(): void {
   show("runtime-communication-unavailable", !available);
   show("runtime-communication-surface", available);
   const access = communicationReadAvailable === null
-    ? "communication:read checking…"
+    ? (runtimeLanguage === "zh-CN" ? "正在检查 communication:read…" : "communication:read checking…")
     : available
-      ? "communication:read" + (communicationManageAvailable === false ? " · read only" : " · polling + lease renewal every 8s")
-      : "communication:read unavailable";
+      ? "communication:read" + (communicationManageAvailable === false
+        ? (runtimeLanguage === "zh-CN" ? " · 只读" : " · read only")
+        : (runtimeLanguage === "zh-CN" ? " · 每 8 秒轮询并续租" : " · polling + lease renewal every 8s"))
+      : (runtimeLanguage === "zh-CN" ? "communication:read 不可用" : "communication:read unavailable");
   setText("runtime-communication-status", access);
 }
 
@@ -1499,8 +2886,7 @@ function renderCommunicationAgents(): void {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "communication-row" + (agentId === selectedCommunicationAgentId ? " selected" : "");
-    row.setAttribute("role", "option");
-    row.setAttribute("aria-selected", agentId === selectedCommunicationAgentId ? "true" : "false");
+    if (agentId === selectedCommunicationAgentId) row.setAttribute("aria-current", "true");
     const head = document.createElement("div");
     head.className = "communication-row-head";
     const title = document.createElement("span");
@@ -1515,8 +2901,8 @@ function renderCommunicationAgents(): void {
     const meta = document.createElement("span");
     meta.className = "communication-row-meta";
     meta.textContent = agentId
-      + " · profile r" + String(agent?.profile_revision || 0)
-      + " · controller g" + String(agent?.current_controller_generation || 0)
+      + (runtimeLanguage === "zh-CN" ? " · 配置版本 r" : " · profile r") + String(agent?.profile_revision || 0)
+      + (runtimeLanguage === "zh-CN" ? " · 控制器 g" : " · controller g") + String(agent?.current_controller_generation || 0)
       + " · " + countLabel(agent?.active_endpoint_count, "active Endpoint")
       + " · " + countLabel(agent?.unresolved_wake_count, "unresolved Wake");
     row.appendChild(meta);
@@ -1539,14 +2925,14 @@ function renderCommunicationAgentCard(): void {
   show("runtime-agent-card", !!agent);
   if (!agent) return;
   const agentId = String(agent.agent_id || "");
-  setText("runtime-agent-card-name", String(agent.display_name || agent.handle || "Agent Card") + " · @" + String(agent.handle || "agent"));
+  setText("runtime-agent-card-name", String(agent.display_name || agent.handle || tr("Agent Card")) + " · @" + String(agent.handle || "agent"));
   setText("runtime-agent-card-id", agentId);
-  setText("runtime-agent-card-description", String(agent.description || "No description."));
+  setText("runtime-agent-card-description", String(agent.description || tr("No description.")));
   setText(
     "runtime-agent-card-revision",
-    "Profile revision " + String(agent.profile_revision || 0)
-      + " · controller generation " + String(agent.current_controller_generation || 0)
-      + " · updated " + communicationTimeLabel(agent.updated_at_unix_ms)
+    (runtimeLanguage === "zh-CN" ? "配置版本 " : "Profile revision ") + String(agent.profile_revision || 0)
+      + (runtimeLanguage === "zh-CN" ? " · 控制器代数 " : " · controller generation ") + String(agent.current_controller_generation || 0)
+      + (runtimeLanguage === "zh-CN" ? " · 更新于 " : " · updated ") + communicationTimeLabel(agent.updated_at_unix_ms)
   );
   setText("runtime-agent-unread", countLabel(agent.queued_delivery_count, "queued"));
   const labels = el("runtime-agent-card-labels");
@@ -1561,8 +2947,8 @@ function renderCommunicationAgentCard(): void {
   setText(
     "runtime-agent-wake-status",
     countLabel(unresolvedWakeCount, "unresolved Wake")
-      + " · latest " + latestWakeState
-      + " · Inbox Delivery and Wake consumption remain independent"
+      + (runtimeLanguage === "zh-CN" ? " · 最近状态 " : " · latest ") + tr(latestWakeState)
+      + (runtimeLanguage === "zh-CN" ? " · 收件箱投递与唤醒消费彼此独立" : " · Inbox Delivery and Wake consumption remain independent")
   );
   const updateForm = el("runtime-agent-update-form") as HTMLFormElement | null;
   const revision = String(agent.profile_revision || 0);
@@ -1590,12 +2976,15 @@ function renderCommunicationAgentCard(): void {
   setText(
     "runtime-agent-endpoint-status",
     endpoint
-      ? "Browser Endpoint " + endpoint.endpoint_id
-        + " · " + endpoint.lifecycle
-        + " · generation " + String(endpoint.controller_generation)
-        + " · lease " + communicationTimeLabel(endpoint.lease_expires_at_unix_ms)
-        + " · Runtime Console adapter: polling only (runtime wake capable: " + String(endpoint.wake_capable) + ")"
-      : "This window is not acting as the Agent. Agent Card, Conversations, Inbox deliveries, and Wake Intents remain durable."
+      ? (runtimeLanguage === "zh-CN" ? "浏览器端点 " : "Browser Endpoint ") + endpoint.endpoint_id
+        + " · " + tr(endpoint.lifecycle)
+        + (runtimeLanguage === "zh-CN" ? " · 代数 " : " · generation ") + String(endpoint.controller_generation)
+        + (runtimeLanguage === "zh-CN" ? " · 租约至 " : " · lease ") + communicationTimeLabel(endpoint.lease_expires_at_unix_ms)
+        + (runtimeLanguage === "zh-CN" ? " · 运行控制台适配器：仅轮询（运行时可唤醒：" : " · Runtime Console adapter: polling only (runtime wake capable: ")
+        + String(endpoint.wake_capable) + ")"
+      : (runtimeLanguage === "zh-CN"
+          ? "此窗口尚未作为该 Agent。Agent 卡片、对话、收件箱投递和唤醒意图仍会持久保留。"
+          : "This window is not acting as the Agent. Agent Card, Conversations, Inbox deliveries, and Wake Intents remain durable.")
   );
   show("runtime-agent-attach", !endpoint);
   show("runtime-agent-detach", !!endpoint);
@@ -1612,13 +3001,12 @@ function renderCommunicationConversations(): void {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "communication-row" + (conversationId === selectedCommunicationConversationId ? " selected" : "");
-    row.setAttribute("role", "option");
-    row.setAttribute("aria-selected", conversationId === selectedCommunicationConversationId ? "true" : "false");
+    if (conversationId === selectedCommunicationConversationId) row.setAttribute("aria-current", "true");
     const head = document.createElement("div");
     head.className = "communication-row-head";
     const title = document.createElement("span");
     title.className = "communication-row-title";
-    title.textContent = String(conversation?.title || "Untitled Conversation");
+    title.textContent = String(conversation?.title || tr("Untitled Conversation"));
     const count = document.createElement("span");
     count.className = "chip";
     count.textContent = countLabel(conversation?.message_count, "message");
@@ -1627,7 +3015,7 @@ function renderCommunicationConversations(): void {
     row.appendChild(head);
     const meta = document.createElement("span");
     meta.className = "communication-row-meta";
-    meta.textContent = conversationId + " · " + countLabel(conversation?.participant_count, "participant") + " · seq " + String(conversation?.last_seq || 0);
+    meta.textContent = conversationId + " · " + countLabel(conversation?.participant_count, "participant") + (runtimeLanguage === "zh-CN" ? " · 序号 " : " · seq ") + String(conversation?.last_seq || 0);
     row.appendChild(meta);
     row.addEventListener("click", () => {
       selectedCommunicationConversationId = conversationId;
@@ -1655,19 +3043,19 @@ function renderCommunicationConversation(): void {
   clearNode(transcript);
   clearNode(el("runtime-conversation-participants"));
   if (!available || !detail) return;
-  setText("runtime-conversation-name", String(summary.title || "Untitled Conversation"));
+  setText("runtime-conversation-name", String(summary.title || tr("Untitled Conversation")));
   setText("runtime-conversation-id", String(summary.conversation_id || ""));
   setText(
     "runtime-conversation-seq",
-    "seq " + String(summary.last_seq || 0) + " · " + countLabel(summary.message_count, "message") + ((Number(detail?.after_seq || 0) > 0 || detail.truncated) ? " · recent bounded page" : "")
+    (runtimeLanguage === "zh-CN" ? "序号 " : "seq ") + String(summary.last_seq || 0) + " · " + countLabel(summary.message_count, "message") + ((Number(detail?.after_seq || 0) > 0 || detail.truncated) ? (runtimeLanguage === "zh-CN" ? " · 最近有界页面" : " · recent bounded page") : "")
   );
   const participants = el("runtime-conversation-participants");
   if (participants) {
     for (const participant of Array.isArray(detail.participants) ? detail.participants : []) {
       const kind = String(participant?.participant_kind || "participant");
       const label = kind === "agent"
-        ? "Agent · " + String(participant?.display_name || participant?.handle || participant?.agent_id || "unknown")
-        : "Human · " + String(participant?.principal_kind || "credential principal");
+        ? "Agent · " + String(participant?.display_name || participant?.handle || participant?.agent_id || tr("unknown"))
+        : (runtimeLanguage === "zh-CN" ? "人工 · " : "Human · ") + String(participant?.principal_kind || (runtimeLanguage === "zh-CN" ? "凭证主体" : "credential principal"));
       appendChip(participants, label, kind === "agent" ? "tone-pass" : "tone-runtime");
     }
   }
@@ -1684,8 +3072,8 @@ function renderCommunicationConversation(): void {
     const name = document.createElement("span");
     name.className = "conversation-message-author";
     name.textContent = agentAuthored
-      ? "Agent · " + String(author.display_name || author.handle || author.agent_id || "unknown")
-      : "Human · " + String(author.principal_kind || "credential principal");
+      ? "Agent · " + String(author.display_name || author.handle || author.agent_id || tr("unknown"))
+      : (runtimeLanguage === "zh-CN" ? "人工 · " : "Human · ") + String(author.principal_kind || (runtimeLanguage === "zh-CN" ? "凭证主体" : "credential principal"));
     const seq = document.createElement("span");
     seq.className = "muted small";
     seq.textContent = "#" + String(message?.seq || 0) + " · " + communicationTimeLabel(message?.created_at_unix_ms);
@@ -1696,7 +3084,7 @@ function renderCommunicationConversation(): void {
     meta.className = "conversation-message-meta";
     const metaParts = [String(message?.message_id || "")];
     if (author.agent_id) metaParts.push(String(author.agent_id));
-    if (message?.reply_to) metaParts.push("reply to " + String(message.reply_to));
+    if (message?.reply_to) metaParts.push((runtimeLanguage === "zh-CN" ? "回复 " : "reply to ") + String(message.reply_to));
     meta.textContent = metaParts.join(" · ");
     card.appendChild(meta);
     const body = document.createElement("div");
@@ -1707,8 +3095,8 @@ function renderCommunicationConversation(): void {
     const delivery = document.createElement("div");
     delivery.className = "conversation-message-deliveries";
     delivery.textContent = deliveries.length
-      ? "Agent Inbox: " + deliveries.map((item: any) => deliveryAgentLabel(String(item?.recipient_agent_id || "")) + " " + String(item?.state || "unknown")).join(" · ")
-      : "No Agent Inbox delivery · transcript / Human room only";
+      ? (runtimeLanguage === "zh-CN" ? "Agent 收件箱：" : "Agent Inbox: ") + deliveries.map((item: any) => deliveryAgentLabel(String(item?.recipient_agent_id || "")) + " " + tr(String(item?.state || "unknown"))).join(" · ")
+      : (runtimeLanguage === "zh-CN" ? "没有 Agent 收件箱投递 · 仅保留记录 / 人工房间" : "No Agent Inbox delivery · transcript / Human room only");
     card.appendChild(delivery);
     transcript.appendChild(card);
   }
@@ -1722,17 +3110,19 @@ function renderCommunicationInbox(): void {
   const endpointId = communicationEndpointId();
   show("runtime-inbox-consume-all", !!endpointId && communicationInbox.length > 0);
   if (!agent) {
-    setText("runtime-inbox-status", "Select an Agent to inspect recipient-specific queued deliveries.");
+    setText("runtime-inbox-status", runtimeLanguage === "zh-CN" ? "选择一个 Agent 以查看收件人专属的排队投递。" : "Select an Agent to inspect recipient-specific queued deliveries.");
     return;
   }
   if (!endpointId) {
-    setText("runtime-inbox-status", "Attach this browser as an Endpoint. Queued deliveries remain durable while offline.");
+    setText("runtime-inbox-status", runtimeLanguage === "zh-CN" ? "将此浏览器附加为端点。离线期间排队投递仍会持久保留。" : "Attach this browser as an Endpoint. Queued deliveries remain durable while offline.");
     return;
   }
   const totalQueued = Number(agent.queued_delivery_count || 0);
   setText(
     "runtime-inbox-status",
-    countLabel(totalQueued, "queued delivery") + (communicationInbox.length < totalQueued ? " · showing " + String(communicationInbox.length) : "") + " · reading does not consume or wake a model"
+    countLabel(totalQueued, "queued delivery")
+      + (communicationInbox.length < totalQueued ? (runtimeLanguage === "zh-CN" ? " · 当前显示 " : " · showing ") + String(communicationInbox.length) : "")
+      + (runtimeLanguage === "zh-CN" ? " · 读取不会消费投递或唤醒模型" : " · reading does not consume or wake a model")
   );
   if (!list) return;
   for (const item of communicationInbox) {
@@ -1742,18 +3132,18 @@ function renderCommunicationInbox(): void {
     head.className = "communication-row-head";
     const title = document.createElement("span");
     title.className = "communication-row-title";
-    title.textContent = String(item?.conversation_title || "Untitled Conversation") + " · #" + String(item?.message?.seq || 0);
+    title.textContent = String(item?.conversation_title || tr("Untitled Conversation")) + " · #" + String(item?.message?.seq || 0);
     const consume = document.createElement("button");
     consume.type = "button";
     consume.className = "text-button";
-    consume.textContent = "Consume";
+    consume.textContent = tr("Consume");
     consume.addEventListener("click", () => void consumeCommunicationDeliveries([String(item?.delivery_id || "")]));
     head.appendChild(title);
     head.appendChild(consume);
     row.appendChild(head);
     const meta = document.createElement("span");
     meta.className = "communication-row-meta";
-    meta.textContent = String(item?.delivery_id || "") + " · from " + (item?.message?.author?.participant_kind === "agent" ? deliveryAgentLabel(String(item.message.author.agent_id || "")) : "Human");
+    meta.textContent = String(item?.delivery_id || "") + (runtimeLanguage === "zh-CN" ? " · 来自 " : " · from ") + (item?.message?.author?.participant_kind === "agent" ? deliveryAgentLabel(String(item.message.author.agent_id || "")) : (runtimeLanguage === "zh-CN" ? "人工" : "Human"));
     row.appendChild(meta);
     const body = document.createElement("div");
     body.className = "inbox-message-preview";
@@ -1916,7 +3306,7 @@ async function refreshCommunication(): Promise<boolean> {
   if (!token || communicationRefreshInFlight) return true;
   communicationRefreshInFlight = true;
   const generation = ++communicationGeneration;
-  setText("runtime-communication-status", "Refreshing durable communication…");
+  setText("runtime-communication-status", tr("Refreshing durable communication…"));
   try {
     const endpointsOk = await renewCommunicationEndpoints(generation);
     if (generation !== communicationGeneration) return false;
@@ -1941,10 +3331,10 @@ async function createCommunicationAgent(event: Event): Promise<void> {
   const displayName = (el("runtime-agent-display-name") as HTMLInputElement | null)?.value.trim() || "";
   const description = (el("runtime-agent-description") as HTMLTextAreaElement | null)?.value.trim() || "";
   const labels = parseAgentIds((el("runtime-agent-labels") as HTMLInputElement | null)?.value || "");
-  if (!handle || !displayName) { setText("runtime-agent-create-status", "Handle and display name are required."); return; }
+  if (!handle || !displayName) { setText("runtime-agent-create-status", tr("Handle and display name are required.")); return; }
   const fingerprint = JSON.stringify({ handle, displayName, description, labels });
   pendingAgentCreate = idempotencyKeyFor(pendingAgentCreate, fingerprint, "runtime-agent");
-  setText("runtime-agent-create-status", "Creating durable Agent…");
+  setText("runtime-agent-create-status", tr("Creating durable Agent…"));
   const response = await api("communication/agent/create", {
     handle,
     display_name: displayName,
@@ -1955,12 +3345,12 @@ async function createCommunicationAgent(event: Event): Promise<void> {
   if (response?.status === 401) { lock("Credential rejected."); return; }
   if (response?.status === 403) {
     communicationManageAvailable = false;
-    setText("runtime-agent-create-status", "communication:manage required.");
+    setText("runtime-agent-create-status", tr("communication:manage required."));
     renderCommunicationAvailability();
     return;
   }
   if (!response || response.status === 0 || response.status === 503) {
-    setText("runtime-agent-create-status", "Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key, or refresh before deciding.");
+    setText("runtime-agent-create-status", tr("Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key, or refresh before deciding."));
     return;
   }
   if (!response.ok || !response.data?.agent) {
@@ -1974,7 +3364,7 @@ async function createCommunicationAgent(event: Event): Promise<void> {
     const input = el(id) as HTMLInputElement | HTMLTextAreaElement | null;
     if (input) input.value = "";
   }
-  setText("runtime-agent-create-status", response.data.replayed ? "Existing idempotent Agent replayed." : "Agent created.");
+  setText("runtime-agent-create-status", tr(response.data.replayed ? "Existing idempotent Agent replayed." : "Agent created."));
   await refreshCommunication();
 }
 
@@ -1987,10 +3377,10 @@ async function updateCommunicationAgent(event: Event): Promise<void> {
   const description = (el("runtime-agent-update-description") as HTMLTextAreaElement | null)?.value.trim() || "";
   const specialtyLabels = parseAgentIds((el("runtime-agent-update-labels") as HTMLInputElement | null)?.value || "");
   if (!handle || !displayName) {
-    setText("runtime-agent-update-status", "Handle and display name are required.");
+    setText("runtime-agent-update-status", tr("Handle and display name are required."));
     return;
   }
-  setText("runtime-agent-update-status", "Updating Agent Card…");
+  setText("runtime-agent-update-status", tr("Updating Agent Card…"));
   const response = await api("communication/agent/update", {
     agent_id: String(agent.agent_id || ""),
     expected_profile_revision: Number(agent.profile_revision || 0),
@@ -2002,20 +3392,20 @@ async function updateCommunicationAgent(event: Event): Promise<void> {
   if (response?.status === 401) { lock("Credential rejected."); return; }
   if (response?.status === 403) {
     communicationManageAvailable = false;
-    setText("runtime-agent-update-status", "communication:manage required.");
+    setText("runtime-agent-update-status", tr("communication:manage required."));
     renderCommunicationAvailability();
     return;
   }
   if (!response || response.status === 0 || response.status === 503) {
-    setText("runtime-agent-update-status", "Outcome uncertain. Refresh the Card before deciding whether to retry.");
+    setText("runtime-agent-update-status", tr("Outcome uncertain. Refresh the Card before deciding whether to retry."));
     return;
   }
   if (!response.ok || !response.data?.agent_id) {
-    setText("runtime-agent-update-status", String(response.data?.message || "Agent Card update failed; refresh before retrying a stale revision."));
+    setText("runtime-agent-update-status", response.data?.message ? String(response.data.message) : tr("Agent Card update failed; refresh before retrying a stale revision."));
     return;
   }
   communicationManageAvailable = true;
-  setText("runtime-agent-update-status", "Agent Card updated.");
+  setText("runtime-agent-update-status", tr("Agent Card updated."));
   await refreshCommunication();
 }
 
@@ -2024,22 +3414,22 @@ async function attachCommunicationEndpoint(): Promise<void> {
   if (!agentId) return;
   for (const [otherAgentId, otherEndpoint] of Array.from(communicationEndpoints.entries())) {
     if (otherAgentId === agentId) continue;
-    setText("runtime-agent-endpoint-status", "Releasing this window’s previous Agent Endpoint…");
+    setText("runtime-agent-endpoint-status", tr("Releasing this window’s previous Agent Endpoint…"));
     const detached = await api("communication/endpoint/detach", {
       endpoint_id: otherEndpoint.endpoint_id,
     });
     if (detached?.status === 401) { lock("Credential rejected."); return; }
     if (detached?.status === 403) {
       communicationManageAvailable = false;
-      setText("runtime-agent-endpoint-status", "communication:manage required.");
+      setText("runtime-agent-endpoint-status", tr("communication:manage required."));
       return;
     }
     if (!detached || detached.status === 0 || detached.status === 503) {
-      setText("runtime-agent-endpoint-status", "Previous Endpoint detach is uncertain. Refresh before switching this window to another Agent.");
+      setText("runtime-agent-endpoint-status", tr("Previous Endpoint detach is uncertain. Refresh before switching this window to another Agent."));
       return;
     }
     if (!detached.ok && detached.status !== 404) {
-      setText("runtime-agent-endpoint-status", String(detached.data?.message || "Could not release the previous Agent Endpoint."));
+      setText("runtime-agent-endpoint-status", detached.data?.message ? String(detached.data.message) : tr("Could not release the previous Agent Endpoint."));
       return;
     }
     communicationEndpoints.delete(otherAgentId);
@@ -2049,7 +3439,7 @@ async function attachCommunicationEndpoint(): Promise<void> {
     pending = { key: operationKey("runtime-endpoint"), attachmentId: pageAttachmentId + "-" + agentId.slice(-8) };
     pendingEndpointAttach.set(agentId, pending);
   }
-  setText("runtime-agent-endpoint-status", "Attaching browser Endpoint…");
+  setText("runtime-agent-endpoint-status", tr("Attaching browser Endpoint…"));
   const response = await api("communication/endpoint/attach", {
     agent_id: agentId,
     host: "Runtime Console",
@@ -2059,11 +3449,11 @@ async function attachCommunicationEndpoint(): Promise<void> {
   if (response?.status === 401) { lock("Credential rejected."); return; }
   if (response?.status === 403) {
     communicationManageAvailable = false;
-    setText("runtime-agent-endpoint-status", "communication:manage required.");
+    setText("runtime-agent-endpoint-status", tr("communication:manage required."));
     return;
   }
   if (!response || response.status === 0 || response.status === 503) {
-    setText("runtime-agent-endpoint-status", "Outcome uncertain. Retry Attach to replay the same idempotency key; do not create a new attachment.");
+    setText("runtime-agent-endpoint-status", tr("Outcome uncertain. Retry Attach to replay the same idempotency key; do not create a new attachment."));
     return;
   }
   if (!response.ok || !response.data?.endpoint?.endpoint_id) {
@@ -2072,7 +3462,7 @@ async function attachCommunicationEndpoint(): Promise<void> {
   }
   if (String(response.data.endpoint.lifecycle || "") !== "attached") {
     pendingEndpointAttach.delete(agentId);
-    setText("runtime-agent-endpoint-status", "The exact Attach replay was already replaced. Choose “Continue as this Agent” again to create a fresh Endpoint generation.");
+    setText("runtime-agent-endpoint-status", tr("The exact Attach replay was already replaced. Choose “Continue as this Agent” again to create a fresh Endpoint generation."));
     return;
   }
   communicationManageAvailable = true;
@@ -2086,16 +3476,16 @@ async function detachCommunicationEndpoint(): Promise<void> {
   const agentId = selectedCommunicationAgentId;
   const endpointId = communicationEndpointId(agentId);
   if (!agentId || !endpointId) return;
-  setText("runtime-agent-endpoint-status", "Detaching browser Endpoint…");
+  setText("runtime-agent-endpoint-status", tr("Detaching browser Endpoint…"));
   const response = await api("communication/endpoint/detach", { endpoint_id: endpointId });
   if (response?.status === 401) { lock("Credential rejected."); return; }
   if (response?.status === 403) {
     communicationManageAvailable = false;
-    setText("runtime-agent-endpoint-status", "communication:manage required.");
+    setText("runtime-agent-endpoint-status", tr("communication:manage required."));
     return;
   }
   if (!response || response.status === 0 || response.status === 503) {
-    setText("runtime-agent-endpoint-status", "Detach outcome uncertain. Refresh before retry; the durable Agent and Inbox are unaffected.");
+    setText("runtime-agent-endpoint-status", tr("Detach outcome uncertain. Refresh before retry; the durable Agent and Inbox are unaffected."));
     return;
   }
   if (!response.ok) {
@@ -2114,10 +3504,10 @@ async function createCommunicationConversation(event: Event): Promise<void> {
   const title = (el("runtime-conversation-title") as HTMLInputElement | null)?.value.trim() || "";
   const idsInput = (el("runtime-conversation-agent-ids") as HTMLInputElement | null)?.value || "";
   const agentIds = parseAgentIds(idsInput || selectedCommunicationAgentId);
-  if (agentIds.length === 0) { setText("runtime-conversation-create-status", "At least one Agent id is required."); return; }
+  if (agentIds.length === 0) { setText("runtime-conversation-create-status", tr("At least one Agent id is required.")); return; }
   const fingerprint = JSON.stringify({ title, agentIds: [...agentIds].sort() });
   pendingConversationCreate = idempotencyKeyFor(pendingConversationCreate, fingerprint, "runtime-conversation");
-  setText("runtime-conversation-create-status", "Creating durable Conversation…");
+  setText("runtime-conversation-create-status", tr("Creating durable Conversation…"));
   const response = await api("communication/conversation/create", {
     title: title || null,
     agent_ids: agentIds,
@@ -2126,11 +3516,11 @@ async function createCommunicationConversation(event: Event): Promise<void> {
   if (response?.status === 401) { lock("Credential rejected."); return; }
   if (response?.status === 403) {
     communicationManageAvailable = false;
-    setText("runtime-conversation-create-status", "communication:manage required.");
+    setText("runtime-conversation-create-status", tr("communication:manage required."));
     return;
   }
   if (!response || response.status === 0 || response.status === 503) {
-    setText("runtime-conversation-create-status", "Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key.");
+    setText("runtime-conversation-create-status", tr("Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key."));
     return;
   }
   if (!response.ok || !response.data?.conversation?.conversation?.conversation_id) {
@@ -2144,7 +3534,7 @@ async function createCommunicationConversation(event: Event): Promise<void> {
   const agentsInput = el("runtime-conversation-agent-ids") as HTMLInputElement | null;
   if (titleInput) titleInput.value = "";
   if (agentsInput) agentsInput.value = selectedCommunicationAgentId;
-  setText("runtime-conversation-create-status", response.data.replayed ? "Existing idempotent Conversation replayed." : "Conversation created.");
+  setText("runtime-conversation-create-status", tr(response.data.replayed ? "Existing idempotent Conversation replayed." : "Conversation created."));
   await refreshCommunication();
 }
 
@@ -2156,11 +3546,11 @@ async function postCommunicationMessage(event: Event): Promise<void> {
   const body = bodyNode?.value.trim() || "";
   const recipientsText = recipientsNode?.value.trim() || "";
   const sendAsAgent = (el("runtime-conversation-send-as-agent") as HTMLInputElement | null)?.checked === true;
-  if (!conversationId || !body) { setText("runtime-conversation-send-status", "Select a Conversation and enter a message."); return; }
+  if (!conversationId || !body) { setText("runtime-conversation-send-status", tr("Select a Conversation and enter a message.")); return; }
   const actingAgent = sendAsAgent ? selectedCommunicationAgent() : null;
   const endpoint = actingAgent ? communicationEndpoint(String(actingAgent.agent_id || "")) : null;
   if (sendAsAgent && (!actingAgent || !endpoint)) {
-    setText("runtime-conversation-send-status", "Select an Agent and choose “Continue as this Agent” before sending as it.");
+    setText("runtime-conversation-send-status", tr("Select an Agent and choose “Continue as this Agent” before sending as it."));
     return;
   }
   const recipientAgentIds = recipientsText ? parseAgentIds(recipientsText) : null;
@@ -2173,7 +3563,7 @@ async function postCommunicationMessage(event: Event): Promise<void> {
     controllerGeneration: endpoint?.controller_generation || null,
   });
   pendingConversationMessage = idempotencyKeyFor(pendingConversationMessage, fingerprint, "runtime-message");
-  setText("runtime-conversation-send-status", "Appending Message and Agent deliveries atomically…");
+  setText("runtime-conversation-send-status", tr("Appending Message and Agent deliveries atomically…"));
   const response = await api("communication/message/post", {
     conversation_id: conversationId,
     body,
@@ -2186,11 +3576,11 @@ async function postCommunicationMessage(event: Event): Promise<void> {
   if (response?.status === 401) { lock("Credential rejected."); return; }
   if (response?.status === 403) {
     communicationManageAvailable = false;
-    setText("runtime-conversation-send-status", "communication:manage required.");
+    setText("runtime-conversation-send-status", tr("communication:manage required."));
     return;
   }
   if (!response || response.status === 0 || response.status === 503) {
-    setText("runtime-conversation-send-status", "Outcome uncertain. Keep the message unchanged and retry only to replay the same idempotency key, or refresh the transcript first.");
+    setText("runtime-conversation-send-status", tr("Outcome uncertain. Keep the message unchanged and retry only to replay the same idempotency key, or refresh the transcript first."));
     return;
   }
   if (!response.ok || !response.data?.message) {
@@ -2200,7 +3590,7 @@ async function postCommunicationMessage(event: Event): Promise<void> {
   communicationManageAvailable = true;
   pendingConversationMessage = null;
   if (bodyNode) bodyNode.value = "";
-  setText("runtime-conversation-send-status", response.data.replayed ? "Existing Message replayed without duplicate delivery." : "Durable Message sent.");
+  setText("runtime-conversation-send-status", tr(response.data.replayed ? "Existing Message replayed without duplicate delivery." : "Durable Message sent."));
   await refreshCommunication();
 }
 
@@ -2210,7 +3600,7 @@ async function consumeCommunicationDeliveries(deliveryIds: string[]): Promise<vo
   const endpointId = endpoint?.endpoint_id || "";
   const ids = deliveryIds.filter(Boolean);
   if (!agentId || !endpoint || ids.length === 0) return;
-  setText("runtime-inbox-status", "Consuming recipient state…");
+  setText("runtime-inbox-status", tr("Consuming recipient state…"));
   const response = await api("communication/inbox/consume", {
     agent_id: agentId,
     endpoint_id: endpointId,
@@ -2220,15 +3610,15 @@ async function consumeCommunicationDeliveries(deliveryIds: string[]): Promise<vo
   if (response?.status === 401) { lock("Credential rejected."); return; }
   if (response?.status === 403) {
     communicationManageAvailable = false;
-    setText("runtime-inbox-status", "communication:manage required to consume deliveries.");
+    setText("runtime-inbox-status", tr("communication:manage required to consume deliveries."));
     return;
   }
   if (!response || response.status === 0 || response.status === 503) {
-    setText("runtime-inbox-status", "Consume outcome uncertain. Refresh before retry; desired-state replay is safe.");
+    setText("runtime-inbox-status", tr("Consume outcome uncertain. Refresh before retry; desired-state replay is safe."));
     return;
   }
   if (!response.ok) {
-    setText("runtime-inbox-status", String(response.data?.message || "Delivery consume failed."));
+    setText("runtime-inbox-status", response.data?.message ? String(response.data.message) : tr("Delivery consume failed."));
     return;
   }
   communicationManageAvailable = true;
@@ -2240,17 +3630,19 @@ function setRefreshBusy(active: boolean): void {
   const button = el("runtime-refresh") as HTMLButtonElement | null;
   if (button) {
     button.disabled = active;
-    button.textContent = active ? "Refreshing…" : "Refresh";
+    button.classList.toggle("is-busy", active);
+    button.title = active ? tr("Refreshing runtime") : tr("Refresh runtime");
+    button.setAttribute("aria-label", button.title);
   }
 }
 
 async function refreshAll(): Promise<void> {
   if (!token || refreshInFlight) return;
   setRefreshBusy(true);
-  setText("runtime-refresh-status", "Refreshing…");
+  setText("runtime-refresh-status", tr("Refreshing…"));
   const recoverCollaboration = runtimeCollaborationNeedsRefreshRecovery(state);
   const overviewRequest = refreshRuntimeOverview(state);
-  const projectsRequest = refreshRuntimeProjects(state, projectSearch);
+  const projectsRequest = refreshRuntimeProjects(state, projectSearch, projectDeviceFilter);
   try {
     const [overviewOk, projectsOk, communicationOk] = await Promise.all([
       fetchOverview(overviewRequest),
@@ -2259,9 +3651,9 @@ async function refreshAll(): Promise<void> {
     ]);
     if (!token) return;
     if (overviewOk && projectsOk && communicationOk) {
-      setText("runtime-refresh-status", "Refreshed " + new Date().toLocaleTimeString());
+      setText("runtime-refresh-status", tr("Refreshed") + " " + new Date().toLocaleTimeString());
     } else {
-      setText("runtime-refresh-status", "Refresh failed · showing previous data");
+      setText("runtime-refresh-status", tr("Refresh failed · showing previous data"));
     }
     if (recoverCollaboration && runtimeCollaborationNeedsRefreshRecovery(state)) {
       const collaborationRequest = runtimeCollaborationRequest(state);
@@ -2283,16 +3675,25 @@ function startAuto(): void {
 }
 function stopAuto(): void { if (timer) window.clearInterval(timer); timer = 0; }
 
-el("runtime-token-form")?.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const input = el("runtime-token-input") as HTMLInputElement | null;
-  const nextToken = input ? input.value.trim() : ""; if (input) input.value = "";
-  if (!nextToken) { setText("runtime-token-error", "Enter a runtime Bearer credential."); return; }
+function connectRuntimeCredential(nextToken: string, rememberForTab: boolean): void {
+  rememberCredentialForTab = rememberForTab;
   token = nextToken;
+  setRuntimeConnectionState("connecting");
+  const remember = el("runtime-token-remember") as HTMLInputElement | null;
+  if (remember) remember.checked = rememberForTab;
   const request = beginRuntimeCredential(state);
   void fetchOverview(refreshRuntimeOverview(state));
   void fetchProjects(request, true);
   void refreshCommunication();
+}
+
+el("runtime-token-form")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = el("runtime-token-input") as HTMLInputElement | null;
+  const remember = el("runtime-token-remember") as HTMLInputElement | null;
+  const nextToken = input ? input.value.trim() : ""; if (input) input.value = "";
+  if (!nextToken) { setText("runtime-token-error", tr("Enter a runtime Bearer credential.")); return; }
+  connectRuntimeCredential(nextToken, remember?.checked !== false);
 });
 
 el("runtime-agent-create-form")?.addEventListener("submit", (event) => void createCommunicationAgent(event));
@@ -2316,27 +3717,161 @@ el("runtime-project-search")?.addEventListener("input", () => {
   projectSearch = input?.value || "";
   stopProjectSearchTimer();
   if (!token) return;
-  setText("runtime-project-status", "Searching…");
+  setText("runtime-project-status", tr("Searching…"));
   projectSearchTimer = window.setTimeout(() => {
     projectSearchTimer = 0;
     if (!token) return;
-    void fetchProjects(refreshRuntimeProjects(state, projectSearch));
+    void fetchProjects(refreshRuntimeProjects(state, projectSearch, projectDeviceFilter));
   }, PROJECT_SEARCH_DEBOUNCE_MS);
 });
 el("runtime-message-kind")?.addEventListener("change", syncAckComposer);
 el("runtime-message-priority")?.addEventListener("change", syncAckComposer);
+el("runtime-message-requires-ack")?.addEventListener("change", syncComposerOptionSummary);
+el("runtime-message-body")?.addEventListener("input", () => {
+  setText("runtime-message-send-status", "");
+  saveCurrentDraft();
+  syncCollaborationComposerLayout();
+});
+el("runtime-message-body")?.addEventListener("keydown", (event) => {
+  if (!(event instanceof KeyboardEvent) || event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+  const body = event.currentTarget as HTMLTextAreaElement | null;
+  const send = el("runtime-message-send") as HTMLButtonElement | null;
+  const form = el("runtime-collaboration-form") as HTMLFormElement | null;
+  event.preventDefault();
+  if (!body?.value.trim() || send?.disabled || !form) return;
+  form.requestSubmit();
+});
 el("runtime-message-reply-clear")?.addEventListener("click", () => setCollaborationReplyTarget(""));
 el("runtime-message-edit-clear")?.addEventListener("click", cancelCollaborationEdit);
 el("runtime-collaboration-form")?.addEventListener("submit", (event) => void postHumanCollaborationMessage(event));
-el("runtime-refresh")?.addEventListener("click", () => void refreshAll());
+el("runtime-chat-scroll")?.addEventListener("scroll", updateCollaborationFollowFromScroll, { passive: true });
+el("runtime-new-messages")?.addEventListener("click", () => scrollCollaborationToLatest(true));
+el("runtime-refresh")?.addEventListener("click", () => {
+  closeTopbarMore(false);
+  void refreshAll();
+});
 el("runtime-lock")?.addEventListener("click", () => lock());
+el("runtime-mobile-nav-toggle")?.addEventListener("click", () => setMobileNavigationOpen(true));
+el("runtime-mobile-nav-close")?.addEventListener("click", () => setMobileNavigationOpen(false, true));
+el("runtime-mobile-nav-backdrop")?.addEventListener("click", () => setMobileNavigationOpen(false, true));
+el("runtime-inspector-backdrop")?.addEventListener("click", () => closeRuntimeInspector(true));
+document.querySelectorAll<HTMLButtonElement>("[data-runtime-view]").forEach((button) => {
+  button.addEventListener("click", () => applyWorkspaceView(workspaceViewPreference(button.dataset.runtimeView)));
+});
+document.querySelectorAll<HTMLButtonElement>("[data-operations-target]").forEach((button) => {
+  button.addEventListener("click", () => revealOperationsSection(String(button.dataset.operationsTarget || "runtime-operations-overview")));
+});
+document.querySelectorAll<HTMLButtonElement>("[data-language-toggle]").forEach((button) => {
+  button.addEventListener("click", () => {
+    applyLanguage(runtimeLanguage === "zh-CN" ? "en" : "zh-CN");
+    closeAppearanceMenus(false);
+    closeTopbarMore(false);
+  });
+});
+document.querySelectorAll<HTMLButtonElement>("[data-theme-option]").forEach((button) => {
+  button.addEventListener("click", () => {
+    applyAppearance(appearancePreference(button.dataset.themeOption));
+    const menu = button.closest("details.theme-menu") as HTMLDetailsElement | null;
+    if (menu) menu.open = false;
+    closeTopbarMore(false);
+  });
+});
+el("runtime-topbar-more")?.addEventListener("toggle", (event) => {
+  const menu = event.currentTarget as HTMLDetailsElement | null;
+  if (!menu?.open) return;
+  closeComposerOptions(false);
+  closeRuntimeInspector(false);
+  setMobileNavigationOpen(false, false);
+});
+document.querySelectorAll<HTMLDetailsElement>("details.theme-menu").forEach((menu) => {
+  menu.addEventListener("toggle", () => {
+    if (!menu.open) return;
+    closeAppearanceMenus(false, menu);
+    closeRuntimeInspector(false);
+    setMobileNavigationOpen(false, false);
+  });
+});
+el("runtime-message-options")?.addEventListener("toggle", (event) => {
+  const options = event.currentTarget as HTMLDetailsElement | null;
+  if (!options?.open) return;
+  closeAppearanceMenus(false);
+  setMobileNavigationOpen(false, false);
+});
+document.addEventListener("pointerdown", (event) => {
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  document.querySelectorAll<HTMLDetailsElement>("details.theme-menu[open]").forEach((menu) => {
+    if (!menu.contains(target)) menu.open = false;
+  });
+  const options = el("runtime-message-options") as HTMLDetailsElement | null;
+  if (options?.open && !options.contains(target)) options.open = false;
+  const topbarMore = el("runtime-topbar-more") as HTMLDetailsElement | null;
+  if (topbarMore?.open && !topbarMore.contains(target)) topbarMore.open = false;
+});
 el("runtime-jump-latest")?.addEventListener("click", jumpLatest);
 el("runtime-timeline")?.addEventListener("scroll", () => {
   const node = el("runtime-timeline"); if (!node) return;
   updateWorkflowSessionFollowFromScroll(state.workflow, node.scrollTop, node.clientHeight, node.scrollHeight); syncFollowUi();
 });
+document.querySelector(".runtime-inspector")?.addEventListener("toggle", (event) => {
+  const inspector = event.currentTarget as HTMLDetailsElement | null;
+  if (inspector?.open) setMobileNavigationOpen(false, false);
+});
+document.addEventListener("keydown", (event) => {
+  const shell = el("runtime-console");
+  const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
+  if (event.key === "Escape") {
+    if (closeComposerOptions(true)) {
+      event.preventDefault();
+      return;
+    }
+    if (closeAppearanceMenus(true)) {
+      event.preventDefault();
+      return;
+    }
+    if (closeTopbarMore(true)) {
+      event.preventDefault();
+      return;
+    }
+    if (inspector?.open && !shell?.classList.contains("context-docked")) {
+      event.preventDefault();
+      closeRuntimeInspector(true);
+      return;
+    }
+    if (shell?.classList.contains("mobile-nav-open")) {
+      event.preventDefault();
+      setMobileNavigationOpen(false, true);
+    }
+    return;
+  }
+  if (event.key !== "Tab" || !shell?.classList.contains("mobile-nav-open")) return;
+  const sidebar = el("runtime-sidebar");
+  if (!sidebar) return;
+  const focusable = visibleFocusableElements(sidebar);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
+window.addEventListener("resize", syncResponsiveNavigation, { passive: true });
+const syncSystemAppearance = () => {
+  if (appearancePreference(document.documentElement.dataset.theme) === "system") applyAppearance("system", false);
+};
+if (typeof appearanceMedia.addEventListener === "function") appearanceMedia.addEventListener("change", syncSystemAppearance);
+else appearanceMedia.addListener(syncSystemAppearance);
+captureStaticUiSources();
+applyLanguage(loadLanguagePreference(), false, false);
+applyAppearance(loadAppearancePreference(), false);
+applyWorkspaceView(loadWorkspaceViewPreference(), false);
 syncAckComposer();
 window.addEventListener("pagehide", () => {
+  saveCurrentDraft();
   detachCommunicationEndpointsBestEffort();
   token = "";
   abortAll();
@@ -2344,4 +3879,9 @@ window.addEventListener("pagehide", () => {
   stopAuto();
 });
 
-lock();
+lock("", false);
+const rememberedRuntimeCredential = loadRememberedRuntimeCredential();
+if (rememberedRuntimeCredential) {
+  setText("runtime-token-error", tr("Restoring this tab…"));
+  connectRuntimeCredential(rememberedRuntimeCredential, true);
+}

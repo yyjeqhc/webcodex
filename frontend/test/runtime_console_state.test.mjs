@@ -35,6 +35,7 @@ import {
   mergeRuntimeCollaborationMessages,
   runtimeCollaborationObservationAction,
   runtimeCollaborationMessageCanMutate,
+  runtimeCollaborationMessageSides,
   setRuntimeCollaborationReplyTarget,
   setRuntimeCollaborationEditTarget,
   runtimeCollaborationEditTarget,
@@ -69,6 +70,8 @@ test("runtime credential and project generations fence stale project responses",
   const projectsDuringA = refreshRuntimeProjects(state, "  webcodex  ");
   assert.equal(projectsDuringA.clientId, "device-a");
   assert.equal(projectsDuringA.query, "webcodex");
+  const fleetProjectsDuringA = refreshRuntimeProjects(state, "", "");
+  assert.equal(fleetProjectsDuringA.clientId, "");
   const refreshedA = refreshRuntimeSessionList(state);
   assert.equal(isCurrentRuntimeSessionListRequest(state, listA), false);
   assert.equal(isCurrentRuntimeSessionListRequest(state, refreshedA), true);
@@ -467,6 +470,23 @@ test("only eligible open Human Join kinds expose mutation actions and ACK is not
   assert.equal(runtimeCollaborationMessageCanMutate({ kind: "todo", status: "resolved", closure_kind: "superseded" }), false);
 });
 
+test("conversation presentation keeps outgoing messages right and replies alternating left", () => {
+  const sides = runtimeCollaborationMessageSides([
+    { message_id: "user-root", kind: "note", message: "hello" },
+    { message_id: "agent-reply", kind: "note", reply_to: "user-root", message: "received" },
+    { message_id: "user-reply", kind: "question", reply_to: "agent-reply", message: "why" },
+    { message_id: "trusted-agent", kind: "progress", author_session_id: "wc_sess_worker", message: "working" },
+    { message_id: "legacy-answer", kind: "answer", message: "done" },
+    { message_id: "retained-reply", kind: "note", reply_to: "missing", message: "retained" },
+  ]);
+  assert.equal(sides.get("user-root"), "outgoing");
+  assert.equal(sides.get("agent-reply"), "incoming");
+  assert.equal(sides.get("user-reply"), "outgoing");
+  assert.equal(sides.get("trusted-agent"), "incoming");
+  assert.equal(sides.get("legacy-answer"), "incoming");
+  assert.equal(sides.get("retained-reply"), "incoming");
+});
+
 test("runtime collaboration rendering uses textContent and explicitly reloads on history loss", async () => {
   const source = await readFile(new URL("../src/runtime.ts", import.meta.url), "utf8");
   const html = await readFile(new URL("../src/runtime.html", import.meta.url), "utf8");
@@ -474,12 +494,31 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.equal(html.includes("runtime-project-" + "select"), false);
   assert.match(html, /runtime-project-list/);
   assert.match(html, /runtime-project-search/);
+  assert.match(html, /runtime-token-remember/);
+  assert.match(html, /data-theme-option="system"/);
+  assert.match(html, /data-theme-option="light"/);
+  assert.match(html, /data-theme-option="dark"/);
+  assert.match(html, /runtime-mobile-nav-toggle/);
+  assert.match(html, /runtime-mobile-nav-close/);
+  assert.match(html, /runtime-mobile-nav-backdrop/);
+  assert.match(html, /runtime-inspector-backdrop/);
+  assert.match(html, /data-runtime-view="sessions"/);
+  assert.match(html, /data-runtime-view="operations"/);
+  assert.match(html, /runtime-operations-stage/);
+  assert.match(html, /runtime-operations-overview/);
+  assert.match(html, /runtime-operations-runners/);
+  assert.match(html, /runtime-operations-agents/);
   assert.match(html, /runtime-session-workspace/);
   assert.match(html, /runtime-workflow-sessions-panel/);
   assert.match(html, /runtime-session-id/);
   assert.match(html, /runtime-session-created/);
   assert.match(html, /runtime-session-updated/);
+  assert.match(html, /runtime-session-context-lifecycle/);
+  assert.match(html, /runtime-session-context-mode/);
   assert.match(css, /\.session-identity/);
+  assert.match(html, /class="session-evidence"/);
+  assert.match(html, /Details &amp; activity/);
+  assert.doesNotMatch(html, /class="inspector-card overview-panel" open/);
   assert.match(html, /workspace path/);
   assert.match(html, /Working &amp; Recently Updated Sessions/);
   assert.match(html, /runtime-recent-session-list/);
@@ -487,15 +526,90 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(html, /runtime-runner-list/);
   assert.match(html, /All Runners/);
   assert.match(html, /runtime-collaboration-form/);
+  assert.match(html, /runtime-collaboration-board[^>]*role="log"/);
+  assert.match(html, /runtime-message-announcer[^>]*aria-live="polite"/);
+  assert.match(html, /runtime-new-messages/);
+  assert.match(html, /id="runtime-chat-scroll" class="chat-scroll"/);
+  assert.match(html, /id="runtime-message-body" rows="1" maxlength="4000" enterkeyhint="send"/);
+  assert.match(html, /runtime-message-options/);
+  assert.match(html, /composer-options-popover/);
+  assert.match(html, /runtime-collaboration-empty-title/);
+  assert.match(html, /runtime-collaboration-empty-copy/);
   assert.match(html, /runtime-message-requires-ack/);
   assert.match(css, /-webkit-line-clamp:\s*4/);
   assert.match(css, /\.recent-session-row/);
   assert.match(css, /\.fleet-row/);
+  assert.match(css, /\.device-group/);
+  assert.match(css, /@media \(max-width: 900px\)/);
+  assert.match(css, /@media \(min-width: 1600px\)/);
+  assert.match(css, /--context-rail-width:\s*clamp\(320px,\s*18vw,\s*360px\)/);
+  assert.match(css, /\.runtime-shell\.context-docked\s*\{[^}]*--content-width:\s*1160px[^}]*grid-template-columns:\s*var\(--sidebar-width\)\s+minmax\(0,\s*1fr\)\s+var\(--context-rail-width\)/);
+  assert.match(css, /translateX\(-102%\)/);
+  assert.match(css, /env\(safe-area-inset-bottom\)/);
+  assert.match(css, /env\(safe-area-inset-top\)/);
+  assert.match(css, /@media \(pointer: coarse\)/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(css, /data-resolved-theme="light"/);
+  assert.match(css, /backdrop-filter/);
+  assert.match(css, /--ambient-three/);
+  assert.match(css, /\.workspace-topbar\s*\{[^}]*z-index:\s*40/);
+  assert.match(css, /\.runtime-shell\s*\{[^}]*gap:\s*0[^}]*padding:\s*0/);
+  assert.match(css, /\.workspace-main\s*\{[^}]*background:\s*var\(--page-surface\)/);
+  assert.match(css, /--layout-major:\s*61\.8%/);
+  assert.match(css, /--layout-minor:\s*38\.2%/);
+  assert.match(css, /--sidebar-width:\s*clamp\(300px,\s*21vw,\s*356px\)/);
+  assert.match(css, /--content-width:\s*1120px/);
+  assert.match(css, /\.message-card\.message-incoming\s*\{[^}]*width:\s*fit-content[^}]*max-width:\s*min\(82%,\s*880px\)/);
+  assert.match(css, /\.message-card\.message-outgoing\s*\{[^}]*max-width:\s*min\(68%,\s*680px\)[^}]*align-self:\s*flex-end/);
+  assert.match(css, /--message-bubble-radius:\s*22px/);
+  assert.doesNotMatch(css, /message-avatar/);
+  assert.doesNotMatch(css, /--message-bubble-anchor-radius/);
+  assert.match(css, /\.message-card\.message-incoming \.message-bubble\s*\{[^}]*border:\s*0[^}]*border-radius:\s*var\(--message-bubble-radius\)/);
+  assert.match(css, /\.message-card\.message-outgoing \.message-bubble\s*\{[^}]*border:\s*0[^}]*border-radius:\s*var\(--message-bubble-radius\)/);
+  assert.match(css, /\.project-row\.selected\s*\{[^}]*background:\s*var\(--sidebar-selected\)/);
+  assert.match(css, /\.device-project-list\s*\{[^}]*border-left:\s*0/);
+  assert.match(css, /\.project-row-state/);
+  assert.match(css, /--message-incoming-bg:\s*rgba\(255,\s*255,\s*255,\s*\.055\)/);
+  assert.match(css, /--message-outgoing-bg:\s*#285487/);
+  assert.match(css, /data-resolved-theme="light"[\s\S]*--message-incoming-bg:\s*rgba\(25,\s*32,\s*45,\s*\.055\)/);
+  assert.match(css, /data-resolved-theme="light"[\s\S]*--message-outgoing-bg:\s*#2866a8/);
+  assert.match(css, /\.message-card\.message-incoming \.message-bubble\s*\{[^}]*background:\s*var\(--message-incoming-bg\)/);
+  assert.match(css, /\.message-card\.message-outgoing \.message-bubble\s*\{[^}]*background:\s*var\(--message-outgoing-bg\)/);
+  assert.match(css, /\.message-footer\s*\{[^}]*display:\s*flex/);
+  assert.match(css, /\.collaboration-composer:focus-within/);
+  assert.match(css, /\.composer-options-popover/);
+  assert.match(css, /\.message-code-copy/);
+  assert.match(css, /\.message-date-separator/);
+  assert.match(css, /\.new-messages-button/);
+  assert.match(css, /\.operations-stage/);
+  assert.match(css, /\.topbar-more-popover/);
+  assert.match(css, /@keyframes composer-enter/);
+  assert.match(css, /\.message-card \+ \.message-card/);
+  assert.match(css, /\.session-card::before/);
   assert.equal(source.includes("innerHTML"), false);
+  assert.match(source, /APPEARANCE_STORAGE_KEY/);
+  assert.match(source, /applyAppearance/);
   assert.doesNotMatch(source, /api\("runner"/);
   assert.match(source, /selectRuntimeSessionLocation/);
-  assert.match(source, /path\.textContent = String\(project\.path\)/);
-  assert.match(source, /runtimeProjectIdentityText\(selectedProjectRow\(\)\)/);
+  assert.doesNotMatch(source, /project-row-path/);
+  assert.match(source, /runtimeProjectIdentityText\(project\)/);
+  assert.match(source, /runtimeCollaborationMessageSides\(messages\)/);
+  assert.match(source, /message-group-continuation/);
+  assert.match(source, /syncCollaborationComposerLayout/);
+  assert.match(source, /scrollCollaborationToLatest/);
+  assert.match(source, /scroll\.scrollTo\(\{ top: scroll\.scrollHeight, behavior \}\)/);
+  assert.match(source, /firstRetainedRender \|\| \(hasNewMessages && shouldFollowNewMessages\)/);
+  assert.match(source, /collaborationFollowLatest \|\| chatIsNearLatest\(\)/);
+  assert.match(source, /collaborationPendingMessages \+= newMessageIds\.length/);
+  assert.match(source, /appendRichMessage/);
+  assert.match(source, /DRAFT_STORAGE_PREFIX/);
+  assert.match(source, /WORKSPACE_VIEW_STORAGE_KEY/);
+  assert.doesNotMatch(source, /window\.matchMedia\("\(pointer: fine\)"\)/);
+  assert.match(source, /event\.shiftKey \|\| event\.isComposing \|\| event\.keyCode === 229/);
+  assert.match(source, /form\.requestSubmit\(\)/);
+  assert.match(source, /message-entering/);
+  assert.match(source, /Acknowledgement required/);
+  assert.doesNotMatch(source, /className = "message-links"/);
   assert.match(source, /renderSessionWorkspaceIdentity\(\)/);
   assert.match(source, /function revealWorkflowSessionDetail[\s\S]*scrollIntoView\(\{ block: "start", inline: "nearest" \}\)/);
   assert.match(source, /setText\("runtime-session-id", String\(detail\.session_id/);
@@ -504,7 +618,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   const recentStart = source.indexOf("function renderRecentSessions");
   const recentEnd = source.indexOf("function selectRecentSession", recentStart);
   const recentRender = source.slice(recentStart, recentEnd);
-  assert.match(recentRender, /workflowSessionLivenessPresentation\(session\)/);
+  assert.match(recentRender, /localizedLivenessPresentation\(session\)/);
   assert.match(recentRender, /attentionLabel\(session\.overview\?\.attention\)/);
   assert.match(recentRender, /updatedLabel\(session\.updated_at\)/);
   const recentSelectStart = source.indexOf("function selectRecentSession");
@@ -514,7 +628,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.doesNotMatch(recentRender, /\.sort\(/);
   assert.match(source, /applyRunnerFilter\(select\.value\)/);
   assert.match(source, /void fetchOverview\(refreshRuntimeOverview\(state\)\)/);
-  assert.match(source, /body\.textContent = String\(message\?\.message \|\| ""\)/);
+  assert.match(source, /appendRichMessage\(bubble, message\?\.message\)/);
   assert.match(source, /action === "reload"[\s\S]*loadRetainedCollaboration/);
   assert.match(source, /action === "drain"/);
   assert.match(source, /abortCollaboration\(\)/);
@@ -524,6 +638,17 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(source, /sessionCollaborationAuthorityFailure/);
   assert.match(source, /response\?\.status !== 403/);
   assert.match(source, /This credential can still read the Session; add session:collaborate to send, edit, or withdraw messages\./);
+  assert.match(source, /show\("runtime-collaboration-form", true\)/);
+  assert.match(source, /show\("runtime-collaboration-board", messages\.length > 0\)/);
+  assert.match(source, /Conversation access requires runtime:read/);
+  assert.match(source, /setHumanJoinSendEnabled\(false\)/);
+  assert.match(source, /function setMobileNavigationOpen/);
+  assert.match(source, /function syncResponsiveNavigation/);
+  assert.match(source, /WIDE_CONTEXT_MEDIA/);
+  assert.match(source, /classList\.toggle\("context-docked", contextDocked\)/);
+  assert.match(source, /contextDocked && inspector\) inspector\.open = true/);
+  assert.match(source, /event\.key === "Escape"/);
+  assert.match(source, /visibleFocusableElements\(sidebar\)/);
   assert.match(source, /Reply target selected\. Your next message will reply to /);
   assert.match(source, /body\?\.focus\(\)/);
   assert.match(source, /state\.collaboration\.phase === "live" && !state\.collaboration\.uncertainMutation/);
@@ -535,14 +660,28 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.doesNotMatch(source, /Delivered|Read by model|Currently acknowledged/);
   assert.match(source, /Refresh failed · showing previous data/);
   assert.match(source, /runtimeCollaborationNeedsRefreshRecovery/);
-  assert.match(source, /event\.key === "Enter" \|\| event\.key === " "/);
   const renderProjectsStart = source.indexOf("function renderProjectSelectors");
   const renderProjectsEnd = source.indexOf("function switchProject", renderProjectsStart);
   const renderProjects = source.slice(renderProjectsStart, renderProjectsEnd);
-  assert.match(renderProjects, /all\.textContent = "All Runners"/);
+  assert.match(renderProjects, /document\.createElement\("button"\)/);
+  assert.match(renderProjects, /row\.type = "button"/);
+  assert.doesNotMatch(renderProjects, /addEventListener\("keydown"/);
+  assert.match(renderProjects, /all\.textContent = tr\("All Runners"\)/);
   assert.match(renderProjects, /switchProject\(String\(project\.client_id \|\| ""\), String\(project\.id \|\| ""\)\)/);
-  assert.match(renderProjects, /SESSION SCAN PARTIAL/);
-  assert.match(renderProjects, /Sessions projected · partial/);
+  assert.match(renderProjects, /project-row-signals/);
+  assert.match(renderProjects, /project-row-meta/);
+  assert.match(renderProjects, /scan partial/);
+  assert.match(renderProjects, /row\.title = \[projectName, projectId/);
+  assert.match(renderProjects, /projectsByDevice/);
+  assert.match(renderProjects, /projectDeviceFilter/);
+  assert.match(renderProjects, /deviceProjectList\.appendChild\(sessionsPanel\)/);
+  assert.match(renderProjects, /deviceMeta\.textContent = tr\(status\) \+ " · " \+ countLabel\(deviceProjects\.length, "Project"\)/);
+  assert.match(source, /appendRichMessage\(bubble, message\?\.message\);\s*content\.appendChild\(bubble\)/);
+  assert.match(source, /footer\.appendChild\(actions\);\s*content\.appendChild\(footer\);\s*card\.appendChild\(content\)/);
+  assert.doesNotMatch(source, /message-avatar/);
+  assert.match(source, /createMessageAction\(tr\("Reply"\), "reply"/);
+  assert.match(source, /projectIcon\.appendChild\(runtimeIcon\("folder"\)\)/);
+  assert.match(source, /icon\.appendChild\(runtimeIcon\("message"\)\)/);
   const renderRunnersStart = source.indexOf("function renderRunnerFleet");
   const renderRunnersEnd = source.indexOf("function renderRecentSessions", renderRunnersStart);
   const renderRunners = source.slice(renderRunnersStart, renderRunnersEnd);
@@ -564,13 +703,15 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(renderProjects, /visible Projects shown/);
   const applyRunnerStart = source.indexOf("function applyRunnerFilter");
   const applyRunnerEnd = source.indexOf("function runnerAttentionCount", applyRunnerStart);
-  assert.match(source.slice(applyRunnerStart, applyRunnerEnd), /fetchProjects\(refreshRuntimeProjects\(state, projectSearch\)\)/);
+  const applyRunner = source.slice(applyRunnerStart, applyRunnerEnd);
+  assert.match(applyRunner, /projectDeviceFilter = device/);
+  assert.match(applyRunner, /fetchProjects\(refreshRuntimeProjects\(state, projectSearch, projectDeviceFilter\)\)/);
   const searchHandlerStart = source.indexOf('el("runtime-project-search")?.addEventListener("input"');
   const searchHandlerEnd = source.indexOf('el("runtime-message-kind")', searchHandlerStart);
   const searchHandler = source.slice(searchHandlerStart, searchHandlerEnd);
   assert.match(searchHandler, /window\.setTimeout/);
   assert.match(searchHandler, /PROJECT_SEARCH_DEBOUNCE_MS/);
-  assert.match(searchHandler, /fetchProjects\(refreshRuntimeProjects\(state, projectSearch\)\)/);
+  assert.match(searchHandler, /fetchProjects\(refreshRuntimeProjects\(state, projectSearch, projectDeviceFilter\)\)/);
   const selectStart = source.indexOf("function selectSession");
   const selectEnd = source.indexOf("async function fetchSessionDetail", selectStart);
   assert.match(source.slice(selectStart, selectEnd), /setHumanJoinSendEnabled\(false\)[\s\S]*startCollaboration/);

@@ -34,7 +34,7 @@ const MAX_COMMUNICATION_PRINCIPAL_KIND_CHARS: usize = 64;
 
 pub(crate) const DEFAULT_ENDPOINT_LEASE_MS: i64 = 120_000;
 
-const MAX_DURABLE_AGENTS: i64 = 4_096;
+pub(crate) const MAX_DURABLE_AGENTS: i64 = 4_096;
 const MAX_CONVERSATIONS: i64 = 8_192;
 const MAX_MESSAGES_PER_CONVERSATION: i64 = 100_000;
 
@@ -1162,6 +1162,15 @@ impl Database {
             return Ok(current);
         }
         let now = now_unix_ms();
+        if !wake_capable {
+            reconcile_wakes_for_endpoint_loss(
+                &transaction,
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                now,
+            )?;
+        }
         transaction
             .execute(
                 "UPDATE wc_agent_endpoints
@@ -1589,7 +1598,6 @@ impl Database {
                 ));
             };
             match wake_state.as_str() {
-                "pending" => {}
                 "prepared" | "delivered" | "delivery_unknown" => {
                     if claimed_endpoint_id.as_deref() != Some(endpoint_id.as_str())
                         || claimed_generation != Some(*expected_controller_generation)
@@ -1600,10 +1608,10 @@ impl Database {
                         ));
                     }
                 }
-                "claimed" => {
+                "pending" | "claimed" => {
                     return Err(CommunicationStoreError::new(
                         "wake_not_dispatched",
-                        "Agent Wake reply cannot be posted before its dispatch fence",
+                        "Agent Wake reply requires a dispatch or explicit-activation fence",
                     ));
                 }
                 "consumed" => {

@@ -1,9 +1,9 @@
 use super::{RecoveryKind, ToolResult, ToolRuntime};
 use crate::auth::{AuthContext, AuthKind};
 use crate::db::{
-    AgentProfilePatch, CommunicationPrincipal, CommunicationStoreError, ConversationAccess,
-    NewAgentEndpoint, NewAgentIdentity, NewConversation, NewConversationMessage,
-    COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
+    AgentProfilePatch, AgentWakeState, CommunicationPrincipal, CommunicationStoreError,
+    ConversationAccess, NewAgentEndpoint, NewAgentIdentity, NewConversation,
+    NewConversationMessage, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
 };
 use serde::Serialize;
 use serde_json::{json, to_value};
@@ -763,14 +763,25 @@ impl ToolRuntime {
         // a current callable process-local registration.
         bootstrap.endpoint.wake_capable &=
             binding.adapter_registered && bootstrap.endpoint.lifecycle == "attached";
-        let wake_reply = bootstrap.wake.as_ref().map(|wake| {
-            json!({
+        let wake_reply = bootstrap
+            .wake
+            .as_ref()
+            .filter(|wake| {
+                matches!(
+                    wake.state,
+                    AgentWakeState::Prepared
+                        | AgentWakeState::Delivered
+                        | AgentWakeState::DeliveryUnknown
+                )
+            })
+            .map(|wake| {
+                json!({
                 "wake_id": wake.wake_id,
                 "reply_operation_index_min": 0,
                 "reply_operation_index_max": 31,
-                "contract": "For each semantically distinct reply in this Wake, call post_conversation_message with this wake_reply_id and a stable per-send reply_operation_index. Exact retry replays one Message; changed reuse fails closed."
-            })
-        });
+                    "contract": "For each semantically distinct reply in this accepted Wake, call post_conversation_message with this wake_reply_id and a stable per-send reply_operation_index. Exact retry replays one Message; changed reuse fails closed."
+                })
+            });
         let runtime_wake_capable = bootstrap.endpoint.wake_capable;
         ToolResult::ok(json!({
             "acting_agent": bootstrap.acting_agent,

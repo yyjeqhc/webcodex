@@ -31,7 +31,7 @@ pub(crate) use self::agent_wake::{
 pub(crate) use self::communication::{
     AgentEndpointRecord, AgentProfilePatch, CommunicationPrincipal, CommunicationStoreError,
     ConversationAccess, NewAgentEndpoint, NewAgentIdentity, NewConversation,
-    NewConversationMessage, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
+    NewConversationMessage, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX, MAX_DURABLE_AGENTS,
 };
 #[cfg(test)]
 pub(crate) use self::execution_model::ConnectorExecutionContinuationIntent;

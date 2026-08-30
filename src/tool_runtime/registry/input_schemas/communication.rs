@@ -282,7 +282,7 @@ pub(crate) fn post_conversation_message_input_schema() -> Value {
             "recipient_agent_ids": agent_id_array(0, "Optional explicit Agent Inbox recipients. Omit to deliver to every Agent participant except the author; an explicit empty array posts to the transcript/room without Agent deliveries."),
             "reply_to": nullable_id(MESSAGE_ID_PATTERN, "Optional parent Message in the same Conversation."),
             "idempotency_key": idempotency_key(),
-            "wake_reply_id": canonical_id(WAKE_ID_PATTERN, "Exact durable Wake providing stable resumed-turn reply replay identity. Use with reply_operation_index instead of idempotency_key."),
+            "wake_reply_id": canonical_id(WAKE_ID_PATTERN, "Exact durable Wake that already crossed a Host dispatch or explicit-activation fence and provides stable resumed-turn reply replay identity. Use with reply_operation_index instead of idempotency_key."),
             "reply_operation_index": {
                 "type": "integer",
                 "minimum": 0,
@@ -337,7 +337,7 @@ pub(crate) fn consume_agent_wake_input_schema() -> Value {
         "type": "object",
         "properties": {
             "agent_id": canonical_id(AGENT_ID_PATTERN, "Exact target Agent named by the durable Wake Intent."),
-            "endpoint_id": canonical_id(ENDPOINT_ID_PATTERN, "Exact current wake-capable Endpoint that received this continuation."),
+            "endpoint_id": canonical_id(ENDPOINT_ID_PATTERN, "Exact current Endpoint bound to this continuation. Host-adapter continuations require it to remain wake-capable; explicit_activation continuations do not."),
             "expected_controller_generation": {
                 "type": "integer",
                 "minimum": 1,

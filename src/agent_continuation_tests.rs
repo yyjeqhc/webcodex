@@ -542,6 +542,46 @@ fn wake_derived_reply_identity_closes_response_loss_without_merging_consumption(
     );
     let wake_id = wake_id_for(&db, &agent_b);
 
+    let pending_bootstrap = runtime.bootstrap_agent_conversation(
+        None,
+        agent_b.clone(),
+        endpoint_b.clone(),
+        generation_b,
+        Some(conversation_id.clone()),
+        Some(wake_id.clone()),
+        None,
+    );
+    assert!(pending_bootstrap.success, "{:?}", pending_bootstrap.output);
+    assert!(pending_bootstrap.output["reply_replay"].is_null());
+    let pending_reply = runtime.post_conversation_message(
+        None,
+        conversation_id.clone(),
+        "must activate before using Wake reply identity".to_string(),
+        Some(agent_b.clone()),
+        Some(endpoint_b.clone()),
+        Some(generation_b),
+        Some(vec![agent_a.clone()]),
+        None,
+        None,
+        Some(wake_id.clone()),
+        Some(0),
+    );
+    assert!(!pending_reply.success);
+    assert_eq!(pending_reply.output["error_kind"], "wake_not_dispatched");
+
+    let activation = runtime.bootstrap_agent_conversation(
+        None,
+        agent_b.clone(),
+        endpoint_b.clone(),
+        generation_b,
+        Some(conversation_id.clone()),
+        Some(wake_id.clone()),
+        Some("reply-activation".to_string()),
+    );
+    assert!(activation.success, "{:?}", activation.output);
+    assert_eq!(activation.output["wake"]["state"], "delivered");
+    assert!(activation.output["reply_replay"].is_object());
+
     let first = post_as_agent(
         &runtime,
         &conversation_id,
@@ -555,6 +595,18 @@ fn wake_derived_reply_identity_closes_response_loss_without_merging_consumption(
         Some(0),
     );
     assert_eq!(first["replayed"], false);
+    post_as_agent(
+        &runtime,
+        &conversation_id,
+        "a second intentional message",
+        &agent_b,
+        &endpoint_b,
+        generation_b,
+        &agent_a,
+        None,
+        Some(&wake_id),
+        Some(1),
+    );
     let (replacement_endpoint_b, replacement_generation_b) =
         attach(&runtime, &agent_b, "reply-endpoint-b2");
     let retry = post_as_agent(
@@ -574,7 +626,7 @@ fn wake_derived_reply_identity_closes_response_loss_without_merging_consumption(
         retry["message"]["message_id"],
         first["message"]["message_id"]
     );
-    assert_eq!(count(&db, "wc_conversation_messages"), 2);
+    assert_eq!(count(&db, "wc_conversation_messages"), 3);
 
     let changed = runtime.post_conversation_message(
         None,
@@ -593,18 +645,6 @@ fn wake_derived_reply_identity_closes_response_loss_without_merging_consumption(
     assert_eq!(
         changed.output["error_kind"],
         "communication_idempotency_conflict"
-    );
-    post_as_agent(
-        &runtime,
-        &conversation_id,
-        "a second intentional message",
-        &agent_b,
-        &replacement_endpoint_b,
-        replacement_generation_b,
-        &agent_a,
-        None,
-        Some(&wake_id),
-        Some(1),
     );
     assert_eq!(count(&db, "wc_conversation_messages"), 3);
 
@@ -628,8 +668,8 @@ fn wake_derived_reply_identity_closes_response_loss_without_merging_consumption(
     assert!(consumed.success);
     assert_eq!(
         db.agent_wake(&wake_id).unwrap().unwrap().state,
-        AgentWakeState::Pending,
-        "Delivery consume remains independent from the logical Wake"
+        AgentWakeState::DeliveryUnknown,
+        "Delivery consume remains independent from the logical Wake; replacement conservatively fences the delivered activation"
     );
 }
 

@@ -121,7 +121,7 @@ pub(crate) struct AgentContinuationController {
 }
 
 impl AgentContinuationController {
-    const DISPATCH_QUEUE_CAPACITY: usize = 256;
+    const DISPATCH_QUEUE_CAPACITY: usize = crate::db::MAX_DURABLE_AGENTS as usize;
 
     pub(crate) fn new(db: Arc<Database>) -> Self {
         let state = Arc::new(AgentContinuationControllerState {
@@ -348,7 +348,7 @@ impl AgentContinuationController {
                 tracing::warn!(
                     agent_id,
                     error = %error,
-                    "Agent continuation dispatch queue is full or unavailable; durable Wake remains authoritative"
+                    "Agent continuation dispatch queue is unavailable; durable Wake remains authoritative"
                 );
             }
         }

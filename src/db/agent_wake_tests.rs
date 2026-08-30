@@ -145,6 +145,91 @@ fn queued_delivery_ids(db: &Database, agent_id: &str) -> Vec<String> {
         .unwrap()
 }
 
+#[test]
+fn withdrawing_wake_capability_reconciles_exact_endpoint_attempts() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("wake-capability-withdrawal.db")).unwrap();
+    let fixture = create_fixture(&db, 'c');
+    post_to_receiver(&db, &fixture, "withdraw capability", "withdraw-message");
+    let endpoint = attach_wake_endpoint(&db, &fixture, "host", "withdraw-endpoint");
+    let wake_id = wake_id_for(&db, &fixture.receiver_agent_id);
+
+    let _claimed = db
+        .claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "host_adapter",
+        )
+        .unwrap()
+        .unwrap();
+    let withdrawn = db
+        .set_agent_endpoint_wake_capability(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            false,
+        )
+        .unwrap();
+    assert!(!withdrawn.wake_capable);
+    assert_eq!(
+        db.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::Pending
+    );
+    assert_eq!(
+        db.agent_wake_attempts(&wake_id).unwrap()[0].state,
+        AgentWakeAttemptState::Revoked
+    );
+
+    db.set_agent_endpoint_wake_capability(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        true,
+    )
+    .unwrap();
+    let claimed = db
+        .claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "host_adapter",
+        )
+        .unwrap()
+        .unwrap();
+    db.prepare_agent_wake_dispatch(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &wake_id,
+        &claimed.attempt.attempt_id,
+        &claimed.claim_fence,
+        &claimed.consume_token,
+    )
+    .unwrap();
+    db.set_agent_endpoint_wake_capability(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        db.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::DeliveryUnknown
+    );
+    assert_eq!(
+        db.agent_wake_attempts(&wake_id).unwrap()[1].state,
+        AgentWakeAttemptState::DeliveryUnknown
+    );
+}
+
 #[derive(Debug)]
 struct FakeContinuationAdapter {
     preflight_error: Option<&'static str>,

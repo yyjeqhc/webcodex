@@ -580,6 +580,16 @@ fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_too
 
     let mut full = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
     add_stateless_workflow_recorder_metadata(&mut full, ModelSurface::FullOperatorRuntime);
+    for tool in full["tools"].as_array().unwrap() {
+        if tool["name"] != "work_on_project" {
+            let serialized = serde_json::to_string(tool).unwrap();
+            assert!(
+                !serialized.contains("work_on_project"),
+                "{} pollutes exact work_on_project discovery",
+                tool["name"]
+            );
+        }
+    }
     let read_files = full["tools"]
         .as_array()
         .unwrap()

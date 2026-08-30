@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 
-use super::common::{object_schema, with_optional_session_id};
+use super::common::{
+    object_schema, with_optional_session_id, OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION,
+};
 
 pub(crate) fn save_project_artifact_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
@@ -89,7 +91,7 @@ pub(crate) fn export_project_artifact_input_schema() -> Value {
         (
             "session_id",
             "string",
-            "Optional explicit wc_sess_* id returned by work_on_project or another compatible Session bootstrap. When provided, this tool call is recorded in that exact Session ledger; omission leaves the call unlinked to Workflow Session state.",
+            OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION,
             false,
         ),
     ])

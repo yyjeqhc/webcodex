@@ -227,8 +227,8 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
             assert_eq!(ack["maxItems"], 8);
             assert_eq!(ack["items"]["pattern"], "^wc_msg_[A-Za-z0-9_]+$");
             let description = ack["description"].as_str().unwrap();
-            assert!(description.contains("current model context still remembers"));
-            assert!(description.contains("ACK does not resolve"));
+            assert!(description.contains("current model context still retains"));
+            assert!(description.contains("ACK neither resolves"));
             let resolution = &read_files["inputSchema"]["properties"]["session_message_resolution"];
             assert_eq!(resolution["type"], "object");
             assert_eq!(
@@ -242,8 +242,10 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
             );
             let resolution_description = resolution["description"].as_str().unwrap();
             assert!(resolution_description.contains("same WebCodex call"));
-            assert!(resolution_description.contains("recording_session_id"));
-            assert!(resolution_description.contains("complete_session_message"));
+            assert!(resolution_description.contains("explicit recording Session"));
+            assert!(resolution_description.contains("atomic completion path"));
+            assert!(!resolution_description.contains("recording_session_id"));
+            assert!(!resolution_description.contains("complete_session_message"));
             let context_request = &read_files["inputSchema"]["properties"]["context_request"];
             assert_eq!(context_request["type"], "array");
             assert_eq!(context_request["maxItems"], 8);
@@ -253,6 +255,7 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
             let request_description = context_request["description"].as_str().unwrap();
             assert!(request_description.contains("after this tool's main effect/observation"));
             assert!(request_description.contains("grants no authority"));
+            assert!(!request_description.contains("memory_read"));
             let context_ack =
                 &read_files["inputSchema"]["properties"]["ack_session_context_revision"];
             assert_eq!(context_ack["type"], "integer");

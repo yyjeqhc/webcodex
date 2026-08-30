@@ -430,6 +430,14 @@ mod tests {
                     spec.description
                 );
             }
+            if spec.name != "work_on_project" {
+                assert!(
+                    !spec.description.contains("work_on_project"),
+                    "{} pollutes exact work_on_project discovery: {}",
+                    spec.name,
+                    spec.description
+                );
+            }
         }
 
         for spec in &specs {
@@ -448,6 +456,13 @@ mod tests {
                     assert!(
                         !description.contains("run_job"),
                         "{} schema pollutes exact run_job discovery: {description}",
+                        spec.name
+                    );
+                }
+                if spec.name != "work_on_project" {
+                    assert!(
+                        !description.contains("work_on_project"),
+                        "{} schema pollutes exact work_on_project discovery: {description}",
                         spec.name
                     );
                 }

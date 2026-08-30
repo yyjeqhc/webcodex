@@ -284,7 +284,7 @@ pub(crate) fn session_summary_input_schema() -> Value {
         (
             "session_id",
             "string",
-            "Opaque wc_sess_* id returned by work_on_project or another compatible Session bootstrap.",
+            "Required explicit wc_sess_* Workflow Session id from a compatible Session bootstrap.",
             true,
         ),
         (

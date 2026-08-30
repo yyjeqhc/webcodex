@@ -228,7 +228,7 @@ pub(super) fn add_stateless_workflow_recorder_metadata(
             json!({
                 "type": "string",
                 "pattern": "^wc_sess_[A-Za-z0-9_]+$",
-                "description": "MCP wrapper metadata only. Optional explicit existing Workflow Session that records this tools/call and supplies trusted collaboration provenance. It is distinct from any concrete tool business session_id, grants no authority, and is removed before concrete tool parsing."
+                "description": "Optional explicit Workflow Session used only to record this call and trusted collaboration provenance. Separate from any tool business Session input; grants no authority; removed before concrete parsing."
             }),
         );
         properties.insert(
@@ -240,14 +240,14 @@ pub(super) fn add_stateless_workflow_recorder_metadata(
                     "type": "string",
                     "pattern": "^wc_msg_[A-Za-z0-9_]+$"
                 },
-                "description": "MCP wrapper metadata only. ACK means the current model context still remembers the referenced open Session message. Repeat ACK ids on subsequent calls while remembered. If omitted later, unresolved ACK-required guidance may be returned again. ACK does not resolve the message."
+                "description": "Proves the current model context still retains the listed open ACK-required Session messages. Repeat while retained. If later omitted, unresolved ACK-required guidance may be surfaced again. ACK neither resolves messages nor grants authority or gates execution."
             }),
         );
         properties.insert(
             crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD.to_string(),
             json!({
                 "type": "object",
-                "description": "MCP wrapper metadata only. After one non-todo message in recording_session_id is already handled, resolve it and attach bounded resolution text on this same WebCodex call instead of making a separate resolve call. For requires_ack guidance, include the same message_id in ack_session_message_ids on this request. The target is always the exact recording Session and this object is removed before concrete tool parsing. Do not use it to predict whether the current tool call will succeed; todo completion still uses complete_session_message.",
+                "description": "After handling one non-todo message in the explicit recording Session, attach its id and bounded resolution text here to resolve it on the same WebCodex call. ACK-required guidance also needs request-scoped ACK. Applies only to that exact recording Session; removed before concrete parsing; does not predict call success. Todos use the atomic completion path.",
                 "properties": {
                     "message_id": {
                         "type": "string",
@@ -274,9 +274,9 @@ pub(super) fn add_stateless_workflow_recorder_metadata(
                         "type": "string",
                         "minLength": 1,
                         "maxLength": crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_KEY_CHARS,
-                        "description": "Bounded context material key. Keys are open-ended rather than schema-enumerated; unsupported keys are reported nonfatally in context_projection."
+                        "description": "Bounded context material key; unsupported keys are reported nonfatally."
                     },
-                    "description": format!("MCP wrapper metadata only. Request bounded context material to be appended as context_projection after this tool's main effect/observation is already complete. Keys remain open-ended; current materials include {}. This sidecar grants no authority and does not retroactively make requested guidance a precondition of the current effect. If project rules or durable Memory guidance were lost, first recover project.instructions and/or memory.bootstrap on an observation call, use memory_read when detail is needed, reason, and only then issue a later mutation that must follow that guidance.", crate::tool_runtime::context_projection::context_material_keys_csv())
+                    "description": format!("Request bounded context material after this tool's main effect/observation; keys are open-ended and currently include {}. This sidecar grants no authority and cannot make requested guidance a retroactive precondition of the current effect. Recover missing project or Memory guidance on a read/observation call before any later dependent mutation.", crate::tool_runtime::context_projection::context_material_keys_csv())
                 }),
             );
             properties.insert(
@@ -285,7 +285,7 @@ pub(super) fn add_stateless_workflow_recorder_metadata(
                 json!({
                     "type": "integer",
                     "minimum": 0,
-                    "description": "Echo the latest Session context revision still present in the current model context. Omit it when unknown. A known behind revision may receive bounded continuous delta recovery; missing, invalid, future, retained-history-loss, or bounded-delta truncation recovery uses a compact current Session handoff. The tool effect remains nonblocking."
+                    "description": "Echo the latest Session context revision retained by the model; omit it when unknown. A known behind revision may receive bounded delta recovery; missing, invalid, future, lost-history, or truncated recovery gets a compact current Session handoff. Recovery is nonblocking."
                 }),
             );
             add_stateless_context_projection_output_schema(tool);

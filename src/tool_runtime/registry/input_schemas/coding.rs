@@ -147,7 +147,7 @@ pub(crate) fn finish_coding_task_input_schema() -> Value {
             },
             "session_id": {
                 "type": "string",
-                "description": "Required explicit wc_sess_* business Session id returned by work_on_project. Advanced/internal callers may also obtain it from compatible Session bootstrap APIs."
+                "description": "Required explicit wc_sess_* business Session id for the current coding task, obtained from its compatible Session bootstrap."
             },
             "include_diff": {
                 "type": "boolean",

@@ -116,7 +116,7 @@ cross-Session/cross-owner delegation.
 
 For a coordinator or worker window that needs to notice later message-board changes without re-listing history, call `observe_session_messages(session_id=...)` once without a token to establish the current baseline, then reuse its opaque `observation_token`. A token call may optionally wait once for up to 60 seconds. The result reports retained current-state delta, `has_more`, and explicit `history_lost` when retention prevents a complete delta. Use `list_session_messages` for historical or exact filtered reads; observation does not replace it.
 
-Message observation is not a delivery receipt, model-context-retention proof, subscription, or orchestrator wake-up. It does not automatically resume a model, route a conversation, or spawn a worker. Room/Discussion remains a future additive collaboration container, not part of this Workflow Session observation primitive.
+Message observation is not a delivery receipt, model-context-retention proof, subscription, or Agent Wake. It does not automatically resume a model, route a Conversation, or spawn a worker. Durable Agent/Conversation/Delivery/Wake state is a separate Server-owned domain and is not part of this Workflow Session observation primitive.
 
 See [Manual Multi-Window Collaboration](agent/manual-window-collaboration.md) for
 coordinator/implementation, implementation/reviewer, parallel-worktree, and

@@ -1,6 +1,6 @@
 # Manual Multi-Window Collaboration
 
-This guide defines bounded collaboration between independent WebCodex Workflow Sessions. It reuses the Session handoff and message board; it is not a scheduler, worker pool, task queue, claim service, shared transcript, or filesystem lock.
+This guide defines bounded collaboration between independent WebCodex Workflow Sessions. It reuses the Session handoff and message board; it is not a scheduler, worker pool, task queue, claim service, shared transcript, or filesystem lock. This manual engineering workflow remains valid alongside the separate durable Agent/Conversation domain.
 
 ## Core model
 
@@ -82,7 +82,7 @@ Observation tracks real message-state mutation, not deque length. Posts advance 
 
 Retention is explicit. Each retained message carries internal latest-revision bookkeeping and the Session maintains a durable low-watermark for evicted observation history. When the caller cursor predates an unrecoverable retention hole, `history_lost=true`; retained current-state delta may still be returned, but it is not represented as complete history. Pagination advances the returned token only through the last change actually returned while `has_more=true`.
 
-Message observation is **not** a delivery receipt, **not** proof of model-context retention, **not** a subscription/stream, and **not** an orchestrator wake-up. It never automatically wakes a model or spawns/routes work. Room/Discussion remains only a future additive direction; this Workflow Session primitive does not create Room, participant, presence, typing, scheduler, worker-pool, or routing state.
+Message observation is **not** a delivery receipt, **not** proof of model-context retention, **not** a subscription/stream, and **not** an Agent Wake. It never automatically wakes a model or spawns/routes work. Durable Agent/Conversation/Delivery/Wake state exists in a separate Server-owned domain; this Workflow Session primitive neither creates nor observes that state and does not create presence, typing, scheduler, worker-pool, or routing state.
 
 ## Runtime Collaboration Console
 
@@ -153,62 +153,50 @@ This workflow does not add automatic worker spawning, scheduler/worker pool beha
 
 The human or coordinator still chooses workers and isolated worktrees/Projects. WebCodex supplies bounded durable collaboration state and deterministic completion correlation, not a multi-agent execution scheduler.
 
-## Future extensibility boundary
+## Relationship to durable Agent/Conversation and asynchronous work
 
-The current message board is intentionally scoped to a Workflow Session because
-that is sufficient for short coordinator/worker handoffs. That storage choice
-does not make the Workflow Session the future long-lived conversation object.
+The Session message board remains intentionally scoped to a Workflow Session. It is
+still the right primitive for explicit engineering handoffs such as coordinator ->
+implementation worker and implementation -> independent reviewer. The existence of
+the durable Agent/Conversation domain does not migrate, reinterpret, or obsolete
+that workflow.
 
-If real usage later needs a durable multi-participant chat or discussion space,
-introduce an additive Room/Discussion container with its own collaboration
-lifecycle. Independent Workflow Sessions may participate in that container, but
-they continue to own their own execution/evidence histories and may be created,
-closed, or replaced independently of the room.
-
-Room/Discussion state is durable application collaboration state, not model-context
-continuity or delivery proof. Membership, presence, a transport/window identity,
-or a referenced Workflow Session never proves that a model still retains or has
-ever read any room message. Models must explicitly observe the bounded messages
-or deltas they need; Room identity must not become hidden Workflow Session selection
-or a context-retention fallback.
-
-Room/Discussion identifiers and participant claims are not bearer capabilities:
-every Room read or post still requires the authenticated caller to satisfy that
-container's own visibility/posting authorization.
-
-Keep the future layers separate:
+Long-lived Agent communication now belongs to the separate durable Agent domain:
 
 ```text
-collaboration substrate
-  bounded messages / replies / provenance / observation
+Durable Agent / Conversation
+  Message -> recipient Delivery -> Wake opportunity
+            |
+            | explicit accept/create work (planned)
+            v
+Agent Task -> exact fenced TaskAttempt
+            |
+            +--> CodingAgentRun
+            +--> Agent Endpoint continuation
+            +--> later concrete execution backend
             |
             v
-optional orchestrator
-  wake-up / routing / worker spawning / scheduling
-            |
-            v
-Workflow Sessions / Jobs / Projects
-  authoritative execution and evidence
+Workflow Session / Job / execution evidence
 ```
 
-A message or room may reference a Workflow Session, Job, Artifact, checkpoint,
-commit, PR, or another collaboration object. Such references only locate the
-authoritative object; they never delegate authority, and consumers revalidate
-the referenced source before consequential use. Participant roles and presence
-are likewise collaboration metadata, not execution permissions.
+These arrows are correlations, not authority inheritance. Conversation membership,
+Message authorship, Delivery state, Wake state, Session todo state, and object
+references never grant Project or execution authority.
 
-An optional orchestrator may decide when to wake, route, or spawn work, but it
-must not mint, inherit, or cache execution authority from Room membership,
-participant role, message authorship, or object references. Every consequential
-execution still goes through the normal explicit Project/Workflow Session target,
-caller authorization, guards, capability checks, and dispatch-time revalidation.
-Collaboration state may be scheduling input; it is not execution-effect truth or
-a lease over a Project, Session, Job, or worktree.
+A Workflow Session todo and future Agent Task are deliberately different. The todo
+is a bounded explicit assignment inside one Session collaboration ledger. An Agent
+Task will represent asynchronous work that survives model/window turns and owns
+independent TaskAttempt/lease/fencing state. Do not silently convert historical or
+current Session todos into Agent Tasks, and do not use `assignment_fence` as an
+Agent Task execution lease.
 
-Do not introduce Room membership, participant registries, presence, typing
-state, generic task leases, or automatic agent routing until a concrete product
-need exists. When a second real collaboration container does exist, shared
-message semantics may be extracted from the existing model rather than creating
-parallel `ChatMessage`, `WorkItem`, and `Todo` systems. Preserve historical
-`wc_sess_*` and Session-message semantics through additive fields/objects rather
-than reinterpretation migrations.
+Likewise, the existing Connector Task used by `task_start` / `task_resume` remains a
+separate project-bound continuity domain. The standing naming and boundary rules for
+future Agent Tasks are in
+[`../architecture/durable-agent-runtime.md`](../architecture/durable-agent-runtime.md).
+
+If later product use justifies runnable-frontier scheduling, worker spawning,
+capacity management, dependency graphs, or autonomous routing, those mechanisms may
+consume durable Agent Task state as input. They remain optional control layers and
+must revalidate claim/execution authority at the consequential boundary; they are
+not hidden behavior of the Session message board or Conversation substrate.

@@ -1,6 +1,6 @@
 # Durable Agent identity, Conversation, and wake foundation
 
-A1 adds a concrete communication domain without changing the meaning of Workflow Sessions or project Memory. A2 extends that domain with durable wake intent, Endpoint lifecycle/generation fencing, dispatch uncertainty, and exact continuation consume semantics without making model execution part of Conversation or Inbox state.
+A1 adds a concrete communication domain without changing the meaning of Workflow Sessions or project Memory. A2 extends that domain with durable wake intent, Endpoint lifecycle/generation fencing, dispatch uncertainty, and exact continuation consume semantics without making model execution part of Conversation or Inbox state. The standing direction beyond this implemented substrate is defined in [`durable-agent-runtime.md`](durable-agent-runtime.md).
 
 ## Domain boundaries
 
@@ -13,10 +13,10 @@ A1 adds a concrete communication domain without changing the meaning of Workflow
 | Agent Delivery | Recipient-specific queued/consumed Inbox state pointing to one Message | a duplicate Message or model invocation |
 | Wake Intent | Durable logical continuation saying an Agent should receive another processing opportunity | a Message, Inbox Delivery, or Host delivery attempt |
 | Wake Delivery Attempt | One Endpoint/generation-bound attempt to deliver a Wake Intent through a continuation adapter | the durable communication fact or a grant of execution authority |
-| Task | Reserved future bridge from communication to requested work | implemented by A1 or A2 |
+| Agent Task | Planned durable asynchronous work accepted/created for an Agent | Connector Task, Conversation Message, Session todo, or execution authority |
 | Workflow Session | Existing execution, provenance, validation, Job, workspace, todo, and guidance context | a chat room |
 
-An Agent Card contains a mutable non-unique handle, display name, description, bounded specialty labels, profile revision, and timestamps. These fields are self-description metadata. Canonical identity is only the Server-generated `agent_id`, and neither identity nor metadata grants Project, filesystem, Runner, Task, or Workflow Session authority.
+An Agent Card contains a mutable non-unique handle, display name, description, bounded specialty labels, profile revision, and timestamps. These fields are self-description metadata. Canonical identity is only the Server-generated `agent_id`, and neither identity nor metadata grants Project, filesystem, Runner, Agent Task, or Workflow Session authority.
 
 ## Authoritative persistence
 
@@ -76,8 +76,10 @@ The page performs bounded polling on the existing eight-second Runtime Console c
 
 A2 also defines a narrow Host-neutral `ContinuationAdapter`: preflight occurs before the dispatch fence and must not resume a model, while dispatch happens only after the Attempt is durably prepared. The checked-in deterministic adapter is test-only; A2 does not claim a production ChatGPT/MCP-App auto-resume path.
 
-## Future boundaries
+## Next boundaries
 
-A later slice may add a production Host continuation adapter and dogfood, an explicit operator/Host reconciliation policy for long-lived `delivery_unknown` ambiguity, a concrete bridge such as `Message -> accepted Task -> Workflow Session -> Job -> Conversation reply`, richer participant administration, and cluster storage. ChatGPT MCP Apps remain one possible Endpoint/continuation adapter rather than a core dependency.
+The next standing work-domain boundary is an independent Agent Task plus fenced Agent TaskAttempt, described in [`durable-agent-runtime.md`](durable-agent-runtime.md). A Conversation Message may later become the stable origin of explicitly accepted work, but Message/Delivery/Wake state is not silently reinterpreted as an Agent Task, claim, lease, or execution result. Existing Connector Tasks and Workflow Session todos remain separate domains.
 
-Current project-scoped Memory behavior is unchanged. Agent identity is stable enough for a future Memory principal or namespace keyed by `agent_id`; A1/A2 do not migrate Memory, add Agent Skills, schedule work, spawn autonomous workers, implement Task/DAG orchestration, federation, A2A compatibility, PostgreSQL, or distributed multi-Server leases.
+A separate later slice may add a production Host continuation adapter and dogfood plus an explicit operator/Host reconciliation policy for long-lived `delivery_unknown` ambiguity. ChatGPT MCP Apps remain one possible Endpoint/continuation adapter rather than a core dependency.
+
+Current project-scoped Memory behavior is unchanged. Agent identity is stable enough for a future Memory principal or namespace keyed by `agent_id`; A1/A2 do not migrate Memory, add Agent Skills, schedule work, spawn autonomous workers, implement Agent Task/DAG orchestration, federation, A2A compatibility, PostgreSQL, or distributed multi-Server leases.

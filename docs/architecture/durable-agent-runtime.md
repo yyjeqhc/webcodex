@@ -1,0 +1,496 @@
+# Durable Agent runtime and asynchronous work
+
+This document defines the standing product direction for durable Agent identity and
+asynchronous work in WebCodex. It builds on the implemented Agent/Conversation/Wake
+foundation without turning WebCodex into a generic swarm framework or workflow
+scheduler.
+
+Implementation details for the current communication and wake substrate live in
+[`durable-agent-conversation.md`](durable-agent-conversation.md). Workflow Session
+semantics remain defined by [`../agent/session-model.md`](../agent/session-model.md).
+
+## Product direction
+
+The product goal is a durable Agent entity that can outlive any one model turn,
+browser window, host connection, Project, or execution carrier.
+
+A user should eventually be able to:
+
+1. create or select a durable Agent;
+2. attach a current window/host to that Agent;
+3. communicate through durable Conversations and Inbox Deliveries;
+4. leave work for the Agent that remains durable while no model is running;
+5. later attach another Endpoint and continue as the same Agent;
+6. execute accepted work through whatever authorized carrier is appropriate;
+7. inspect durable status instead of inferring progress from browser/UI state.
+
+The model process is not the Agent. A model turn executes **on behalf of** a durable
+Agent. Closing a window therefore means that an Endpoint disappeared; it does not
+mean that the Agent, its Conversations, or its accepted work disappeared.
+
+This direction may eventually make multi-Agent scheduling possible, but scheduling
+is not the product definition. WebCodex should first make Agent identity and work
+independent from windows and synchronous model turns. Runnable-frontier scheduling,
+capacity management, graph execution, and autonomous delegation remain optional
+capabilities that require separate product evidence.
+
+## Names that must not collapse
+
+WebCodex already contains several concepts that use similar words. They are separate
+domains and must remain explicit in code, schemas, documentation, and reviews.
+
+| Concept | Meaning | Not interchangeable with |
+| --- | --- | --- |
+| Runtime Project | Runner-registered execution target addressed as `agent:<client_id>:<project_id>` | durable Agent identity |
+| Durable Agent | Server-minted `wc_dagent_*` identity representing who acts/communicates | Runner, browser window, credential, Workflow Session |
+| Agent Endpoint | Current Host/Client attachment for one Agent, with lifecycle/generation | Agent identity or work ownership |
+| Conversation | Durable communication space | Workflow Session, task queue, execution context |
+| Agent Delivery | Recipient-specific Inbox state for one Message | model invocation or accepted work |
+| Wake Intent | Durable logical processing opportunity for an Agent | Message, Delivery, Agent Task, execution lease |
+| Connector Task | Existing project-bound `task_start` / `task_resume` continuity domain | Agent Task |
+| Agent Task | Planned durable unit of accepted asynchronous Agent work | Connector Task, Session todo, Conversation Message |
+| Agent TaskAttempt | Planned exact execution/ownership attempt for one Agent Task | Endpoint, Workflow Session, CodingAgentRun |
+| Workflow Session | Existing execution/provenance/validation/handoff evidence context | Agent, Conversation, Agent Task |
+| Job | Concrete long-running process/validation execution | Agent Task or TaskAttempt |
+| CodingAgentRun | Existing ACP delegated coding execution | Agent Task itself |
+
+The `agent:` prefix in a runtime Project id is historical Runner-address syntax. It
+is unrelated to the durable `wc_dagent_*` Agent identity domain.
+
+In implementation names, prefer `ConnectorTask` for the existing Connector
+continuity domain and `AgentTask` / `AgentTaskAttempt` for the asynchronous Agent
+work domain. Do not introduce an unqualified new `Task` type where ownership would
+be ambiguous.
+
+## Implemented durable Agent foundation
+
+The current implementation already establishes these boundaries:
+
+```text
+Durable Agent
+    |
+    +-- Agent Card / profile
+    +-- Endpoint attachments + controller generations
+    +-- Conversations
+    |     +-- append-only Messages
+    |     +-- recipient Deliveries / Inbox
+    |
+    +-- Wake Intents
+          +-- Endpoint/generation-bound Wake Delivery Attempts
+```
+
+Important current invariants:
+
+- `agent_id` is Server-minted stable identity; Agent Card metadata grants no
+  execution authority.
+- Endpoint identity is replaceable and principal-bound; lease validity and
+  controller generation fence stale attachments.
+- Conversation participation grants communication authority only.
+- Message, Delivery, Wake Intent, and Wake Delivery Attempt are independent durable
+  facts.
+- Message/Delivery creation and required Wake coalescing are transactional.
+- communication-resource authorization hides existence from unauthorized exact-id
+  probes.
+- generic database open is storage-only; standalone Server takeover recovery runs
+  only after explicit Server instance ownership is acquired.
+- dispatch uncertainty after the Wake dispatch fence is preserved rather than
+  blindly retried.
+- project-scoped Memory is unchanged; Agent-scoped Memory is only a future boundary.
+
+These invariants are prerequisites for asynchronous Agent work, not a scheduler.
+
+## Asynchronous Agent work
+
+An **Agent Task** represents durable work that has been explicitly accepted or
+created for later completion. It answers:
+
+> What work remains to be completed?
+
+It must survive model-turn completion, Endpoint detach, browser closure, Server
+restart, and temporary absence of an execution carrier.
+
+An Agent Task is not created merely because a Conversation Message exists. A Message
+is communication; converting or accepting a request into work must be an explicit
+durable transition. An Agent Task may retain stable origin references such as `conversation_id` and
+`source_message_id`, but the Message body remains owned by the Conversation domain.
+
+Likewise, an Agent Task that references a Project does not receive Project authority.
+The Project reference identifies where work may need to occur; every actual execution
+still passes the normal Project/Runner/filesystem/permission checks.
+
+A first Agent Task model should stay deliberately small. Candidate durable fields
+are:
+
+```text
+AgentTask
+  task_id
+  creator / owner principal attribution
+  assignee_agent_id?
+  bounded title / instruction
+  source_conversation_id?
+  source_message_id?
+  referenced_project_id?
+  state
+  created_at
+  updated_at
+  terminal result / reason references?
+```
+
+The exact state enum should be chosen by the implementing slice, not expanded in
+advance for hypothetical graph execution. The first slice needs only enough states
+to distinguish available/active work from terminal success/failure and any explicit
+cancellation that is actually required.
+
+## TaskAttempt is the execution ownership unit
+
+An Agent Task does not record a mutable `claimed_by` field that is repeatedly reused
+across retries. Each concrete attempt is a separate durable **Agent TaskAttempt**.
+
+```text
+AgentTask
+   |
+   +-- TaskAttempt 1 -> expired / failed
+   +-- TaskAttempt 2 -> failed
+   +-- TaskAttempt 3 -> completed
+```
+
+A TaskAttempt answers:
+
+> Who owns this exact execution attempt, and which generation of that attempt is
+> still allowed to make progress?
+
+Candidate durable fields are:
+
+```text
+AgentTaskAttempt
+  attempt_id
+  task_id
+  attempt_number
+  assignee_agent_id
+  state
+  lease_expires_at
+  attempt_fence
+  attempt_controller_generation
+  workflow_session_id?
+  execution_kind?
+  execution_ref?
+  created_at
+  started_at?
+  terminal_at?
+```
+
+The Attempt belongs to the durable Agent, not to a browser window. An Endpoint or
+other execution carrier is only a current way of executing that Attempt.
+
+### Two different stale-execution fences
+
+Attempt retry and carrier replacement are different events and need different
+fences.
+
+**Attempt fence** separates one TaskAttempt from a later TaskAttempt:
+
+```text
+Attempt 1 (fence A) -> lease expires
+Attempt 2 (fence B) -> becomes current
+
+late heartbeat(A) -> stale
+late complete(A)  -> stale
+late fail(A)      -> stale
+```
+
+The same Agent reclaiming work after Attempt 1 expires creates Attempt 2. Matching
+`agent_id` must never revive an expired Attempt.
+
+**Attempt controller generation** separates execution carriers inside the same Attempt:
+
+```text
+Attempt 2
+  Agent A
+  attempt_fence = B
+  attempt_controller_generation = 4
+       |
+       +-- old carrier binding / attempt generation 3 -> stale
+       +-- replacement carrier binding / attempt generation 4 -> current
+```
+
+Carrier replacement therefore does not necessarily create a new Attempt, but the
+old carrier must lose the ability to heartbeat, dispatch, or submit a terminal
+result. `attempt_controller_generation` is Attempt-local freshness metadata, not a
+credential or a grant of Project authority. It is distinct from the existing Agent
+Endpoint controller generation. When the carrier is an Agent Endpoint, the binding
+must also preserve and validate the exact `endpoint_id` plus that Endpoint's own
+controller generation.
+
+If an execution backend already has a stronger exact identity (for example a
+CodingAgentRun `run_id` plus provider-instance fencing), bind and revalidate that
+identity rather than weakening it into a generic controller token.
+
+## Attempt authority and lease semantics
+
+Possession of an Attempt id, fence, lease timestamp, Agent id, or controller
+generation is never sufficient authority by itself.
+
+The intended admission rule is conceptually:
+
+```text
+normal caller authorization
++ authorized Agent Task visibility / operation
++ exact active task_id + attempt_id
++ exact assignee_agent_id
++ unexpired Attempt lease
++ exact opaque attempt_fence
++ current attempt_controller_generation when a replaceable carrier is bound
++ normal Project / executor authority for consequential execution
+```
+
+`attempt_fence` is conflict-detection/freshness metadata, not a bearer credential.
+A lease that is already expired cannot be renewed by the stale owner and cannot
+submit completion. A new claim after expiry creates a new Attempt.
+
+Planner or scheduler output, if one is added later, is advisory. The authoritative
+claim/dispatch mutation must re-check current Agent Task state, Attempt state, lease,
+assignee, Project/executor authority, and any dependency rules that eventually
+exist.
+
+## Idempotency, replay, and uncertainty
+
+Agent Task mutations should follow the existing WebCodex durable patterns:
+
+- create-like operations use caller-generated idempotency keys plus canonical
+  request fingerprints;
+- exact uncertain retry returns the original Agent Task/TaskAttempt/result;
+- reusing one key for changed intent fails closed;
+- duplicate terminal completion is exact replay, not a second side effect;
+- expired Attempt heartbeat/completion is rejected even when the Agent is the same;
+- once a later Attempt exists, an older Attempt remains permanently stale;
+- restart restores durable Task/Attempt truth rather than inferring ownership from
+  process-local state.
+
+Execution dispatch has a separate uncertainty boundary. If a backend dispatch may
+have happened, the TaskAttempt must preserve that ambiguity and reconcile the exact
+execution rather than minting a replacement execution blindly. Existing
+CodingAgentRun `outcome_unknown` / provider-instance semantics are the preferred
+first backend precedent.
+
+## Communication, Wake, Task, and execution are separate
+
+The expected relationship is:
+
+```text
+Human / Agent
+    |
+    v
+Conversation Message
+    |
+    | explicit accept/create work
+    v
+Agent Task
+    |
+    | exact claim
+    v
+Agent TaskAttempt
+    |
+    +--> CodingAgentRun
+    |       or
+    +--> Agent Endpoint continuation
+    |       or future concrete backend
+    v
+Workflow Session / Job / backend execution evidence
+    |
+    v
+exact Attempt terminal transition
+    |
+    v
+Agent Task result
+    |
+    v
+Conversation reply / durable notification
+```
+
+The arrows are correlations, not authority inheritance.
+
+A Wake Intent says that an Agent should receive another processing opportunity. It
+is not an Agent Task claim and does not mean work completed. Consuming a Wake does
+not consume Agent Task work. Consuming Inbox Deliveries does not complete an Agent
+Task. An Agent Task may remain durable while the Agent has no wake-capable Endpoint.
+
+A Workflow Session remains the execution/provenance/validation context for concrete
+work. It does not become the Agent Task identity. A Session todo remains a useful
+manual coordinator/worker assignment primitive, but it is not silently upgraded
+into an Agent Task.
+
+## Authority and privacy boundaries
+
+Agent entity work crosses communication and execution domains, so the boundary must
+remain explicit from the first Agent Task slice.
+
+Standing rules:
+
+- Agent identity or Agent Card metadata grants no execution authority.
+- Conversation membership, authorship, mention, Delivery, or Wake possession grants
+  no Agent Task execution authority.
+- Agent Task assignment grants no Project, Runner, filesystem, Job, Workflow
+  Session, Computer, or CodingAgent authority.
+- An Agent Task's Project reference grants no access to that Project.
+- Claim/dispatch/completion re-authorize their owning Agent Task domain and any
+  actual Project/executor target at the consequential boundary.
+- Agent Task visibility, Agent Task management, assignment/claim, and underlying execution
+  authority are conceptually distinct even if the first implementation can safely
+  reuse a smaller closed scope set.
+- exact Task/Attempt lookups should follow the existing authorization-result privacy
+  discipline: an unauthorized caller must not use guessed opaque ids as an
+  existence oracle.
+- generic audit/telemetry should keep ids, state, counts, generations, and bounded
+  metadata, not duplicate full Agent Task instructions, Conversation bodies, secrets, or
+  opaque fences/tokens.
+
+Do not name new scopes merely to make the model look symmetric. Introduce a scope
+only when the actual first Agent Task surface creates a distinct authority audience.
+
+## Agent continuity across windows
+
+The durable identity model is intentionally stronger than window continuity:
+
+```text
+Window / Host Endpoint E1 disappears
+        |
+        v
+Durable Agent still exists
+        |
+        +-- Agent Card
+        +-- Conversation / Inbox / Wake
+        +-- future Agent Memory
+        +-- Agent Tasks / TaskAttempts
+        |
+        v
+Endpoint E2 attaches later
+```
+
+A replacement Endpoint may continue the same Agent, subject to current principal
+ownership, Endpoint generation, TaskAttempt controller fencing, and the execution
+backend's own rules. No model is assumed to remain resident between turns.
+
+This also leaves a clean future boundary for Agent-scoped Memory and Skills. Current
+Project Memory remains unchanged until a deliberate migration/namespace design is
+implemented. Agent Skills are later additive capability/configuration, not part of
+TaskAttempt authority.
+
+## Execution backend sequence
+
+Do not build a universal execution-provider framework in the Agent Task foundation.
+Use concrete backends first.
+
+### A3 — Agent Task + fenced TaskAttempt
+
+Establish durable Agent Task and TaskAttempt semantics only:
+
+- explicit work creation/acceptance;
+- atomic claim;
+- lease + exact Attempt fencing;
+- carrier/controller-generation fencing where needed;
+- exact heartbeat/completion/replay;
+- restart recovery;
+- authority/privacy boundaries;
+- minimal observation/listing needed to dogfood the domain.
+
+A3 does **not** automatically spawn workers or choose execution capacity.
+
+### A4a — TaskAttempt -> existing CodingAgentRun
+
+Use the existing ACP CodingAgentRun as the first real execution backend. It already
+has durable run identity, caller/project/provider intent binding, provider-instance
+fencing, uncertain-dispatch handling, and restart reconciliation.
+
+This is deliberately the first backend because it proves that Agent Task execution
+is independent from ChatGPT browser windows.
+
+### A4b — TaskAttempt -> Agent Endpoint continuation
+
+After a production Host continuation adapter exists, allow a TaskAttempt to execute
+through a wake-capable Agent Endpoint. The TaskAttempt remains Agent-owned; the
+Endpoint remains a replaceable carrier.
+
+Only after both backends reveal repeated common machinery should WebCodex extract a
+minimal shared execution binding/adapter abstraction.
+
+## Scheduling is optional derived capability
+
+Later dogfood may show that many durable Agent Tasks benefit from a runnable-frontier
+scheduler. If so, scheduling should derive from durable work, not from browser tabs
+or UI idle state.
+
+Useful future invariants include:
+
+- planning is advisory; claim remains authoritative;
+- runnable work and live execution reservations drive capacity decisions;
+- active execution reservations form a floor only for the carrier class they
+  actually consume;
+- semantic durable state transitions create wake pressure; visual UI state does not;
+- stale workers/carriers cannot renew expired leases or submit late results.
+
+Capacity is therefore potentially per execution class rather than simply
+"number of active Agent Tasks = number of ChatGPT windows".
+
+This is a possible A5 product slice, not an A3 requirement and not WebCodex's north
+star.
+
+## Dependencies and workflow graphs come later
+
+Do not add dependency DAGs, fan-out/reducers, graph node kinds, conditional routing,
+supersteps/barriers, or parent/child Agent orchestration merely because another
+system demonstrates them.
+
+First prove:
+
+```text
+Agent Task -> exact TaskAttempt -> concrete execution -> exact terminal result
+```
+
+Add dependency semantics only after real workflows require `A -> B` or fan-out/join.
+Add an explicit workflow graph only after dependency plus conditional-routing use
+cases justify a third abstraction layer. Superstep/BSP-style coordination has no
+current roadmap commitment.
+
+## A3 acceptance matrix
+
+The first Agent Task foundation should close at least these cases:
+
+| Case | Required result |
+| --- | --- |
+| two Agents concurrently claim one Agent Task | exactly one authoritative Attempt is created/accepted |
+| exact claim retry | returns the same Attempt without redispatch |
+| heartbeat before lease expiry | succeeds only for exact current Attempt/controller |
+| heartbeat after lease expiry | rejected as stale |
+| completion after lease expiry | rejected as stale |
+| same Agent claims after expiry | creates a new Attempt |
+| different Agent claims after expiry | creates a new Attempt only if current assignment/authority makes that Agent eligible |
+| Attempt 1 responds after Attempt 2 exists | Attempt 1 remains permanently stale |
+| Endpoint replacement inside one Attempt | old controller generation is fenced |
+| Server restart | Task/Attempt truth and accepted replay identities survive |
+| Endpoint detach | Task/Attempt durable state does not disappear |
+| duplicate completion | exact replay, no repeated terminal side effect |
+| changed replay | idempotency conflict |
+| Conversation participant references Agent Task | receives no implicit Agent Task execution authority |
+| Agent Task references Project | receives no implicit Project authority |
+| unauthorized exact Agent Task/Attempt id | does not disclose foreign-resource existence |
+
+## Explicit non-goals for the next slice
+
+The Agent Task foundation must not expand into:
+
+- a generic swarm scheduler or worker pool;
+- automatic Agent spawning or autonomous delegation;
+- runnable-frontier/capacity autoscaling;
+- dependency DAG, fan-out/reducer, graph DSL, or superstep;
+- a universal execution-provider framework;
+- Agent parent/child hierarchy;
+- production ChatGPT continuation unless that is the dedicated A4b slice;
+- Agent-scoped Memory migration or Agent Skills;
+- federation/A2A compatibility;
+- PostgreSQL/distributed multi-Server scheduling;
+- a generic Actor/Event/Entity ORM.
+
+The design goal is narrower: make a durable Agent able to own and resume
+asynchronous work correctly, with explicit identity, authority, replay, and stale
+execution fencing. More automated coordination can grow from that foundation only
+when real product use demonstrates the need.

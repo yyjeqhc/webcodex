@@ -5,6 +5,7 @@ live in [`AGENTS.md`](../../AGENTS.md).** This file explains durable product
 structure so agents do not re-litigate settled shape during ordinary tasks.
 
 Related product docs: [`ARCHITECTURE.md`](../ARCHITECTURE.md),
+[`../architecture/durable-agent-runtime.md`](../architecture/durable-agent-runtime.md),
 [`TESTING.md`](../TESTING.md).
 
 ---
@@ -28,56 +29,48 @@ Full naming, lifecycle, compatibility, and non-goals:
 
 Do **not** change `wc_sess_*` ID format, ledger event shape, or lifecycle
 semantics casually. Session / guard / explicit-targeting work must preserve the
-invariants listed in `AGENTS.md` §6 (Architecture) and the session section.
+invariants linked from `AGENTS.md` §6 (domain rules) and the Session model.
 
-### Collaboration boundary (standing)
+### Durable Agent and collaboration boundary (standing)
 
-A Workflow Session remains a bounded **execution and evidence unit** even when
-its session-local message board is used for coordinator/worker handoff. Do not
-turn `wc_sess_*` lifecycle, ownership, or evidence history into a generic chat
-room, participant registry, worker pool, or scheduler.
+A Workflow Session remains a bounded **execution and evidence unit** even when its
+session-local message board is used for coordinator/worker handoff. Do not turn
+`wc_sess_*` lifecycle, ownership, or evidence history into a generic chat room,
+Agent identity, task queue, worker pool, or scheduler.
 
-If repeated dogfood later demonstrates a real need for durable multi-party
-conversation, add an independent Room/Discussion-style collaboration container
-rather than reinterpreting existing Workflow Sessions. The standing extension
-rules are:
+The independent durable collaboration domain now exists: Server-minted Agents,
+replaceable Agent Endpoints, Conversations, Messages, recipient Deliveries, and
+Wake Intents/Attempts. The earlier `Room/Discussion` placeholder is superseded by
+this concrete Agent/Conversation model. Standing rules are:
 
-- each executing model/worker continues to own an independent Workflow Session
-  for its tool calls, validation, Jobs, checkpoints, and review evidence; pure
-  collaboration observers need no execution Session merely to participate;
-- Room/Discussion state never proves model-context retention or message delivery.
-  Membership, presence, transport/window identity, or a referenced Workflow
-  Session cannot be used as a receipt that a model has seen prior messages, nor
-  as hidden Workflow Session/context inference. Models explicitly observe the
-  bounded collaboration state they need;
-- Room/Discussion membership or roles may govern only that collaboration
-  container's own visibility/posting contract; they never confer Project,
-  Workflow Session, Job, Artifact, shell, Computer, or other execution
-  authority. Message authorship and object references remain provenance or
-  correlation, and dereferencing an object always re-runs that object's normal
-  authorization;
-- Room/Discussion identifiers and participant claims are not bearer capabilities;
-  Room reads/posts still require authenticated caller authorization against that
-  collaboration container's own visibility/posting contract;
-- the collaboration substrate may own bounded messages, reply/thread
-  correlation, provenance, and observation, while automatic wake-up, worker
-  spawning, routing, scheduling, or continuation belongs to a separate optional
-  orchestrator layer;
-- an orchestrator may choose when and where to dispatch work, but it never
-  inherits execution authority from collaboration state. Consequential actions
-  still name explicit targets and pass the same caller authorization, Project and
-  Workflow Session scope, guards, capabilities, and dispatch-time revalidation as
-  direct tool calls;
-- a Room/Discussion is never itself a filesystem/worktree lock, task lease, or
-  execution authority;
-- extract shared message/participant machinery only after a second concrete
-  consumer exists; do not pre-build a generic collaboration framework for a
-  hypothetical future UI;
-- future collaboration storage is additive: existing `wc_sess_*` and
-  Session-message meanings remain unchanged rather than being migrated into a
-  new interpretation.
+- a durable Agent is not a browser window, MCP connection, credential, Runner,
+  Runtime Project, or Workflow Session;
+- Conversation participation governs communication only. It never confers Project,
+  Workflow Session, Job, Artifact, shell, Computer, CodingAgent, or filesystem
+  authority;
+- Message, Delivery, Wake, and execution are separate durable facts. Message/read
+  state never proves model-context retention, and Wake never proves Agent Task completion;
+- each concrete execution may still use an independent Workflow Session for tool
+  calls, validation, Jobs, checkpoints, and review evidence; pure communication
+  does not require an execution Session;
+- the Session message board remains the explicit manual coordinator/worker handoff
+  substrate. It is not migrated into Conversation and its todo semantics are not an
+  Agent Task lease;
+- the planned asynchronous work object is an independent **Agent Task** with an
+  exact fenced **Agent TaskAttempt**. It is not the existing Connector Task and is
+  not inferred merely because a Conversation Message exists;
+- references among Conversation, Agent Task, Workflow Session, Job, CodingAgentRun,
+  commit, PR, or Artifact provide correlation only. Dereferencing always re-runs
+  the referenced object's normal authorization;
+- automatic worker spawning, runnable-frontier scheduling, capacity management,
+  dependency graphs, or orchestration are optional later control layers, not the
+  definition of a durable Agent and not authority sources.
 
-Current bounded handoff behavior and non-goals are documented in
+The standing Agent/asynchronous-work design is documented in
+[`../architecture/durable-agent-runtime.md`](../architecture/durable-agent-runtime.md).
+Current communication/wake implementation details live in
+[`../architecture/durable-agent-conversation.md`](../architecture/durable-agent-conversation.md).
+Current bounded Session handoff behavior remains documented in
 [`manual-window-collaboration.md`](manual-window-collaboration.md).
 
 ### Action audit session (HTTP / operator audit)

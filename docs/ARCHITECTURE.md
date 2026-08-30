@@ -1,8 +1,9 @@
 # Architecture
 
 WebCodex is a self-hosted tool runtime that lets online AI clients operate
-private code through a Server and a local Runner. This page is a conceptual
-overview; the [CLI](CLI.md), [Runner](RUNNER.md), [Deployment](DEPLOYMENT.md),
+private code through a Server and a local Runner, while the Server can also retain
+durable Agent/Conversation state independently of a browser window. This page is a
+conceptual overview; the [CLI](CLI.md), [Runner](RUNNER.md), [Deployment](DEPLOYMENT.md),
 and [Authentication](AUTH_MODEL.md) guides cover the operational details.
 
 For a short definition of the terms, see the terminology sections in
@@ -41,7 +42,7 @@ WebCodex exposes the same runtime through several thin adapters:
   returns the standard runtime OpenAPI schema.
 - **REST** — the Server's HTTP runtime API.
 - **CLI** — the operator/developer command-line interface.
-- **Console** — a read-only browser view of project readiness and review.
+- **Console** — the Server-hosted operator browser surface for runtime readiness, Workflow Session collaboration, and bounded durable Agent/Conversation interaction. Its mutations use the same Server authority paths rather than a second state store.
 
 All adapters share the same Server, project registration, authentication, and
 policy boundaries. A regular Server is the normal long-lived coding runtime and
@@ -64,14 +65,39 @@ is the id registered by that Runner in its `projects.d` registry.
 `allowed_roots` controls where projects may be registered or created (default
 `$HOME`; an explicit list narrows it).
 
-## Task / Job / session continuity
+## Durable Agent identity and asynchronous work
 
-- **Task** — a bounded unit of project work created by the model and reviewed
-  by a human. Tasks are durable and can be resumed. A project-bound Connector
-  may bind an active task only when its exact adapter/protocol supplies a stable
-  `ClientWindow`. Stateless MCP 2026 has no hidden window continuity: each
-  `task_start` is independent and existing work continues explicitly with its
-  durable `task_id` through `task_resume`.
+The Server also owns a durable Agent communication domain. A durable Agent uses a
+Server-minted `wc_dagent_*` identity and is deliberately independent from a browser
+window, MCP connection, credential, Runtime Project, or Workflow Session. The
+`agent:` prefix in `agent:<client_id>:<project_id>` is Runner-address syntax and is
+not a durable Agent identity.
+
+Today this domain includes Agent profiles, replaceable Endpoint attachments,
+Conversations, append-only Messages, recipient Deliveries/Inbox state, and durable
+Wake Intents with Endpoint/generation-fenced delivery attempts. Conversation
+membership and Agent identity grant communication authority only; they do not grant
+Project, Runner, filesystem, Job, or Workflow Session authority.
+
+The next asynchronous-work boundary is an **Agent Task** plus an exact fenced
+**Agent TaskAttempt**. An Agent Task represents accepted work that can outlive a
+model turn or Endpoint. It is intentionally separate from both the existing
+Connector Task continuity model and Workflow Session todos. WebCodex is not defined
+as a swarm scheduler: worker pools, runnable-frontier scheduling, graph execution,
+and autonomous delegation remain optional later capabilities.
+
+See [Durable Agent runtime and asynchronous work](architecture/durable-agent-runtime.md)
+and the current [Agent/Conversation/Wake implementation contract](architecture/durable-agent-conversation.md).
+
+## Connector Task / Job / Workflow Session continuity
+
+- **Connector Task** — the existing bounded project-first continuity unit used by
+  `task_start` / `task_resume`. Connector Tasks are durable and can be resumed. A
+  project-bound Connector may bind an active Connector Task only when its exact
+  adapter/protocol supplies a stable `ClientWindow`. Stateless MCP 2026 has no
+  hidden window continuity: each `task_start` is independent and existing work
+  continues explicitly with its durable `task_id` through `task_resume`. A
+  Connector Task is not an Agent Task.
 - **Job** — a long-running command or validation that continues after the
   initiating call returns. A single execution is promoted to a Job with the
   same `job_id` when it outlives the synchronous grace period; it is never
@@ -120,13 +146,14 @@ See [SECURITY.md](../SECURITY.md) and [AUTH_MODEL.md](AUTH_MODEL.md).
 
 ## Persistence and recovery
 
-The Server persists users, tokens, projects, audit entries, and OAuth rows in a
-SQLite database. Task history is durable. Per-repository window mappings exist
-only for adapters that explicitly provide a stable `ClientWindow`; they are not
-inferred from credentials, connections, or project identity. Process-local
+The Server persists users, tokens, projects, audit entries, OAuth rows, Connector
+Task history, and the durable Agent/Conversation/Delivery/Wake domain in SQLite.
+Per-repository Connector window mappings exist only for adapters that explicitly
+provide a stable `ClientWindow`; they are not inferred from credentials,
+connections, or project identity. Process-local
 "currently viewed project" state is deliberately discarded on restart.
-Stateless MCP 2026 restores no hidden window mapping: callers continue exact work
-with an explicit durable task id. A stateful adapter may restore only its exact
+Stateless MCP 2026 restores no hidden Connector window mapping: callers continue
+exact Connector work with an explicit durable Connector task id. A stateful adapter may restore only its exact
 window/repository mapping under that adapter's own contract.
 
 Runner Job state is reconciled from the Runner's inventory on reconnect.
@@ -147,9 +174,11 @@ results.
 ## Module map
 
 ```text
-HTTP / MCP / OpenAPI --> ToolRuntime --> Project resolution --> Agent bridge
-                                                  |--> File/Edit/Git/Validation/Job tools
-                                                  |--> Session / Handoff / Hygiene
+MCP / OpenAPI / Runtime HTTP --> ToolRuntime --+--> Project resolution --> Runner bridge
+                                               |      |--> File/Edit/Git/Validation/Job tools
+                                               |      +--> Workflow Session / Handoff / Hygiene
+                                               +--> Durable Agent / Conversation / Delivery / Wake
+Runtime Console -----------------------> canonical Server HTTP/kernel paths above
 ```
 
 - `runtime_http` — REST runtime routes.
@@ -167,6 +196,8 @@ HTTP / MCP / OpenAPI --> ToolRuntime --> Project resolution --> Agent bridge
 
 ## Further reading
 
+- [Durable Agent runtime and asynchronous work](architecture/durable-agent-runtime.md) — persistent Agent identity and planned asynchronous Agent work
+- [Durable Agent/Conversation/Wake contract](architecture/durable-agent-conversation.md) — current communication implementation
 - [CLI](CLI.md) — commands and terminology
 - [Runner](RUNNER.md) — the execution boundary and operations
 - [Deployment](DEPLOYMENT.md) — self-hosting

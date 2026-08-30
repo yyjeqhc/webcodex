@@ -26,7 +26,7 @@ V2 development is paused; V1 is the active product line and is not feature-froze
 - For model-facing execution, prefer structured process/argv and durable Job/observation primitives over shell-text orchestration. Keep shell as an escape hatch; structured lifecycle state is the source of truth for retry safety.
 - Keep model-facing ToolSpec/OpenAPI operation descriptions concise and prefer 300 characters or fewer when semantics remain complete. Never delete necessary authority, retry, continuation, uncertainty, safety, or recovery semantics merely for brevity; the canonical tested hard ceiling is `MODEL_TOOL_DESCRIPTION_MAX_CHARS`.
 - Treat demonstrated host features such as MCP App orchestration as optional adapters. Core execution and Job semantics must remain protocol-, UI-, transport-, and OS-neutral.
-- Never assume a model-facing HTTP/MCP request has stable model-window or Workflow Session identity. Treat requests as stateless unless that exact adapter/protocol contract explicitly supplies a stable `ClientWindow`. Stateless MCP 2026 must not derive hidden continuity from `Mcp-Session-Id`, connection state, credentials, project identity, or prior requests. Transport/audit/session correlation ids are not Workflow Session, model-context-retention, or authority proofs by themselves; use explicit durable task/session ids and recorder metadata only under their own contracts.
+- Never assume a model-facing HTTP/MCP request has stable model-window or Workflow Session identity. Treat requests as stateless unless that exact adapter/protocol contract explicitly supplies a stable `ClientWindow`. Stateless MCP 2026 must not derive hidden continuity from `Mcp-Session-Id`, connection state, credentials, project identity, or prior requests. Transport/audit/session correlation ids are not Workflow Session, model-context-retention, or authority proofs by themselves; use explicit durable identifiers from their owning domain. Connector Tasks, Workflow Sessions, durable Agents/Conversations, and future Agent Tasks are distinct identities and must not be inferred from one another.
 
 Product direction: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -84,6 +84,8 @@ Release guidance: [`docs/agent/release-process.md`](docs/agent/release-process.m
 - Public runtime and API surfaces: [`docs/agent/openapi-guidelines.md`](docs/agent/openapi-guidelines.md).
 - Workflow Sessions: [`docs/agent/session-model.md`](docs/agent/session-model.md).
 - Manual multi-window collaboration: [`docs/agent/manual-window-collaboration.md`](docs/agent/manual-window-collaboration.md).
+- Durable Agent identity, Conversation/Wake, and asynchronous Agent work: [`docs/architecture/durable-agent-runtime.md`](docs/architecture/durable-agent-runtime.md).
+- Current durable Agent/Conversation/Wake implementation contract: [`docs/architecture/durable-agent-conversation.md`](docs/architecture/durable-agent-conversation.md).
 - Authority boundaries: [`docs/agent/permission-model.md`](docs/agent/permission-model.md).
 - Architecture decisions: [`docs/agent/architecture-decisions.md`](docs/agent/architecture-decisions.md).
 

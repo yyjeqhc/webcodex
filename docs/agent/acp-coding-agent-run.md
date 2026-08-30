@@ -985,7 +985,7 @@ P0/P1 do not imply:
 - hot ACP provider reload/generic provider framework;
 - ACP v2 or experimental extensions;
 - scheduler, worker pool, automatic worker spawning, or orchestration;
-- Room/Discussion/Participant/presence/typing;
+- integration with durable Agent/Conversation/Participant state, presence, or typing;
 - durable Operation DAG;
 - unification of Workflow Session, Job, ACP Session, and CodingAgentRun;
 - a claim that Project cwd is a filesystem sandbox;

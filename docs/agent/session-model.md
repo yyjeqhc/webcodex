@@ -54,12 +54,20 @@ MCP and never proof of Workflow Session identity, model-context retention, or
 authority. Raw window values are not stored; only their domain-separated hash is
 used where that adapter contract permits window binding.
 
-Restart recovery follows the same boundary: durable task history always
+Restart recovery follows the same boundary: durable Connector Task history always
 survives; only adapters with an explicit stable window may restore an exact
 window/repository mapping automatically. Stateless callers recover explicitly by
 `task_id`. `task_resume` may rebind only when the current adapter actually
-supplies a new stable `ClientWindow`; otherwise the durable task resumes without
+supplies a new stable `ClientWindow`; otherwise the durable Connector Task resumes without
 manufacturing one.
+
+The durable Agent/Conversation/Wake domain is also not a session type. A
+Server-minted Agent may participate in Conversations and later own asynchronous
+Agent Tasks while concrete execution uses zero or more independent Workflow
+Sessions. Future **Agent Task** / **Agent TaskAttempt** semantics are distinct from
+the Connector Task described above; similar names do not imply shared lifecycle,
+window binding, storage, or authority. See
+[`../architecture/durable-agent-runtime.md`](../architecture/durable-agent-runtime.md).
 
 ---
 
@@ -135,7 +143,7 @@ Retention correctness does not infer continuity from deque length or position. R
 
 Waiting uses process-local notification only as a wake signal; durable revision state remains the truth. No Session-store or persistence-writer mutex is held across the bounded await, unrelated Session mutation can only cause a spurious recheck, and timeout is a successful unchanged result rather than a tool failure.
 
-Message observation is not a delivery receipt, not model-context retention, not a subscription/stream, and not an orchestrator wake-up. Room/Discussion, Participant, presence, typing, scheduler/worker-pool, automatic worker spawning, and routing remain future additive capabilities rather than reinterpretations of this cursor.
+Message observation is not a delivery receipt, not model-context retention, not a subscription/stream, and not an Agent Wake. Durable Agent/Conversation/Participant/Delivery/Wake state already exists as a separate Server-owned domain; this Workflow Session cursor neither observes nor mutates it. Presence, typing, Agent Task scheduling/worker-pool behavior, automatic worker spawning, and routing remain separate additive capabilities rather than reinterpretations of this cursor.
 
 Every Workflow Session admitted to the in-memory store carries one canonical creation-time authority-group fingerprint. The ledger keeps only that domain-separated SHA-256 fingerprint under the historical `owner_authority_fingerprint` field; raw user, shared-key, project-grant, credential, or window identity material is never persisted as Session authority. Project authorization and creation-time Session authority are separate checks: access to a project does not authorize another authority group's Session, and a matching Session fingerprint does not bypass project authorization or project equality.
 

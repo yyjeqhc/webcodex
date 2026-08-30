@@ -123,15 +123,28 @@ fn communication_store_unavailable() -> ToolResult {
     .with_recovery(RecoveryKind::UserAction, None)
 }
 
+fn communication_recovery_kind(
+    error_kind: &str,
+    store_failure_recovery: RecoveryKind,
+) -> RecoveryKind {
+    match error_kind {
+        "communication_store_unavailable" => store_failure_recovery,
+        "agent_profile_changed" => RecoveryKind::Reobserve,
+        "endpoint_expired"
+        | "endpoint_detached"
+        | "endpoint_not_active"
+        | "endpoint_generation_stale"
+        | "wake_endpoint_fence_mismatch"
+        | "wake_claim_stale" => RecoveryKind::Reconcile,
+        _ => RecoveryKind::FixInput,
+    }
+}
+
 fn communication_error(
     error: CommunicationStoreError,
     store_failure_recovery: RecoveryKind,
 ) -> ToolResult {
-    let recovery = match error.code() {
-        "communication_store_unavailable" => store_failure_recovery,
-        "agent_profile_changed" => RecoveryKind::Reobserve,
-        _ => RecoveryKind::FixInput,
-    };
+    let recovery = communication_recovery_kind(error.code(), store_failure_recovery);
     ToolResult::err_with_output(
         error.message(),
         json!({
@@ -527,6 +540,29 @@ impl ToolRuntime {
 mod tests {
     use super::*;
     use crate::auth::shared_key_context;
+
+    #[test]
+    fn stale_endpoint_and_wake_fences_require_reconciliation() {
+        for error_kind in [
+            "endpoint_expired",
+            "endpoint_detached",
+            "endpoint_not_active",
+            "endpoint_generation_stale",
+            "wake_endpoint_fence_mismatch",
+            "wake_claim_stale",
+        ] {
+            assert_eq!(
+                communication_recovery_kind(error_kind, RecoveryKind::RetrySame),
+                RecoveryKind::Reconcile,
+                "{error_kind}"
+            );
+        }
+
+        assert_eq!(
+            communication_recovery_kind("wake_consume_token_mismatch", RecoveryKind::RetrySame),
+            RecoveryKind::FixInput
+        );
+    }
 
     #[test]
     fn durable_principal_ignores_rotating_api_key_identity() {

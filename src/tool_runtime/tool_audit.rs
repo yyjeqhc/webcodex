@@ -702,9 +702,13 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                     "wake_id",
                 ],
             );
+            let consume_token_present = obj
+                .get("consume_token_present")
+                .and_then(Value::as_bool)
+                .unwrap_or_else(|| obj.get("consume_token").and_then(Value::as_str).is_some());
             out.insert(
                 "consume_token_present".to_string(),
-                Value::Bool(obj.get("consume_token").and_then(Value::as_str).is_some()),
+                Value::Bool(consume_token_present),
             );
         }
         "memory_search" => {
@@ -2532,6 +2536,16 @@ mod computer_privacy_tests {
         );
         assert_eq!(request["consume_token_present"], true);
         assert_eq!(request["expected_controller_generation"], 7);
+        let typed_request = ToolCall::ConsumeAgentWake {
+            agent_id: "wc_dagent_0123456789abcdef0123456789abcdef".to_string(),
+            endpoint_id: "wc_endpoint_0123456789abcdef0123456789abcdef".to_string(),
+            expected_controller_generation: 7,
+            wake_id: "wc_wake_0123456789abcdef0123456789abcdef".to_string(),
+            consume_token: PRIVATE_TOKEN.to_string(),
+        }
+        .session_log_arguments();
+        assert_eq!(typed_request["consume_token_present"], true);
+        assert!(!typed_request.to_string().contains(PRIVATE_TOKEN));
         let request_text = request.to_string();
         for private in [
             PRIVATE_TOKEN,

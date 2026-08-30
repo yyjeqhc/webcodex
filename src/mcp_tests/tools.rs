@@ -124,8 +124,11 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             assert_eq!(recorder["type"], "string");
             assert_eq!(recorder["pattern"], "^wc_sess_[A-Za-z0-9_]+$");
             let description = recorder["description"].as_str().unwrap();
-            assert!(description.contains("wrapper metadata"));
-            assert!(description.contains("distinct from any concrete tool business session_id"));
+            assert!(description.contains("record this call"));
+            assert!(description.contains("trusted collaboration provenance"));
+            assert!(description.contains("Separate from any tool business Session input"));
+            assert!(description.contains("grants no authority"));
+            assert!(description.contains("removed before concrete parsing"));
             let ack = properties
                 .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD)
                 .unwrap_or_else(|| panic!("stateless ACK metadata missing for {}", tool["name"]));
@@ -136,9 +139,10 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             );
             assert_eq!(ack["items"]["pattern"], "^wc_msg_[A-Za-z0-9_]+$");
             let ack_description = ack["description"].as_str().unwrap();
-            assert!(ack_description.contains("current model context still remembers"));
-            assert!(ack_description.contains("If omitted later"));
-            assert!(ack_description.contains("does not resolve"));
+            assert!(ack_description.contains("current model context still retains"));
+            assert!(ack_description.contains("Repeat while retained"));
+            assert!(ack_description.contains("If later omitted"));
+            assert!(ack_description.contains("neither resolves messages nor grants authority"));
             assert!(!properties.contains_key(MCP_RESERVED_SESSION_ID_FIELD));
         }
         // Exercise the real env adapter, not just the pure renderer: compact

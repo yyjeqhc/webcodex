@@ -352,8 +352,12 @@ The standing direction for model-facing execution is defined in
 5. **Optional host UI is an adapter, not an owner.** MCP Apps or another host may
    observe Jobs and later resume a model, but core execution cannot depend on
    Apps, MCP Tasks, MRTR, elicitation, progress extensions, or iframe state. If
-   automatic model resume is provided, one conversation-level Orchestrator owns
-   that authority; independent Job Views do not race to resume the model.
+   automatic model resume is provided, exactly one durable continuation domain
+   owns each logical resume event; independent Job Views, cards, or Host views do
+   not race to resume the model. For Agent-bound continuation, the Agent Wake /
+   Wake Delivery Attempt domain owns that logical continuation; Host/controller
+   state is adapter-local delivery state rather than a second WebCodex
+   continuation truth.
 6. **Transport fallback must preserve execution semantics.** Polling, WebSocket,
    and QUIC may differ in delivery behavior, but none may silently duplicate a
    command or turn a transport stall into a false pre-start rejection.

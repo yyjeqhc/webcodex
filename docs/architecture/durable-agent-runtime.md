@@ -357,6 +357,22 @@ Standing rules:
 Do not name new scopes merely to make the model look symmetric. Introduce a scope
 only when the actual first Agent Task surface creates a distinct authority audience.
 
+For the first A3 slice, Agent assignment must not manufacture a new bearer
+principal. Task creation/assignment/start/heartbeat/completion run under the current
+authenticated caller and must prove that caller may operate the exact Task and its
+current assignee Agent in the Task domain. A simple first implementation may reuse
+the Agent's existing owner communication principal when that is the actual product
+audience, but doing so does not confer Project or executor authority and does not
+make `agent_id`, `task_id`, `attempt_id`, or an opaque fence a credential.
+
+Execution-carrier admission is then additive rather than implicit. A
+CodingAgentRun-backed Attempt does not require any browser/Host Endpoint; it
+re-authorizes the exact Project and CodingAgent backend under their normal rules. An
+Endpoint-backed Attempt additionally requires the exact currently authorized
+Endpoint plus its generation/binding fences. This keeps Task ownership independent
+from window presence while preventing either Agent ownership or Endpoint possession
+from silently broadening execution authority.
+
 ## Agent continuity across windows
 
 The durable identity model is intentionally stronger than window continuity:

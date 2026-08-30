@@ -42,6 +42,8 @@ const OP_CREATE_AGENT: &str = "create_agent_identity";
 const OP_ATTACH_ENDPOINT: &str = "attach_agent_endpoint";
 const OP_CREATE_CONVERSATION: &str = "create_conversation";
 const OP_POST_MESSAGE: &str = "post_conversation_message";
+const OP_POST_WAKE_REPLY: &str = "post_agent_wake_reply";
+const MAX_WAKE_REPLY_OPERATION_INDEX: i64 = 31;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CommunicationStoreError {
@@ -51,7 +53,7 @@ pub(crate) struct CommunicationStoreError {
 }
 
 impl CommunicationStoreError {
-    pub(super) fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -143,6 +145,7 @@ pub(crate) enum ConversationAccess {
     Agent {
         agent_id: String,
         endpoint_id: String,
+        expected_controller_generation: i64,
     },
 }
 
@@ -152,11 +155,17 @@ pub(crate) struct NewConversationMessage {
     pub(crate) body: String,
     pub(crate) author_agent_id: Option<String>,
     pub(crate) endpoint_id: Option<String>,
+    pub(crate) expected_controller_generation: Option<i64>,
     /// None means every Agent participant except the Agent author. Some([])
     /// means transcript-only delivery to the room/human participants.
     pub(crate) recipient_agent_ids: Option<Vec<String>>,
     pub(crate) reply_to: Option<String>,
-    pub(crate) idempotency_key: String,
+    pub(crate) idempotency_key: Option<String>,
+    /// Stable automatic/manual resumed-turn reply identity. The store derives
+    /// the idempotency identity from the exact Wake plus this bounded operation
+    /// index; callers never need to invent a fresh key after an uncertain reply.
+    pub(crate) wake_reply_id: Option<String>,
+    pub(crate) reply_operation_index: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1104,6 +1113,77 @@ impl Database {
         })
     }
 
+    /// Verify one exact current Endpoint without exposing process-local Host
+    /// adapter state.
+    pub(crate) fn verify_current_agent_endpoint(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+    ) -> Result<AgentEndpointRecord, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        let conn = self.conn.lock().unwrap();
+        require_current_endpoint(
+            &conn,
+            principal,
+            agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )
+    }
+
+    /// Project one current process-local continuation binding onto the durable
+    /// Endpoint capability bit. Only Host/controller infrastructure calls this
+    /// exact Endpoint-generation transition; public attach requests always
+    /// create non-wake-capable Endpoints.
+    pub(crate) fn set_agent_endpoint_wake_capability(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        wake_capable: bool,
+    ) -> Result<AgentEndpointRecord, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        let current = require_current_endpoint(
+            &transaction,
+            principal,
+            agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )?;
+        if current.wake_capable == wake_capable {
+            transaction.commit().map_err(store_error)?;
+            return Ok(current);
+        }
+        let now = now_unix_ms();
+        transaction
+            .execute(
+                "UPDATE wc_agent_endpoints
+                 SET wake_capable = ?2,
+                     last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?3)
+                 WHERE endpoint_id = ?1 AND agent_id = ?4
+                   AND controller_generation = ?5 AND lifecycle = 'attached'",
+                params![
+                    endpoint_id,
+                    wake_capable as i64,
+                    now,
+                    agent_id,
+                    expected_controller_generation,
+                ],
+            )
+            .map_err(store_error)?;
+        let endpoint = load_endpoint(&transaction, endpoint_id)?
+            .expect("current Endpoint must remain readable after capability transition");
+        transaction.commit().map_err(store_error)?;
+        Ok(endpoint)
+    }
+
     pub(crate) fn create_conversation(
         &self,
         principal: &CommunicationPrincipal,
@@ -1346,7 +1426,45 @@ impl Database {
             "invalid_conversation_id",
         )?;
         let body = validate_message_body(&input.body)?;
-        let idempotency_key = validate_idempotency_key(&input.idempotency_key)?;
+        let (operation, idempotency_key, wake_reply) = match (
+            input.idempotency_key.as_deref(),
+            input.wake_reply_id.as_deref(),
+            input.reply_operation_index,
+        ) {
+            (Some(key), None, None) => (OP_POST_MESSAGE, validate_idempotency_key(key)?, None),
+            (None, Some(wake_id), Some(operation_index)) => {
+                validate_id(
+                    wake_id,
+                    super::agent_wake::AGENT_WAKE_ID_PREFIX,
+                    "invalid_wake_id",
+                )?;
+                if !(0..=MAX_WAKE_REPLY_OPERATION_INDEX).contains(&operation_index) {
+                    return Err(CommunicationStoreError::new(
+                        "invalid_reply_operation_index",
+                        format!(
+                            "reply_operation_index must be between 0 and {MAX_WAKE_REPLY_OPERATION_INDEX}"
+                        ),
+                    ));
+                }
+                (
+                    OP_POST_WAKE_REPLY,
+                    format!("{wake_id}:{operation_index}"),
+                    Some((wake_id.to_string(), operation_index)),
+                )
+            }
+            (Some(_), Some(_), Some(_)) => {
+                return Err(CommunicationStoreError::new(
+                    "conflicting_message_replay_identity",
+                    "Provide idempotency_key or wake_reply_id plus reply_operation_index, not both",
+                ));
+            }
+            _ => {
+                return Err(CommunicationStoreError::new(
+                    "message_replay_identity_required",
+                    "Provide idempotency_key, or wake_reply_id plus reply_operation_index",
+                ));
+            }
+        };
         let reply_to = match input.reply_to {
             Some(value) => {
                 validate_id(&value, CONVERSATION_MESSAGE_ID_PREFIX, "invalid_message_id")?;
@@ -1366,16 +1484,30 @@ impl Database {
                         "Agent-authored messages require an active Endpoint",
                     )
                 })?;
+                let expected_controller_generation =
+                    input.expected_controller_generation.ok_or_else(|| {
+                        CommunicationStoreError::new(
+                            "controller_generation_required",
+                            "Agent-authored messages require expected_controller_generation",
+                        )
+                    })?;
                 ConversationAccess::Agent {
                     agent_id: agent_id.clone(),
                     endpoint_id: endpoint_id.clone(),
+                    expected_controller_generation,
                 }
             }
             None => {
-                if input.endpoint_id.is_some() {
+                if input.endpoint_id.is_some() || input.expected_controller_generation.is_some() {
                     return Err(CommunicationStoreError::new(
                         "unexpected_endpoint_id",
-                        "Human-authored messages must not provide endpoint_id",
+                        "Human-authored messages must not provide Endpoint fencing",
+                    ));
+                }
+                if wake_reply.is_some() {
+                    return Err(CommunicationStoreError::new(
+                        "wake_reply_requires_agent_author",
+                        "Wake-derived reply replay identity requires an Agent author",
                     ));
                 }
                 ConversationAccess::Human
@@ -1384,13 +1516,28 @@ impl Database {
         // Hash the caller's canonical logical request rather than derived current
         // state. Exact replay can therefore recover the committed Message even
         // after its author Endpoint detached or the Conversation later closed.
+        // Wake-derived reply replay is stable across Host/Endpoint replacement.
+        // The exact current carrier is still required for the first commit, but
+        // is not part of the semantic send identity recovered after an
+        // uncertain response.
+        let replay_endpoint_id = wake_reply
+            .is_none()
+            .then(|| input.endpoint_id.as_deref())
+            .flatten();
+        let replay_controller_generation = wake_reply
+            .is_none()
+            .then_some(input.expected_controller_generation)
+            .flatten();
         let request_hash = digest_json(&json!({
             "conversation_id": &input.conversation_id,
             "author_agent_id": input.author_agent_id.as_deref(),
-            "endpoint_id": input.endpoint_id.as_deref(),
+            "endpoint_id": replay_endpoint_id,
+            "expected_controller_generation": replay_controller_generation,
             "body": &body,
             "recipient_agent_ids": explicit_recipient_agent_ids.as_ref(),
             "reply_to": reply_to.as_deref(),
+            "wake_reply_id": wake_reply.as_ref().map(|(wake_id, _)| wake_id),
+            "reply_operation_index": wake_reply.as_ref().map(|(_, index)| index),
         }));
         let mut conn = self.conn.lock().unwrap();
         let transaction = conn
@@ -1399,7 +1546,7 @@ impl Database {
         if let Some(message_id) = lookup_idempotent_resource(
             &transaction,
             principal,
-            OP_POST_MESSAGE,
+            operation,
             &idempotency_key,
             &request_hash,
         )? {
@@ -1416,6 +1563,63 @@ impl Database {
             });
         }
         authorize_conversation_access(&transaction, principal, &access, &input.conversation_id)?;
+        if let Some((wake_id, _)) = wake_reply.as_ref() {
+            let ConversationAccess::Agent {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+            } = &access
+            else {
+                unreachable!("Wake reply identity requires Agent access");
+            };
+            let wake_binding: Option<(String, Option<String>, Option<i64>)> = transaction
+                .query_row(
+                    "SELECT state, claimed_endpoint_id, claimed_controller_generation
+                     FROM wc_agent_wakes
+                     WHERE wake_id = ?1 AND target_agent_id = ?2",
+                    params![wake_id, agent_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(store_error)?;
+            let Some((wake_state, claimed_endpoint_id, claimed_generation)) = wake_binding else {
+                return Err(CommunicationStoreError::new(
+                    "wake_not_found",
+                    "Agent Wake does not exist",
+                ));
+            };
+            match wake_state.as_str() {
+                "pending" => {}
+                "prepared" | "delivered" | "delivery_unknown" => {
+                    if claimed_endpoint_id.as_deref() != Some(endpoint_id.as_str())
+                        || claimed_generation != Some(*expected_controller_generation)
+                    {
+                        return Err(CommunicationStoreError::new(
+                            "wake_endpoint_fence_mismatch",
+                            "Agent Wake is bound to a different Endpoint generation",
+                        ));
+                    }
+                }
+                "claimed" => {
+                    return Err(CommunicationStoreError::new(
+                        "wake_not_dispatched",
+                        "Agent Wake reply cannot be posted before its dispatch fence",
+                    ));
+                }
+                "consumed" => {
+                    return Err(CommunicationStoreError::new(
+                        "wake_already_consumed",
+                        "Agent Wake was already consumed; re-read the Conversation before posting new work",
+                    ));
+                }
+                _ => {
+                    return Err(CommunicationStoreError::new(
+                        "wake_state_invalid",
+                        "Agent Wake is in an unsupported state",
+                    ));
+                }
+            }
+        }
         let lifecycle: String = transaction
             .query_row(
                 "SELECT lifecycle FROM wc_conversations WHERE conversation_id = ?1",
@@ -1605,7 +1809,7 @@ impl Database {
         record_idempotent_resource(
             &transaction,
             principal,
-            OP_POST_MESSAGE,
+            operation,
             &idempotency_key,
             &request_hash,
             &message_id,
@@ -1626,6 +1830,7 @@ impl Database {
         principal: &CommunicationPrincipal,
         agent_id: &str,
         endpoint_id: &str,
+        expected_controller_generation: i64,
         after_delivery_order: i64,
         limit: usize,
     ) -> Result<AgentInboxPage, CommunicationStoreError> {
@@ -1638,7 +1843,13 @@ impl Database {
         }
         let limit = bounded_limit(limit)?;
         let conn = self.conn.lock().unwrap();
-        require_current_endpoint(&conn, principal, agent_id, endpoint_id, None)?;
+        require_current_endpoint(
+            &conn,
+            principal,
+            agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )?;
         let total_queued_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM wc_agent_deliveries
@@ -1712,6 +1923,7 @@ impl Database {
         principal: &CommunicationPrincipal,
         agent_id: &str,
         endpoint_id: &str,
+        expected_controller_generation: i64,
         delivery_ids: Vec<String>,
     ) -> Result<DeliveryConsumeResult, CommunicationStoreError> {
         validate_communication_principal(principal)?;
@@ -1722,7 +1934,13 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
-        require_current_endpoint(&transaction, principal, agent_id, endpoint_id, None)?;
+        require_current_endpoint(
+            &transaction,
+            principal,
+            agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )?;
         let now = now_unix_ms();
         let mut consumed_delivery_ids = Vec::new();
         let mut already_consumed_delivery_ids = Vec::new();
@@ -1785,14 +2003,21 @@ fn authorize_list_access(
         ConversationAccess::Agent {
             agent_id,
             endpoint_id,
+            expected_controller_generation,
         } => {
-            require_current_endpoint(conn, principal, agent_id, endpoint_id, None)?;
+            require_current_endpoint(
+                conn,
+                principal,
+                agent_id,
+                endpoint_id,
+                Some(*expected_controller_generation),
+            )?;
             Ok(Some(agent_id.clone()))
         }
     }
 }
 
-fn authorize_conversation_access(
+pub(super) fn authorize_conversation_access(
     conn: &Connection,
     principal: &CommunicationPrincipal,
     access: &ConversationAccess,
@@ -1813,8 +2038,15 @@ fn authorize_conversation_access(
         ConversationAccess::Agent {
             agent_id,
             endpoint_id,
+            expected_controller_generation,
         } => {
-            require_current_endpoint(conn, principal, agent_id, endpoint_id, None)?;
+            require_current_endpoint(
+                conn,
+                principal,
+                agent_id,
+                endpoint_id,
+                Some(*expected_controller_generation),
+            )?;
             conn.query_row(
                 "SELECT EXISTS(
                     SELECT 1 FROM wc_conversation_participants
@@ -1838,7 +2070,7 @@ fn authorize_conversation_access(
     }
 }
 
-fn read_conversation_in_connection(
+pub(super) fn read_conversation_in_connection(
     conn: &Connection,
     principal: &CommunicationPrincipal,
     access: &ConversationAccess,
@@ -2029,7 +2261,7 @@ pub(super) fn require_current_endpoint(
     Ok(row)
 }
 
-fn load_agent(
+pub(super) fn load_agent(
     conn: &Connection,
     agent_id: &str,
 ) -> Result<Option<DurableAgentIdentity>, CommunicationStoreError> {
@@ -2082,7 +2314,7 @@ fn row_to_agent(row: &rusqlite::Row<'_>) -> rusqlite::Result<DurableAgentIdentit
     })
 }
 
-fn load_endpoint(
+pub(super) fn load_endpoint(
     conn: &Connection,
     endpoint_id: &str,
 ) -> Result<Option<AgentEndpointRecord>, CommunicationStoreError> {
@@ -2256,7 +2488,7 @@ fn load_message(
     }))
 }
 
-fn lookup_idempotent_resource(
+pub(super) fn lookup_idempotent_resource(
     transaction: &Transaction<'_>,
     principal: &CommunicationPrincipal,
     operation: &str,
@@ -2285,7 +2517,7 @@ fn lookup_idempotent_resource(
     }
 }
 
-fn record_idempotent_resource(
+pub(super) fn record_idempotent_resource(
     transaction: &Transaction<'_>,
     principal: &CommunicationPrincipal,
     operation: &str,
@@ -2476,7 +2708,7 @@ fn validate_message_body(value: &str) -> Result<String, CommunicationStoreError>
     Ok(value.to_string())
 }
 
-fn validate_idempotency_key(value: &str) -> Result<String, CommunicationStoreError> {
+pub(super) fn validate_idempotency_key(value: &str) -> Result<String, CommunicationStoreError> {
     validate_nonempty_chars(
         value,
         MAX_COMMUNICATION_IDEMPOTENCY_KEY_CHARS,

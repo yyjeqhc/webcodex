@@ -64,19 +64,21 @@ be ambiguous.
 
 ## Implemented durable Agent foundation
 
-The current implementation already establishes these boundaries:
+The current implementation already establishes these boundaries and the A2.5 natural-conversation path:
 
 ```text
 Durable Agent
     |
     +-- Agent Card / profile
     +-- Endpoint attachments + controller generations
+    |     +-- process-local exact Host adapter binding
     +-- Conversations
     |     +-- append-only Messages
     |     +-- recipient Deliveries / Inbox
     |
     +-- Wake Intents
           +-- Endpoint/generation-bound Wake Delivery Attempts
+          +-- bounded event-driven continuation scheduling
 ```
 
 Important current invariants:
@@ -95,9 +97,31 @@ Important current invariants:
   only after explicit Server instance ownership is acquired.
 - dispatch uncertainty after the Wake dispatch fence is preserved rather than
   blindly retried.
+- one authenticated communication principal can create/select/update multiple
+  durable Agents, explicitly attach different Host windows, and communicate through
+  exact-recipient Conversations without making the window the Agent.
+- exact Agent/Endpoint/generation bootstrap exposes only bounded IDs, counts,
+  high-watermarks, Wake hints, and truthful current adapter capability; authoritative
+  Inbox and Conversation reads remain separate. An already-active explicit turn can
+  idempotently accept one pending Wake through an `explicit_activation` Attempt and
+  recover the same consume token without pretending it requested a new model turn.
+- automatically resumed replies can derive stable replay identity from exact Wake
+  plus a bounded operation index, closing the reply-committed/response-lost window
+  without merging Wake and Delivery consumption.
+- process-local Host bindings are empty after restart; offline Messages, Deliveries,
+  and the same logical Wake remain durable until a new exact Endpoint generation
+  registers a callable adapter.
 - project-scoped Memory is unchanged; Agent-scoped Memory is only a future boundary.
 
-These invariants are prerequisites for asynchronous Agent work, not a scheduler.
+No demonstrated production ChatGPT auto-resume adapter currently exists in the
+repository or supported Host protocols. MCP Apps provide UI resources, MCP 2026
+Tasks and Connector continuation poll their own exact durable executions, and none
+is reused as a fictional arbitrary model-turn callback. Runtime Console is an
+explicit selection/attachment and polling surface only. The controller boundary and
+fake adapter tests prove dispatch semantics, not production Host wake delivery.
+
+These invariants and the natural-conversation slice are prerequisites for
+asynchronous Agent work, not a scheduler.
 
 ## Asynchronous Agent work
 

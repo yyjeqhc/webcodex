@@ -14,6 +14,8 @@ mod action_audit;
 mod action_audit_sessions;
 mod admin_http;
 mod admin_project_lifecycle;
+#[cfg(test)]
+mod agent_continuation_tests;
 mod agent_quic;
 mod agent_session;
 mod agent_tokens_http;

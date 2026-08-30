@@ -61,6 +61,14 @@ fn idempotency_key() -> Value {
     )
 }
 
+fn expected_controller_generation() -> Value {
+    json!({
+        "type": "integer",
+        "minimum": 1,
+        "description": "Exact Server-assigned current Endpoint generation. Stale generations fail closed."
+    })
+}
+
 fn agent_id_array(min_items: usize, description: &str) -> Value {
     json!({
         "type": "array",
@@ -166,11 +174,6 @@ pub(crate) fn attach_agent_endpoint_input_schema() -> Value {
                 "maxLength": 128,
                 "description": "Optional host-local attachment identifier. It is not durable Agent identity."
             },
-            "wake_capable": {
-                "type": "boolean",
-                "default": false,
-                "description": "Whether this attachment has a registered adapter capable of resuming a model turn. Capability alone grants no communication, Project, filesystem, Runner, or Workflow Session authority and does not itself dispatch a wake."
-            },
             "idempotency_key": idempotency_key()
         },
         "required": ["agent_id", "host", "idempotency_key"],
@@ -208,8 +211,9 @@ pub(crate) fn create_conversation_input_schema() -> Value {
 
 fn conversation_access_properties() -> Value {
     json!({
-        "agent_id": nullable_id(AGENT_ID_PATTERN, "Optional Agent view. Must be paired with endpoint_id; omit both for the current Human principal."),
-        "endpoint_id": nullable_id(ENDPOINT_ID_PATTERN, "Active Endpoint proving the optional Agent view. Must be paired with agent_id.")
+        "agent_id": nullable_id(AGENT_ID_PATTERN, "Optional Agent view. Must be paired with exact Endpoint fencing; omit all three fields for the current Human principal."),
+        "endpoint_id": nullable_id(ENDPOINT_ID_PATTERN, "Active Endpoint proving the optional Agent view."),
+        "expected_controller_generation": expected_controller_generation()
     })
 }
 
@@ -220,13 +224,15 @@ pub(crate) fn list_conversations_input_schema() -> Value {
         "properties": {
             "agent_id": access["agent_id"].clone(),
             "endpoint_id": access["endpoint_id"].clone(),
+            "expected_controller_generation": access["expected_controller_generation"].clone(),
             "offset": optional_offset(),
             "limit": optional_limit()
         },
         "required": [],
         "dependentRequired": {
-            "agent_id": ["endpoint_id"],
-            "endpoint_id": ["agent_id"]
+            "agent_id": ["endpoint_id", "expected_controller_generation"],
+            "endpoint_id": ["agent_id", "expected_controller_generation"],
+            "expected_controller_generation": ["agent_id", "endpoint_id"]
         },
         "additionalProperties": false
     })
@@ -240,6 +246,7 @@ pub(crate) fn read_conversation_input_schema() -> Value {
             "conversation_id": canonical_id(CONVERSATION_ID_PATTERN, "Canonical Conversation id."),
             "agent_id": access["agent_id"].clone(),
             "endpoint_id": access["endpoint_id"].clone(),
+            "expected_controller_generation": access["expected_controller_generation"].clone(),
             "after_seq": {
                 "type": "integer",
                 "minimum": 0,
@@ -250,8 +257,9 @@ pub(crate) fn read_conversation_input_schema() -> Value {
         },
         "required": ["conversation_id"],
         "dependentRequired": {
-            "agent_id": ["endpoint_id"],
-            "endpoint_id": ["agent_id"]
+            "agent_id": ["endpoint_id", "expected_controller_generation"],
+            "endpoint_id": ["agent_id", "expected_controller_generation"],
+            "expected_controller_generation": ["agent_id", "endpoint_id"]
         },
         "additionalProperties": false
     })
@@ -270,13 +278,35 @@ pub(crate) fn post_conversation_message_input_schema() -> Value {
             },
             "author_agent_id": nullable_id(AGENT_ID_PATTERN, "Agent author provenance. Omit for the current Human principal; Agent authors require endpoint_id."),
             "endpoint_id": nullable_id(ENDPOINT_ID_PATTERN, "Active Endpoint proving an Agent-authored message. Omit for Human authors."),
+            "expected_controller_generation": expected_controller_generation(),
             "recipient_agent_ids": agent_id_array(0, "Optional explicit Agent Inbox recipients. Omit to deliver to every Agent participant except the author; an explicit empty array posts to the transcript/room without Agent deliveries."),
             "reply_to": nullable_id(MESSAGE_ID_PATTERN, "Optional parent Message in the same Conversation."),
-            "idempotency_key": idempotency_key()
+            "idempotency_key": idempotency_key(),
+            "wake_reply_id": canonical_id(WAKE_ID_PATTERN, "Exact durable Wake providing stable resumed-turn reply replay identity. Use with reply_operation_index instead of idempotency_key."),
+            "reply_operation_index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 31,
+                "description": "Stable per-send index within one Wake. Reuse the same index only for an exact uncertain retry; use a different index for each intentional additional Message."
+            }
         },
-        "required": ["conversation_id", "body", "idempotency_key"],
+        "required": ["conversation_id", "body"],
+        "oneOf": [
+            {
+                "required": ["idempotency_key"],
+                "not": {"anyOf": [{"required": ["wake_reply_id"]}, {"required": ["reply_operation_index"]}]}
+            },
+            {
+                "required": ["wake_reply_id", "reply_operation_index"],
+                "not": {"required": ["idempotency_key"]}
+            }
+        ],
         "dependentRequired": {
-            "author_agent_id": ["endpoint_id"]
+            "author_agent_id": ["endpoint_id", "expected_controller_generation"],
+            "endpoint_id": ["author_agent_id", "expected_controller_generation"],
+            "expected_controller_generation": ["author_agent_id", "endpoint_id"],
+            "wake_reply_id": ["author_agent_id", "endpoint_id", "expected_controller_generation", "reply_operation_index"],
+            "reply_operation_index": ["wake_reply_id"]
         },
         "additionalProperties": false
     })
@@ -288,6 +318,7 @@ pub(crate) fn list_agent_inbox_input_schema() -> Value {
         "properties": {
             "agent_id": canonical_id(AGENT_ID_PATTERN, "Canonical recipient Agent id."),
             "endpoint_id": canonical_id(ENDPOINT_ID_PATTERN, "Active Endpoint proving access to this Agent Inbox."),
+            "expected_controller_generation": expected_controller_generation(),
             "after_delivery_order": {
                 "type": "integer",
                 "minimum": 0,
@@ -296,7 +327,7 @@ pub(crate) fn list_agent_inbox_input_schema() -> Value {
             },
             "limit": optional_limit()
         },
-        "required": ["agent_id", "endpoint_id"],
+        "required": ["agent_id", "endpoint_id", "expected_controller_generation"],
         "additionalProperties": false
     })
 }
@@ -329,6 +360,7 @@ pub(crate) fn consume_agent_deliveries_input_schema() -> Value {
         "properties": {
             "agent_id": canonical_id(AGENT_ID_PATTERN, "Canonical recipient Agent id."),
             "endpoint_id": canonical_id(ENDPOINT_ID_PATTERN, "Active Endpoint proving access to this Agent Inbox."),
+            "expected_controller_generation": expected_controller_generation(),
             "delivery_ids": {
                 "type": "array",
                 "items": canonical_id(DELIVERY_ID_PATTERN, "Canonical Agent Delivery id."),
@@ -338,7 +370,23 @@ pub(crate) fn consume_agent_deliveries_input_schema() -> Value {
                 "description": "Deliveries to mark consumed. Repeating already-consumed ids is a safe desired-state retry."
             }
         },
-        "required": ["agent_id", "endpoint_id", "delivery_ids"],
+        "required": ["agent_id", "endpoint_id", "expected_controller_generation", "delivery_ids"],
+        "additionalProperties": false
+    })
+}
+
+pub(crate) fn bootstrap_agent_conversation_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "agent_id": canonical_id(AGENT_ID_PATTERN, "Exact durable Agent this active turn acts for."),
+            "endpoint_id": canonical_id(ENDPOINT_ID_PATTERN, "Exact current Host Endpoint carrying this activation."),
+            "expected_controller_generation": expected_controller_generation(),
+            "conversation_id": canonical_id(CONVERSATION_ID_PATTERN, "Optional explicit current Conversation. When omitted, an exact Wake may select its latest Conversation; no hidden Host selection is inferred."),
+            "wake_id": canonical_id(WAKE_ID_PATTERN, "Optional exact Wake identity from a continuation envelope or explicit pending-work activation."),
+            "activation_idempotency_key": idempotency_key()
+        },
+        "required": ["agent_id", "endpoint_id", "expected_controller_generation"],
         "additionalProperties": false
     })
 }

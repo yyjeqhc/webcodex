@@ -45,12 +45,13 @@ pub(crate) use coding_agents::{
     coding_agent_start_input_schema,
 };
 pub(crate) use communication::{
-    attach_agent_endpoint_input_schema, consume_agent_deliveries_input_schema,
-    consume_agent_wake_input_schema, create_agent_identity_input_schema,
-    create_conversation_input_schema, detach_agent_endpoint_input_schema,
-    list_agent_identities_input_schema, list_agent_inbox_input_schema,
-    list_conversations_input_schema, post_conversation_message_input_schema,
-    read_conversation_input_schema, update_agent_identity_input_schema,
+    attach_agent_endpoint_input_schema, bootstrap_agent_conversation_input_schema,
+    consume_agent_deliveries_input_schema, consume_agent_wake_input_schema,
+    create_agent_identity_input_schema, create_conversation_input_schema,
+    detach_agent_endpoint_input_schema, list_agent_identities_input_schema,
+    list_agent_inbox_input_schema, list_conversations_input_schema,
+    post_conversation_message_input_schema, read_conversation_input_schema,
+    update_agent_identity_input_schema,
 };
 pub(super) use computer::{
     computer_accessibility_status_input_schema, computer_accessibility_tree_input_schema,

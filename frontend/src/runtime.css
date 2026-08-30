@@ -130,6 +130,8 @@ h4 { margin-bottom: 5px; color: var(--muted); font-size: .72rem; text-transform:
 .stack-form > label, .compact-field-grid > label { display: grid; gap: 3px; color: var(--muted); font-size: .76rem; }
 .stack-form input, .stack-form textarea { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; background: var(--panel); color: var(--text); }
 .stack-form textarea { resize: vertical; }
+.stack-form > label.inline-choice { display: flex; grid-template-columns: none; flex-direction: row; align-items: center; gap: 7px; }
+.stack-form > label.inline-choice input { width: auto; }
 .compact-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 7px; }
 .form-actions .muted { margin-right: auto; }
@@ -141,6 +143,7 @@ h4 { margin-bottom: 5px; color: var(--muted); font-size: .72rem; text-transform:
 .communication-row-meta, .communication-id { display: block; color: var(--muted); font-size: .72rem; overflow-wrap: anywhere; }
 .communication-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; user-select: all; }
 .communication-description { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.card-edit-form { border-top: 1px solid var(--border); padding-top: 9px; margin-top: 9px; }
 .communication-participants { margin: 8px 0; }
 .conversation-list { max-height: 220px; }
 .conversation-transcript { display: grid; gap: 7px; min-height: 120px; max-height: 480px; overflow: auto; margin: 9px 0; }

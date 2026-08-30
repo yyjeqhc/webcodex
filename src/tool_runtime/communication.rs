@@ -94,15 +94,23 @@ fn communication_principal_unavailable(message: &str) -> ToolResult {
 fn access_from_endpoint(
     agent_id: Option<String>,
     endpoint_id: Option<String>,
+    expected_controller_generation: Option<i64>,
 ) -> Result<ConversationAccess, ToolResult> {
-    match (agent_id, endpoint_id) {
-        (None, None) => Ok(ConversationAccess::Human),
-        (Some(agent_id), Some(endpoint_id)) => Ok(ConversationAccess::Agent {
+    match (
+        agent_id,
+        endpoint_id,
+        expected_controller_generation,
+    ) {
+        (None, None, None) => Ok(ConversationAccess::Human),
+        (Some(agent_id), Some(endpoint_id), Some(expected_controller_generation)) => {
+            Ok(ConversationAccess::Agent {
             agent_id,
             endpoint_id,
-        }),
+                expected_controller_generation,
+            })
+        }
         _ => Err(ToolResult::err_with_output(
-            "agent_id and endpoint_id must be provided together for an Agent conversation view",
+            "agent_id, endpoint_id, and expected_controller_generation must be provided together for an Agent conversation view",
             json!({
                 "error_kind": "invalid_conversation_access",
                 "state_changed": false,
@@ -269,7 +277,6 @@ impl ToolRuntime {
         agent_id: String,
         host: String,
         client_attachment_id: Option<String>,
-        wake_capable: bool,
         idempotency_key: String,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
@@ -285,11 +292,25 @@ impl ToolRuntime {
                 agent_id,
                 host,
                 client_attachment_id,
-                wake_capable,
+                // Public/model/Console attachment cannot self-assert Host
+                // continuation capability. Only process-local adapter
+                // registration may transition this field to true.
+                wake_capable: false,
                 idempotency_key,
             },
         ) {
-            Ok(result) => serialized_success(result),
+            Ok(result) => {
+                if result.state_changed {
+                    if let Some(controller) = self.agent_continuations.as_ref() {
+                        controller.reconcile_attached_endpoint(
+                            &result.endpoint.agent_id,
+                            &result.endpoint.endpoint_id,
+                            result.endpoint.controller_generation,
+                        );
+                    }
+                }
+                serialized_success(result)
+            }
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
         }
     }
@@ -313,6 +334,73 @@ impl ToolRuntime {
         }
     }
 
+    /// Host-integration boundary for registering a callable continuation
+    /// adapter after an explicit Endpoint attach. This is intentionally not a
+    /// model-facing tool: callback handles are process-local Host state.
+    #[allow(dead_code)]
+    pub(crate) fn register_agent_continuation_adapter(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        adapter: std::sync::Arc<dyn crate::agent_wake::ContinuationAdapter>,
+    ) -> ToolResult {
+        let principal = match communication_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(controller) = self.agent_continuations.as_ref() else {
+            return communication_store_unavailable();
+        };
+        match controller.register_endpoint_adapter(
+            principal,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            adapter,
+        ) {
+            Ok(endpoint) => serialized_success(json!({
+                "endpoint": endpoint,
+                "adapter_registered": true,
+                "state_changed": true,
+            })),
+            Err(error) => communication_error(error, RecoveryKind::Reconcile),
+        }
+    }
+
+    /// Host-integration boundary for withdrawing one exact callable adapter
+    /// while preserving the durable Endpoint, Inbox, and Wake state.
+    #[allow(dead_code)]
+    pub(crate) fn unregister_agent_continuation_adapter(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+    ) -> ToolResult {
+        let principal = match communication_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(controller) = self.agent_continuations.as_ref() else {
+            return communication_store_unavailable();
+        };
+        match controller.unregister_endpoint_adapter(
+            &principal,
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+        ) {
+            Ok(endpoint) => serialized_success(json!({
+                "endpoint": endpoint,
+                "adapter_registered": false,
+                "state_changed": true,
+            })),
+            Err(error) => communication_error(error, RecoveryKind::Reconcile),
+        }
+    }
+
     pub(crate) fn detach_agent_endpoint(
         &self,
         auth: Option<&AuthContext>,
@@ -326,7 +414,16 @@ impl ToolRuntime {
             return communication_store_unavailable();
         };
         match db.detach_agent_endpoint(&principal, &endpoint_id) {
-            Ok(result) => serialized_success(result),
+            Ok(result) => {
+                if let Some(controller) = self.agent_continuations.as_ref() {
+                    controller.endpoint_detached(
+                        &result.endpoint.agent_id,
+                        &result.endpoint.endpoint_id,
+                        result.endpoint.controller_generation,
+                    );
+                }
+                serialized_success(result)
+            }
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
         }
     }
@@ -364,6 +461,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         agent_id: Option<String>,
         endpoint_id: Option<String>,
+        expected_controller_generation: Option<i64>,
         offset: Option<usize>,
         limit: Option<usize>,
     ) -> ToolResult {
@@ -371,10 +469,11 @@ impl ToolRuntime {
             Ok(principal) => principal,
             Err(result) => return result,
         };
-        let access = match access_from_endpoint(agent_id, endpoint_id) {
-            Ok(access) => access,
-            Err(result) => return result,
-        };
+        let access =
+            match access_from_endpoint(agent_id, endpoint_id, expected_controller_generation) {
+                Ok(access) => access,
+                Err(result) => return result,
+            };
         let Some(db) = self.communication_db.as_ref() else {
             return communication_store_unavailable();
         };
@@ -396,6 +495,7 @@ impl ToolRuntime {
         conversation_id: String,
         agent_id: Option<String>,
         endpoint_id: Option<String>,
+        expected_controller_generation: Option<i64>,
         after_seq: Option<i64>,
         limit: Option<usize>,
     ) -> ToolResult {
@@ -403,10 +503,11 @@ impl ToolRuntime {
             Ok(principal) => principal,
             Err(result) => return result,
         };
-        let access = match access_from_endpoint(agent_id, endpoint_id) {
-            Ok(access) => access,
-            Err(result) => return result,
-        };
+        let access =
+            match access_from_endpoint(agent_id, endpoint_id, expected_controller_generation) {
+                Ok(access) => access,
+                Err(result) => return result,
+            };
         let Some(db) = self.communication_db.as_ref() else {
             return communication_store_unavailable();
         };
@@ -430,9 +531,12 @@ impl ToolRuntime {
         body: String,
         author_agent_id: Option<String>,
         endpoint_id: Option<String>,
+        expected_controller_generation: Option<i64>,
         recipient_agent_ids: Option<Vec<String>>,
         reply_to: Option<String>,
-        idempotency_key: String,
+        idempotency_key: Option<String>,
+        wake_reply_id: Option<String>,
+        reply_operation_index: Option<i64>,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
@@ -448,12 +552,32 @@ impl ToolRuntime {
                 body,
                 author_agent_id,
                 endpoint_id,
+                expected_controller_generation,
                 recipient_agent_ids,
                 reply_to,
                 idempotency_key,
+                wake_reply_id,
+                reply_operation_index,
             },
         ) {
-            Ok(result) => serialized_success(result),
+            Ok(result) => {
+                if result.state_changed {
+                    if let Some(controller) = self.agent_continuations.as_ref() {
+                        let mut recipients = result
+                            .message
+                            .deliveries
+                            .iter()
+                            .map(|delivery| delivery.recipient_agent_id.as_str())
+                            .collect::<Vec<_>>();
+                        recipients.sort_unstable();
+                        recipients.dedup();
+                        for recipient in recipients {
+                            controller.schedule_agent(recipient);
+                        }
+                    }
+                }
+                serialized_success(result)
+            }
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
         }
     }
@@ -463,6 +587,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         agent_id: String,
         endpoint_id: String,
+        expected_controller_generation: i64,
         after_delivery_order: Option<i64>,
         limit: Option<usize>,
     ) -> ToolResult {
@@ -477,6 +602,7 @@ impl ToolRuntime {
             &principal,
             &agent_id,
             &endpoint_id,
+            expected_controller_generation,
             after_delivery_order.unwrap_or(0),
             limit.unwrap_or(DEFAULT_COMMUNICATION_LIST_LIMIT),
         ) {
@@ -490,6 +616,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         agent_id: String,
         endpoint_id: String,
+        expected_controller_generation: i64,
         delivery_ids: Vec<String>,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
@@ -499,7 +626,13 @@ impl ToolRuntime {
         let Some(db) = self.communication_db.as_ref() else {
             return communication_store_unavailable();
         };
-        match db.consume_agent_deliveries(&principal, &agent_id, &endpoint_id, delivery_ids) {
+        match db.consume_agent_deliveries(
+            &principal,
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+            delivery_ids,
+        ) {
             Ok(result) => serialized_success(result),
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
         }
@@ -530,9 +663,132 @@ impl ToolRuntime {
             &wake_id,
             &consume_token,
         ) {
-            Ok(result) => serialized_success(result),
+            Ok(result) => {
+                if result.state_changed {
+                    if let Some(controller) = self.agent_continuations.as_ref() {
+                        controller.schedule_agent(&agent_id);
+                    }
+                }
+                serialized_success(result)
+            }
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn bootstrap_agent_conversation(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        conversation_id: Option<String>,
+        wake_id: Option<String>,
+        activation_idempotency_key: Option<String>,
+    ) -> ToolResult {
+        let principal = match communication_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(db) = self.communication_db.as_ref() else {
+            return communication_store_unavailable();
+        };
+        let mut bootstrap = match db.bootstrap_agent_conversation(
+            &principal,
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+            conversation_id.as_deref(),
+            wake_id.as_deref(),
+        ) {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => return communication_error(error, RecoveryKind::Reconcile),
+        };
+        let wake_activation =
+            if let Some(activation_idempotency_key) = activation_idempotency_key.as_deref() {
+                let Some(wake) = bootstrap.wake.as_ref() else {
+                    return communication_error(
+                        CommunicationStoreError::new(
+                            "wake_not_found",
+                            "No unresolved Agent Wake is available for explicit activation",
+                        ),
+                        RecoveryKind::Reconcile,
+                    );
+                };
+                let activation = match db.accept_explicit_agent_wake_activation(
+                    &principal,
+                    &agent_id,
+                    &endpoint_id,
+                    expected_controller_generation,
+                    &wake.wake_id,
+                    activation_idempotency_key,
+                ) {
+                    Ok(activation) => activation,
+                    Err(error) => return communication_error(error, RecoveryKind::Reconcile),
+                };
+                bootstrap = match db.bootstrap_agent_conversation(
+                    &principal,
+                    &agent_id,
+                    &endpoint_id,
+                    expected_controller_generation,
+                    conversation_id.as_deref(),
+                    Some(&activation.wake.wake_id),
+                ) {
+                    Ok(bootstrap) => bootstrap,
+                    Err(error) => return communication_error(error, RecoveryKind::Reconcile),
+                };
+                Some(json!({
+                    "wake_id": activation.wake.wake_id,
+                    "attempt_id": activation.attempt_id,
+                    "consume_token": activation.consume_token,
+                    "adapter_kind": "explicit_activation",
+                    "replayed": activation.replayed,
+                    "state_changed": activation.state_changed,
+                }))
+            } else {
+                None
+            };
+        let binding = self
+            .agent_continuations
+            .as_ref()
+            .map(|controller| {
+                controller.binding_status(&agent_id, &endpoint_id, expected_controller_generation)
+            })
+            .unwrap_or(crate::agent_wake::AgentHostBindingStatus {
+                adapter_registered: false,
+                adapter_kind: None,
+                production_auto_resume_available: false,
+            });
+        // Visible capability is the conjunction of durable Endpoint state and
+        // a current callable process-local registration.
+        bootstrap.endpoint.wake_capable &=
+            binding.adapter_registered && bootstrap.endpoint.lifecycle == "attached";
+        let wake_reply = bootstrap.wake.as_ref().map(|wake| {
+            json!({
+                "wake_id": wake.wake_id,
+                "reply_operation_index_min": 0,
+                "reply_operation_index_max": 31,
+                "contract": "For each semantically distinct reply in this Wake, call post_conversation_message with this wake_reply_id and a stable per-send reply_operation_index. Exact retry replays one Message; changed reuse fails closed."
+            })
+        });
+        let runtime_wake_capable = bootstrap.endpoint.wake_capable;
+        ToolResult::ok(json!({
+            "acting_agent": bootstrap.acting_agent,
+            "endpoint": bootstrap.endpoint,
+            "selected_conversation": bootstrap.selected_conversation,
+            "inbox": bootstrap.inbox,
+            "wake": bootstrap.wake,
+            "host_binding": {
+                "adapter_registered": binding.adapter_registered,
+                "adapter_kind": binding.adapter_kind,
+                "runtime_wake_capable": runtime_wake_capable,
+                "production_auto_resume_available": binding.production_auto_resume_available,
+                "manual_fallback": !binding.production_auto_resume_available,
+            },
+            "reply_replay": wake_reply,
+            "wake_activation": wake_activation,
+            "bootstrap_note": "Durable state remains authoritative. Read the Agent Inbox and relevant Conversation before acting; this bootstrap contains no transcript or Inbox Message body."
+        }))
     }
 }
 
@@ -671,12 +927,14 @@ mod tests {
             bob_conversation_id,
             None,
             None,
+            None,
             Some(0),
             Some(10),
         );
         let missing_conversation_result = runtime.read_conversation(
             Some(&alice),
             missing_conversation,
+            None,
             None,
             None,
             Some(0),

@@ -573,7 +573,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             );
         }
         "attach_agent_endpoint" => {
-            copy_keys(obj, &mut out, &["agent_id", "host", "wake_capable"]);
+            copy_keys(obj, &mut out, &["agent_id", "host"]);
             out.insert(
                 "client_attachment_id_present".to_string(),
                 Value::Bool(
@@ -612,7 +612,13 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             copy_keys(
                 obj,
                 &mut out,
-                &["agent_id", "endpoint_id", "offset", "limit"],
+                &[
+                    "agent_id",
+                    "endpoint_id",
+                    "expected_controller_generation",
+                    "offset",
+                    "limit",
+                ],
             );
         }
         "read_conversation" => {
@@ -623,6 +629,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                     "conversation_id",
                     "agent_id",
                     "endpoint_id",
+                    "expected_controller_generation",
                     "after_seq",
                     "limit",
                 ],
@@ -636,7 +643,10 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                     "conversation_id",
                     "author_agent_id",
                     "endpoint_id",
+                    "expected_controller_generation",
                     "reply_to",
+                    "wake_reply_id",
+                    "reply_operation_index",
                 ],
             );
             out.insert(
@@ -676,11 +686,21 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             copy_keys(
                 obj,
                 &mut out,
-                &["agent_id", "endpoint_id", "after_delivery_order", "limit"],
+                &[
+                    "agent_id",
+                    "endpoint_id",
+                    "expected_controller_generation",
+                    "after_delivery_order",
+                    "limit",
+                ],
             );
         }
         "consume_agent_deliveries" => {
-            copy_keys(obj, &mut out, &["agent_id", "endpoint_id"]);
+            copy_keys(
+                obj,
+                &mut out,
+                &["agent_id", "endpoint_id", "expected_controller_generation"],
+            );
             out.insert(
                 "delivery_count".to_string(),
                 Value::from(
@@ -689,6 +709,19 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                         .map(Vec::len)
                         .unwrap_or_default(),
                 ),
+            );
+        }
+        "bootstrap_agent_conversation" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "agent_id",
+                    "endpoint_id",
+                    "expected_controller_generation",
+                    "conversation_id",
+                    "wake_id",
+                ],
             );
         }
         "consume_agent_wake" => {
@@ -1506,6 +1539,19 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "consumed_count": output.get("consumed_delivery_ids").and_then(Value::as_array).map(Vec::len),
             "already_consumed_count": output.get("already_consumed_delivery_ids").and_then(Value::as_array).map(Vec::len),
             "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "bootstrap_agent_conversation" => serde_json::json!({
+            "agent_id": output.pointer("/acting_agent/agent_id").cloned().unwrap_or(Value::Null),
+            "endpoint_id": output.pointer("/endpoint/endpoint_id").cloned().unwrap_or(Value::Null),
+            "controller_generation": output.pointer("/endpoint/controller_generation").cloned().unwrap_or(Value::Null),
+            "conversation_id": output.pointer("/selected_conversation/conversation_id").cloned().unwrap_or(Value::Null),
+            "queued_delivery_count": output.pointer("/inbox/queued_delivery_count").cloned().unwrap_or(Value::Null),
+            "wake_id": output.pointer("/wake/wake_id").cloned().unwrap_or(Value::Null),
+            "wake_state": output.pointer("/wake/state").cloned().unwrap_or(Value::Null),
+            "adapter_kind": output.pointer("/host_binding/adapter_kind").cloned().unwrap_or(Value::Null),
+            "runtime_wake_capable": output.pointer("/host_binding/runtime_wake_capable").cloned().unwrap_or(Value::Null),
+            "production_auto_resume_available": output.pointer("/host_binding/production_auto_resume_available").cloned().unwrap_or(Value::Null),
             "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
         }),
         "consume_agent_wake" => serde_json::json!({
@@ -2480,11 +2526,14 @@ mod computer_privacy_tests {
             body: PRIVATE_BODY.to_string(),
             author_agent_id: None,
             endpoint_id: None,
+            expected_controller_generation: None,
             recipient_agent_ids: Some(vec![
                 "wc_dagent_0123456789abcdef0123456789abcdef".to_string()
             ]),
             reply_to: None,
-            idempotency_key: PRIVATE_KEY.to_string(),
+            idempotency_key: Some(PRIVATE_KEY.to_string()),
+            wake_reply_id: None,
+            reply_operation_index: None,
         }
         .session_log_arguments();
         let post_text = post.to_string();
@@ -2510,6 +2559,72 @@ mod computer_privacy_tests {
         assert!(!result.to_string().contains(PRIVATE_BODY));
         assert_eq!(result["seq"], 4);
         assert_eq!(result["delivery_count"], 1);
+
+        let bootstrap = session_log_result_for_tool(
+            "bootstrap_agent_conversation",
+            &json!({
+                "acting_agent": {
+                    "agent_id": "wc_dagent_0123456789abcdef0123456789abcdef",
+                    "description": PRIVATE_DESCRIPTION,
+                    "specialty_labels": [PRIVATE_LABEL]
+                },
+                "endpoint": {
+                    "endpoint_id": "wc_endpoint_0123456789abcdef0123456789abcdef",
+                    "controller_generation": 4,
+                    "client_attachment_id": "PRIVATE_HOST_ATTACHMENT"
+                },
+                "selected_conversation": {
+                    "conversation_id": "wc_conv_0123456789abcdef0123456789abcdef"
+                },
+                "inbox": {"queued_delivery_count": 2},
+                "wake": {
+                    "wake_id": "wc_wake_0123456789abcdef0123456789abcdef",
+                    "state": "pending",
+                    "consume_token": "PRIVATE_CONSUME_TOKEN",
+                    "message_body": PRIVATE_BODY
+                },
+                "host_binding": {
+                    "adapter_kind": "host_adapter",
+                    "runtime_wake_capable": true,
+                    "production_auto_resume_available": false,
+                    "callback_secret": "PRIVATE_CALLBACK_SECRET"
+                },
+                "wake_activation": {
+                    "wake_id": "wc_wake_0123456789abcdef0123456789abcdef",
+                    "attempt_id": "wc_wake_attempt_0123456789abcdef0123456789abcdef",
+                    "consume_token": "PRIVATE_ACTIVATION_CONSUME_TOKEN",
+                    "adapter_kind": "explicit_activation"
+                }
+            }),
+        );
+        let bootstrap_text = bootstrap.to_string();
+        for private in [
+            PRIVATE_DESCRIPTION,
+            PRIVATE_LABEL,
+            PRIVATE_BODY,
+            "PRIVATE_HOST_ATTACHMENT",
+            "PRIVATE_CONSUME_TOKEN",
+            "PRIVATE_CALLBACK_SECRET",
+            "PRIVATE_ACTIVATION_CONSUME_TOKEN",
+        ] {
+            assert!(
+                !bootstrap_text.contains(private),
+                "bootstrap audit leaked {private}"
+            );
+        }
+        assert_eq!(bootstrap["controller_generation"], 4);
+        assert_eq!(bootstrap["queued_delivery_count"], 2);
+
+        let activation_request = ToolCall::BootstrapAgentConversation {
+            agent_id: "wc_dagent_0123456789abcdef0123456789abcdef".to_string(),
+            endpoint_id: "wc_endpoint_0123456789abcdef0123456789abcdef".to_string(),
+            expected_controller_generation: 4,
+            conversation_id: None,
+            wake_id: Some("wc_wake_0123456789abcdef0123456789abcdef".to_string()),
+            activation_idempotency_key: Some(PRIVATE_KEY.to_string()),
+        }
+        .session_log_arguments();
+        assert!(!activation_request.to_string().contains(PRIVATE_KEY));
     }
 
     #[test]
@@ -4175,7 +4290,6 @@ impl ToolCall {
                 agent_id,
                 host,
                 client_attachment_id,
-                wake_capable,
                 idempotency_key,
             } => session_log_arguments_for_tool_request(
                 "attach_agent_endpoint",
@@ -4183,7 +4297,6 @@ impl ToolCall {
                     "agent_id": agent_id,
                     "host": host,
                     "client_attachment_id": client_attachment_id,
-                    "wake_capable": wake_capable,
                     "idempotency_key": idempotency_key,
                 }),
             ),
@@ -4206,6 +4319,7 @@ impl ToolCall {
             Self::ListConversations {
                 agent_id,
                 endpoint_id,
+                expected_controller_generation,
                 offset,
                 limit,
             } => session_log_arguments_for_tool_request(
@@ -4213,6 +4327,7 @@ impl ToolCall {
                 &serde_json::json!({
                     "agent_id": agent_id,
                     "endpoint_id": endpoint_id,
+                    "expected_controller_generation": expected_controller_generation,
                     "offset": offset,
                     "limit": limit,
                 }),
@@ -4221,6 +4336,7 @@ impl ToolCall {
                 conversation_id,
                 agent_id,
                 endpoint_id,
+                expected_controller_generation,
                 after_seq,
                 limit,
             } => session_log_arguments_for_tool_request(
@@ -4229,6 +4345,7 @@ impl ToolCall {
                     "conversation_id": conversation_id,
                     "agent_id": agent_id,
                     "endpoint_id": endpoint_id,
+                    "expected_controller_generation": expected_controller_generation,
                     "after_seq": after_seq,
                     "limit": limit,
                 }),
@@ -4238,9 +4355,12 @@ impl ToolCall {
                 body,
                 author_agent_id,
                 endpoint_id,
+                expected_controller_generation,
                 recipient_agent_ids,
                 reply_to,
                 idempotency_key,
+                wake_reply_id,
+                reply_operation_index,
             } => session_log_arguments_for_tool_request(
                 "post_conversation_message",
                 &serde_json::json!({
@@ -4248,14 +4368,18 @@ impl ToolCall {
                     "body": body,
                     "author_agent_id": author_agent_id,
                     "endpoint_id": endpoint_id,
+                    "expected_controller_generation": expected_controller_generation,
                     "recipient_agent_ids": recipient_agent_ids,
                     "reply_to": reply_to,
                     "idempotency_key": idempotency_key,
+                    "wake_reply_id": wake_reply_id,
+                    "reply_operation_index": reply_operation_index,
                 }),
             ),
             Self::ListAgentInbox {
                 agent_id,
                 endpoint_id,
+                expected_controller_generation,
                 after_delivery_order,
                 limit,
             } => session_log_arguments_for_tool_request(
@@ -4263,6 +4387,7 @@ impl ToolCall {
                 &serde_json::json!({
                     "agent_id": agent_id,
                     "endpoint_id": endpoint_id,
+                    "expected_controller_generation": expected_controller_generation,
                     "after_delivery_order": after_delivery_order,
                     "limit": limit,
                 }),
@@ -4270,13 +4395,33 @@ impl ToolCall {
             Self::ConsumeAgentDeliveries {
                 agent_id,
                 endpoint_id,
+                expected_controller_generation,
                 delivery_ids,
             } => session_log_arguments_for_tool_request(
                 "consume_agent_deliveries",
                 &serde_json::json!({
                     "agent_id": agent_id,
                     "endpoint_id": endpoint_id,
+                    "expected_controller_generation": expected_controller_generation,
                     "delivery_ids": delivery_ids,
+                }),
+            ),
+            Self::BootstrapAgentConversation {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                conversation_id,
+                wake_id,
+                activation_idempotency_key,
+            } => session_log_arguments_for_tool_request(
+                "bootstrap_agent_conversation",
+                &serde_json::json!({
+                    "agent_id": agent_id,
+                    "endpoint_id": endpoint_id,
+                    "expected_controller_generation": expected_controller_generation,
+                    "conversation_id": conversation_id,
+                    "wake_id": wake_id,
+                    "activation_idempotency_key": activation_idempotency_key,
                 }),
             ),
             Self::ConsumeAgentWake {

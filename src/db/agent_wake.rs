@@ -1,7 +1,11 @@
+use super::communication::lookup_idempotent_resource;
 use super::communication::{
-    digest_text, new_id, now_unix_ms, require_current_endpoint, store_error,
-    validate_communication_principal, validate_id, CommunicationPrincipal, CommunicationStoreError,
-    AGENT_ENDPOINT_ID_PREFIX, DURABLE_AGENT_ID_PREFIX,
+    digest_text, load_agent, new_id, now_unix_ms, read_conversation_in_connection,
+    record_idempotent_resource, require_current_endpoint, store_error,
+    validate_communication_principal, validate_id, validate_idempotency_key, AgentEndpointRecord,
+    CommunicationPrincipal, CommunicationStoreError, ConversationAccess, ConversationSummaryRecord,
+    DurableAgentIdentity, AGENT_ENDPOINT_ID_PREFIX, CONVERSATION_ID_PREFIX,
+    DURABLE_AGENT_ID_PREFIX,
 };
 use super::Database;
 use rusqlite::{
@@ -179,6 +183,42 @@ pub(crate) struct AgentWakeConsumeResult {
     pub(crate) state_changed: bool,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct AgentInboxBootstrapSummary {
+    pub(crate) queued_delivery_count: i64,
+    pub(crate) inbox_high_watermark: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct AgentWakeBootstrapSummary {
+    pub(crate) wake_id: String,
+    pub(crate) state: AgentWakeState,
+    pub(crate) revision: i64,
+    pub(crate) conversation_id: String,
+    pub(crate) latest_message_id: String,
+    pub(crate) queued_delivery_count: i64,
+    pub(crate) inbox_high_watermark: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct AgentConversationBootstrapRecord {
+    pub(crate) acting_agent: DurableAgentIdentity,
+    pub(crate) endpoint: AgentEndpointRecord,
+    pub(crate) selected_conversation: Option<ConversationSummaryRecord>,
+    pub(crate) inbox: AgentInboxBootstrapSummary,
+    pub(crate) wake: Option<AgentWakeBootstrapSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct AgentWakeExplicitActivation {
+    pub(crate) wake: AgentWakeRecord,
+    pub(crate) attempt_id: String,
+    #[serde(skip_serializing)]
+    pub(crate) consume_token: String,
+    pub(crate) replayed: bool,
+    pub(crate) state_changed: bool,
+}
+
 impl Database {
     pub(super) fn ensure_agent_wake_schema(conn: &mut Connection) -> anyhow::Result<()> {
         let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -306,6 +346,17 @@ impl Database {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
         expire_stale_endpoints(&transaction, now)?;
+        // Process-local Host callbacks/adapters never survive a Server
+        // takeover. Clear their durable capability projection before any
+        // successor can treat an old Endpoint as dispatchable.
+        transaction
+            .execute(
+                "UPDATE wc_agent_endpoints
+                 SET wake_capable = 0
+                 WHERE lifecycle = 'attached' AND wake_capable != 0",
+                [],
+            )
+            .map_err(store_error)?;
 
         transaction
             .execute(
@@ -659,6 +710,72 @@ impl Database {
         )
     }
 
+    /// Revalidate the exact current Endpoint and prepared Attempt immediately
+    /// before invoking an external Host callback. The durable dispatch fence
+    /// has already been crossed, so replacement after preparation remains
+    /// conservatively uncertain.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn verify_agent_wake_dispatch_binding(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        wake_id: &str,
+        attempt_id: &str,
+        claim_fence: &str,
+    ) -> Result<(), CommunicationStoreError> {
+        validate_wake_mutation_ids(agent_id, endpoint_id, wake_id, attempt_id)?;
+        validate_communication_principal(principal)?;
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        let endpoint = require_current_endpoint(
+            &transaction,
+            principal,
+            agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )?;
+        if !endpoint.wake_capable {
+            return Err(CommunicationStoreError::new(
+                "endpoint_not_wake_capable",
+                "Agent Endpoint no longer has a registered continuation adapter",
+            ));
+        }
+        let wake = require_exact_claim(
+            &transaction,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            wake_id,
+            attempt_id,
+            claim_fence,
+            None,
+        )?;
+        if wake.state != AgentWakeState::Prepared {
+            return Err(CommunicationStoreError::new(
+                "wake_not_prepared",
+                "Agent Wake is no longer prepared for this dispatch",
+            ));
+        }
+        let attempt = load_attempt(&transaction, attempt_id)?.ok_or_else(|| {
+            CommunicationStoreError::new(
+                "wake_attempt_not_found",
+                "Agent Wake Attempt does not exist",
+            )
+        })?;
+        if attempt.state != AgentWakeAttemptState::Prepared {
+            return Err(CommunicationStoreError::new(
+                "wake_attempt_not_prepared",
+                "Agent Wake Attempt is no longer prepared for dispatch",
+            ));
+        }
+        transaction.commit().map_err(store_error)?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn mark_agent_wake_delivery_unknown(
         &self,
@@ -802,12 +919,6 @@ impl Database {
             endpoint_id,
             Some(expected_controller_generation),
         )?;
-        if !endpoint.wake_capable {
-            return Err(CommunicationStoreError::new(
-                "endpoint_not_wake_capable",
-                "Agent Endpoint is not wake-capable",
-            ));
-        }
         let wake = load_wake(&transaction, wake_id)?.ok_or_else(|| {
             CommunicationStoreError::new("wake_not_found", "Agent Wake does not exist")
         })?;
@@ -831,11 +942,11 @@ impl Database {
                 "Agent Wake has no exact dispatched attempt to consume",
             )
         })?;
-        let expected_token_hash: String = transaction
+        let (expected_token_hash, adapter_kind): (String, String) = transaction
             .query_row(
-                "SELECT consume_token_hash FROM wc_agent_wake_attempts WHERE attempt_id = ?1",
+                "SELECT consume_token_hash, adapter_kind FROM wc_agent_wake_attempts WHERE attempt_id = ?1",
                 params![attempt_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .map_err(store_error)?
@@ -845,6 +956,12 @@ impl Database {
                     "Agent Wake Attempt does not exist",
                 )
             })?;
+        if !endpoint.wake_capable && adapter_kind != "explicit_activation" {
+            return Err(CommunicationStoreError::new(
+                "endpoint_not_wake_capable",
+                "Agent Endpoint is not wake-capable",
+            ));
+        }
         if expected_token_hash != digest_text("webcodex.agent-wake.consume-token.v1", consume_token)
         {
             return Err(CommunicationStoreError::new(
@@ -918,6 +1035,297 @@ impl Database {
             state: AgentWakeState::Consumed,
             already_consumed: false,
             consumed_at_unix_ms: now,
+            state_changed: true,
+        })
+    }
+
+    /// Return a bounded, authoritative Agent-turn bootstrap without copying
+    /// transcript bodies, Inbox message bodies, raw fences/tokens, or principal
+    /// identity into ambient Host state.
+    pub(crate) fn bootstrap_agent_conversation(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        selected_conversation_id: Option<&str>,
+        wake_id: Option<&str>,
+    ) -> Result<AgentConversationBootstrapRecord, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        validate_id(agent_id, DURABLE_AGENT_ID_PREFIX, "invalid_agent_id")?;
+        validate_id(endpoint_id, AGENT_ENDPOINT_ID_PREFIX, "invalid_endpoint_id")?;
+        if let Some(conversation_id) = selected_conversation_id {
+            validate_id(
+                conversation_id,
+                CONVERSATION_ID_PREFIX,
+                "invalid_conversation_id",
+            )?;
+        }
+        if let Some(wake_id) = wake_id {
+            validate_id(wake_id, AGENT_WAKE_ID_PREFIX, "invalid_wake_id")?;
+        }
+
+        let conn = self.conn.lock().unwrap();
+        let endpoint = require_current_endpoint(
+            &conn,
+            principal,
+            agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )?;
+        let acting_agent = load_agent(&conn, agent_id)?.ok_or_else(|| {
+            CommunicationStoreError::new("agent_not_found", "Agent identity does not exist")
+        })?;
+
+        let wake = if let Some(wake_id) = wake_id {
+            let wake = load_wake(&conn, wake_id)?
+                .filter(|wake| wake.target_agent_id == agent_id)
+                .ok_or_else(|| {
+                    CommunicationStoreError::new("wake_not_found", "Agent Wake does not exist")
+                })?;
+            (wake.state != AgentWakeState::Consumed).then_some(wake)
+        } else {
+            let selected_wake_id: Option<String> = conn
+                .query_row(
+                    "SELECT wake_id FROM wc_agent_wakes
+                     WHERE target_agent_id = ?1 AND state != 'consumed'
+                     ORDER BY CASE
+                         WHEN state IN ('prepared', 'delivered', 'delivery_unknown') THEN 0
+                         WHEN state = 'claimed' THEN 1
+                         ELSE 2
+                     END, created_at_unix_ms, wake_id
+                     LIMIT 1",
+                    params![agent_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(store_error)?;
+            selected_wake_id
+                .as_deref()
+                .map(|wake_id| load_wake(&conn, wake_id))
+                .transpose()?
+                .flatten()
+        };
+
+        let effective_conversation_id =
+            selected_conversation_id.map(ToOwned::to_owned).or_else(|| {
+                wake.as_ref()
+                    .map(|wake| wake.latest_conversation_id.clone())
+            });
+        let selected_conversation = effective_conversation_id
+            .as_deref()
+            .map(|conversation_id| {
+                read_conversation_in_connection(
+                    &conn,
+                    principal,
+                    &ConversationAccess::Agent {
+                        agent_id: agent_id.to_string(),
+                        endpoint_id: endpoint_id.to_string(),
+                        expected_controller_generation,
+                    },
+                    conversation_id,
+                    0,
+                    0,
+                )
+                .map(|detail| detail.conversation)
+            })
+            .transpose()?;
+        let (queued_delivery_count, inbox_high_watermark): (i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), COALESCE(MAX(delivery_order), 0)
+                 FROM wc_agent_deliveries
+                 WHERE recipient_agent_id = ?1 AND state = 'queued'",
+                params![agent_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(store_error)?;
+        let wake = wake.map(|wake| AgentWakeBootstrapSummary {
+            wake_id: wake.wake_id,
+            state: wake.state,
+            revision: wake.revision,
+            conversation_id: wake.latest_conversation_id,
+            latest_message_id: wake.latest_message_id,
+            queued_delivery_count: wake.queued_delivery_count_snapshot,
+            inbox_high_watermark: wake.inbox_high_watermark,
+        });
+
+        Ok(AgentConversationBootstrapRecord {
+            acting_agent,
+            endpoint,
+            selected_conversation,
+            inbox: AgentInboxBootstrapSummary {
+                queued_delivery_count,
+                inbox_high_watermark,
+            },
+            wake,
+        })
+    }
+
+    /// Accept one pending Wake into an already-active explicit model turn.
+    /// Unlike a continuation adapter this does not request a new turn. The
+    /// caller key makes both the durable Attempt and returned consume token
+    /// exactly recoverable if the tool response is lost.
+    pub(crate) fn accept_explicit_agent_wake_activation(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        wake_id: &str,
+        activation_idempotency_key: &str,
+    ) -> Result<AgentWakeExplicitActivation, CommunicationStoreError> {
+        const OP_EXPLICIT_ACTIVATION: &str = "accept_explicit_agent_wake_activation";
+        validate_communication_principal(principal)?;
+        validate_id(agent_id, DURABLE_AGENT_ID_PREFIX, "invalid_agent_id")?;
+        validate_id(endpoint_id, AGENT_ENDPOINT_ID_PREFIX, "invalid_endpoint_id")?;
+        validate_id(wake_id, AGENT_WAKE_ID_PREFIX, "invalid_wake_id")?;
+        let activation_idempotency_key = validate_idempotency_key(activation_idempotency_key)?;
+        let request_hash = digest_text(
+            "webcodex.agent-wake.explicit-activation-request.v1",
+            &format!("{agent_id}\0{endpoint_id}\0{expected_controller_generation}\0{wake_id}"),
+        );
+        let consume_token_digest = digest_text(
+            "webcodex.agent-wake.explicit-activation-consume.v1",
+            &format!(
+                "{}\0{agent_id}\0{endpoint_id}\0{expected_controller_generation}\0{wake_id}\0{activation_idempotency_key}",
+                principal.digest
+            ),
+        );
+        let consume_token = format!(
+            "{AGENT_WAKE_CONSUME_TOKEN_PREFIX}{}",
+            &consume_token_digest[..32]
+        );
+        let now = now_unix_ms();
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        if let Some(attempt_id) = lookup_idempotent_resource(
+            &transaction,
+            principal,
+            OP_EXPLICIT_ACTIVATION,
+            &activation_idempotency_key,
+            &request_hash,
+        )? {
+            let attempt = load_attempt(&transaction, &attempt_id)?.ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "wake_attempt_not_found",
+                    "Explicit Agent Wake activation no longer exists",
+                )
+            })?;
+            let wake = load_wake(&transaction, wake_id)?.ok_or_else(|| {
+                CommunicationStoreError::new("wake_not_found", "Agent Wake does not exist")
+            })?;
+            transaction.commit().map_err(store_error)?;
+            return Ok(AgentWakeExplicitActivation {
+                wake,
+                attempt_id: attempt.attempt_id,
+                consume_token,
+                replayed: true,
+                state_changed: false,
+            });
+        }
+        require_current_endpoint(
+            &transaction,
+            principal,
+            agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )?;
+        let wake = load_wake(&transaction, wake_id)?
+            .filter(|wake| wake.target_agent_id == agent_id)
+            .ok_or_else(|| {
+                CommunicationStoreError::new("wake_not_found", "Agent Wake does not exist")
+            })?;
+        if wake.state != AgentWakeState::Pending {
+            return Err(CommunicationStoreError::new(
+                "wake_not_pending",
+                "Explicit activation can accept only a pending Agent Wake",
+            ));
+        }
+        let dispatched_exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM wc_agent_wakes
+                    WHERE target_agent_id = ?1
+                      AND state IN ('prepared', 'delivered', 'delivery_unknown')
+                 )",
+                params![agent_id],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?;
+        if dispatched_exists {
+            return Err(CommunicationStoreError::new(
+                "wake_dispatch_blocked",
+                "Resolve the Agent's already-dispatched Wake before accepting another",
+            ));
+        }
+        let attempt_id = new_id(AGENT_WAKE_ATTEMPT_ID_PREFIX);
+        let claim_fence = new_id(AGENT_WAKE_CLAIM_FENCE_PREFIX);
+        let claim_fence_hash = digest_text("webcodex.agent-wake.claim-fence.v1", &claim_fence);
+        let consume_token_hash =
+            digest_text("webcodex.agent-wake.consume-token.v1", &consume_token);
+        transaction
+            .execute(
+                "INSERT INTO wc_agent_wake_attempts (
+                    attempt_id, wake_id, endpoint_id, controller_generation,
+                    adapter_kind, state, claim_fence_hash, consume_token_hash,
+                    claimed_at_unix_ms, claim_lease_expires_at_unix_ms,
+                    prepared_at_unix_ms, delivered_at_unix_ms,
+                    delivery_unknown_at_unix_ms, revoked_at_unix_ms,
+                    consumed_at_unix_ms
+                 ) VALUES (?1, ?2, ?3, ?4, 'explicit_activation', 'delivered',
+                           ?5, ?6, ?7, ?7, ?7, ?7, NULL, NULL, NULL)",
+                params![
+                    attempt_id,
+                    wake_id,
+                    endpoint_id,
+                    expected_controller_generation,
+                    claim_fence_hash,
+                    consume_token_hash,
+                    now,
+                ],
+            )
+            .map_err(store_error)?;
+        let changed = transaction
+            .execute(
+                "UPDATE wc_agent_wakes
+                 SET state = 'delivered', revision = revision + 1,
+                     updated_at_unix_ms = ?2, claimed_attempt_id = ?3,
+                     claimed_endpoint_id = ?4, claimed_controller_generation = ?5,
+                     claim_lease_expires_at_unix_ms = NULL
+                 WHERE wake_id = ?1 AND state = 'pending'",
+                params![
+                    wake_id,
+                    now,
+                    attempt_id,
+                    endpoint_id,
+                    expected_controller_generation,
+                ],
+            )
+            .map_err(store_error)?;
+        if changed != 1 {
+            return Err(CommunicationStoreError::new(
+                "wake_activation_conflict",
+                "Agent Wake changed before explicit activation was accepted",
+            ));
+        }
+        record_idempotent_resource(
+            &transaction,
+            principal,
+            OP_EXPLICIT_ACTIVATION,
+            &activation_idempotency_key,
+            &request_hash,
+            &attempt_id,
+            now,
+        )?;
+        let wake = load_wake(&transaction, wake_id)?.expect("activated Wake must exist");
+        transaction.commit().map_err(store_error)?;
+        Ok(AgentWakeExplicitActivation {
+            wake,
+            attempt_id,
+            consume_token,
+            replayed: false,
             state_changed: true,
         })
     }
@@ -1334,7 +1742,7 @@ fn wake_envelope(
     consume_token: &str,
 ) -> AgentWakeEnvelope {
     let resume_hint = format!(
-        "Agent {} has durable communication work pending.\n\nwake_id={}\nendpoint_id={}\ncontroller_generation={}\nqueued_delivery_count={}\ninbox_high_watermark={}\nconsume_token={}\n\nBefore producing a user-visible response:\n1. verify current durable Agent / Endpoint state;\n2. read the authoritative Agent Inbox;\n3. read relevant Conversation messages;\n4. process only durable current state;\n5. consume the exact Wake Intent when accepted.",
+        "Agent {} has durable communication work pending.\n\nwake_id={}\nendpoint_id={}\ncontroller_generation={}\nqueued_delivery_count={}\ninbox_high_watermark={}\nconsume_token={}\n\nBefore completing this turn:\n1. bootstrap and verify the exact Agent / Endpoint generation;\n2. read the authoritative Agent Inbox and relevant Conversation;\n3. perform any needed work and post replies with the Wake-derived replay identity;\n4. consume the exact accepted Wake;\n5. separately consume only processed Delivery ids.",
         wake.target_agent_id,
         wake.wake_id,
         endpoint_id,

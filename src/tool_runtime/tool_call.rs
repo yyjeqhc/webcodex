@@ -1047,8 +1047,6 @@ pub enum ToolCall {
         host: String,
         #[serde(default)]
         client_attachment_id: Option<String>,
-        #[serde(default)]
-        wake_capable: bool,
         idempotency_key: String,
     },
 
@@ -1072,6 +1070,8 @@ pub enum ToolCall {
         #[serde(default)]
         endpoint_id: Option<String>,
         #[serde(default)]
+        expected_controller_generation: Option<i64>,
+        #[serde(default)]
         offset: Option<usize>,
         #[serde(default)]
         limit: Option<usize>,
@@ -1084,6 +1084,8 @@ pub enum ToolCall {
         agent_id: Option<String>,
         #[serde(default)]
         endpoint_id: Option<String>,
+        #[serde(default)]
+        expected_controller_generation: Option<i64>,
         #[serde(default)]
         after_seq: Option<i64>,
         #[serde(default)]
@@ -1099,16 +1101,24 @@ pub enum ToolCall {
         #[serde(default)]
         endpoint_id: Option<String>,
         #[serde(default)]
+        expected_controller_generation: Option<i64>,
+        #[serde(default)]
         recipient_agent_ids: Option<Vec<String>>,
         #[serde(default)]
         reply_to: Option<String>,
-        idempotency_key: String,
+        #[serde(default)]
+        idempotency_key: Option<String>,
+        #[serde(default)]
+        wake_reply_id: Option<String>,
+        #[serde(default)]
+        reply_operation_index: Option<i64>,
     },
 
     /// List queued deliveries for an Agent proven by an active Endpoint.
     ListAgentInbox {
         agent_id: String,
         endpoint_id: String,
+        expected_controller_generation: i64,
         #[serde(default)]
         after_delivery_order: Option<i64>,
         #[serde(default)]
@@ -1119,7 +1129,22 @@ pub enum ToolCall {
     ConsumeAgentDeliveries {
         agent_id: String,
         endpoint_id: String,
+        expected_controller_generation: i64,
         delivery_ids: Vec<String>,
+    },
+
+    /// Verify one exact Agent/Endpoint activation and return bounded current
+    /// Conversation, Inbox, Wake, Host-binding, and reply-replay context.
+    BootstrapAgentConversation {
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        #[serde(default)]
+        conversation_id: Option<String>,
+        #[serde(default)]
+        wake_id: Option<String>,
+        #[serde(default)]
+        activation_idempotency_key: Option<String>,
     },
 
     /// Consume one exact durable Agent Wake continuation without consuming Inbox deliveries.
@@ -2464,6 +2489,7 @@ impl ToolCall {
             Self::PostConversationMessage { .. } => "post_conversation_message",
             Self::ListAgentInbox { .. } => "list_agent_inbox",
             Self::ConsumeAgentDeliveries { .. } => "consume_agent_deliveries",
+            Self::BootstrapAgentConversation { .. } => "bootstrap_agent_conversation",
             Self::ConsumeAgentWake { .. } => "consume_agent_wake",
             Self::MemorySearch { .. } => "memory_search",
             Self::MemoryRead { .. } => "memory_read",

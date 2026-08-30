@@ -77,9 +77,12 @@ fn post_to_receiver(db: &Database, fixture: &RecoveryFixture, index: usize) -> S
             body: format!("private migration body {index}"),
             author_agent_id: None,
             endpoint_id: None,
+            expected_controller_generation: None,
             recipient_agent_ids: Some(vec![fixture.receiver_agent_id.clone()]),
             reply_to: None,
-            idempotency_key: format!("migration-message-{index}"),
+            idempotency_key: Some(format!("migration-message-{index}")),
+            wake_reply_id: None,
+            reply_operation_index: None,
         },
     )
     .unwrap()

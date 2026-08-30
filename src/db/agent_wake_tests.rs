@@ -84,9 +84,12 @@ fn post_to_receiver(db: &Database, fixture: &Fixture, body: &str, key: &str) -> 
             body: body.to_string(),
             author_agent_id: None,
             endpoint_id: None,
+            expected_controller_generation: None,
             recipient_agent_ids: Some(vec![fixture.receiver_agent_id.clone()]),
             reply_to: None,
-            idempotency_key: key.to_string(),
+            idempotency_key: Some(key.to_string()),
+            wake_reply_id: None,
+            reply_operation_index: None,
         },
     )
     .unwrap()
@@ -251,6 +254,7 @@ fn offline_fifty_message_burst_preserves_facts_and_coalesces_wake() {
             &fixture.owner,
             &fixture.receiver_agent_id,
             &endpoint.endpoint_id,
+            endpoint.controller_generation,
             0,
             100,
         )
@@ -263,6 +267,7 @@ fn offline_fifty_message_burst_preserves_facts_and_coalesces_wake() {
         &fixture.owner,
         &fixture.receiver_agent_id,
         &endpoint.endpoint_id,
+        endpoint.controller_generation,
         vec![first_delivery_id],
     )
     .unwrap();
@@ -378,6 +383,7 @@ fn replacement_generation_fences_old_claim_dispatch_wake_consume_and_inbox_consu
             &fixture.owner,
             &fixture.receiver_agent_id,
             &generation_one.endpoint_id,
+            generation_one.controller_generation,
             vec![delivery_id],
         )
         .unwrap_err()
@@ -396,7 +402,7 @@ fn replacement_generation_fences_old_claim_dispatch_wake_consume_and_inbox_consu
         .unwrap()
         .unwrap();
     assert_eq!(claim_two.wake.wake_id, claim_one.wake.wake_id);
-    db.release_agent_wake_claim(
+    db.prepare_agent_wake_dispatch(
         &fixture.owner,
         &fixture.receiver_agent_id,
         &generation_two.endpoint_id,
@@ -404,8 +410,33 @@ fn replacement_generation_fences_old_claim_dispatch_wake_consume_and_inbox_consu
         &claim_two.wake.wake_id,
         &claim_two.attempt.attempt_id,
         &claim_two.claim_fence,
+        &claim_two.consume_token,
     )
     .unwrap();
+    let generation_three = attach_wake_endpoint(&db, &fixture, "host-three", "endpoint-three");
+    assert_eq!(generation_three.controller_generation, 3);
+    assert_eq!(
+        db.verify_agent_wake_dispatch_binding(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &generation_two.endpoint_id,
+            generation_two.controller_generation,
+            &claim_two.wake.wake_id,
+            &claim_two.attempt.attempt_id,
+            &claim_two.claim_fence,
+        )
+        .unwrap_err()
+        .code(),
+        "endpoint_expired",
+        "a callback reaching the controller after replacement is fenced before Host invocation"
+    );
+    assert_eq!(
+        db.agent_wake(&claim_two.wake.wake_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        AgentWakeState::DeliveryUnknown
+    );
 }
 
 #[test]
@@ -552,6 +583,7 @@ fn fake_adapter_recovers_same_wake_before_fence_and_exact_consume_is_idempotent(
             &fixture.owner,
             &fixture.receiver_agent_id,
             &generation_three.endpoint_id,
+            generation_three.controller_generation,
             delivery_ids,
         )
         .unwrap();

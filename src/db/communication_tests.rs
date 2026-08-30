@@ -66,9 +66,12 @@ fn human_message(
         body: body.to_string(),
         author_agent_id: None,
         endpoint_id: None,
+        expected_controller_generation: None,
         recipient_agent_ids,
         reply_to,
-        idempotency_key: key.to_string(),
+        idempotency_key: Some(key.to_string()),
+        wake_reply_id: None,
+        reply_operation_index: None,
     }
 }
 
@@ -76,6 +79,7 @@ fn agent_message(
     conversation_id: &str,
     agent_id: &str,
     endpoint_id: &str,
+    expected_controller_generation: i64,
     body: &str,
     recipient_agent_ids: Option<Vec<String>>,
     reply_to: Option<String>,
@@ -86,9 +90,12 @@ fn agent_message(
         body: body.to_string(),
         author_agent_id: Some(agent_id.to_string()),
         endpoint_id: Some(endpoint_id.to_string()),
+        expected_controller_generation: Some(expected_controller_generation),
         recipient_agent_ids,
         reply_to,
-        idempotency_key: key.to_string(),
+        idempotency_key: Some(key.to_string()),
+        wake_reply_id: None,
+        reply_operation_index: None,
     }
 }
 
@@ -388,6 +395,7 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
                 &conversation_id,
                 &agent_a.agent_id,
                 &endpoint_a.endpoint_id,
+                endpoint_a.controller_generation,
                 "Agent A to Agent B",
                 Some(vec![agent_b.agent_id.clone()]),
                 Some(human.message.message_id.clone()),
@@ -409,6 +417,7 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
                 &conversation_id,
                 &agent_b.agent_id,
                 &endpoint_b.endpoint_id,
+                endpoint_b.controller_generation,
                 "Agent B to Human / room",
                 Some(Vec::new()),
                 Some(from_a.message.message_id.clone()),
@@ -434,7 +443,14 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
     assert_eq!(transcript.conversation.last_seq, 3);
 
     let inbox_a = db
-        .list_agent_inbox(&owner, &agent_a.agent_id, &endpoint_a.endpoint_id, 0, 10)
+        .list_agent_inbox(
+            &owner,
+            &agent_a.agent_id,
+            &endpoint_a.endpoint_id,
+            endpoint_a.controller_generation,
+            0,
+            10,
+        )
         .unwrap();
     assert_eq!(inbox_a.total_queued_count, 1);
     assert_eq!(
@@ -443,7 +459,14 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
     );
 
     let inbox_b = db
-        .list_agent_inbox(&owner, &agent_b.agent_id, &endpoint_b.endpoint_id, 0, 10)
+        .list_agent_inbox(
+            &owner,
+            &agent_b.agent_id,
+            &endpoint_b.endpoint_id,
+            endpoint_b.controller_generation,
+            0,
+            10,
+        )
         .unwrap();
     assert_eq!(inbox_b.total_queued_count, 2);
     assert_eq!(
@@ -468,6 +491,7 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
             &owner,
             &agent_b.agent_id,
             &endpoint_b.endpoint_id,
+            endpoint_b.controller_generation,
             b_delivery_ids.clone(),
         )
         .unwrap();
@@ -478,6 +502,7 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
             &owner,
             &agent_b.agent_id,
             &endpoint_b.endpoint_id,
+            endpoint_b.controller_generation,
             b_delivery_ids.clone(),
         )
         .unwrap();
@@ -487,9 +512,16 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
         expected_b_delivery_ids
     );
     assert_eq!(
-        db.list_agent_inbox(&owner, &agent_a.agent_id, &endpoint_a.endpoint_id, 0, 10)
-            .unwrap()
-            .total_queued_count,
+        db.list_agent_inbox(
+            &owner,
+            &agent_a.agent_id,
+            &endpoint_a.endpoint_id,
+            endpoint_a.controller_generation,
+            0,
+            10,
+        )
+        .unwrap()
+        .total_queued_count,
         1,
         "Agent B consumption must not mutate Agent A delivery state"
     );
@@ -519,7 +551,14 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
         .unwrap()
         .endpoint;
     let recovered_inbox = db
-        .list_agent_inbox(&owner, &agent_b.agent_id, &replacement_b.endpoint_id, 0, 10)
+        .list_agent_inbox(
+            &owner,
+            &agent_b.agent_id,
+            &replacement_b.endpoint_id,
+            replacement_b.controller_generation,
+            0,
+            10,
+        )
         .unwrap();
     assert_eq!(recovered_inbox.total_queued_count, 1);
     assert_eq!(
@@ -568,6 +607,7 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
             &ConversationAccess::Agent {
                 agent_id: agent_b.agent_id.clone(),
                 endpoint_id: replacement_b.endpoint_id.clone(),
+                expected_controller_generation: replacement_b.controller_generation,
             },
             &conversation_id,
             0,
@@ -617,6 +657,7 @@ fn exact_message_replay_survives_endpoint_detach_without_duplicate_delivery() {
                 &conversation_id,
                 &agent_a.agent_id,
                 &endpoint_a.endpoint_id,
+                endpoint_a.controller_generation,
                 "Committed before the response was lost",
                 Some(vec![agent_b.agent_id.clone()]),
                 None,
@@ -636,6 +677,7 @@ fn exact_message_replay_survives_endpoint_detach_without_duplicate_delivery() {
                 &conversation_id,
                 &agent_a.agent_id,
                 &endpoint_a.endpoint_id,
+                endpoint_a.controller_generation,
                 "Committed before the response was lost",
                 Some(vec![agent_b.agent_id.clone()]),
                 None,
@@ -655,6 +697,7 @@ fn exact_message_replay_survives_endpoint_detach_without_duplicate_delivery() {
                 &conversation_id,
                 &agent_a.agent_id,
                 &endpoint_a.endpoint_id,
+                endpoint_a.controller_generation,
                 "Changed request must not bypass detached Endpoint validation",
                 Some(vec![agent_b.agent_id.clone()]),
                 None,
@@ -965,6 +1008,7 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &ConversationAccess::Agent {
                 agent_id: alice_agent.agent_id.clone(),
                 endpoint_id: bob_endpoint.endpoint_id.clone(),
+                expected_controller_generation: bob_endpoint.controller_generation,
             },
             0,
             10,
@@ -975,6 +1019,7 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &ConversationAccess::Agent {
                 agent_id: alice_agent.agent_id.clone(),
                 endpoint_id: missing_endpoint.clone(),
+                expected_controller_generation: bob_endpoint.controller_generation,
             },
             0,
             10,
@@ -988,12 +1033,20 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &alice,
             &alice_agent.agent_id,
             &bob_endpoint.endpoint_id,
+            bob_endpoint.controller_generation,
             0,
             10,
         )
         .unwrap_err(),
-        db.list_agent_inbox(&alice, &alice_agent.agent_id, &missing_endpoint, 0, 10)
-            .unwrap_err(),
+        db.list_agent_inbox(
+            &alice,
+            &alice_agent.agent_id,
+            &missing_endpoint,
+            bob_endpoint.controller_generation,
+            0,
+            10,
+        )
+        .unwrap_err(),
         "endpoint_not_found",
     );
 
@@ -1017,6 +1070,7 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &ConversationAccess::Agent {
                 agent_id: alice_agent.agent_id.clone(),
                 endpoint_id: alice_endpoint.endpoint_id.clone(),
+                expected_controller_generation: alice_endpoint.controller_generation,
             },
             &bob_conversation,
             0,
@@ -1028,6 +1082,7 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &ConversationAccess::Agent {
                 agent_id: alice_agent.agent_id.clone(),
                 endpoint_id: alice_endpoint.endpoint_id.clone(),
+                expected_controller_generation: alice_endpoint.controller_generation,
             },
             &missing_conversation,
             0,
@@ -1141,6 +1196,7 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &alice,
             &alice_agent.agent_id,
             &alice_endpoint.endpoint_id,
+            alice_endpoint.controller_generation,
             vec![bob_delivery_id],
         )
         .unwrap_err(),
@@ -1148,6 +1204,7 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &alice,
             &alice_agent.agent_id,
             &alice_endpoint.endpoint_id,
+            alice_endpoint.controller_generation,
             vec![missing_delivery.clone()],
         )
         .unwrap_err(),
@@ -1159,6 +1216,7 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &alice,
             &alice_agent.agent_id,
             &alice_endpoint.endpoint_id,
+            alice_endpoint.controller_generation,
             vec![alice_other_delivery_id],
         )
         .unwrap_err(),
@@ -1166,6 +1224,7 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &alice,
             &alice_agent.agent_id,
             &alice_endpoint.endpoint_id,
+            alice_endpoint.controller_generation,
             vec![missing_delivery],
         )
         .unwrap_err(),
@@ -1177,6 +1236,7 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &alice,
             &alice_agent.agent_id,
             &alice_endpoint.endpoint_id,
+            alice_endpoint.controller_generation,
             vec![alice_delivery_id.clone()],
         )
         .unwrap();
@@ -1190,6 +1250,7 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &alice,
             &alice_agent.agent_id,
             &alice_endpoint.endpoint_id,
+            alice_endpoint.controller_generation,
             vec![alice_delivery_id.clone()],
         )
         .unwrap();
@@ -1221,6 +1282,7 @@ fn foreign_exact_communication_resources_match_missing_ids() {
             &alice,
             &alice_agent.agent_id,
             &alice_endpoint.endpoint_id,
+            alice_endpoint.controller_generation,
             0,
             10,
         )

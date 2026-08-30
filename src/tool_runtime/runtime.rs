@@ -161,6 +161,10 @@ pub struct ToolRuntime {
     /// Optional Control-owned durable Agent and Conversation store. It shares
     /// the Server SQLite handle with other durable domains but owns independent tables.
     pub(crate) communication_db: Option<Arc<crate::Database>>,
+    /// Optional process-local Host continuation registry/controller. It is
+    /// created only when the durable communication database is injected and is
+    /// intentionally empty again after process restart.
+    pub(crate) agent_continuations: Option<crate::agent_wake::AgentContinuationController>,
 }
 
 impl ToolRuntime {
@@ -198,6 +202,7 @@ impl ToolRuntime {
             observations: Arc::new(RuntimeObservations::default()),
             memory_db: None,
             communication_db: None,
+            agent_continuations: None,
         }
     }
 
@@ -225,6 +230,9 @@ impl ToolRuntime {
     }
 
     pub(crate) fn with_communication_database(mut self, db: Arc<crate::Database>) -> Self {
+        self.agent_continuations = Some(crate::agent_wake::AgentContinuationController::new(
+            db.clone(),
+        ));
         self.communication_db = Some(db);
         self
     }

@@ -266,8 +266,6 @@ struct CommunicationEndpointAttachInput {
     host: String,
     #[serde(default)]
     client_attachment_id: Option<String>,
-    #[serde(default)]
-    wake_capable: bool,
     idempotency_key: String,
 }
 
@@ -292,6 +290,8 @@ struct CommunicationConversationsInput {
     #[serde(default)]
     endpoint_id: Option<String>,
     #[serde(default)]
+    expected_controller_generation: Option<i64>,
+    #[serde(default)]
     offset: Option<usize>,
     #[serde(default)]
     limit: Option<usize>,
@@ -315,6 +315,8 @@ struct CommunicationConversationInput {
     #[serde(default)]
     endpoint_id: Option<String>,
     #[serde(default)]
+    expected_controller_generation: Option<i64>,
+    #[serde(default)]
     after_seq: Option<i64>,
     #[serde(default)]
     limit: Option<usize>,
@@ -330,10 +332,17 @@ struct CommunicationMessagePostInput {
     #[serde(default)]
     endpoint_id: Option<String>,
     #[serde(default)]
+    expected_controller_generation: Option<i64>,
+    #[serde(default)]
     recipient_agent_ids: Option<Vec<String>>,
     #[serde(default)]
     reply_to: Option<String>,
-    idempotency_key: String,
+    #[serde(default)]
+    idempotency_key: Option<String>,
+    #[serde(default)]
+    wake_reply_id: Option<String>,
+    #[serde(default)]
+    reply_operation_index: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -341,6 +350,7 @@ struct CommunicationMessagePostInput {
 struct CommunicationInboxInput {
     agent_id: String,
     endpoint_id: String,
+    expected_controller_generation: i64,
     #[serde(default)]
     after_delivery_order: Option<i64>,
     #[serde(default)]
@@ -352,6 +362,7 @@ struct CommunicationInboxInput {
 struct CommunicationInboxConsumeInput {
     agent_id: String,
     endpoint_id: String,
+    expected_controller_generation: i64,
     delivery_ids: Vec<String>,
 }
 
@@ -2101,7 +2112,6 @@ async fn communication_endpoint_attach(req: &mut Request, depot: &mut Depot, res
             input.agent_id,
             input.host,
             input.client_attachment_id,
-            input.wake_capable,
             input.idempotency_key,
         ),
     );
@@ -2168,6 +2178,7 @@ async fn communication_conversations(req: &mut Request, depot: &mut Depot, res: 
             Some(&auth),
             input.agent_id,
             input.endpoint_id,
+            input.expected_controller_generation,
             input.offset,
             input.limit,
         ),
@@ -2225,6 +2236,7 @@ async fn communication_conversation(req: &mut Request, depot: &mut Depot, res: &
             input.conversation_id,
             input.agent_id,
             input.endpoint_id,
+            input.expected_controller_generation,
             input.after_seq,
             input.limit,
         ),
@@ -2252,9 +2264,12 @@ async fn communication_message_post(req: &mut Request, depot: &mut Depot, res: &
             input.body,
             input.author_agent_id,
             input.endpoint_id,
+            input.expected_controller_generation,
             input.recipient_agent_ids,
             input.reply_to,
             input.idempotency_key,
+            input.wake_reply_id,
+            input.reply_operation_index,
         ),
     );
 }
@@ -2278,6 +2293,7 @@ async fn communication_inbox(req: &mut Request, depot: &mut Depot, res: &mut Res
             Some(&auth),
             input.agent_id,
             input.endpoint_id,
+            input.expected_controller_generation,
             input.after_delivery_order,
             input.limit,
         ),
@@ -2303,6 +2319,7 @@ async fn communication_inbox_consume(req: &mut Request, depot: &mut Depot, res: 
             Some(&auth),
             input.agent_id,
             input.endpoint_id,
+            input.expected_controller_generation,
             input.delivery_ids,
         ),
     );
@@ -2899,7 +2916,6 @@ mod tests {
                 "agent_id": agent_a,
                 "host": "Runtime Console Test",
                 "client_attachment_id": "window-a",
-                "wake_capable": false,
                 "idempotency_key": "http-endpoint-a"
             }),
         )
@@ -2909,6 +2925,9 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
+        let generation_a = endpoint_a_body["endpoint"]["controller_generation"]
+            .as_i64()
+            .unwrap();
 
         let (status, endpoint_b_body) = post_communication(
             &service,
@@ -2918,7 +2937,6 @@ mod tests {
                 "agent_id": agent_b,
                 "host": "Runtime Console Test",
                 "client_attachment_id": "window-b",
-                "wake_capable": false,
                 "idempotency_key": "http-endpoint-b"
             }),
         )
@@ -2928,6 +2946,9 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
+        let generation_b = endpoint_b_body["endpoint"]["controller_generation"]
+            .as_i64()
+            .unwrap();
 
         let (status, conversation_body) = post_communication(
             &service,
@@ -2994,6 +3015,7 @@ mod tests {
                 "body": "Agent A to Agent B",
                 "author_agent_id": agent_a,
                 "endpoint_id": endpoint_a,
+                "expected_controller_generation": generation_a,
                 "recipient_agent_ids": [agent_b],
                 "reply_to": human_message_id,
                 "idempotency_key": "http-agent-message"
@@ -3040,6 +3062,7 @@ mod tests {
             json!({
                 "agent_id": agent_b,
                 "endpoint_id": endpoint_b,
+                "expected_controller_generation": generation_b,
                 "after_delivery_order": 0,
                 "limit": 10
             }),
@@ -3057,6 +3080,7 @@ mod tests {
         let consume_payload = json!({
             "agent_id": agent_b,
             "endpoint_id": endpoint_b,
+            "expected_controller_generation": generation_b,
             "delivery_ids": delivery_ids
         });
         let (status, consumed) = post_communication(

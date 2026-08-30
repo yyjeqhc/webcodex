@@ -7,12 +7,13 @@ use crate::tool_runtime::metadata::{
     COMMUNICATION_MANAGE, COMMUNICATION_READ, TOOL_PROVIDER_CONTROL,
 };
 use crate::tool_runtime::registry::input_schemas::{
-    attach_agent_endpoint_input_schema, consume_agent_deliveries_input_schema,
-    consume_agent_wake_input_schema, create_agent_identity_input_schema,
-    create_conversation_input_schema, detach_agent_endpoint_input_schema,
-    list_agent_identities_input_schema, list_agent_inbox_input_schema,
-    list_conversations_input_schema, post_conversation_message_input_schema,
-    read_conversation_input_schema, update_agent_identity_input_schema,
+    attach_agent_endpoint_input_schema, bootstrap_agent_conversation_input_schema,
+    consume_agent_deliveries_input_schema, consume_agent_wake_input_schema,
+    create_agent_identity_input_schema, create_conversation_input_schema,
+    detach_agent_endpoint_input_schema, list_agent_identities_input_schema,
+    list_agent_inbox_input_schema, list_conversations_input_schema,
+    post_conversation_message_input_schema, read_conversation_input_schema,
+    update_agent_identity_input_schema,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
@@ -91,8 +92,28 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Attach a replacement Host/Client Endpoint to an owned durable Agent. The Server assigns a new monotonic controller generation and fences every older attachment. The Endpoint is principal-bound continuation attachment state, not identity or execution authority. wake_capable declares adapter capability only; it grants no Project, filesystem, Runner, or Workflow Session authority and does not itself dispatch. Exact idempotency-key replay returns the original Endpoint.",
+            "Attach a replacement Host/Client Endpoint to an owned durable Agent. The Server assigns a new monotonic controller generation and fences every older attachment. Public attachment is not wake-capable; only callable process-local Host adapter registration may enable continuation. Exact idempotency replay returns the original Endpoint.",
             attach_agent_endpoint_input_schema,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+    require_all_scopes(
+        model_spec(
+            def(
+                "bootstrap_agent_conversation",
+                ModelVisible,
+                TOOL_CATEGORY_COMMUNICATION,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                CommunicationManage,
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                false,
+                false,
+            ),
+            "Verify an exact Agent/Endpoint generation and return bounded turn context without Message bodies. With an activation idempotency key, accept one pending Wake into this already-active explicit turn and return a replayable consume token; this does not request a new model turn.",
+            bootstrap_agent_conversation_input_schema,
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),
@@ -191,7 +212,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Atomically append one ordered Conversation Message, recipient-specific Agent deliveries, and coalesced durable Wake Intent for recipients needing work. Exact idempotency replay cannot duplicate these facts. Agent authors require a current Endpoint. Posting records work; it does not itself invoke a model.",
+            "Atomically append one Message, recipient Deliveries, and a coalesced Wake. Exact replay cannot duplicate them; Agent authors require the current Endpoint generation. After commit, a registered exact Host adapter may receive one bounded continuation; otherwise the Wake stays pending.",
             post_conversation_message_input_schema,
         ),
         COMMUNICATION_MANAGE_SCOPES,

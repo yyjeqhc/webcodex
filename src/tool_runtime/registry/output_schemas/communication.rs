@@ -53,7 +53,7 @@ fn endpoint_schema() -> Value {
             "agent_id": schema_type("string", "Durable Agent carried by this Endpoint."),
             "host": schema_type("string", "Host adapter name."),
             "client_attachment_id": nullable_string("Optional host-local attachment id."),
-            "wake_capable": schema_type("boolean", "Registered adapter capability input only; never execution authority."),
+            "wake_capable": schema_type("boolean", "True only when this exact Endpoint generation also has a current callable process-local continuation adapter; never execution authority."),
             "controller_generation": schema_type("integer", "Server-assigned monotonic continuation ownership generation."),
             "lifecycle": {"type": "string", "enum": ["attached", "detached", "expired"]},
             "attached_at_unix_ms": schema_type("integer", "Attachment time in Unix milliseconds."),
@@ -245,6 +245,120 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "state_changed",
                 schema_type("boolean", "Whether attachment state changed."),
+            ),
+        ]),
+        "bootstrap_agent_conversation" => wrapped_output_schema(vec![
+            ("acting_agent", agent_schema()),
+            ("endpoint", endpoint_schema()),
+            (
+                "selected_conversation",
+                json!({
+                    "anyOf": [conversation_summary_schema(), {"type": "null"}],
+                    "description": "Explicitly selected Conversation, or the exact Wake's latest Conversation. Null means no hidden Host selection was inferred."
+                }),
+            ),
+            (
+                "inbox",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "queued_delivery_count": schema_type("integer", "Current authoritative queued Inbox count."),
+                        "inbox_high_watermark": schema_type("integer", "Highest currently queued durable delivery_order, or zero.")
+                    },
+                    "required": ["queued_delivery_count", "inbox_high_watermark"]
+                }),
+            ),
+            (
+                "wake",
+                json!({
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "wake_id": schema_type("string", "Exact unresolved durable Wake identity."),
+                                "state": {"type": "string", "enum": ["pending", "claimed", "prepared", "delivered", "delivery_unknown"]},
+                                "revision": schema_type("integer", "Current Wake revision."),
+                                "conversation_id": schema_type("string", "Latest Conversation represented by the Wake."),
+                                "latest_message_id": schema_type("string", "Latest Message id represented by the Wake; no Message body is included."),
+                                "queued_delivery_count": schema_type("integer", "Bounded queued count snapshot represented by the Wake."),
+                                "inbox_high_watermark": schema_type("integer", "Durable delivery high-watermark represented by the Wake.")
+                            },
+                            "required": [
+                                "wake_id", "state", "revision", "conversation_id",
+                                "latest_message_id", "queued_delivery_count", "inbox_high_watermark"
+                            ]
+                        },
+                        {"type": "null"}
+                    ]
+                }),
+            ),
+            (
+                "host_binding",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "adapter_registered": schema_type("boolean", "Whether this exact Endpoint generation has a current process-local adapter handle."),
+                        "adapter_kind": nullable_string("Bounded adapter kind, if registered."),
+                        "runtime_wake_capable": schema_type("boolean", "Conjunction of current durable Endpoint state and exact process-local adapter registration."),
+                        "production_auto_resume_available": schema_type("boolean", "True only for a demonstrated production Host new-model-turn primitive."),
+                        "manual_fallback": schema_type("boolean", "True when explicit Host/model activation is required.")
+                    },
+                    "required": [
+                        "adapter_registered", "adapter_kind", "runtime_wake_capable",
+                        "production_auto_resume_available", "manual_fallback"
+                    ]
+                }),
+            ),
+            (
+                "reply_replay",
+                json!({
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "wake_id": schema_type("string", "Stable Wake component of resumed-turn reply identity."),
+                                "reply_operation_index_min": schema_type("integer", "Minimum per-send reply index."),
+                                "reply_operation_index_max": schema_type("integer", "Maximum per-send reply index."),
+                                "contract": schema_type("string", "How to replay exact uncertain sends without duplicating Messages.")
+                            },
+                            "required": ["wake_id", "reply_operation_index_min", "reply_operation_index_max", "contract"]
+                        },
+                        {"type": "null"}
+                    ]
+                }),
+            ),
+            (
+                "wake_activation",
+                json!({
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "wake_id": schema_type("string", "Exact Wake accepted by this already-active explicit turn."),
+                                "attempt_id": schema_type("string", "Durable explicit-activation Wake Attempt."),
+                                "consume_token": schema_type("string", "Exact token for consume_agent_wake; audit/session projections omit it."),
+                                "adapter_kind": {"type": "string", "const": "explicit_activation"},
+                                "replayed": schema_type("boolean", "Whether this activation exactly replayed."),
+                                "state_changed": schema_type("boolean", "Whether this call first accepted the pending Wake.")
+                            },
+                            "required": [
+                                "wake_id", "attempt_id", "consume_token", "adapter_kind",
+                                "replayed", "state_changed"
+                            ]
+                        },
+                        {"type": "null"}
+                    ],
+                    "description": "Present only when activation_idempotency_key accepts or replays a pending Wake into the current explicit model turn."
+                }),
+            ),
+            (
+                "bootstrap_note",
+                schema_type("string", "Bounded reminder that durable reads remain authoritative."),
             ),
         ]),
         "create_conversation" => wrapped_output_schema(vec![

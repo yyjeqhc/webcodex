@@ -2355,6 +2355,11 @@ function resetCommunicationSurface() {
     pendingAgentCreate = null;
     pendingConversationCreate = null;
     pendingConversationMessage = null;
+    const agentUpdateForm = el("runtime-agent-update-form");
+    if (agentUpdateForm) {
+        delete agentUpdateForm.dataset.agentId;
+        delete agentUpdateForm.dataset.profileRevision;
+    }
     clearNode(el("runtime-agent-list"));
     clearNode(el("runtime-conversation-list"));
     clearNode(el("runtime-conversation-transcript"));
@@ -2462,14 +2467,37 @@ function renderCommunicationAgentCard() {
     setText("runtime-agent-wake-status", countLabel(unresolvedWakeCount, "unresolved Wake")
         + " · latest " + latestWakeState
         + " · Inbox Delivery and Wake consumption remain independent");
+    const updateForm = el("runtime-agent-update-form");
+    const revision = String(agent.profile_revision || 0);
+    if (updateForm && (updateForm.dataset.agentId !== agentId
+        || updateForm.dataset.profileRevision !== revision)) {
+        const handle = el("runtime-agent-update-handle");
+        const displayName = el("runtime-agent-update-display-name");
+        const description = el("runtime-agent-update-description");
+        const labelsInput = el("runtime-agent-update-labels");
+        if (handle)
+            handle.value = String(agent.handle || "");
+        if (displayName)
+            displayName.value = String(agent.display_name || "");
+        if (description)
+            description.value = String(agent.description || "");
+        if (labelsInput) {
+            labelsInput.value = Array.isArray(agent.specialty_labels)
+                ? agent.specialty_labels.join(", ")
+                : "";
+        }
+        updateForm.dataset.agentId = agentId;
+        updateForm.dataset.profileRevision = revision;
+        setText("runtime-agent-update-status", "");
+    }
     const endpoint = communicationEndpoint(agentId);
     setText("runtime-agent-endpoint-status", endpoint
         ? "Browser Endpoint " + endpoint.endpoint_id
             + " · " + endpoint.lifecycle
             + " · generation " + String(endpoint.controller_generation)
             + " · lease " + communicationTimeLabel(endpoint.lease_expires_at_unix_ms)
-            + " · polling only (wake_capable=" + String(endpoint.wake_capable) + "), no execution authority"
-        : "No browser Endpoint attached. Agent identity, Inbox deliveries, and Wake Intents remain durable.");
+            + " · Runtime Console adapter: polling only (runtime wake capable: " + String(endpoint.wake_capable) + ")"
+        : "This window is not acting as the Agent. Agent Card, Conversations, Inbox deliveries, and Wake Intents remain durable.");
     show("runtime-agent-attach", !endpoint);
     show("runtime-agent-detach", !!endpoint);
 }
@@ -2731,8 +2759,9 @@ async function fetchCommunicationConversation(generation) {
 }
 async function fetchCommunicationInbox(generation) {
     const agentId = selectedCommunicationAgentId;
-    const endpointId = communicationEndpointId(agentId);
-    if (!agentId || !endpointId) {
+    const endpoint = communicationEndpoint(agentId);
+    const endpointId = endpoint?.endpoint_id || "";
+    if (!agentId || !endpoint) {
         communicationInbox = [];
         renderCommunicationInbox();
         return true;
@@ -2740,6 +2769,7 @@ async function fetchCommunicationInbox(generation) {
     const response = await api("communication/inbox", {
         agent_id: agentId,
         endpoint_id: endpointId,
+        expected_controller_generation: endpoint.controller_generation,
         after_delivery_order: 0,
         limit: 100,
     });
@@ -2878,10 +2908,80 @@ async function createCommunicationAgent(event) {
     setText("runtime-agent-create-status", response.data.replayed ? "Existing idempotent Agent replayed." : "Agent created.");
     await refreshCommunication();
 }
+async function updateCommunicationAgent(event) {
+    event.preventDefault();
+    const agent = selectedCommunicationAgent();
+    if (!agent)
+        return;
+    const handle = el("runtime-agent-update-handle")?.value.trim() || "";
+    const displayName = el("runtime-agent-update-display-name")?.value.trim() || "";
+    const description = el("runtime-agent-update-description")?.value.trim() || "";
+    const specialtyLabels = parseAgentIds(el("runtime-agent-update-labels")?.value || "");
+    if (!handle || !displayName) {
+        setText("runtime-agent-update-status", "Handle and display name are required.");
+        return;
+    }
+    setText("runtime-agent-update-status", "Updating Agent Card…");
+    const response = await api("communication/agent/update", {
+        agent_id: String(agent.agent_id || ""),
+        expected_profile_revision: Number(agent.profile_revision || 0),
+        handle,
+        display_name: displayName,
+        description,
+        specialty_labels: specialtyLabels,
+    });
+    if (response?.status === 401) {
+        lock("Credential rejected.");
+        return;
+    }
+    if (response?.status === 403) {
+        communicationManageAvailable = false;
+        setText("runtime-agent-update-status", "communication:manage required.");
+        renderCommunicationAvailability();
+        return;
+    }
+    if (!response || response.status === 0 || response.status === 503) {
+        setText("runtime-agent-update-status", "Outcome uncertain. Refresh the Card before deciding whether to retry.");
+        return;
+    }
+    if (!response.ok || !response.data?.agent_id) {
+        setText("runtime-agent-update-status", String(response.data?.message || "Agent Card update failed; refresh before retrying a stale revision."));
+        return;
+    }
+    communicationManageAvailable = true;
+    setText("runtime-agent-update-status", "Agent Card updated.");
+    await refreshCommunication();
+}
 async function attachCommunicationEndpoint() {
     const agentId = selectedCommunicationAgentId;
     if (!agentId)
         return;
+    for (const [otherAgentId, otherEndpoint] of Array.from(communicationEndpoints.entries())) {
+        if (otherAgentId === agentId)
+            continue;
+        setText("runtime-agent-endpoint-status", "Releasing this window’s previous Agent Endpoint…");
+        const detached = await api("communication/endpoint/detach", {
+            endpoint_id: otherEndpoint.endpoint_id,
+        });
+        if (detached?.status === 401) {
+            lock("Credential rejected.");
+            return;
+        }
+        if (detached?.status === 403) {
+            communicationManageAvailable = false;
+            setText("runtime-agent-endpoint-status", "communication:manage required.");
+            return;
+        }
+        if (!detached || detached.status === 0 || detached.status === 503) {
+            setText("runtime-agent-endpoint-status", "Previous Endpoint detach is uncertain. Refresh before switching this window to another Agent.");
+            return;
+        }
+        if (!detached.ok && detached.status !== 404) {
+            setText("runtime-agent-endpoint-status", String(detached.data?.message || "Could not release the previous Agent Endpoint."));
+            return;
+        }
+        communicationEndpoints.delete(otherAgentId);
+    }
     let pending = pendingEndpointAttach.get(agentId);
     if (!pending) {
         pending = { key: operationKey("runtime-endpoint"), attachmentId: pageAttachmentId + "-" + agentId.slice(-8) };
@@ -2892,7 +2992,6 @@ async function attachCommunicationEndpoint() {
         agent_id: agentId,
         host: "Runtime Console",
         client_attachment_id: pending.attachmentId,
-        wake_capable: false,
         idempotency_key: pending.key,
     });
     if (response?.status === 401) {
@@ -2910,6 +3009,11 @@ async function attachCommunicationEndpoint() {
     }
     if (!response.ok || !response.data?.endpoint?.endpoint_id) {
         setText("runtime-agent-endpoint-status", String(response.data?.message || "Endpoint attach failed."));
+        return;
+    }
+    if (String(response.data.endpoint.lifecycle || "") !== "attached") {
+        pendingEndpointAttach.delete(agentId);
+        setText("runtime-agent-endpoint-status", "The exact Attach replay was already replaced. Choose “Continue as this Agent” again to create a fresh Endpoint generation.");
         return;
     }
     communicationManageAvailable = true;
@@ -3001,17 +3105,34 @@ async function postCommunicationMessage(event) {
     const recipientsNode = el("runtime-conversation-recipients");
     const body = bodyNode?.value.trim() || "";
     const recipientsText = recipientsNode?.value.trim() || "";
+    const sendAsAgent = el("runtime-conversation-send-as-agent")?.checked === true;
     if (!conversationId || !body) {
         setText("runtime-conversation-send-status", "Select a Conversation and enter a message.");
         return;
     }
+    const actingAgent = sendAsAgent ? selectedCommunicationAgent() : null;
+    const endpoint = actingAgent ? communicationEndpoint(String(actingAgent.agent_id || "")) : null;
+    if (sendAsAgent && (!actingAgent || !endpoint)) {
+        setText("runtime-conversation-send-status", "Select an Agent and choose “Continue as this Agent” before sending as it.");
+        return;
+    }
     const recipientAgentIds = recipientsText ? parseAgentIds(recipientsText) : null;
-    const fingerprint = JSON.stringify({ conversationId, body, recipientAgentIds });
+    const fingerprint = JSON.stringify({
+        conversationId,
+        body,
+        recipientAgentIds,
+        authorAgentId: actingAgent?.agent_id || null,
+        endpointId: endpoint?.endpoint_id || null,
+        controllerGeneration: endpoint?.controller_generation || null,
+    });
     pendingConversationMessage = idempotencyKeyFor(pendingConversationMessage, fingerprint, "runtime-message");
     setText("runtime-conversation-send-status", "Appending Message and Agent deliveries atomically…");
     const response = await api("communication/message/post", {
         conversation_id: conversationId,
         body,
+        author_agent_id: actingAgent?.agent_id || null,
+        endpoint_id: endpoint?.endpoint_id || null,
+        expected_controller_generation: endpoint?.controller_generation || null,
         recipient_agent_ids: recipientAgentIds,
         idempotency_key: pendingConversationMessage.key,
     });
@@ -3041,14 +3162,16 @@ async function postCommunicationMessage(event) {
 }
 async function consumeCommunicationDeliveries(deliveryIds) {
     const agentId = selectedCommunicationAgentId;
-    const endpointId = communicationEndpointId(agentId);
+    const endpoint = communicationEndpoint(agentId);
+    const endpointId = endpoint?.endpoint_id || "";
     const ids = deliveryIds.filter(Boolean);
-    if (!agentId || !endpointId || ids.length === 0)
+    if (!agentId || !endpoint || ids.length === 0)
         return;
     setText("runtime-inbox-status", "Consuming recipient state…");
     const response = await api("communication/inbox/consume", {
         agent_id: agentId,
         endpoint_id: endpointId,
+        expected_controller_generation: endpoint.controller_generation,
         delivery_ids: ids,
     });
     if (response?.status === 401) {
@@ -3142,6 +3265,7 @@ el("runtime-token-form")?.addEventListener("submit", (event) => {
     void refreshCommunication();
 });
 el("runtime-agent-create-form")?.addEventListener("submit", (event) => void createCommunicationAgent(event));
+el("runtime-agent-update-form")?.addEventListener("submit", (event) => void updateCommunicationAgent(event));
 el("runtime-agent-attach")?.addEventListener("click", () => void attachCommunicationEndpoint());
 el("runtime-agent-detach")?.addEventListener("click", () => void detachCommunicationEndpoint());
 el("runtime-conversation-create-form")?.addEventListener("submit", (event) => void createCommunicationConversation(event));

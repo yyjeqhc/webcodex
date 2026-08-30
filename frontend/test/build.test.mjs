@@ -80,10 +80,13 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(runtimeHtml, /runtime-token-form/);
   assert.match(runtimeHtml, /runtime-communication-panel/);
   assert.match(runtimeHtml, /runtime-agent-create-form/);
+  assert.match(runtimeHtml, /runtime-agent-update-form/);
+  assert.match(runtimeHtml, /Continue as this Agent/);
   assert.match(runtimeHtml, /runtime-conversation-transcript/);
+  assert.match(runtimeHtml, /runtime-conversation-send-as-agent/);
   assert.match(runtimeHtml, /runtime-inbox-list/);
-  assert.match(runtimeHtml, /renews its bounded Endpoint lease every 8 seconds/);
-  assert.match(runtimeHtml, /does not invoke or wake a model/);
+  assert.match(runtimeHtml, /no production model-resume adapter/);
+  assert.match(runtimeHtml, /pending Wake Intents remain durable/);
   assert.match(runtimeHtml, /Jump to latest/);
   assert.match(runtimeHtml, /Reported progress/);
   assert.match(runtimeHtml, /Model-reported; informational only\./);

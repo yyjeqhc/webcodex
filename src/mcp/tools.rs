@@ -63,6 +63,24 @@ fn full_operator_runtime_specs_for_auth(
     specs
 }
 
+/// Full model-visible target universe reachable through the adaptive gateway.
+///
+/// This is intentionally independent of the current caller's OAuth scopes. The
+/// gateway decides only whether a target belongs to an admitted model surface;
+/// the selected target's existing scope/authority checks remain authoritative
+/// after routing. Stateless-only extensions are included only in the protocol
+/// era where Full Operator can model-expose them.
+fn adaptive_runtime_gateway_target_specs(stateless_2026: bool) -> Vec<ToolSpec> {
+    let mut specs = registered_tool_specs();
+    if stateless_2026 {
+        specs.extend(crate::tool_runtime::skill_runtime_tool_specs());
+        specs.extend(crate::tool_runtime::skill_management_tool_specs());
+        specs.extend(crate::tool_runtime::memory_runtime_tool_specs());
+        specs.extend(crate::tool_runtime::memory_management_tool_specs());
+    }
+    specs
+}
+
 fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
     ToolSpec {
         name: ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string(),
@@ -99,20 +117,16 @@ fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
     }
 }
 
-fn adaptive_runtime_gateway_target_allowed(
-    target: &str,
-    stateless_2026: bool,
-    auth: Option<&AuthContext>,
-) -> bool {
+fn adaptive_runtime_gateway_target_allowed(target: &str, stateless_2026: bool) -> bool {
     if target == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
         || ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.contains(&target)
     {
         return false;
     }
     if target == crate::mcp_gateway::MCP_TOOL_NAME {
-        return crate::mcp_gateway::authorized(auth);
+        return true;
     }
-    full_operator_runtime_specs_for_auth(stateless_2026, auth)
+    adaptive_runtime_gateway_target_specs(stateless_2026)
         .iter()
         .any(|spec| spec.name == target)
 }
@@ -120,7 +134,6 @@ fn adaptive_runtime_gateway_target_allowed(
 fn unwrap_adaptive_runtime_gateway_arguments(
     arguments: Value,
     stateless_2026: bool,
-    auth: Option<&AuthContext>,
 ) -> Result<(String, Value), String> {
     let mut outer = arguments
         .as_object()
@@ -133,7 +146,7 @@ fn unwrap_adaptive_runtime_gateway_arguments(
         .ok_or_else(|| {
             "adaptive runtime gateway field 'tool' must be a non-empty string".to_string()
         })?;
-    if !adaptive_runtime_gateway_target_allowed(&target, stateless_2026, auth) {
+    if !adaptive_runtime_gateway_target_allowed(&target, stateless_2026) {
         return Err(format!(
             "tool '{target}' is not available through the adaptive runtime gateway"
         ));
@@ -1039,8 +1052,7 @@ pub(super) async fn handle_call(
         && params.name == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME;
     if via_adaptive_runtime_gateway {
         let (target, arguments) =
-            match unwrap_adaptive_runtime_gateway_arguments(params.arguments, stateless_2026, auth)
-            {
+            match unwrap_adaptive_runtime_gateway_arguments(params.arguments, stateless_2026) {
                 Ok(target) => target,
                 Err(message) => {
                     return McpOutcome::BadRequest(rpc_error(id, -32602, message));

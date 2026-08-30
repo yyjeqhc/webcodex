@@ -144,6 +144,115 @@ async fn oauth2_mcp_local_gateway_catalog_and_call_require_explicit_scope() {
 }
 
 #[tokio::test]
+async fn oauth2_adaptive_gateway_preserves_canonical_target_scope_errors() {
+    let (_tmp, service, token) =
+        oauth_mcp_service_with_surface("runtime:read", ModelSurface::AdaptiveRuntime);
+
+    let (status, body, _) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({
+            "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+            "arguments": {
+                "tool": "list_tools",
+                "arguments": {"summary_only": true, "limit": 1}
+            }
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "authorized gateway dispatch: {body:?}"
+    );
+    assert_eq!(body["result"]["isError"], false);
+    assert_eq!(
+        body["result"]["structuredContent"]["output"]["returned_count"],
+        1
+    );
+
+    let (status, body, challenge) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({
+            "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+            "arguments": {
+                "tool": "read_file",
+                "arguments": {"project": "demo", "path": "README.md"}
+            }
+        }),
+    )
+    .await;
+    assert_mcp_oauth_scope_rejected(
+        status,
+        &body,
+        challenge.as_deref(),
+        Some(crate::auth::SCOPE_PROJECT_READ),
+    );
+
+    let (status, body, challenge) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({
+            "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+            "arguments": {
+                "tool": crate::mcp_gateway::MCP_TOOL_NAME,
+                "arguments": {"action": "list"}
+            }
+        }),
+    )
+    .await;
+    assert_mcp_oauth_scope_rejected(
+        status,
+        &body,
+        challenge.as_deref(),
+        Some(crate::auth::SCOPE_MCP_LOCAL),
+    );
+
+    let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "adaptive tools/list: {body:?}");
+    let names = listed_tool_names(&body);
+    assert!(names.contains(crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME));
+    assert!(!names.contains(crate::mcp_gateway::MCP_TOOL_NAME));
+
+    let (_tmp, service, token) =
+        oauth_mcp_service_with_surface("runtime:read mcp:local", ModelSurface::AdaptiveRuntime);
+    let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "authorized adaptive tools/list: {body:?}"
+    );
+    let names = listed_tool_names(&body);
+    assert!(names.contains(crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME));
+    assert!(names.contains(crate::mcp_gateway::MCP_TOOL_NAME));
+
+    let (status, body, _) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({
+            "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+            "arguments": {
+                "tool": crate::mcp_gateway::MCP_TOOL_NAME,
+                "arguments": {"action": "list"}
+            }
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "authorized adaptive mcp_tool: {body:?}"
+    );
+    assert_eq!(body["result"]["isError"], false);
+    assert_eq!(body["result"]["structuredContent"]["servers"], json!([]));
+}
+
+#[tokio::test]
 async fn oauth2_mcp_computer_app_resources_require_runtime_read() {
     let (_tmp, service, token) =
         oauth_mcp_service_with_surface("runtime:read", ModelSurface::FullOperatorRuntime);

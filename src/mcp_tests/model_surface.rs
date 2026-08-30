@@ -359,6 +359,7 @@ async fn adaptive_runtime_gateway_rejects_recursive_and_unknown_targets() {
     for target in [
         crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
         "work_on_project",
+        "start_coding_task",
         "not_a_real_webcodex_tool",
     ] {
         let outcome = handle_mcp_request(

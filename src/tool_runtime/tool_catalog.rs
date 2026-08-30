@@ -83,6 +83,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "list_agent_identities",
             "update_agent_identity",
             "attach_agent_endpoint",
+            "bootstrap_agent_conversation",
             "detach_agent_endpoint",
             "create_conversation",
             "list_conversations",

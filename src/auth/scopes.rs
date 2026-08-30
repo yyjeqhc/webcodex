@@ -857,6 +857,7 @@ mod tests {
                 "create_agent_identity"
                     | "update_agent_identity"
                     | "attach_agent_endpoint"
+                    | "bootstrap_agent_conversation"
                     | "detach_agent_endpoint"
                     | "create_conversation"
                     | "post_conversation_message"

@@ -6,9 +6,9 @@
 //! - A complete Connector configuration (`WEBCODEX_CONNECTOR_SURFACE=task-v1`)
 //!   selects `canonical_connector`.
 //! - Without Connector configuration, an unset `WEBCODEX_MCP_MODEL_SURFACE`
-//!   selects the focused `local_coding` surface; the explicit
-//!   `local-coding-v1` / `full-operator-v1` values select `local_coding` /
-//!   `full_operator_runtime` respectively.
+//!   selects the focused `local_coding` surface. Explicit `local-coding-v1`,
+//!   `adaptive-runtime-v1`, and `full-operator-v1` values select `local_coding`,
+//!   `adaptive_runtime`, and `full_operator_runtime` respectively.
 //! - Setting Connector configuration and `WEBCODEX_MCP_MODEL_SURFACE` together,
 //!   or using an unsupported value, is a startup configuration error and never
 //!   falls through to another surface.
@@ -18,16 +18,45 @@ use crate::tool_runtime::tool_definition::LOCAL_CODING_TOOL_NAMES;
 use crate::tool_runtime::{registered_tool_specs, ToolSpec};
 
 pub(crate) const MODEL_SURFACE_LOCAL_CODING: &str = "local_coding";
+pub(crate) const MODEL_SURFACE_ADAPTIVE_RUNTIME: &str = "adaptive_runtime";
 pub(crate) const MODEL_SURFACE_FULL_OPERATOR_RUNTIME: &str = "full_operator_runtime";
 pub(crate) const MODEL_SURFACE_CANONICAL_CONNECTOR: &str = "canonical_connector";
 
 pub(crate) const MCP_MODEL_SURFACE_ENV: &str = "WEBCODEX_MCP_MODEL_SURFACE";
 pub(crate) const MCP_MODEL_SURFACE_LOCAL_CODING_V1: &str = "local-coding-v1";
+pub(crate) const MCP_MODEL_SURFACE_ADAPTIVE_RUNTIME_V1: &str = "adaptive-runtime-v1";
 pub(crate) const MCP_MODEL_SURFACE_FULL_OPERATOR_V1: &str = "full-operator-v1";
+
+/// Small typed surface for hosts that can discover a long-tail runtime gateway lazily.
+/// Keep high-frequency coding operations direct; advanced domains remain reachable
+/// through the adaptive MCP gateway without expanding their schemas into tools/list.
+pub(crate) const ADAPTIVE_RUNTIME_CORE_TOOL_NAMES: &[&str] = &[
+    "work_on_project",
+    "list_projects",
+    "runtime_status",
+    "tool_manifest",
+    "project_overview",
+    "search_project_texts",
+    "read_files",
+    "apply_text_edits",
+    "run_process",
+    "run_script",
+    "observe_jobs",
+    "cargo_check",
+    "cargo_test",
+    "go_test",
+    "validation_summary",
+    "git_status",
+    "git_review_summary",
+    "show_changes",
+    "workspace_hygiene_check",
+    "finish_coding_task",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModelSurface {
     LocalCoding,
+    AdaptiveRuntime,
     FullOperatorRuntime,
     CanonicalConnector,
 }
@@ -36,9 +65,16 @@ impl ModelSurface {
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::LocalCoding => MODEL_SURFACE_LOCAL_CODING,
+            Self::AdaptiveRuntime => MODEL_SURFACE_ADAPTIVE_RUNTIME,
             Self::FullOperatorRuntime => MODEL_SURFACE_FULL_OPERATOR_RUNTIME,
             Self::CanonicalConnector => MODEL_SURFACE_CANONICAL_CONNECTOR,
         }
+    }
+
+    /// Operator-style stateless MCP extensions stay available on the adaptive
+    /// surface even though their individual schemas are hidden behind one gateway.
+    pub(crate) fn supports_operator_extensions(self) -> bool {
+        matches!(self, Self::AdaptiveRuntime | Self::FullOperatorRuntime)
     }
 }
 
@@ -63,9 +99,10 @@ pub(crate) fn resolve_model_surface(
         (Some(_), None) => Ok(ModelSurface::CanonicalConnector),
         (None, None) => Ok(ModelSurface::LocalCoding),
         (None, Some(MCP_MODEL_SURFACE_LOCAL_CODING_V1)) => Ok(ModelSurface::LocalCoding),
+        (None, Some(MCP_MODEL_SURFACE_ADAPTIVE_RUNTIME_V1)) => Ok(ModelSurface::AdaptiveRuntime),
         (None, Some(MCP_MODEL_SURFACE_FULL_OPERATOR_V1)) => Ok(ModelSurface::FullOperatorRuntime),
         (None, Some(value)) => Err(format!(
-            "unsupported {MCP_MODEL_SURFACE_ENV} '{value}'; expected {MCP_MODEL_SURFACE_LOCAL_CODING_V1} or {MCP_MODEL_SURFACE_FULL_OPERATOR_V1}"
+            "unsupported {MCP_MODEL_SURFACE_ENV} '{value}'; expected {MCP_MODEL_SURFACE_LOCAL_CODING_V1}, {MCP_MODEL_SURFACE_ADAPTIVE_RUNTIME_V1}, or {MCP_MODEL_SURFACE_FULL_OPERATOR_V1}"
         )),
     }
 }
@@ -83,6 +120,24 @@ pub(crate) fn local_coding_tool_specs() -> Vec<ToolSpec> {
         .map(|name| {
             by_name.remove(*name).unwrap_or_else(|| {
                 panic!("{name} local_coding tool is missing a registered ToolSpec")
+            })
+        })
+        .collect()
+}
+
+/// Registered direct ToolSpecs for the adaptive runtime surface. Long-tail
+/// runtime tools are not listed here; the MCP adapter exposes one bounded
+/// gateway for those names while preserving normal ToolRuntime authorization.
+pub(crate) fn adaptive_runtime_core_tool_specs() -> Vec<ToolSpec> {
+    let mut by_name: std::collections::HashMap<String, ToolSpec> = registered_tool_specs()
+        .into_iter()
+        .map(|spec| (spec.name.clone(), spec))
+        .collect();
+    ADAPTIVE_RUNTIME_CORE_TOOL_NAMES
+        .iter()
+        .map(|name| {
+            by_name.remove(*name).unwrap_or_else(|| {
+                panic!("{name} adaptive_runtime core tool is missing a registered ToolSpec")
             })
         })
         .collect()
@@ -113,6 +168,29 @@ mod tests {
         let specs = local_coding_tool_specs();
         let names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
         assert_eq!(names, LOCAL_CODING_TOOL_NAMES);
+        for spec in &specs {
+            assert!(
+                crate::tool_runtime::tool_definition::is_model_visible_tool_name(&spec.name),
+                "{} must be model-visible",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_runtime_core_is_small_unique_and_fully_registered() {
+        assert_eq!(
+            ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.len(),
+            20,
+            "adaptive core size is an intentional model-admission budget"
+        );
+        let mut seen = std::collections::HashSet::new();
+        for name in ADAPTIVE_RUNTIME_CORE_TOOL_NAMES {
+            assert!(seen.insert(*name), "{name} is duplicated in adaptive core");
+        }
+        let specs = adaptive_runtime_core_tool_specs();
+        let names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
+        assert_eq!(names, ADAPTIVE_RUNTIME_CORE_TOOL_NAMES);
         for spec in &specs {
             assert!(
                 crate::tool_runtime::tool_definition::is_model_visible_tool_name(&spec.name),
@@ -159,6 +237,10 @@ mod tests {
                 "{name} must not expand local_coding"
             );
             assert!(
+                !ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.contains(&name),
+                "{name} must stay behind adaptive_runtime discovery"
+            );
+            assert!(
                 !crate::connector_runtime::surface::CAPABILITY_NAMES.contains(&name),
                 "{name} must not expand canonical_connector"
             );
@@ -188,10 +270,15 @@ mod tests {
     }
 
     #[test]
-    fn explicit_local_coding_and_full_operator_values() {
+    fn explicit_local_coding_adaptive_and_full_operator_values() {
         let mut env = crate::test_support::TestEnvGuard::new();
         env.set(MCP_MODEL_SURFACE_ENV, MCP_MODEL_SURFACE_LOCAL_CODING_V1);
         assert_eq!(resolve_model_surface(None), Ok(ModelSurface::LocalCoding));
+        env.set(MCP_MODEL_SURFACE_ENV, MCP_MODEL_SURFACE_ADAPTIVE_RUNTIME_V1);
+        assert_eq!(
+            resolve_model_surface(None),
+            Ok(ModelSurface::AdaptiveRuntime)
+        );
         env.set(MCP_MODEL_SURFACE_ENV, MCP_MODEL_SURFACE_FULL_OPERATOR_V1);
         assert_eq!(
             resolve_model_surface(None),

@@ -35,8 +35,10 @@ WebCodex exposes the same runtime through several thin adapters:
 - **MCP** — a startup-selected model-facing surface. A complete project-first
   Connector configuration selects the fourteen-capability `canonical_connector`
   surface; without Connector configuration, MCP defaults to the broader
-  `local_coding` surface. `full_operator_runtime` is an explicit advanced
-  surface for management tooling.
+  `local_coding` surface. `adaptive_runtime` is an opt-in admission-focused
+  surface with a small typed coding core plus one long-tail runtime gateway;
+  `full_operator_runtime` remains the explicit fully expanded advanced surface
+  for management tooling.
 - **GPT Actions** — `/openapi.json` follows the Server mode: a configured
   Connector returns the project-bound Connector schema, while a generic Server
   returns the standard runtime OpenAPI schema.

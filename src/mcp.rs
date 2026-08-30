@@ -97,17 +97,18 @@ fn validate_model_surface_state(
     match (model_surface, connector_present) {
         (ModelSurface::CanonicalConnector, true)
         | (ModelSurface::LocalCoding, false)
+        | (ModelSurface::AdaptiveRuntime, false)
         | (ModelSurface::FullOperatorRuntime, false) => Ok(()),
         (ModelSurface::CanonicalConnector, false) => Err(
             "canonical_connector surface selected but Connector runtime state is missing"
                 .to_string(),
         ),
-        (ModelSurface::LocalCoding, true) | (ModelSurface::FullOperatorRuntime, true) => {
-            Err(format!(
-                "{} surface selected but Connector runtime state is present",
-                model_surface.name()
-            ))
-        }
+        (ModelSurface::LocalCoding, true)
+        | (ModelSurface::AdaptiveRuntime, true)
+        | (ModelSurface::FullOperatorRuntime, true) => Err(format!(
+            "{} surface selected but Connector runtime state is present",
+            model_surface.name()
+        )),
     }
 }
 

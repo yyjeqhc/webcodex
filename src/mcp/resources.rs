@@ -77,7 +77,7 @@ pub(super) fn request_supports_mcp_apps(params: &Value) -> bool {
 }
 
 pub(super) fn model_surface_supports_computer_app(model_surface: ModelSurface) -> bool {
-    model_surface == ModelSurface::FullOperatorRuntime
+    model_surface.supports_operator_extensions()
 }
 
 pub(super) fn mcp_computer_app_resource_meta() -> Value {
@@ -1600,7 +1600,7 @@ impl McpResourceToolCallPrepareError {
     pub(super) fn message(&self) -> String {
         match self {
             Self::UnsupportedExportSurface => {
-                "export_project_artifact requires the stateless-2026 full-operator MCP surface"
+                "export_project_artifact requires a stateless-2026 operator-capable MCP surface"
                     .to_string()
             }
             Self::ArtifactCallerBinding(error) => {
@@ -1621,7 +1621,7 @@ pub(super) fn prepare_tool_call(
     auth: Option<&AuthContext>,
 ) -> Result<McpResourceToolCallContext, McpResourceToolCallPrepareError> {
     let artifact_export_caller = if tool_name == "export_project_artifact" {
-        if !stateless_2026 || model_surface != ModelSurface::FullOperatorRuntime {
+        if !stateless_2026 || !model_surface.supports_operator_extensions() {
             return Err(McpResourceToolCallPrepareError::UnsupportedExportSurface);
         }
         Some(
@@ -1632,7 +1632,7 @@ pub(super) fn prepare_tool_call(
         None
     };
     let snapshot_resource_caller = if stateless_2026
-        && model_surface == ModelSurface::FullOperatorRuntime
+        && model_surface.supports_operator_extensions()
         && matches!(tool_name, "computer_snapshot" | "computer_snapshot_display")
     {
         mcp_artifact_export_caller_binding(auth).ok()

@@ -107,7 +107,11 @@ async fn apply_text_edits_discriminated_schema_reaches_full_and_local_coding_mcp
         4
     );
 
-    for surface in [ModelSurface::FullOperatorRuntime, ModelSurface::LocalCoding] {
+    for surface in [
+        ModelSurface::FullOperatorRuntime,
+        ModelSurface::LocalCoding,
+        ModelSurface::AdaptiveRuntime,
+    ] {
         let runtime = test_runtime_with_surface(surface);
         let outcome = handle_mcp_request(
             &runtime,
@@ -221,6 +225,165 @@ async fn local_coding_allows_surface_tools_to_dispatch() {
     }
 }
 
+// =========================================================================
+// adaptive_runtime model surface
+// =========================================================================
+
+#[tokio::test]
+async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(Value::from(720)),
+            mcp_2026_params(json!({})),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("adaptive tools/list must succeed");
+    };
+    let tools = value["result"]["tools"].as_array().unwrap();
+    let names: Vec<&str> = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names.len(),
+        crate::model_surface::ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.len() + 1,
+        "adaptive surface should expose only the typed core plus one gateway"
+    );
+    assert_eq!(
+        &names[..crate::model_surface::ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.len()],
+        crate::model_surface::ADAPTIVE_RUNTIME_CORE_TOOL_NAMES
+    );
+    assert_eq!(
+        names.last().copied(),
+        Some(crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
+    );
+    for long_tail in [
+        "list_tools",
+        "read_file",
+        "run_shell",
+        "goto_definition",
+        "computer_list_windows",
+        "post_session_message",
+        "coding_agent_start",
+        "artifact_upload_begin",
+    ] {
+        assert!(
+            !names.contains(&long_tail),
+            "{long_tail} must stay behind the adaptive gateway"
+        );
+    }
+
+    let gateway = tools
+        .iter()
+        .find(|tool| tool["name"] == crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
+        .expect("adaptive gateway");
+    let properties = gateway["inputSchema"]["properties"].as_object().unwrap();
+    for field in [
+        "tool",
+        "arguments",
+        "recording_session_id",
+        "ack_session_message_ids",
+        "session_message_resolution",
+        "context_request",
+        "ack_session_context_revision",
+    ] {
+        assert!(
+            properties.contains_key(field),
+            "adaptive gateway missing stateless wrapper field {field}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn adaptive_runtime_requires_gateway_for_long_tail_and_preserves_dispatch() {
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let direct = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(721)),
+            mcp_2026_params(json!({
+                "name": "list_tools",
+                "arguments": {"summary_only": true, "limit": 1}
+            })),
+        ),
+        None,
+    )
+    .await;
+    match direct {
+        McpOutcome::BadRequest(value) => {
+            assert_eq!(value["error"]["code"], -32602);
+            assert!(value["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("adaptive_runtime"));
+        }
+        other => panic!("direct adaptive long-tail call must be rejected, got {other:?}"),
+    }
+
+    let gateway = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(722)),
+            mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {
+                    "tool": "list_tools",
+                    "arguments": {"summary_only": true, "limit": 1}
+                }
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = gateway else {
+        panic!("adaptive gateway must dispatch an allowed long-tail tool");
+    };
+    assert_eq!(value["result"]["structuredContent"]["success"], true);
+    assert_eq!(
+        value["result"]["structuredContent"]["output"]["returned_count"],
+        1
+    );
+}
+
+#[tokio::test]
+async fn adaptive_runtime_gateway_rejects_recursive_and_unknown_targets() {
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    for target in [
+        crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+        "work_on_project",
+        "not_a_real_webcodex_tool",
+    ] {
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(723)),
+                mcp_2026_params(json!({
+                    "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                    "arguments": {"tool": target, "arguments": {}}
+                })),
+            ),
+            None,
+        )
+        .await;
+        match outcome {
+            McpOutcome::BadRequest(value) => {
+                assert_eq!(value["error"]["code"], -32602);
+                assert!(value["error"]["message"].as_str().unwrap().contains(target));
+            }
+            other => panic!("target {target} must fail closed, got {other:?}"),
+        }
+    }
+}
+
 #[tokio::test]
 async fn full_operator_explicit_surface_lists_full_runtime_and_dispatches() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
@@ -306,6 +469,26 @@ async fn explicit_local_coding_v1_selects_local_coding() {
     assert_eq!(
         names,
         crate::tool_runtime::tool_definition::LOCAL_CODING_TOOL_NAMES
+    );
+}
+
+#[tokio::test]
+async fn explicit_adaptive_runtime_v1_reports_adaptive_surface() {
+    let runtime = test_runtime_from_model_surface_env(Some(
+        crate::model_surface::MCP_MODEL_SURFACE_ADAPTIVE_RUNTIME_V1,
+    ));
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc("initialize", Some(Value::from(745)), json!({})),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("adaptive initialize must succeed");
+    };
+    assert_eq!(
+        value["result"]["serverInfo"]["modelSurface"],
+        crate::model_surface::MODEL_SURFACE_ADAPTIVE_RUNTIME
     );
 }
 

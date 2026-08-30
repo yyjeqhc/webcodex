@@ -565,15 +565,17 @@ fi
 # ----------------------------------------------------------------------------
 
 # The model surface is startup-selected and immutable. The default local_coding
-# surface is the intentional 35-tool canonical coding loop; the explicit
-# full-operator-v1 surface exposes the complete operator tool set. Neither
-# surface re-exposes the removed legacy edit tools or the ModelHidden tools
-# (job_tail) to the model via MCP tools/list; write_project_file is
-# ModelVisible and appears only on the full-operator surface.
+# surface is the focused 46-tool coding loop. adaptive-runtime-v1 exposes a
+# smaller typed core plus one long-tail runtime gateway, while full-operator-v1
+# exposes the complete operator tool set. No surface re-exposes removed legacy
+# edit tools or ModelHidden tools (job_tail) via MCP tools/list.
 MODEL_SURFACE_ENV="${WEBCODEX_MCP_MODEL_SURFACE:-}"
 case "$MODEL_SURFACE_ENV" in
     "" | "local-coding-v1")
         EXPECTED_SURFACE="local_coding"
+        ;;
+    "adaptive-runtime-v1")
+        EXPECTED_SURFACE="adaptive_runtime"
         ;;
     "full-operator-v1")
         EXPECTED_SURFACE="full_operator_runtime"
@@ -606,10 +608,15 @@ fi
 body="$(api_post /mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
 TOOLS_LIST_BODY="$body"
 tools_count="$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d.get("result",{}).get("tools",[])))' 2>/dev/null || echo 0)"
-if [ "${tools_count:-0}" -ge 30 ]; then
+if [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
+    min_tools_count=21
+else
+    min_tools_count=30
+fi
+if [ "${tools_count:-0}" -ge "$min_tools_count" ]; then
     pass "MCP tools/list returned $tools_count tools"
 else
-    fail "MCP tools/list returned too few tools (got $tools_count; body: ${body:0:300})"
+    fail "MCP tools/list returned too few tools (got $tools_count expected >=$min_tools_count; body: ${body:0:300})"
 fi
 # Extract the exact tool names from MCP tools/list (never grep the raw body:
 # descriptions and schemas may legitimately mention other tool names).
@@ -660,6 +667,29 @@ if [ "$EXPECTED_SURFACE" = "local_coding" ]; then
     done
     if [ "$mcp_compat_absent" = "1" ]; then
         pass "MCP tools/list excludes non-local_coding tools on local_coding"
+    fi
+elif [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
+    adaptive_present=1
+    for tname in work_on_project list_projects runtime_status tool_manifest project_overview \
+        search_project_texts read_files apply_text_edits run_process run_script observe_jobs \
+        cargo_check cargo_test go_test validation_summary git_status git_review_summary \
+        show_changes workspace_hygiene_check finish_coding_task call_runtime_tool; do
+        if mcp_tool_present "$tname"; then
+            :
+        else
+            adaptive_present=0
+            fail "MCP tools/list missing adaptive_runtime tool $tname"
+        fi
+    done
+    for tname in list_tools read_file run_shell apply_unified_diff goto_definition \
+        computer_list_windows post_session_message coding_agent_start artifact_upload_begin; do
+        if mcp_tool_present "$tname"; then
+            adaptive_present=0
+            fail "MCP tools/list must keep long-tail tool $tname behind call_runtime_tool"
+        fi
+    done
+    if [ "$adaptive_present" = "1" ]; then
+        pass "MCP tools/list exposes only the adaptive typed core plus gateway"
     fi
 else
     # full_operator_runtime: the complete operator tool surface.
@@ -829,25 +859,36 @@ else
     fail "job_tail skipped: no JOB_ID available"
 fi
 
-# MCP tools/list must now expose the Phase A tool names that are on the model
-# surface. job_tail is ModelHidden (never on the model surface); git_diff is
-# the canonical replacement on local_coding, while git_diff_summary is a
-# full-operator-only tool.
+# MCP tools/list must now expose the Phase A tool names only on expanded coding
+# surfaces. adaptive_runtime deliberately keeps these lower-frequency tools
+# behind call_runtime_tool rather than expanding their schemas.
 phase_a_present=1
-for tname in list_project_files search_project_text list_jobs job_log git_diff; do
-    if mcp_tool_present "$tname"; then
-        :
-    else
-        phase_a_present=0
-        fail "MCP tools/list missing $tname"
+if [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
+    for tname in list_project_files search_project_text list_jobs job_log git_diff; do
+        if mcp_tool_present "$tname"; then
+            phase_a_present=0
+            fail "MCP tools/list must keep Phase A long-tail tool $tname behind call_runtime_tool"
+        fi
+    done
+    if [ "$phase_a_present" = "1" ]; then
+        pass "MCP adaptive_runtime keeps Phase A long-tail schemas behind the gateway"
     fi
-done
-if [ "$EXPECTED_SURFACE" = "local_coding" ] && mcp_tool_present "git_diff_summary"; then
-    phase_a_present=0
-    fail "MCP tools/list must not expose git_diff_summary on local_coding"
-fi
-if [ "$phase_a_present" = "1" ]; then
-    pass "MCP tools/list exposes the Phase A console tools on the model surface"
+else
+    for tname in list_project_files search_project_text list_jobs job_log git_diff; do
+        if mcp_tool_present "$tname"; then
+            :
+        else
+            phase_a_present=0
+            fail "MCP tools/list missing $tname"
+        fi
+    done
+    if [ "$EXPECTED_SURFACE" = "local_coding" ] && mcp_tool_present "git_diff_summary"; then
+        phase_a_present=0
+        fail "MCP tools/list must not expose git_diff_summary on local_coding"
+    fi
+    if [ "$phase_a_present" = "1" ]; then
+        pass "MCP tools/list exposes the Phase A console tools on the expanded model surface"
+    fi
 fi
 
 # ----------------------------------------------------------------------------
@@ -893,7 +934,13 @@ else
     fail "apply_unified_diff failed preflight mutated the worktree"
 fi
 
-if mcp_tool_present "apply_unified_diff"; then
+if [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
+    if mcp_tool_present "apply_unified_diff"; then
+        fail "MCP adaptive_runtime must keep apply_unified_diff behind call_runtime_tool"
+    else
+        pass "MCP adaptive_runtime keeps apply_unified_diff behind call_runtime_tool"
+    fi
+elif mcp_tool_present "apply_unified_diff"; then
     pass "MCP tools/list exposes apply_unified_diff"
 else
     fail "MCP tools/list missing apply_unified_diff"

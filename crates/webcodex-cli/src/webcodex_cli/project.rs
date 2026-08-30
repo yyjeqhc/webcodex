@@ -189,30 +189,30 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
         .map_err(|error| error.to_string());
     }
     let runner_command = shell_command(&[
-        "webcodex-runner".to_string(),
+        "webcodex".to_string(),
+        "runner".to_string(),
+        "run".to_string(),
         "--config".to_string(),
         opts.config.to_string_lossy().into_owned(),
     ]);
-    let reload_guidance = if registration.already_registered {
-        "The project registry was unchanged; no Runner reload is required.\n".to_string()
+    if registration.already_registered {
+        return Ok(format!(
+            "Project already added:\n  {}\n\nNo Runner restart is required.\n",
+            registration.path.display()
+        ));
+    }
+    let restart_guidance = if cfg!(windows) {
+        format!(
+            "Next:\n  Stop the foreground Runner with Ctrl-C, then run:\n    {runner_command}\n"
+        )
     } else {
         format!(
-            "Restart or reload the existing Runner that uses this config so the registry change is loaded.\nIf it is a foreground Runner, stop that existing process first, then run:\n  {runner_command}\nIf it is installed as a service, use the matching `webcodex runner restart ...` command instead; do not start a second foreground Runner with the same client_id.\n"
+            "Next:\n  If the Runner is in the foreground, stop it with Ctrl-C, then run:\n    {runner_command}\n  If it is installed as a service, use the matching `webcodex runner restart` command instead.\n"
         )
     };
     Ok(format!(
-        "Project {}.\n\n  id:                {}\n  path:              {}\n  agent config:      {}\n  projects registry: {}\n  project record:    {}\n\nAllowed roots are registration authority; they are not workspace registrations.\n{}",
-        if registration.already_registered {
-            "already registered"
-        } else {
-            "registered"
-        },
-        registration.id,
-        registration.path.display(),
-        opts.config.display(),
-        projects_dir.display(),
-        registration.record_path.display(),
-        reload_guidance,
+        "Project added:\n  {}\n\nRunner restart required.\n\n{restart_guidance}",
+        registration.path.display()
     ))
 }
 
@@ -278,6 +278,42 @@ mod tests {
         assert_eq!(second["project"]["id"], "demo");
         assert_eq!(second["project"]["already_registered"], true);
         assert_eq!(second["runner_reload_required"], false);
+    }
+
+    #[test]
+    fn human_registration_output_prioritizes_project_and_reload_action() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        let project = root.join("demo");
+        let registry = tmp.path().join("registry");
+        std::fs::create_dir_all(&project).unwrap();
+        let config_path = tmp.path().join("agent.toml");
+        config(&config_path, &registry, &root);
+
+        let first = run_project_register(ProjectRegisterOptions {
+            config: config_path.clone(),
+            project: project.clone(),
+            json: false,
+        })
+        .unwrap();
+        assert!(first.contains("Project added:"), "{first}");
+        assert!(first.contains(&project.display().to_string()), "{first}");
+        assert!(first.contains("Runner restart required."), "{first}");
+        assert!(first.contains("webcodex runner run --config"), "{first}");
+        assert!(!first.contains("projects registry"), "{first}");
+        assert!(!first.contains("project record"), "{first}");
+
+        let second = run_project_register(ProjectRegisterOptions {
+            config: config_path,
+            project,
+            json: false,
+        })
+        .unwrap();
+        assert!(second.contains("Project already added:"), "{second}");
+        assert!(
+            second.contains("No Runner restart is required."),
+            "{second}"
+        );
     }
 
     #[test]

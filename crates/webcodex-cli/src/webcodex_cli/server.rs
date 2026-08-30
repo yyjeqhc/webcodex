@@ -107,32 +107,24 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
         return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
     }
     let mut out = String::new();
-    out.push_str("Server configuration initialized.\n\n");
-    out.push_str(&format!("  env file:     {}\n", opts.env_file.display()));
-    out.push_str(&format!("  listen:       {}\n", opts.listen));
-    out.push_str(&format!("  data dir:     {}\n", opts.data_dir.display()));
-    out.push_str(&format!("  token prefix: {}\n", token_prefix(&token)));
-    out.push_str(&format!(
-        "  open mode:    {}\n",
-        if opts.open { "enabled" } else { "disabled" }
-    ));
-    out.push_str("  shared key:   enabled\n");
-    out.push_str("\nNext steps:\n");
-    if let Some(command) = install_command {
-        out.push_str(&format!("  - Install and start: `{command}`\n"));
-        out.push_str(&format!(
-            "  - Or run in foreground: `{foreground_command}`\n"
-        ));
+    out.push_str("WebCodex Server configured.\n\n");
+    out.push_str("Data:\n");
+    out.push_str(&format!("  {}\n", opts.data_dir.display()));
+    out.push_str("\nNext:\n");
+    if let Some(command) = &install_command {
+        out.push_str(&format!("  {command}\n"));
+        out.push_str("\nForeground alternative:\n");
+        out.push_str(&format!("  {foreground_command}\n"));
+        out.push_str("  Keep that terminal open while using the foreground Server.\n");
     } else {
-        out.push_str(&format!("  - Run in foreground: `{foreground_command}`\n"));
-        if cfg!(target_os = "linux") {
-            out.push_str("  - System service installation is root-only; non-root onboarding uses the foreground Server flow.\n");
-        } else {
-            out.push_str("  - Managed systemd Server installation is Linux-only.\n");
-        }
+        out.push_str(&format!("  {foreground_command}\n"));
+        out.push_str("  Keep that terminal open while using the foreground Server.\n");
     }
-    out.push_str(&format!("  - Check it: `{status_command}`\n"));
-    out.push_str("\nNo full token was printed. No user or Agent tokens were created.\n");
+    out.push_str("\nCheck:\n");
+    out.push_str(&format!("  {status_command}\n"));
+    out.push_str("\nDetails:\n");
+    out.push_str(&format!("  Configuration: {}\n", opts.env_file.display()));
+    out.push_str(&format!("  Listen:        {}\n", opts.listen));
     Ok(out)
 }
 
@@ -559,7 +551,40 @@ pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<Strin
         return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
     }
     let mut out = String::new();
-    out.push_str("Server status:\n\n");
+    out.push_str(if http.reachable {
+        "Server: running\n"
+    } else {
+        "Server: unreachable\n"
+    });
+    if let Some(count) = agents_online_count {
+        out.push_str(&format!("Runners online: {count}\n"));
+    }
+    out.push_str("\nNext:\n");
+    if !http.reachable {
+        if let Some(env_file) = opts.env_file.as_ref() {
+            let command = shell_command(&[
+                "webcodex".to_string(),
+                "server".to_string(),
+                "run".to_string(),
+                "--env-file".to_string(),
+                env_file.to_string_lossy().into_owned(),
+            ]);
+            out.push_str(&format!("  {command}\n"));
+        } else {
+            out.push_str("  Start the WebCodex Server, then run this status command again.\n");
+        }
+    } else if agents_online_count == Some(0) {
+        out.push_str(
+            "  Create a one-time login code in another terminal with `webcodex pairing create`.\n",
+        );
+    } else if agents_online_count.is_some_and(|count| count > 0) {
+        out.push_str(
+            "  Check project readiness on the project machine with `webcodex runner status`.\n",
+        );
+    } else {
+        out.push_str("  Continue first-run setup with `webcodex pairing create`, or check an existing Runner.\n");
+    }
+    out.push_str("\nDetails:\n");
     out.push_str(&format!("  HTTP probe:            {}\n", probe_url));
     out.push_str(&format!(
         "  HTTP reachable:        {}\n",

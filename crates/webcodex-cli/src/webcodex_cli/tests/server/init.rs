@@ -249,6 +249,9 @@ fn server_init_writes_env_file_and_0600_permissions() {
     .unwrap();
     let output = run_server_init(opts).unwrap();
     assert!(data_dir.is_dir(), "server init must create WEBCODEX_DATA");
+    assert!(output.contains("WebCodex Server configured."), "{output}");
+    assert!(output.contains("Data:"), "{output}");
+    assert!(output.contains("Next:"), "{output}");
     let foreground = crate::webcodex_cli::shell_command(&[
         "webcodex".to_string(),
         "server".to_string(),
@@ -282,7 +285,8 @@ fn server_init_writes_env_file_and_0600_permissions() {
     assert!(content.contains("WEBCODEX_SHARED_KEY_ENABLED=true\n"));
     let token = parse_env_content_value(&content, "WEBCODEX_TOKEN").unwrap();
     assert!(!output.contains(&token));
-    assert!(output.contains("token prefix:"));
+    assert!(!output.contains("token prefix:"), "{output}");
+    assert!(!output.contains("shared key:"), "{output}");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

@@ -1576,6 +1576,12 @@ fn parse_server_subcommand(args: &[String]) -> CliAction {
     }
 }
 
+pub(crate) fn foreground_run_banner(component: &str) -> String {
+    format!(
+        "Starting WebCodex {component} in the foreground.\nKeep this terminal open. Ctrl-C stops the {component}.\n\n"
+    )
+}
+
 fn parse_server_run(args: &[String]) -> Result<InternalRunOptions, String> {
     let mut env_file: Option<PathBuf> = None;
     let mut iter = args.iter();
@@ -2795,7 +2801,20 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
-        CliAction::RunnerRun(opts) | CliAction::ServerRun(opts) => {
+        CliAction::RunnerRun(opts) => {
+            print!("{}", foreground_run_banner("Runner"));
+            let _ = std::io::stdout().flush();
+            match run_internal_binary(&opts.bin, &opts.args, &opts.env) {
+                Ok(code) => std::process::exit(code),
+                Err(stderr) => {
+                    eprintln!("{}", stderr);
+                    std::process::exit(1);
+                }
+            }
+        }
+        CliAction::ServerRun(opts) => {
+            print!("{}", foreground_run_banner("Server"));
+            let _ = std::io::stdout().flush();
             match run_internal_binary(&opts.bin, &opts.args, &opts.env) {
                 Ok(code) => std::process::exit(code),
                 Err(stderr) => {

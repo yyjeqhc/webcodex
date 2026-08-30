@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+use super::connect::profile::read_project_files;
 use super::http::{fetch_runtime_status, http_post_json_status, HttpStatusSummary};
 use super::{
     control_service_for_scope, encode_exec_argument, encode_exec_path_argument,
@@ -9,7 +10,7 @@ use super::{
     install_unit_for_scope, local_runner_profile_marker, local_runner_state_summary,
     query_systemd_service_status_for_scope, read_optional_token, read_optional_user_api_token,
     run_local_runner_logs, run_local_runner_service, run_logs_for_scope, service_unit_name,
-    uninstall_unit_for_scope, validate_systemd_identity, LocalRunnerServiceAction,
+    shell_command, uninstall_unit_for_scope, validate_systemd_identity, LocalRunnerServiceAction,
     RUNNER_SERVICE_UNIT,
 };
 use crate::{
@@ -136,13 +137,23 @@ pub(crate) fn run_runner_install_service(
     } else {
         ""
     };
+    let status_command = shell_command(&[
+        "webcodex".to_string(),
+        "runner".to_string(),
+        "status".to_string(),
+        "--scope".to_string(),
+        opts.scope.as_str().to_string(),
+        "--config".to_string(),
+        opts.config.to_string_lossy().into_owned(),
+        "--service-file".to_string(),
+        opts.service_file.to_string_lossy().into_owned(),
+    ]);
     Ok(format!(
-        "Runner service installed.\n\n  scope:        {}\n  service file: {}\n  unit:         {}\n  config:       {}\n  binary:       {}\n  enabled:      yes\n  started:      {}\n{}",
-        opts.scope.as_str(),
-        opts.service_file.display(),
-        result.unit,
+        "Runner {}.\n\nRunner configuration:\n  {}\n\nNext:\n  {status_command}\n\nDetails:\n  Service: {}\n  Scope:   {}\n  Started: {}\n{}",
+        if result.started { "installed and started" } else { "installed" },
         opts.config.display(),
-        opts.bin.display(),
+        result.unit,
+        opts.scope.as_str(),
         if result.started { "yes" } else { "no (--no-start)" },
         warning,
     ))
@@ -310,6 +321,119 @@ fn runtime_client_online(output: &Value, client_id: &str) -> Option<bool> {
     })
 }
 
+fn runtime_client_project_count(output: &Value, client_id: &str) -> Option<usize> {
+    runtime_client_entry(output, client_id)?
+        .get("projects_count")
+        .and_then(Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
+}
+
+fn render_runner_readiness_summary(
+    client_online: Option<bool>,
+    loaded_project_count: Option<usize>,
+    configured_project_count: Option<usize>,
+    config: &Path,
+) -> String {
+    let mut out = String::new();
+    match client_online {
+        Some(true) => out.push_str("Runner: connected\n"),
+        Some(false) => out.push_str("Runner: offline\n"),
+        None => out.push_str("Runner connection: not checked\n"),
+    }
+    match (
+        client_online,
+        loaded_project_count,
+        configured_project_count,
+    ) {
+        (Some(true), Some(loaded), Some(configured)) if loaded == configured => {
+            out.push_str(&format!("Projects: {loaded}\n"));
+        }
+        (Some(true), Some(loaded), Some(configured)) => {
+            out.push_str(&format!("Projects loaded: {loaded}\n"));
+            out.push_str(&format!("Projects configured: {configured}\n"));
+        }
+        (Some(true), Some(loaded), None) => {
+            out.push_str(&format!("Projects loaded: {loaded}\n"));
+            out.push_str("Projects configured: unknown\n");
+        }
+        (_, Some(loaded), Some(configured)) => {
+            out.push_str(&format!("Projects configured: {configured}\n"));
+            out.push_str(&format!("Projects last reported: {loaded}\n"));
+        }
+        (_, _, Some(configured)) => {
+            out.push_str(&format!("Projects configured: {configured}\n"));
+        }
+        (_, Some(loaded), None) => {
+            out.push_str(&format!("Projects last reported: {loaded}\n"));
+            out.push_str("Projects configured: unknown\n");
+        }
+        (_, None, None) => out.push_str("Projects configured: unknown\n"),
+    }
+
+    let add_project = |out: &mut String| {
+        let command = format!(
+            "{} /path/to/project",
+            shell_command(&[
+                "webcodex".to_string(),
+                "project".to_string(),
+                "register".to_string(),
+                "--config".to_string(),
+                config.to_string_lossy().into_owned(),
+            ])
+        );
+        out.push_str("\nAdd a project:\n");
+        out.push_str(&format!("  {command}\n"));
+    };
+
+    if client_online == Some(true) {
+        match (loaded_project_count, configured_project_count) {
+            (Some(loaded), Some(configured)) if loaded == configured && loaded > 0 => {
+                out.push_str("\nWebCodex is ready to use registered projects.\n");
+            }
+            (Some(0), Some(0)) => {
+                out.push_str("\nRunner connected, but no project has been added.\n");
+                add_project(&mut out);
+            }
+            (Some(_), Some(_)) => {
+                out.push_str(
+                    "\nRunner connected, but configured project changes are not fully loaded.\n",
+                );
+                out.push_str("\nRunner restart required.\n");
+                out.push_str("\nNext:\n  Restart the existing Runner, then check `webcodex runner status` again.\n");
+            }
+            (_, Some(0)) => {
+                out.push_str("\nNo project is configured locally.\n");
+                add_project(&mut out);
+            }
+            _ => {
+                out.push_str("\nRunner connected, but project readiness could not be verified.\n");
+                out.push_str("Readiness: unknown.\n");
+            }
+        }
+    } else if client_online == Some(false) {
+        match configured_project_count {
+            Some(0) => {
+                out.push_str("\nNo project has been added.\n");
+                add_project(&mut out);
+            }
+            Some(_) => {
+                out.push_str("\nNext:\n  Start or restart this Runner, then check status again.\n")
+            }
+            None => out.push_str("\nProject registration could not be verified locally.\n"),
+        }
+    } else {
+        match configured_project_count {
+            Some(0) => {
+                out.push_str("\nNo project has been added.\n");
+                add_project(&mut out);
+            }
+            Some(_) => out.push_str("\nProject registration exists locally, but Runner connection and loaded projects were not checked.\n"),
+            None => out.push_str("\nProject registration and Runner connection were not checked.\n"),
+        }
+    }
+    out
+}
+
 pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<String, String> {
     let service_unit = service_unit_name(&opts.service_file, RUNNER_SERVICE_UNIT);
     let local = opts
@@ -347,6 +471,7 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
 
     let mut runtime_http: Option<HttpStatusSummary> = None;
     let mut client_online: Option<bool> = None;
+    let mut loaded_project_count: Option<usize> = None;
     if let (Some(server_url), Some(token)) =
         (effective_server_url.as_deref(), user_token.as_deref())
     {
@@ -354,6 +479,7 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
         if let Some(output) = http.output.as_ref() {
             if !metadata.client_id.trim().is_empty() {
                 client_online = runtime_client_online(output, &metadata.client_id);
+                loaded_project_count = runtime_client_project_count(output, &metadata.client_id);
             }
         }
         runtime_http = Some(http);
@@ -441,8 +567,19 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
         return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
     }
 
-    let mut out = String::new();
-    out.push_str("Runner status:\n\n");
+    let projects_dir = metadata.projects_dir.clone().unwrap_or(
+        webcodex_runner_config::paths::default_client_config_base_dir()?.join("projects.d"),
+    );
+    let configured_project_count = read_project_files(&projects_dir)
+        .ok()
+        .map(|projects| projects.len());
+    let mut out = render_runner_readiness_summary(
+        client_online,
+        loaded_project_count,
+        configured_project_count,
+        &metadata.path,
+    );
+    out.push_str("\nDetails:\n");
     if let Some(local) = &local {
         out.push_str("  runner mode:          hosted local process\n");
         out.push_str(&format!("  runner active:        {}\n", local.running));
@@ -555,6 +692,94 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn human_readiness_requires_registered_project_and_observed_connection() {
+        let config = Path::new("/tmp/webcodex/agent.toml");
+
+        let ready = render_runner_readiness_summary(Some(true), Some(1), Some(1), config);
+        assert!(ready.contains("Runner: connected"), "{ready}");
+        assert!(ready.contains("Projects: 1"), "{ready}");
+        assert!(
+            ready.contains("WebCodex is ready to use registered projects."),
+            "{ready}"
+        );
+
+        let zero = render_runner_readiness_summary(Some(true), Some(0), Some(0), config);
+        assert!(
+            zero.contains("Runner connected, but no project has been added."),
+            "{zero}"
+        );
+        assert!(
+            zero.contains(
+                "webcodex project register --config /tmp/webcodex/agent.toml /path/to/project"
+            ),
+            "{zero}"
+        );
+        assert!(!zero.contains("ready to use"), "{zero}");
+
+        let pending_restart = render_runner_readiness_summary(Some(true), Some(0), Some(1), config);
+        assert!(
+            pending_restart.contains("configured project changes are not fully loaded"),
+            "{pending_restart}"
+        );
+        assert!(
+            pending_restart.contains("Runner restart required."),
+            "{pending_restart}"
+        );
+        assert!(
+            !pending_restart.contains("ready to use"),
+            "{pending_restart}"
+        );
+
+        let partial_reload = render_runner_readiness_summary(Some(true), Some(1), Some(2), config);
+        assert!(
+            partial_reload.contains("Projects loaded: 1"),
+            "{partial_reload}"
+        );
+        assert!(
+            partial_reload.contains("Projects configured: 2"),
+            "{partial_reload}"
+        );
+        assert!(
+            partial_reload.contains("Runner restart required."),
+            "{partial_reload}"
+        );
+        assert!(!partial_reload.contains("ready to use"), "{partial_reload}");
+
+        let unknown = render_runner_readiness_summary(None, None, Some(1), config);
+        assert!(
+            unknown.contains("Runner connection: not checked"),
+            "{unknown}"
+        );
+        assert!(!unknown.contains("ready to use"), "{unknown}");
+
+        let online_unknown = render_runner_readiness_summary(Some(true), None, Some(1), config);
+        assert!(
+            online_unknown.contains("project readiness could not be verified"),
+            "{online_unknown}"
+        );
+        assert!(
+            online_unknown.contains("Readiness: unknown."),
+            "{online_unknown}"
+        );
+        assert!(!online_unknown.contains("ready to use"), "{online_unknown}");
+
+        let unreadable_registry =
+            render_runner_readiness_summary(Some(true), Some(1), None, config);
+        assert!(
+            unreadable_registry.contains("Projects configured: unknown"),
+            "{unreadable_registry}"
+        );
+        assert!(
+            unreadable_registry.contains("Readiness: unknown."),
+            "{unreadable_registry}"
+        );
+        assert!(
+            !unreadable_registry.contains("ready to use"),
+            "{unreadable_registry}"
+        );
+    }
 
     #[test]
     fn service_unit_name_tracks_the_selected_profile_unit() {

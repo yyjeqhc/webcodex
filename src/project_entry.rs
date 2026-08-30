@@ -236,8 +236,9 @@ pub(crate) fn usage() -> &'static str {
        webcodex setup [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
        webcodex run [--root PATH] [--profile NAME] [--state-dir PATH]\n\
                               [--console-assets-dir ABSOLUTE_PATH]\n\n\
-`share` is the first-run path for ChatGPT/remote MCP: it performs project setup,\n\
-starts the local Server + Runner, and exposes a temporary credential. The default\n\
+`share` is the Quick Trial path: it temporarily shares this one project for ChatGPT/remote MCP,\n\
+starts a local Server + Runner for the foreground lifetime, and ends when the command exits.\n\
+For full daily use, configure the regular WebCodex Server + Runner flow instead. The default\n\
 Cloudflare Quick Tunnel reuses or auto-manages a verified `cloudflared`. The opt-in\n\
 OpenAI Secure MCP Tunnel provider uses a pinned verified `tunnel-client` and keeps\n\
 the temporary WebCodex Bearer credential local. Public URL sharing best-effort\n\

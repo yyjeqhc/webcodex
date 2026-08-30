@@ -745,11 +745,14 @@ only for local/trusted-network demos."
                     .post(audit_http::audit_stats),
             ),
     );
-    tracing::info!("Server started successfully!");
+    tracing::info!("WebCodex Server is running.");
     let port = addr.split(':').next_back().unwrap_or("8080");
     let base = format!("http://localhost:{}", port);
     tracing::info!("Runtime base: {}", base);
     tracing::info!("MCP endpoint: {}/mcp", base);
+    tracing::info!(
+        "Next: create a one-time login code in another terminal with `webcodex pairing create`."
+    );
     tracing::info!(
         tool_request_trace = crate::config::tool_request_trace_enabled(),
         "tool_request_trace"

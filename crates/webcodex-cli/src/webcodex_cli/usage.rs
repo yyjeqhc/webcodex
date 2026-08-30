@@ -1,42 +1,39 @@
 pub(crate) fn usage() -> &'static str {
     "Usage: webcodex [COMMAND]\n\n\
 Unified command-line interface for WebCodex.\n\n\
-Start here:\n\
-  (no command)                  Interactive Git repo shortcut for `share` on Linux/macOS\n\
-  share                         Share the current project for ChatGPT/MCP over HTTPS (Linux/macOS/Windows)\n\
+Full daily setup:\n\
+  server init|install|run|start|stop|restart|status|logs|uninstall\n\
+                                Configure/run the Server; service lifecycle is Linux-only\n\
+  pairing create                Create a one-time login code\n\
+  login                         Log the project machine in with that code\n\
+  project register              Add an existing project\n\
+  runner init|install|run|start|stop|restart|status|logs|uninstall\n\
+                                Run project work; service lifecycle is Linux-only\n\n\
+Quick trial:\n\
+  share                         Temporarily share one project; ends when the command exits\n\
+  (no command)                  Interactive Git repo shortcut for `share` on Linux/macOS\n\n\
+Project commands:\n\
   connect                       Connect the current project to an existing Server\n\
   status                        Show concise project coding readiness\n\
-  doctor                        Diagnose project readiness\n\n\
-Project (local/manual):\n\
+  doctor                        Diagnose project readiness\n\
   setup                         Configure the current Git project without starting it\n\
   run                           Run the project-bound Server and Runner locally\n\
   disconnect                    Disconnect a local project from its hosted Server\n\
-  project register              Register an existing workspace in a Runner projects registry\n\
   task                          Review tasks and make host-local decisions\n\n\
-Account / identity (advanced):\n\
-  login                         Log this device into a server (one-time pairing code)\n\
+Account:\n\
   logout                        Remove this device's credentials\n\
   auth status                   Show login status\n\n\
-Operator / service management:\n\
-  server init|install|run|start|stop|restart|status|logs|uninstall\n\
-                                Configure/run the Server; managed lifecycle is Linux-only\n\
-  runner init|install|run|start|stop|restart|status|logs|uninstall\n\
-                                Manage the Runner lifecycle and service\n\
+Operator / advanced:\n\
   ops status|agents|runner|projects|smoke-preflight\n\
-                                Read-only operator workflow checks\n\n\
-Advanced / compatibility:\n\
-  pairing create                Create a client enrollment code\n\
-  client enroll                 Enroll this machine (advanced; prefer `webcodex login`)\n\
+                                Read-only operator workflow checks\n\
+  client enroll                 Advanced compatibility enrollment\n\
   users create|list             Manage users\n\
   tokens create|create-local|generate|register-hash|list|revoke\n\
-                                Manage personal API tokens\n\
   agent-tokens create|create-local|register-hash|list|revoke\n\
-                                Manage Runner tokens\n\
-  setup single-user             Run the existing single-user bootstrap flow\n\n\
+  setup single-user             Existing single-user bootstrap flow\n\n\
 Options:\n\
   -h, --help                    Print help and exit\n\
-  -V, --version                 Print version and exit\n\n\
-First ChatGPT connection: run explicit `webcodex share` on Linux/macOS/Windows. Bare interactive `webcodex` auto-share remains Linux/macOS-only. Windows x64 supports managed Cloudflare; Windows ARM64 Cloudflare requires a trusted explicit/PATH binary.\n"
+  -V, --version                 Print version and exit\n"
 }
 
 pub(crate) fn connect_usage() -> &'static str {
@@ -89,12 +86,11 @@ Options:\n\
 
 pub(crate) fn project_register_usage() -> &'static str {
     "Usage: webcodex project register --config PATH <PROJECT> [OPTIONS]\n\n\
-Register one existing workspace in the projects_dir used by a Runner agent.toml.\n\
-projects_dir is the Runner project registry directory, not the workspace root; when omitted,\n\
-the same per-user default as Runner config loading is used.\n\
-allowed_roots is the filesystem authority boundary for registration; it does not register a workspace.\n\n\
+Add one existing project to a Runner configuration.\n\
+A newly added project is loaded after that Runner restarts; adding the same project again is idempotent.\n\
+Advanced: projects_dir remains the Runner project registry directory and allowed_roots remains the filesystem authority boundary.\n\n\
 Options:\n\
-  --config PATH              Runner agent.toml whose registry and policy should be used\n\
+  --config PATH              Runner configuration created by login/init\n\
   --json                     Print machine-readable output\n\
   -h, --help                 Print help and exit\n"
 }
@@ -102,11 +98,12 @@ Options:\n\
 pub(crate) fn pairing_usage() -> &'static str {
     "Usage: webcodex pairing <COMMAND>\n\n\
      Commands:\n\
-       create       Create a short-lived pairing code for client enrollment\n"
+       create       Create a short-lived one-time login code\n"
 }
 
 pub(crate) fn pairing_create_usage() -> &'static str {
     "Usage: webcodex pairing create --server-url URL --username USER [--client-id CLIENT_ID] [OPTIONS]\n\n\
+     Create a one-time login code on the Server, then use it once on the machine that holds the project.\n\n\
      Options:\n\
        --server-url URL          WebCodex server URL\n\
        --proxy http://HOST:PORT Explicit proxy override for this CLI request\n\
@@ -279,6 +276,7 @@ pub(crate) fn ops_smoke_preflight_usage() -> &'static str {
 
 pub(crate) fn server_usage() -> &'static str {
     "Usage: webcodex server <COMMAND>\n\n\
+The Server is the first part of the full daily WebCodex setup.\n\n\
 Commands:\n\
   init        Initialize or update Server configuration\n\
   install     Install, enable, and start the Linux systemd socket/service pair\n\
@@ -342,17 +340,18 @@ pub(crate) fn server_status_usage() -> &'static str {
 
 pub(crate) fn runner_usage() -> &'static str {
     "Usage: webcodex runner <COMMAND>\n\n\
+The Runner is the machine that executes project work for the full daily setup.\n\n\
 Commands:\n\
   init        Generate a Runner config (`agent.toml`)\n\
-  install     Install, enable, and start the webcodex-runner service\n\
-  run         Run webcodex-runner directly in the foreground\n\
-  start       Start a hosted background Runner or installed profile service\n\
-  stop        Stop a hosted background Runner or installed profile service\n\
-  restart     Restart a hosted background Runner or installed profile service\n\
+  install     Install, enable, and start the Linux systemd Runner service\n\
+  run         Run webcodex-runner directly in the foreground (all supported platforms)\n\
+  start       Start a hosted background Runner or installed Linux service\n\
+  stop        Stop a hosted background Runner or installed Linux service\n\
+  restart     Restart a hosted background Runner or installed Linux service\n\
   status      Check Runner lifecycle, safe config metadata, and connectivity\n\
-  logs        Read hosted Runner logs or the installed service journal\n\
-  uninstall   Remove only the systemd unit; requires --confirm\n\n\
-Service commands accept --scope user|system. Non-root users default to user; root defaults to system.\n\
+  logs        Read hosted Runner logs or the installed Linux service journal\n\
+  uninstall   Remove only the Linux systemd unit; requires --confirm\n\n\
+Linux systemd service commands accept --scope user|system. Non-root users default to user; root defaults to system.\n\
 Profiles created by `connect` keep their detached-process behavior when --scope is omitted.\n\n\
 `webcodex run` is the current-project runtime coordinator. `webcodex runner run` directly executes the standalone Runner.\n"
 }
@@ -428,15 +427,14 @@ pub(crate) fn runner_status_usage() -> &'static str {
 
 pub(crate) fn login_usage() -> &'static str {
     "Usage: webcodex login <SERVER-URL> --code <PAIRING-CODE> [OPTIONS]\n\n\
-     Log this device into a WebCodex server. Ask whoever runs the server for a\n\
-     pairing code (`webcodex pairing create`), then run this. This is the\n\
-     primary way to connect a machine.\n\n\
+     Use a one-time login code (`webcodex pairing create`) to connect this project machine.\n\
+     Add --project to add an existing project during the same login.\n\n\
      Options:\n\
      \x20\x20--code CODE          Pairing code from the server (required)\n\
      \x20\x20--proxy http://HOST:PORT Explicit proxy override for this CLI request\n\
      \x20\x20--no-system-proxy   Ignore proxy environment and connect directly\n\
      \x20\x20--device NAME        Name for this device [default: hostname + local suffix]\n\
-     \x20\x20--allowed-root PATH  Repeatable registration authority root; does not register a workspace\n\
+     \x20\x20--allowed-root PATH  Repeatable location under which projects may be added later\n\
      \x20\x20--project PATH       Existing workspace to register with this login\n\
      \x20\x20--transport NAME     websocket|polling|quic|auto [default: websocket]\n\
      \x20\x20--dir PATH           Where connections are stored [default: root /etc/webcodex;\n\

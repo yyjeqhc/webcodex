@@ -623,9 +623,27 @@ pub(crate) fn render_login_result(
     };
     let foreground_command = foreground_argv.as_ref().map(|argv| shell_command(argv));
     let runner_install_command = runner_install_argv.as_ref().map(|argv| shell_command(argv));
-    let runtime_project = registration.map(|project| format!("agent:{device}:{}", project.id));
+    let human_foreground_command = (!effective_root).then(|| {
+        shell_command(&[
+            "webcodex".to_string(),
+            "runner".to_string(),
+            "run".to_string(),
+            "--config".to_string(),
+            paths.agent_config.to_string_lossy().into_owned(),
+        ])
+    });
     let register_command = format!(
         "{} <existing-workspace>",
+        shell_command(&[
+            "webcodex".to_string(),
+            "project".to_string(),
+            "register".to_string(),
+            "--config".to_string(),
+            paths.agent_config.to_string_lossy().into_owned(),
+        ])
+    );
+    let human_register_command = format!(
+        "{} /path/to/project",
         shell_command(&[
             "webcodex".to_string(),
             "project".to_string(),
@@ -690,7 +708,7 @@ pub(crate) fn render_login_result(
         return serde_json::to_string_pretty(&summary).map_err(|error| error.to_string());
     }
 
-    if print_mcp_config {
+    let mcp_connection = if print_mcp_config {
         let token = std::fs::read_to_string(&paths.user_token)
             .map_err(|error| {
                 format!(
@@ -701,63 +719,50 @@ pub(crate) fn render_login_result(
             .trim()
             .to_string();
         validate_user_api_token(&token)?;
-        return Ok(format!(
-            "Sensitive HTTP MCP connection details\n\
-             ======================================\n\
-             These connection details include a credential. Store them privately.\n\n\
-             MCP URL: {server_url}/mcp\n\
-             Authorization: Bearer {token}\n"
-        ));
+        Some(format!(
+            "\nChatGPT connection\n------------------\nContains a private credential. Do not share it.\nThis credential came from this same one-time login; do not run login again to get it.\n\nMCP URL:\n  {server_url}/mcp\n\nAuthentication:\n  Bearer token\n\nCredential:\n  {token}\n"
+        ))
+    } else {
+        None
+    };
+
+    let mut out = String::new();
+    out.push_str("Login complete\n\n");
+    if let Some(project) = registration {
+        out.push_str("Project:\n");
+        out.push_str(&format!("  {}\n", project.path.display()));
+    } else {
+        out.push_str("No project has been added yet.\n");
     }
-
-    let next_step_guidance = match (foreground_command, runner_install_command) {
-        (Some(foreground_command), Some(command)) => format!(
-            "Start the Runner in the foreground:\n  {foreground_command}\n\n\
-             Or install it as a non-root user service (run as the same ordinary user):\n  {command}\n"
-        ),
-        (Some(foreground_command), None) => format!(
-            "Start the Runner in the foreground:\n  {foreground_command}\n\n{}\n",
-            runner_install_reason.unwrap_or("automatic Runner service installation is unavailable")
-        ),
-        (None, None) => "Login ran as root, so no command to start a root Runner is recommended.\n\
-                        Recommended: have the ordinary local user who will run the Runner use a fresh pairing code to execute `webcodex login`, then install the user service as that same user.\n\
-                        Advanced system service deployment requires an administrator to explicitly select a non-root account with `--scope system --user`, verify that account can read the Runner config and access the working directory, and ensure the config, projects directory, and allowed roots have suitable permissions.\n"
-            .to_string(),
-        _ => return Err("inconsistent login Runner guidance state".to_string()),
-    };
-
-    let allowed_roots_text = if allowed_roots.is_empty() {
-        "    (none)\n".to_string()
+    out.push_str("\nRunner configuration:\n");
+    out.push_str(&format!("  {}\n", paths.agent_config.display()));
+    if !allowed_roots.is_empty() {
+        out.push_str("\nProjects may be added under:\n");
+        for root in allowed_roots {
+            out.push_str(&format!("  {}\n", root.display()));
+        }
+    }
+    out.push_str("\nNext:\n");
+    if registration.is_none() {
+        out.push_str(&format!("  {human_register_command}\n"));
+    } else if let Some(command) = &human_foreground_command {
+        out.push_str(&format!("  {command}\n"));
+        out.push_str("\nKeep this terminal open. Ctrl-C stops this Runner.\n");
+        if let Some(install) = &runner_install_command {
+            out.push_str("\nFor daily background use on Linux instead:\n");
+            out.push_str(&format!("  {install}\n"));
+        }
     } else {
-        allowed_roots
-            .iter()
-            .map(|root| format!("    {}\n", root.display()))
-            .collect::<String>()
-    };
-    let project_guidance = if let (Some(project), Some(runtime_project)) =
-        (registration, runtime_project)
-    {
-        format!(
-            "Registered project:\n  id:   {}\n  path: {}\n\nAfter the Runner starts, WebCodex should expose:\n  {}\n",
-            project.id,
-            project.path.display(),
-            runtime_project,
-        )
-    } else {
-        format!(
-            "Project registration: none\n\nNo project is registered yet.\n--allowed-root controls where projects may be registered; it does not register a workspace.\nRegister an existing workspace before using project-bound coding tools:\n  {register_command}\n\nRunner access is configured, but project-bound tools remain unavailable until a project is registered.\n"
-        )
-    };
-
-    Ok(format!(
-        "Login succeeded.\n\n  server:            {server_url}\n  username:          {username}\n  device/client_id:  {device}\n  MCP endpoint:      {server_url}/mcp\n  user token file:   {} (GPT Actions, MCP, and REST/project APIs)\n  agent config:      {} (contains Runner transport credentials only)\n  projects registry: {} (Runner project registry, not a workspace root)\n\nAllowed roots (registration authority):\n{}\n{}\n{}",
-        paths.user_token.display(),
-        paths.agent_config.display(),
-        paths.projects_dir.display(),
-        allowed_roots_text,
-        project_guidance,
-        next_step_guidance,
-    ))
+        out.push_str("  Use a fresh one-time login code as the ordinary local user who will run project commands.\n");
+        out.push_str("  No root Runner command is recommended by this login.\n");
+    }
+    out.push_str("\nDetails:\n");
+    out.push_str(&format!("  Server: {server_url}\n"));
+    out.push_str(&format!("  User:   {username}\n"));
+    if let Some(block) = mcp_connection {
+        out.push_str(&block);
+    }
+    Ok(out)
 }
 
 /// Message for the case where the code was spent but the destination was taken.
@@ -2147,7 +2152,10 @@ mod tests {
         assert!(device.starts_with("shared-host-"), "{device}");
         assert_eq!(device.len(), "shared-host-".len() + DEVICE_SUFFIX_HEX_LEN);
         assert_eq!(value["pairing_code"], CODE);
-        assert!(output.contains(device), "{output}");
+        assert!(
+            !output.contains(device),
+            "human output should not expose the internal client id: {output}"
+        );
         assert!(base.join(DEVICE_ID_FILE).is_file());
     }
 
@@ -2540,37 +2548,26 @@ mod tests {
             false,
         )
         .unwrap();
-        assert!(text.contains("https://api.example.com/mcp"), "{text}");
-        assert!(
-            text.contains(&paths.user_token.display().to_string()),
-            "{text}"
-        );
+        assert!(text.starts_with("Login complete\n\n"), "{text}");
+        assert!(text.contains("No project has been added yet."), "{text}");
+        assert!(text.contains("Runner configuration:"), "{text}");
         assert!(
             text.contains(&paths.agent_config.display().to_string()),
             "{text}"
         );
-        assert!(text.contains("webcodex-runner --config"), "{text}");
         assert!(
-            text.contains("GPT Actions, MCP, and REST/project APIs"),
+            text.contains("webcodex project register --config")
+                && text.contains("/path/to/project"),
             "{text}"
         );
-        assert!(text.contains("Runner transport credentials only"), "{text}");
-        assert!(text.contains("Project registration: none"), "{text}");
-        assert!(text.contains("--allowed-root controls where projects may be registered; it does not register a workspace"), "{text}");
-        assert!(text.contains("projects registry"), "{text}");
+        assert!(!text.contains("device/client_id"), "{text}");
+        assert!(!text.contains("projects registry"), "{text}");
+        assert!(!text.contains("runtime_project"), "{text}");
         assert!(
-            (!cfg!(windows) && text.contains("webcodex runner install --scope user --config"))
-                || (cfg!(windows) && !text.contains("webcodex runner install")),
+            !text.contains(&paths.user_token.display().to_string()),
             "{text}"
         );
-        assert!(
-            cfg!(windows) || text.contains("same ordinary user"),
-            "non-root guidance was not explicit: {text}"
-        );
-        assert!(
-            !cfg!(windows) || text.contains(WINDOWS_RUNNER_INSTALL_REASON),
-            "Windows login did not explain the service-install boundary: {text}"
-        );
+        assert!(!text.contains("webcodex runner install"), "{text}");
         assert!(!text.contains(USER_TOKEN), "default text leaked a token");
         assert!(!text.contains(AGENT_TOKEN), "default text leaked a token");
 
@@ -2624,6 +2621,44 @@ mod tests {
     }
 
     #[test]
+    fn render_login_result_with_project_gives_runner_next_action() {
+        let paths = ConnectionPaths::new(PathBuf::from("/tmp/login-with-project"));
+        let project = ProjectRegistration {
+            id: "demo".to_string(),
+            path: PathBuf::from("/tmp/demo"),
+            record_path: paths.projects_dir.join("demo.toml"),
+            already_registered: false,
+        };
+        let text = render_login_result(
+            &paths,
+            "https://api.example.com",
+            "alice",
+            "laptop",
+            Some(&project),
+            &[PathBuf::from("/tmp")],
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(text.contains("Project:\n  /tmp/demo"), "{text}");
+        assert!(
+            text.contains("Projects may be added under:\n  /tmp"),
+            "{text}"
+        );
+        assert!(text.contains("webcodex runner run --config"), "{text}");
+        assert!(text.contains("Keep this terminal open."), "{text}");
+        assert!(text.contains("Ctrl-C stops this Runner."), "{text}");
+        assert_eq!(
+            text.contains("webcodex runner install --scope user --config"),
+            !cfg!(windows),
+            "{text}"
+        );
+        assert!(!text.contains("runtime project"), "{text}");
+        assert!(!text.contains("client_id"), "{text}");
+    }
+
+    #[test]
     fn render_login_result_quotes_config_paths_and_exposes_argv() {
         let paths = ConnectionPaths::new(PathBuf::from("/tmp/path with 'quote/$value/`tick`;semi"));
         let foreground_argv = vec![
@@ -2640,27 +2675,39 @@ mod tests {
             "--config".to_string(),
             paths.agent_config.to_string_lossy().into_owned(),
         ];
+        let human_foreground_argv = vec![
+            "webcodex".to_string(),
+            "runner".to_string(),
+            "run".to_string(),
+            "--config".to_string(),
+            paths.agent_config.to_string_lossy().into_owned(),
+        ];
+        let registration = ProjectRegistration {
+            id: "demo".to_string(),
+            path: PathBuf::from("/tmp/demo"),
+            record_path: paths.projects_dir.join("demo.toml"),
+            already_registered: false,
+        };
 
         let text = render_login_result(
             &paths,
             "https://api.example.com",
             "alice",
             "laptop",
-            None,
+            Some(&registration),
             &[],
             false,
             false,
             false,
         )
         .unwrap();
-        assert!(text.contains(&shell_command(&foreground_argv)), "{text}");
+        assert!(
+            text.contains(&shell_command(&human_foreground_argv)),
+            "{text}"
+        );
         assert_eq!(
             text.contains(&shell_command(&install_argv)),
             !cfg!(windows),
-            "{text}"
-        );
-        assert!(
-            !cfg!(windows) || text.contains(WINDOWS_RUNNER_INSTALL_REASON),
             "{text}"
         );
 
@@ -2752,13 +2799,19 @@ mod tests {
             "--config".to_string(),
             paths.agent_config.to_string_lossy().into_owned(),
         ];
+        let registration = ProjectRegistration {
+            id: "demo".to_string(),
+            path: PathBuf::from("/tmp/demo"),
+            record_path: paths.projects_dir.join("demo.toml"),
+            already_registered: false,
+        };
 
         let text = render_login_result(
             &paths,
             "https://api.example.com",
             "alice",
             "laptop",
-            None,
+            Some(&registration),
             &[],
             true,
             false,
@@ -2775,25 +2828,12 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains(&shell_command(&foreground_argv)), "{text}");
-        assert!(text.contains("Login ran as root"), "{text}");
+        assert!(text.contains("ordinary local user"), "{text}");
+        assert!(text.contains("fresh one-time login code"), "{text}");
         assert!(
-            text.contains("ordinary local user who will run the Runner"),
+            text.contains("No root Runner command is recommended"),
             "{text}"
         );
-        assert!(text.contains("fresh pairing code"), "{text}");
-        assert!(
-            text.contains("install the user service as that same user"),
-            "{text}"
-        );
-        assert!(
-            text.contains("Advanced system service deployment"),
-            "{text}"
-        );
-        assert!(text.contains("--scope system --user"), "{text}");
-        assert!(text.contains("read the Runner config"), "{text}");
-        assert!(text.contains("working directory"), "{text}");
-        assert!(text.contains("projects directory"), "{text}");
-        assert!(text.contains("allowed roots"), "{text}");
         assert!(!text.contains(USER_TOKEN), "root text leaked a token");
         assert!(!text.contains(AGENT_TOKEN), "root text leaked a token");
 
@@ -2850,15 +2890,23 @@ mod tests {
             true,
         )
         .unwrap();
+        assert!(text.contains("Login complete"), "{text}");
+        assert!(text.contains("ChatGPT connection"), "{text}");
         assert!(
-            text.contains("Sensitive HTTP MCP connection details"),
+            text.contains("Contains a private credential. Do not share it."),
             "{text}"
         );
-        assert!(text.contains("https://api.example.com/mcp"), "{text}");
+        assert!(text.contains("same one-time login"), "{text}");
         assert!(
-            text.contains(&format!("Authorization: Bearer {USER_TOKEN}")),
+            text.contains("MCP URL:\n  https://api.example.com/mcp"),
             "{text}"
         );
+        assert!(text.contains("Authentication:\n  Bearer token"), "{text}");
+        assert!(
+            text.contains(&format!("Credential:\n  {USER_TOKEN}")),
+            "{text}"
+        );
+        assert!(!text.contains(AGENT_TOKEN), "{text}");
     }
 
     #[test]

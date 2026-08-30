@@ -105,6 +105,16 @@ fn webcodex_cli_help_mentions_management_commands() {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);
             assert!(stdout.contains("pairing create"));
+            assert!(stdout.contains("Full daily setup:"), "{stdout}");
+            assert!(
+                stdout.matches("service lifecycle is Linux-only").count() >= 2,
+                "{stdout}"
+            );
+            assert!(stdout.contains("Quick trial:"), "{stdout}");
+            assert!(
+                stdout.contains("Temporarily share one project; ends when the command exits"),
+                "{stdout}"
+            );
             assert!(stdout.contains("client enroll"));
             // The token actions are now listed once per group rather than one
             // line per action, but every action must still appear.
@@ -131,13 +141,15 @@ fn webcodex_cli_help_mentions_management_commands() {
 }
 
 #[test]
-fn project_register_and_login_project_help_explain_registry_vs_authority() {
+fn project_register_and_login_project_help_prioritize_user_language() {
     let project_help = cli_exit(["project", "register", "--help"]).unwrap();
-    assert!(project_help.contains("projects_dir is the Runner project registry directory"));
-    assert!(project_help.contains("allowed_roots is the filesystem authority boundary"));
+    assert!(project_help.contains("Add one existing project to a Runner configuration"));
+    assert!(project_help.contains("Advanced: projects_dir"));
+    assert!(project_help.contains("allowed_roots"));
     let login_help = cli_exit(["login", "--help"]).unwrap();
+    assert!(login_help.contains("one-time login code"));
     assert!(login_help.contains("--project PATH"));
-    assert!(login_help.contains("does not register a workspace"));
+    assert!(login_help.contains("projects may be added later"));
 
     assert!(matches!(
         cli_action([
@@ -157,14 +169,29 @@ fn project_register_and_login_project_help_explain_registry_vs_authority() {
 }
 
 #[test]
+fn foreground_run_banner_describes_lifetime_without_false_readiness() {
+    let server = foreground_run_banner("Server");
+    assert!(server.contains("Starting WebCodex Server in the foreground."));
+    assert!(server.contains("Keep this terminal open."));
+    assert!(server.contains("Ctrl-C stops the Server."));
+    assert!(!server.contains("Server is running"));
+
+    let runner = foreground_run_banner("Runner");
+    assert!(runner.contains("Starting WebCodex Runner in the foreground."));
+    assert!(runner.contains("Ctrl-C stops the Runner."));
+    assert!(!runner.contains("Runner connected"));
+}
+
+#[test]
 fn common_help_entrypoints_smoke() {
     let cases: &[(&[&str], &[&str])] = &[
         (
             &["--help"],
             &[
                 "Usage: webcodex [COMMAND]",
-                "Start here:",
+                "Full daily setup:",
                 "share",
+                "Quick trial:",
                 "connect",
                 "server init|install|run|start|stop|restart|status|logs|uninstall",
                 "setup single-user",
@@ -179,6 +206,15 @@ fn common_help_entrypoints_smoke() {
                 "install",
                 "run",
                 "uninstall",
+            ],
+        ),
+        (
+            &["runner", "--help"],
+            &[
+                "Usage: webcodex runner <COMMAND>",
+                "Linux systemd Runner service",
+                "foreground (all supported platforms)",
+                "Linux systemd service commands",
             ],
         ),
     ];
@@ -198,21 +234,18 @@ fn common_help_entrypoints_smoke() {
 #[test]
 fn top_level_help_prioritizes_first_run_without_hiding_advanced_commands() {
     let out = cli_exit(["--help"]).unwrap();
-    let start_here = out.find("Start here:").unwrap();
+    let full = out.find("Full daily setup:").unwrap();
+    let server = out.find("server init|install|run").unwrap();
+    let pairing = out.find("pairing create").unwrap();
+    let login = out.find("\nlogin").unwrap();
+    let quick = out.find("Quick trial:").unwrap();
     let share = out.find("\nshare").unwrap();
-    let connect = out.find("\nconnect").unwrap();
-    let operator = out.find("Operator / service management:").unwrap();
-    assert!(start_here < share && share < connect && connect < operator);
+    let advanced = out.find("Operator / advanced:").unwrap();
+    assert!(full < server && server < pairing && pairing < login);
+    assert!(login < quick && quick < share && share < advanced);
     assert!(out.contains("(no command)"));
     assert!(out.contains("Interactive Git repo shortcut for `share` on Linux/macOS"));
-    assert!(
-        out.contains("Share the current project for ChatGPT/MCP over HTTPS (Linux/macOS/Windows)")
-    );
-    assert!(out.contains(
-        "First ChatGPT connection: run explicit `webcodex share` on Linux/macOS/Windows"
-    ));
-    assert!(!out.contains("Windows -> use `webcodex connect <server-url>`"));
-    assert!(!out.contains("historical `agent` namespace"));
+    assert!(out.contains("Temporarily share one project; ends when the command exits"));
     assert!(out.contains("agent-tokens create|"));
 }
 
@@ -441,11 +474,11 @@ fn help_moves_client_enroll_to_advanced_and_keeps_login_as_the_primary_entry() {
                 "help missing client enroll: {stdout}"
             );
             assert!(
-                stdout.contains("Advanced / compatibility"),
-                "help missing Advanced section: {stdout}"
+                stdout.contains("Operator / advanced"),
+                "help missing advanced section: {stdout}"
             );
             // client enroll must sit under the advanced section, after it.
-            let advanced = stdout.find("Advanced / compatibility").unwrap();
+            let advanced = stdout.find("Operator / advanced").unwrap();
             let enroll = stdout.find("client enroll").unwrap();
             assert!(
                 enroll > advanced,

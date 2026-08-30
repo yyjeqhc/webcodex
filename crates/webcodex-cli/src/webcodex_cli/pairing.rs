@@ -88,33 +88,25 @@ fn render_pairing_create_result(
         });
         serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
     } else {
-        let client_id = value["client_id"]
-            .as_str()
-            .filter(|client_id| !client_id.is_empty())
-            .unwrap_or("(unbound; claimed by the login device)");
+        let lifetime = if opts.ttl_secs % 60 == 0 {
+            let minutes = opts.ttl_secs / 60;
+            format!("{minutes} minute{}", if minutes == 1 { "" } else { "s" })
+        } else {
+            format!("{} seconds", opts.ttl_secs)
+        };
         let mut out = String::new();
-        out.push_str("Pairing code created.\n\n");
+        out.push_str("One-time login code created\n\n");
+        out.push_str("Code:\n");
         out.push_str(&format!(
-            "  username:     {}\n",
-            value["username"].as_str().unwrap_or("unknown")
-        ));
-        out.push_str(&format!("  client_id:    {client_id}\n"));
-        out.push_str(&format!(
-            "  expires_at:   {}\n",
-            value["expires_at"]
-                .as_i64()
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "unknown".to_string())
-        ));
-        out.push_str(&format!(
-            "  pairing code: {}\n",
+            "  {}\n",
             value["pairing_code"].as_str().unwrap_or("")
         ));
-        out.push_str(&format!(
-            "\nOn the client, run: {}\n",
-            shell_command(&login_argv)
-        ));
-        out.push_str("No wc_pat_* or wc_agent_* token files were created on the server.\n");
+        out.push_str("\nExpires in:\n");
+        out.push_str(&format!("  {lifetime}\n"));
+        out.push_str("\nUse this code once on the machine that holds your project.\n");
+        out.push_str("\nNext:\n");
+        out.push_str(&format!("  {}\n", shell_command(&login_argv)));
+        out.push_str("\nThis code is not the Server administrator token. Do not copy the Server env file to the project machine.\n");
         Ok(out)
     }
 }
@@ -333,13 +325,24 @@ mod tests {
     #[test]
     fn unbound_pairing_output_uses_login_without_device() {
         let output = render_pairing_create_result(&opts("", false), &response("")).unwrap();
+        assert!(output.contains("One-time login code created"), "{output}");
+        assert!(output.contains("Code:\n  wc_pair_example"), "{output}");
+        assert!(output.contains("Expires in:\n  10 minutes"), "{output}");
         assert!(
-            output.contains(
-                "On the client, run: webcodex login https://example.test --code wc_pair_example"
-            ),
+            output.contains("Use this code once on the machine that holds your project."),
+            "{output}"
+        );
+        assert!(
+            output.contains("webcodex login https://example.test --code wc_pair_example"),
+            "{output}"
+        );
+        assert!(
+            output.contains("not the Server administrator token"),
             "{output}"
         );
         assert!(!output.contains("--device"), "{output}");
+        assert!(!output.contains("wc_pat_"), "{output}");
+        assert!(!output.contains("wc_agent_"), "{output}");
     }
 
     #[test]
@@ -349,7 +352,7 @@ mod tests {
                 .unwrap();
         assert!(
             output.contains(
-                "On the client, run: webcodex login https://example.test --code wc_pair_example --device alice-laptop"
+                "webcodex login https://example.test --code wc_pair_example --device alice-laptop"
             ),
             "{output}"
         );

@@ -269,5 +269,19 @@ mod tests {
         assert!(stdout.contains("webcodex status"));
         assert!(stderr.is_empty());
         assert!(project_entry::usage().contains("--no-copy-url"));
+        let share_help = project_entry::usage();
+        assert!(
+            share_help.contains("`share` is the Quick Trial path"),
+            "{share_help}"
+        );
+        assert!(
+            share_help.contains("ends when the command exits"),
+            "{share_help}"
+        );
+        assert!(share_help.contains("full daily use"), "{share_help}");
+        assert!(
+            !share_help.contains("`share` is the first-run path"),
+            "{share_help}"
+        );
     }
 }

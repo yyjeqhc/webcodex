@@ -193,6 +193,9 @@ async fn server_status_parses_env_token_posts_and_does_not_print_token() {
         .to_ascii_lowercase()
         .contains("authorization: bearer secret-status-token"));
     assert!(!output.contains(token));
+    assert!(output.contains("Server: running"), "{output}");
+    assert!(output.contains("Runners online: 2"), "{output}");
+    assert!(output.contains("runner status"), "{output}");
     assert!(output.contains("HTTP reachable:        yes"));
     assert!(output.contains("auth_enabled:          true"));
     assert!(output.contains("configured_public_url: https://example.test"));
@@ -268,6 +271,11 @@ async fn server_status_connection_failure_reports_unreachable_without_token() {
     let output = run_server_status(opts).await.unwrap();
     handle.join().unwrap();
     assert!(output.contains("HTTP reachable:        no"));
+    assert!(output.contains("Server: unreachable"), "{output}");
+    assert!(
+        output.contains("webcodex server run --env-file"),
+        "{output}"
+    );
     assert!(output.contains("HTTP error:"));
     assert!(!output.contains(token));
 }

@@ -717,7 +717,7 @@ fn share_access_labels(
 
 fn render_openai_share_ready(project_name: &str, tunnel_id: &str) -> String {
     format!(
-        "WebCodex ready\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. Connection: Tunnel\n3. Tunnel: {tunnel_id}\n4. Authentication: No authentication\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nReady for ChatGPT through OpenAI Secure MCP Tunnel.\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: OpenAI Secure MCP Tunnel\nPublic access: no public WebCodex endpoint; outbound-only OpenAI Tunnel transport\nWebCodex authentication: the temporary Bearer credential stays local and is injected by tunnel-client into the private MCP hop. Do not paste it into ChatGPT.\nCredential lifetime: temporary; stopping this share removes the local credential and tunnel-client process. The Platform Tunnel identity remains operator managed.\nPress Ctrl-C to stop sharing."
+        "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. Connection: Tunnel\n3. Tunnel: {tunnel_id}\n4. Authentication: No authentication\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nReady for ChatGPT through OpenAI Secure MCP Tunnel.\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: OpenAI Secure MCP Tunnel\nPublic access: no public WebCodex endpoint; outbound-only OpenAI Tunnel transport\nWebCodex authentication: the temporary Bearer credential stays local and is injected by tunnel-client into the private MCP hop. Do not paste it into ChatGPT.\nCredential lifetime: temporary; stopping this share removes the local credential and tunnel-client process. The Platform Tunnel identity remains operator managed.\nPress Ctrl-C to stop sharing."
     )
 }
 
@@ -740,7 +740,7 @@ fn render_share_ready(
             "1. In ChatGPT Developer Mode, create a custom MCP app."
         };
         return format!(
-            "WebCodex ready\n\nWhat to do next\n{client_step}\n2. MCP URL (sensitive): {endpoint}\n3. Authentication: No authentication\n4. Scan Tools.\n5. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nCredential transport: URL query (`token=`), explicitly opted in for this temporary share only.\nSecurity: treat the entire MCP URL as a secret; query credentials may appear in client, proxy, clipboard, or access logs. Prefer `--auth bearer` when the client supports headers.\nCredential lifetime: temporary; stopping this share removes the accepted credential.\nPress Ctrl-C to stop sharing."
+            "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next\n{client_step}\n2. MCP URL (sensitive): {endpoint}\n3. Authentication: No authentication\n4. Scan Tools.\n5. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nCredential transport: URL query (`token=`), explicitly opted in for this temporary share only.\nSecurity: treat the entire MCP URL as a secret; query credentials may appear in client, proxy, clipboard, or access logs. Prefer `--auth bearer` when the client supports headers.\nCredential lifetime: temporary; stopping this share removes the accepted credential.\nPress Ctrl-C to stop sharing."
         );
     }
     let next_steps = match tunnel {
@@ -765,7 +765,7 @@ fn render_share_ready(
         TunnelProvider::None => "This credential is temporary.",
     };
     format!(
-        "WebCodex ready\n\n{next_steps}\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nCredential lifetime: {lifetime_message}\nPress Ctrl-C to stop sharing."
+        "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\n{next_steps}\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nCredential lifetime: {lifetime_message}\nPress Ctrl-C to stop sharing."
     )
 }
 
@@ -791,7 +791,7 @@ fn render_share_oauth_ready(
         "1. In a local MCP client, create an MCP connection."
     };
     format!(
-        "WebCodex ready\n\nWhat to do next\n{client_step}\n2. MCP URL: {base}/mcp\n3. Authentication: OAuth 2.0 Authorization Code + PKCE S256\n4. Client ID: {}\n5. Client secret: {}\n6. Redirect URI: {}\n7. Scan Tools and complete the WebCodex authorization flow.\n   Project share credential (this share only): {credential}\n   Enter it only on the WebCodex authorization page; do not put it in ChatGPT.\n8. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nAuthorization server: {base}\nOAuth grant lifetime: fenced to this share process; access/refresh grants cannot survive a restart.\nCredential lifetime: {lifetime_message}\nPress Ctrl-C to stop sharing.",
+        "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next\n{client_step}\n2. MCP URL: {base}/mcp\n3. Authentication: OAuth 2.0 Authorization Code + PKCE S256\n4. Client ID: {}\n5. Client secret: {}\n6. Redirect URI: {}\n7. Scan Tools and complete the WebCodex authorization flow.\n   Project share credential (this share only): {credential}\n   Enter it only on the WebCodex authorization page; do not put it in ChatGPT.\n8. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nAuthorization server: {base}\nOAuth grant lifetime: fenced to this share process; access/refresh grants cannot survive a restart.\nCredential lifetime: {lifetime_message}\nPress Ctrl-C to stop sharing.",
         oauth.client_id, oauth.client_secret, oauth.redirect_uri
     )
 }
@@ -1158,7 +1158,9 @@ mod tests {
         );
         assert!(output.contains(temporary));
         assert!(!output.contains(persistent));
-        assert!(output.starts_with("WebCodex ready\n\nWhat to do next"));
+        assert!(output.starts_with(
+            "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next"
+        ));
         assert!(output.contains("https://demo.trycloudflare.com/mcp"));
         assert!(output.contains("Authentication: Bearer token"));
         assert!(output.contains("Scan Tools"));
@@ -1202,6 +1204,8 @@ mod tests {
         assert!(output.contains("Add this MCP endpoint to a local MCP client"));
         assert!(!output.contains("Ready for ChatGPT"));
         assert!(!output.contains("In ChatGPT Developer Mode"));
+        assert!(output.contains("Temporary share"));
+        assert!(output.contains("This session ends when this command exits."));
         assert!(!output.contains("tunneled URL"));
     }
 
@@ -1213,6 +1217,8 @@ mod tests {
         assert!(output.contains("tunnel_0123456789abcdef0123456789abcdef"));
         assert!(output.contains("temporary Bearer credential stays local"));
         assert!(output.contains("Do not paste it into ChatGPT"));
+        assert!(output.contains("Temporary share"));
+        assert!(output.contains("This session ends when this command exits."));
         assert!(!output.contains("Credential (this share only)"));
         assert!(!output.contains("MCP URL:"));
     }
@@ -1237,7 +1243,9 @@ mod tests {
         assert!(output.contains("wc_client_test"));
         assert!(output.contains("wc_csec_test"));
         assert!(output.contains("webcodex_temporary-print-once"));
-        assert!(output.starts_with("WebCodex ready\n\nWhat to do next"));
+        assert!(output.starts_with(
+            "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next"
+        ));
         assert!(output.contains("Project share credential (this share only)"));
         assert!(output.find("MCP URL:").unwrap() < output.find("Details").unwrap());
         assert!(output.contains("fenced to this share process"));

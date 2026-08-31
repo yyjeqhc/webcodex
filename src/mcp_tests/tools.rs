@@ -143,7 +143,7 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             assert!(ack_description.contains("Repeat while retained"));
             assert!(ack_description.contains("If later omitted"));
             assert!(ack_description.contains("neither resolves messages nor grants authority"));
-            assert!(!properties.contains_key(MCP_RESERVED_SESSION_ID_FIELD));
+            assert!(!properties.contains_key("_session_id"));
         }
         // Exercise the real env adapter, not just the pure renderer: compact
         // must change outputSchema shape while preserving the common fields.
@@ -156,7 +156,7 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             let properties = tool["inputSchema"]["properties"].as_object().unwrap();
             assert!(!properties
                 .contains_key(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD));
-            assert!(!properties.contains_key(MCP_RESERVED_SESSION_ID_FIELD));
+            assert!(!properties.contains_key("_session_id"));
             if compact {
                 assert!(
                     tool.get("outputSchema").is_none(),
@@ -1591,47 +1591,42 @@ async fn mcp_tools_call_list_projects_returns_content_blocks() {
 }
 
 #[tokio::test]
-async fn mcp_tools_call_strips_reserved_session_id_before_dispatch() {
+async fn mcp_tools_call_rejects_legacy_reserved_session_id_before_dispatch() {
     let runtime = test_runtime();
-    let session = runtime
-        .sessions
-        .start_session(Some("demo".to_string()), Some("mcp strip".to_string()));
+    let session = runtime.sessions.start_session(
+        Some("demo".to_string()),
+        Some("legacy recorder".to_string()),
+    );
     let outcome = handle_mcp_request(
         &runtime,
         rpc(
             "tools/call",
             Some(Value::from(32)),
-            json!({
+            mcp_2026_params(json!({
                 "name": "list_projects",
-                "arguments": {
-                    MCP_RESERVED_SESSION_ID_FIELD: &session.session_id
-                }
-            }),
+                "arguments": {"_session_id": &session.session_id}
+            })),
         ),
         None,
     )
     .await;
-    match outcome {
-        McpOutcome::Ok(_) => {}
-        other => panic!("expected Ok, got {:?}", other),
-    }
-    let summary = runtime
-        .sessions
-        .summary(&session.session_id, Some(10))
-        .unwrap();
-    assert_eq!(summary.counts.tool_calls, 1);
-    let started = summary
-        .events
-        .iter()
-        .find(|event| event.kind == "tool_call_started")
-        .unwrap();
-    assert_eq!(started.transport, "mcp");
-    assert_eq!(started.tool_name, "list_projects");
-    assert!(
-        !serde_json::to_string(&started.input_summary)
+    let value = match outcome {
+        McpOutcome::BadRequest(value) => value,
+        other => panic!("expected invalid-params BadRequest, got {other:?}"),
+    };
+    assert_eq!(value["error"]["code"], -32602);
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(message.contains("_session_id"));
+    assert!(message.contains("no longer supported"));
+    assert!(message.contains("recording_session_id"));
+    assert_eq!(
+        runtime
+            .sessions
+            .summary(&session.session_id, Some(10))
             .unwrap()
-            .contains(MCP_RESERVED_SESSION_ID_FIELD),
-        "_session_id must be stripped before recording/dispatch"
+            .counts
+            .tool_calls,
+        0
     );
 }
 
@@ -1716,14 +1711,11 @@ async fn stateless_mcp_ack_wrapper_is_removed_before_concrete_dispatch_and_is_re
 }
 
 #[tokio::test]
-async fn mcp_tools_call_rejects_conflicting_recorder_metadata_before_dispatch() {
+async fn mcp_tools_call_rejects_legacy_session_alias_even_with_canonical_recorder() {
     let runtime = test_runtime();
     let canonical = runtime
         .sessions
         .start_session(None, Some("canonical recorder".to_string()));
-    let legacy = runtime
-        .sessions
-        .start_session(None, Some("legacy recorder".to_string()));
 
     let outcome = handle_mcp_request(
         &runtime,
@@ -1734,7 +1726,7 @@ async fn mcp_tools_call_rejects_conflicting_recorder_metadata_before_dispatch() 
                 "name": "list_projects",
                 "arguments": {
                     crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &canonical.session_id,
-                    MCP_RESERVED_SESSION_ID_FIELD: &legacy.session_id
+                    "_session_id": &canonical.session_id
                 }
             })),
         ),
@@ -1748,15 +1740,22 @@ async fn mcp_tools_call_rejects_conflicting_recorder_metadata_before_dispatch() 
     assert_eq!(value["error"]["code"], -32602);
     assert!(value["error"]["message"]
         .as_str()
-        .is_some_and(|message| message.contains("must identify the same Workflow Session")));
-    for session_id in [&canonical.session_id, &legacy.session_id] {
-        let summary = runtime.sessions.summary(session_id, Some(10)).unwrap();
-        assert_eq!(summary.counts.tool_calls, 0);
-    }
+        .is_some_and(
+            |message| message.contains("_session_id") && message.contains("no longer supported")
+        ));
+    assert_eq!(
+        runtime
+            .sessions
+            .summary(&canonical.session_id, Some(10))
+            .unwrap()
+            .counts
+            .tool_calls,
+        0
+    );
 }
 
 #[tokio::test]
-async fn mcp_tools_call_records_event_with_session_id() {
+async fn mcp_tools_call_records_event_with_recording_session_id() {
     let runtime = test_runtime();
     let session = runtime.sessions.start_session(None, None);
     let outcome = handle_mcp_request(
@@ -1764,12 +1763,12 @@ async fn mcp_tools_call_records_event_with_session_id() {
         rpc(
             "tools/call",
             Some(Value::from(33)),
-            json!({
+            mcp_2026_params(json!({
                 "name": "list_projects",
                 "arguments": {
-                    MCP_RESERVED_SESSION_ID_FIELD: &session.session_id
+                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &session.session_id
                 }
-            }),
+            })),
         ),
         None,
     )
@@ -1777,10 +1776,6 @@ async fn mcp_tools_call_records_event_with_session_id() {
     match outcome {
         McpOutcome::Ok(value) => {
             assert_eq!(value["result"]["structuredContent"]["success"], true);
-            let output = &value["result"]["structuredContent"]["output"];
-            assert!(output.get("session_context_revision").is_none());
-            assert!(output.get("session_continuity").is_none());
-            assert!(output.get("session_recovery").is_none());
         }
         other => panic!("expected Ok, got {:?}", other),
     }
@@ -1840,16 +1835,16 @@ async fn mcp_tools_list_hides_testing_metadata_while_raw_call_records_it() {
         rpc(
             "tools/call",
             Some(Value::from(331)),
-            json!({
+            mcp_2026_params(json!({
                 "name": "job_status",
                 "arguments": {
-                    MCP_RESERVED_SESSION_ID_FIELD: &session.session_id,
+                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &session.session_id,
                     "job_id": "missing-job",
                     "expected_failure": true,
                     "expected_failure_kind": "job_not_found",
                     "assertion_name": "mcp hidden metadata compatibility"
                 }
-            }),
+            })),
         ),
         None,
     )
@@ -1890,7 +1885,7 @@ async fn mcp_tools_list_hides_testing_metadata_while_raw_call_records_it() {
 }
 
 #[tokio::test]
-async fn mcp_show_changes_distinguishes_reserved_session_id_from_query_session_id() {
+async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_id() {
     use crate::shell_protocol::{
         ShellAgentProjectSummary, ShellAgentResultRequest, ShellClientCapabilities,
         ShellClientRegisterRequest,
@@ -1968,15 +1963,15 @@ async fn mcp_show_changes_distinguishes_reserved_session_id_from_query_session_i
         rpc(
             "tools/call",
             Some(Value::from(34)),
-            json!({
+            mcp_2026_params(json!({
                 "name": "show_changes",
                 "arguments": {
-                    MCP_RESERVED_SESSION_ID_FIELD: &tracking_session.session_id,
+                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &tracking_session.session_id,
                     "project": project,
                     "session_id": &query_session.session_id,
                     "include_diff": false
                 }
-            }),
+            })),
         ),
         Some(&auth),
     );

@@ -23,7 +23,6 @@ use crate::tool_runtime::{registered_tool_specs, ToolRuntime, ToolSpec};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-pub(super) const MCP_RESERVED_SESSION_ID_FIELD: &str = "_session_id";
 pub(super) const ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME: &str = "call_runtime_tool";
 
 fn filter_specs_for_oauth(mut specs: Vec<ToolSpec>, auth: Option<&AuthContext>) -> Vec<ToolSpec> {
@@ -159,7 +158,7 @@ fn unwrap_adaptive_runtime_gateway_arguments(
         "adaptive runtime gateway field 'arguments' must be an object".to_string()
     })?;
 
-    let mut allowed_wrapper_fields = vec![MCP_RESERVED_SESSION_ID_FIELD];
+    let mut allowed_wrapper_fields = Vec::new();
     if stateless_2026 {
         allowed_wrapper_fields.extend([
             crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
@@ -462,7 +461,7 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, _app_enabled: bool) -> 
                 "as_image".to_string(),
                 json!({
                     "type": "boolean",
-                    "description": "MCP-only. When true, read one complete PNG, JPEG, or WebP up to 1 MiB and return it as native image content. Cannot be combined with offset, length, or max_bytes."
+                    "description": "MCP-only. When true, read one complete PNG, JPEG, or WebP up to 1 MiB and return it as native image content. Cannot be combined with offset or length."
                 }),
             );
         }
@@ -807,16 +806,17 @@ fn log_mcp_host_file_import_trust_decision(
     );
 }
 
-pub(super) fn strip_reserved_session_id(arguments: &mut Value) -> Result<Option<String>, String> {
+pub(super) fn strip_recording_session_id(arguments: &mut Value) -> Result<Option<String>, String> {
     let Some(object) = arguments.as_object_mut() else {
         return Ok(None);
     };
-    let canonical =
-        object.remove(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD);
-    let legacy = object.remove(MCP_RESERVED_SESSION_ID_FIELD);
-
-    let canonical = match canonical {
-        None => None,
+    if object.contains_key("_session_id") {
+        return Err(
+            "field '_session_id' is no longer supported; use 'recording_session_id'".to_string(),
+        );
+    }
+    match object.remove(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD) {
+        None => Ok(None),
         Some(Value::String(value)) => {
             let value = value.trim();
             if value.is_empty() {
@@ -825,30 +825,13 @@ pub(super) fn strip_reserved_session_id(arguments: &mut Value) -> Result<Option<
                     crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD
                 ));
             }
-            Some(value.to_string())
+            Ok(Some(value.to_string()))
         }
-        Some(_) => {
-            return Err(format!(
-                "field '{}' must be a non-empty string",
-                crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD
-            ));
-        }
-    };
-    let legacy = legacy
-        .and_then(|value| value.as_str().map(str::to_string))
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-
-    if let (Some(canonical), Some(legacy)) = (&canonical, &legacy) {
-        if canonical != legacy {
-            return Err(format!(
-                "fields '{}' and '{}' must identify the same Workflow Session when both are provided",
-                crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
-                MCP_RESERVED_SESSION_ID_FIELD
-            ));
-        }
+        Some(_) => Err(format!(
+            "field '{}' must be a non-empty string",
+            crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD
+        )),
     }
-    Ok(canonical.or(legacy))
 }
 
 pub(super) fn strip_stateless_ack_session_message_ids(
@@ -1235,7 +1218,7 @@ pub(super) async fn handle_call(
             },
         ));
     }
-    let session_id = match strip_reserved_session_id(&mut params.arguments) {
+    let session_id = match strip_recording_session_id(&mut params.arguments) {
         Ok(session_id) => session_id,
         Err(message) => {
             if let Some(lc) = lifecycle.as_deref() {

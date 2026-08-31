@@ -197,7 +197,6 @@ async fn read_project_artifact_routes_to_agent_file_op() {
                     Some(5),
                     Some(7),
                     None,
-                    None,
                 )
                 .await
         }
@@ -257,7 +256,6 @@ async fn read_project_artifact_mcp_image_routes_complete_bounded_remote_read() {
                 .read_project_artifact(
                     project,
                     "docs/images/remote.png".to_string(),
-                    None,
                     None,
                     None,
                     None,
@@ -329,7 +327,6 @@ async fn read_project_artifact_mcp_image_rejects_untrusted_remote_mime() {
                     None,
                     None,
                     None,
-                    None,
                     Some(true),
                 )
                 .await
@@ -384,7 +381,6 @@ async fn read_project_artifact_image_mode_is_rejected_outside_mcp() {
                 encoding: None,
                 offset: None,
                 length: None,
-                max_bytes: None,
                 as_image: Some(true),
             },
             SessionTransport::Api,
@@ -619,7 +615,6 @@ async fn project_artifact_tools_require_file_capabilities() {
                 encoding: None,
                 offset: None,
                 length: None,
-                max_bytes: None,
                 as_image: None,
             },
             Some(&bootstrap),

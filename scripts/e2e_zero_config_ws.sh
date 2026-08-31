@@ -1294,12 +1294,12 @@ else
     fail "callRuntimeTool(list_tools) params null failed (body: ${body:0:300})"
 fi
 
-# callRuntimeTool: arguments alias -> list_tools succeeds.
+# callRuntimeTool: retired arguments envelope is rejected; use params or flattened fields.
 body="$(api_post /api/tools/call '{"tool":"list_tools","arguments":null}')"
-if printf '%s' "$body" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("success") is True else 1)'; then
-    pass "callRuntimeTool(list_tools) arguments alias succeeds"
+if printf '%s' "$body" | python3 -c 'import json,sys; body=json.load(sys.stdin); err=str(body.get("error", "")); sys.exit(0 if body.get("success") is False and "arguments" in err and "no longer supported" in err else 1)'; then
+    pass "callRuntimeTool(list_tools) rejects retired arguments envelope"
 else
-    fail "callRuntimeTool(list_tools) arguments alias failed (body: ${body:0:300})"
+    fail "callRuntimeTool(list_tools) accepted retired arguments envelope (body: ${body:0:300})"
 fi
 
 # callRuntimeTool: git_diff_summary against the agent project succeeds.

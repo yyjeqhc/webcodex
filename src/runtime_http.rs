@@ -9,8 +9,8 @@ use crate::tool_runtime::kernel::{
 use crate::tool_runtime::model_ergonomics_telemetry::ModelErgonomicsCompletion;
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::{
-    ListToolsOptions, ToolCall, ToolRuntime, TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD,
-    TOOL_CALL_TOOL_FIELD, TOOL_CALL_WRAPPER_FIELDS,
+    ListToolsOptions, ToolCall, ToolRuntime, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
+    TOOL_CALL_WRAPPER_FIELDS,
 };
 use salvo::prelude::*;
 use serde_json::{json, Value};
@@ -455,19 +455,18 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
 /// - `{"tool":"list_tools"}`
 /// - `{"tool":"list_tools","params":null}`
 /// - `{"tool":"git_diff_summary","params":{"project":"agent:c:p"}}`
-/// - `{"tool":"git_diff_summary","arguments":{"project":"agent:c:p"}}`
 /// - `{"tool":"git_diff_summary","project":"agent:c:p"}`
 /// - `{"tool":"git_status","project":"agent:c:p","recording_session_id":"wc_sess_..."}`
 ///
-/// When both non-null `params` and `arguments` are present, `params` wins;
-/// `arguments` is only a compatibility alias. Null wrappers are treated as
-/// absent. When neither non-null wrapper is present, every top-level field
-/// except `tool` and reserved metadata like `recording_session_id` is collected
-/// into the params object for GPT Action compatibility. Top-level `session_id`
-/// is not reserved here; it remains a normal flattened tool argument for tools
-/// such as `session_summary`. Returns a human-readable error string (never
-/// including the raw body) when the body is not a JSON object or `tool` is
-/// missing/not a non-empty string.
+/// Non-null `params` take precedence over flattened GPT Action fields. A null
+/// `params` wrapper is treated as absent. When `params` is absent/null, every
+/// top-level field except `tool` and reserved metadata like
+/// `recording_session_id` is collected into the params object for GPT Action
+/// compatibility. The retired `arguments` wrapper is rejected explicitly.
+/// Top-level `session_id` is not reserved here; it remains a normal flattened
+/// tool argument for tools such as `session_summary`. Returns a human-readable
+/// error string (never including the raw body) when the body is not a JSON
+/// object or `tool` is missing/not a non-empty string.
 fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
     let obj = body
         .as_object()
@@ -485,8 +484,10 @@ fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
             return Err(format!("missing required field '{TOOL_CALL_TOOL_FIELD}'"));
         }
     };
-    // Non-null params take precedence over the `arguments` alias; flattened
-    // GPT Action fields are collected when neither wrapper has a value. Some
+    if obj.contains_key("arguments") {
+        return Err("field 'arguments' is no longer supported; use 'params' or flattened top-level tool arguments".to_string());
+    }
+    // Non-null params take precedence over flattened GPT Action fields. Some
     // Action runtimes emit optional object properties as explicit nulls, which
     // must not erase valid flattened tool arguments.
     let params = if let Some(params) = obj
@@ -494,11 +495,6 @@ fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
         .filter(|params| !params.is_null())
     {
         params.clone()
-    } else if let Some(arguments) = obj
-        .get(TOOL_CALL_ARGUMENTS_FIELD)
-        .filter(|arguments| !arguments.is_null())
-    {
-        arguments.clone()
     } else {
         let mut flattened = serde_json::Map::new();
         for (key, value) in obj {

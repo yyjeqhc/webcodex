@@ -899,7 +899,6 @@ pub(super) async fn mcp_artifact_export_read_legacy_chunk(
                     "encoding": "base64",
                     "offset": offset,
                     "length": length,
-                    "max_bytes": length,
                 }),
             },
             ToolCallContext {

@@ -140,7 +140,7 @@ pub(crate) fn permission_summary_from_events(events: &[SessionEvent], limit: usi
     let mut events_total = 0usize;
     let mut required_count = 0usize;
     let mut auto_approved_count = 0usize;
-    let mut approved_count = 0usize;
+    let mut manual_approved_count = 0usize;
     let mut denied_count = 0usize;
     let mut pending_count = 0usize;
     let mut hard_denied_count = 0usize;
@@ -159,7 +159,7 @@ pub(crate) fn permission_summary_from_events(events: &[SessionEvent], limit: usi
         }
         match permission.status.as_str() {
             "auto_approved" => auto_approved_count += 1,
-            "approved" => approved_count += 1,
+            "approved" => manual_approved_count += 1,
             "denied" | "expired" => denied_count += 1,
             "requested" => pending_count += 1,
             "hard_denied" => hard_denied_count += 1,
@@ -175,7 +175,6 @@ pub(crate) fn permission_summary_from_events(events: &[SessionEvent], limit: usi
         }
     }
 
-    let manual_approved_count = approved_count;
     let total_approved_count = manual_approved_count + auto_approved_count;
     let config = EffectiveAuthorityConfig::from_env();
 
@@ -186,7 +185,6 @@ pub(crate) fn permission_summary_from_events(events: &[SessionEvent], limit: usi
         "auto_approved_count": auto_approved_count,
         "manual_approved_count": manual_approved_count,
         "total_approved_count": total_approved_count,
-        "approved_count": approved_count,
         "denied_count": denied_count,
         "pending_count": pending_count,
         "hard_denied_count": hard_denied_count,

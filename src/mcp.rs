@@ -70,7 +70,6 @@ use tools::{
     strip_stateless_ack_session_context_revision, strip_stateless_ack_session_message_ids,
     strip_stateless_context_request, strip_stateless_session_message_resolution,
     take_last_mcp_host_file_import_trust_decision, HostFileImportTrustReason, McpToolCallParams,
-    MCP_RESERVED_SESSION_ID_FIELD,
 };
 
 /// Hard upper bound on a single MCP JSON-RPC dispatch, applied in `mcp_post`.

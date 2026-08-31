@@ -1014,30 +1014,20 @@ fn openapi_call_runtime_tool_params_is_explicit_object() {
 }
 
 #[test]
-fn openapi_call_runtime_tool_documents_arguments_alias() {
-    // Phase 2: ToolCallRequest must document the `arguments` compatibility
-    // alias and state that `params` wins. Both must be object-typed.
+fn openapi_call_runtime_tool_exposes_only_canonical_params_envelope() {
     let spec = build_openapi_spec();
     let properties = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
         .as_object()
         .unwrap();
+    assert!(properties.contains_key(TOOL_CALL_PARAMS_FIELD));
     assert!(
-        properties.contains_key(TOOL_CALL_ARGUMENTS_FIELD),
-        "ToolCallRequest must declare an `arguments` alias property"
+        !properties.contains_key("arguments"),
+        "retired arguments alias must not remain in ToolCallRequest"
     );
-    let arguments = &properties[TOOL_CALL_ARGUMENTS_FIELD];
-    assert_eq!(arguments["type"], "object", "arguments must be type object");
-    assert_eq!(arguments["nullable"], true, "arguments must allow null");
-    assert_eq!(
-        arguments["additionalProperties"], true,
-        "arguments must allow arbitrary object properties"
-    );
-    let desc_blob =
-        serde_json::to_string(&spec["components"]["schemas"]["ToolCallRequest"]).unwrap();
-    assert!(
-        desc_blob.contains("params") && desc_blob.contains("precedence"),
-        "ToolCallRequest description must document params precedence over arguments"
-    );
+    let params = &properties[TOOL_CALL_PARAMS_FIELD];
+    assert_eq!(params["type"], "object");
+    assert_eq!(params["nullable"], true);
+    assert_eq!(params["additionalProperties"], true);
 }
 
 #[test]
@@ -1064,7 +1054,7 @@ fn openapi_call_runtime_tool_declares_flattened_action_fields() {
     }
 
     assert!(properties.contains_key(TOOL_CALL_PARAMS_FIELD));
-    assert!(properties.contains_key(TOOL_CALL_ARGUMENTS_FIELD));
+    assert!(!properties.contains_key("arguments"));
     assert!(
         !properties.contains_key("allow_cross_project_session"),
         "ToolCallRequest must not publish the cross-project debug escape as a flattened Action field"
@@ -1087,8 +1077,10 @@ fn openapi_call_runtime_tool_declares_flattened_action_fields() {
 
     let desc_blob = serde_json::to_string(tool_call).unwrap();
     assert!(
-        desc_blob.contains("top-level fields") && desc_blob.contains("params/arguments"),
-        "ToolCallRequest must document flattened GPT Action compatibility"
+        desc_blob.contains("top-level fields")
+            && desc_blob.contains("canonical direct/non-Action argument envelope")
+            && desc_blob.contains("retired `arguments` wrapper is rejected"),
+        "ToolCallRequest must document flattened GPT Action compatibility and the canonical params envelope"
     );
 }
 
@@ -1549,30 +1541,31 @@ fn openapi_work_on_project_example_keeps_first_use_projection_defaults() {
 }
 
 #[test]
-fn openapi_call_runtime_tool_examples_cover_alias_and_no_params() {
-    // Phase 2: callRuntimeTool examples should demonstrate the arguments
-    // alias and the argument-less (params omitted) shapes so a custom GPT
-    // has concrete templates for both.
+fn openapi_call_runtime_tool_examples_cover_params_and_no_params_without_retired_alias() {
     let spec = build_openapi_spec();
     let examples = &spec["paths"]["/api/tools/call"]["post"]["requestBody"]["content"]
         ["application/json"]["examples"];
-    let keys: Vec<&str> = examples
+    let values = examples
         .as_object()
         .unwrap()
-        .keys()
-        .map(|k| k.as_str())
-        .collect();
+        .values()
+        .map(|example| &example["value"])
+        .collect::<Vec<_>>();
     assert!(
-        keys.iter()
-            .any(|k| examples[*k]["value"]["arguments"].is_object()),
-        "callRuntimeTool examples should include an arguments-alias variant"
+        values.iter().all(|value| value.get("arguments").is_none()),
+        "callRuntimeTool examples must not advertise the retired arguments alias"
     );
     assert!(
-        keys.iter().any(|k| {
-            let v = &examples[*k]["value"];
-            v["tool"].as_str() == Some("list_tools") && v.get("params").is_none()
+        values
+            .iter()
+            .any(|value| value.get("params").is_some_and(|params| params.is_object())),
+        "callRuntimeTool examples should include the canonical params envelope"
+    );
+    assert!(
+        values.iter().any(|value| {
+            value["tool"].as_str() == Some("list_tools") && value.get("params").is_none()
         }),
-        "callRuntimeTool examples should include an argument-less variant"
+        "callRuntimeTool examples should include an argument-less flattened variant"
     );
 }
 

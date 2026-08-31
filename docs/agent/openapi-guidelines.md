@@ -97,8 +97,8 @@ failures. `policy_rejected` means policy blocked the request before a write.
 
 ## 6. Flattened Action fields
 
-- GPT Actions should prefer **flattened top-level fields** over `params` /
-  `arguments`.
+- GPT Actions should prefer **flattened top-level fields** over the direct
+  `params` envelope.
 - Use `recording_session_id` for generic wrapper recorder metadata.
 - Use `session_id` as tool business input.
 - When a **model-visible** runtime tool is expected to work through GPT Action
@@ -108,7 +108,7 @@ failures. `policy_rejected` means policy blocked the request before a write.
   `checkpoint_id`, `confirm`, `dry_run`, `include_untracked`, and
   `include_diff_stat`). Hidden direct/API compatibility tools remain out-of-band
   parser/dispatch contracts and must not contribute flattened model fields;
-  explicit direct callers should prefer `params` or `arguments`, while any
+  explicit direct callers should use the canonical `params` envelope, while any
   retained historical flattened form stays a runtime compatibility detail only.
 - Add/update tests that fail when flattened Action fields are missing.
 - Do **not** loosen `additionalProperties` to `true` as a workaround — list the

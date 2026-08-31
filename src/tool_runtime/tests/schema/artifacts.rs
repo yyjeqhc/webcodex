@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn read_project_artifact_uses_only_canonical_length_bound() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "read_project_artifact");
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert!(props.contains_key("length"));
+    assert!(
+        !props.contains_key("max_bytes"),
+        "read_project_artifact must not advertise the retired max_bytes alias"
+    );
+
+    let error = ToolCall::from_tool_name(
+        "read_project_artifact",
+        json!({"project": "agent:test:demo", "path": "artifact.bin", "max_bytes": 32}),
+    )
+    .unwrap_err();
+    assert!(error.contains("max_bytes"));
+    assert!(error.contains("no longer supported"));
+    assert!(error.contains("length"));
+}
+
+#[test]
 fn read_project_artifact_metadata_schema_exposes_allow_missing() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "read_project_artifact_metadata");

@@ -1400,7 +1400,6 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     assert_eq!(result.output["permissions"]["required_count"], 0);
     assert_eq!(result.output["permissions"]["auto_approved_count"], 0);
     assert_eq!(result.output["permissions"]["manual_approved_count"], 0);
-    assert_eq!(result.output["permissions"]["approved_count"], 0);
     assert_eq!(result.output["permissions"]["total_approved_count"], 0);
     assert!(result.output["permissions"]["recent"]
         .as_array()

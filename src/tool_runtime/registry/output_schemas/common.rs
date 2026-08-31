@@ -174,7 +174,6 @@ pub(crate) fn permission_summary_schema(description: &str) -> Value {
             "policy": schema_type("string", "Effective permission policy."),
             "events_total": schema_type("integer", "Permission-bearing ledger events counted."),
             "required_count": schema_type("integer", "Permission decisions that required approval handling."),
-            "approved_count": schema_type("integer", "Compatibility alias for manual_approved_count."),
             "manual_approved_count": schema_type("integer", "Manually approved decisions."),
             "auto_approved_count": schema_type("integer", "Automatically approved decisions."),
             "total_approved_count": schema_type("integer", "manual_approved_count plus auto_approved_count."),

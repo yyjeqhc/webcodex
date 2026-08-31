@@ -648,8 +648,7 @@ async fn http_tools_call_full_trace_captures_raw_effective_and_final_payloads() 
     let (_tmp, service) = phase2_service();
     let request = json!({
         "tool": "list_tools",
-        "params": {},
-        "arguments": {"raw_only_marker": "client-wrapper-evidence"}
+        "params": {}
     });
     let (status, response) = http_tool_call(&service, request.clone()).await;
     assert_eq!(status, StatusCode::OK, "{response}");
@@ -902,51 +901,56 @@ async fn http_start_coding_task_default_response_is_standard() {
 }
 
 #[tokio::test]
-async fn http_hidden_start_coding_task_keeps_params_and_arguments_advanced_compatibility() {
+async fn http_hidden_start_coding_task_uses_only_canonical_params_envelope() {
     let _compact = ActionCompactEnvGuard::disabled();
-    for wrapper in ["params", "arguments"] {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let (runtime, registry) = register_import_agent_with_capabilities(
-            tmp_proj.path(),
-            Some(crate::shell_protocol::ShellClientCapabilities {
-                shell: true,
-                file_read: true,
-                file_write: true,
-                git: true,
-                ..Default::default()
-            }),
-        )
-        .await;
-        let executor = spawn_startup_agent_executor(registry);
-        let service = Service::new(build_projects_router(config, db, runtime));
-        let advanced = json!({
-            "project": "agent:importer:demo",
-            "mode": "read_only",
-            "detail": "minimal"
-        });
-        let body = if wrapper == "params" {
-            json!({"tool": "start_coding_task", "params": advanced})
-        } else {
-            json!({"tool": "start_coding_task", "arguments": advanced})
-        };
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let tmp_proj = tempfile::tempdir().unwrap();
+    let (runtime, registry) = register_import_agent_with_capabilities(
+        tmp_proj.path(),
+        Some(crate::shell_protocol::ShellClientCapabilities {
+            shell: true,
+            file_read: true,
+            file_write: true,
+            git: true,
+            ..Default::default()
+        }),
+    )
+    .await;
+    let executor = spawn_startup_agent_executor(registry);
+    let service = Service::new(build_projects_router(config, db, runtime));
+    let advanced = json!({
+        "project": "agent:importer:demo",
+        "mode": "read_only",
+        "detail": "minimal"
+    });
 
-        let mut resp = TestClient::post("http://localhost/api/tools/call")
-            .bearer_auth("secret")
-            .json(&body)
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::OK, "{wrapper}: {body}");
-        let output: Value = resp.take_json().await.unwrap();
-        assert_eq!(output["success"], true, "{wrapper}: {output}");
-        assert_eq!(output["output"]["detail"], "minimal");
-        assert_eq!(output["output"]["session"]["mode"], "read_only");
-        assert!(output["output"]["session"]["session_id"]
-            .as_str()
-            .is_some_and(|id| id.starts_with("wc_sess_")));
-        executor.abort();
-    }
+    let mut resp = TestClient::post("http://localhost/api/tools/call")
+        .bearer_auth("secret")
+        .json(&json!({"tool": "start_coding_task", "params": advanced.clone()}))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::OK);
+    let output: Value = resp.take_json().await.unwrap();
+    assert_eq!(output["success"], true, "{output}");
+    assert_eq!(output["output"]["detail"], "minimal");
+    assert_eq!(output["output"]["session"]["mode"], "read_only");
+    assert!(output["output"]["session"]["session_id"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("wc_sess_")));
+
+    let mut rejected = TestClient::post("http://localhost/api/tools/call")
+        .bearer_auth("secret")
+        .json(&json!({"tool": "start_coding_task", "arguments": advanced}))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&rejected), StatusCode::BAD_REQUEST);
+    let rejected: Value = rejected.take_json().await.unwrap();
+    let error = rejected["error"].as_str().unwrap();
+    assert!(error.contains("arguments"));
+    assert!(error.contains("no longer supported"));
+    assert!(error.contains("params"));
+    executor.abort();
 }
 
 #[tokio::test]
@@ -1116,16 +1120,18 @@ fn extract_tool_call_params_precede_flattened_fields() {
 }
 
 #[test]
-fn extract_tool_call_arguments_precede_flattened_fields_without_params() {
-    let (tool, params) = extract_tool_call(&json!({
-        "tool": "git_status",
-        "project": "wrong",
-        "arguments": {"project": "right"},
-    }))
-    .unwrap();
-
-    assert_eq!(tool, "git_status");
-    assert_eq!(params, json!({"project": "right"}));
+fn extract_tool_call_rejects_retired_arguments_envelope() {
+    for arguments in [json!(null), json!({"project": "right"})] {
+        let error = extract_tool_call(&json!({
+            "tool": "git_status",
+            "project": "flattened",
+            "arguments": arguments,
+        }))
+        .unwrap_err();
+        assert!(error.contains("arguments"));
+        assert!(error.contains("no longer supported"));
+        assert!(error.contains("params"));
+    }
 }
 
 #[test]
@@ -1419,19 +1425,24 @@ async fn http_tools_call_rejects_malformed_and_unknown_request_matrix() {
 }
 
 #[tokio::test]
-async fn http_tools_call_accepts_omitted_null_and_alias_params() {
-    // Wrapper compatibility is HTTP-owned; ToolRuntime owns list_tools parsing.
+async fn http_tools_call_accepts_omitted_and_null_params_but_rejects_arguments_alias() {
     let (_tmp, service) = phase2_service();
     for request in [
         json!({"tool": "list_tools"}),
         json!({"tool": "list_tools", "params": null}),
-        json!({"tool": "list_tools", "arguments": null}),
     ] {
         let (status, body) = http_tool_call(&service, request.clone()).await;
         assert_eq!(status, StatusCode::OK, "request: {request}");
         assert_eq!(body["success"], true, "request: {request}");
         assert!(body["output"]["tools"].is_array(), "request: {request}");
     }
+
+    let request = json!({"tool": "list_tools", "arguments": null});
+    let (status, body) = http_tool_call(&service, request).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let error = body["error"].as_str().unwrap();
+    assert!(error.contains("arguments"));
+    assert!(error.contains("no longer supported"));
 }
 
 #[tokio::test]
@@ -1843,23 +1854,23 @@ async fn session_summary_bounds_event_limit() {
 }
 
 #[tokio::test]
-async fn http_tools_call_params_wins_over_arguments() {
-    // `params` precedence is an HTTP wrapper contract; ToolRuntime owns the tool semantics.
+async fn http_tools_call_rejects_arguments_even_when_params_are_present() {
     let (_tmp, service) = phase2_service();
     let (status, body) = http_tool_call(
         &service,
         json!({
             "tool": "git_diff_summary",
-            "params": {"project": "agent:params-wins:p"},
-            "arguments": {"project": "agent:arguments-loses:p"},
+            "params": {"project": "agent:canonical:p"},
+            "arguments": {"project": "agent:retired:p"},
         }),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["success"], false);
     let error = body["error"].as_str().unwrap();
-    assert!(error.contains("params-wins"), "{error}");
-    assert!(!error.contains("arguments-loses"), "{error}");
+    assert!(error.contains("arguments"), "{error}");
+    assert!(error.contains("no longer supported"), "{error}");
+    assert!(!error.contains("agent:canonical:p"), "{error}");
+    assert!(!error.contains("agent:retired:p"), "{error}");
 }
 
 #[tokio::test]

@@ -1965,13 +1965,16 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
 fn assert_permission_summary_schema_fields(schema: &Value) {
     let props = schema["properties"].as_object().unwrap();
     for field in [
-        "approved_count",
         "manual_approved_count",
         "auto_approved_count",
         "total_approved_count",
     ] {
         assert!(props.contains_key(field), "permissions missing {field}");
     }
+    assert!(
+        !props.contains_key("approved_count"),
+        "permission schema must not retain the approved_count compatibility alias"
+    );
 }
 
 fn assert_job_lifecycle_summary_schema_fields(schema: &Value) {

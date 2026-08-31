@@ -227,8 +227,8 @@ fn openapi_generic_call_runtime_tool_schema_remains_strict_model_visible_surface
         "ToolCallRequest.properties must keep params for non-Action clients"
     );
     assert!(
-        properties.contains_key(TOOL_CALL_ARGUMENTS_FIELD),
-        "ToolCallRequest.properties must keep arguments alias"
+        !properties.contains_key("arguments"),
+        "ToolCallRequest.properties must not retain the retired arguments alias"
     );
 
     let tool_property = &properties[TOOL_CALL_TOOL_FIELD];
@@ -309,10 +309,6 @@ fn explicit_tool_call_request_extra_fields() -> BTreeMap<&'static str, &'static 
         (
             TOOL_CALL_PARAMS_FIELD,
             "non-Action object argument envelope with arbitrary tool-specific keys",
-        ),
-        (
-            TOOL_CALL_ARGUMENTS_FIELD,
-            "params compatibility alias for non-Action clients",
         ),
         (
             crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,

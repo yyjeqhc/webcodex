@@ -109,7 +109,6 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     assert_eq!(handoff.output["permissions"]["required_count"], 1);
     assert_eq!(handoff.output["permissions"]["auto_approved_count"], 1);
     assert_eq!(handoff.output["permissions"]["manual_approved_count"], 0);
-    assert_eq!(handoff.output["permissions"]["approved_count"], 0);
     assert_eq!(handoff.output["permissions"]["total_approved_count"], 1);
     assert_eq!(
         handoff.output["permissions"]["recent"][0]["tool_name"],
@@ -155,7 +154,6 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     assert_eq!(finish.output["permissions"]["required_count"], 1);
     assert_eq!(finish.output["permissions"]["auto_approved_count"], 1);
     assert_eq!(finish.output["permissions"]["manual_approved_count"], 0);
-    assert_eq!(finish.output["permissions"]["approved_count"], 0);
     assert_eq!(finish.output["permissions"]["total_approved_count"], 1);
 }
 
@@ -4290,7 +4288,6 @@ async fn read_project_artifact_rejects_sensitive_path_before_resolving_project()
             None,
             None,
             None,
-            None,
         )
         .await;
     assert!(!out.success);
@@ -4306,7 +4303,6 @@ async fn read_project_artifact_rejects_invalid_length_before_resolving_project()
             None,
             None,
             Some(crate::tool_runtime::files::MAX_READ_PROJECT_ARTIFACT_LENGTH + 1),
-            None,
             None,
         )
         .await;

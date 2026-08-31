@@ -717,7 +717,6 @@ impl ToolRuntime {
         encoding: Option<String>,
         offset: Option<usize>,
         length: Option<usize>,
-        max_bytes: Option<usize>,
         as_image: Option<bool>,
     ) -> ToolResult {
         if let Err(e) = validate_artifact_file_path(&path) {
@@ -728,23 +727,17 @@ impl ToolRuntime {
             return ToolResult::err("unsupported encoding; only 'base64' is currently supported");
         }
         let as_image = as_image.unwrap_or(false);
-        if as_image && (offset.is_some() || length.is_some() || max_bytes.is_some()) {
+        if as_image && (offset.is_some() || length.is_some()) {
             return ToolResult::err(
-                "as_image cannot be combined with offset, length, or max_bytes; the MCP image path always reads one complete bounded image",
+                "as_image cannot be combined with offset or length; the MCP image path always reads one complete bounded image",
             );
         }
         let offset = offset.unwrap_or(0);
-        let mut length = if as_image {
+        let length = if as_image {
             MAX_MCP_IMAGE_BYTES
         } else {
-            length.unwrap_or_else(|| max_bytes.unwrap_or(DEFAULT_READ_PROJECT_ARTIFACT_LENGTH))
+            length.unwrap_or(DEFAULT_READ_PROJECT_ARTIFACT_LENGTH)
         };
-        if let Some(max_bytes) = max_bytes {
-            if max_bytes == 0 {
-                return ToolResult::err("max_bytes must be at least 1");
-            }
-            length = length.min(max_bytes);
-        }
         if length == 0 {
             return ToolResult::err("length must be at least 1");
         }

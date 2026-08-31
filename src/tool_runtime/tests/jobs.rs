@@ -133,7 +133,7 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     assert_eq!(permission_summary["required_count"], 2);
     assert_eq!(permission_summary["auto_approved_count"], 2);
     assert_eq!(permission_summary["manual_approved_count"], 0);
-    assert_eq!(permission_summary["approved_count"], 0);
+    assert!(permission_summary.get("approved_count").is_none());
     assert_eq!(permission_summary["total_approved_count"], 2);
     let failed = summary
         .events

@@ -1737,7 +1737,6 @@ async fn session_handoff_summary_read_only_session_allowed() {
     assert_eq!(result.output["permissions"]["required_count"], 0);
     assert_eq!(result.output["permissions"]["auto_approved_count"], 0);
     assert_eq!(result.output["permissions"]["manual_approved_count"], 0);
-    assert_eq!(result.output["permissions"]["approved_count"], 0);
     assert_eq!(result.output["permissions"]["total_approved_count"], 0);
     assert!(result.output["permissions"]["recent"]
         .as_array()

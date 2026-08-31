@@ -5,13 +5,13 @@ use std::collections::BTreeMap;
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::{
     generic_tool_call_flattened_args_for_spec, registered_tool_specs, MAX_UNIFIED_DIFF_BYTES,
-    TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
+    TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
 };
 
 const UNIFIED_DIFF_FIELD_DESCRIPTION: &str = "Raw standard unified diff only. Do not include shell heredocs or Codex apply_patch wrapper syntax such as *** Begin Patch / *** Update File / *** End Patch. The first non-empty line should be diff --git ..., --- ..., or another git-apply-compatible unified diff header.";
 const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional explicit existing wc_sess_* id. When provided, records this dedicated action in that exact Workflow Session; omission does not infer a Session.";
 const FLATTENED_TOOL_ARG_DESCRIPTION: &str =
-    "Flattened tool-specific argument. Used only when `params` and `arguments` are absent.";
+    "Flattened tool-specific argument. Used only when `params` is absent or null.";
 
 fn flattened_tool_arg_schema(schema_type: &str) -> Value {
     json!({
@@ -652,7 +652,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "callRuntimeTool",
                     "Call runtime tool (advanced)",
-                    "Advanced generic escape hatch for model-visible runtime tools. Prefer dedicated actions or tool_manifest. GPT Actions use flattened fields; params/arguments remain direct/non-Action compatibility envelopes. recording_session_id records wrapper calls.",
+                    "Advanced generic escape hatch for model-visible runtime tools. Prefer dedicated actions or tool_manifest. GPT Actions use flattened fields; params is the canonical direct/non-Action envelope. recording_session_id records wrapper calls.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
@@ -773,13 +773,11 @@ pub(crate) fn build_openapi_spec() -> Value {
                                 }]
                             }
                         },
-                        "argumentsAlias": {
-                            "summary": "MCP-style arguments alias (non-null params wins when both are present)",
+                        "paramsEnvelope": {
+                            "summary": "Canonical direct/non-Action params envelope",
                             "value": {
                                 "tool": "git_diff_summary",
-                                "arguments": {
-                                    "project": "webcodex"
-                                }
+                                "params": {"project": "webcodex"}
                             }
                         },
                         "noParams": {
@@ -1028,7 +1026,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": [TOOL_CALL_TOOL_FIELD],
-            "description": "Generic GPT Actions runtime tool call. The model-facing `tool` selector and flattened top-level fields cover only model-visible runtime tools and match registered_tool_specs, MCP discovery, and tool_manifest. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted direct/non-Action compatibility envelopes; non-null `params` takes precedence, and null wrappers do not suppress flattened arguments. Top-level `session_id` is ordinary explicit tool business input when declared by the selected visible tool; use `recording_session_id` only to record this wrapper call in an explicitly selected existing Workflow Session. Omitted Session identifiers never infer a Workflow Session from window, credential, project, or prior calls. For daily discovery prefer tool_manifest; it exposes accepted_flattened_args for model-facing top-level calls. Use list_tools with summary_only/category/features/limit only for focused discovery.",
+            "description": "Generic GPT Actions runtime tool call. The model-facing `tool` selector and flattened top-level fields cover only model-visible runtime tools and match registered_tool_specs, MCP discovery, and tool_manifest. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params objects. `params` is the canonical direct/non-Action argument envelope; a non-null value takes precedence and a null wrapper does not suppress flattened arguments. The retired `arguments` wrapper is rejected. Top-level `session_id` is ordinary explicit tool business input when declared by the selected visible tool; use `recording_session_id` only to record this wrapper call in an explicitly selected existing Workflow Session. Omitted Session identifiers never infer a Workflow Session from window, credential, project, or prior calls. For daily discovery prefer tool_manifest; it exposes accepted_flattened_args for model-facing top-level calls. Use list_tools with summary_only/category/features/limit only for focused discovery.",
             "properties": {
                 "session_id": {
                     "type": "string",
@@ -1036,13 +1034,13 @@ fn schemas() -> Value {
                 },
                 "kind": {
                     "type": "string",
-                    "description": "Flattened tool-specific argument. For message-board tools, one of note, proposal, question, answer, decision, risk, progress, guidance, todo. For workspace_checkpoint_create, one of snapshot, baseline, before_refactor, after_refactor, last_known_good, rollback_candidate. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened tool-specific argument. For message-board tools, one of note, proposal, question, answer, decision, risk, progress, guidance, todo. For workspace_checkpoint_create, one of snapshot, baseline, before_refactor, after_refactor, last_known_good, rollback_candidate. Used only when `params` is absent or null."
                 },
                 "labels": {
                     "type": "array",
                     "items": {"type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9._-]+$"},
                     "maxItems": 20,
-                    "description": "Flattened workspace_checkpoint_create labels. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened workspace_checkpoint_create labels. Used only when `params` is absent or null."
                 },
                 "validation": {
                     "type": "object",
@@ -1069,27 +1067,27 @@ fn schemas() -> Value {
                 },
                 "note": {
                     "type": "string",
-                    "description": "Flattened workspace_checkpoint_create optional note (not used by restore). Used only when `params` and `arguments` are absent."
+                    "description": "Flattened workspace_checkpoint_create optional note (not used by restore). Used only when `params` is absent or null."
                 },
                 "include_untracked": {
                     "type": "boolean",
-                    "description": "Flattened workspace_checkpoint_create flag to capture small non-secret UTF-8 untracked files (default false). Used only when `params` and `arguments` are absent."
+                    "description": "Flattened workspace_checkpoint_create flag to capture small non-secret UTF-8 untracked files (default false). Used only when `params` is absent or null."
                 },
                 "checkpoint_id": {
                     "type": "string",
-                    "description": "Flattened workspace_checkpoint_show/restore/delete wc_ckpt_* id. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened workspace_checkpoint_show/restore/delete wc_ckpt_* id. Used only when `params` is absent or null."
                 },
                 "confirm": {
                     "type": "boolean",
-                    "description": "Flattened confirmation flag for workspace_checkpoint_restore/delete and stop_job; must be true to proceed. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened confirmation flag for workspace_checkpoint_restore/delete and stop_job; must be true to proceed. Used only when `params` is absent or null."
                 },
                 "include_command_preview": {
                     "type": "boolean",
-                    "description": "Flattened job_status debug flag. Defaults to false; when true, job_status includes bounded command_preview metadata. stdout/stderr bodies are never included. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened job_status debug flag. Defaults to false; when true, job_status includes bounded command_preview metadata. stdout/stderr bodies are never included. Used only when `params` is absent or null."
                 },
                 "include_diff_stat": {
                     "type": "boolean",
-                    "description": "Flattened workspace_checkpoint_show flag to include tracked/staged diff stat strings (default false). Used only when `params` and `arguments` are absent."
+                    "description": "Flattened workspace_checkpoint_show flag to include tracked/staged diff stat strings (default false). Used only when `params` is absent or null."
                 },
                 // Keep the flattened GPT Action shape composition-free. The canonical MCP/local-coding
                 // ToolSpec carries the strict per-kind oneOf contract; this import-facing projection uses
@@ -1099,7 +1097,7 @@ fn schemas() -> Value {
                     "type": "array",
                     "minItems": 1,
                     "maxItems": 16,
-                    "description": "Flattened apply_text_edits transactional file changes. kind=edit requires path, expected_sha256, and edits and forbids to_path/content; create requires path/content and forbids to_path/expected_sha256/edits; delete requires path/expected_sha256 and forbids to_path/content/edits; rename requires path/to_path/expected_sha256 and forbids content/edits. Used only when `params` and `arguments` are absent.",
+                    "description": "Flattened apply_text_edits transactional file changes. kind=edit requires path, expected_sha256, and edits and forbids to_path/content; create requires path/content and forbids to_path/expected_sha256/edits; delete requires path/expected_sha256 and forbids to_path/content/edits; rename requires path/to_path/expected_sha256 and forbids content/edits. Used only when `params` is absent or null.",
                     "items": {
                         "type": "object",
                         "additionalProperties": false,
@@ -1152,99 +1150,99 @@ fn schemas() -> Value {
                 },
                 "dry_run": {
                     "type": "boolean",
-                    "description": "Flattened apply_text_edits flag to compute the plan without writing. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened apply_text_edits flag to compute the plan without writing. Used only when `params` is absent or null."
                 },
                 "message": {
                     "type": "string",
-                    "description": "Flattened post_session_message body. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened post_session_message body. Used only when `params` is absent or null."
                 },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Flattened post_session_message tags. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened post_session_message tags. Used only when `params` is absent or null."
                 },
                 "reply_to": {
                     "type": "string",
-                    "description": "Flattened post_session_message reply target wc_msg_* id. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened post_session_message reply target wc_msg_* id. Used only when `params` is absent or null."
                 },
                 "priority": {
                     "type": "string",
-                    "description": "Flattened post_session_message priority: low, normal, or high. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened post_session_message priority: low, normal, or high. Used only when `params` is absent or null."
                 },
                 "status": {
                     "type": "string",
-                    "description": "Flattened list_session_messages status filter: open or resolved. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened list_session_messages status filter: open or resolved. Used only when `params` is absent or null."
                 },
                 "after_observation_token": {
                     "type": "string",
                     "maxLength": 192,
-                    "description": "Flattened opaque observation token for observe_session_messages and compatible bounded observation tools. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened opaque observation token for observe_session_messages and compatible bounded observation tools. Used only when `params` is absent or null."
                 },
                 "wait_secs": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 60,
-                    "description": "Flattened one-shot bounded wait for observe_session_messages and compatible observation tools. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened one-shot bounded wait for observe_session_messages and compatible observation tools. Used only when `params` is absent or null."
                 },
                 "message_id": {
                     "type": "string",
-                    "description": "Flattened resolve_session_message wc_msg_* id. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened resolve_session_message wc_msg_* id. Used only when `params` is absent or null."
                 },
                 "resolution": {
                     "type": "string",
-                    "description": "Flattened resolve_session_message resolution note. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened resolve_session_message resolution note. Used only when `params` is absent or null."
                 },
                 "compact": {
                     "type": "boolean",
-                    "description": "Flattened runtime_status flag. Defaults to false. When true, returns compact runtime observability for sanity checks instead of the full status payload. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened runtime_status flag. Defaults to false. When true, returns compact runtime observability for sanity checks instead of the full status payload. Used only when `params` is absent or null."
                 },
                 "path": {
                     "type": "string",
-                    "description": "Flattened tool-specific argument. For artifact_upload_chunk/finish/abort this is required and must exactly match the path used by artifact_upload_begin to bind upload_id to the target path. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened tool-specific argument. For artifact_upload_chunk/finish/abort this is required and must exactly match the path used by artifact_upload_begin to bind upload_id to the target path. Used only when `params` is absent or null."
                 },
                 "skip": {
                     "type": "integer",
-                    "description": "Flattened git_log commit offset. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened git_log commit offset. Used only when `params` is absent or null."
                 },
                 "category": {
                     "type": "string",
-                    "description": "Flattened list_tools/tool_manifest category filter. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened list_tools/tool_manifest category filter. Used only when `params` is absent or null."
                 },
                 "intent": {
                     "type": "string",
-                    "description": "Flattened tool_manifest task-intent view such as coding, audit, exploration, release, or discovery. Distinct from category. Intent views only filter and rank discovery output; they do not change tool behavior, policy, permissions, execution, or finish verdict semantics. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened tool_manifest task-intent view such as coding, audit, exploration, release, or discovery. Distinct from category. Intent views only filter and rank discovery output; they do not change tool behavior, policy, permissions, execution, or finish verdict semantics. Used only when `params` is absent or null."
                 },
                 "include_recommended_flows": {
                     "type": "boolean",
-                    "description": "Flattened tool_manifest flag. Defaults to true and controls recommended_flows in compact discovery output. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened tool_manifest flag. Defaults to true and controls recommended_flows in compact discovery output. Used only when `params` is absent or null."
                 },
                 "include_risk_summary": {
                     "type": "boolean",
-                    "description": "Flattened tool_manifest flag. Defaults to true and controls risk_summary in compact discovery output. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened tool_manifest flag. Defaults to true and controls risk_summary in compact discovery output. Used only when `params` is absent or null."
                 },
                 "include_hygiene": {
                     "type": "boolean",
-                    "description": "Flattened finish_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened finish_coding_task flag. Defaults to true. Used only when `params` is absent or null."
                 },
                 "max_findings": {
                     "type": "integer",
-                    "description": "Flattened workspace_hygiene_check maximum findings to return; clamped by the runtime to 1..200. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened workspace_hygiene_check maximum findings to return; clamped by the runtime to 1..200. Used only when `params` is absent or null."
                 },
                 "include_tracked": {
                     "type": "boolean",
-                    "description": "Flattened workspace_hygiene_check flag. When true, also report tracked suspicious path names by path/name only; file contents are never read. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened workspace_hygiene_check flag. When true, also report tracked suspicious path names by path/name only; file contents are never read. Used only when `params` is absent or null."
                 },
                 "include_handoff": {
                     "type": "boolean",
-                    "description": "Flattened finish_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened finish_coding_task flag. Defaults to true. Used only when `params` is absent or null."
                 },
                 "include_validation_summary": {
                     "type": "boolean",
-                    "description": "Flattened finish_coding_task flag. Defaults to true; minimal diagnostics may be derived from safe bounded validation metadata, but raw stdout/stderr is never exposed. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened finish_coding_task flag. Defaults to true; minimal diagnostics may be derived from safe bounded validation metadata, but raw stdout/stderr is never exposed. Used only when `params` is absent or null."
                 },
                 "include_validation": {
                     "type": "boolean",
-                    "description": "Flattened session_handoff_summary flag. Defaults to true; validation is ledger-derived and parser.available is true only when safe bounded metadata is present. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened session_handoff_summary flag. Defaults to true; validation is ledger-derived and parser.available is true only when safe bounded metadata is present. Used only when `params` is absent or null."
                 },
                 "include_workspace": {
                     "type": "boolean",
@@ -1256,23 +1254,23 @@ fn schemas() -> Value {
                 },
                 "features": {
                     "type": "string",
-                    "description": "Flattened list_tools feature filter, or cargo feature selection for cargo tools. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened list_tools feature filter, or cargo feature selection for cargo tools. Used only when `params` is absent or null."
                 },
                 "summary_only": {
                     "type": "boolean",
-                    "description": "Flattened list_tools/runtime_status/session_handoff_summary/finish_coding_task flag. For list_tools, returns compact tool summaries without full schemas. For runtime_status, aliases compact=true. For handoff/finish, returns compact closeout outcome fields and omits recent_events, long ledger details, command text, stdout/stderr, tails, and excerpts. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened list_tools/runtime_status/session_handoff_summary/finish_coding_task flag. For list_tools, returns compact tool summaries without full schemas. For runtime_status, aliases compact=true. For handoff/finish, returns compact closeout outcome fields and omits recent_events, long ledger details, command text, stdout/stderr, tails, and excerpts. Used only when `params` is absent or null."
                 },
                 "upload_id": {
                     "type": "string",
-                    "description": "Flattened artifact_upload_chunk/finish/abort wc_upload_* id. The same path from artifact_upload_begin is also required so the runtime can bind upload_id to the requested target path. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened artifact_upload_chunk/finish/abort wc_upload_* id. The same path from artifact_upload_begin is also required so the runtime can bind upload_id to the requested target path. Used only when `params` is absent or null."
                 },
                 "expected_bytes": {
                     "type": "integer",
-                    "description": "Flattened artifact_upload_begin final byte count guard. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened artifact_upload_begin final byte count guard. Used only when `params` is absent or null."
                 },
                 "allow_missing": {
                     "type": "boolean",
-                    "description": "Flattened read_project_artifact_metadata flag. When true, a missing artifact returns exists=false instead of a failed tool call. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened read_project_artifact_metadata flag. When true, a missing artifact returns exists=false instead of a failed tool call. Used only when `params` is absent or null."
                 },
             }
         },
@@ -1989,16 +1987,7 @@ fn insert_tool_call_request_reserved_properties(schemas: &mut Value) {
         TOOL_CALL_PARAMS_FIELD.to_string(),
         json!({
             "type": "object",
-            "description": "Tool-specific arguments object for non-Action clients. Takes precedence over `arguments` when both are non-null. A null wrapper does not suppress flattened top-level fields. GPT Actions should prefer flattened top-level fields.",
-            "nullable": true,
-            "additionalProperties": true
-        }),
-    );
-    properties.insert(
-        TOOL_CALL_ARGUMENTS_FIELD.to_string(),
-        json!({
-            "type": "object",
-            "description": "Compatibility alias for `params`. Used only when `params` is absent; ignored otherwise.",
+            "description": "Canonical tool-specific arguments object for non-Action clients. A non-null value takes precedence; a null wrapper does not suppress flattened top-level fields. GPT Actions should prefer flattened top-level fields.",
             "nullable": true,
             "additionalProperties": true
         }),

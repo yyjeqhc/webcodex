@@ -24,12 +24,8 @@ use std::collections::{BTreeMap, HashSet};
 
 pub(crate) const TOOL_CALL_TOOL_FIELD: &str = "tool";
 pub(crate) const TOOL_CALL_PARAMS_FIELD: &str = "params";
-pub(crate) const TOOL_CALL_ARGUMENTS_FIELD: &str = "arguments";
-pub(crate) const TOOL_CALL_WRAPPER_FIELDS: &[&str] = &[
-    TOOL_CALL_TOOL_FIELD,
-    TOOL_CALL_PARAMS_FIELD,
-    TOOL_CALL_ARGUMENTS_FIELD,
-];
+pub(crate) const TOOL_CALL_WRAPPER_FIELDS: &[&str] =
+    &[TOOL_CALL_TOOL_FIELD, TOOL_CALL_PARAMS_FIELD];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1533,8 +1529,6 @@ pub enum ToolCall {
         #[serde(default)]
         length: Option<usize>,
         #[serde(default)]
-        max_bytes: Option<usize>,
-        #[serde(default)]
         as_image: Option<bool>,
     },
 
@@ -2021,7 +2015,6 @@ fn reject_unknown_start_coding_task_fields(arguments: &Value) -> Result<(), Stri
         // Wrapper/session metadata that transports may leave in params.
         "session_id",
         "recording_session_id",
-        "_session_id",
     ];
     let Some(object) = arguments.as_object() else {
         return Ok(());
@@ -2136,7 +2129,6 @@ fn reject_unknown_read_files_fields(arguments: &Value) -> Result<(), String> {
         "max_result_bytes",
         // Wrapper/session metadata that transports may leave in params.
         "recording_session_id",
-        "_session_id",
     ];
     let Some(object) = arguments.as_object() else {
         return Ok(());
@@ -2163,7 +2155,6 @@ fn reject_unknown_observe_jobs_fields(arguments: &Value) -> Result<(), String> {
         // Wrapper/session metadata that transports may leave in params.
         "session_id",
         "recording_session_id",
-        "_session_id",
     ];
     let Some(object) = arguments.as_object() else {
         return Ok(());
@@ -2190,7 +2181,6 @@ fn reject_unknown_search_project_texts_fields(arguments: &Value) -> Result<(), S
         "max_result_bytes",
         // Wrapper/session metadata that transports may leave in params.
         "recording_session_id",
-        "_session_id",
     ];
     let Some(object) = arguments.as_object() else {
         return Ok(());
@@ -2222,7 +2212,6 @@ fn reject_unknown_git_diff_hunks_fields(arguments: &Value) -> Result<(), String>
         "session_id",
         // Wrapper/session metadata that transports may leave in params.
         "recording_session_id",
-        "_session_id",
     ];
     let Some(object) = arguments.as_object() else {
         return Ok(());
@@ -2334,6 +2323,16 @@ impl ToolCall {
         validate_model_facing_assertion_name(name, &arguments)?;
         let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&arguments);
         let arguments = strip_tool_call_expectation_metadata(arguments);
+        if name == "read_project_artifact"
+            && arguments
+                .as_object()
+                .is_some_and(|object| object.contains_key("max_bytes"))
+        {
+            return Err(
+                "invalid arguments for tool 'read_project_artifact': field 'max_bytes' is no longer supported; use 'length'"
+                    .to_string(),
+            );
+        }
         if name == "start_coding_task" {
             reject_unknown_start_coding_task_fields(&arguments)?;
             validate_coding_project_source_shape(name, &arguments, true)?;

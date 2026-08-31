@@ -132,12 +132,6 @@ pub(crate) fn read_project_artifact_input_schema() -> Value {
             "Optional chunk length in bytes; defaults to 32768 and cannot exceed 65536.",
             false,
         ),
-        (
-            "max_bytes",
-            "integer",
-            "Compatibility alias/upper bound for length; cannot exceed 65536.",
-            false,
-        ),
     ]))
 }
 

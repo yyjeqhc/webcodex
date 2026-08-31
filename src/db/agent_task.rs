@@ -616,15 +616,26 @@ impl Database {
         task_id: &str,
         assignee_agent_id: &str,
     ) -> Result<AgentTaskMutation, CommunicationStoreError> {
-        self.assign_agent_task_at(principal, task_id, assignee_agent_id, now_unix_ms())
+        self.assign_agent_task_with_now(principal, task_id, assignee_agent_id, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn assign_agent_task_at(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,
         assignee_agent_id: &str,
         now: i64,
+    ) -> Result<AgentTaskMutation, CommunicationStoreError> {
+        self.assign_agent_task_with_now(principal, task_id, assignee_agent_id, Some(now))
+    }
+
+    fn assign_agent_task_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        assignee_agent_id: &str,
+        now: Option<i64>,
     ) -> Result<AgentTaskMutation, CommunicationStoreError> {
         validate_communication_principal(principal)?;
         validate_id(task_id, AGENT_TASK_ID_PREFIX, "invalid_agent_task_id")?;
@@ -637,6 +648,7 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
+        let now = now.unwrap_or_else(now_unix_ms);
         let mut task = load_owned_task(&transaction, principal, task_id, now)?;
         if task.stored_state.terminal() {
             return Err(task_terminal_error());
@@ -696,15 +708,16 @@ impl Database {
         assignee_agent_id: &str,
         idempotency_key: &str,
     ) -> Result<AgentTaskAttemptStartMutation, CommunicationStoreError> {
-        self.start_agent_task_attempt_at(
+        self.start_agent_task_attempt_with_now(
             principal,
             task_id,
             assignee_agent_id,
             idempotency_key,
-            now_unix_ms(),
+            None,
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn start_agent_task_attempt_at(
         &self,
         principal: &CommunicationPrincipal,
@@ -712,6 +725,23 @@ impl Database {
         assignee_agent_id: &str,
         idempotency_key: &str,
         now: i64,
+    ) -> Result<AgentTaskAttemptStartMutation, CommunicationStoreError> {
+        self.start_agent_task_attempt_with_now(
+            principal,
+            task_id,
+            assignee_agent_id,
+            idempotency_key,
+            Some(now),
+        )
+    }
+
+    fn start_agent_task_attempt_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        assignee_agent_id: &str,
+        idempotency_key: &str,
+        now: Option<i64>,
     ) -> Result<AgentTaskAttemptStartMutation, CommunicationStoreError> {
         validate_communication_principal(principal)?;
         validate_id(task_id, AGENT_TASK_ID_PREFIX, "invalid_agent_task_id")?;
@@ -729,6 +759,7 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
+        let now = now.unwrap_or_else(now_unix_ms);
         let mut task = load_owned_task(&transaction, principal, task_id, now)?;
 
         if let Some(attempt_id) = lookup_idempotent_resource(
@@ -859,17 +890,18 @@ impl Database {
         attempt_fence: &str,
         attempt_controller_generation: i64,
     ) -> Result<AgentTaskAttemptHeartbeatMutation, CommunicationStoreError> {
-        self.heartbeat_agent_task_attempt_at(
+        self.heartbeat_agent_task_attempt_with_now(
             principal,
             task_id,
             attempt_id,
             assignee_agent_id,
             attempt_fence,
             attempt_controller_generation,
-            now_unix_ms(),
+            None,
         )
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn heartbeat_agent_task_attempt_at(
         &self,
@@ -880,6 +912,28 @@ impl Database {
         attempt_fence: &str,
         attempt_controller_generation: i64,
         now: i64,
+    ) -> Result<AgentTaskAttemptHeartbeatMutation, CommunicationStoreError> {
+        self.heartbeat_agent_task_attempt_with_now(
+            principal,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            Some(now),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn heartbeat_agent_task_attempt_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+        now: Option<i64>,
     ) -> Result<AgentTaskAttemptHeartbeatMutation, CommunicationStoreError> {
         validate_attempt_mutation_inputs(
             principal,
@@ -893,6 +947,7 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
+        let now = now.unwrap_or_else(now_unix_ms);
         let task = load_owned_task(&transaction, principal, task_id, now)?;
         let attempt = require_current_attempt(
             &transaction,
@@ -1017,7 +1072,7 @@ impl Database {
         terminal_reason: Option<&str>,
         completion_key: &str,
     ) -> Result<AgentTaskAttemptCompletionMutation, CommunicationStoreError> {
-        self.complete_agent_task_attempt_at(
+        self.complete_agent_task_attempt_with_now(
             principal,
             task_id,
             attempt_id,
@@ -1028,10 +1083,11 @@ impl Database {
             terminal_result,
             terminal_reason,
             completion_key,
-            now_unix_ms(),
+            None,
         )
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn complete_agent_task_attempt_at(
         &self,
@@ -1046,6 +1102,36 @@ impl Database {
         terminal_reason: Option<&str>,
         completion_key: &str,
         now: i64,
+    ) -> Result<AgentTaskAttemptCompletionMutation, CommunicationStoreError> {
+        self.complete_agent_task_attempt_with_now(
+            principal,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            outcome,
+            terminal_result,
+            terminal_reason,
+            completion_key,
+            Some(now),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn complete_agent_task_attempt_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+        outcome: AgentTaskState,
+        terminal_result: Option<&str>,
+        terminal_reason: Option<&str>,
+        completion_key: &str,
+        now: Option<i64>,
     ) -> Result<AgentTaskAttemptCompletionMutation, CommunicationStoreError> {
         validate_attempt_mutation_inputs(
             principal,
@@ -1078,6 +1164,7 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
+        let now = now.unwrap_or_else(now_unix_ms);
         let task = load_owned_task(&transaction, principal, task_id, now)?;
 
         if let Some(replayed_attempt_id) = lookup_idempotent_resource(

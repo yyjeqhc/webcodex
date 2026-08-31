@@ -5,9 +5,19 @@ use super::communication::{
 };
 use super::Database;
 use rusqlite::params;
-use std::sync::{Arc, Barrier};
+use std::sync::{mpsc, Arc, Barrier};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const T0: i64 = 1_000_000;
+
+fn wall_now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("wall clock after Unix epoch")
+        .as_millis()
+        .try_into()
+        .expect("wall-clock milliseconds fit i64")
+}
 
 fn principal(hex: char) -> CommunicationPrincipal {
     CommunicationPrincipal {
@@ -244,6 +254,109 @@ fn concurrent_attempt_start_creates_exactly_one_authoritative_attempt() {
         )
         .unwrap();
     assert_eq!(count, 1);
+}
+
+#[test]
+fn live_lease_mutations_sample_server_time_after_serialization_wait() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("agent-task-serialized-clock.db");
+    let db = Arc::new(Database::open(&path).unwrap());
+    let owner = principal('e');
+    let assignee = agent(&db, &owner, "serialized-clock-agent");
+
+    let heartbeat_task = create_assigned_task(&db, &owner, &assignee, "heartbeat-clock-task");
+    let heartbeat_attempt = start(
+        &db,
+        &owner,
+        &heartbeat_task,
+        &assignee,
+        "heartbeat-clock-start",
+        T0 + 15,
+    );
+    let completion_task = create_assigned_task(&db, &owner, &assignee, "completion-clock-task");
+    let completion_attempt = start(
+        &db,
+        &owner,
+        &completion_task,
+        &assignee,
+        "completion-clock-start",
+        T0 + 16,
+    );
+
+    // Hold the same Database mutex that production mutations serialize through.
+    // Workers announce immediately before entering the public mutation wrapper. The
+    // lease is then moved to a point after any pre-lock clock sample but before the
+    // mutex is released. A wrapper that sampled time before serialization would
+    // incorrectly renew/complete; the production path must sample after it acquires
+    // the authoritative transaction.
+    let guard = db.conn_for_tests();
+    let (ready_tx, ready_rx) = mpsc::channel();
+
+    let heartbeat_db = Arc::clone(&db);
+    let heartbeat_owner = owner.clone();
+    let heartbeat_assignee = assignee.clone();
+    let heartbeat_task_id = heartbeat_task.clone();
+    let heartbeat_attempt_id = heartbeat_attempt.attempt.attempt_id.clone();
+    let heartbeat_fence = heartbeat_attempt.attempt_fence.clone();
+    let heartbeat_ready = ready_tx.clone();
+    let heartbeat_handle = std::thread::spawn(move || {
+        heartbeat_ready.send(()).unwrap();
+        heartbeat_db.heartbeat_agent_task_attempt(
+            &heartbeat_owner,
+            &heartbeat_task_id,
+            &heartbeat_attempt_id,
+            &heartbeat_assignee,
+            &heartbeat_fence,
+            1,
+        )
+    });
+
+    let completion_db = Arc::clone(&db);
+    let completion_owner = owner.clone();
+    let completion_assignee = assignee.clone();
+    let completion_task_id = completion_task.clone();
+    let completion_attempt_id = completion_attempt.attempt.attempt_id.clone();
+    let completion_fence = completion_attempt.attempt_fence.clone();
+    let completion_ready = ready_tx.clone();
+    let completion_handle = std::thread::spawn(move || {
+        completion_ready.send(()).unwrap();
+        completion_db.complete_agent_task_attempt(
+            &completion_owner,
+            &completion_task_id,
+            &completion_attempt_id,
+            &completion_assignee,
+            &completion_fence,
+            1,
+            AgentTaskState::Succeeded,
+            Some("late result"),
+            None,
+            "completion-clock-finish",
+        )
+    });
+
+    ready_rx.recv().unwrap();
+    ready_rx.recv().unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    let expires_at = wall_now_ms().saturating_add(200);
+    guard
+        .execute(
+            "UPDATE wc_agent_task_attempts
+             SET lease_expires_at_unix_ms = ?1
+             WHERE attempt_id IN (?2, ?3)",
+            params![
+                expires_at,
+                heartbeat_attempt.attempt.attempt_id,
+                completion_attempt.attempt.attempt_id,
+            ],
+        )
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    drop(guard);
+
+    let heartbeat_error = heartbeat_handle.join().unwrap().unwrap_err();
+    assert_eq!(heartbeat_error.code(), "agent_task_attempt_stale");
+    let completion_error = completion_handle.join().unwrap().unwrap_err();
+    assert_eq!(completion_error.code(), "agent_task_attempt_stale");
 }
 
 #[test]

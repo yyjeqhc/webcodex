@@ -131,8 +131,10 @@ raw forensic 模式：如果 credential-like value 被放进 tool argument、scr
 Runner request 或 Runner response，它会作为 payload data 被完整记录。
 
 没有 payload 文件不代表 payload 是空的，也不代表内容被截断。检查 Server journal
-中的 `tool_trace_capture_omitted` / `trace_disk_budget_exceeded` 或
-`tool_trace_capture_failed`。这些 trace 失败只影响诊断，不会让底层 tool 失败。如果
+中的 `tool_trace_capture_omitted`，并区分 `trace_writer_queue_full` 与
+`trace_disk_budget_exceeded`，或检查 `tool_trace_capture_failed`。full-mode 写入使用有界
+后台 queue；queue 饱和时会主动丢弃诊断记录，而不是拖慢 tool request。这些 trace
+失败只影响诊断，不会让底层 tool 失败。如果
 WebCodex 已记录 `tool_handler_returned` 而 client 没收到 response，还要按同一请求时间
 关联 reverse proxy access log，因为 handler return 并不证明 client delivery。
 

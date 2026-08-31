@@ -168,11 +168,13 @@ wrapper/session normalization 后 Server 实际使用的 effective arguments、�
 Server 真正发出的 typed Runner request、相关联的 Runner reply/Job update，以及存在
 有界 JSON body 时的最终 tool response。完整
 payload 以 JSON + zstd 存在 `<trace-dir>/<server_trace_id>/`，不会作为 BLOB 写入
-canonical runtime database。
+canonical runtime database。full-mode 持久化由有界后台 writer 执行，因此 trace I/O
+与压缩不会反压 tool request；这些 capture 是 best-effort 诊断数据。writer queue 饱和时，
+对应记录会被省略，Server 会记录 `tool_trace_capture_omitted` 和
+`trace_writer_queue_full`。
 
 大 payload 不会静默截断。如果清理过期/最旧 trace 后仍无法在总磁盘预算内完整保存，
-本次 capture 会被省略，Server 同时记录 `tool_trace_capture_omitted` 和
-`trace_disk_budget_exceeded`。`full` 是显式的自托管诊断模式，目录里可能包含源码、
+本次 capture 会被省略，并记录 `trace_disk_budget_exceeded`。`full` 是显式的自托管诊断模式，目录里可能包含源码、
 patch、script/stdin、命令输出、user message 或其他 tool payload，应按敏感诊断数据
 保护该目录。trace path 不会读取 WebCodex ingress HTTP `Authorization` header；但
 如果 token、key 或其他 secret 本身出现在 tool argument、script/stdin、Runner request

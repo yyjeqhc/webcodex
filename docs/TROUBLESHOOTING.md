@@ -144,8 +144,10 @@ tool argument, script/stdin, Runner request, or Runner response will be captured
 as payload data.
 
 No payload file means neither "empty" nor "truncated". Check the Server journal
-for `tool_trace_capture_omitted` / `trace_disk_budget_exceeded` or
-`tool_trace_capture_failed`. Those trace failures are diagnostic only; they do
+for `tool_trace_capture_omitted` with `trace_writer_queue_full` or
+`trace_disk_budget_exceeded`, or for `tool_trace_capture_failed`. Full-mode writes
+use a bounded background queue, so saturation intentionally drops diagnostic
+records instead of slowing the tool request. Those trace failures are diagnostic only; they do
 not make the underlying tool fail. If WebCodex logged `tool_handler_returned`
 but the client saw no reply, correlate the same request time with the reverse
 proxy access log because handler return is not proof of client delivery.

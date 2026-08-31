@@ -188,10 +188,13 @@ exact typed Server-to-Runner request when dispatch occurs, correlated Runner
 replies/Job updates, and final JSON tool response where a bounded JSON response
 exists. Full payloads are complete JSON compressed with
 zstd under `<trace-dir>/<server_trace_id>/`; they are not stored as BLOBs in the
-canonical runtime database. Large payloads are never silently truncated: if the
+canonical runtime database. Full-mode persistence runs on a bounded background
+writer so trace I/O and compression do not backpressure tool requests. Captures
+are best-effort diagnostics: if that writer queue is saturated, the affected
+record is omitted and the Server emits `tool_trace_capture_omitted` with
+`trace_writer_queue_full`. Large payloads are never silently truncated: if the
 configured total-byte budget cannot fit a capture after pruning expired/old
-traces, that capture is omitted and the Server emits
-`tool_trace_capture_omitted` with `trace_disk_budget_exceeded`.
+traces, that capture is omitted with `trace_disk_budget_exceeded`.
 
 Full tracing is an explicit self-hosted diagnostic mode and can contain source
 files, patches, script/stdin data, command output, user messages, or other tool

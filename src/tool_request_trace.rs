@@ -797,6 +797,7 @@ fn persist_metadata_event_with_config(
     append_event_locked(&mut accounting, config, trace_id, &event)
 }
 
+#[cfg(test)]
 fn persist_metadata_event(trace_id: &str, event: Value) -> io::Result<bool> {
     let config = trace_store_config();
     persist_metadata_event_with_config(trace_id, event, &config)
@@ -898,6 +899,7 @@ fn persist_payload_with_config(
     Ok(Some((raw.len(), compressed.len(), digest, relative_path)))
 }
 
+#[cfg(test)]
 fn persist_payload(
     trace_id: &str,
     phase: &str,

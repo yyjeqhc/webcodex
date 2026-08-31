@@ -451,7 +451,7 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
     },
     ToolManifestIntent {
         name: "audit",
-        purpose: "Read-only review/audit: inspect, git history/diff, hygiene, finish or handoff.",
+        purpose: "Review/audit without Project mutation or command execution: establish bounded Workflow context, inspect, read git history/diff, check hygiene, finish or handoff.",
         tools: &[
             "work_on_project",
             "project_overview",

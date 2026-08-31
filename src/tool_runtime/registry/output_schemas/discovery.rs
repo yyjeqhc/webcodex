@@ -240,11 +240,31 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "anyOf": [
                         {
                             "type": "object",
-                            "description": "Exact one-tool contract containing name, description, input_schema, annotations, and current MCP model-surface invocation routing. output_schema is intentionally omitted.",
+                            "description": "Exact one-tool contract containing name, description, canonical effect/risk/approval/idempotency semantics, input_schema, annotations, and current MCP model-surface invocation routing. output_schema is intentionally omitted.",
                             "additionalProperties": false,
                             "properties": {
                                 "name": {"type": "string"},
                                 "description": {"type": "string"},
+                                "effect": {
+                                    "type": "string",
+                                    "enum": ["observe", "mutate", "execute"],
+                                    "description": "Canonical business effect."
+                                },
+                                "risk": {
+                                    "type": "string",
+                                    "enum": ["read_only", "project_write", "skill_manage", "memory_manage", "communication_manage", "session_collaborate", "workflow_manage", "checkpoint_manage", "run_control", "computer_control", "job_run", "account_manage"],
+                                    "description": "Canonical risk class; read_only is the retained external label for read/observation risk."
+                                },
+                                "approval": {
+                                    "type": "string",
+                                    "enum": ["none", "standard", "inherit_from_start"],
+                                    "description": "Canonical interactive approval policy, independent from effect and authority."
+                                },
+                                "idempotency": {
+                                    "type": "string",
+                                    "enum": ["pure_read", "desired_state", "keyed", "fenced_replay", "non_idempotent"],
+                                    "description": "Canonical retry/idempotency contract."
+                                },
                                 "input_schema": {"type": "object", "additionalProperties": true},
                                 "annotations": {"type": "object", "additionalProperties": true},
                                 "availability": {
@@ -260,7 +280,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                                     "description": "call_runtime_tool only when availability=gateway; otherwise null."
                                 }
                             },
-                            "required": ["name", "description", "input_schema", "annotations", "availability", "gateway_tool"]
+                            "required": ["name", "description", "effect", "risk", "approval", "idempotency", "input_schema", "annotations", "availability", "gateway_tool"]
                         },
                         {"type": "null"}
                     ]
@@ -330,7 +350,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "tools",
                 array_schema(
                     open_object_schema(
-                        "Compact tool entry: name, category, accepted_flattened_args, deprecated_or_unsupported_args, provider, risk, read_only, requires_project, path_hint, destructive, shell_like, oauth_scope, availability, gateway_tool. availability is MCP ModelSurface routing only, not authorization."
+                        "Compact tool entry: name, category, accepted_flattened_args, deprecated_or_unsupported_args, provider, effect, risk, approval, idempotency, read_only, requires_project, path_hint, destructive, shell_like, oauth_scope, availability, gateway_tool. availability is MCP ModelSurface routing only, not authorization."
                     ),
                     "Compact tool entries without input/output schemas.",
                 ),

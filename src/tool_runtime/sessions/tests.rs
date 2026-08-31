@@ -51,7 +51,10 @@ fn record_model_facing_result(
 fn session_tool_classification_uses_definition_policy() {
     for (tool, risk_class) in [
         ("show_changes", "read_only"),
-        ("start_session", "read_only"),
+        ("start_session", "workflow_manage"),
+        ("close_session", "session_collaborate"),
+        ("workspace_checkpoint_create", "checkpoint_manage"),
+        ("coding_agent_cancel", "run_control"),
         ("write_project_file", "project_write"),
         ("apply_unified_diff", "project_write"),
         ("run_process", "job_run"),

@@ -334,6 +334,57 @@ async fn observe_session_messages_retention_reports_history_loss_for_protected_t
 }
 
 #[tokio::test]
+async fn observe_session_messages_token_survives_current_v2_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let session = store.start_session(Some("proj".to_string()), None);
+    post(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Note,
+        "before baseline",
+        SessionMessagePriority::Normal,
+    );
+    let before_restart = baseline(&store, &session.session_id).await;
+
+    // Observation-token issuance durably fences the current revision. A fresh
+    // current-v2 store opened while the first store is still alive must accept
+    // the token without relying on graceful Drop or a test-only flush.
+    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let unchanged = restored
+        .observe_messages(
+            &session.session_id,
+            Some(&before_restart.observation_token),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(!unchanged.changed);
+    assert!(unchanged.messages.is_empty());
+
+    let new_message = post(
+        &restored,
+        &session.session_id,
+        SessionMessageKind::Progress,
+        "after restart",
+        SessionMessagePriority::Normal,
+    );
+    let after_restart = restored
+        .observe_messages(
+            &session.session_id,
+            Some(&before_restart.observation_token),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(after_restart.messages.len(), 1);
+    assert_eq!(after_restart.messages[0].message_id, new_message.message_id);
+}
+
+#[tokio::test]
 async fn observe_session_messages_duplicate_persisted_positive_revisions_fail_closed() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = dir.path().join("sessions.json");
@@ -859,6 +910,57 @@ fn collaboration_session_message_exact_lookup_finds_old_retained_todo() {
         )
         .unwrap();
     assert!(missing.is_empty());
+}
+
+#[test]
+fn collaboration_session_message_completion_replays_after_current_v2_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let coordinator = store.start_session(Some("proj".to_string()), None);
+    let worker = store.start_session(Some("proj".to_string()), None);
+    let todo = post(
+        &store,
+        &coordinator.session_id,
+        SessionMessageKind::Todo,
+        "persist completion",
+        SessionMessagePriority::Normal,
+    );
+    let input = CompleteSessionMessageInput {
+        session_id: coordinator.session_id.clone(),
+        message_id: todo.message_id.clone(),
+        answer: "persisted answer".to_string(),
+        tags: vec!["done".to_string()],
+        priority: SessionMessagePriority::Normal,
+        completion_id: completion_id('d'),
+        author_session_id: Some(worker.session_id.clone()),
+        expected_assignment_fence: assignment_fence(
+            &store,
+            &coordinator.session_id,
+            &todo.message_id,
+        ),
+    };
+    let first = store.complete_message(input.clone()).unwrap();
+
+    // Completion success durably fences the accepted intent, so a fresh
+    // current-v2 store can replay it without a test-only flush or graceful Drop.
+    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let replay = restored.complete_message(input).unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.answer.message_id, first.answer.message_id);
+    assert_eq!(
+        restored
+            .list_messages(
+                &coordinator.session_id,
+                ListSessionMessagesFilter {
+                    reply_to: Some(todo.message_id),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]

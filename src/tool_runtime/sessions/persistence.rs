@@ -114,8 +114,17 @@ fn v2_record_has_canonical_logical_invocation_shape(value: &Value) -> bool {
         .is_some_and(|events| {
             events.iter().all(|event| {
                 event.as_object().is_some_and(|object| {
-                    object.contains_key("logical_invocation_id")
-                        == object.contains_key("logical_invocation_role")
+                    match (
+                        object.get("logical_invocation_id"),
+                        object.get("logical_invocation_role"),
+                    ) {
+                        (None, None) => true,
+                        (Some(Value::String(id)), Some(Value::String(role))) => {
+                            super::events::is_valid_logical_invocation_id(id)
+                                && super::events::is_valid_logical_invocation_role(role)
+                        }
+                        _ => false,
+                    }
                 })
             })
         })

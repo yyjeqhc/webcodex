@@ -4108,13 +4108,21 @@ fn v2_event_and_message_shape_corruption_discards_only_affected_rows() {
         Some("proj".to_string()),
         Some("retired event field".to_string()),
     );
+    let bad_noncanonical_correlation = store.start_session(
+        Some("proj".to_string()),
+        Some("noncanonical correlation values".to_string()),
+    );
     let bad_message = store.start_session(
         Some("proj".to_string()),
         Some("unknown message field".to_string()),
     );
     let good = store.start_session(Some("proj".to_string()), Some("good".to_string()));
 
-    for session_id in [&bad_missing.session_id, &bad_retired.session_id] {
+    for session_id in [
+        &bad_missing.session_id,
+        &bad_retired.session_id,
+        &bad_noncanonical_correlation.session_id,
+    ] {
         let mut metadata = ToolCallRecorderMetadata::default();
         metadata.assign_logical_invocation();
         let start = store.record_tool_call_started_with_metadata(
@@ -4161,6 +4169,14 @@ fn v2_event_and_message_shape_corruption_discards_only_affected_rows() {
         .unwrap()
         .insert("allow_cross_project_session".to_string(), Value::Bool(true));
 
+    let noncanonical_record = records
+        .iter_mut()
+        .find(|record| record["session_id"] == bad_noncanonical_correlation.session_id)
+        .unwrap();
+    let noncanonical_event = noncanonical_record["events"][0].as_object_mut().unwrap();
+    noncanonical_event.insert("logical_invocation_id".to_string(), Value::Null);
+    noncanonical_event.insert("logical_invocation_role".to_string(), Value::Null);
+
     let message_record = records
         .iter_mut()
         .find(|record| record["session_id"] == bad_message.session_id)
@@ -4175,6 +4191,9 @@ fn v2_event_and_message_shape_corruption_discards_only_affected_rows() {
     assert_eq!(restored.status().restored_sessions, 1);
     assert!(restored.summary(&bad_missing.session_id, None).is_none());
     assert!(restored.summary(&bad_retired.session_id, None).is_none());
+    assert!(restored
+        .summary(&bad_noncanonical_correlation.session_id, None)
+        .is_none());
     assert!(restored.summary(&bad_message.session_id, None).is_none());
     assert!(restored.summary(&good.session_id, None).is_some());
     assert_eq!(restored.status().last_persist_error, None);

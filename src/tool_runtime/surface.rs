@@ -42,7 +42,7 @@ pub(crate) fn recommended_flows() -> Vec<&'static str> {
 }
 
 impl ToolRuntime {
-    pub(crate) const LIST_TOOLS_MAX_LIMIT: usize = 128;
+    pub(crate) const LIST_TOOLS_MAX_LIMIT: usize = 256;
 
     pub(crate) fn list_tools_payload(&self, options: ListToolsOptions) -> Value {
         let specs = registered_tool_specs();

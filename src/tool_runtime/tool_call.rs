@@ -1045,6 +1045,27 @@ pub enum ToolCall {
         idempotency_key: String,
     },
 
+    /// Explicitly dispatch the exact latest fenced AgentTaskAttempt to one durable CodingAgentRun.
+    StartAgentTaskCodingRun {
+        project: String,
+        task_id: String,
+        attempt_id: String,
+        assignee_agent_id: String,
+        attempt_fence: String,
+        attempt_controller_generation: i64,
+        provider_id: String,
+        #[serde(default)]
+        config: Option<BTreeMap<String, webcodex_core::coding_agent::CodingAgentConfigValue>>,
+        #[serde(default)]
+        timeout_secs: Option<u64>,
+    },
+
+    /// Reconcile the exact durable CodingAgentRun already bound to one AgentTaskAttempt.
+    ReconcileAgentTaskCodingRun {
+        task_id: String,
+        attempt_id: String,
+    },
+
     /// Renew only the exact latest unexpired fenced AgentTaskAttempt.
     HeartbeatAgentTaskAttempt {
         task_id: String,
@@ -2517,6 +2538,8 @@ impl ToolCall {
             Self::ReadAgentTask { .. } => "read_agent_task",
             Self::AssignAgentTask { .. } => "assign_agent_task",
             Self::StartAgentTaskAttempt { .. } => "start_agent_task_attempt",
+            Self::StartAgentTaskCodingRun { .. } => "start_agent_task_coding_run",
+            Self::ReconcileAgentTaskCodingRun { .. } => "reconcile_agent_task_coding_run",
             Self::HeartbeatAgentTaskAttempt { .. } => "heartbeat_agent_task_attempt",
             Self::CompleteAgentTaskAttempt { .. } => "complete_agent_task_attempt",
             Self::CreateAgentIdentity { .. } => "create_agent_identity",
@@ -2734,6 +2757,7 @@ impl ToolCall {
             Self::RunProcess { project, .. }
             | Self::RunDetachedProcess { project, .. }
             | Self::CodingAgentStart { project, .. }
+            | Self::StartAgentTaskCodingRun { project, .. }
             | Self::RunScript { project, .. }
             | Self::RunShell { project, .. }
             | Self::OpenSessionShell { project, .. }

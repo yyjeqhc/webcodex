@@ -768,6 +768,23 @@ mod tests {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_CODING_AGENT_RUN, SCOPE_PROJECT_WRITE]),
             ),
             (
+                "start_agent_task_coding_run",
+                OAuthToolScopePolicy::RequireAll(&[
+                    SCOPE_COMMUNICATION_READ,
+                    SCOPE_COMMUNICATION_MANAGE,
+                    SCOPE_CODING_AGENT_RUN,
+                    SCOPE_PROJECT_WRITE,
+                ]),
+            ),
+            (
+                "reconcile_agent_task_coding_run",
+                OAuthToolScopePolicy::RequireAll(&[
+                    SCOPE_COMMUNICATION_READ,
+                    SCOPE_COMMUNICATION_MANAGE,
+                    SCOPE_CODING_AGENT_RUN,
+                ]),
+            ),
+            (
                 "coding_agent_observe",
                 OAuthToolScopePolicy::Require(SCOPE_CODING_AGENT_RUN),
             ),
@@ -843,6 +860,19 @@ mod tests {
                     | "read_agent_task"
             ) {
                 OAuthToolScopePolicy::RequireAll(COMMUNICATION_READ_SCOPES)
+            } else if tool == "start_agent_task_coding_run" {
+                OAuthToolScopePolicy::RequireAll(&[
+                    SCOPE_COMMUNICATION_READ,
+                    SCOPE_COMMUNICATION_MANAGE,
+                    SCOPE_CODING_AGENT_RUN,
+                    SCOPE_PROJECT_WRITE,
+                ])
+            } else if tool == "reconcile_agent_task_coding_run" {
+                OAuthToolScopePolicy::RequireAll(&[
+                    SCOPE_COMMUNICATION_READ,
+                    SCOPE_COMMUNICATION_MANAGE,
+                    SCOPE_CODING_AGENT_RUN,
+                ])
             } else if matches!(
                 tool,
                 "create_agent_identity"

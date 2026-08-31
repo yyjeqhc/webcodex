@@ -85,6 +85,8 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "read_agent_task",
             "assign_agent_task",
             "start_agent_task_attempt",
+            "start_agent_task_coding_run",
+            "reconcile_agent_task_coding_run",
             "heartbeat_agent_task_attempt",
             "complete_agent_task_attempt",
         ],

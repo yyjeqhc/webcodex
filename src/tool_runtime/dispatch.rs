@@ -1605,6 +1605,40 @@ impl ToolRuntime {
                 idempotency_key,
             } => self.start_agent_task_attempt(auth, task_id, assignee_agent_id, idempotency_key),
 
+            ToolCall::StartAgentTaskCodingRun {
+                project,
+                task_id,
+                attempt_id,
+                assignee_agent_id,
+                attempt_fence,
+                attempt_controller_generation,
+                provider_id,
+                config,
+                timeout_secs,
+            } => {
+                self.start_agent_task_coding_run(
+                    auth,
+                    project,
+                    task_id,
+                    attempt_id,
+                    assignee_agent_id,
+                    attempt_fence,
+                    attempt_controller_generation,
+                    provider_id,
+                    config,
+                    timeout_secs,
+                )
+                .await
+            }
+
+            ToolCall::ReconcileAgentTaskCodingRun {
+                task_id,
+                attempt_id,
+            } => {
+                self.reconcile_agent_task_coding_run(auth, task_id, attempt_id)
+                    .await
+            }
+
             ToolCall::HeartbeatAgentTaskAttempt {
                 task_id,
                 attempt_id,

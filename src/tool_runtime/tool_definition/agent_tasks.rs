@@ -1,16 +1,22 @@
+use super::AgentCapability::CodingAgentRuns;
 use super::ToolVisibility::ModelVisible;
-use super::{def, model_spec, require_all_scopes, ToolDefinition, TOOL_CATEGORY_AGENT_TASK};
+use super::{
+    def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_JOB,
+    TOOL_CATEGORY_AGENT_TASK,
+};
 use crate::auth::scopes::{COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
-    ToolRisk::{Read, WorkflowManage},
-    COMMUNICATION_MANAGE, COMMUNICATION_READ, TOOL_PROVIDER_CONTROL,
+    ToolRisk::{JobRun, Read, WorkflowManage},
+    CODING_AGENT_RUN, COMMUNICATION_MANAGE, COMMUNICATION_READ, TOOL_PROVIDER_AGENT,
+    TOOL_PROVIDER_CONTROL,
 };
 use crate::tool_runtime::registry::input_schemas::{
     assign_agent_task_input_schema, complete_agent_task_attempt_input_schema,
     create_agent_task_input_schema, heartbeat_agent_task_attempt_input_schema,
     list_agent_tasks_input_schema, read_agent_task_input_schema,
-    start_agent_task_attempt_input_schema,
+    reconcile_agent_task_coding_run_input_schema, start_agent_task_attempt_input_schema,
+    start_agent_task_coding_run_input_schema,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
@@ -138,6 +144,64 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             start_agent_task_attempt_input_schema,
         ),
         COMMUNICATION_MANAGE_SCOPES,
+    ),
+    permission_risk(
+        model_spec(
+            require_all_scopes(
+                def(
+                    "start_agent_task_coding_run",
+                    ModelVisible,
+                    TOOL_CATEGORY_AGENT_TASK,
+                    Some(CodingAgentRuns),
+                    TOOL_PROVIDER_AGENT,
+                    super::ToolSemanticContract {
+                        effect: super::ToolEffect::Execute,
+                        risk: JobRun,
+                        approval: super::ToolApprovalPolicy::Standard,
+                        idempotency: super::ToolIdempotency::FencedReplay,
+                    },
+                    Some(CODING_AGENT_RUN),
+                    true,
+                    NoPath,
+                    true,
+                    false,
+                ),
+                &[
+                    COMMUNICATION_READ,
+                    COMMUNICATION_MANAGE,
+                    CODING_AGENT_RUN,
+                    crate::auth::SCOPE_PROJECT_WRITE,
+                ],
+            ),
+            "Explicitly dispatch the exact latest unexpired fenced AgentTaskAttempt to its one durable CodingAgentRun backend. The Server derives the backend replay identity from the Attempt and uses AgentTask.instruction; the supplied Project must match referenced_project_id and is independently re-authorized through normal CodingAgent admission. Durable binding and outcome-unknown fencing precede external dispatch, so uncertain retries never mint replacement work.",
+            start_agent_task_coding_run_input_schema,
+        ),
+        PERMISSION_RISK_JOB,
+    ),
+    model_spec(
+        require_all_scopes(
+            def(
+                "reconcile_agent_task_coding_run",
+                ModelVisible,
+                TOOL_CATEGORY_AGENT_TASK,
+                None,
+                TOOL_PROVIDER_AGENT,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::DesiredState,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                false,
+                false,
+            ),
+            &[COMMUNICATION_READ, COMMUNICATION_MANAGE, CODING_AGENT_RUN],
+        ),
+        "Reconcile only the exact CodingAgentRun already durably bound to one owned AgentTaskAttempt. It never starts execution, chooses a provider, changes intent, or requires the old browser's Attempt fence. Authoritative Completed/Failed/Cancelled truth can terminalize the exact latest bound Attempt even after its ordinary lease expires; Lost remains outcome_unknown.",
+        reconcile_agent_task_coding_run_input_schema,
     ),
     require_all_scopes(
         model_spec(

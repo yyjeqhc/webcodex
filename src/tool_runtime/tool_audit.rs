@@ -549,6 +549,37 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
             );
         }
+        "start_agent_task_coding_run" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "project",
+                    "task_id",
+                    "attempt_id",
+                    "assignee_agent_id",
+                    "attempt_controller_generation",
+                    "provider_id",
+                    "timeout_secs",
+                ],
+            );
+            out.insert(
+                "attempt_fence_present".to_string(),
+                Value::Bool(obj.get("attempt_fence").and_then(Value::as_str).is_some()),
+            );
+            out.insert(
+                "config_count".to_string(),
+                Value::from(
+                    obj.get("config")
+                        .and_then(Value::as_object)
+                        .map(serde_json::Map::len)
+                        .unwrap_or_default(),
+                ),
+            );
+        }
+        "reconcile_agent_task_coding_run" => {
+            copy_keys(obj, &mut out, &["task_id", "attempt_id"]);
+        }
         "heartbeat_agent_task_attempt" => {
             copy_keys(
                 obj,
@@ -1605,6 +1636,23 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "attempt_number": output.pointer("/attempt/attempt_number").cloned().unwrap_or(Value::Null),
             "attempt_state": output.pointer("/attempt/state").cloned().unwrap_or(Value::Null),
             "controller_generation": output.pointer("/attempt/attempt_controller_generation").cloned().unwrap_or(Value::Null),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "start_agent_task_coding_run" | "reconcile_agent_task_coding_run" => serde_json::json!({
+            "task_id": output.get("task_id").cloned().unwrap_or(Value::Null),
+            "attempt_id": output.get("attempt_id").cloned().unwrap_or(Value::Null),
+            "run_id": output.get("run_id").cloned().unwrap_or(Value::Null),
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "provider_id": output.get("provider_id").cloned().unwrap_or(Value::Null),
+            "dispatch_state": output.get("dispatch_state").cloned().unwrap_or(Value::Null),
+            "run_state": output.get("run_state").cloned().unwrap_or(Value::Null),
+            "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
+            "execution_status": output.get("execution_status").cloned().unwrap_or(Value::Null),
+            "execution_recovery": output.get("execution_recovery").cloned().unwrap_or(Value::Null),
+            "task_state": output.get("task_state").cloned().unwrap_or(Value::Null),
+            "attempt_state": output.get("attempt_state").cloned().unwrap_or(Value::Null),
             "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
             "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
             "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
@@ -4455,6 +4503,40 @@ impl ToolCall {
                     "task_id": task_id,
                     "assignee_agent_id": assignee_agent_id,
                     "idempotency_key": idempotency_key,
+                }),
+            ),
+            Self::StartAgentTaskCodingRun {
+                project,
+                task_id,
+                attempt_id,
+                assignee_agent_id,
+                attempt_fence,
+                attempt_controller_generation,
+                provider_id,
+                config,
+                timeout_secs,
+            } => session_log_arguments_for_tool_request(
+                "start_agent_task_coding_run",
+                &serde_json::json!({
+                    "project": project,
+                    "task_id": task_id,
+                    "attempt_id": attempt_id,
+                    "assignee_agent_id": assignee_agent_id,
+                    "attempt_fence": attempt_fence,
+                    "attempt_controller_generation": attempt_controller_generation,
+                    "provider_id": provider_id,
+                    "config": config,
+                    "timeout_secs": timeout_secs,
+                }),
+            ),
+            Self::ReconcileAgentTaskCodingRun {
+                task_id,
+                attempt_id,
+            } => session_log_arguments_for_tool_request(
+                "reconcile_agent_task_coding_run",
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "attempt_id": attempt_id,
                 }),
             ),
             Self::HeartbeatAgentTaskAttempt {

@@ -1170,6 +1170,57 @@ mod tests {
     }
 
     #[test]
+    fn agent_task_coding_run_tools_require_task_and_execution_authority() {
+        let communication_only = oauth(&["communication:read", "communication:manage"]);
+        for tool in [
+            "start_agent_task_coding_run",
+            "reconcile_agent_task_coding_run",
+        ] {
+            assert_eq!(
+                check_runtime_tool_scope(Some(&communication_only), tool),
+                Err(ToolCallErrorStatus::InsufficientScope {
+                    required_scope: Some(crate::auth::SCOPE_CODING_AGENT_RUN),
+                    description: "missing required scope: coding_agent:run".to_string(),
+                }),
+                "communication authority must not grant CodingAgent execution/observation authority for {tool}"
+            );
+        }
+
+        let task_and_run = oauth(&[
+            "communication:read",
+            "communication:manage",
+            "coding_agent:run",
+        ]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&task_and_run), "start_agent_task_coding_run"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_PROJECT_WRITE),
+                description: "missing required scope: project:write".to_string(),
+            }),
+            "Task ownership and CodingAgent authority must not imply Project write authority"
+        );
+        assert_eq!(
+            check_runtime_tool_scope(
+                Some(&task_and_run),
+                "reconcile_agent_task_coding_run"
+            ),
+            Ok(()),
+            "reconciliation observes exact bound execution and must not require a new Project write grant"
+        );
+
+        let start_allowed = oauth(&[
+            "communication:read",
+            "communication:manage",
+            "coding_agent:run",
+            "project:write",
+        ]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&start_allowed), "start_agent_task_coding_run"),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn computer_tools_require_independent_scope() {
         let denied = oauth(&["runtime:read", "project:read"]);
         assert_eq!(

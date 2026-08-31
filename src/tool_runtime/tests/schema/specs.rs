@@ -612,6 +612,8 @@ fn tool_specs_covers_expected_tool_set() {
         "read_agent_task",
         "assign_agent_task",
         "start_agent_task_attempt",
+        "start_agent_task_coding_run",
+        "reconcile_agent_task_coding_run",
         "heartbeat_agent_task_attempt",
         "complete_agent_task_attempt",
         "run_process",

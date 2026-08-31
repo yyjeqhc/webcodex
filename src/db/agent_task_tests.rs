@@ -1008,6 +1008,145 @@ fn concurrent_attempt_start_creates_exactly_one_authoritative_attempt() {
 }
 
 #[test]
+fn live_coding_dispatch_mutations_sample_server_time_after_serialization_wait() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("agent-task-coding-serialized-clock.db");
+    let db = Arc::new(Database::open(&path).unwrap());
+    let owner = principal('d');
+    let assignee = agent(&db, &owner, "coding-serialized-clock-agent");
+    let now = wall_now_ms();
+
+    let prepare_task =
+        create_assigned_task(&db, &owner, &assignee, "coding-serialized-prepare-task");
+    let prepare_attempt = start(
+        &db,
+        &owner,
+        &prepare_task,
+        &assignee,
+        "coding-serialized-prepare-start",
+        now,
+    );
+    let prepare_intent = coding_binding_intent("serialized-prepare");
+
+    let claim_task = create_assigned_task(&db, &owner, &assignee, "coding-serialized-claim-task");
+    let claim_attempt = start(
+        &db,
+        &owner,
+        &claim_task,
+        &assignee,
+        "coding-serialized-claim-start",
+        now + 1,
+    );
+    let claim_intent = coding_binding_intent("serialized-claim");
+    prepare_coding_binding(
+        &db,
+        &owner,
+        &claim_task,
+        &assignee,
+        &claim_attempt,
+        &claim_intent,
+        now + 2,
+    );
+
+    // Hold the same Database mutex/transaction boundary used by live A4a mutations.
+    // Both workers enter their production wrappers before the lease is shortened, then
+    // wait until after expiry. A pre-serialization clock sample would incorrectly let
+    // prepare create a binding or claim cross the external-dispatch fence.
+    let guard = db.conn_for_tests();
+    let (ready_tx, ready_rx) = mpsc::channel();
+
+    let prepare_db = Arc::clone(&db);
+    let prepare_owner = owner.clone();
+    let prepare_assignee = assignee.clone();
+    let prepare_task_id = prepare_task.clone();
+    let prepare_attempt_id = prepare_attempt.attempt.attempt_id.clone();
+    let prepare_fence = prepare_attempt.attempt_fence.clone();
+    let prepare_intent_for_thread = prepare_intent.clone();
+    let prepare_ready = ready_tx.clone();
+    let prepare_handle = std::thread::spawn(move || {
+        prepare_ready.send(()).unwrap();
+        prepare_db.prepare_agent_task_coding_run(
+            &prepare_owner,
+            "agent:special:reference-only",
+            &prepare_task_id,
+            &prepare_attempt_id,
+            &prepare_assignee,
+            &prepare_fence,
+            1,
+            &prepare_intent_for_thread,
+        )
+    });
+
+    let claim_db = Arc::clone(&db);
+    let claim_owner = owner.clone();
+    let claim_assignee = assignee.clone();
+    let claim_task_id = claim_task.clone();
+    let claim_attempt_id = claim_attempt.attempt.attempt_id.clone();
+    let claim_fence = claim_attempt.attempt_fence.clone();
+    let claim_fingerprint = claim_intent.binding_intent_fingerprint.clone();
+    let claim_ready = ready_tx.clone();
+    let claim_handle = std::thread::spawn(move || {
+        claim_ready.send(()).unwrap();
+        claim_db.claim_agent_task_coding_run_dispatch(
+            &claim_owner,
+            &claim_task_id,
+            &claim_attempt_id,
+            &claim_assignee,
+            &claim_fence,
+            1,
+            &claim_fingerprint,
+        )
+    });
+
+    ready_rx.recv().unwrap();
+    ready_rx.recv().unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    let expires_at = wall_now_ms().saturating_add(200);
+    guard
+        .execute(
+            "UPDATE wc_agent_task_attempts
+             SET lease_expires_at_unix_ms = ?1
+             WHERE attempt_id IN (?2, ?3)",
+            params![
+                expires_at,
+                prepare_attempt.attempt.attempt_id,
+                claim_attempt.attempt.attempt_id,
+            ],
+        )
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    drop(guard);
+
+    let prepare_error = prepare_handle.join().unwrap().unwrap_err();
+    assert_eq!(prepare_error.code(), "agent_task_attempt_stale");
+    let claim_error = claim_handle.join().unwrap().unwrap_err();
+    assert_eq!(claim_error.code(), "agent_task_attempt_stale");
+
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row(
+                "SELECT COUNT(*) FROM wc_agent_task_coding_runs WHERE attempt_id = ?1",
+                [prepare_attempt.attempt.attempt_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0,
+        "expired prepare must not create a durable backend binding",
+    );
+    assert_eq!(
+        db.read_agent_task_coding_run_binding(
+            &owner,
+            &claim_task,
+            &claim_attempt.attempt.attempt_id,
+        )
+        .unwrap()
+        .dispatch_state,
+        AgentTaskCodingRunDispatchState::Prepared,
+        "expired claim must not cross the durable outcome-unknown dispatch fence",
+    );
+}
+
+#[test]
 fn live_lease_mutations_sample_server_time_after_serialization_wait() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("agent-task-serialized-clock.db");

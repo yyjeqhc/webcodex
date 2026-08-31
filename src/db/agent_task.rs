@@ -1610,7 +1610,7 @@ impl Database {
             attempt_fence,
             attempt_controller_generation,
             intent,
-            now_unix_ms(),
+            None,
         )
     }
 
@@ -1637,7 +1637,7 @@ impl Database {
             attempt_fence,
             attempt_controller_generation,
             intent,
-            now,
+            Some(now),
         )
     }
 
@@ -1652,7 +1652,7 @@ impl Database {
         attempt_fence: &str,
         attempt_controller_generation: i64,
         intent: &AgentTaskCodingRunBindingIntent,
-        now: i64,
+        now: Option<i64>,
     ) -> Result<AgentTaskCodingRunPrepared, CommunicationStoreError> {
         validate_attempt_mutation_inputs(
             principal,
@@ -1666,6 +1666,7 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
+        let now = now.unwrap_or_else(now_unix_ms);
         let task = load_owned_task(&transaction, principal, task_id, now)?;
         let referenced_project = task.referenced_project_id.as_deref().ok_or_else(|| {
             CommunicationStoreError::new(
@@ -1829,7 +1830,6 @@ impl Database {
         attempt_controller_generation: i64,
         binding_intent_fingerprint: &str,
     ) -> Result<AgentTaskCodingRunDispatchClaim, CommunicationStoreError> {
-        let now = now_unix_ms();
         validate_attempt_mutation_inputs(
             principal,
             task_id,
@@ -1842,6 +1842,7 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
+        let now = now_unix_ms();
         let task = load_owned_task(&transaction, principal, task_id, now)?;
         let _attempt = require_current_attempt(
             &transaction,

@@ -839,6 +839,8 @@ mod tests {
                     | "list_conversations"
                     | "read_conversation"
                     | "list_agent_inbox"
+                    | "list_agent_tasks"
+                    | "read_agent_task"
             ) {
                 OAuthToolScopePolicy::RequireAll(COMMUNICATION_READ_SCOPES)
             } else if matches!(
@@ -852,6 +854,11 @@ mod tests {
                     | "post_conversation_message"
                     | "consume_agent_deliveries"
                     | "consume_agent_wake"
+                    | "create_agent_task"
+                    | "assign_agent_task"
+                    | "start_agent_task_attempt"
+                    | "heartbeat_agent_task_attempt"
+                    | "complete_agent_task_attempt"
             ) {
                 OAuthToolScopePolicy::RequireAll(COMMUNICATION_MANAGE_SCOPES)
             } else if tool == "run_detached_process" {

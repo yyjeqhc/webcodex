@@ -86,6 +86,33 @@ async fn enqueue_scoped_apply_text_edits_requires_explicit_line_scope_capability
         .is_none());
 }
 
+#[test]
+fn enqueue_scoped_occurrence_requires_both_capabilities_before_admission() {
+    let baseline = v2_baseline_capabilities();
+    assert!(baseline.apply_text_edit_occurrence);
+    assert!(!baseline.apply_text_edit_line_scope);
+
+    let baseline_features = RunnerFeatureSet::try_from_registration(&baseline).unwrap();
+    assert!(baseline_features.supports(RunnerFeature::ApplyTextEditOccurrence));
+    assert!(!baseline_features.supports(RunnerFeature::ApplyTextEditLineScope));
+
+    let mut scoped = baseline.clone();
+    scoped.apply_text_edit_line_scope = true;
+    let scoped_features = RunnerFeatureSet::try_from_registration(&scoped).unwrap();
+    assert!(scoped_features.supports(RunnerFeature::ApplyTextEditOccurrence));
+    assert!(scoped_features.supports(RunnerFeature::ApplyTextEditLineScope));
+
+    // An accepted generation-2 Runner cannot reach scoped enqueue with the
+    // occurrence capability absent: occurrence remains part of the frozen V2
+    // baseline, while line scope is independently additive.
+    scoped.apply_text_edit_occurrence = false;
+    let error = RunnerFeatureSet::try_from_registration(&scoped).unwrap_err();
+    assert_eq!(
+        error,
+        "runner generation baseline capability mismatch: apply_text_edit_occurrence"
+    );
+}
+
 #[tokio::test]
 async fn enqueue_scoped_apply_text_edits_preserves_scope_and_global_occurrence_payload() {
     let registry = ShellClientRegistry::default();

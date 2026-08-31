@@ -114,6 +114,94 @@ fn enqueue_scoped_occurrence_requires_both_capabilities_before_admission() {
 }
 
 #[tokio::test]
+async fn generic_file_enqueue_rejects_scoped_edit_without_line_scope_capability() {
+    let registry = ShellClientRegistry::default();
+    register_line_scope_instance(&registry, "generic-scope-off", false).await;
+
+    let error = registry
+        .enqueue_file_op(
+            line_scope_request("generic-scope-off", None),
+            "rest-like-caller".to_string(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("capability_unavailable"));
+    assert!(error.contains("apply_text_edit_line_scope"));
+    assert!(registry
+        .poll(ShellAgentPollRequest {
+            client_id: "generic-scope-off".to_string(),
+            agent_instance_id: "inst".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn generic_file_enqueue_preserves_unscoped_edit_without_line_scope_capability() {
+    let registry = ShellClientRegistry::default();
+    register_line_scope_instance(&registry, "generic-unscoped", false).await;
+
+    let mut request = line_scope_request("generic-unscoped", None);
+    let mut payload: serde_json::Value =
+        serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+    payload["changes"][0]["edits"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("line_scope");
+    request.content = Some(payload.to_string());
+
+    let (request_id, _rx) = registry
+        .enqueue_file_op(request, "rest-like-caller".to_string())
+        .await
+        .unwrap();
+    let queued = registry
+        .poll(ShellAgentPollRequest {
+            client_id: "generic-unscoped".to_string(),
+            agent_instance_id: "inst".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(queued.request_id, request_id);
+    assert_eq!(queued.kind, "file_apply_text_edits");
+}
+
+#[tokio::test]
+async fn generic_file_enqueue_scoped_edit_uses_capability_fenced_path() {
+    let registry = ShellClientRegistry::default();
+    register_line_scope_instance(&registry, "generic-scope-on", true).await;
+
+    let (request_id, _rx) = registry
+        .enqueue_file_op(
+            line_scope_request("generic-scope-on", Some(2)),
+            "rest-like-caller".to_string(),
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(ShellAgentPollRequest {
+            client_id: "generic-scope-on".to_string(),
+            agent_instance_id: "inst".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(request.request_id, request_id);
+    assert_eq!(request.kind, "file_apply_text_edits");
+    let payload: serde_json::Value =
+        serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["changes"][0]["edits"][0]["occurrence"], 2);
+    assert_eq!(
+        payload["changes"][0]["edits"][0]["line_scope"]["start_line"],
+        40
+    );
+}
+
+#[tokio::test]
 async fn enqueue_scoped_apply_text_edits_preserves_scope_and_global_occurrence_payload() {
     let registry = ShellClientRegistry::default();
     register_line_scope_instance(&registry, "scope-on", true).await;

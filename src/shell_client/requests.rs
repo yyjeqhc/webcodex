@@ -287,6 +287,38 @@ pub(super) fn resolve_disconnected_sync_requests_locked(
     }
 }
 
+fn apply_text_edits_capability_requirements(body: &ShellFileOpRequest) -> (bool, bool) {
+    if body.op != "apply_text_edits" {
+        return (false, false);
+    }
+    let Some(content) = body.content.as_deref() else {
+        return (false, false);
+    };
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(content) else {
+        // Invalid JSON cannot become a valid Runner mutation. Preserve the
+        // existing generic-ingress behavior and let the Runner reject it.
+        return (false, false);
+    };
+    let Some(changes) = payload.get("changes").and_then(serde_json::Value::as_array) else {
+        return (false, false);
+    };
+
+    let mut requires_occurrence = false;
+    let mut requires_line_scope = false;
+    for edit in changes
+        .iter()
+        .filter_map(|change| change.get("edits").and_then(serde_json::Value::as_array))
+        .flatten()
+    {
+        requires_occurrence |= edit.get("occurrence").is_some();
+        requires_line_scope |= edit.get("line_scope").is_some();
+        if requires_occurrence && requires_line_scope {
+            break;
+        }
+    }
+    (requires_occurrence, requires_line_scope)
+}
+
 impl ShellClientRegistry {
     pub async fn enqueue_file_op(
         &self,
@@ -302,6 +334,13 @@ impl ShellClientRegistry {
                 "{} is internal-only; generic file-op enqueue is forbidden",
                 body.op
             ));
+        }
+        let (requires_occurrence, requires_line_scope) =
+            apply_text_edits_capability_requirements(&body);
+        if requires_line_scope {
+            return self
+                .enqueue_apply_text_edits_with_line_scope(body, requested_by, requires_occurrence)
+                .await;
         }
         self.enqueue_validated_file_op(body, requested_by).await
     }

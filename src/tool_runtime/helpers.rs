@@ -1065,14 +1065,6 @@ pub(crate) fn validate_limited_cleanup_paths(
     Ok(clean)
 }
 
-pub(crate) fn shell_join_paths(paths: &[String]) -> String {
-    paths
-        .iter()
-        .map(|p| shell_escape_simple(p))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 pub(crate) fn bounded_tail(text: &str, max_chars: usize) -> (String, bool) {
     let total = text.chars().count();
     if total <= max_chars {

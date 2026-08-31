@@ -405,9 +405,11 @@ pub fn shell_computer_request_payload_max_bytes(kind: &str) -> usize {
 pub const SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION: &str = "job_state_reconciliation";
 pub const SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS: &str = "coding_agent_runs";
 /// Capabilities guaranteed by every accepted protocol-generation-2 Runner.
-/// These explicit bools are protocol facts shared by Server and Runner. Server
-/// authority still uses its typed RunnerFeature classification and verifies this
-/// list cannot drift.
+/// These explicit bools remain wire facts shared by Server and Runner, but a
+/// missing/false baseline bit rejects registration. Downstream consumers may
+/// retain atomic invariant checks; they must not select old-Runner fallbacks.
+/// Server authority still uses its typed RunnerFeature classification and verifies
+/// this list cannot drift.
 pub const AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_FILE_READ,
     SHELL_CLIENT_CAPABILITY_FILE_WRITE,

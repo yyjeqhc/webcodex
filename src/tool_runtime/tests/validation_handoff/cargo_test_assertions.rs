@@ -1,5 +1,5 @@
 //! Cargo test-count postcondition coverage across synchronous, Job, Session,
-//! capability-fence, and incomplete-evidence paths.
+//! and incomplete-evidence paths.
 
 use super::*;
 

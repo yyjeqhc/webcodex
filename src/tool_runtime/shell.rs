@@ -484,6 +484,7 @@ impl ToolRuntime {
         result
     }
 
+    #[cfg(test)]
     pub(crate) async fn run_shell(
         &self,
         project: String,
@@ -495,6 +496,7 @@ impl ToolRuntime {
             .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn run_shell_with_contract(
         &self,
         project: String,

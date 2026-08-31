@@ -17,14 +17,14 @@ fn apply_text_edit_occurrence_capability_rejection(reason: impl AsRef<str>) -> T
     let reason = reason.as_ref();
     ToolResult::err_with_output(
         format!(
-            "Rejected before write: {reason}.\nNo files were modified.\nRetry guidance: upgrade the Runner or refine the edit to a unique exact match without occurrence."
+            "Rejected before write: {reason}.\nNo files were modified.\nRetry guidance: the accepted Runner violated the generation-2 apply_text_edit_occurrence baseline; reconnect it or refine the edit to a unique exact match without occurrence."
         ),
         json!({
             "state_changed": false,
             "error_kind": "agent_capability_unavailable",
             "failure_kind": "capability_unavailable",
             "capability": crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
-            "retry_guidance": "upgrade the Runner or refine the edit to a unique exact match without occurrence"
+            "retry_guidance": "reconnect the Runner or refine the edit to a unique exact match without occurrence"
         }),
     )
 }
@@ -597,68 +597,12 @@ impl ToolRuntime {
                 Ok(client_id) => client_id.to_string(),
                 Err(error) => return ToolResult::err(error),
             };
-            // Pre-check is a non-authoritative optimization only: the
-            // authoritative capability decision happens under the registry lock
-            // at enqueue time, so a client that re-registers without
-            // structured_file_delete between here and the enqueue falls back to
-            // the legacy shell path instead of receiving an unknown file op.
-            let supports_structured_delete = self
-                .shell_clients
-                .get_client_feature_set(&client_id)
-                .await
-                .map(|features| {
-                    features.supports(crate::shell_client::RunnerFeature::StructuredFileDelete)
-                })
-                .unwrap_or(false);
-            if supports_structured_delete {
-                return self
-                    .delete_project_files_structured_agent(&proj, client_id, paths, project, 30)
-                    .await;
-            }
-            return self.delete_project_files_legacy_shell(project, paths).await;
+            return self
+                .delete_project_files_structured_agent(&proj, client_id, paths, project, 30)
+                .await;
         }
 
         self.delete_project_files_local(&proj, paths)
-    }
-
-    /// Rolling-upgrade compatibility for Runner binaries that predate
-    /// `structured_file_delete`. This deliberately preserves the historical
-    /// POSIX `rm -f -- ...` path and is therefore not a new cross-platform
-    /// execution contract. Retirement condition: once the supported Runner
-    /// fleet requires `structured_file_delete`, remove this fallback and its
-    /// compatibility tests rather than extending shell quoting to new platforms.
-    async fn delete_project_files_legacy_shell(
-        &self,
-        project: String,
-        paths: Vec<String>,
-    ) -> ToolResult {
-        // Admission reaches this path only while mixed-version Runner support is
-        // still required. Never retry here after a possibly-dispatched structured
-        // delete; that uncertainty is handled by the structured lifecycle path.
-        let command = format!("rm -f -- {}", shell_join_paths(&paths));
-        let result = self.run_shell(project, command, Some(30), None).await;
-        if result.success {
-            let stdout_present = result
-                .output
-                .get("stdout_tail")
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.is_empty());
-            let stderr_present = result
-                .output
-                .get("stderr_tail")
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.is_empty());
-            ToolResult::ok(json!({
-                "ok": true,
-                "deleted_paths": paths,
-                "missing_paths": [],
-                "refused_paths": [],
-                "stdout_present": stdout_present,
-                "stderr_present": stderr_present,
-            }))
-        } else {
-            result
-        }
     }
 
     /// Bounded structured-delete failure result. Projects the shared
@@ -707,7 +651,7 @@ impl ToolRuntime {
         proj: &ProjectConfig,
         client_id: String,
         paths: Vec<String>,
-        project: String,
+        _project: String,
         wait_timeout_secs: u64,
     ) -> ToolResult {
         let payload = match serde_json::to_string(&json!({"paths": paths})) {
@@ -740,13 +684,10 @@ impl ToolRuntime {
         {
             Ok(request) => request,
             Err(error) if error.starts_with("capability_unavailable:") => {
-                // The client re-registered without structured_file_delete
-                // between the pre-check and this authoritative enqueue; the
-                // registry queued nothing and no mutation can have happened.
-                // The legacy shell path is the rolling-upgrade fallback every
-                // Runner generation supports. This is the ONLY case that may
-                // fall back after a structured attempt.
-                return self.delete_project_files_legacy_shell(project, paths).await;
+                return Self::delete_project_files_lifecycle_failure(
+                    format!("agent delete_project_files generation-2 capability invariant failed: {error}"),
+                    ShellCommandExecutionState::NotStarted,
+                );
             }
             Err(_) => return ToolResult::err("agent delete_project_files is unavailable"),
         };

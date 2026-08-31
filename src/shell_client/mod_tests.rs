@@ -314,11 +314,9 @@ async fn register_quic_v1_client(registry: &ShellClientRegistry, client_id: &str
 }
 
 // ---------------------------------------------------------------------------
-// Structured delete enqueue: the authoritative `structured_file_delete`
-// capability fence. The capability check and pending-request admission must
-// happen under the same registry lock, so a client that re-registered without
-// the capability never receives an unknown `file_delete_project_files` op and
-// a failed admission leaves no request or waiter behind.
+// Structured delete enqueue: keep the generation-2 capability invariant check
+// atomic with pending-request admission. A failed invariant queues nothing and
+// leaves no request or waiter behind; it never selects a compatibility path.
 // ---------------------------------------------------------------------------
 
 #[path = "mod_tests/quic_queueing.rs"]

@@ -11,7 +11,7 @@ use webcodex_workspace::file_read_range::{self, EffectiveRange, FileReadRange, R
 #[cfg(test)]
 use super::helpers::run_command_sync;
 use super::helpers::{
-    looks_like_command_timeout, run_command_sync_bounded, shell_escape_simple, shell_join_paths,
+    looks_like_command_timeout, run_command_sync_bounded, shell_escape_simple,
     validate_limited_cleanup_paths, validate_project_relative_path, LocalRunFailure,
 };
 use super::project_resolution::ResolvedProject;

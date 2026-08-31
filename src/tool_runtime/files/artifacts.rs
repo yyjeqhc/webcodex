@@ -267,10 +267,8 @@ pub(crate) fn validate_project_artifact_export_snapshot(
 
 impl ToolRuntime {
     /// Internal-only large-file metadata transport for MCP artifact export.
-    /// The ShellClient registry atomically fences the additive streaming-metadata
-    /// capability with request admission. `Ok(None)` means only that the current
-    /// Runner predates bounded large-file metadata and the caller must use the
-    /// 10 MiB legacy metadata bound instead.
+    /// The ShellClient registry atomically rechecks the generation-2 streaming
+    /// metadata and chunk-read baseline while admitting the request.
     async fn run_agent_json_artifact_export_metadata_op(
         &self,
         client_id: String,
@@ -278,7 +276,7 @@ impl ToolRuntime {
         path: String,
         payload: Value,
         auth: Option<&AuthContext>,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Value, String> {
         let serialized = serde_json::to_string(&payload).map_err(|error| {
             format!("failed to serialize artifact export metadata payload: {error}")
         })?;
@@ -300,27 +298,10 @@ impl ToolRuntime {
             create_dirs: false,
             wait_timeout_secs: wait_timeout,
         };
-        let (request_id, rx) = match self
+        let (request_id, rx) = self
             .shell_clients
-            .enqueue_artifact_export_metadata(
-                request,
-                "mcp_artifact_export".to_string(),
-                auth,
-            )
-            .await
-        {
-            Ok(request) => request,
-            Err(error)
-                if error.contains(
-                    crate::shell_protocol::SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
-                ) || error.contains(
-                    crate::shell_protocol::SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
-                ) =>
-            {
-                return Ok(None)
-            }
-            Err(error) => return Err(error),
-        };
+            .enqueue_artifact_export_metadata(request, "mcp_artifact_export".to_string(), auth)
+            .await?;
         let response = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
             Ok(Ok(response)) => response,
             Ok(Err(_)) => {
@@ -351,16 +332,13 @@ impl ToolRuntime {
                 &stdout[..stdout.len().min(200)]
             )
         })?;
-        Ok(Some(output))
+        Ok(output)
     }
 
-    /// Internal-only optimized segment transport for MCP artifact export. This
-    /// is not a ToolCall and has no model schema. Project ownership and Runner
-    /// access are re-resolved for the authenticated caller before each enqueue;
-    /// the registry then atomically fences file_read plus the additive optimized
-    /// capability with request admission. `Ok(None)` means only that the current
-    /// Runner predates the optimized request and the caller may use the existing
-    /// public read_project_artifact compatibility path.
+    /// Internal-only segment transport for MCP artifact export. This is not a
+    /// ToolCall and has no model schema. Project ownership and Runner access are
+    /// re-resolved for the authenticated caller before each enqueue; the registry
+    /// then atomically rechecks file_read plus the generation-2 chunk-read baseline.
     pub(crate) async fn read_project_artifact_export_chunk_internal(
         &self,
         project: &str,
@@ -369,7 +347,7 @@ impl ToolRuntime {
         offset: usize,
         length: usize,
         auth: Option<&AuthContext>,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Value, String> {
         if let Err(error) = validate_artifact_file_path(path) {
             return Err(error);
         }
@@ -423,21 +401,10 @@ impl ToolRuntime {
             create_dirs: false,
             wait_timeout_secs: wait_timeout,
         };
-        let (request_id, rx) = match self
+        let (request_id, rx) = self
             .shell_clients
             .enqueue_artifact_export_chunk(request, "mcp_artifact_export".to_string(), auth)
-            .await
-        {
-            Ok(request) => request,
-            Err(error)
-                if error.contains(
-                    crate::shell_protocol::SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
-                ) =>
-            {
-                return Ok(None)
-            }
-            Err(error) => return Err(error),
-        };
+            .await?;
         let response = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
             Ok(Ok(response)) => response,
             Ok(Err(_)) => {
@@ -468,7 +435,7 @@ impl ToolRuntime {
                 &stdout[..stdout.len().min(200)]
             )
         })?;
-        Ok(Some(output))
+        Ok(output)
     }
 
     pub(crate) async fn save_project_artifact(
@@ -627,7 +594,7 @@ impl ToolRuntime {
         });
         let output = match self
             .run_agent_json_artifact_export_metadata_op(
-                client_id.clone(),
+                client_id,
                 resolved.config.path.clone(),
                 path.clone(),
                 streaming_payload,
@@ -635,28 +602,7 @@ impl ToolRuntime {
             )
             .await
         {
-            Ok(Some(output)) => output,
-            Ok(None) => {
-                let legacy_payload = json!({
-                    "path": path.clone(),
-                    "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
-                    "allow_missing": false,
-                });
-                match self
-                    .run_agent_json_file_op(
-                        client_id,
-                        resolved.config.path.clone(),
-                        path.clone(),
-                        "read_project_artifact_metadata",
-                        legacy_payload,
-                        "export_project_artifact",
-                    )
-                    .await
-                {
-                    Ok(output) => output,
-                    Err(error) => return ToolResult::err(error),
-                }
-            }
+            Ok(output) => output,
             Err(error) => return ToolResult::err(error),
         };
         if let Some(error) = output

@@ -481,11 +481,11 @@ impl ToolRuntime {
             }
             if !client.supports(RunnerFeature::ProjectPathRegistration) {
                 return ToolResult::err_with_output(
-                    "agent_capability_unavailable: the selected Runner does not support project path registration; upgrade the Runner or use an existing registered project id",
+                    "agent_capability_unavailable: accepted Runner violated the generation-2 project_path_registration baseline",
                     json!({
                         "error_kind": "agent_capability_unavailable",
                         "failure_kind": "capability_unavailable",
-                        "reason_code": "project_path_registration_requires_newer_runner",
+                        "reason_code": "runner_generation_baseline_invariant",
                         "capability": SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
                         "state_changed": false,
                     }),

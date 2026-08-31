@@ -546,10 +546,9 @@ impl ShellClientRegistry {
         Ok((request_id, rx))
     }
 
-    /// Enqueue the export-only large-file metadata read. Capability checks and
-    /// admission share the registry lock so a mixed-version replacement cannot
-    /// receive a caller-provided large metadata bound unless it explicitly
-    /// advertises both optimized export chunks and bounded streaming metadata.
+    /// Enqueue the export-only large-file metadata read. The generation-2
+    /// baseline checks and admission share the registry lock so request dispatch
+    /// cannot outlive the exact accepted Runner capability snapshot.
     pub(crate) async fn enqueue_artifact_export_metadata(
         &self,
         body: ShellFileOpRequest,
@@ -635,10 +634,9 @@ impl ShellClientRegistry {
         Ok((request_id, rx))
     }
 
-    /// Enqueue the internal artifact-export segment read. Capability checks and
-    /// pending admission share the registry lock so a mixed-version replacement
-    /// can never receive an unsupported request. Only an explicit capability
-    /// miss is eligible for the Control-side legacy read fallback.
+    /// Enqueue the internal artifact-export segment read. The generation-2
+    /// baseline checks and pending admission share the registry lock. A baseline
+    /// miss is an invariant failure and never selects a second read implementation.
     pub(crate) async fn enqueue_artifact_export_chunk(
         &self,
         body: ShellFileOpRequest,
@@ -715,18 +713,10 @@ impl ShellClientRegistry {
         Ok((request_id, rx))
     }
 
-    /// Enqueue a structured `delete_project_files` agent file op. This is the
-    /// authoritative TOCTOU fence for mixed-version rolling upgrades: the
-    /// `structured_file_delete` capability check and the pending-request
-    /// admission happen under the same registry lock, so an agent that
-    /// re-registers without the capability between a caller's pre-check and
-    /// this call never receives a structured delete request it cannot
-    /// understand.
-    ///
-    /// When the current client no longer advertises the capability, nothing is
-    /// queued, no waiter or request is created, and an error carrying the
-    /// `capability_unavailable:` prefix is returned so the caller can take the
-    /// legacy shell fallback (supported by old and new Runners).
+    /// Enqueue a structured `delete_project_files` agent file op. The
+    /// generation-2 `structured_file_delete` baseline check and pending-request
+    /// admission happen under the same registry lock. A baseline miss queues
+    /// nothing and is reported as an invariant failure; there is no shell fallback.
     pub(crate) async fn enqueue_structured_file_delete(
         &self,
         body: ShellFileOpRequest,

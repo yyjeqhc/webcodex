@@ -1,10 +1,6 @@
 use super::*;
 
-async fn register_structured_delete_client(
-    registry: &ShellClientRegistry,
-    client_id: &str,
-    structured_file_delete: bool,
-) {
+async fn register_structured_delete_client(registry: &ShellClientRegistry, client_id: &str) {
     registry
         .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
@@ -19,10 +15,7 @@ async fn register_structured_delete_client(
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
-                structured_file_delete,
-                ..Default::default()
-            }),
+            capabilities: Some(ShellClientCapabilities::default()),
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
@@ -35,16 +28,12 @@ async fn register_structured_delete_instance(
     registry: &ShellClientRegistry,
     client_id: &str,
     instance: &str,
-    structured_file_delete: bool,
 ) -> Result<ShellClientView, String> {
     register_instance_with_capabilities(
         registry,
         client_id,
         instance,
-        ShellClientCapabilities {
-            structured_file_delete,
-            ..Default::default()
-        },
+        ShellClientCapabilities::default(),
     )
     .await
 }
@@ -72,7 +61,7 @@ fn structured_delete_request(client_id: &str) -> ShellFileOpRequest {
 #[tokio::test]
 async fn enqueue_structured_file_delete_queues_when_capability_advertised() {
     let registry = ShellClientRegistry::default();
-    register_structured_delete_client(&registry, "structured-delete-on", true).await;
+    register_structured_delete_client(&registry, "structured-delete-on").await;
     let (request_id, _rx) = registry
         .enqueue_structured_file_delete(
             structured_delete_request("structured-delete-on"),
@@ -114,7 +103,7 @@ async fn enqueue_structured_file_delete_unknown_client_fails_closed() {
 #[tokio::test]
 async fn enqueue_structured_file_delete_offline_client_fails_closed() {
     let registry = ShellClientRegistry::default();
-    register_structured_delete_client(&registry, "structured-delete-offline", true).await;
+    register_structured_delete_client(&registry, "structured-delete-offline").await;
     registry
         .set_last_seen_for_test(
             "structured-delete-offline",
@@ -135,7 +124,7 @@ async fn enqueue_structured_file_delete_offline_client_fails_closed() {
 #[tokio::test]
 async fn enqueue_structured_file_delete_rejects_other_ops_before_registry() {
     let registry = ShellClientRegistry::default();
-    register_structured_delete_client(&registry, "structured-delete-op", true).await;
+    register_structured_delete_client(&registry, "structured-delete-op").await;
     let mut req = structured_delete_request("structured-delete-op");
     req.op = "write".to_string();
     let error = registry
@@ -152,7 +141,7 @@ async fn enqueue_structured_file_delete_rejects_other_ops_before_registry() {
 #[tokio::test]
 async fn enqueue_structured_file_delete_validates_request_before_locking() {
     let registry = ShellClientRegistry::default();
-    register_structured_delete_client(&registry, "structured-delete-invalid", true).await;
+    register_structured_delete_client(&registry, "structured-delete-invalid").await;
     let mut req = structured_delete_request("structured-delete-invalid");
     req.path = "".to_string();
     let error = registry
@@ -164,12 +153,12 @@ async fn enqueue_structured_file_delete_validates_request_before_locking() {
 }
 
 #[tokio::test]
-async fn same_instance_structured_file_delete_same_capability_reconnect_allowed() {
+async fn same_instance_structured_file_delete_reconnect_allowed() {
     let registry = ShellClientRegistry::default();
-    register_structured_delete_instance(&registry, "monotonic-reconnect", "inst-a", true)
+    register_structured_delete_instance(&registry, "monotonic-reconnect", "inst-a")
         .await
         .unwrap();
-    register_structured_delete_instance(&registry, "monotonic-reconnect", "inst-a", true)
+    register_structured_delete_instance(&registry, "monotonic-reconnect", "inst-a")
         .await
         .unwrap();
     let view = registry
@@ -181,23 +170,9 @@ async fn same_instance_structured_file_delete_same_capability_reconnect_allowed(
 }
 
 #[tokio::test]
-async fn same_instance_structured_file_delete_upgrade_allowed() {
-    let registry = ShellClientRegistry::default();
-    register_structured_delete_instance(&registry, "monotonic-upgrade", "inst-a", false)
-        .await
-        .unwrap();
-    register_structured_delete_instance(&registry, "monotonic-upgrade", "inst-a", true)
-        .await
-        .unwrap();
-    let view = registry.get_client_view("monotonic-upgrade").await.unwrap();
-    assert_eq!(view.agent_instance_id, "inst-a");
-    assert!(view.capabilities.structured_file_delete);
-}
-
-#[tokio::test]
 async fn same_instance_reconnect_keeps_queued_structured_delete_dispatchable() {
     let registry = ShellClientRegistry::default();
-    register_structured_delete_instance(&registry, "reconnect-keeps", "inst-a", true)
+    register_structured_delete_instance(&registry, "reconnect-keeps", "inst-a")
         .await
         .unwrap();
     let (request_id, _rx) = registry
@@ -211,7 +186,7 @@ async fn same_instance_reconnect_keeps_queued_structured_delete_dispatchable() {
     // Same-instance transport reconnect with the capability still true: the
     // queued structured request remains valid and dispatchable to that
     // instance (never failed or re-enqueued).
-    register_structured_delete_instance(&registry, "reconnect-keeps", "inst-a", true)
+    register_structured_delete_instance(&registry, "reconnect-keeps", "inst-a")
         .await
         .unwrap();
     let polled = registry
@@ -230,7 +205,7 @@ async fn same_instance_reconnect_keeps_queued_structured_delete_dispatchable() {
 #[tokio::test]
 async fn instance_replacement_drains_sync_requests_before_installing_new_lease() {
     let registry = ShellClientRegistry::default();
-    register_structured_delete_instance(&registry, "replace-drain", "inst-a", true)
+    register_structured_delete_instance(&registry, "replace-drain", "inst-a")
         .await
         .unwrap();
     let (request_id, mut rx) = registry
@@ -245,8 +220,9 @@ async fn instance_replacement_drains_sync_requests_before_installing_new_lease()
     registry
         .set_last_seen_for_test("replace-drain", chrono::Utc::now().timestamp() - 120)
         .await;
-    // Replacement instance B does not support structured delete.
-    register_structured_delete_instance(&registry, "replace-drain", "inst-b", false)
+    // Replacement instance B satisfies the same generation-2 baseline; the
+    // lease transition itself drains the old synchronous request.
+    register_structured_delete_instance(&registry, "replace-drain", "inst-b")
         .await
         .unwrap();
 

@@ -21,23 +21,23 @@ mod skills;
 mod text_edits;
 mod validation;
 
-pub(super) use artifacts::{
+pub(crate) use artifacts::{
     artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
     artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,
     export_project_artifact_input_schema, import_conversation_files_to_project_input_schema,
     read_project_artifact_input_schema, read_project_artifact_metadata_input_schema,
     save_project_artifact_input_schema,
 };
-pub(super) use checkpoints::{
+pub(crate) use checkpoints::{
     checkpoint_create_input_schema, checkpoint_delete_input_schema, checkpoint_labels_schema,
     checkpoint_list_input_schema, checkpoint_restore_input_schema, checkpoint_show_input_schema,
     checkpoint_validation_schema,
 };
-pub(super) use cleanup::{
+pub(crate) use cleanup::{
     delete_project_files_input_schema, discard_untracked_input_schema,
     git_restore_paths_input_schema,
 };
-pub(super) use coding::{finish_coding_task_input_schema, work_on_project_input_schema};
+pub(crate) use coding::{finish_coding_task_input_schema, work_on_project_input_schema};
 pub(crate) use coding_agents::{
     coding_agent_cancel_input_schema, coding_agent_observe_input_schema,
     coding_agent_start_input_schema,
@@ -51,7 +51,7 @@ pub(crate) use communication::{
     post_conversation_message_input_schema, read_conversation_input_schema,
     update_agent_identity_input_schema,
 };
-pub(super) use computer::{
+pub(crate) use computer::{
     computer_accessibility_status_input_schema, computer_accessibility_tree_input_schema,
     computer_activate_window_input_schema, computer_control_input_schema,
     computer_element_state_input_schema, computer_find_elements_input_schema,
@@ -72,26 +72,26 @@ pub(crate) use discovery::{
     empty_input_schema, list_agents_input_schema, list_projects_input_schema,
     list_tools_input_schema, runtime_status_input_schema, tool_manifest_input_schema,
 };
-pub(super) use files::{
+pub(crate) use files::{
     list_project_files_input_schema, list_project_tracked_files_input_schema,
     project_overview_input_schema, read_file_input_schema, read_files_input_schema,
     search_project_text_input_schema, search_project_texts_input_schema,
 };
-pub(super) use git::{
+pub(crate) use git::{
     git_diff_hunks_input_schema, git_diff_input_schema, git_diff_summary_input_schema,
     git_log_input_schema, git_review_summary_input_schema, git_status_input_schema,
     show_changes_input_schema,
 };
-pub(super) use hygiene::workspace_hygiene_check_input_schema;
-pub(super) use jobs::{
+pub(crate) use hygiene::workspace_hygiene_check_input_schema;
+pub(crate) use jobs::{
     job_log_input_schema, job_status_input_schema, list_jobs_input_schema,
     observe_jobs_input_schema, open_session_shell_input_schema, run_detached_process_input_schema,
     run_job_input_schema, run_process_input_schema, run_script_input_schema,
     run_shell_input_schema, session_shell_exec_input_schema, session_shell_identity_input_schema,
     stop_job_input_schema,
 };
-pub(super) use line_edits::apply_text_edits_input_schema;
-pub(super) use lsp::{
+pub(crate) use line_edits::apply_text_edits_input_schema;
+pub(crate) use lsp::{
     call_hierarchy_input_schema, document_diagnostics_input_schema, document_symbols_input_schema,
     find_references_input_schema, goto_definition_input_schema, hover_input_schema,
     lsp_status_input_schema, workspace_symbols_input_schema,
@@ -100,11 +100,11 @@ pub(super) use memory::{
     memory_delete_input_schema, memory_read_input_schema, memory_scope_list_input_schema,
     memory_scope_purge_input_schema, memory_search_input_schema, memory_set_input_schema,
 };
-pub(super) use patches::apply_unified_diff_input_schema;
+pub(crate) use patches::apply_unified_diff_input_schema;
 pub(crate) use projects::{
     create_project_input_schema, register_project_input_schema, unregister_project_input_schema,
 };
-pub(super) use sessions::{
+pub(crate) use sessions::{
     close_session_input_schema, complete_session_message_input_schema,
     get_session_assignment_input_schema, list_session_messages_input_schema,
     observe_session_messages_input_schema, post_session_message_input_schema,
@@ -117,7 +117,7 @@ pub(super) use skills::{
     skill_activate_input_schema, skill_install_input_schema, skill_list_input_schema,
     skill_read_file_input_schema, skill_remove_revision_input_schema, skill_versions_input_schema,
 };
-pub(super) use text_edits::write_project_file_input_schema;
-pub(super) use validation::{
+pub(crate) use text_edits::write_project_file_input_schema;
+pub(crate) use validation::{
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema, go_test_input_schema,
 };

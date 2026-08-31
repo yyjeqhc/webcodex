@@ -1,10 +1,16 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToolRisk {
-    ReadOnly,
+    /// Data exposure / observation risk. This says nothing about whether the
+    /// tool has side effects; `ToolEffect` is authoritative for that question.
+    Read,
     ProjectWrite,
     SkillManage,
     MemoryManage,
     CommunicationManage,
+    SessionCollaborate,
+    WorkflowManage,
+    CheckpointManage,
+    RunControl,
     ComputerControl,
     JobRun,
     /// Reserved for account-control tools; the current runtime manifest has
@@ -17,17 +23,107 @@ pub(crate) enum ToolRisk {
 impl ToolRisk {
     pub(crate) fn session_risk_class(self) -> &'static str {
         match self {
-            ToolRisk::ReadOnly => "read_only",
+            // Preserve the existing external risk label while separating
+            // read-only effect semantics from risk classification internally.
+            ToolRisk::Read => "read_only",
             ToolRisk::ProjectWrite => "project_write",
             ToolRisk::SkillManage => "skill_manage",
             ToolRisk::MemoryManage => "memory_manage",
             ToolRisk::CommunicationManage => "communication_manage",
+            ToolRisk::SessionCollaborate => "session_collaborate",
+            ToolRisk::WorkflowManage => "workflow_manage",
+            ToolRisk::CheckpointManage => "checkpoint_manage",
+            ToolRisk::RunControl => "run_control",
             ToolRisk::ComputerControl => "computer_control",
             ToolRisk::JobRun => "job_run",
             ToolRisk::AccountManage => "account_manage",
             ToolRisk::Unknown => "unknown",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolEffect {
+    Observe,
+    Mutate,
+    Execute,
+    Unknown,
+}
+
+impl ToolEffect {
+    pub(crate) const fn read_only_hint(self) -> bool {
+        matches!(self, Self::Observe)
+    }
+
+    pub(crate) const fn manifest_label(self) -> &'static str {
+        match self {
+            Self::Observe => "observe",
+            Self::Mutate => "mutate",
+            Self::Execute => "execute",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolApprovalPolicy {
+    None,
+    Standard,
+    InheritFromStart,
+    Unknown,
+}
+
+impl ToolApprovalPolicy {
+    pub(crate) const fn requires_permission(self) -> bool {
+        matches!(self, Self::Standard | Self::Unknown)
+    }
+
+    pub(crate) const fn manifest_label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Standard => "standard",
+            Self::InheritFromStart => "inherit_from_start",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolIdempotency {
+    PureRead,
+    DesiredState,
+    Keyed,
+    FencedReplay,
+    NonIdempotent,
+    Unknown,
+}
+
+impl ToolIdempotency {
+    pub(crate) const fn mcp_hint(self) -> bool {
+        matches!(
+            self,
+            Self::PureRead | Self::DesiredState | Self::Keyed | Self::FencedReplay
+        )
+    }
+
+    pub(crate) const fn manifest_label(self) -> &'static str {
+        match self {
+            Self::PureRead => "pure_read",
+            Self::DesiredState => "desired_state",
+            Self::Keyed => "keyed",
+            Self::FencedReplay => "fenced_replay",
+            Self::NonIdempotent => "non_idempotent",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ToolSemanticContract {
+    pub(crate) effect: ToolEffect,
+    pub(crate) risk: ToolRisk,
+    pub(crate) approval: ToolApprovalPolicy,
+    pub(crate) idempotency: ToolIdempotency,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +162,10 @@ pub(crate) enum ToolAuthorityPolicy {
 pub(crate) struct ToolMetadata {
     pub(crate) name: &'static str,
     pub(crate) provider_id: &'static str,
+    pub(crate) effect: ToolEffect,
     pub(crate) risk: ToolRisk,
+    pub(crate) approval: ToolApprovalPolicy,
+    pub(crate) idempotency: ToolIdempotency,
     /// Canonical credential authority for this runtime tool. Discovery and
     /// execution must both derive from this policy rather than tool-name switches.
     pub(crate) authority: ToolAuthorityPolicy,
@@ -75,7 +174,6 @@ pub(crate) struct ToolMetadata {
     pub(crate) legacy_oauth_scope_hint: Option<&'static str>,
     pub(crate) requires_project: bool,
     pub(crate) path_hint: ToolPathHint,
-    pub(crate) read_only: bool,
     pub(crate) destructive: bool,
     pub(crate) shell_like: bool,
 }
@@ -105,7 +203,7 @@ pub(crate) const TOOL_PROVIDER_UNKNOWN: &str = "unknown";
 pub(crate) const fn metadata(
     name: &'static str,
     provider_id: &'static str,
-    risk: ToolRisk,
+    semantic: ToolSemanticContract,
     oauth_scope: Option<&'static str>,
     requires_project: bool,
     path_hint: ToolPathHint,
@@ -115,7 +213,10 @@ pub(crate) const fn metadata(
     ToolMetadata {
         name,
         provider_id,
-        risk,
+        effect: semantic.effect,
+        risk: semantic.risk,
+        approval: semantic.approval,
+        idempotency: semantic.idempotency,
         authority: match oauth_scope {
             Some(scope) => ToolAuthorityPolicy::Require(scope),
             None => ToolAuthorityPolicy::Unknown,
@@ -123,7 +224,6 @@ pub(crate) const fn metadata(
         legacy_oauth_scope_hint: oauth_scope,
         requires_project,
         path_hint,
-        read_only: matches!(risk, ToolRisk::ReadOnly),
         destructive,
         shell_like,
     }
@@ -132,7 +232,12 @@ pub(crate) const fn metadata(
 const LEGACY_ROUTE_METADATA: &[ToolMetadata] = &[metadata(
     "delete_files",
     TOOL_PROVIDER_AGENT,
-    ToolRisk::ProjectWrite,
+    ToolSemanticContract {
+        effect: ToolEffect::Mutate,
+        risk: ToolRisk::ProjectWrite,
+        approval: ToolApprovalPolicy::Standard,
+        idempotency: ToolIdempotency::NonIdempotent,
+    },
     Some(PROJECT_WRITE),
     true,
     ToolPathHint::PathList,
@@ -161,12 +266,14 @@ pub(crate) fn tool_metadata(name: &str) -> ToolMetadata {
     lookup_tool_metadata(name).copied().unwrap_or(ToolMetadata {
         name: "<unknown>",
         provider_id: TOOL_PROVIDER_UNKNOWN,
+        effect: ToolEffect::Unknown,
         risk: ToolRisk::Unknown,
+        approval: ToolApprovalPolicy::Unknown,
+        idempotency: ToolIdempotency::Unknown,
         authority: ToolAuthorityPolicy::Unknown,
         legacy_oauth_scope_hint: None,
         requires_project: false,
         path_hint: ToolPathHint::None,
-        read_only: false,
         destructive: false,
         shell_like: false,
     })
@@ -205,9 +312,11 @@ mod tests {
     fn tool_metadata_unknown_is_safe() {
         assert!(lookup_tool_metadata("not_a_tool").is_none());
         let metadata = tool_metadata("not_a_tool");
+        assert_eq!(metadata.effect, ToolEffect::Unknown);
         assert_eq!(metadata.risk, ToolRisk::Unknown);
+        assert_eq!(metadata.approval, ToolApprovalPolicy::Unknown);
+        assert_eq!(metadata.idempotency, ToolIdempotency::Unknown);
         assert_eq!(metadata.legacy_oauth_scope_hint, None);
-        assert!(!metadata.read_only);
         assert!(!metadata.destructive);
         assert!(!metadata.shell_like);
     }
@@ -218,6 +327,9 @@ mod tests {
         let metadata = lookup_tool_metadata("delete_files").unwrap();
         assert_eq!(metadata.provider_id, TOOL_PROVIDER_AGENT);
         assert_eq!(metadata.risk, ToolRisk::ProjectWrite);
+        assert_eq!(metadata.effect, ToolEffect::Mutate);
+        assert_eq!(metadata.approval, ToolApprovalPolicy::Standard);
+        assert_eq!(metadata.idempotency, ToolIdempotency::NonIdempotent);
         assert_eq!(metadata.legacy_oauth_scope_hint, Some(PROJECT_WRITE));
         assert!(metadata.requires_project);
         assert_eq!(metadata.path_hint, ToolPathHint::PathList);
@@ -226,43 +338,54 @@ mod tests {
     }
 
     #[test]
-    fn tool_metadata_show_changes_is_project_read_and_read_only() {
+    fn tool_metadata_show_changes_is_project_read_observation() {
         let metadata = lookup_tool_metadata("show_changes").unwrap();
         assert_eq!(metadata.provider_id, TOOL_PROVIDER_AGENT);
-        assert_eq!(metadata.risk, ToolRisk::ReadOnly);
+        assert_eq!(metadata.effect, ToolEffect::Observe);
+        assert_eq!(metadata.risk, ToolRisk::Read);
+        assert_eq!(metadata.approval, ToolApprovalPolicy::None);
+        assert_eq!(metadata.idempotency, ToolIdempotency::PureRead);
         assert_eq!(metadata.legacy_oauth_scope_hint, Some(PROJECT_READ));
         assert!(metadata.requires_project);
-        assert!(metadata.read_only);
         assert!(!metadata.destructive);
     }
 
     #[test]
-    fn tool_metadata_start_session_is_runtime_read() {
+    fn tool_metadata_start_session_is_workflow_mutation_without_new_approval() {
         let metadata = lookup_tool_metadata("start_session").unwrap();
         assert_eq!(metadata.provider_id, TOOL_PROVIDER_CONTROL);
-        assert_eq!(metadata.risk, ToolRisk::ReadOnly);
+        assert_eq!(metadata.effect, ToolEffect::Mutate);
+        assert_eq!(metadata.risk, ToolRisk::WorkflowManage);
+        assert_eq!(metadata.approval, ToolApprovalPolicy::None);
+        assert_eq!(metadata.idempotency, ToolIdempotency::NonIdempotent);
         assert_eq!(metadata.legacy_oauth_scope_hint, Some(SCOPE_RUNTIME_READ));
         assert!(!metadata.requires_project);
-        assert!(metadata.read_only);
     }
 
     #[test]
-    fn checkpoint_metadata_uses_project_read_and_write_scopes() {
-        for name in [
-            "workspace_checkpoint_create",
-            "workspace_checkpoint_list",
-            "workspace_checkpoint_show",
-        ] {
+    fn checkpoint_metadata_separates_effect_from_existing_authority() {
+        let create = lookup_tool_metadata("workspace_checkpoint_create").unwrap();
+        assert_eq!(create.provider_id, TOOL_PROVIDER_NATIVE);
+        assert_eq!(create.effect, ToolEffect::Mutate);
+        assert_eq!(create.risk, ToolRisk::CheckpointManage);
+        assert_eq!(create.approval, ToolApprovalPolicy::None);
+        assert_eq!(create.idempotency, ToolIdempotency::NonIdempotent);
+        assert_eq!(create.legacy_oauth_scope_hint, Some(SCOPE_PROJECT_READ));
+        assert!(create.requires_project);
+
+        for name in ["workspace_checkpoint_list", "workspace_checkpoint_show"] {
             let metadata = lookup_tool_metadata(name).unwrap();
             assert_eq!(metadata.provider_id, TOOL_PROVIDER_NATIVE, "{name}");
-            assert_eq!(metadata.risk, ToolRisk::ReadOnly, "{name}");
+            assert_eq!(metadata.effect, ToolEffect::Observe, "{name}");
+            assert_eq!(metadata.risk, ToolRisk::Read, "{name}");
+            assert_eq!(metadata.approval, ToolApprovalPolicy::None, "{name}");
+            assert_eq!(metadata.idempotency, ToolIdempotency::PureRead, "{name}");
             assert_eq!(
                 metadata.legacy_oauth_scope_hint,
                 Some(SCOPE_PROJECT_READ),
                 "{name}"
             );
             assert!(metadata.requires_project, "{name}");
-            assert!(metadata.read_only, "{name}");
         }
         for name in [
             "workspace_checkpoint_restore",
@@ -270,14 +393,20 @@ mod tests {
         ] {
             let metadata = lookup_tool_metadata(name).unwrap();
             assert_eq!(metadata.provider_id, TOOL_PROVIDER_NATIVE, "{name}");
+            assert_eq!(metadata.effect, ToolEffect::Mutate, "{name}");
             assert_eq!(metadata.risk, ToolRisk::ProjectWrite, "{name}");
+            assert_eq!(metadata.approval, ToolApprovalPolicy::Standard, "{name}");
+            assert_eq!(
+                metadata.idempotency,
+                ToolIdempotency::NonIdempotent,
+                "{name}"
+            );
             assert_eq!(
                 metadata.legacy_oauth_scope_hint,
                 Some(PROJECT_WRITE),
                 "{name}"
             );
             assert!(metadata.requires_project, "{name}");
-            assert!(!metadata.read_only, "{name}");
         }
     }
 
@@ -308,7 +437,7 @@ mod tests {
                 Some(SCOPE_PROJECT_WRITE),
                 "{name}"
             );
-            assert!(!metadata.read_only, "{name}");
+            assert_eq!(metadata.effect, ToolEffect::Mutate, "{name}");
         }
     }
 

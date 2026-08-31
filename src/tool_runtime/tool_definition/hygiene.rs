@@ -3,7 +3,7 @@ use super::ToolVisibility::ModelVisible;
 use super::{def, git_like, ToolDefinition, TOOL_CATEGORY_CLEANUP};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{None as NoPath, PathList},
-    ToolRisk::{ProjectWrite, ReadOnly},
+    ToolRisk::{ProjectWrite, Read},
     PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_AGENT,
 };
 
@@ -13,7 +13,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[def(
     TOOL_CATEGORY_CLEANUP,
     Some(GitOrShell),
     TOOL_PROVIDER_AGENT,
-    ReadOnly,
+    super::ToolSemanticContract {
+        effect: super::ToolEffect::Observe,
+        risk: Read,
+        approval: super::ToolApprovalPolicy::None,
+        idempotency: super::ToolIdempotency::PureRead,
+    },
     Some(PROJECT_READ),
     true,
     NoPath,
@@ -28,7 +33,12 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_CLEANUP,
         Some(Shell),
         TOOL_PROVIDER_AGENT,
-        ProjectWrite,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Mutate,
+            risk: ProjectWrite,
+            approval: super::ToolApprovalPolicy::Standard,
+            idempotency: super::ToolIdempotency::NonIdempotent,
+        },
         Some(PROJECT_WRITE),
         true,
         PathList,
@@ -41,7 +51,12 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_CLEANUP,
         Some(StructuredProcess),
         TOOL_PROVIDER_AGENT,
-        ProjectWrite,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Mutate,
+            risk: ProjectWrite,
+            approval: super::ToolApprovalPolicy::Standard,
+            idempotency: super::ToolIdempotency::NonIdempotent,
+        },
         Some(PROJECT_WRITE),
         true,
         PathList,
@@ -54,7 +69,12 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_CLEANUP,
         Some(StructuredProcess),
         TOOL_PROVIDER_AGENT,
-        ProjectWrite,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Mutate,
+            risk: ProjectWrite,
+            approval: super::ToolApprovalPolicy::Standard,
+            idempotency: super::ToolIdempotency::NonIdempotent,
+        },
         Some(PROJECT_WRITE),
         true,
         PathList,

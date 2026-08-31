@@ -24,8 +24,9 @@ mod skills;
 mod testing;
 
 use super::metadata::{
-    metadata as make_tool_metadata, ToolAuthorityPolicy, ToolMetadata, ToolPathHint, ToolRisk,
-    RUNTIME_READ, TOOL_PROVIDER_CONTROL,
+    metadata as make_tool_metadata, ToolApprovalPolicy, ToolAuthorityPolicy, ToolEffect,
+    ToolIdempotency, ToolMetadata, ToolPathHint, ToolRisk, ToolSemanticContract, RUNTIME_READ,
+    TOOL_PROVIDER_CONTROL,
 };
 use super::registry::input_schemas::list_tools_input_schema;
 #[cfg(test)]
@@ -50,7 +51,7 @@ pub(crate) use super::tool_policy::{
 };
 pub(crate) use super::tool_policy::{
     is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
-    model_visible_tool_names_csv, runtime_tool_agent_capability,
+    model_visible_tool_names_csv, runtime_tool_agent_capability, runtime_tool_approval_policy,
     runtime_tool_captures_validation_output, runtime_tool_category, runtime_tool_disabled_message,
     runtime_tool_effect_annotations, runtime_tool_extra_accepted_flattened_args,
     runtime_tool_is_change_summary_like, runtime_tool_is_git_like, runtime_tool_is_read_like,
@@ -316,7 +317,6 @@ pub(crate) struct ToolDefinitionPolicy {
     pub(crate) disabled_message: Option<&'static str>,
     pub(crate) extra_accepted_flattened_args: &'static [&'static str],
     pub(crate) git_like: bool,
-    pub(crate) effect_annotations: Option<ToolEffectAnnotations>,
     pub(crate) permission_risk: Option<&'static str>,
     pub(crate) requires_artifact_upload_path_binding: bool,
     pub(crate) requires_explicit_business_session: bool,
@@ -330,7 +330,6 @@ impl ToolDefinitionPolicy {
         disabled_message: None,
         extra_accepted_flattened_args: &[],
         git_like: false,
-        effect_annotations: None,
         permission_risk: None,
         requires_artifact_upload_path_binding: false,
         requires_explicit_business_session: false,
@@ -367,7 +366,7 @@ const fn def(
     category: &'static str,
     agent_capability: Option<AgentCapability>,
     provider_id: &'static str,
-    risk: ToolRisk,
+    semantic: ToolSemanticContract,
     oauth_scope: Option<&'static str>,
     requires_project: bool,
     path_hint: ToolPathHint,
@@ -382,7 +381,7 @@ const fn def(
         metadata: make_tool_metadata(
             name,
             provider_id,
-            risk,
+            semantic,
             oauth_scope,
             requires_project,
             path_hint,
@@ -416,19 +415,6 @@ const fn require_all_scopes(
         metadata: ToolMetadata {
             authority: ToolAuthorityPolicy::RequireAll(scopes),
             ..definition.metadata
-        },
-        ..definition
-    }
-}
-
-const fn effect_annotations(
-    definition: ToolDefinition,
-    annotations: ToolEffectAnnotations,
-) -> ToolDefinition {
-    ToolDefinition {
-        policy: ToolDefinitionPolicy {
-            effect_annotations: Some(annotations),
-            ..definition.policy
         },
         ..definition
     }
@@ -493,7 +479,7 @@ bool_policy_modifier!(
 );
 
 use ToolPathHint::None as NoPath;
-use ToolRisk::ReadOnly;
+use ToolRisk::Read;
 use ToolVisibility::ModelVisible;
 
 pub(crate) fn tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {
@@ -534,7 +520,12 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[model_spec(
         TOOL_CATEGORY_RUNTIME,
         None,
         TOOL_PROVIDER_CONTROL,
-        ReadOnly,
+        ToolSemanticContract {
+            effect: ToolEffect::Observe,
+            risk: Read,
+            approval: ToolApprovalPolicy::None,
+            idempotency: ToolIdempotency::PureRead,
+        },
         Some(RUNTIME_READ),
         false,
         NoPath,

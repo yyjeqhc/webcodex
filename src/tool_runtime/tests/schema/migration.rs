@@ -83,10 +83,10 @@ fn tool_definition_explains_all_tool_call_runtime_names() {
 fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
     use crate::tool_runtime::metadata::lookup_tool_metadata;
     use crate::tool_runtime::tool_definition::{
-        lookup_tool_definition, runtime_tool_agent_capability, runtime_tool_category,
-        runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
-        runtime_tool_metadata, runtime_tool_permission_risk, runtime_tool_requires_permission,
-        runtime_tool_session_risk_class, tool_definitions,
+        lookup_tool_definition, runtime_tool_agent_capability, runtime_tool_approval_policy,
+        runtime_tool_category, runtime_tool_is_read_like, runtime_tool_is_shell_like,
+        runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
+        runtime_tool_requires_permission, runtime_tool_session_risk_class, tool_definitions,
     };
 
     for definition in tool_definitions() {
@@ -145,6 +145,12 @@ fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
             definition.name
         );
         assert_eq!(
+            runtime_tool_approval_policy(definition.name),
+            definition.metadata().approval,
+            "{} approval helper must match ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
             runtime_tool_permission_risk(definition.name),
             definition.permission_risk(),
             "{} permission risk helper must match ToolDefinition",
@@ -199,7 +205,18 @@ fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
     assert_eq!(delete_files.legacy_oauth_scope_hint, Some(PROJECT_WRITE));
     assert!(delete_files.requires_project);
     assert_eq!(delete_files.path_hint, ToolPathHint::PathList);
-    assert!(!delete_files.read_only);
+    assert_eq!(
+        delete_files.effect,
+        crate::tool_runtime::metadata::ToolEffect::Mutate
+    );
+    assert_eq!(
+        delete_files.approval,
+        crate::tool_runtime::metadata::ToolApprovalPolicy::Standard
+    );
+    assert_eq!(
+        delete_files.idempotency,
+        crate::tool_runtime::metadata::ToolIdempotency::NonIdempotent
+    );
     assert!(delete_files.destructive);
     assert!(!delete_files.shell_like);
     assert!(
@@ -252,7 +269,21 @@ fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
         assert_eq!(unknown.legacy_oauth_scope_hint, None, "{name}");
         assert!(!unknown.requires_project, "{name}");
         assert_eq!(unknown.path_hint, ToolPathHint::None, "{name}");
-        assert!(!unknown.read_only, "{name}");
+        assert_eq!(
+            unknown.effect,
+            crate::tool_runtime::metadata::ToolEffect::Unknown,
+            "{name}"
+        );
+        assert_eq!(
+            unknown.approval,
+            crate::tool_runtime::metadata::ToolApprovalPolicy::Unknown,
+            "{name}"
+        );
+        assert_eq!(
+            unknown.idempotency,
+            crate::tool_runtime::metadata::ToolIdempotency::Unknown,
+            "{name}"
+        );
         assert!(!unknown.destructive, "{name}");
         assert!(!unknown.shell_like, "{name}");
         assert_eq!(runtime_tool_metadata(name), unknown, "{name}");

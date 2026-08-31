@@ -178,6 +178,7 @@ impl ToolRuntime {
             return Err(unknown_tool_manifest_tool_result(tool_name));
         };
         let category = runtime_tool_category(spec.name.as_str());
+        let metadata = runtime_tool_metadata(spec.name.as_str());
         let (availability, gateway_tool) = self
             .model_surface()
             .runtime_tool_invocation_route(spec.name.as_str());
@@ -194,6 +195,10 @@ impl ToolRuntime {
             "contract": {
                 "name": spec.name,
                 "description": spec.description,
+                "effect": metadata.effect.manifest_label(),
+                "risk": metadata.risk.session_risk_class(),
+                "approval": metadata.approval.manifest_label(),
+                "idempotency": metadata.idempotency.manifest_label(),
                 "input_schema": spec.input_schema,
                 "annotations": spec.annotations,
                 "availability": availability,
@@ -471,8 +476,11 @@ pub(super) fn build_list_tools_summary_entries(specs: &[ToolSpec]) -> Vec<Value>
                 "name": name,
                 "description": spec.description,
                 "category": runtime_tool_category(name),
+                "effect": m.effect.manifest_label(),
                 "risk": m.risk.session_risk_class(),
-                "read_only": m.read_only,
+                "approval": m.approval.manifest_label(),
+                "idempotency": m.idempotency.manifest_label(),
+                "read_only": m.effect.read_only_hint(),
                 "requires_project": m.requires_project,
                 "annotations": spec.annotations,
             })
@@ -493,8 +501,11 @@ pub(super) fn compact_manifest_tool_entry(
         "accepted_flattened_args": accepted_flattened_args_for_spec(spec),
         "deprecated_or_unsupported_args": [],
         "provider": m.provider_id,
+        "effect": m.effect.manifest_label(),
         "risk": m.risk.session_risk_class(),
-        "read_only": m.read_only,
+        "approval": m.approval.manifest_label(),
+        "idempotency": m.idempotency.manifest_label(),
+        "read_only": m.effect.read_only_hint(),
         "requires_project": m.requires_project,
         "path_hint": m.path_hint.manifest_label(),
         "destructive": m.destructive,
@@ -530,7 +541,7 @@ fn list_tool_matches_feature(name: &str, feature: &str) -> bool {
         "artifact" => category == TOOL_CATEGORY_ARTIFACT,
         "artifact_upload" | "upload" => name.starts_with("artifact_upload_"),
         "read" => {
-            runtime_tool_metadata(name).read_only
+            runtime_tool_metadata(name).effect.read_only_hint()
                 || name.starts_with("read_")
                 || name.contains("_read_")
         }

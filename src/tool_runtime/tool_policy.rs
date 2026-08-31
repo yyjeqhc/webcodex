@@ -1,6 +1,8 @@
 //! Runtime tool lookup and policy helpers derived from ToolDefinition.
 
-use super::metadata::{tool_metadata, ToolMetadata, ToolPathHint, ToolRisk};
+use super::metadata::{
+    tool_metadata, ToolApprovalPolicy, ToolEffect, ToolMetadata, ToolPathHint, ToolRisk,
+};
 use super::tool_definition::{
     tool_definitions, AgentCapability, ToolDefinition, ToolEffectAnnotations,
     PERMISSION_RISK_ARTIFACT_WRITE, PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_PATCH,
@@ -13,14 +15,12 @@ impl ToolDefinition {
     }
 
     pub(crate) fn effect_annotations(self) -> ToolEffectAnnotations {
-        self.policy
-            .effect_annotations
-            .unwrap_or(ToolEffectAnnotations {
-                read_only_hint: self.metadata.read_only,
-                destructive_hint: self.metadata.destructive,
-                idempotent_hint: self.metadata.read_only,
-                open_world_hint: self.metadata.shell_like,
-            })
+        ToolEffectAnnotations {
+            read_only_hint: self.metadata.effect.read_only_hint(),
+            destructive_hint: self.metadata.destructive,
+            idempotent_hint: self.metadata.idempotency.mcp_hint(),
+            open_world_hint: self.metadata.shell_like,
+        }
     }
 
     pub(crate) fn session_risk_class(self) -> &'static str {
@@ -28,7 +28,7 @@ impl ToolDefinition {
     }
 
     pub(crate) fn is_read_like(self) -> bool {
-        self.metadata.read_only
+        self.metadata.effect == ToolEffect::Observe
     }
 
     pub(crate) fn is_write_like(self) -> bool {
@@ -79,8 +79,12 @@ impl ToolDefinition {
         self.policy.requires_artifact_upload_path_binding
     }
 
+    pub(crate) fn approval_policy(self) -> ToolApprovalPolicy {
+        self.metadata.approval
+    }
+
     pub(crate) fn requires_permission(self) -> bool {
-        metadata_requires_write_or_shell_boundary(self.metadata)
+        self.approval_policy().requires_permission()
     }
 
     pub(crate) fn permission_risk(self) -> &'static str {
@@ -128,10 +132,6 @@ fn fallback_permission_risk(name: &str, metadata: ToolMetadata) -> &'static str 
     permission_risk_from_metadata(metadata)
 }
 
-fn metadata_requires_write_or_shell_boundary(metadata: ToolMetadata) -> bool {
-    !metadata.read_only || metadata.destructive || metadata.shell_like
-}
-
 pub(crate) fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefinition> {
     tool_definitions().find(|definition| definition.name == name)
 }
@@ -169,9 +169,9 @@ pub(crate) fn runtime_tool_effect_annotations(name: &str) -> ToolEffectAnnotatio
     match definition_or_metadata_facade(name) {
         Ok(definition) => definition.effect_annotations(),
         Err(metadata) => ToolEffectAnnotations {
-            read_only_hint: metadata.read_only,
+            read_only_hint: metadata.effect.read_only_hint(),
             destructive_hint: metadata.destructive,
-            idempotent_hint: metadata.read_only,
+            idempotent_hint: metadata.idempotency.mcp_hint(),
             open_world_hint: metadata.shell_like,
         },
     }
@@ -199,7 +199,7 @@ pub(crate) fn runtime_tool_session_risk_class(name: &str) -> &'static str {
 pub(crate) fn runtime_tool_is_read_like(name: &str) -> bool {
     match definition_or_metadata_facade(name) {
         Ok(definition) => definition.is_read_like(),
-        Err(metadata) => metadata.read_only,
+        Err(metadata) => metadata.effect == ToolEffect::Observe,
     }
 }
 
@@ -251,10 +251,17 @@ pub(crate) fn runtime_tool_extra_accepted_flattened_args(name: &str) -> &'static
         .map_or(&[], |definition| definition.extra_accepted_flattened_args())
 }
 
+pub(crate) fn runtime_tool_approval_policy(name: &str) -> ToolApprovalPolicy {
+    match definition_or_metadata_facade(name) {
+        Ok(definition) => definition.approval_policy(),
+        Err(metadata) => metadata.approval,
+    }
+}
+
 pub(crate) fn runtime_tool_requires_permission(name: &str) -> bool {
     match definition_or_metadata_facade(name) {
         Ok(definition) => definition.requires_permission(),
-        Err(metadata) => metadata_requires_write_or_shell_boundary(metadata),
+        Err(metadata) => metadata.approval.requires_permission(),
     }
 }
 

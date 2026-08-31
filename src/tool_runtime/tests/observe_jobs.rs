@@ -338,7 +338,10 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
         definition.metadata.legacy_oauth_scope_hint,
         Some(crate::auth::SCOPE_RUNTIME_READ)
     );
-    assert!(definition.metadata.read_only);
+    assert_eq!(
+        definition.metadata.effect,
+        crate::tool_runtime::metadata::ToolEffect::Observe
+    );
     let manifest = super::super::surface::registered_tool_categories();
     assert!(manifest["jobs"]
         .as_array()

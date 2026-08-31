@@ -2901,7 +2901,10 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
     // Metadata: read-only, runtime:read scope.
     let metadata = crate::tool_runtime::metadata::lookup_tool_metadata("session_handoff_summary")
         .expect("metadata");
-    assert!(metadata.read_only);
+    assert_eq!(
+        metadata.effect,
+        crate::tool_runtime::metadata::ToolEffect::Observe
+    );
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
     assert_eq!(metadata.legacy_oauth_scope_hint, Some("runtime:read"));

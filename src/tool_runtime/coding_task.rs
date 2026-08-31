@@ -563,7 +563,11 @@ impl ToolRuntime {
                 {
                     return result;
                 }
-                let permission = self.permission_evaluator.evaluate("create_project", None);
+                let permission = super::permissions::evaluate_permission_for_tool(
+                    &self.permission_evaluator,
+                    "create_project",
+                    None,
+                );
                 if let Some(decision) = permission.as_ref() {
                     if !decision.allows_execution() {
                         let mut result =
@@ -638,7 +642,11 @@ impl ToolRuntime {
                 if let Some(result) = registration_scope_denied(auth, "project path registration") {
                     return result;
                 }
-                let permission = self.permission_evaluator.evaluate("register_project", None);
+                let permission = super::permissions::evaluate_permission_for_tool(
+                    &self.permission_evaluator,
+                    "register_project",
+                    None,
+                );
                 if let Some(decision) = permission.as_ref() {
                     if !decision.allows_execution() {
                         let mut result =

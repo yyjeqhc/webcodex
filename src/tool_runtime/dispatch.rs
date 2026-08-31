@@ -1119,9 +1119,11 @@ impl ToolRuntime {
         // Order: session/auth guards above → permission gate → mutation below.
         // Path/sensitive hard checks still run inside tools; hard-deny filter
         // suppresses permission attach so soft policy never overrides them.
-        let permission = self
-            .permission_evaluator
-            .evaluate(call.tool_name(), call.project());
+        let permission = super::permissions::evaluate_permission_for_tool(
+            &self.permission_evaluator,
+            call.tool_name(),
+            call.project(),
+        );
         if let Some(decision) = permission.as_ref() {
             if !decision.allows_execution() {
                 let mut result = permissions::permission_execution_denied_result(decision);

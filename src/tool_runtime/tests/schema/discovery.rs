@@ -1671,6 +1671,67 @@ async fn tool_manifest_exact_tool_returns_input_contract_without_output_schema()
 }
 
 #[tokio::test]
+async fn tool_manifest_projects_canonical_semantic_contracts() {
+    let runtime = test_runtime();
+    for (tool_name, effect, risk, approval, idempotency, read_only) in [
+        (
+            "read_file",
+            "observe",
+            "read_only",
+            "none",
+            "pure_read",
+            true,
+        ),
+        (
+            "close_session",
+            "mutate",
+            "session_collaborate",
+            "none",
+            "desired_state",
+            false,
+        ),
+        (
+            "coding_agent_start",
+            "execute",
+            "job_run",
+            "standard",
+            "keyed",
+            false,
+        ),
+        (
+            "coding_agent_cancel",
+            "mutate",
+            "run_control",
+            "inherit_from_start",
+            "desired_state",
+            false,
+        ),
+    ] {
+        let result = runtime
+            .dispatch(ToolCall::ToolManifest {
+                tool_name: Some(tool_name.to_string()),
+                category: None,
+                intent: None,
+                include_recommended_flows: false,
+                include_risk_summary: false,
+            })
+            .await;
+        assert!(result.success, "{tool_name}: {:?}", result.error);
+        let contract = &result.output["contract"];
+        assert_eq!(contract["effect"], effect, "{tool_name}");
+        assert_eq!(contract["risk"], risk, "{tool_name}");
+        assert_eq!(contract["approval"], approval, "{tool_name}");
+        assert_eq!(contract["idempotency"], idempotency, "{tool_name}");
+        let compact = &result.output["tools"][0];
+        assert_eq!(compact["effect"], effect, "{tool_name}");
+        assert_eq!(compact["risk"], risk, "{tool_name}");
+        assert_eq!(compact["approval"], approval, "{tool_name}");
+        assert_eq!(compact["idempotency"], idempotency, "{tool_name}");
+        assert_eq!(compact["read_only"], read_only, "{tool_name}");
+    }
+}
+
+#[tokio::test]
 async fn tool_manifest_surface_routing_metadata_tracks_current_model_surface() {
     use crate::model_surface::ModelSurface;
 

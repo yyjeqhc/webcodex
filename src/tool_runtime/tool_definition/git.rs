@@ -2,7 +2,7 @@ use super::AgentCapability::GitOrShell;
 use super::ToolVisibility::ModelVisible;
 use super::{change_summary_like, def, git_like, ToolDefinition, TOOL_CATEGORY_GIT};
 use crate::tool_runtime::metadata::{
-    ToolPathHint::None as NoPath, ToolRisk::ReadOnly, PROJECT_READ, TOOL_PROVIDER_AGENT,
+    ToolPathHint::None as NoPath, ToolRisk::Read, PROJECT_READ, TOOL_PROVIDER_AGENT,
 };
 
 pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
@@ -12,7 +12,12 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
         TOOL_PROVIDER_AGENT,
-        ReadOnly,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
         Some(PROJECT_READ),
         true,
         NoPath,
@@ -25,7 +30,12 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
         TOOL_PROVIDER_AGENT,
-        ReadOnly,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
         Some(PROJECT_READ),
         true,
         NoPath,
@@ -38,7 +48,12 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
         TOOL_PROVIDER_AGENT,
-        ReadOnly,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
         Some(PROJECT_READ),
         true,
         NoPath,
@@ -54,7 +69,12 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
         TOOL_PROVIDER_AGENT,
-        ReadOnly,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
         Some(PROJECT_READ),
         true,
         NoPath,
@@ -67,7 +87,12 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
         TOOL_PROVIDER_AGENT,
-        ReadOnly,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
         Some(PROJECT_READ),
         true,
         NoPath,
@@ -80,7 +105,12 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
         TOOL_PROVIDER_AGENT,
-        ReadOnly,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
         Some(PROJECT_READ),
         true,
         NoPath,
@@ -93,7 +123,12 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
         TOOL_PROVIDER_AGENT,
-        ReadOnly,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
         Some(PROJECT_READ),
         true,
         NoPath,

@@ -105,10 +105,13 @@ fn validation_summary_registration_schema_metadata_and_openapi_are_synchronized(
     );
 
     let metadata = lookup_tool_metadata("validation_summary").unwrap();
-    assert_eq!(metadata.risk, ToolRisk::ReadOnly);
+    assert_eq!(metadata.risk, ToolRisk::Read);
     assert_eq!(metadata.legacy_oauth_scope_hint, Some(SCOPE_PROJECT_READ));
     assert!(metadata.requires_project);
-    assert!(metadata.read_only);
+    assert_eq!(
+        metadata.effect,
+        crate::tool_runtime::metadata::ToolEffect::Observe
+    );
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
     assert_eq!(

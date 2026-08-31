@@ -2,12 +2,14 @@ use super::*;
 
 #[test]
 fn tool_definitions_drive_session_and_permission_policy() {
-    use crate::tool_runtime::metadata::ToolRisk;
+    use crate::tool_runtime::metadata::{
+        ToolApprovalPolicy, ToolAuthorityPolicy, ToolEffect, ToolIdempotency, ToolRisk,
+    };
     use crate::tool_runtime::tool_definition::{
-        runtime_tool_captures_validation_output, runtime_tool_disabled_message,
-        runtime_tool_extra_accepted_flattened_args, runtime_tool_is_change_summary_like,
-        runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
-        runtime_tool_is_write_like, runtime_tool_permission_risk,
+        runtime_tool_approval_policy, runtime_tool_captures_validation_output,
+        runtime_tool_disabled_message, runtime_tool_extra_accepted_flattened_args,
+        runtime_tool_is_change_summary_like, runtime_tool_is_git_like, runtime_tool_is_read_like,
+        runtime_tool_is_shell_like, runtime_tool_is_write_like, runtime_tool_permission_risk,
         runtime_tool_requires_explicit_business_session, runtime_tool_requires_permission,
         runtime_tool_session_risk_class, tool_definitions, PERMISSION_RISK_ARTIFACT_WRITE,
         PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_JOB, PERMISSION_RISK_PATCH,
@@ -30,6 +32,39 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ToolRisk::ComputerControl
     );
 
+    for (name, effect, risk) in [
+        (
+            "apply_text_edits",
+            ToolEffect::Mutate,
+            ToolRisk::ProjectWrite,
+        ),
+        (
+            "delete_project_files",
+            ToolEffect::Mutate,
+            ToolRisk::ProjectWrite,
+        ),
+        ("run_shell", ToolEffect::Execute, ToolRisk::JobRun),
+        ("cargo_check", ToolEffect::Execute, ToolRisk::JobRun),
+        (
+            "computer_control",
+            ToolEffect::Execute,
+            ToolRisk::ComputerControl,
+        ),
+        (
+            "post_conversation_message",
+            ToolEffect::Mutate,
+            ToolRisk::CommunicationManage,
+        ),
+    ] {
+        let metadata = lookup_tool_definition(name)
+            .unwrap_or_else(|| panic!("{name} definition"))
+            .metadata();
+        assert_eq!(metadata.effect, effect, "{name}");
+        assert_eq!(metadata.risk, risk, "{name}");
+        assert_eq!(metadata.approval, ToolApprovalPolicy::Standard, "{name}");
+        assert!(runtime_tool_requires_permission(name), "{name}");
+    }
+
     let git_group = TOOL_DISCOVERY_GROUPS
         .iter()
         .find(|group| group.name == TOOL_DISCOVERY_GROUP_GIT)
@@ -49,8 +84,8 @@ fn tool_definitions_drive_session_and_permission_policy() {
         );
         assert_eq!(
             definition.is_read_like(),
-            metadata.read_only,
-            "{} read-like policy must derive from metadata",
+            metadata.effect == ToolEffect::Observe,
+            "{} read-like policy must derive from Effect",
             definition.name
         );
         assert_eq!(
@@ -80,10 +115,66 @@ fn tool_definitions_drive_session_and_permission_policy() {
         );
         assert_eq!(
             definition.requires_permission(),
-            !metadata.read_only || metadata.destructive || metadata.shell_like,
-            "{} permission requirement must derive from metadata risk flags",
+            metadata.approval.requires_permission(),
+            "{} permission requirement must derive from ApprovalPolicy",
             definition.name
         );
+        assert_eq!(
+            runtime_tool_approval_policy(definition.name),
+            metadata.approval,
+            "{} approval facade must use canonical ToolDefinition metadata",
+            definition.name
+        );
+        if metadata.destructive {
+            assert_ne!(
+                metadata.effect,
+                ToolEffect::Observe,
+                "{} destructive tools cannot be observations",
+                definition.name
+            );
+        }
+        if metadata.shell_like {
+            assert_ne!(
+                metadata.effect,
+                ToolEffect::Observe,
+                "{} open-world shell tools cannot be observations",
+                definition.name
+            );
+        }
+        if metadata.idempotency == ToolIdempotency::PureRead {
+            assert_eq!(
+                metadata.effect,
+                ToolEffect::Observe,
+                "{} PureRead requires an observation effect",
+                definition.name
+            );
+        }
+        if definition.visibility.is_model_visible() {
+            assert_ne!(
+                metadata.effect,
+                ToolEffect::Unknown,
+                "{} effect",
+                definition.name
+            );
+            assert_ne!(
+                metadata.approval,
+                ToolApprovalPolicy::Unknown,
+                "{} approval",
+                definition.name
+            );
+            assert_ne!(
+                metadata.idempotency,
+                ToolIdempotency::Unknown,
+                "{} idempotency",
+                definition.name
+            );
+            assert_ne!(
+                metadata.authority,
+                ToolAuthorityPolicy::Unknown,
+                "{} authority",
+                definition.name
+            );
+        }
         assert_eq!(
             runtime_tool_session_risk_class(definition.name),
             definition.session_risk_class(),
@@ -264,6 +355,20 @@ fn tool_definitions_drive_session_and_permission_policy() {
         assert_eq!(runtime_tool_permission_risk(tool), risk, "{tool}");
     }
 
+    let close_session = lookup_tool_definition("close_session").unwrap().metadata();
+    assert_eq!(close_session.effect, ToolEffect::Mutate);
+    assert_eq!(close_session.approval, ToolApprovalPolicy::None);
+    assert!(!runtime_tool_requires_permission("close_session"));
+
+    let cancel = lookup_tool_definition("coding_agent_cancel")
+        .unwrap()
+        .metadata();
+    assert_eq!(cancel.effect, ToolEffect::Mutate);
+    assert_eq!(cancel.risk, ToolRisk::RunControl);
+    assert_eq!(cancel.approval, ToolApprovalPolicy::InheritFromStart);
+    assert_eq!(cancel.idempotency, ToolIdempotency::DesiredState);
+    assert!(!runtime_tool_requires_permission("coding_agent_cancel"));
+
     assert_eq!(
         runtime_tool_session_risk_class("__unknown__"),
         ToolRisk::Unknown.session_risk_class()
@@ -326,7 +431,7 @@ fn required_agent_capability_matches_metadata_risk_table() {
         ),
         (
             "session_shell_status",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::PersistentShell,
         ),
         (
@@ -371,12 +476,12 @@ fn required_agent_capability_matches_metadata_risk_table() {
         ),
         (
             "read_project_artifact_metadata",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::FileRead,
         ),
         (
             "read_project_artifact",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::FileRead,
         ),
         (
@@ -404,113 +509,105 @@ fn required_agent_capability_matches_metadata_risk_table() {
             ToolRisk::ProjectWrite,
             AgentCapability::FileWrite,
         ),
-        (
-            "git_status",
-            ToolRisk::ReadOnly,
-            AgentCapability::GitOrShell,
-        ),
-        ("git_diff", ToolRisk::ReadOnly, AgentCapability::GitOrShell),
+        ("git_status", ToolRisk::Read, AgentCapability::GitOrShell),
+        ("git_diff", ToolRisk::Read, AgentCapability::GitOrShell),
         (
             "git_diff_hunks",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::GitOrShell,
         ),
         (
             "git_review_summary",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::GitOrShell,
         ),
-        ("git_log", ToolRisk::ReadOnly, AgentCapability::GitOrShell),
+        ("git_log", ToolRisk::Read, AgentCapability::GitOrShell),
         ("cargo_fmt", ToolRisk::JobRun, AgentCapability::Shell),
         ("cargo_check", ToolRisk::JobRun, AgentCapability::Shell),
         ("cargo_test", ToolRisk::JobRun, AgentCapability::Shell),
         ("go_test", ToolRisk::JobRun, AgentCapability::OwnerOnly),
-        ("read_file", ToolRisk::ReadOnly, AgentCapability::FileRead),
-        ("read_files", ToolRisk::ReadOnly, AgentCapability::FileRead),
+        ("read_file", ToolRisk::Read, AgentCapability::FileRead),
+        ("read_files", ToolRisk::Read, AgentCapability::FileRead),
         (
             "lsp_status",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::LspReadOnlyNavigation,
         ),
         (
             "document_symbols",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::LspReadOnlyNavigation,
         ),
         (
             "document_diagnostics",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::LspReadOnlyNavigation,
         ),
         (
             "hover",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::LspReadOnlyNavigation,
         ),
         (
             "workspace_symbols",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::LspReadOnlyNavigation,
         ),
         (
             "goto_definition",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::LspReadOnlyNavigation,
         ),
         (
             "find_references",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::LspReadOnlyNavigation,
         ),
         (
             "call_hierarchy",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::LspCallHierarchy,
         ),
         ("run_job", ToolRisk::JobRun, AgentCapability::AsyncJobs),
         (
             "project_overview",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::FileRead,
         ),
         (
             "list_project_files",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::FileRead,
         ),
         (
             "list_project_tracked_files",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::Shell,
         ),
         (
             "search_project_text",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::Shell,
         ),
         (
             "search_project_texts",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::Shell,
         ),
         (
             "git_diff_summary",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::GitOrShell,
         ),
-        (
-            "show_changes",
-            ToolRisk::ReadOnly,
-            AgentCapability::GitOrShell,
-        ),
+        ("show_changes", ToolRisk::Read, AgentCapability::GitOrShell),
         (
             "workspace_hygiene_check",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::GitOrShell,
         ),
         (
             "workspace_checkpoint_create",
-            ToolRisk::ReadOnly,
+            ToolRisk::CheckpointManage,
             AgentCapability::FileRead,
         ),
         (
@@ -520,12 +617,12 @@ fn required_agent_capability_matches_metadata_risk_table() {
         ),
         (
             "workspace_checkpoint_list",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::OwnerOnly,
         ),
         (
             "workspace_checkpoint_show",
-            ToolRisk::ReadOnly,
+            ToolRisk::Read,
             AgentCapability::OwnerOnly,
         ),
         (
@@ -602,7 +699,18 @@ fn policy_helpers_keep_non_runtime_names_on_fallback_boundary() {
     assert_eq!(delete_files.legacy_oauth_scope_hint, Some(PROJECT_WRITE));
     assert!(delete_files.requires_project);
     assert_eq!(delete_files.path_hint, ToolPathHint::PathList);
-    assert!(!delete_files.read_only);
+    assert_eq!(
+        delete_files.effect,
+        crate::tool_runtime::metadata::ToolEffect::Mutate
+    );
+    assert_eq!(
+        delete_files.approval,
+        crate::tool_runtime::metadata::ToolApprovalPolicy::Standard
+    );
+    assert_eq!(
+        delete_files.idempotency,
+        crate::tool_runtime::metadata::ToolIdempotency::NonIdempotent
+    );
     assert!(delete_files.destructive);
     assert!(!delete_files.shell_like);
     assert_eq!(
@@ -644,7 +752,21 @@ fn policy_helpers_keep_non_runtime_names_on_fallback_boundary() {
         assert_eq!(unknown.legacy_oauth_scope_hint, None, "{name}");
         assert!(!unknown.requires_project, "{name}");
         assert_eq!(unknown.path_hint, ToolPathHint::None, "{name}");
-        assert!(!unknown.read_only, "{name}");
+        assert_eq!(
+            unknown.effect,
+            crate::tool_runtime::metadata::ToolEffect::Unknown,
+            "{name}"
+        );
+        assert_eq!(
+            unknown.approval,
+            crate::tool_runtime::metadata::ToolApprovalPolicy::Unknown,
+            "{name}"
+        );
+        assert_eq!(
+            unknown.idempotency,
+            crate::tool_runtime::metadata::ToolIdempotency::Unknown,
+            "{name}"
+        );
         assert!(!unknown.destructive, "{name}");
         assert!(!unknown.shell_like, "{name}");
         assert!(lookup_tool_metadata(name).is_none(), "{name}");

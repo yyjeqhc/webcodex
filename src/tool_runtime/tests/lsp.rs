@@ -28,7 +28,11 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
     ] {
         let def = lookup_tool_definition(name).expect(name);
         assert_eq!(def.category, TOOL_CATEGORY_LSP, "{name}");
-        assert!(def.metadata.read_only, "{name}");
+        assert_eq!(
+            def.metadata.effect,
+            crate::tool_runtime::metadata::ToolEffect::Observe,
+            "{name}"
+        );
         assert!(!def.metadata.destructive, "{name}");
         assert!(!def.metadata.shell_like, "{name}");
         assert_eq!(
@@ -44,7 +48,10 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
     }
     let hierarchy = lookup_tool_definition("call_hierarchy").expect("call_hierarchy");
     assert_eq!(hierarchy.category, TOOL_CATEGORY_LSP);
-    assert!(hierarchy.metadata.read_only);
+    assert_eq!(
+        hierarchy.metadata.effect,
+        crate::tool_runtime::metadata::ToolEffect::Observe
+    );
     assert_eq!(
         hierarchy.agent_capability,
         Some(AgentCapability::LspCallHierarchy)

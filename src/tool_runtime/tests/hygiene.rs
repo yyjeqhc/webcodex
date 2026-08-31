@@ -100,7 +100,10 @@ fn workspace_hygiene_check_is_known_and_in_specs() {
     // Metadata: read-only, project:read.
     let metadata =
         crate::tool_runtime::metadata::lookup_tool_metadata("workspace_hygiene_check").unwrap();
-    assert!(metadata.read_only);
+    assert_eq!(
+        metadata.effect,
+        crate::tool_runtime::metadata::ToolEffect::Observe
+    );
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
     assert!(metadata.requires_project);

@@ -344,9 +344,25 @@ fn work_on_project_schema_and_registration() {
     let names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
     assert!(names.contains(&"work_on_project"), "missing from specs");
 
-    // Model-visible ToolDefinition with workflow category and read-only risk.
+    // Workflow bootstrap mutates durable Session state without adding a new
+    // interactive approval; its existing runtime:read authority is unchanged.
     let metadata = crate::tool_runtime::metadata::lookup_tool_metadata("work_on_project").unwrap();
-    assert!(metadata.read_only);
+    assert_eq!(
+        metadata.effect,
+        crate::tool_runtime::metadata::ToolEffect::Mutate
+    );
+    assert_eq!(
+        metadata.risk,
+        crate::tool_runtime::metadata::ToolRisk::WorkflowManage
+    );
+    assert_eq!(
+        metadata.approval,
+        crate::tool_runtime::metadata::ToolApprovalPolicy::None
+    );
+    assert_eq!(
+        metadata.idempotency,
+        crate::tool_runtime::metadata::ToolIdempotency::NonIdempotent
+    );
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
     assert!(metadata.requires_project);

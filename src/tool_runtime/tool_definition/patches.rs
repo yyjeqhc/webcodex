@@ -11,7 +11,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[def(
     TOOL_CATEGORY_PATCH,
     Some(Shell),
     TOOL_PROVIDER_AGENT,
-    ProjectWrite,
+    super::ToolSemanticContract {
+        effect: super::ToolEffect::Mutate,
+        risk: ProjectWrite,
+        approval: super::ToolApprovalPolicy::Standard,
+        idempotency: super::ToolIdempotency::NonIdempotent,
+    },
     Some(PROJECT_WRITE),
     true,
     Patch,

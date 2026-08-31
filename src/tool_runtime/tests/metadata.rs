@@ -1585,7 +1585,10 @@ fn runtime_status_input_schema_exposes_compact_flags() {
 fn session_handoff_validation_exposure_keeps_read_only_metadata() {
     let metadata = crate::tool_runtime::metadata::lookup_tool_metadata("session_handoff_summary")
         .expect("session_handoff_summary metadata");
-    assert!(metadata.read_only);
+    assert_eq!(
+        metadata.effect,
+        crate::tool_runtime::metadata::ToolEffect::Observe
+    );
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
     assert_eq!(metadata.legacy_oauth_scope_hint, Some("runtime:read"));
@@ -1597,7 +1600,10 @@ fn project_overview_metadata_schema_and_flattened_args_are_read_only() {
         .expect("project_overview metadata");
     assert_eq!(metadata.provider_id, "agent");
     assert!(metadata.requires_project);
-    assert!(metadata.read_only);
+    assert_eq!(
+        metadata.effect,
+        crate::tool_runtime::metadata::ToolEffect::Observe
+    );
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
     assert_eq!(metadata.legacy_oauth_scope_hint, Some("project:read"));

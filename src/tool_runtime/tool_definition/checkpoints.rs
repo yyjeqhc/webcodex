@@ -3,7 +3,7 @@ use super::ToolVisibility::ModelVisible;
 use super::{def, git_like, ToolDefinition, TOOL_CATEGORY_CHECKPOINT};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{None as NoPath, Patch},
-    ToolRisk::{ProjectWrite, ReadOnly},
+    ToolRisk::{ProjectWrite, Read},
     PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_NATIVE,
 };
 
@@ -14,7 +14,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_CHECKPOINT,
         Some(FileRead),
         TOOL_PROVIDER_NATIVE,
-        ReadOnly,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Mutate,
+            risk: super::ToolRisk::CheckpointManage,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::NonIdempotent,
+        },
         Some(PROJECT_READ),
         true,
         NoPath,
@@ -27,7 +32,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_CHECKPOINT,
         Some(OwnerOnly),
         TOOL_PROVIDER_NATIVE,
-        ReadOnly,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
         Some(PROJECT_READ),
         true,
         NoPath,
@@ -40,7 +50,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_CHECKPOINT,
         Some(OwnerOnly),
         TOOL_PROVIDER_NATIVE,
-        ReadOnly,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
         Some(PROJECT_READ),
         true,
         NoPath,
@@ -53,7 +68,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_CHECKPOINT,
         Some(FileWrite),
         TOOL_PROVIDER_NATIVE,
-        ProjectWrite,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Mutate,
+            risk: ProjectWrite,
+            approval: super::ToolApprovalPolicy::Standard,
+            idempotency: super::ToolIdempotency::NonIdempotent,
+        },
         Some(PROJECT_WRITE),
         true,
         Patch,
@@ -66,7 +86,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         TOOL_CATEGORY_CHECKPOINT,
         Some(OwnerOnly),
         TOOL_PROVIDER_NATIVE,
-        ProjectWrite,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Mutate,
+            risk: ProjectWrite,
+            approval: super::ToolApprovalPolicy::Standard,
+            idempotency: super::ToolIdempotency::NonIdempotent,
+        },
         Some(PROJECT_WRITE),
         true,
         NoPath,

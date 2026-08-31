@@ -45,11 +45,36 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     for name in ["start_coding_task", "finish_coding_task"] {
         assert!(is_known_tool_name(name), "{name} missing from known names");
         let metadata = lookup_tool_metadata(name).expect("metadata");
-        assert!(metadata.read_only);
         assert!(!metadata.destructive);
         assert!(!metadata.shell_like);
         assert_eq!(metadata.legacy_oauth_scope_hint, Some("runtime:read"));
     }
+    let start_metadata = lookup_tool_metadata("start_coding_task").expect("start metadata");
+    assert_eq!(
+        start_metadata.effect,
+        crate::tool_runtime::metadata::ToolEffect::Mutate
+    );
+    assert_eq!(
+        start_metadata.risk,
+        crate::tool_runtime::metadata::ToolRisk::WorkflowManage
+    );
+    assert_eq!(
+        start_metadata.approval,
+        crate::tool_runtime::metadata::ToolApprovalPolicy::None
+    );
+    let finish_metadata = lookup_tool_metadata("finish_coding_task").expect("finish metadata");
+    assert_eq!(
+        finish_metadata.effect,
+        crate::tool_runtime::metadata::ToolEffect::Observe
+    );
+    assert_eq!(
+        finish_metadata.risk,
+        crate::tool_runtime::metadata::ToolRisk::Read
+    );
+    assert_eq!(
+        finish_metadata.idempotency,
+        crate::tool_runtime::metadata::ToolIdempotency::PureRead
+    );
     assert!(!names.contains(&"start_coding_task"));
     assert!(names.contains(&"finish_coding_task"));
     let start_definition =

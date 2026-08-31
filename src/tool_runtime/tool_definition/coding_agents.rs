@@ -1,12 +1,12 @@
 use super::AgentCapability::CodingAgentRuns;
 use super::ToolVisibility::ModelVisible;
 use super::{
-    def, effect_annotations, model_spec, permission_risk, require_all_scopes, ToolDefinition,
-    ToolEffectAnnotations, PERMISSION_RISK_JOB, TOOL_CATEGORY_CODING_AGENT,
+    def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_JOB,
+    TOOL_CATEGORY_CODING_AGENT,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
-    ToolRisk::{JobRun, ReadOnly},
+    ToolRisk::{JobRun, Read},
     CODING_AGENT_RUN, TOOL_PROVIDER_AGENT,
 };
 use crate::tool_runtime::registry::input_schemas::{
@@ -24,7 +24,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     TOOL_CATEGORY_CODING_AGENT,
                     Some(CodingAgentRuns),
                     TOOL_PROVIDER_AGENT,
-                    JobRun,
+                    super::ToolSemanticContract {
+                        effect: super::ToolEffect::Execute,
+                        risk: JobRun,
+                        approval: super::ToolApprovalPolicy::Standard,
+                        idempotency: super::ToolIdempotency::Keyed,
+                    },
                     Some(CODING_AGENT_RUN),
                     true,
                     NoPath,
@@ -45,7 +50,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             TOOL_CATEGORY_CODING_AGENT,
             None,
             TOOL_PROVIDER_AGENT,
-            ReadOnly,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
             Some(CODING_AGENT_RUN),
             false,
             NoPath,
@@ -55,31 +65,28 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Observe bounded normalized events and lifecycle for one existing CodingAgentRun. Return the opaque token for only-new follow-ups; history loss/reset is explicit. Observation never starts, retries, or resumes ACP work.",
         coding_agent_observe_input_schema,
     ),
-    effect_annotations(
-        model_spec(
-            def(
-                "coding_agent_cancel",
-                ModelVisible,
-                TOOL_CATEGORY_CODING_AGENT,
-                None,
-                TOOL_PROVIDER_AGENT,
-                // Cancel is Run lifecycle control but deliberately not a second
-                // WebCodex PermissionEvaluator decision after start admission.
-                ReadOnly,
-                Some(CODING_AGENT_RUN),
-                false,
-                NoPath,
-                false,
-                false,
-            ),
-            "Request cancellation of one existing CodingAgentRun. This does not grant permission, retry a prompt, or create a replacement Run; observe the same run_id for authoritative terminal state.",
-            coding_agent_cancel_input_schema,
+    model_spec(
+        def(
+            "coding_agent_cancel",
+            ModelVisible,
+            TOOL_CATEGORY_CODING_AGENT,
+            None,
+            TOOL_PROVIDER_AGENT,
+            // Cancel is Run lifecycle control but deliberately not a second
+            // WebCodex PermissionEvaluator decision after start admission.
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Mutate,
+                risk: super::ToolRisk::RunControl,
+                approval: super::ToolApprovalPolicy::InheritFromStart,
+                idempotency: super::ToolIdempotency::DesiredState,
+            },
+            Some(CODING_AGENT_RUN),
+            false,
+            NoPath,
+            false,
+            false,
         ),
-        ToolEffectAnnotations {
-            read_only_hint: false,
-            destructive_hint: false,
-            idempotent_hint: true,
-            open_world_hint: false,
-        },
+        "Request cancellation of one existing CodingAgentRun. This does not grant permission, retry a prompt, or create a replacement Run; observe the same run_id for authoritative terminal state.",
+        coding_agent_cancel_input_schema,
     ),
 ];

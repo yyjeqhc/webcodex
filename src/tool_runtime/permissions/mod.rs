@@ -38,12 +38,30 @@ pub(crate) use policy::{resolve_authority_mode, RESTRICTED_DENY_REASON};
 
 use serde_json::{json, Value};
 
+use super::metadata::ToolApprovalPolicy;
 use super::sessions::{canonical_tool_call_finished_events, SessionEvent};
+use super::tool_definition::runtime_tool_approval_policy;
 use super::tool_result::{RecoveryKind, ToolResult};
 
 /// Canonical authority profile (runtime_status / coding-task startup).
 pub(crate) fn authority_profile_payload() -> Value {
     policy::authority_profile_payload_for(&EffectiveAuthorityConfig::from_env())
+}
+
+/// Evaluate interactive permission only when the canonical tool approval
+/// contract requires a fresh decision. `InheritFromStart` is deliberately
+/// distinct from `None` even though neither enters the evaluator here.
+pub(crate) fn evaluate_permission_for_tool(
+    evaluator: &PermissionEvaluator,
+    tool_name: &str,
+    project: Option<&str>,
+) -> Option<PermissionDecision> {
+    match runtime_tool_approval_policy(tool_name) {
+        ToolApprovalPolicy::Standard | ToolApprovalPolicy::Unknown => {
+            evaluator.evaluate(tool_name, project)
+        }
+        ToolApprovalPolicy::None | ToolApprovalPolicy::InheritFromStart => None,
+    }
 }
 
 pub(crate) fn add_permission_to_result(result: &mut ToolResult, permission: &PermissionDecision) {

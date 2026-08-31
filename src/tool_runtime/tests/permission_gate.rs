@@ -267,9 +267,13 @@ async fn hard_policy_deny_still_suppresses_permission_attach() {
 }
 
 #[tokio::test]
-async fn read_only_tool_skips_permission_decision() {
-    let client_id = "perm-readonly";
-    let runtime = runtime_with_mode(client_id, AuthorityMode::Restricted);
+async fn observe_tool_skips_permission_evaluator() {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let client_id = "perm-observe";
+    let runtime = runtime_with_agent_project(client_id).with_permission_evaluator(
+        PermissionEvaluator::with_mode(AuthorityMode::Restricted)
+            .with_eval_counter(counter.clone()),
+    );
     register_agent(
         &runtime,
         client_id,
@@ -315,11 +319,70 @@ async fn read_only_tool_skips_permission_decision() {
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        0,
+        "ApprovalPolicy::None must skip PermissionEvaluator"
+    );
     assert!(
         result.output.get("permission").is_none(),
-        "read-only tools must not invent permission records: {:?}",
+        "observe tools must not invent permission records: {:?}",
         result.output.get("permission")
     );
+}
+
+#[tokio::test]
+async fn session_mutation_with_no_approval_skips_permission_evaluator() {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let runtime = test_runtime().with_permission_evaluator(
+        PermissionEvaluator::with_mode(AuthorityMode::Restricted)
+            .with_eval_counter(counter.clone()),
+    );
+    let session = runtime
+        .sessions
+        .start_session(None, Some("permission semantic test".to_string()));
+
+    let result = runtime
+        .dispatch(ToolCall::CloseSession {
+            session_id: session.session_id.clone(),
+        })
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["lifecycle"], "closed");
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
+    assert!(
+        result.output.get("permission").is_none(),
+        "Mutate + ApprovalPolicy::None must not create an interactive permission record"
+    );
+}
+
+#[tokio::test]
+async fn coding_agent_cancel_inherits_start_approval_without_second_evaluator_decision() {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let runtime = test_runtime().with_permission_evaluator(
+        PermissionEvaluator::with_mode(AuthorityMode::Restricted)
+            .with_eval_counter(counter.clone()),
+    );
+    let auth = auth_context(None, true);
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::CodingAgentCancel {
+                run_id: "wc_car_permission_semantics_missing".to_string(),
+            },
+            Some(&auth),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "unknown_coding_agent_run");
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        0,
+        "InheritFromStart must not trigger a second PermissionEvaluator decision"
+    );
+    assert!(result.output.get("permission").is_none());
 }
 
 #[tokio::test]

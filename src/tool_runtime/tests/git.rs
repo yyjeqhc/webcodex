@@ -4531,10 +4531,13 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
     );
     assert!(definition.visibility.is_model_visible());
     let metadata = lookup_tool_metadata("git_review_summary").expect("git_review_summary metadata");
-    assert_eq!(metadata.risk, ToolRisk::ReadOnly);
+    assert_eq!(metadata.risk, ToolRisk::Read);
     assert_eq!(metadata.legacy_oauth_scope_hint, Some(SCOPE_PROJECT_READ));
     assert!(metadata.requires_project);
-    assert!(metadata.read_only);
+    assert_eq!(
+        metadata.effect,
+        crate::tool_runtime::metadata::ToolEffect::Observe
+    );
     assert!(!metadata.destructive);
     assert_eq!(
         oauth_scope_policy_for_runtime_tool("git_review_summary"),

@@ -9,9 +9,9 @@ use super::super::tool_definition::{
     runtime_tool_permission_risk, runtime_tool_requires_permission,
 };
 
-/// Whether the tool class enters the permission-bearing set.
+/// Whether the canonical ApprovalPolicy enters the permission-bearing set.
 ///
-/// Read-only tools return false and do not produce a [`super::PermissionDecision`].
+/// Effect and risk classification do not decide interactive approval.
 pub(crate) fn tool_requires_permission(tool_name: &str) -> bool {
     runtime_tool_requires_permission(tool_name)
 }

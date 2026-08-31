@@ -122,14 +122,14 @@ impl ToolRuntime {
         output
     }
 
-    /// Return a compact, bounded tool manifest with categories, risk summary,
-    /// recommended flows, and optional intent-shaped tool views. Read-only
-    /// runtime introspection; never exposes full input/output schemas, tokens,
-    /// secrets, or internal paths. Intent views only filter and rank discovery
-    /// output; they do not change tool behavior, policy, permissions,
-    /// execution, or finish verdict semantics. Intended as a lightweight
-    /// alternative to `list_tools` for long-running tasks where the full
-    /// schemas cause ResponseTooLargeError.
+    /// Return compact, bounded runtime discovery. List/filter mode stays
+    /// schema-free; exact tool_name mode exposes one tool's input schema while
+    /// intentionally omitting its output schema. Never exposes tokens, secrets,
+    /// or internal paths. Intent views only filter and rank discovery output;
+    /// they do not change tool behavior, policy, permissions, execution, or
+    /// finish verdict semantics. Intended as a lightweight alternative to
+    /// `list_tools` for long-running tasks where full catalog schemas cause
+    /// ResponseTooLargeError.
     pub(super) async fn tool_manifest(
         &self,
         tool_name: Option<String>,

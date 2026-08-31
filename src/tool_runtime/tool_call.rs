@@ -1979,9 +1979,10 @@ pub enum ToolCall {
     /// only filter and rank discovery output; they do not change tool behavior,
     /// policy, permissions, execution, or finish verdict semantics. Intended as
     /// a lightweight alternative to `list_tools` for long-running tasks where
-    /// the full input/output schemas cause ResponseTooLargeError. Read-only
-    /// runtime introspection; never exposes schemas, tokens, secrets, or
-    /// internal paths.
+    /// full catalog schemas cause ResponseTooLargeError. Read-only runtime
+    /// introspection; list/filter mode stays schema-free, while exact tool_name
+    /// mode exposes only that tool's input schema. Never exposes tokens, secrets,
+    /// internal paths, or output schemas.
     ToolManifest {
         /// Optional exact model-visible runtime tool name for one-tool contract discovery.
         #[serde(default)]

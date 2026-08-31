@@ -59,15 +59,14 @@ fn canonical_runner_feature_wire_names_round_trip() {
 
 #[test]
 fn canonical_runner_feature_set_tracks_each_individual_wire_bool() {
-    let all_false = RunnerFeatureSet::from_legacy_wire_for_test(&wire_capabilities_with_only(None));
+    let all_false = RunnerFeatureSet::from_wire_for_test(&wire_capabilities_with_only(None));
     for feature in RunnerFeature::all() {
         assert!(!all_false.supports(*feature), "{}", feature.as_wire_name());
     }
 
     for advertised in RunnerFeature::all() {
-        let semantics = RunnerFeatureSet::from_legacy_wire_for_test(&wire_capabilities_with_only(
-            Some(*advertised),
-        ));
+        let semantics =
+            RunnerFeatureSet::from_wire_for_test(&wire_capabilities_with_only(Some(*advertised)));
         for observed in RunnerFeature::all() {
             assert_eq!(
                 semantics.supports(*observed),
@@ -152,47 +151,13 @@ fn v2_baseline_exactly_matches_generation_eligible_classification() {
 }
 
 #[test]
-fn legacy_v1_generation_baseline_is_empty_and_preserves_wire_truth() {
-    for generation in [None, Some(AGENT_PROTOCOL_GENERATION_LEGACY_V1)] {
-        let protocol = AcceptedRunnerProtocol::try_from_registration(
-            AGENT_PROTOCOL_VERSION_POLLING_V1,
-            generation,
-        )
-        .unwrap();
-        assert_eq!(protocol.generation(), RunnerProtocolGeneration::LegacyV1);
-
-        let none =
-            RunnerFeatureSet::try_from_registration(protocol, &wire_capabilities_with_only(None))
-                .unwrap();
-        for feature in RunnerFeature::all()
-            .iter()
-            .copied()
-            .filter(|feature| feature.inference() == RunnerFeatureInference::GenerationEligible)
-        {
-            assert!(!none.supports(feature), "{}", feature.as_wire_name());
-            let advertised = RunnerFeatureSet::try_from_registration(
-                protocol,
-                &wire_capabilities_with_only(Some(feature)),
-            )
-            .unwrap();
-            assert!(advertised.supports(feature), "{}", feature.as_wire_name());
-        }
-    }
-}
-
-#[test]
-fn v2_generation_baseline_requires_legacy_projection_without_silent_or() {
-    let protocol = AcceptedRunnerProtocol::try_from_registration(
-        AGENT_PROTOCOL_VERSION_POLLING_V1,
-        Some(AGENT_PROTOCOL_GENERATION_V2),
-    )
-    .unwrap();
+fn v2_generation_baseline_requires_explicit_bool_projection_without_silent_or() {
     let baseline = v2_baseline_capabilities();
-    let accepted = RunnerFeatureSet::try_from_registration(protocol, &baseline).unwrap();
+    let accepted = RunnerFeatureSet::try_from_registration(&baseline).unwrap();
 
     let missing = wire_capabilities_with_only(None);
     assert_eq!(
-        RunnerFeatureSet::try_from_registration(protocol, &missing).unwrap_err(),
+        RunnerFeatureSet::try_from_registration(&missing).unwrap_err(),
         "runner generation baseline capability mismatch: file_read"
     );
 
@@ -203,7 +168,7 @@ fn v2_generation_baseline_requires_legacy_projection_without_silent_or() {
     {
         assert!(accepted.supports(feature), "{}", feature.as_wire_name());
         let contradictory = with_wire_feature(&baseline, feature, false);
-        let error = RunnerFeatureSet::try_from_registration(protocol, &contradictory).unwrap_err();
+        let error = RunnerFeatureSet::try_from_registration(&contradictory).unwrap_err();
         assert_eq!(
             error,
             format!(
@@ -216,13 +181,8 @@ fn v2_generation_baseline_requires_legacy_projection_without_silent_or() {
 
 #[test]
 fn v2_registration_required_features_are_never_inferred_from_generation() {
-    let protocol = AcceptedRunnerProtocol::try_from_registration(
-        AGENT_PROTOCOL_VERSION_POLLING_V1,
-        Some(AGENT_PROTOCOL_GENERATION_V2),
-    )
-    .unwrap();
     let baseline = v2_baseline_capabilities();
-    let baseline_only = RunnerFeatureSet::try_from_registration(protocol, &baseline).unwrap();
+    let baseline_only = RunnerFeatureSet::try_from_registration(&baseline).unwrap();
 
     for feature in RunnerFeature::all()
         .iter()
@@ -235,8 +195,7 @@ fn v2_registration_required_features_are_never_inferred_from_generation() {
             feature.as_wire_name()
         );
         let explicitly_advertised = with_wire_feature(&baseline, feature, true);
-        let accepted =
-            RunnerFeatureSet::try_from_registration(protocol, &explicitly_advertised).unwrap();
+        let accepted = RunnerFeatureSet::try_from_registration(&explicitly_advertised).unwrap();
         assert!(accepted.supports(feature), "{}", feature.as_wire_name());
     }
 
@@ -259,8 +218,8 @@ fn v2_registration_required_features_are_never_inferred_from_generation() {
 
 #[test]
 fn missing_additive_wire_fields_remain_false_in_canonical_semantics() {
-    let legacy: ShellClientCapabilities = serde_json::from_str(r#"{}"#).unwrap();
-    let semantics = RunnerFeatureSet::from_legacy_wire_for_test(&legacy);
+    let wire: ShellClientCapabilities = serde_json::from_str(r#"{}"#).unwrap();
+    let semantics = RunnerFeatureSet::from_wire_for_test(&wire);
 
     assert!(semantics.supports(RunnerFeature::Shell));
     for feature in RunnerFeature::all() {
@@ -305,17 +264,16 @@ async fn current_protocol_generation_never_infers_registration_required_host_fea
 }
 
 #[tokio::test]
-async fn shell_client_view_preserves_legacy_capability_wire_projection() {
+async fn shell_client_view_preserves_capability_wire_projection() {
     let registry = ShellClientRegistry::default();
-    let mut advertised = wire_capabilities_with_only(None);
-    advertised.file_read = true;
-    advertised.structured_process_argv = true;
+    let mut advertised = v2_baseline_capabilities();
     advertised.computer_control = true;
 
     let mut registration = runner_registration("projection", "inst-a", Vec::new());
     registration.capabilities = Some(advertised.clone());
     let view = registry.register(registration).await.unwrap();
 
+    advertised.agent_protocol_generation = None;
     assert_eq!(view.capabilities, advertised);
     let serialized = serde_json::to_value(&view.capabilities).unwrap();
     assert_eq!(serialized["shell"], false);
@@ -348,10 +306,7 @@ async fn v2_generation_advertisement_never_enters_public_capability_projection()
 async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_replacement() {
     let registry = ShellClientRegistry::default();
 
-    let mut first_capabilities = wire_capabilities_with_only(None);
-    first_capabilities.file_read = true;
-    first_capabilities.structured_process_argv = true;
-    first_capabilities.lsp_read_only_navigation = true;
+    let mut first_capabilities = v2_baseline_capabilities();
     first_capabilities.computer_observe = true;
     let mut first = runner_registration("semantic-snapshot", "inst-a", Vec::new());
     first.capabilities = Some(first_capabilities);
@@ -367,7 +322,7 @@ async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_repla
     assert!(first_snapshot.supports(RunnerFeature::StructuredProcessArgv));
     assert!(first_snapshot.supports(RunnerFeature::LspReadOnlyNavigation));
     assert!(first_snapshot.supports(RunnerFeature::ComputerObserve));
-    assert!(!first_snapshot.supports(RunnerFeature::FileWrite));
+    assert!(first_snapshot.supports(RunnerFeature::FileWrite));
     assert!(!first_snapshot.supports(RunnerFeature::ComputerTextInput));
 
     registry
@@ -376,10 +331,7 @@ async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_repla
             now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1,
         )
         .await;
-    let mut replacement_capabilities = wire_capabilities_with_only(None);
-    replacement_capabilities.file_write = true;
-    replacement_capabilities.structured_script_payload = true;
-    replacement_capabilities.lsp_call_hierarchy = true;
+    let mut replacement_capabilities = v2_baseline_capabilities();
     replacement_capabilities.computer_text_input = true;
     let mut replacement = runner_registration("semantic-snapshot", "inst-b", Vec::new());
     replacement.capabilities = Some(replacement_capabilities);
@@ -391,7 +343,7 @@ async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_repla
         .unwrap();
     assert_eq!(replacement_snapshot.view.agent_instance_id, "inst-b");
     assert!(replacement_snapshot.view.connected);
-    assert!(!replacement_snapshot.supports(RunnerFeature::FileRead));
+    assert!(replacement_snapshot.supports(RunnerFeature::FileRead));
     assert!(replacement_snapshot.supports(RunnerFeature::FileWrite));
     assert!(replacement_snapshot.supports(RunnerFeature::StructuredScriptPayload));
     assert!(replacement_snapshot.supports(RunnerFeature::LspCallHierarchy));
@@ -401,74 +353,46 @@ async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_repla
     // being paired with feature truth from the replacement process.
     assert_eq!(first_snapshot.view.agent_instance_id, "inst-a");
     assert!(first_snapshot.supports(RunnerFeature::FileRead));
-    assert!(!first_snapshot.supports(RunnerFeature::FileWrite));
+    assert!(first_snapshot.supports(RunnerFeature::FileWrite));
     assert!(first_snapshot.supports(RunnerFeature::ComputerObserve));
     assert!(!first_snapshot.supports(RunnerFeature::ComputerTextInput));
 }
 
 #[tokio::test]
-async fn project_operation_enqueue_rechecks_canonical_features_after_reregistration() {
+async fn generation_baseline_project_features_cannot_downgrade_on_reregistration() {
     let registry = ShellClientRegistry::default();
-    let mut initial_capabilities = wire_capabilities_with_only(None);
-    initial_capabilities.project_path_registration = true;
-    initial_capabilities.project_lifecycle = true;
-    let mut initial = runner_registration("project-feature-fence", "inst-a", Vec::new());
-    initial.capabilities = Some(initial_capabilities);
-    registry.register(initial).await.unwrap();
+    registry
+        .register(runner_registration(
+            "project-feature-fence",
+            "inst-a",
+            Vec::new(),
+        ))
+        .await
+        .unwrap();
 
-    // Hold the old semantic observation to model the ToolRuntime preflight, then
-    // allow the same process to re-register without these non-sticky features.
-    let stale_preflight = registry
+    let original = registry
         .get_client_semantic_view("project-feature-fence")
         .await
         .unwrap();
-    assert!(stale_preflight.supports(RunnerFeature::ProjectPathRegistration));
-    assert!(stale_preflight.supports(RunnerFeature::ProjectLifecycle));
+    assert!(original.supports(RunnerFeature::ProjectPathRegistration));
+    assert!(original.supports(RunnerFeature::ProjectLifecycle));
 
     let mut downgraded = runner_registration("project-feature-fence", "inst-a", Vec::new());
-    downgraded.capabilities = Some(wire_capabilities_with_only(None));
-    registry.register(downgraded).await.unwrap();
-
-    let path_error = registry
-        .enqueue_project_op(
-            "project-feature-fence".to_string(),
-            "resolve_or_register_project",
-            "{}".to_string(),
-            "test".to_string(),
-        )
-        .await
-        .unwrap_err();
-    assert!(
-        path_error.contains("project_path_registration"),
-        "{path_error}"
+    let mut capabilities = v2_baseline_capabilities();
+    capabilities.project_path_registration = false;
+    downgraded.capabilities = Some(capabilities);
+    let error = registry.register(downgraded).await.unwrap_err();
+    assert_eq!(
+        error,
+        "runner generation baseline capability mismatch: project_path_registration"
     );
 
-    let lifecycle_error = registry
-        .enqueue_project_op(
-            "project-feature-fence".to_string(),
-            "project_lifecycle_disable",
-            "{}".to_string(),
-            "test".to_string(),
-        )
+    let preserved = registry
+        .get_client_semantic_view("project-feature-fence")
         .await
-        .unwrap_err();
-    assert!(
-        lifecycle_error.contains("project_lifecycle"),
-        "{lifecycle_error}"
-    );
-}
-
-async fn register_structured_delete_state(
-    registry: &ShellClientRegistry,
-    client_id: &str,
-    instance_id: &str,
-    enabled: bool,
-) -> Result<(), String> {
-    let mut capabilities = wire_capabilities_with_only(None);
-    capabilities.structured_file_delete = enabled;
-    let mut registration = runner_registration(client_id, instance_id, Vec::new());
-    registration.capabilities = Some(capabilities);
-    registry.register(registration).await.map(|_| ())
+        .unwrap();
+    assert!(preserved.supports(RunnerFeature::ProjectPathRegistration));
+    assert!(preserved.supports(RunnerFeature::ProjectLifecycle));
 }
 
 #[tokio::test]
@@ -476,7 +400,7 @@ async fn coding_agent_registration_consistency_uses_canonical_feature_semantics(
     let registry = ShellClientRegistry::default();
 
     let mut metadata_without_feature = runner_registration("coding-metadata", "inst-a", Vec::new());
-    metadata_without_feature.capabilities = Some(wire_capabilities_with_only(None));
+    metadata_without_feature.capabilities = Some(v2_baseline_capabilities());
     metadata_without_feature.coding_agent_providers =
         Some(vec![webcodex_core::coding_agent::CodingAgentProvider {
             provider_id: "codex".to_string(),
@@ -495,9 +419,11 @@ async fn coding_agent_registration_consistency_uses_canonical_feature_semantics(
     );
 
     let mut feature_without_metadata = runner_registration("coding-feature", "inst-a", Vec::new());
-    feature_without_metadata.capabilities = Some(wire_capabilities_with_only(Some(
+    feature_without_metadata.capabilities = Some(with_wire_feature(
+        &v2_baseline_capabilities(),
         RunnerFeature::CodingAgentRuns,
-    )));
+        true,
+    ));
     let error = registry
         .register(feature_without_metadata)
         .await
@@ -515,11 +441,7 @@ async fn register_sticky_feature_state(
     feature: RunnerFeature,
     enabled: bool,
 ) -> Result<(), String> {
-    let capabilities = if enabled {
-        wire_capabilities_with_only(Some(feature))
-    } else {
-        wire_capabilities_with_only(None)
-    };
+    let capabilities = with_wire_feature(&v2_baseline_capabilities(), feature, enabled);
     let mut registration = runner_registration(client_id, instance_id, Vec::new());
     registration.capabilities = Some(capabilities);
 
@@ -544,15 +466,46 @@ async fn register_sticky_feature_state(
 }
 
 #[tokio::test]
-async fn all_seven_sticky_features_reject_same_instance_downgrade() {
+async fn generation_baseline_features_reject_reregistration_downgrade() {
     for feature in [
-        RunnerFeature::JobStateReconciliation,
-        RunnerFeature::CodingAgentRuns,
         RunnerFeature::StructuredFileDelete,
         RunnerFeature::ApplyTextEditOccurrence,
         RunnerFeature::InternalPosixScript,
         RunnerFeature::ArtifactExportChunkRead,
         RunnerFeature::ArtifactExportStreamingMetadata,
+    ] {
+        let registry = ShellClientRegistry::default();
+        let client_id = format!("baseline-{}", feature.as_wire_name());
+        registry
+            .register(runner_registration(&client_id, "inst-a", Vec::new()))
+            .await
+            .unwrap();
+        let mut downgraded = runner_registration(&client_id, "inst-a", Vec::new());
+        downgraded.capabilities = Some(with_wire_feature(
+            &v2_baseline_capabilities(),
+            feature,
+            false,
+        ));
+        let error = registry.register(downgraded).await.unwrap_err();
+        assert_eq!(
+            error,
+            format!(
+                "runner generation baseline capability mismatch: {}",
+                feature.as_wire_name()
+            )
+        );
+        assert!(registry
+            .client_supports(&client_id, feature.as_wire_name())
+            .await
+            .unwrap());
+    }
+}
+
+#[tokio::test]
+async fn registration_required_sticky_features_reject_same_instance_downgrade() {
+    for feature in [
+        RunnerFeature::JobStateReconciliation,
+        RunnerFeature::CodingAgentRuns,
     ] {
         let registry = ShellClientRegistry::default();
         let client_id = format!("sticky-{}", feature.as_wire_name());
@@ -567,63 +520,61 @@ async fn all_seven_sticky_features_reject_same_instance_downgrade() {
             "feature={} error={error}",
             feature.as_wire_name()
         );
-        assert!(
-            registry
-                .client_supports(&client_id, feature.as_wire_name())
-                .await
-                .unwrap(),
-            "rejected downgrade must preserve {}",
-            feature.as_wire_name()
-        );
+        assert!(registry
+            .client_supports(&client_id, feature.as_wire_name())
+            .await
+            .unwrap());
     }
 }
 
 #[tokio::test]
 async fn canonical_sticky_feature_fence_preserves_allowed_reconnect_transitions() {
+    let feature = RunnerFeature::JobStateReconciliation;
+
     let false_false = ShellClientRegistry::default();
-    register_structured_delete_state(&false_false, "ff", "inst-a", false)
+    register_sticky_feature_state(&false_false, "ff", "inst-a", feature, false)
         .await
         .unwrap();
-    register_structured_delete_state(&false_false, "ff", "inst-a", false)
+    register_sticky_feature_state(&false_false, "ff", "inst-a", feature, false)
         .await
         .unwrap();
 
     let false_true = ShellClientRegistry::default();
-    register_structured_delete_state(&false_true, "ft", "inst-a", false)
+    register_sticky_feature_state(&false_true, "ft", "inst-a", feature, false)
         .await
         .unwrap();
-    register_structured_delete_state(&false_true, "ft", "inst-a", true)
+    register_sticky_feature_state(&false_true, "ft", "inst-a", feature, true)
         .await
         .unwrap();
 
     let true_true = ShellClientRegistry::default();
-    register_structured_delete_state(&true_true, "tt", "inst-a", true)
+    register_sticky_feature_state(&true_true, "tt", "inst-a", feature, true)
         .await
         .unwrap();
-    register_structured_delete_state(&true_true, "tt", "inst-a", true)
+    register_sticky_feature_state(&true_true, "tt", "inst-a", feature, true)
         .await
         .unwrap();
 
     let true_false = ShellClientRegistry::default();
-    register_structured_delete_state(&true_false, "tf", "inst-a", true)
+    register_sticky_feature_state(&true_false, "tf", "inst-a", feature, true)
         .await
         .unwrap();
-    let error = register_structured_delete_state(&true_false, "tf", "inst-a", false)
+    let error = register_sticky_feature_state(&true_false, "tf", "inst-a", feature, false)
         .await
         .unwrap_err();
-    assert!(error.contains("cannot downgrade structured_file_delete"));
+    assert!(error.contains("cannot downgrade job_state_reconciliation"));
 
     let replacement = ShellClientRegistry::default();
-    register_structured_delete_state(&replacement, "replacement", "inst-a", true)
+    register_sticky_feature_state(&replacement, "replacement", "inst-a", feature, true)
         .await
         .unwrap();
     replacement
         .set_last_seen_for_test("replacement", now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1)
         .await;
-    register_structured_delete_state(&replacement, "replacement", "inst-b", false)
+    register_sticky_feature_state(&replacement, "replacement", "inst-b", feature, false)
         .await
         .unwrap();
     let view = replacement.get_client_view("replacement").await.unwrap();
     assert_eq!(view.agent_instance_id, "inst-b");
-    assert!(!view.capabilities.structured_file_delete);
+    assert!(!view.capabilities.job_state_reconciliation);
 }

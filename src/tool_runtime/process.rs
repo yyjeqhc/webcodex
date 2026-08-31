@@ -23,7 +23,7 @@ use crate::shell_client::{
 use crate::shell_protocol::{
     validate_process_argv, ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest,
     ShellProcessArgv, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
-    STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
+    STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
 };
 
 fn command_started(state: ShellCommandExecutionState) -> bool {
@@ -482,12 +482,7 @@ impl ToolRuntime {
                 )
             }
         };
-        if !features.supports(RunnerFeature::DetachedProcessJobs)
-            || !features.supports(RunnerFeature::StructuredProcessArgv)
-            || !features.supports(RunnerFeature::StructuredExecutionJobs)
-            || !(features.supports(RunnerFeature::AsyncJobs)
-                || features.supports(RunnerFeature::AsyncShellJobs))
-        {
+        if !features.supports(RunnerFeature::DetachedProcessJobs) {
             return process_tool_failure_result(
                 command_rejected_message(
                     "capability_unavailable: this Runner does not advertise the complete detached_process_jobs structured Job contract",
@@ -727,44 +722,17 @@ impl ToolRuntime {
             };
             let resolved_cwd = project_relative_agent_cwd(&proj, &effective_cwd)
                 .unwrap_or_else(|_| ".".to_string());
-            let features = match self.shell_clients.get_client_feature_set(&client_id).await {
-                Ok(features) => features,
-                Err(error) => {
-                    let mut result = process_tool_failure_result(
-                        command_rejected_message(
-                            error.to_string(),
-                            "confirm the Runner is registered and connected, then retry.",
-                        ),
-                        "agent_offline",
-                        ShellCommandExecutionState::NotStarted,
-                    );
-                    decorate(
-                        &mut result.output,
-                        declared_purpose,
-                        &summary,
-                        &resolved_cwd,
-                        "agent",
-                    );
-                    add_structured_continuation_facts(
-                        &mut result,
-                        timeout,
-                        timeout.min(STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS),
-                        false,
-                    );
-                    return result;
-                }
-            };
-            let async_handoff_available = allow_async_handoff
-                && features.supports(RunnerFeature::StructuredExecutionJobs)
-                && (features.supports(RunnerFeature::AsyncJobs)
-                    || features.supports(RunnerFeature::AsyncShellJobs));
+            // Generation-2 admission guarantees the complete typed structured
+            // execution baseline. Only server-owned internal mutations may opt
+            // out of model-facing durable Job handoff.
+            let async_handoff_available = allow_async_handoff;
             if !async_handoff_available
-                && timeout > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS
+                && timeout > STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS
             {
                 let mut result = process_tool_failure_result(
                     command_rejected_message(
-                        "capability_unavailable: this Runner does not support durable typed structured execution Jobs",
-                        "upgrade the Runner to one advertising structured_execution_jobs, or request timeout_secs at most 120 seconds.",
+                        "internal synchronous structured execution cannot hand off to a durable Job",
+                        "keep this internal operation at timeout_secs <= 120.",
                     ),
                     "capability_unavailable",
                     ShellCommandExecutionState::NotStarted,
@@ -779,7 +747,7 @@ impl ToolRuntime {
                 add_structured_continuation_facts(
                     &mut result,
                     timeout,
-                    STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
+                    STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
                     false,
                 );
                 return result;
@@ -1068,7 +1036,7 @@ impl ToolRuntime {
             );
             result
         } else {
-            if timeout > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS {
+            if timeout > STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS {
                 let mut result = process_tool_failure_result(
                     command_rejected_message(
                         "capability_unavailable: the server-local compatibility executor has no durable typed Job handoff",
@@ -1081,7 +1049,7 @@ impl ToolRuntime {
                 add_structured_continuation_facts(
                     &mut result,
                     timeout,
-                    STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
+                    STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
                     false,
                 );
                 return result;

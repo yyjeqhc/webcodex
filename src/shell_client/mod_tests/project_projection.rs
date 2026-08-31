@@ -111,7 +111,7 @@ async fn project_cardinality_does_not_reject_runner_liveness_or_dynamic_upsert()
 async fn registry_register_saves_projects() {
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -128,7 +128,7 @@ async fn registry_register_saves_projects() {
             projects: Some(vec![project_summary("webcodex", "/root/git/webcodex")]),
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let clients = registry.list_clients().await;
@@ -144,7 +144,7 @@ async fn registry_register_saves_projects() {
 async fn registry_poll_updates_projects() {
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -161,7 +161,7 @@ async fn registry_poll_updates_projects() {
             projects: Some(vec![project_summary("one", "/tmp/one")]),
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let polled = registry
@@ -187,7 +187,7 @@ async fn registry_poll_updates_projects() {
 async fn registry_poll_without_projects_preserves_existing_projection() {
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -204,7 +204,7 @@ async fn registry_poll_without_projects_preserves_existing_projection() {
             projects: Some(vec![project_summary("one", "/tmp/one")]),
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
 
@@ -228,7 +228,7 @@ async fn registry_poll_without_projects_preserves_existing_projection() {
 async fn registry_project_owner_check_enforces_boundary() {
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -245,11 +245,11 @@ async fn registry_project_owner_check_enforces_boundary() {
             projects: Some(vec![project_summary("webcodex", "/root/git/webcodex")]),
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -266,7 +266,7 @@ async fn registry_project_owner_check_enforces_boundary() {
             projects: Some(vec![project_summary("secret", "/tmp/secret")]),
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
 

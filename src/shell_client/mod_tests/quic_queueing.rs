@@ -163,7 +163,7 @@ async fn registry_allows_quic_v1_start_job_queueing() {
 async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -180,7 +180,7 @@ async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
             projects: None,
             agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V1.to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let job = registry

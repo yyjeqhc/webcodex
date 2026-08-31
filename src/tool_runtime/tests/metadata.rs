@@ -105,7 +105,7 @@ fn list_agents_call() -> ToolCall {
 }
 
 fn metadata_agent_registration(client_id: &str, protocol: &str) -> ShellClientRegisterRequest {
-    ShellClientRegisterRequest {
+    crate::test_support::current_runner_registration(ShellClientRegisterRequest {
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -122,7 +122,7 @@ fn metadata_agent_registration(client_id: &str, protocol: &str) -> ShellClientRe
         projects: None,
         agent_protocol_version: Some(protocol.to_string()),
         policy: None,
-    }
+    })
 }
 
 async fn register_computer_target_for_auth(
@@ -150,12 +150,14 @@ async fn register_computer_target_for_auth(
                 owner: None,
                 hostname: Some(format!("host-{client_id}")),
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    computer_observe,
-                    computer_snapshot_region,
-                    computer_accessibility_observe,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        computer_observe,
+                        computer_snapshot_region,
+                        computer_accessibility_observe,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![registered_project(
                     &format!("private-{client_id}"),
                     &format!("/tmp/private-{client_id}"),
@@ -193,11 +195,13 @@ async fn register_application_target_for_auth(
                 owner: None,
                 hostname: Some(format!("host-{client_id}")),
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    computer_application_discovery,
-                    computer_application_launch,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        computer_application_discovery,
+                        computer_application_launch,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![registered_project(
                     &format!("private-{client_id}"),
                     &format!("/tmp/private-{client_id}"),
@@ -233,10 +237,12 @@ async fn register_display_target_for_auth(
                 owner: None,
                 hostname: Some(format!("host-{client_id}")),
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    computer_display_observe: true,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        computer_display_observe: true,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![registered_project(
                     &format!("private-{client_id}"),
                     &format!("/tmp/private-{client_id}"),
@@ -272,10 +278,12 @@ async fn register_pointer_target_for_auth(
                 owner: None,
                 hostname: Some(format!("host-{client_id}")),
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    computer_pointer_control: true,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        computer_pointer_control: true,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![registered_project(
                     &format!("private-{client_id}"),
                     &format!("/tmp/private-{client_id}"),
@@ -312,11 +320,13 @@ async fn register_clipboard_target_for_auth(
                 owner: None,
                 hostname: Some(format!("host-{client_id}")),
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    computer_clipboard_read: read,
-                    computer_clipboard_write: write,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        computer_clipboard_read: read,
+                        computer_clipboard_write: write,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![registered_project(
                     &format!("private-{client_id}"),
                     &format!("/tmp/private-{client_id}"),
@@ -352,57 +362,59 @@ async fn register_agent_projects_for_auth(
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    file_read: true,
-                    file_write: true,
-                    artifact_export_chunk_read: false,
-                    artifact_export_streaming_metadata: false,
-                    structured_file_delete: false,
-                    apply_text_edit_occurrence: false,
-                    git: true,
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    ssh_shell: false,
-                    persistent_shell: false,
-                    ssh_persistent_shell: false,
-                    structured_validation_argv: true,
-                    structured_cargo_test_count_assertion: true,
-                    structured_go_test_json: true,
-                    structured_go_test_tool: true,
-                    structured_go_test_packages: true,
-                    structured_process_argv: true,
-                    structured_script_payload: false,
-                    internal_posix_script: false,
-                    structured_execution_jobs: false,
-                    detached_process_jobs: false,
-                    lsp_read_only_navigation: false,
-                    lsp_call_hierarchy: false,
-                    sandbox_inspect_commands: false,
-                    project_lifecycle: false,
-                    project_path_registration: false,
-                    skill_store_read: false,
-                    skill_store_manage: false,
-                    computer_observe: false,
-                    computer_application_discovery: false,
-                    computer_application_launch: false,
-                    computer_display_observe: false,
-                    computer_pointer_control: false,
-                    computer_clipboard_read: false,
-                    computer_clipboard_write: false,
-                    computer_snapshot_region: false,
-                    computer_accessibility_observe: false,
-                    computer_element_state: false,
-                    computer_control: false,
-                    computer_scroll_to_element: false,
-                    computer_key_input: false,
-                    computer_window_activate: false,
-                    computer_text_input: false,
-                    job_state_reconciliation: false,
-                    coding_agent_runs: false,
-                    agent_protocol_generation: None,
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        shell: true,
+                        file_read: true,
+                        file_write: true,
+                        artifact_export_chunk_read: false,
+                        artifact_export_streaming_metadata: false,
+                        structured_file_delete: false,
+                        apply_text_edit_occurrence: false,
+                        git: true,
+                        jobs: true,
+                        async_jobs: true,
+                        async_shell_jobs: true,
+                        ssh_shell: false,
+                        persistent_shell: false,
+                        ssh_persistent_shell: false,
+                        structured_validation_argv: true,
+                        structured_cargo_test_count_assertion: true,
+                        structured_go_test_json: true,
+                        structured_go_test_tool: true,
+                        structured_go_test_packages: true,
+                        structured_process_argv: true,
+                        structured_script_payload: false,
+                        internal_posix_script: false,
+                        structured_execution_jobs: false,
+                        detached_process_jobs: false,
+                        lsp_read_only_navigation: false,
+                        lsp_call_hierarchy: false,
+                        sandbox_inspect_commands: false,
+                        project_lifecycle: false,
+                        project_path_registration: false,
+                        skill_store_read: false,
+                        skill_store_manage: false,
+                        computer_observe: false,
+                        computer_application_discovery: false,
+                        computer_application_launch: false,
+                        computer_display_observe: false,
+                        computer_pointer_control: false,
+                        computer_clipboard_read: false,
+                        computer_clipboard_write: false,
+                        computer_snapshot_region: false,
+                        computer_accessibility_observe: false,
+                        computer_element_state: false,
+                        computer_control: false,
+                        computer_scroll_to_element: false,
+                        computer_key_input: false,
+                        computer_window_activate: false,
+                        computer_text_input: false,
+                        job_state_reconciliation: false,
+                        coding_agent_runs: false,
+                        agent_protocol_generation: None,
+                    },
+                )),
                 projects: Some(vec![registered_project(
                     project_id,
                     &format!("/tmp/{}", project_id),
@@ -852,7 +864,9 @@ async fn replacement_runner_pending_inventory_has_zero_project_routing_authority
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(capabilities),
+            capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities,
+            )),
             projects: None,
             agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V2.to_string()),
             policy: None,
@@ -1024,7 +1038,9 @@ async fn replacement_runner_removed_project_never_inherits_old_authority() {
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(capabilities),
+            capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities,
+            )),
             projects: None,
             agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V2.to_string()),
             policy: None,
@@ -1237,7 +1253,9 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: Some(crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            )),
             projects: None,
             agent_protocol_version: Some("websocket-v1".to_string()),
             policy: Some(AgentPolicySummary {
@@ -1330,8 +1348,6 @@ async fn unique_short_agent_project_id_is_resolved_by_runtime_surface() {
 async fn agent_capability_rejection_matrix_names_required_capability() {
     enum CapabilityCase {
         RunShell,
-        ReadFile,
-        RunJob,
         GitStatus,
     }
 
@@ -1344,18 +1360,6 @@ async fn agent_capability_rejection_matrix_names_required_capability() {
             },
             CapabilityCase::RunShell,
             vec!["does not support shell", "agent client cap-shell"],
-        ),
-        (
-            "cap-read",
-            ShellClientCapabilities::default(),
-            CapabilityCase::ReadFile,
-            vec!["does not support file_read"],
-        ),
-        (
-            "cap-job",
-            ShellClientCapabilities::default(),
-            CapabilityCase::RunJob,
-            vec!["does not support async shell jobs"],
         ),
         (
             "cap-git",
@@ -1375,23 +1379,6 @@ async fn agent_capability_rejection_matrix_names_required_capability() {
         let project = agent_test_project_id(client_id);
         let call = match case {
             CapabilityCase::RunShell => ToolCall::RunShell {
-                project,
-                command: "echo hi".to_string(),
-                session_id: None,
-                timeout_secs: None,
-                cwd: None,
-                purpose: None,
-                shell: None,
-            },
-            CapabilityCase::ReadFile => ToolCall::ReadFile {
-                project,
-                path: "README.md".to_string(),
-                session_id: None,
-                start_line: None,
-                limit: None,
-                with_line_numbers: None,
-            },
-            CapabilityCase::RunJob => ToolCall::RunJob {
                 project,
                 command: "echo hi".to_string(),
                 session_id: None,

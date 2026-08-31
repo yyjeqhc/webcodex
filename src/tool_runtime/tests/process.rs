@@ -71,6 +71,15 @@ fn process_call(project: String, session_id: Option<String>) -> ToolCall {
     }
 }
 
+fn process_sync_call(project: String, session_id: Option<String>) -> ToolCall {
+    let mut call = process_call(project, session_id);
+    let ToolCall::RunProcess { sync_wait_secs, .. } = &mut call else {
+        unreachable!("process_call must return RunProcess");
+    };
+    *sync_wait_secs = Some(30);
+    call
+}
+
 async fn register_process_agent(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -330,7 +339,7 @@ async fn run_process_enqueues_only_typed_argv_and_reports_completed_exit_codes()
             let bootstrap = bootstrap.clone();
             async move {
                 runtime
-                    .dispatch_with_auth(process_call(project, None), Some(&bootstrap))
+                    .dispatch_with_auth(process_sync_call(project, None), Some(&bootstrap))
                     .await
             }
         });
@@ -718,7 +727,9 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(capabilities),
+            capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities,
+            )),
             projects: Some(vec![registered_project(
                 "demo",
                 &temp.path().to_string_lossy(),
@@ -1483,119 +1494,6 @@ async fn promoted_process_inherits_the_initiating_session_without_a_second_tool_
 }
 
 #[tokio::test]
-async fn b2_process_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
-    let temp = tempfile::tempdir().unwrap();
-    let runtime = test_runtime();
-    let capabilities = ShellClientCapabilities {
-        shell: true,
-        async_jobs: true,
-        structured_process_argv: true,
-        structured_script_payload: true,
-        structured_execution_jobs: false,
-        ..Default::default()
-    };
-    register_agent_with_projects(
-        &runtime,
-        "process-b2",
-        None,
-        capabilities,
-        vec![registered_project("demo", &temp.path().to_string_lossy())],
-    )
-    .await;
-    let project = crate::tool_runtime::agent_project_runtime_id("process-b2", "demo");
-    let auth = auth_context(None, true);
-    let direct = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    ToolCall::RunProcess {
-                        project,
-                        executable: "argv-helper".to_string(),
-                        args: Vec::new(),
-                        stdin: None,
-                        session_id: None,
-                        timeout_secs: Some(120),
-                        sync_wait_secs: Some(45),
-                        cwd: None,
-                        purpose: None,
-                    },
-                    Some(&auth),
-                )
-                .await
-        }
-    });
-    let request = wait_for_patch_agent_request(&runtime, "process-b2").await;
-    assert_eq!(request.kind, "run_process");
-    complete_process_lifecycle(
-        &runtime,
-        "process-b2",
-        request.request_id,
-        ShellCommandExecutionState::Completed,
-        Some(0),
-        "",
-        "",
-        None,
-    )
-    .await;
-    let direct = direct.await.unwrap();
-    assert!(direct.output.get("promoted_to_job").is_none());
-    assert_eq!(direct.output["async_handoff_available"], false);
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("run_process");
-    let instance = json!({
-        "success": true,
-        "output": direct.output.clone(),
-        "error": null,
-    });
-    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
-        .unwrap_or_else(|error| {
-            panic!("B2 sparse terminal success must match run_process schema: {error}")
-        });
-    let mut malformed = direct.output.clone();
-    malformed["execution_state"] = json!("outcome_unknown");
-    malformed["command_completed"] = json!(false);
-    malformed["command_ok"] = json!(false);
-    let malformed_instance = json!({
-        "success": false,
-        "output": malformed,
-        "error": "transport outcome unknown",
-    });
-    assert!(
-        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
-            &malformed_instance,
-            &schema,
-        )
-        .is_err(),
-        "async_handoff_available=false must not weaken non-terminal continuation requirements"
-    );
-
-    let rejected = runtime
-        .dispatch_with_auth(
-            ToolCall::RunProcess {
-                project,
-                executable: "argv-helper".to_string(),
-                args: Vec::new(),
-                stdin: None,
-                session_id: None,
-                timeout_secs: Some(121),
-                sync_wait_secs: None,
-                cwd: None,
-                purpose: None,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert_eq!(rejected.output["execution_state"], "not_started");
-    assert_eq!(rejected.output["command_started"], false);
-    assert_eq!(rejected.output["failure_kind"], "capability_unavailable");
-    assert!(probe_patch_agent_request(&runtime, "process-b2")
-        .await
-        .is_none());
-}
-
-#[tokio::test]
 async fn run_process_preserves_large_typed_argv_without_shell_parsing() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
@@ -1615,7 +1513,7 @@ async fn run_process_preserves_large_typed_argv_without_shell_parsing() {
                         stdin: None,
                         session_id: None,
                         timeout_secs: Some(30),
-                        sync_wait_secs: None,
+                        sync_wait_secs: Some(30),
                         cwd: None,
                         purpose: None,
                     },
@@ -1644,35 +1542,6 @@ async fn run_process_preserves_large_typed_argv_without_shell_parsing() {
 }
 
 #[tokio::test]
-async fn run_process_capability_absence_fails_prestart_without_shell_fallback() {
-    let temp = tempfile::tempdir().unwrap();
-    let runtime = test_runtime();
-    let project =
-        register_process_agent(&runtime, "legacy-process-agent", temp.path(), false, false).await;
-
-    let result = runtime
-        .dispatch_with_auth(process_call(project, None), Some(&auth_context(None, true)))
-        .await;
-
-    assert!(!result.success);
-    assert_eq!(result.output["execution_state"], "not_started");
-    assert_eq!(result.output["command_started"], false);
-    assert_eq!(result.output["command_completed"], false);
-    assert_eq!(result.output["failure_kind"], "capability_unavailable");
-    assert!(result
-        .error
-        .as_deref()
-        .unwrap_or_default()
-        .contains("no shell fallback"));
-    assert!(
-        probe_patch_agent_request(&runtime, "legacy-process-agent")
-            .await
-            .is_none(),
-        "capability failure must not enqueue run_process or run_shell"
-    );
-}
-
-#[tokio::test]
 async fn run_process_batch_rejection_from_runner_has_stable_prestart_contract() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
@@ -1682,7 +1551,10 @@ async fn run_process_batch_rejection_from_runner_has_stable_prestart_contract() 
         let runtime = runtime.clone();
         async move {
             runtime
-                .dispatch_with_auth(process_call(project, None), Some(&auth_context(None, true)))
+                .dispatch_with_auth(
+                    process_sync_call(project, None),
+                    Some(&auth_context(None, true)),
+                )
                 .await
         }
     });
@@ -1748,7 +1620,10 @@ async fn run_process_transport_uncertainty_and_timeout_preserve_phase_a_truth() 
         let project = project.clone();
         async move {
             runtime
-                .dispatch_with_auth(process_call(project, None), Some(&auth_context(None, true)))
+                .dispatch_with_auth(
+                    process_sync_call(project, None),
+                    Some(&auth_context(None, true)),
+                )
                 .await
         }
     });
@@ -1782,7 +1657,7 @@ async fn run_process_transport_uncertainty_and_timeout_preserve_phase_a_truth() 
         async move {
             runtime
                 .dispatch_with_auth(
-                    process_call(timeout_project, None),
+                    process_sync_call(timeout_project, None),
                     Some(&auth_context(None, true)),
                 )
                 .await
@@ -1843,7 +1718,7 @@ async fn run_process_session_default_cwd_applies_without_default_shell() {
         async move {
             runtime
                 .dispatch_with_auth(
-                    process_call(project, Some(session_id)),
+                    process_sync_call(project, Some(session_id)),
                     Some(&auth_context(None, true)),
                 )
                 .await
@@ -2045,35 +1920,6 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
         assert_eq!(result.output["command_completed"], false);
         assert_eq!(result.output["failure_kind"], "invalid_arguments");
     }
-    let durable_only = runtime
-        .dispatch_with_auth(
-            ToolCall::RunProcess {
-                project: project.clone(),
-                executable: "argv-helper".to_string(),
-                args: Vec::new(),
-                stdin: None,
-                session_id: None,
-                timeout_secs: Some(121),
-                sync_wait_secs: None,
-                cwd: None,
-                purpose: None,
-            },
-            Some(&auth_context(None, true)),
-        )
-        .await;
-    assert_eq!(durable_only.output["execution_state"], "not_started");
-    assert_eq!(durable_only.output["command_started"], false);
-    assert_eq!(durable_only.output["command_completed"], false);
-    assert_eq!(
-        durable_only.output["failure_kind"],
-        "capability_unavailable"
-    );
-    assert_eq!(durable_only.output["async_handoff_available"], false);
-    assert!(!root.join("marker").exists());
-    assert!(probe_patch_agent_request(&runtime, "process-guards")
-        .await
-        .is_none());
-
     let inspect = runtime.sessions.start_session_with_guards(
         Some(project.clone()),
         Some("inspect process".to_string()),
@@ -2087,7 +1933,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
         async move {
             runtime
                 .dispatch_with_auth(
-                    process_call(project, Some(session_id)),
+                    process_sync_call(project, Some(session_id)),
                     Some(&auth_context(None, true)),
                 )
                 .await

@@ -21,7 +21,7 @@ fn streaming_registration(client_id: &str, agent_instance_id: &str) -> ShellClie
     let mut capabilities = ShellClientCapabilities::default();
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;
-    ShellClientRegisterRequest {
+    crate::test_support::current_runner_registration(ShellClientRegisterRequest {
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -38,7 +38,7 @@ fn streaming_registration(client_id: &str, agent_instance_id: &str) -> ShellClie
         projects: Some(Vec::new()),
         agent_protocol_version: Some("websocket-v1".to_string()),
         policy: None,
-    }
+    })
 }
 
 fn start_job_request(client_id: &str) -> ShellJobOpRequest {

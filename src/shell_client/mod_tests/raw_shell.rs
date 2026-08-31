@@ -12,10 +12,12 @@ async fn raw_shell_run_wait_timeout_preserves_known_dispatch_evidence() {
         "inst",
         vec![project_summary("webcodex", "/tmp/webcodex")],
     );
-    registration.capabilities = Some(ShellClientCapabilities {
-        shell: true,
-        ..Default::default()
-    });
+    registration.capabilities = Some(crate::test_support::current_runner_capabilities(
+        ShellClientCapabilities {
+            shell: true,
+            ..Default::default()
+        },
+    ));
     registry.register(registration).await.unwrap();
 
     let service = Service::new(

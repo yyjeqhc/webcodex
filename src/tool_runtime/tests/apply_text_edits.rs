@@ -590,52 +590,11 @@ async fn apply_text_edits_conflict_then_same_sha_occurrence_retry_needs_no_hidde
 }
 
 #[tokio::test]
-async fn apply_text_edits_legacy_runner_unique_match_occurrence_out_of_range_queues_nothing() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
-    let path = tmp.path().join("src/lib.rs");
-    std::fs::write(&path, "foo\n").unwrap();
-    let sha = files::sha256_hex_bytes(&std::fs::read(&path).unwrap());
-    let runtime = test_runtime();
-    let project =
-        register_agent_project_at_path(&runtime, "ate-legacy-occurrence", "agent-proj", tmp.path())
-            .await;
-    let mut edit = text_edit(
-        ApplyTextEditKind::ReplaceExact,
-        Some("foo"),
-        Some("bar"),
-        None,
-    );
-    edit.occurrence = Some(2);
-
-    let result = runtime
-        .apply_text_edits(
-            project,
-            vec![edit_change("src/lib.rs", &sha, vec![edit])],
-            None,
-        )
-        .await;
-
-    assert!(!result.success);
-    assert_eq!(result.output["state_changed"], false);
-    assert_eq!(result.output["error_kind"], "agent_capability_unavailable");
-    assert_eq!(result.output["failure_kind"], "capability_unavailable");
-    assert_eq!(result.output["capability"], "apply_text_edit_occurrence");
-    assert!(result
-        .error
-        .as_deref()
-        .unwrap()
-        .contains("upgrade the Runner"));
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "foo\n");
-    assert_no_apply_text_edits_runner_request(&runtime, "ate-legacy-occurrence").await;
-}
-
-#[tokio::test]
-async fn apply_text_edits_legacy_runner_no_occurrence_still_queues_and_succeeds() {
-    let runtime = runtime_with_agent_project("ate-legacy-unique");
+async fn apply_text_edits_without_occurrence_unique_match_queues_and_succeeds() {
+    let runtime = runtime_with_agent_project("ate-no-occurrence-unique");
     register_agent(
         &runtime,
-        "ate-legacy-unique",
+        "ate-no-occurrence-unique",
         None,
         ShellClientCapabilities {
             file_write: true,
@@ -643,7 +602,7 @@ async fn apply_text_edits_legacy_runner_no_occurrence_still_queues_and_succeeds(
         },
     )
     .await;
-    let project = agent_test_project_id("ate-legacy-unique");
+    let project = agent_test_project_id("ate-no-occurrence-unique");
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -665,13 +624,13 @@ async fn apply_text_edits_legacy_runner_no_occurrence_still_queues_and_succeeds(
                 .await
         }
     });
-    let request = wait_for_patch_agent_request(&runtime, "ate-legacy-unique").await;
+    let request = wait_for_patch_agent_request(&runtime, "ate-no-occurrence-unique").await;
     let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
     assert!(payload["changes"][0]["edits"][0]["occurrence"].is_null());
     runtime
         .shell_clients
         .complete(ShellAgentResultRequest {
-            client_id: "ate-legacy-unique".to_string(),
+            client_id: "ate-no-occurrence-unique".to_string(),
             agent_instance_id: "inst".to_string(),
             request_id: request.request_id,
             exit_code: Some(0),
@@ -692,11 +651,11 @@ async fn apply_text_edits_legacy_runner_no_occurrence_still_queues_and_succeeds(
 }
 
 #[tokio::test]
-async fn apply_text_edits_legacy_runner_ambiguous_no_occurrence_keeps_legacy_fail_closed() {
-    let runtime = runtime_with_agent_project("ate-legacy-ambiguous");
+async fn apply_text_edits_without_occurrence_ambiguous_match_fails_closed() {
+    let runtime = runtime_with_agent_project("ate-no-occurrence-ambiguous");
     register_agent(
         &runtime,
-        "ate-legacy-ambiguous",
+        "ate-no-occurrence-ambiguous",
         None,
         ShellClientCapabilities {
             file_write: true,
@@ -704,7 +663,7 @@ async fn apply_text_edits_legacy_runner_ambiguous_no_occurrence_keeps_legacy_fai
         },
     )
     .await;
-    let project = agent_test_project_id("ate-legacy-ambiguous");
+    let project = agent_test_project_id("ate-no-occurrence-ambiguous");
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -726,11 +685,11 @@ async fn apply_text_edits_legacy_runner_ambiguous_no_occurrence_keeps_legacy_fai
                 .await
         }
     });
-    let request = wait_for_patch_agent_request(&runtime, "ate-legacy-ambiguous").await;
+    let request = wait_for_patch_agent_request(&runtime, "ate-no-occurrence-ambiguous").await;
     runtime
         .shell_clients
         .complete(ShellAgentResultRequest {
-            client_id: "ate-legacy-ambiguous".to_string(),
+            client_id: "ate-no-occurrence-ambiguous".to_string(),
             agent_instance_id: "inst".to_string(),
             request_id: request.request_id,
             exit_code: Some(0),

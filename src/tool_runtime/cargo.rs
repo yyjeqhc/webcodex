@@ -786,7 +786,7 @@ impl ToolRuntime {
 
         if resolved.is_agent() {
             // Structured validation tools never execute through a named SSH resource.
-            // Reject at the shared Agent entry so legacy sync, short sync, and
+            // Reject at the shared Agent entry so direct sync, short sync, and
             // long Job handoff paths cannot silently fall back to the project root.
             if let Some(result) = reject_structured_validation_ssh_resource(ssh_resource.as_deref())
             {

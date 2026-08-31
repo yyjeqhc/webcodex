@@ -133,7 +133,7 @@ impl ShellClientSemanticView {
 
     #[cfg(test)]
     pub(crate) fn from_public_view_for_test(view: ShellClientView) -> Self {
-        let runner_features = RunnerFeatureSet::from_legacy_wire_for_test(&view.capabilities);
+        let runner_features = RunnerFeatureSet::from_wire_for_test(&view.capabilities);
         Self {
             view,
             runner_features,

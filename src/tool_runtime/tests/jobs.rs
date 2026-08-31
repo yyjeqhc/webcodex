@@ -828,39 +828,6 @@ async fn run_shell_default_sixty_stays_synchronous_even_with_async_job_capabilit
 }
 
 #[tokio::test]
-async fn long_run_shell_without_async_job_capability_keeps_legacy_sync_dispatch() {
-    let client_id = "shell-long-legacy";
-    let runtime = runtime_with_agent_project(client_id);
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        ShellClientCapabilities {
-            shell: true,
-            ..Default::default()
-        },
-    )
-    .await;
-    let project = agent_test_project_id(client_id);
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        async move {
-            runtime
-                .run_shell(project, "printf legacy".to_string(), Some(120), None)
-                .await
-        }
-    });
-    let request = wait_for_patch_agent_request(&runtime, client_id).await;
-    assert_eq!(request.kind, "run_shell");
-    assert_eq!(request.timeout_secs, 120);
-    complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, "legacy", "").await;
-    let result = task.await.unwrap();
-    assert!(result.success, "{:?}", result.error);
-    assert!(result.output.get("promoted_to_job").is_none());
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
-}
-
-#[tokio::test]
 async fn long_run_shell_async_job_capability_does_not_bypass_shell_authority() {
     let client_id = "shell-long-no-shell";
     let project_id = "proj-long-no-shell";
@@ -882,11 +849,13 @@ async fn long_run_shell_async_job_capability_does_not_bypass_shell_authority() {
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: false,
-                    async_shell_jobs: true,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        shell: false,
+                        async_shell_jobs: true,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![registered_project(
                     project_id,
                     &format!("/tmp/{project_id}"),
@@ -2439,10 +2408,10 @@ async fn register_job_agent_for_auth(
     project_id: &str,
     auth: &crate::auth::AuthContext,
 ) {
-    let caps = ShellClientCapabilities {
+    let caps = crate::test_support::current_runner_capabilities(ShellClientCapabilities {
         async_shell_jobs: true,
         ..Default::default()
-    };
+    });
     runtime
         .shell_clients
         .register_with_auth(
@@ -2504,10 +2473,12 @@ async fn register_managed_job_agent(
             owner: Some(owner.to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
-                async_shell_jobs: true,
-                ..Default::default()
-            }),
+            capabilities: Some(crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities {
+                    async_shell_jobs: true,
+                    ..Default::default()
+                },
+            )),
             projects: Some(vec![registered_project(
                 project_id,
                 &format!("/tmp/{owner}/{project_id}"),

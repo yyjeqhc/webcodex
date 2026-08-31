@@ -8,10 +8,7 @@ use crate::lsp_bridge::{
     PublicLocation, PublicPosition, PublicRange, PublicSymbol, PublicWorkspaceSymbol,
     WorkspaceSymbolsResult, AGENT_LSP_REQUEST_KIND,
 };
-use crate::shell_protocol::{
-    ShellClientCapabilities, ShellClientRegisterRequest,
-    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
-};
+use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest};
 use crate::tool_runtime::tool_definition::{
     lookup_tool_definition, model_visible_tool_definitions, AgentCapability, TOOL_CATEGORY_LSP,
 };
@@ -336,31 +333,33 @@ async fn register_lsp_agent_capabilities(
     let project_path = root.to_string_lossy().to_string();
     runtime
         .shell_clients
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: Some(ShellClientCapabilities {
-                shell: true,
-                file_read: true,
-                file_write: true,
-                lsp_read_only_navigation: lsp_capable,
-                lsp_call_hierarchy: call_hierarchy_capable,
-                ..Default::default()
-            }),
-            projects: Some(vec![registered_project(project_id, &project_path)]),
-            agent_protocol_version: Some("polling-v1".to_string()),
-            policy: None,
-        })
+        .register(crate::test_support::current_runner_registration(
+            ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                host_context: None,
+                capabilities: Some(ShellClientCapabilities {
+                    shell: true,
+                    file_read: true,
+                    file_write: true,
+                    lsp_read_only_navigation: lsp_capable,
+                    lsp_call_hierarchy: call_hierarchy_capable,
+                    ..Default::default()
+                }),
+                projects: Some(vec![registered_project(project_id, &project_path)]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+        ))
         .await
         .unwrap();
     crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
@@ -577,81 +576,6 @@ async fn dispatch_document_symbols_with_result_path(client_id: &str, path: &str)
     });
     complete_lsp_agent_request(&runtime, client_id, document_symbols_result(path)).await;
     task.await.unwrap()
-}
-
-#[tokio::test]
-async fn capability_missing_blocks_dispatch() {
-    let runtime = test_runtime();
-    let tmp = tempfile::tempdir().unwrap();
-    let project = register_lsp_agent(&runtime, "old-agent", "demo", tmp.path(), false).await;
-    let auth = auth_context(None, true);
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::DocumentDiagnostics {
-                project,
-                path: "src/main.rs".into(),
-                limit: None,
-                session_id: None,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert!(!result.success);
-    assert_eq!(result.output["error_kind"], "agent_capability_unavailable");
-    assert_eq!(result.output["recovery_kind"], "none");
-    assert!(result.output.get("recovery_tool").is_none());
-    let err = result.error.unwrap_or_default();
-    assert!(
-        err.contains("agent_capability_unavailable")
-            || err.contains(SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION),
-        "{err}"
-    );
-}
-
-#[tokio::test]
-async fn call_hierarchy_requires_its_distinct_runner_capability_before_dispatch() {
-    let runtime = test_runtime();
-    let tmp = tempfile::tempdir().unwrap();
-    let project = register_lsp_agent_capabilities(
-        &runtime,
-        "navigation-only",
-        "demo",
-        tmp.path(),
-        true,
-        false,
-    )
-    .await;
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::CallHierarchy {
-                project,
-                path: "src/main.rs".into(),
-                line: 1,
-                column: 4,
-                direction: CallHierarchyDirection::Both,
-                depth: 1,
-                limit: 50,
-                session_id: None,
-            },
-            Some(&auth_context(None, true)),
-        )
-        .await;
-    assert!(!result.success);
-    assert_eq!(result.output["error_kind"], "agent_capability_unavailable");
-    assert_eq!(result.output["recovery_kind"], "none");
-    assert!(result.output.get("recovery_tool").is_none());
-    let error = result.error.unwrap_or_default();
-    assert!(
-        error.contains("agent_capability_unavailable")
-            || error.contains(SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY),
-        "{error}"
-    );
-    assert!(
-        probe_patch_agent_request(&runtime, "navigation-only")
-            .await
-            .is_none(),
-        "capability failure must happen before agent dispatch"
-    );
 }
 
 #[tokio::test]
@@ -1497,36 +1421,4 @@ fn typed_payload_rejects_arbitrary_operation() {
     let req: crate::shell_protocol::ShellAgentShellRequest =
         serde_json::from_str(old_request).unwrap();
     assert!(req.lsp.is_none());
-}
-
-#[tokio::test]
-async fn capability_default_false_on_old_registration() {
-    let runtime = test_runtime();
-    runtime
-        .shell_clients
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "legacy".into(),
-            agent_instance_id: "inst".into(),
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: Some(serde_json::from_value(json!({"shell": true})).unwrap()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".into()),
-            policy: None,
-        })
-        .await
-        .unwrap();
-    assert!(!runtime
-        .shell_clients
-        .client_supports("legacy", SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION)
-        .await
-        .unwrap());
 }

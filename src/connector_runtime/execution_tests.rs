@@ -116,7 +116,9 @@ pub(crate) async fn console_fixture() -> ConsoleFixture {
                 owner: Some("owner".into()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities::default()),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities::default(),
+                )),
                 projects: None,
                 agent_protocol_version: Some("polling-v1".into()),
                 policy: None,
@@ -137,28 +139,23 @@ async fn fixture(yield_ms: u64) -> Fixture {
     fixture_configured(yield_ms, |service| service).await
 }
 
-async fn fixture_with_go_json_capability(yield_ms: u64, structured_go_test_json: bool) -> Fixture {
-    fixture_built(yield_ms, |service| service, false, structured_go_test_json).await
-}
-
 /// Restricted-authority fixture for the lanes that protect the human-approval
 /// machinery; the default fixture runs under trusted_agent like production.
 async fn fixture_restricted(yield_ms: u64) -> Fixture {
-    fixture_built(yield_ms, |service| service, true, true).await
+    fixture_built(yield_ms, |service| service, true).await
 }
 
 async fn fixture_configured(
     yield_ms: u64,
     configure: impl FnOnce(execution::ExecutionService) -> execution::ExecutionService,
 ) -> Fixture {
-    fixture_built(yield_ms, configure, false, true).await
+    fixture_built(yield_ms, configure, false).await
 }
 
 async fn fixture_built(
     yield_ms: u64,
     configure: impl FnOnce(execution::ExecutionService) -> execution::ExecutionService,
     restricted: bool,
-    structured_go_test_json: bool,
 ) -> Fixture {
     let temp = tempfile::tempdir().unwrap();
     let project = temp.path().join("project");
@@ -181,18 +178,13 @@ async fn fixture_built(
                 owner: Some("owner".into()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    file_read: true,
-                    file_write: true,
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    structured_validation_argv: true,
-                    structured_go_test_json,
-                    internal_posix_script: true,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        shell: true,
+                        internal_posix_script: true,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![project_summary("project", &project)]),
                 agent_protocol_version: Some("polling-v1".into()),
                 policy: None,
@@ -679,51 +671,6 @@ async fn connector_readiness_uses_registered_agent_capabilities() {
     let fixture = fixture(1_000).await;
     let ready = fixture.connector.readiness(&fixture.owner).await.unwrap();
     assert!(ready.ready);
-
-    fixture
-        .registry
-        .register_with_auth(
-            ShellClientRegisterRequest {
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: "hosted".into(),
-                agent_instance_id: "instance".into(),
-                display_name: None,
-                owner: Some("owner".into()),
-                hostname: None,
-                host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    file_read: true,
-                    file_write: true,
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    structured_validation_argv: false,
-                    internal_posix_script: true,
-                    ..Default::default()
-                }),
-                projects: Some(vec![project_summary(
-                    "project",
-                    Path::new(&fixture.connector.context.executor_root),
-                )]),
-                agent_protocol_version: Some("polling-v1".into()),
-                policy: None,
-            },
-            Some(&fixture.owner),
-        )
-        .await
-        .unwrap();
-    let old_agent = fixture.connector.readiness(&fixture.owner).await.unwrap();
-    assert!(!old_agent.ready);
-    assert!(old_agent.findings.iter().any(|finding| {
-        finding.code == "structured_validation_unavailable"
-            && finding.status == crate::project_entry::ReadinessStatus::Fail
-    }));
 
     fixture
         .registry
@@ -2496,110 +2443,6 @@ async fn go_test_failure_has_durable_structured_assertion_evidence() {
 }
 
 #[tokio::test]
-async fn go_json_execution_replay_does_not_require_current_runner_capability() {
-    let fixture = fixture(1_000).await;
-    let root = Path::new(&task(&fixture).execution_root).join("go-replay");
-    std::fs::create_dir(&root).unwrap();
-    std::fs::write(
-        root.join("go.mod"),
-        "module example.test/go-replay\n\ngo 1.22\n",
-    )
-    .unwrap();
-    let arguments = json!({
-        "task_id": fixture.task_id,
-        "operation_id": "go-json-replay-1",
-        "checks": ["test"],
-        "recipe": "go",
-        "cwd": "go-replay",
-        "timeout_secs": 30
-    });
-    let registry = fixture.registry.clone();
-    let responder = tokio::spawn(async move {
-        let request = next_request(&registry).await;
-        update_validation_job(
-            &registry,
-            request.job_id.as_deref().unwrap(),
-            "completed",
-            Some(r#"{"Action":"pass","Package":"example.test/go-replay","Test":"TestOK"}"#),
-            Some(0),
-            check_progress(1, None, None),
-        )
-        .await;
-    });
-    let first = fixture.call("checks_run", arguments.clone()).await;
-    responder.await.unwrap();
-    assert!(first.ok, "{}", first.body);
-    let execution_id = first.body["data"]["execution"]["execution_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let registered_projects = fixture
-        .registry
-        .list_client_projects("hosted")
-        .await
-        .unwrap();
-    fixture
-        .registry
-        .register_with_auth(
-            ShellClientRegisterRequest {
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: "hosted".into(),
-                agent_instance_id: "instance".into(),
-                display_name: None,
-                owner: Some("owner".into()),
-                hostname: None,
-                host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    file_read: true,
-                    file_write: true,
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    structured_validation_argv: true,
-                    structured_go_test_json: false,
-                    internal_posix_script: true,
-                    ..Default::default()
-                }),
-                projects: Some(registered_projects),
-                agent_protocol_version: Some("polling-v1".into()),
-                policy: None,
-            },
-            Some(&fixture.owner),
-        )
-        .await
-        .unwrap();
-
-    let replay = fixture.call("checks_run", arguments).await;
-    assert!(replay.ok, "{}", replay.body);
-    assert_eq!(
-        replay.body["data"]["execution"]["execution_id"],
-        execution_id
-    );
-    let conflict = fixture
-        .call(
-            "checks_run",
-            json!({
-                "task_id": fixture.task_id,
-                "operation_id": "go-json-replay-1",
-                "checks": ["test"],
-                "recipe": "go",
-                "cwd": "go-replay",
-                "timeout_secs": 31
-            }),
-        )
-        .await;
-    assert_eq!(conflict.body["error"]["code"], "operation_id_conflict");
-    assert!(poll(&fixture.registry).await.is_none());
-}
-
-#[tokio::test]
 async fn structured_progress_rejects_invalid_order_and_preserves_fail_fast_plan() {
     let fixture = fixture(1_000).await;
     let plan = || ShellJobStartMetadata {
@@ -2807,153 +2650,6 @@ async fn ordinary_jobs_reject_validation_progress_without_changing_normal_update
         .as_deref()
         .unwrap()
         .contains("validation_progress_unexpected"));
-}
-
-#[tokio::test]
-async fn old_agent_cannot_receive_a_structured_validation_job() {
-    let fixture = fixture(1_000).await;
-    fixture
-        .registry
-        .register_with_auth(
-            ShellClientRegisterRequest {
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: "hosted".into(),
-                agent_instance_id: "instance".into(),
-                display_name: None,
-                owner: Some("owner".into()),
-                hostname: None,
-                host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    structured_validation_argv: false,
-                    internal_posix_script: true,
-                    ..Default::default()
-                }),
-                projects: None,
-                agent_protocol_version: Some("polling-v1".into()),
-                policy: None,
-            },
-            Some(&fixture.owner),
-        )
-        .await
-        .unwrap();
-    let outcome = fixture
-        .call(
-            "checks_run",
-            checks(&fixture, "old-agent-check-1", &["check"]),
-        )
-        .await;
-    assert_eq!(
-        outcome.body["error"]["code"],
-        "structured_validation_unavailable"
-    );
-    assert!(fixture
-        .connector
-        .db
-        .latest_connector_execution(
-            &fixture.task_id,
-            &fixture.connector.context.project_id,
-            tests::PROJECT_SUBJECT_ID,
-            None,
-        )
-        .unwrap()
-        .is_none());
-    assert!(poll(&fixture.registry).await.is_none());
-}
-
-#[tokio::test]
-async fn old_agent_without_go_json_capability_rejects_go_test_before_reservation_but_allows_go_check(
-) {
-    let fixture = fixture_with_go_json_capability(1_000, false).await;
-    let root = Path::new(&task(&fixture).execution_root).join("go-compat");
-    std::fs::create_dir(&root).unwrap();
-    std::fs::write(
-        root.join("go.mod"),
-        "module example.test/go-compat\n\ngo 1.22\n",
-    )
-    .unwrap();
-    let go_test = fixture
-        .call(
-            "checks_run",
-            json!({
-                "task_id": fixture.task_id,
-                "operation_id": "old-runner-go-test",
-                "checks": ["test"],
-                "recipe": "go",
-                "cwd": "go-compat",
-                "timeout_secs": 30
-            }),
-        )
-        .await;
-    assert!(!go_test.ok, "{}", go_test.body);
-    assert_eq!(go_test.http_status, 409);
-    assert_eq!(
-        go_test.body["error"]["code"],
-        "structured_go_test_json_unavailable"
-    );
-    assert_eq!(
-        go_test.body["data"]["required_capability"],
-        "structured_go_test_json"
-    );
-    assert!(go_test.body["error"]["suggested_action"]
-        .as_str()
-        .is_some_and(|message| message.contains("Upgrade and reconnect")));
-    assert!(fixture
-        .connector
-        .db
-        .latest_connector_execution(
-            &fixture.task_id,
-            &fixture.connector.context.project_id,
-            tests::PROJECT_SUBJECT_ID,
-            None,
-        )
-        .unwrap()
-        .is_none());
-    assert!(poll(&fixture.registry).await.is_none());
-
-    let go_check = fixture
-        .call(
-            "checks_run",
-            json!({
-                "task_id": fixture.task_id,
-                "operation_id": "old-runner-go-check",
-                "checks": ["check"],
-                "recipe": "go",
-                "cwd": "go-compat",
-                "timeout_secs": 30
-            }),
-        )
-        .await;
-    assert!(go_check.ok, "{}", go_check.body);
-    assert_ne!(
-        go_check.body["data"]["execution"]["execution_status"], "failed",
-        "{}",
-        go_check.body
-    );
-    let request = next_request(&fixture.registry).await;
-    assert_eq!(request.kind, "start_validation_job");
-    let steps: Vec<ShellJobValidationStep> = serde_json::from_str(&request.command).unwrap();
-    assert_eq!(steps.len(), 1);
-    assert_eq!(steps[0].name, "check");
-    assert_eq!(steps[0].program, "go");
-    assert_eq!(steps[0].args, ["vet", "./..."]);
-    update_validation_job(
-        &fixture.registry,
-        request.job_id.as_deref().unwrap(),
-        "completed",
-        None,
-        Some(0),
-        check_progress(1, None, None),
-    )
-    .await;
-    assert!(go_check.body["data"]["execution"]["execution_id"].is_string());
 }
 
 #[tokio::test]
@@ -4065,14 +3761,16 @@ async fn read_only_commands_run_is_denied_even_when_agent_advertises_sandbox() {
                 owner: Some("owner".into()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    sandbox_inspect_commands: true,
-                    project_lifecycle: false,
-                    project_path_registration: false,
-                    internal_posix_script: true,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        shell: true,
+                        sandbox_inspect_commands: true,
+                        project_lifecycle: false,
+                        project_path_registration: false,
+                        internal_posix_script: true,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![project_summary(
                     "project",
                     Path::new(&fixture.connector.context.executor_root),
@@ -4126,20 +3824,22 @@ async fn enable_inspect_sandbox(fixture: &Fixture) {
                 owner: Some("owner".into()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    file_read: true,
-                    file_write: true,
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    structured_validation_argv: true,
-                    sandbox_inspect_commands: true,
-                    project_lifecycle: false,
-                    project_path_registration: false,
-                    internal_posix_script: true,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        shell: true,
+                        file_read: true,
+                        file_write: true,
+                        jobs: true,
+                        async_jobs: true,
+                        async_shell_jobs: true,
+                        structured_validation_argv: true,
+                        sandbox_inspect_commands: true,
+                        project_lifecycle: false,
+                        project_path_registration: false,
+                        internal_posix_script: true,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![project_summary(
                     "project",
                     Path::new(&fixture.connector.context.executor_root),
@@ -4629,16 +4329,18 @@ async fn manifestless_python_unittest_checks_finish_with_clean_result() {
                 owner: Some("owner".into()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    file_read: true,
-                    file_write: true,
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    structured_validation_argv: true,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        shell: true,
+                        file_read: true,
+                        file_write: true,
+                        jobs: true,
+                        async_jobs: true,
+                        async_shell_jobs: true,
+                        structured_validation_argv: true,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![project_summary("project", &project)]),
                 agent_protocol_version: Some("polling-v1".into()),
                 policy: None,

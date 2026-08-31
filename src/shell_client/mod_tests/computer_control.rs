@@ -95,7 +95,7 @@ async fn computer_scroll_to_element_requires_independent_capability() {
     assert!(error.contains("does not support computer_scroll_to_element"));
 
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -116,7 +116,7 @@ async fn computer_scroll_to_element_requires_independent_capability() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let (_request_id, _rx) = registry
@@ -175,7 +175,7 @@ async fn computer_key_input_requires_independent_capability() {
     assert!(error.contains("does not support computer_key_input"));
 
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -196,7 +196,7 @@ async fn computer_key_input_requires_independent_capability() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let (_request_id, _rx) = registry
@@ -233,7 +233,7 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
     let payload = r#"{"display_id":"display_0123456789abcdef0123456789abcdef","snapshot_generation":7,"x":123,"y":456}"#;
 
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -254,7 +254,7 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     for kind in ["computer_pointer_move", "computer_pointer_click"] {
@@ -276,7 +276,7 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
     }
 
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -296,7 +296,7 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let (_request_id, _rx) = registry
@@ -333,7 +333,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
     let alice = auth_context(Some("alice"), false);
 
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -355,7 +355,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     for (kind, payload, capability) in [
@@ -384,7 +384,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
     }
 
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -404,7 +404,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let (_request_id, _rx) = registry
@@ -448,7 +448,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
     assert!(error.contains("does not support computer_clipboard_write"));
 
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -468,7 +468,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let (_request_id, _rx) = registry
@@ -541,7 +541,7 @@ async fn computer_window_activation_requires_its_own_additive_capability() {
     assert!(error.contains("does not support computer_window_activate"));
 
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -566,7 +566,7 @@ async fn computer_window_activation_requires_its_own_additive_capability() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let (_request_id, _rx) = registry

@@ -23,7 +23,7 @@ async fn register_lsp_test_client_capabilities(
     call_hierarchy_capable: bool,
 ) {
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -44,7 +44,7 @@ async fn register_lsp_test_client_capabilities(
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
 }
@@ -71,68 +71,17 @@ async fn enqueue_call_hierarchy_uses_only_its_distinct_capability() {
 }
 
 #[tokio::test]
-async fn enqueue_lsp_rechecks_call_hierarchy_capability_atomically_after_downgrade() {
-    let registry = ShellClientRegistry::default();
-    register_lsp_test_client_capabilities(&registry, "hierarchy-fence", true, true).await;
-    assert!(registry
-        .client_supports(
-            "hierarchy-fence",
-            crate::shell_protocol::SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-        )
-        .await
-        .unwrap());
-
-    // Same instance re-registers without the hierarchy capability after an
-    // earlier observer saw it as enabled.
-    register_lsp_test_client_capabilities(&registry, "hierarchy-fence", true, false).await;
-    let error = registry
-        .enqueue_lsp(
-            "hierarchy-fence".to_string(),
-            AgentLspPayload {
-                project_id: "demo".to_string(),
-                request: AgentLspRequest::CallHierarchy {
-                    path: "src/main.rs".to_string(),
-                    line: 1,
-                    column: 1,
-                    direction: crate::lsp_bridge::CallHierarchyDirection::Both,
-                    depth: 1,
-                    limit: 50,
-                },
-            },
-            "test".to_string(),
-            5,
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        EnqueueLspError::UnsupportedCapability {
-            client_id: "hierarchy-fence".to_string(),
-            capability: crate::shell_protocol::SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-        }
-    );
-
-    let inner = registry.inner.lock().await;
-    assert!(inner
-        .queues_by_client
-        .get("hierarchy-fence")
-        .is_none_or(|queue| queue.is_empty()));
-    assert!(inner
-        .pending_by_id
-        .values()
-        .all(|pending| pending.request.client_id != "hierarchy-fence"));
-}
-
-#[tokio::test]
 async fn enqueue_lsp_prunes_expired_shared_key_registration_before_admission() {
     let ttl_secs = 10;
     let registry = ShellClientRegistry::with_shared_key_limits_for_test(1, 4, ttl_secs);
     let auth = crate::auth::shared_key::shared_key_context("ttl-lsp");
     let mut registration = runner_registration("ttl-lsp", "inst", Vec::new());
-    registration.capabilities = Some(ShellClientCapabilities {
-        lsp_call_hierarchy: true,
-        ..Default::default()
-    });
+    registration.capabilities = Some(crate::test_support::current_runner_capabilities(
+        ShellClientCapabilities {
+            lsp_call_hierarchy: true,
+            ..Default::default()
+        },
+    ));
     registry
         .register_with_auth(registration, Some(&auth))
         .await
@@ -193,33 +142,6 @@ async fn enqueue_lsp_returns_structured_unknown_client_error() {
         }
     );
     assert_eq!(error.to_string(), "unknown shell client: missing");
-}
-
-#[tokio::test]
-async fn enqueue_lsp_returns_structured_unsupported_capability_error() {
-    let registry = ShellClientRegistry::default();
-    register_lsp_test_client(&registry, "legacy", false).await;
-    let error = registry
-        .enqueue_lsp(
-            "legacy".to_string(),
-            lsp_status_payload(),
-            "test".to_string(),
-            5,
-        )
-        .await
-        .unwrap_err();
-
-    assert_eq!(
-        error,
-        EnqueueLspError::UnsupportedCapability {
-            client_id: "legacy".to_string(),
-            capability: crate::shell_protocol::SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
-        }
-    );
-    assert_eq!(
-        error.to_string(),
-        "agent client legacy does not support lsp_read_only_navigation"
-    );
 }
 
 #[tokio::test]

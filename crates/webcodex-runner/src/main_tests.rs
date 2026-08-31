@@ -132,8 +132,6 @@ mod apply_text_edits;
 mod artifact_read;
 #[path = "main_tests/artifact_upload.rs"]
 mod artifact_upload;
-#[path = "main_tests/compatibility.rs"]
-mod compatibility;
 #[path = "main_tests/config_reload.rs"]
 mod config_reload;
 #[path = "main_tests/dispatch_file.rs"]

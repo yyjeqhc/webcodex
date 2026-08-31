@@ -4,7 +4,7 @@ use super::*;
 async fn registry_rejects_enqueue_when_queue_full() {
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -21,7 +21,7 @@ async fn registry_rejects_enqueue_when_queue_full() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     // Fill the queue to the limit without any consumer draining it.
@@ -70,7 +70,7 @@ async fn registry_rejects_enqueue_when_client_offline() {
     // accepting work that can only time out (or fill the 256-deep queue).
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -87,7 +87,7 @@ async fn registry_rejects_enqueue_when_client_offline() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     registry

@@ -200,13 +200,13 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // only after installing that request handler.
             artifact_export_chunk_read: false,
             // Large export metadata is likewise a running-binary capability;
-            // generated config must not make mixed-version Servers infer it.
+            // generated config is not authoritative for registration semantics.
             artifact_export_streaming_metadata: false,
             // The running binary advertises structured deletion only after its
             // complete project-root-enforced handler is installed.
             structured_file_delete: false,
-            // Exact occurrence selectors are a running-binary capability; static
-            // generated config must remain false for rolling compatibility.
+            // Exact occurrence selectors are a running-binary capability; the
+            // running Runner advertises the canonical registration baseline.
             apply_text_edit_occurrence: false,
             git: true,
             jobs: true,

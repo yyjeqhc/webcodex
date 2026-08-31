@@ -466,7 +466,7 @@ async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_a
 }
 
 #[tokio::test]
-async fn session_ssh_resource_rejects_structured_cargo_before_legacy_sync_start() {
+async fn session_ssh_resource_rejects_structured_cargo_before_direct_sync_start() {
     let runtime = test_runtime();
     let auth = open_auth_context();
     let capabilities = ShellClientCapabilities {
@@ -521,7 +521,7 @@ async fn session_ssh_resource_rejects_structured_cargo_before_legacy_sync_start(
         probe_agent_request_for_client(&runtime, "context-ssh-cargo")
             .await
             .is_none(),
-        "structured Cargo rejection must happen before the legacy sync command starts"
+        "structured Cargo rejection must happen before the direct sync command starts"
     );
 }
 
@@ -595,19 +595,19 @@ async fn session_ssh_resource_requires_runner_ssh_shell_capability() {
     let auth = open_auth_context();
     register_agent_projects_for_auth(
         &runtime,
-        "context-ssh-legacy",
+        "context-ssh-no-capability",
         &auth,
         ShellClientCapabilities::default(),
         vec![registered_project("demo", "/runner-local-project")],
     )
     .await;
-    let project = "agent:context-ssh-legacy:demo".to_string();
+    let project = "agent:context-ssh-no-capability:demo".to_string();
     let session = runtime
         .sessions
         .start_session_with_options(
             sessions::SessionCreateOptions::new(
                 Some(project.clone()),
-                Some("legacy SSH context".to_string()),
+                Some("SSH context without runner capability".to_string()),
                 SessionMode::Normal,
                 sessions::SessionGuards::default(),
             )
@@ -637,10 +637,10 @@ async fn session_ssh_resource_requires_runner_ssh_shell_capability() {
         .as_deref()
         .is_some_and(|error| error.contains("agent_capability_unavailable")));
     assert!(
-        probe_agent_request_for_client(&runtime, "context-ssh-legacy")
+        probe_agent_request_for_client(&runtime, "context-ssh-no-capability")
             .await
             .is_none(),
-        "an old Runner must not receive an SSH resource request"
+        "a Runner without ssh_shell must not receive an SSH resource request"
     );
 }
 

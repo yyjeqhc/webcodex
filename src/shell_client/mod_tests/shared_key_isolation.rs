@@ -242,10 +242,12 @@ async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
                 owner: Some(owner.to_string()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    coding_agent_runs: true,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        coding_agent_runs: true,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![project_summary(
                     "private",
                     &format!("/home/{owner}/private"),

@@ -25,9 +25,9 @@ async fn register_bridge_runner(registry: &ShellClientRegistry) {
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
-            capabilities: Some(ShellClientCapabilities {
-                ..Default::default()
-            }),
+            capabilities: Some(crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            )),
             host_context: None,
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
@@ -58,7 +58,7 @@ fn bridge_registration(
     agent_instance_id: &str,
     providers: Option<Vec<McpGatewayProvider>>,
 ) -> ShellClientRegisterRequest {
-    ShellClientRegisterRequest {
+    current_runner_registration(ShellClientRegisterRequest {
         client_id: client_id.to_string(),
         agent_instance_id: agent_instance_id.to_string(),
         display_name: None,
@@ -78,7 +78,7 @@ fn bridge_registration(
         job_inventory: None,
         coding_agent_providers: None,
         coding_agent_inventory: None,
-    }
+    })
 }
 
 #[tokio::test]
@@ -168,12 +168,14 @@ async fn bridge_registration_inventory_is_bounded_and_exact() {
         .is_err());
     registry
         .register(bridge_registration(
-            "legacy-no-inventory",
-            "legacy-no-inventory-instance",
+            "no-gateway-inventory",
+            "no-gateway-inventory-instance",
             None,
         ))
         .await
-        .expect("legacy Runner without gateway inventory remains valid but cannot receive gateway requests");
+        .expect(
+            "Runner without gateway inventory remains valid but cannot receive gateway requests",
+        );
 }
 
 #[tokio::test]

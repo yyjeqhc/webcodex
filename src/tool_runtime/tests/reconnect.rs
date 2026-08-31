@@ -51,7 +51,7 @@ fn register_request(
     build: Option<AgentBuildInfo>,
     protocol: &str,
 ) -> ShellClientRegisterRequest {
-    ShellClientRegisterRequest {
+    crate::test_support::current_runner_registration(ShellClientRegisterRequest {
         client_id: client_id.to_string(),
         agent_instance_id: instance.to_string(),
         display_name: None,
@@ -77,7 +77,7 @@ fn register_request(
         job_inventory: None,
         coding_agent_providers: None,
         coding_agent_inventory: None,
-    }
+    })
 }
 
 async fn layers(runtime: &ToolRuntime) -> Value {

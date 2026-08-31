@@ -19,12 +19,11 @@ use super::tool_audit::{assertion_validation_identity, run_script_validation_ide
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_client::{
-    script_preview, RunnerFeature, ShellJobStartMetadata, ShellJobVisibility,
-    StructuredJobExecution,
+    script_preview, ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution,
 };
 use crate::shell_protocol::{
     validate_script_request, ShellCommandExecutionState, ShellJobOpRequest, ShellScriptLanguage,
-    ShellScriptPayload, STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
+    ShellScriptPayload, STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
 };
 
 fn decorate(
@@ -161,64 +160,9 @@ impl ToolRuntime {
             };
             let resolved_cwd = project_relative_agent_cwd(&proj, &effective_cwd)
                 .unwrap_or_else(|_| ".".to_string());
-            let features = match self.shell_clients.get_client_feature_set(&client_id).await {
-                Ok(features) => features,
-                Err(error) => {
-                    let mut result = process_tool_failure_result(
-                        command_rejected_message(
-                            error.to_string(),
-                            "confirm the Runner is registered and connected, then retry.",
-                        ),
-                        "agent_offline",
-                        ShellCommandExecutionState::NotStarted,
-                    );
-                    decorate(
-                        &mut result.output,
-                        declared_purpose,
-                        &summary,
-                        language,
-                        &resolved_cwd,
-                        "agent",
-                    );
-                    add_structured_continuation_facts(
-                        &mut result,
-                        timeout,
-                        timeout.min(STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS),
-                        false,
-                    );
-                    return result;
-                }
-            };
-            let async_handoff_available = features.supports(RunnerFeature::StructuredExecutionJobs)
-                && (features.supports(RunnerFeature::AsyncJobs)
-                    || features.supports(RunnerFeature::AsyncShellJobs));
-            if !async_handoff_available
-                && timeout > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS
-            {
-                let mut result = process_tool_failure_result(
-                    command_rejected_message(
-                        "capability_unavailable: this Runner does not support durable typed structured execution Jobs",
-                        "upgrade the Runner to one advertising structured_execution_jobs, or request timeout_secs at most 120 seconds.",
-                    ),
-                    "capability_unavailable",
-                    ShellCommandExecutionState::NotStarted,
-                );
-                decorate(
-                    &mut result.output,
-                    declared_purpose,
-                    &summary,
-                    language,
-                    &resolved_cwd,
-                    "agent",
-                );
-                add_structured_continuation_facts(
-                    &mut result,
-                    timeout,
-                    STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
-                    false,
-                );
-                return result;
-            }
+            // Generation-2 admission guarantees async typed structured Jobs;
+            // sync_wait_secs now controls projection timing, not Runner compatibility.
+            let async_handoff_available = true;
             if async_handoff_available && timeout > budget.sync_wait_secs {
                 let job = self
                     .shell_clients
@@ -506,7 +450,7 @@ impl ToolRuntime {
             );
             result
         } else {
-            if timeout > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS {
+            if timeout > STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS {
                 let mut result = process_tool_failure_result(
                     command_rejected_message(
                         "capability_unavailable: the server-local compatibility executor has no durable typed Job handoff",
@@ -526,7 +470,7 @@ impl ToolRuntime {
                 add_structured_continuation_facts(
                     &mut result,
                     timeout,
-                    STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
+                    STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
                     false,
                 );
                 return result;

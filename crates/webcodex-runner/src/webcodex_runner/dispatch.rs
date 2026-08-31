@@ -18,7 +18,7 @@ use crate::shell_protocol::{
     validate_process_argv, validate_raw_shell_wire_command, validate_script_request,
     ShellAgentShellRequest, ShellProcessArgv, ShellScriptPayload, EXTERNAL_SEARCH_REQUEST_PREFIX,
     PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
-    STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
+    STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
 };
 use crate::{handle_file_request, is_file_request_kind, JobManager, PendingJobStart};
 use std::path::Path;
@@ -660,10 +660,10 @@ fn validate_run_process_request(
         }
     }
     if request.timeout_secs == 0
-        || request.timeout_secs > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS
+        || request.timeout_secs > STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS
     {
         return Err(format!(
-            "timeout_secs must be between 1 and {STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS}"
+            "timeout_secs must be between 1 and {STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS}"
         ));
     }
     Ok(process)
@@ -691,9 +691,9 @@ fn validate_run_script_request(
         request.cwd.as_deref(),
         request.timeout_secs,
     )?;
-    if request.timeout_secs > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS {
+    if request.timeout_secs > STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS {
         return Err(format!(
-            "timeout_secs must be between 1 and {STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS}"
+            "timeout_secs must be between 1 and {STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS}"
         ));
     }
     Ok(script)

@@ -37,6 +37,20 @@ fn script_call(
     }
 }
 
+fn script_sync_call(
+    project: String,
+    session_id: Option<String>,
+    language: ShellScriptLanguage,
+    script: impl Into<String>,
+) -> ToolCall {
+    let mut call = script_call(project, session_id, language, script);
+    let ToolCall::RunScript { sync_wait_secs, .. } = &mut call else {
+        unreachable!("script_call must return RunScript");
+    };
+    *sync_wait_secs = Some(30);
+    call
+}
+
 async fn register_script_agent(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -212,7 +226,7 @@ async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_ki
         async move {
             runtime
                 .dispatch_with_auth(
-                    script_call(project, None, ShellScriptLanguage::Bash, large_script),
+                    script_sync_call(project, None, ShellScriptLanguage::Bash, large_script),
                     Some(&auth_context(None, true)),
                 )
                 .await
@@ -685,104 +699,6 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
 }
 
 #[tokio::test]
-async fn b2_script_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
-    let temp = tempfile::tempdir().unwrap();
-    let runtime = test_runtime();
-    let capabilities = ShellClientCapabilities {
-        shell: true,
-        async_jobs: true,
-        structured_process_argv: true,
-        structured_script_payload: true,
-        structured_execution_jobs: false,
-        ..Default::default()
-    };
-    register_agent_with_projects(
-        &runtime,
-        "script-b2",
-        None,
-        capabilities,
-        vec![registered_project("demo", &temp.path().to_string_lossy())],
-    )
-    .await;
-    let project = crate::tool_runtime::agent_project_runtime_id("script-b2", "demo");
-    let auth = auth_context(None, true);
-    let direct = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    ToolCall::RunScript {
-                        project,
-                        language: ShellScriptLanguage::Sh,
-                        script: "true".to_string(),
-                        args: Vec::new(),
-                        stdin: None,
-                        session_id: None,
-                        timeout_secs: Some(120),
-                        sync_wait_secs: Some(45),
-                        cwd: None,
-                        purpose: None,
-                    },
-                    Some(&auth),
-                )
-                .await
-        }
-    });
-    let request = wait_for_patch_agent_request(&runtime, "script-b2").await;
-    assert_eq!(request.kind, "run_script");
-    complete_script_lifecycle(
-        &runtime,
-        "script-b2",
-        request.request_id,
-        ShellCommandExecutionState::Completed,
-        Some(0),
-        "",
-        "",
-        None,
-    )
-    .await;
-    let direct = direct.await.unwrap();
-    assert!(direct.output.get("promoted_to_job").is_none());
-    assert_eq!(direct.output["async_handoff_available"], false);
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("run_script");
-    let instance = json!({
-        "success": true,
-        "output": direct.output.clone(),
-        "error": null,
-    });
-    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
-        .unwrap_or_else(|error| {
-            panic!("B2 sparse terminal success must match run_script schema: {error}")
-        });
-
-    let rejected = runtime
-        .dispatch_with_auth(
-            ToolCall::RunScript {
-                project,
-                language: ShellScriptLanguage::Sh,
-                script: "true".to_string(),
-                args: Vec::new(),
-                stdin: None,
-                session_id: None,
-                timeout_secs: Some(121),
-                sync_wait_secs: None,
-                cwd: None,
-                purpose: None,
-            },
-            Some(&auth),
-        )
-        .await;
-    assert_eq!(rejected.output["execution_state"], "not_started");
-    assert_eq!(rejected.output["command_started"], false);
-    assert_eq!(rejected.output["failure_kind"], "capability_unavailable");
-    assert!(probe_patch_agent_request(&runtime, "script-b2")
-        .await
-        .is_none());
-}
-
-#[tokio::test]
 async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_truthful() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
@@ -795,7 +711,7 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
         async move {
             runtime
                 .dispatch_with_auth(
-                    script_call(project, None, ShellScriptLanguage::Sh, "exit 19"),
+                    script_sync_call(project, None, ShellScriptLanguage::Sh, "exit 19"),
                     Some(&auth_context(None, true)),
                 )
                 .await
@@ -827,7 +743,7 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
         async move {
             runtime
                 .dispatch_with_auth(
-                    script_call(project, None, ShellScriptLanguage::Sh, "sleep 10"),
+                    script_sync_call(project, None, ShellScriptLanguage::Sh, "sleep 10"),
                     Some(&auth_context(None, true)),
                 )
                 .await
@@ -861,7 +777,7 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
         async move {
             runtime
                 .dispatch_with_auth(
-                    script_call(project, None, ShellScriptLanguage::Sh, "true"),
+                    script_sync_call(project, None, ShellScriptLanguage::Sh, "true"),
                     Some(&auth_context(None, true)),
                 )
                 .await
@@ -896,7 +812,7 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
         async move {
             runtime
                 .dispatch_with_auth(
-                    script_call(
+                    script_sync_call(
                         missing_project,
                         None,
                         ShellScriptLanguage::Powershell,
@@ -926,55 +842,6 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
     assert_eq!(missing.output["command_started"], false);
     assert_eq!(missing.output["command_completed"], false);
     assert_eq!(missing.output["failure_kind"], "interpreter_unavailable");
-}
-
-#[tokio::test]
-async fn run_script_capability_and_authority_fail_before_enqueue_without_shell_fallback() {
-    let temp = tempfile::tempdir().unwrap();
-    let runtime = test_runtime();
-    let project = register_script_agent(&runtime, "legacy-script", temp.path(), false, false).await;
-    let result = runtime
-        .dispatch_with_auth(
-            script_call(project, None, ShellScriptLanguage::Sh, "touch marker"),
-            Some(&auth_context(None, true)),
-        )
-        .await;
-    assert_eq!(result.output["execution_state"], "not_started");
-    assert_eq!(result.output["command_started"], false);
-    assert_eq!(result.output["command_completed"], false);
-    assert_eq!(result.output["failure_kind"], "capability_unavailable");
-    assert!(result
-        .error
-        .as_deref()
-        .unwrap_or_default()
-        .contains("no shell fallback"));
-    assert!(probe_patch_agent_request(&runtime, "legacy-script")
-        .await
-        .is_none());
-
-    let denied_runtime = test_runtime().with_permission_evaluator(
-        permissions::PermissionEvaluator::with_mode(permissions::AuthorityMode::Restricted),
-    );
-    let denied_project =
-        register_script_agent(&denied_runtime, "denied-script", temp.path(), true, false).await;
-    let denied = denied_runtime
-        .dispatch_with_auth(
-            script_call(
-                denied_project,
-                None,
-                ShellScriptLanguage::Sh,
-                "touch marker",
-            ),
-            Some(&auth_context(None, true)),
-        )
-        .await;
-    assert_eq!(denied.output["execution_state"], "not_started");
-    assert_eq!(denied.output["command_started"], false);
-    assert_eq!(denied.output["command_completed"], false);
-    assert_eq!(denied.output["failure_kind"], "permission_denied");
-    assert!(probe_patch_agent_request(&denied_runtime, "denied-script")
-        .await
-        .is_none());
 }
 
 #[derive(Default)]
@@ -1024,7 +891,7 @@ async fn run_script_session_defaults_and_evidence_are_body_and_stdin_free() {
         async move {
             runtime
                 .dispatch_with_auth(
-                    script_call(
+                    script_sync_call(
                         project,
                         Some(session_id),
                         ShellScriptLanguage::Sh,
@@ -1226,7 +1093,7 @@ async fn run_script_ssh_read_only_closed_and_inspect_session_boundaries_fail_clo
         async move {
             runtime
                 .dispatch_with_auth(
-                    script_call(project, Some(session_id), ShellScriptLanguage::Sh, "true"),
+                    script_sync_call(project, Some(session_id), ShellScriptLanguage::Sh, "true"),
                     Some(&auth_context(None, true)),
                 )
                 .await
@@ -1387,34 +1254,6 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
         assert_eq!(result.output["command_completed"], false);
         assert_eq!(result.output["failure_kind"], "invalid_arguments");
     }
-    let durable_only = runtime
-        .dispatch_with_auth(
-            ToolCall::RunScript {
-                project: project.clone(),
-                language: ShellScriptLanguage::Sh,
-                script: "true".to_string(),
-                args: Vec::new(),
-                stdin: None,
-                session_id: None,
-                timeout_secs: Some(121),
-                sync_wait_secs: None,
-                cwd: None,
-                purpose: None,
-            },
-            Some(&auth_context(None, true)),
-        )
-        .await;
-    assert_eq!(durable_only.output["execution_state"], "not_started");
-    assert_eq!(durable_only.output["command_started"], false);
-    assert_eq!(durable_only.output["command_completed"], false);
-    assert_eq!(
-        durable_only.output["failure_kind"],
-        "capability_unavailable"
-    );
-    assert_eq!(durable_only.output["async_handoff_available"], false);
-    assert!(probe_patch_agent_request(&runtime, "script-bounds")
-        .await
-        .is_none());
 }
 
 #[tokio::test]

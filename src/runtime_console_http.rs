@@ -2383,7 +2383,9 @@ mod tests {
                     owner: auth.and_then(|auth| auth.username.clone()),
                     hostname: Some(format!("private-host-{client_id}")),
                     host_context: None,
-                    capabilities: Some(ShellClientCapabilities::default()),
+                    capabilities: Some(crate::test_support::current_runner_capabilities(
+                        ShellClientCapabilities::default(),
+                    )),
                     projects: Some(vec![project(project_id, private_path)]),
                     agent_protocol_version: Some("polling-v1".to_string()),
                     policy: None,

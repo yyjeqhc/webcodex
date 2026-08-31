@@ -64,8 +64,6 @@ pub(crate) use jobs::{
 #[cfg(test)]
 pub(crate) use projects::ShellClientLookupError;
 pub(crate) use protocol::AcceptedRunnerProtocol;
-#[cfg(test)]
-pub(crate) use protocol::RunnerProtocolGeneration;
 pub(crate) use reconciliation::recovery_timeout_sweep;
 pub(crate) use requests::EnqueueLspError;
 use state::ShellClientRegistryInner;
@@ -153,8 +151,8 @@ pub const TRANSPORT_QUIC: &str = "quic";
 /// Canonical Server-side transport authority for one registered Runner.
 ///
 /// This value comes from the actual polling/WebSocket/QUIC ingress path. It is
-/// deliberately independent from the legacy `agent_protocol_version` label,
-/// which is normalized separately for compatibility and inventory semantics.
+/// deliberately independent from the `agent_protocol_version` inventory-strategy label,
+/// which is normalized separately from transport authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentTransport {
     Polling,

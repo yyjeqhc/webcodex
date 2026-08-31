@@ -1206,48 +1206,6 @@ async fn checkpoint_session_input_summary_does_not_leak_commands() {
 }
 
 #[tokio::test]
-async fn checkpoint_create_requires_agent_file_read_capability() {
-    let runtime = runtime_with_agent_project("oe");
-    let caps = ShellClientCapabilities::default();
-    register_agent(&runtime, "oe", None, caps).await;
-    let bootstrap = auth_context(None, true);
-    let result = runtime
-        .dispatch_with_auth(
-            checkpoint_create_call(agent_test_project_id("oe"), None, None, None),
-            Some(&bootstrap),
-        )
-        .await;
-    assert!(!result.success);
-    let err = result.error.unwrap();
-    assert!(err.contains("does not support file_read"), "{}", err);
-}
-
-#[tokio::test]
-async fn checkpoint_restore_requires_agent_file_write_capability() {
-    let runtime = runtime_with_agent_project("oe");
-    let caps = ShellClientCapabilities {
-        file_read: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, "oe", None, caps).await;
-    let bootstrap = auth_context(None, true);
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::WorkspaceCheckpointRestore {
-                project: agent_test_project_id("oe"),
-                checkpoint_id: "wc_ckpt_missing".to_string(),
-                confirm: true,
-                session_id: None,
-            },
-            Some(&bootstrap),
-        )
-        .await;
-    assert!(!result.success);
-    let err = result.error.unwrap();
-    assert!(err.contains("does not support file_write"), "{}", err);
-}
-
-#[tokio::test]
 async fn checkpoint_metadata_tools_enforce_agent_owner_boundary() {
     let runtime = runtime_with_agent_project("oe");
     let caps = ShellClientCapabilities {

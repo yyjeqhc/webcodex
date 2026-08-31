@@ -244,17 +244,12 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
                 owner: Some("local-owner".to_string()),
                 hostname: Some("private-host".to_string()),
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    file_read: true,
-                    file_write: true,
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    structured_validation_argv: true,
-                    structured_go_test_json: true,
-                    ..Default::default()
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        shell: true,
+                        ..Default::default()
+                    },
+                )),
                 projects: Some(vec![ShellAgentProjectSummary {
                     id: config.executor_project_id.clone(),
                     name: Some(config.project_name.clone()),
@@ -396,6 +391,7 @@ fn agent_transport_cases(client_id: &str) -> [(&'static str, serde_json::Value);
                 "client_id": client_id,
                 "agent_instance_id": PROJECT_AGENT_INSTANCE,
                 "agent_protocol_version": "polling-v1",
+                "capabilities": crate::test_support::current_runner_capabilities(ShellClientCapabilities::default()),
                 "owner": "local-owner"
             }),
         ),
@@ -471,6 +467,7 @@ async fn project_agent_token_enforces_client_id_and_bootstrap_still_registers() 
             "client_id": "bootstrap-client",
             "agent_instance_id": "bootstrap-instance",
             "agent_protocol_version": "polling-v1",
+            "capabilities": crate::test_support::current_runner_capabilities(ShellClientCapabilities::default()),
             "owner": "local-owner"
         }),
     )

@@ -1,4 +1,4 @@
-use super::job_updates::{JobLogWaitOutcome, ShellJobStartMetadata, StructuredJobExecution};
+use super::job_updates::{ShellJobStartMetadata, StructuredJobExecution};
 use super::reconciliation::{
     reconcile_inventory_locked, recovery_timeout_sweep, validate_job_inventory,
     validate_job_inventory_without_project_membership, RECOVERY_SWEEP_PASS_CAP,
@@ -68,7 +68,7 @@ fn empty_inventory() -> ShellJobInventory {
 }
 
 fn register_request(instance: &str, inventory: ShellJobInventory) -> ShellClientRegisterRequest {
-    ShellClientRegisterRequest {
+    crate::test_support::current_runner_registration(ShellClientRegisterRequest {
         client_id: CLIENT_ID.to_string(),
         agent_instance_id: instance.to_string(),
         display_name: Some("reconciliation test runner".to_string()),
@@ -85,7 +85,7 @@ fn register_request(instance: &str, inventory: ShellJobInventory) -> ShellClient
         job_inventory: Some(inventory),
         coding_agent_providers: None,
         coding_agent_inventory: None,
-    }
+    })
 }
 
 async fn register(registry: &ShellClientRegistry, instance: &str, inventory: ShellJobInventory) {
@@ -1584,111 +1584,6 @@ async fn terminal_observed_hidden_until_handoff_is_not_pruned_by_public_retentio
 }
 
 #[tokio::test]
-async fn terminal_observed_legacy_trimmed_terminal_status_cleans_request_state() {
-    let registry = ShellClientRegistry::default();
-    let mut request = register_request(INSTANCE_A, empty_inventory());
-    request.capabilities = Some(ShellClientCapabilities {
-        jobs: true,
-        async_jobs: true,
-        async_shell_jobs: true,
-        ..Default::default()
-    });
-    request.job_inventory = None;
-    registry.register(request).await.unwrap();
-    let job = registry
-        .start_job(start_request("printf legacy"), "tester".to_string())
-        .await
-        .unwrap();
-    let dispatched = registry
-        .poll(ShellAgentPollRequest {
-            client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
-            projects: None,
-        })
-        .await
-        .unwrap()
-        .expect("legacy start request");
-    let before_update = registry.get_job(&job.job_id).await.unwrap();
-    let observation_token = before_update.observation_token.unwrap();
-    let request_id = dispatched.request_id.clone();
-    let revision_before = {
-        let inner = registry.inner.lock().await;
-        assert!(inner.pending_by_id.contains_key(&request_id));
-        assert_eq!(inner.request_to_job.get(&request_id), Some(&job.job_id));
-        inner.jobs_by_id[&job.job_id]
-            .public_revision
-            .load(std::sync::atomic::Ordering::Relaxed)
-    };
-    let before_terminal = now_ts();
-
-    let completed = registry
-        .update_job(ShellAgentJobUpdateRequest {
-            client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
-            job_id: job.job_id.clone(),
-            request_id: Some(request_id.clone()),
-            update_seq: None,
-            status: " completed ".to_string(),
-            stdout_chunk: None,
-            stderr_chunk: None,
-            stdout_tail: Some("done\n".to_string()),
-            stderr_tail: Some(String::new()),
-            log_snapshot: None,
-            exit_code: Some(0),
-            duration_ms: Some(20),
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            finished: true,
-        })
-        .await
-        .unwrap();
-    let after_terminal = now_ts();
-
-    assert_eq!(completed.status, "completed");
-    assert_eq!(completed.exit_code, Some(0));
-    assert_eq!(completed.duration_ms, Some(20));
-    assert!(completed.started_at.is_some());
-    let ended_at = completed.ended_at.expect("legacy terminal update ended_at");
-    assert!((before_terminal..=after_terminal).contains(&ended_at));
-    {
-        let inner = registry.inner.lock().await;
-        let record = inner.jobs_by_id.get(&job.job_id).unwrap();
-        assert_eq!(record.status, "completed");
-        assert_eq!(record.terminal_observed_at, Some(ended_at));
-        assert_eq!(record.ended_at, Some(ended_at));
-        assert_eq!(record.exit_code, Some(0));
-        assert_eq!(record.duration_ms, Some(20));
-        assert!(!inner.pending_by_id.contains_key(&request_id));
-        assert!(!inner.request_to_job.contains_key(&request_id));
-        assert_eq!(
-            record
-                .public_revision
-                .load(std::sync::atomic::Ordering::Relaxed),
-            revision_before + 1
-        );
-    }
-    let (info, stdout, stderr, _, _, wait) = registry
-        .job_log_for_auth(
-            None,
-            &job.job_id,
-            None,
-            None,
-            None,
-            Some(&observation_token),
-            Some(5),
-        )
-        .await
-        .unwrap();
-    assert_eq!(info.status, "completed");
-    assert_eq!(stdout.as_deref(), Some("done\n"));
-    assert_eq!(stderr.as_deref(), Some(""));
-    assert_eq!(wait.wait_outcome, JobLogWaitOutcome::Immediate);
-    assert!(wait.changed);
-    assert!(wait.terminal);
-}
-
-#[tokio::test]
 async fn terminal_observed_missing_internal_time_is_backfilled_before_prune() {
     let registry = ShellClientRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
@@ -2569,7 +2464,7 @@ async fn job_reconciliation_malformed_inventory_does_not_mutate_registry() {
 }
 
 #[tokio::test]
-async fn job_reconciliation_legacy_capability_keeps_immediate_lost_semantics() {
+async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
     let mismatch_registry = ShellClientRegistry::default();
     let mut missing_inventory = register_request(INSTANCE_A, empty_inventory());
     missing_inventory.job_inventory = None;
@@ -2579,7 +2474,9 @@ async fn job_reconciliation_legacy_capability_keeps_immediate_lost_semantics() {
         .unwrap_err()
         .contains("requires job_inventory"));
     let mut unexpected_inventory = register_request(INSTANCE_A, empty_inventory());
-    unexpected_inventory.capabilities = Some(ShellClientCapabilities::default());
+    unexpected_inventory.capabilities = Some(crate::test_support::current_runner_capabilities(
+        ShellClientCapabilities::default(),
+    ));
     assert!(mismatch_registry
         .register(unexpected_inventory)
         .await
@@ -2588,7 +2485,9 @@ async fn job_reconciliation_legacy_capability_keeps_immediate_lost_semantics() {
     let downgrade_registry = ShellClientRegistry::default();
     register(&downgrade_registry, INSTANCE_A, empty_inventory()).await;
     let mut downgraded = register_request(INSTANCE_A, empty_inventory());
-    downgraded.capabilities = Some(ShellClientCapabilities::default());
+    downgraded.capabilities = Some(crate::test_support::current_runner_capabilities(
+        ShellClientCapabilities::default(),
+    ));
     downgraded.job_inventory = None;
     assert!(downgrade_registry
         .register(downgraded)
@@ -2598,12 +2497,14 @@ async fn job_reconciliation_legacy_capability_keeps_immediate_lost_semantics() {
 
     let registry = ShellClientRegistry::default();
     let mut request = register_request(INSTANCE_A, empty_inventory());
-    request.capabilities = Some(ShellClientCapabilities {
-        jobs: true,
-        async_jobs: true,
-        async_shell_jobs: true,
-        ..Default::default()
-    });
+    request.capabilities = Some(crate::test_support::current_runner_capabilities(
+        ShellClientCapabilities {
+            jobs: true,
+            async_jobs: true,
+            async_shell_jobs: true,
+            ..Default::default()
+        },
+    ));
     request.job_inventory = None;
     registry.register(request).await.unwrap();
     let job = registry
@@ -2624,7 +2525,7 @@ async fn job_reconciliation_legacy_capability_keeps_immediate_lost_semantics() {
     assert_eq!(lost.status, "lost");
     assert_eq!(
         lost.recovery_reason_code.as_deref(),
-        Some("legacy_runner_disconnected")
+        Some("runner_disconnected_without_reconciliation")
     );
 }
 

@@ -4,7 +4,7 @@ use super::*;
 async fn registry_enqueues_polls_and_completes_shell_request() {
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -21,7 +21,7 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let (request_id, rx) = registry
@@ -72,7 +72,7 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
 async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -89,7 +89,7 @@ async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let (request_a, waiter_a) = registry

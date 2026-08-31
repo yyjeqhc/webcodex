@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn computer_snapshot_artifact_requires_current_target_project_and_file_write_under_registry_lock(
+async fn computer_snapshot_artifact_rechecks_current_target_project_and_authority_under_registry_lock(
 ) {
     let registry = ShellClientRegistry::default();
     let alice = auth_context(Some("alice"), false);
@@ -27,8 +27,8 @@ async fn computer_snapshot_artifact_requires_current_target_project_and_file_wri
         wait_timeout_secs: 60,
     }
     };
-    let register = |client_id: &str, instance_id: &str, file_write: bool, project_path: &str| {
-        ShellClientRegisterRequest {
+    let register =
+        |client_id: &str, instance_id: &str, project_path: &str| ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -41,44 +41,21 @@ async fn computer_snapshot_artifact_requires_current_target_project_and_file_wri
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
-                shell: true,
-                file_read: true,
-                file_write,
-                ..Default::default()
-            }),
+            capabilities: Some(crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities {
+                    shell: true,
+                    ..Default::default()
+                },
+            )),
             projects: Some(vec![project_summary("demo", project_path)]),
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        }
-    };
-
-    registry
-        .register(register(
-            "computer-artifact-no-write",
-            "artifact-no-write-inst",
-            false,
-            "/tmp/project",
-        ))
-        .await
-        .unwrap();
-    let error = registry
-        .enqueue_computer_snapshot_artifact(
-            request("computer-artifact-no-write"),
-            "demo",
-            "/tmp/project",
-            "alice".to_string(),
-            Some(&alice),
-        )
-        .await
-        .unwrap_err();
-    assert!(error.contains("file_write"), "{error}");
+        };
 
     registry
         .register(register(
             "computer-artifact-write",
             "artifact-inst",
-            true,
             "/tmp/project",
         ))
         .await
@@ -112,7 +89,6 @@ async fn computer_snapshot_artifact_requires_current_target_project_and_file_wri
         .register(register(
             "computer-artifact-poll-change",
             "artifact-poll-inst",
-            true,
             "/tmp/project",
         ))
         .await
@@ -159,64 +135,8 @@ async fn computer_snapshot_artifact_requires_current_target_project_and_file_wri
 
     registry
         .register(register(
-            "computer-artifact-cap-change",
-            "artifact-cap-inst",
-            true,
-            "/tmp/project",
-        ))
-        .await
-        .unwrap();
-    let (_request_id, response_rx) = registry
-        .enqueue_computer_snapshot_artifact(
-            request("computer-artifact-cap-change"),
-            "demo",
-            "/tmp/project",
-            "alice".to_string(),
-            Some(&alice),
-        )
-        .await
-        .unwrap();
-    registry
-        .register(register(
-            "computer-artifact-cap-change",
-            "artifact-cap-inst",
-            false,
-            "/tmp/project",
-        ))
-        .await
-        .unwrap();
-    assert!(registry
-        .poll(ShellAgentPollRequest {
-            client_id: "computer-artifact-cap-change".to_string(),
-            agent_instance_id: "artifact-cap-inst".to_string(),
-            projects: None,
-        })
-        .await
-        .unwrap()
-        .is_none());
-    let response = tokio::time::timeout(std::time::Duration::from_secs(1), response_rx)
-        .await
-        .expect("capability downgrade response timed out")
-        .expect("capability downgrade response channel closed");
-    assert_eq!(response.request_dispatched, Some(false));
-    assert_eq!(
-        response.command_execution_state,
-        Some(ShellCommandExecutionState::NotStarted)
-    );
-    assert!(
-        response
-            .error
-            .as_deref()
-            .unwrap_or_default()
-            .contains("stale_authority"),
-        "{response:?}"
-    );
-
-    registry
-        .register(register(
             "computer-artifact-owner-change",
             "artifact-owner-inst",
-            true,
             "/tmp/project",
         ))
         .await
@@ -234,7 +154,6 @@ async fn computer_snapshot_artifact_requires_current_target_project_and_file_wri
     let mut changed_owner = register(
         "computer-artifact-owner-change",
         "artifact-owner-inst",
-        true,
         "/tmp/project",
     );
     changed_owner.owner = Some("bob".to_string());
@@ -270,7 +189,6 @@ async fn computer_snapshot_artifact_requires_current_target_project_and_file_wri
         .register(register(
             "computer-artifact-replaced",
             "artifact-replaced-inst",
-            true,
             "/tmp/project",
         ))
         .await
@@ -281,7 +199,6 @@ async fn computer_snapshot_artifact_requires_current_target_project_and_file_wri
         .register(register(
             "computer-artifact-replaced",
             "artifact-replaced-inst",
-            true,
             "/tmp/replaced",
         ))
         .await

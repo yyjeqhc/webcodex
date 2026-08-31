@@ -4,7 +4,7 @@ use super::*;
 async fn touch_client_refreshes_stale_client_back_to_online() {
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -21,7 +21,7 @@ async fn touch_client_refreshes_stale_client_back_to_online() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
 

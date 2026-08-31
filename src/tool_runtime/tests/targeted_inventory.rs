@@ -62,11 +62,13 @@ async fn register_target_agent(
             owner: None,
             hostname: Some(format!("host-{client_id}")),
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
-                git: true,
-                async_shell_jobs: true,
-                ..Default::default()
-            }),
+            capabilities: Some(crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities {
+                    git: true,
+                    async_shell_jobs: true,
+                    ..Default::default()
+                },
+            )),
             projects: Some(projects),
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
@@ -97,7 +99,9 @@ async fn register_target_agent_for_auth(
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities::default()),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities::default(),
+                )),
                 projects: Some(vec![registered_project(
                     project_id,
                     &format!("/tmp/{client_id}/{project_id}"),
@@ -142,7 +146,9 @@ async fn register_managed_target_agent(
             owner: Some(owner.to_string()),
             hostname: Some(format!("{owner}-private-host")),
             host_context: None,
-            capabilities: Some(ShellClientCapabilities::default()),
+            capabilities: Some(crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            )),
             projects: Some(vec![registered_project(project_id, project_path)]),
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,

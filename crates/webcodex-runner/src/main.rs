@@ -1924,7 +1924,7 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> ShellClientCapabilities {
     // registration rather than a separate capability bit. Older binaries omit
     // that inventory, so a newer Server will never target them.
     // `job_state_reconciliation` is on by default. A hidden, test/ops-only env
-    // knob lets an E2E simulate a legacy runner that predates the capability
+    // knob lets an E2E exercise the valid generation-2 no-reconciliation mode
     // (it then has no job inventory and a disconnect falls straight to `lost`).
     // Default production behavior is unchanged: only the explicit opt-out
     // disables it, and the server already rejects inventory without the
@@ -2173,9 +2173,9 @@ fn build_register_request_with_provider_status(
             process_started_at: Some(process_started_at()),
             build: Some(runner_build_info()),
             job_concurrency_limit: Some(max_concurrent_jobs(cfg)),
-            // A legacy runner (capability disabled for E2E) must not send a job
+            // A Runner with reconciliation disabled for E2E must not send a job
             // inventory: the server rejects inventory without the capability and
-            // vice-versa, so a true legacy client advertises neither.
+            // vice-versa.
             job_inventory: if disable_job_state_reconciliation_for_test() {
                 None
             } else {

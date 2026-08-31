@@ -29,7 +29,7 @@ async fn lease_different_online_instance_rejected() {
     // A second process with the same client_id but a different instance
     // must be rejected while the first is online.
     let err = registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -46,7 +46,7 @@ async fn lease_different_online_instance_rejected() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap_err();
     assert!(err.contains("already online"), "error was: {err}");
@@ -468,13 +468,13 @@ async fn lease_reconcile_disconnect_stale_instance_is_noop() {
     assert_eq!(updated.status, "running");
 
     // Only B's own disconnect reconciles B's job. A non-reconciliation
-    // client's active job becomes `lost` (legacy_runner_disconnected).
+    // client's active job becomes `lost` without reconciliation support.
     registry.reconcile_disconnect("oe", "inst-b").await;
     let b_final = registry.get_job(&b_job.job_id).await.unwrap();
     assert_eq!(b_final.status, "lost");
     assert_eq!(
         b_final.recovery_reason_code.as_deref(),
-        Some("legacy_runner_disconnected")
+        Some("runner_disconnected_without_reconciliation")
     );
     // A's old job is unaffected by B's disconnect.
     let old_final = registry.get_job(&old_job.job_id).await.unwrap();
@@ -512,7 +512,7 @@ async fn lease_register_notifier_rejects_stale_instance() {
 async fn lease_register_rejects_empty_instance_id() {
     let registry = ShellClientRegistry::default();
     let err = registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -529,7 +529,7 @@ async fn lease_register_rejects_empty_instance_id() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap_err();
     assert!(err.contains("agent_instance_id"), "error was: {err}");
@@ -550,7 +550,7 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
         ..Default::default()
     };
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -570,7 +570,7 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
 
@@ -678,7 +678,7 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
         .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
         .await;
     let view = registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -698,7 +698,7 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .expect("exact detached recovery inventory must transfer to replacement instance");
     assert_eq!(view.agent_instance_id, "inst-b");

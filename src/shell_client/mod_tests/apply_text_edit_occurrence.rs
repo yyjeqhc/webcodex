@@ -73,24 +73,6 @@ async fn enqueue_apply_text_edits_occurrence_requires_capability_and_queues_atom
         .contains("\"occurrence\":2"));
 }
 
-#[tokio::test]
-async fn enqueue_apply_text_edits_occurrence_capability_false_queues_nothing() {
-    let registry = ShellClientRegistry::default();
-    register_occurrence_instance(&registry, "occurrence-off", "inst", false)
-        .await
-        .unwrap();
-    let error = registry
-        .enqueue_apply_text_edits_with_occurrence(
-            occurrence_request("occurrence-off"),
-            "tester".to_string(),
-        )
-        .await
-        .unwrap_err();
-    assert!(error.starts_with("capability_unavailable:"), "{error}");
-    assert!(error.contains("apply_text_edit_occurrence"), "{error}");
-    assert_structured_delete_client_idle(&registry, "occurrence-off").await;
-}
-
 #[test]
 fn apply_text_edit_occurrence_missing_capability_defaults_false_and_is_omitted() {
     let legacy: ShellClientCapabilities = serde_json::from_str(
@@ -100,57 +82,4 @@ fn apply_text_edit_occurrence_missing_capability_defaults_false_and_is_omitted()
     assert!(!legacy.apply_text_edit_occurrence);
     let serialized = serde_json::to_value(ShellClientCapabilities::default()).unwrap();
     assert!(serialized.get("apply_text_edit_occurrence").is_none());
-}
-
-#[tokio::test]
-async fn same_instance_apply_text_edit_occurrence_downgrade_is_rejected() {
-    let registry = ShellClientRegistry::default();
-    register_occurrence_instance(&registry, "occurrence-monotonic", "inst-a", true)
-        .await
-        .unwrap();
-    let error = register_occurrence_instance(&registry, "occurrence-monotonic", "inst-a", false)
-        .await
-        .unwrap_err();
-    assert!(
-        error.contains("cannot downgrade apply_text_edit_occurrence"),
-        "{error}"
-    );
-    let view = registry
-        .get_client_view("occurrence-monotonic")
-        .await
-        .unwrap();
-    assert_eq!(view.agent_instance_id, "inst-a");
-    assert!(view.capabilities.apply_text_edit_occurrence);
-}
-
-#[tokio::test]
-async fn occurrence_enqueue_rechecks_replacement_capability_under_admission_lock() {
-    let registry = ShellClientRegistry::default();
-    register_occurrence_instance(&registry, "occurrence-flip", "inst-a", true)
-        .await
-        .unwrap();
-    assert!(registry
-        .client_supports(
-            "occurrence-flip",
-            crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
-        )
-        .await
-        .unwrap());
-
-    registry
-        .set_last_seen_for_test("occurrence-flip", chrono::Utc::now().timestamp() - 120)
-        .await;
-    register_occurrence_instance(&registry, "occurrence-flip", "inst-b", false)
-        .await
-        .unwrap();
-
-    let error = registry
-        .enqueue_apply_text_edits_with_occurrence(
-            occurrence_request("occurrence-flip"),
-            "tester".to_string(),
-        )
-        .await
-        .unwrap_err();
-    assert!(error.starts_with("capability_unavailable:"), "{error}");
-    assert_structured_delete_client_idle(&registry, "occurrence-flip").await;
 }

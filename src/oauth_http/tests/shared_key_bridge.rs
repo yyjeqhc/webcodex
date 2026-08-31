@@ -268,7 +268,9 @@ async fn register_shared_key_runner_with_capabilities(
                 display_name: None,
                 owner: None,
                 hostname: None,
-                capabilities: Some(capabilities),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    capabilities,
+                )),
                 host_context: None,
                 projects: None,
                 agent_protocol_version: Some("polling-v1".to_string()),

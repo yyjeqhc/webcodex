@@ -4,7 +4,7 @@ use super::*;
 async fn reconcile_disconnect_marks_running_jobs_lost() {
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -21,7 +21,7 @@ async fn reconcile_disconnect_marks_running_jobs_lost() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let job = registry
@@ -63,7 +63,7 @@ async fn reconcile_disconnect_fails_pending_sync_requests_fast() {
     // wait timeout.
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -80,7 +80,7 @@ async fn reconcile_disconnect_fails_pending_sync_requests_fast() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let (_request_id, rx) = registry

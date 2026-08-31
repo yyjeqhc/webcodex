@@ -4,7 +4,7 @@ use crate::shell_protocol::{
     ShellProcessArgv, ShellRunRequest, ShellScriptPayload, ToolProvidersStatus,
     PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
     PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES,
-    STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
+    STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
 };
 use sha2::{Digest, Sha256};
 
@@ -584,9 +584,9 @@ pub(super) fn validate_process_request(
             return Err("cwd cannot contain NUL bytes".to_string());
         }
     }
-    if timeout_secs == 0 || timeout_secs > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS {
+    if timeout_secs == 0 || timeout_secs > STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS {
         return Err(format!(
-            "timeout_secs must be between 1 and {STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS}"
+            "timeout_secs must be between 1 and {STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS}"
         ));
     }
     if wait_timeout_secs > MAX_SYNC_WAIT_SECS {
@@ -607,9 +607,9 @@ pub(super) fn validate_script_enqueue_request(
 ) -> Result<(), String> {
     validate_id(client_id, "client_id")?;
     validate_script_request(script, stdin, cwd, timeout_secs)?;
-    if timeout_secs > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS {
+    if timeout_secs > STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS {
         return Err(format!(
-            "timeout_secs must be between 1 and {STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS}"
+            "timeout_secs must be between 1 and {STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS}"
         ));
     }
     if wait_timeout_secs > MAX_SYNC_WAIT_SECS {

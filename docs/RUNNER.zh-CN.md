@@ -58,11 +58,15 @@ WebCodex 不保证与 v0.3.9 及更早 Server/Runner 二进制的滚动兼容。
 修改可以有意移除旧 wire 或认证兼容面，因此跨越这些修改时应同步升级 first-party
 Server 与 Runner。只有当前合同明确保留的兼容面才属于受支持范围。
 
+当前 first-party Runner 注册只接受 protocol generation 2：
+`capabilities.agent_protocol_generation` 必须精确为 `2`。缺失、generation `1` 或未知
+值都会在创建 Runner record 前 fail closed。generation 2 的 22 个 baseline capability
+bool 是协议事实；缺失或与 baseline 矛盾时直接拒绝注册，而不是降级成 unavailable。
+RegistrationRequired 的增量 capability 仍保持显式声明，省略时按不可用处理。
+
 `polling-v1`、`websocket-v1`、`quic-v1` 以及对应的 `v2` inventory label 仍是当前
-ingress 语义，并不承诺接受任意旧 release binary。注册继续 fail closed：
-`agent_protocol_version` 必须存在且受支持。省略新增 capability 时仍按 fail-closed
-语义处理（通常为 `false`/不可用）；只有显式声明支持时才发送 project-inventory
-paging。
+ingress 语义；它们只选择 project inventory strategy，不选择旧 protocol generation，
+也不承诺接受任意旧 release binary。`agent_protocol_version` 仍必须存在且受支持。
 
 QUIC 升级注意：`[quic].keepalive_interval_secs` 现在会真实配置 Quinn transport
 keepalive；默认仍为 20 秒，有效范围为 `1..=25`。历史上大于 25 的值虽然能够被接受，

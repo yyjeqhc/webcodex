@@ -107,7 +107,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
     assert!(error.contains("does not support computer_snapshot_region"));
 
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -130,7 +130,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let error = registry
@@ -147,7 +147,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
     assert!(error.contains("does not support computer_observe"));
 
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -170,7 +170,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let (_request_id, _rx) = registry
@@ -203,7 +203,7 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
     let registry = ShellClientRegistry::default();
     let alice = auth_context(Some("alice"), false);
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -223,7 +223,7 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
 

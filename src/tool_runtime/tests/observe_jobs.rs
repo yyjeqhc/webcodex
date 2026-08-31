@@ -798,30 +798,32 @@ async fn observe_jobs_recovering_lost_and_stop_requested_match_job_log_semantics
     };
     runtime
         .shell_clients
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: Some(ShellJobInventory {
-                active_complete: true,
-                jobs: Vec::new(),
-            }),
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "observe-recovering".to_string(),
-            agent_instance_id: "inst".to_string(),
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: Some(recovering_caps),
-            projects: Some(vec![registered_project(
-                "agent-proj",
-                "/tmp/observe-recovering",
-            )]),
-            agent_protocol_version: Some("polling-v1".to_string()),
-            policy: None,
-        })
+        .register(crate::test_support::current_runner_registration(
+            ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: Some(ShellJobInventory {
+                    active_complete: true,
+                    jobs: Vec::new(),
+                }),
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+                client_id: "observe-recovering".to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                host_context: None,
+                capabilities: Some(recovering_caps),
+                projects: Some(vec![registered_project(
+                    "agent-proj",
+                    "/tmp/observe-recovering",
+                )]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+        ))
         .await
         .unwrap();
     let auth = bootstrap_auth_context();

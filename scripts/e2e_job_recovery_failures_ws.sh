@@ -25,11 +25,11 @@ set -euo pipefail
 #       with `runner_instance_replaced`; B starts its own new job; A's late
 #       update is rejected; first ended_at/reason preserved.
 #
-#   E — Legacy runner (no job_state_reconciliation) disconnect lost.
+#   E — Runner without reconciliation (no job_state_reconciliation) disconnect lost.
 #       Runner registered with the reconciliation capability disabled
 #       (WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1). A job runs;
-#       the legacy runner disconnects. The job deterministically becomes
-#       `lost` with `legacy_runner_disconnected`, stays lost after a server
+#       the no-reconciliation Runner disconnects. The job deterministically becomes
+#       `lost` with `runner_disconnected_without_reconciliation`, stays lost after a server
 #       restart, no re-execution, no same-client takeover.
 #
 #   F — Repeated server restart (3x) keeps the same job_id.
@@ -214,7 +214,7 @@ COOKIE_JAR="$TMP_ROOT/cookies.txt"
 DATA_DIR="$TMP_ROOT/data"
 PROJECTS_DIR="$TMP_ROOT/projects.d"
 AGENT_TOML="$TMP_ROOT/agent.toml"
-LEGACY_AGENT_TOML="$TMP_ROOT/legacy-agent.toml"
+NO_RECONCILIATION_AGENT_TOML="$TMP_ROOT/no-reconciliation-agent.toml"
 TEST_REPO="$TMP_ROOT/jobfail-repo"
 SERVER_LOG="$TMP_ROOT/server.log"
 RUNNER_LOG="$TMP_ROOT/agent.log"
@@ -562,62 +562,62 @@ stop_runner
 log "scenario D complete"
 
 # ============================================================================
-# Scenario E — Legacy runner (no job_state_reconciliation) disconnect lost
+# Scenario E — Runner without reconciliation (no job_state_reconciliation) disconnect lost
 # ----------------------------------------------------------------------------
 # Scope note: the runner's running-job update path always carries an
 # authoritative log_snapshot + update_seq, which the server rejects without the
 # reconciliation capability. Faithfully disabling that path on the runner is a
-# larger runner-side change outside this phase. The full legacy
+# larger runner-side change outside this phase. The full no-reconciliation
 # disconnect->lost transition is covered by the unit test
-# `job_reconciliation_legacy_capability_keeps_immediate_lost_semantics`.
-# This E2E verifies the real-process backward-compatible registration of a
-# legacy runner (no capability, no inventory) and that a job it accepted is
-# deterministically fenced to `lost` with `legacy_runner_disconnected` when the
-# legacy transport disconnects, without entering `recovering`.
+# `job_reconciliation_absent_capability_keeps_immediate_lost_semantics`.
+# This E2E verifies the real-process generation-2 registration of a
+# no-reconciliation Runner (no capability, no inventory) and that a job it accepted is
+# deterministically fenced to `lost` with `runner_disconnected_without_reconciliation` when the
+# no-reconciliation transport disconnects, without entering `recovering`.
 # ============================================================================
-log "scenario E: legacy runner disconnect -> deterministic lost"
+log "scenario E: no-reconciliation Runner disconnect -> deterministic lost"
 : >"$SERVER_LOG"; : >"$RUNNER_LOG"
 E_MARKER_FILE="$TEST_REPO/scenario-e-count.txt"
 : >"$E_MARKER_FILE"
 E_COMMAND="printf 'E-START\\n' >> '$E_MARKER_FILE'; sleep 300"
 
-# A legacy runner config (reconciliation capability disabled via env at start).
-write_agent_toml "$LEGACY_AGENT_TOML"
+# A no-reconciliation Runner config (reconciliation capability disabled via env at start).
+write_agent_toml "$NO_RECONCILIATION_AGENT_TOML"
 start_server
 wait_for_server || { fail "E: server did not listen"; dump_logs; exit 1; }
-WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_runner "$LEGACY_AGENT_TOML"
-wait_for_agent_online >/dev/null || { fail "E: legacy runner did not register"; dump_logs; exit 1; }
-pass "E: legacy runner registered without job_state_reconciliation"
+WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_runner "$NO_RECONCILIATION_AGENT_TOML"
+wait_for_agent_online >/dev/null || { fail "E: no-reconciliation Runner did not register"; dump_logs; exit 1; }
+pass "E: no-reconciliation Runner registered without job_state_reconciliation"
 
 # The capability is not advertised (field absent or false).
 BODY_CAP="$(runtime_status)"
 E_CAP="$(json_get "$BODY_CAP" output.agents.clients.0.capabilities.job_state_reconciliation)"
 if [ "$E_CAP" = "True" ]; then
-    fail "E: legacy runner unexpectedly advertised reconciliation"
+    fail "E: no-reconciliation Runner unexpectedly advertised reconciliation"
 else
-    pass "E: legacy runner does not advertise reconciliation"
+    pass "E: no-reconciliation Runner does not advertise reconciliation"
 fi
 
-# Start a job; it becomes queued then agent_queued when the legacy runner
+# Start a job; it becomes queued then agent_queued when the no-reconciliation Runner
 # polls it. We do NOT wait for `running` (the snapshot update is rejected), so
 # the job stays agent_queued until disconnect.
 JOB_BODY_E="$(run_job_call "$E_COMMAND" 300)"
 JOB_ID_E="$(json_get "$JOB_BODY_E" output.job_id)"
-assert_nonempty "E: legacy job started" "$JOB_ID_E"
-# Give the legacy runner a moment to poll/accept the request.
+assert_nonempty "E: no-reconciliation job started" "$JOB_ID_E"
+# Give the no-reconciliation Runner a moment to poll/accept the request.
 sleep 2
 BODY_QUEUED="$(job_status_call "$JOB_ID_E")"
-assert_ne "E: legacy job did not enter recovering" "$(json_get "$BODY_QUEUED" output.status)" "recovering"
-pass "E: legacy job dispatched without entering recovering"
+assert_ne "E: no-reconciliation job did not enter recovering" "$(json_get "$BODY_QUEUED" output.status)" "recovering"
+pass "E: no-reconciliation job dispatched without entering recovering"
 
-log "E: killing legacy runner"
+log "E: killing no-reconciliation Runner"
 stop_runner
-# Legacy disconnect goes straight to lost (no recovering grace, no snapshot).
+# No-reconciliation disconnect goes straight to lost (no recovering grace, no snapshot).
 E_LOST_BODY="$(wait_for_job_status "$JOB_ID_E" lost)"
-assert_eq "E: legacy job is lost" "$(json_get "$E_LOST_BODY" output.status)" "lost"
-assert_eq "E: legacy lost reason" "$(json_get "$E_LOST_BODY" output.recovery_reason_code)" "legacy_runner_disconnected"
+assert_eq "E: no-reconciliation job is lost" "$(json_get "$E_LOST_BODY" output.status)" "lost"
+assert_eq "E: no-reconciliation lost reason" "$(json_get "$E_LOST_BODY" output.recovery_reason_code)" "runner_disconnected_without_reconciliation"
 E_END_AT="$(json_get "$E_LOST_BODY" output.ended_at)"
-assert_nonempty "E: legacy job ended_at set" "$E_END_AT"
+assert_nonempty "E: no-reconciliation job ended_at set" "$E_END_AT"
 E_REASON_TEXT="$(json_get "$E_LOST_BODY" output.recovery_reason)"
 assert_nonempty "E: recovery_reason text surfaced" "$E_REASON_TEXT"
 
@@ -633,11 +633,11 @@ assert_eq "E: lost job has no durable record after restart (unknown)" "$(json_ge
 E_START_COUNT="$(grep -c 'E-START' "$E_MARKER_FILE" || true)"
 assert_eq "E: command executed once (no re-execution)" "$E_START_COUNT" "1"
 
-# A same-client new legacy instance cannot take over the old job (it has no
+# A same-client new no-reconciliation instance cannot take over the old job (it has no
 # durable record after the restart, and the new instance submits no inventory
 # for it).
-WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_runner "$LEGACY_AGENT_TOML"
-wait_for_agent_online >/dev/null || { fail "E: second legacy runner did not register"; dump_logs; exit 1; }
+WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_runner "$NO_RECONCILIATION_AGENT_TOML"
+wait_for_agent_online >/dev/null || { fail "E: second no-reconciliation Runner did not register"; dump_logs; exit 1; }
 sleep 2
 BODY_E3="$(job_status_call "$JOB_ID_E")"
 assert_eq "E: old job not revived by new same-client instance" "$(json_get "$BODY_E3" output.status)" ""

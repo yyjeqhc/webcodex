@@ -258,42 +258,44 @@ async fn mcp_import_runtime(
     };
     let registry = Arc::new(crate::shell_client::ShellClientRegistry::default());
     registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "importer".to_string(),
-            agent_instance_id: "inst-import".to_string(),
-            display_name: None,
-            owner: owner.map(str::to_string),
-            hostname: None,
-            host_context: None,
-            capabilities: Some(ShellClientCapabilities {
-                file_write: true,
-                ..Default::default()
-            }),
-            projects: Some(vec![ShellAgentProjectSummary {
-                id: "demo".to_string(),
-                name: Some("Demo".to_string()),
-                path: root.to_string_lossy().to_string(),
-                allow_patch: true,
-                kind: None,
-                description: None,
-                hooks: vec![],
-                disabled: false,
-                revision: None,
-                git_branch: None,
-                git_head: None,
-                git_dirty: None,
-                updated_at: 0,
-                shell_profile: None,
-            }]),
-            agent_protocol_version: Some("polling-v1".to_string()),
-            policy: None,
-        })
+        .register(crate::test_support::current_runner_registration(
+            ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+                client_id: "importer".to_string(),
+                agent_instance_id: "inst-import".to_string(),
+                display_name: None,
+                owner: owner.map(str::to_string),
+                hostname: None,
+                host_context: None,
+                capabilities: Some(ShellClientCapabilities {
+                    file_write: true,
+                    ..Default::default()
+                }),
+                projects: Some(vec![ShellAgentProjectSummary {
+                    id: "demo".to_string(),
+                    name: Some("Demo".to_string()),
+                    path: root.to_string_lossy().to_string(),
+                    allow_patch: true,
+                    kind: None,
+                    description: None,
+                    hooks: vec![],
+                    disabled: false,
+                    revision: None,
+                    git_branch: None,
+                    git_head: None,
+                    git_dirty: None,
+                    updated_at: 0,
+                    shell_profile: None,
+                }]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+        ))
         .await
         .unwrap();
     let runtime = Arc::new(

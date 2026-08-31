@@ -731,7 +731,7 @@ pub(super) fn refresh_job_status_locked(inner: &mut ShellClientRegistryInner, jo
             mark_job_lost(
                 job,
                 now_ts(),
-                "legacy_runner_disconnected",
+                "runner_disconnected_without_reconciliation",
                 "shell client went stale while job was running",
             );
         }

@@ -74,7 +74,7 @@ async fn computer_element_state_requires_its_own_additive_capability() {
     assert!(error.contains("does not support computer_element_state"));
 
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -98,7 +98,7 @@ async fn computer_element_state_requires_its_own_additive_capability() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let (_request_id, _rx) = registry

@@ -1111,42 +1111,44 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
     let project_name = "remote-images";
     runtime
         .shell_clients
-        .register(ShellClientRegisterRequest {
-            client_id: client_id.to_string(),
-            agent_instance_id: agent_instance_id.to_string(),
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: Some(ShellClientCapabilities {
-                file_read: true,
-                ..Default::default()
-            }),
-            projects: Some(vec![ShellAgentProjectSummary {
-                id: project_name.to_string(),
-                name: Some(project_name.to_string()),
-                path: "/remote/session-atlas".to_string(),
-                allow_patch: true,
-                kind: Some("repo".to_string()),
-                description: None,
-                hooks: Vec::new(),
-                disabled: false,
-                revision: None,
-                git_branch: None,
-                git_head: None,
-                git_dirty: None,
-                updated_at: 1,
-                shell_profile: None,
-            }]),
-            agent_protocol_version: Some("polling-v1".to_string()),
-            policy: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-        })
+        .register(crate::test_support::current_runner_registration(
+            ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: agent_instance_id.to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                host_context: None,
+                capabilities: Some(ShellClientCapabilities {
+                    file_read: true,
+                    ..Default::default()
+                }),
+                projects: Some(vec![ShellAgentProjectSummary {
+                    id: project_name.to_string(),
+                    name: Some(project_name.to_string()),
+                    path: "/remote/session-atlas".to_string(),
+                    allow_patch: true,
+                    kind: Some("repo".to_string()),
+                    description: None,
+                    hooks: Vec::new(),
+                    disabled: false,
+                    revision: None,
+                    git_branch: None,
+                    git_head: None,
+                    git_dirty: None,
+                    updated_at: 1,
+                    shell_profile: None,
+                }]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+            },
+        ))
         .await
         .unwrap();
     let project = crate::tool_runtime::agent_project_runtime_id(client_id, project_name);
@@ -1878,44 +1880,46 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
     let runtime = test_runtime();
     runtime
         .shell_clients
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "mcp-client".to_string(),
-            agent_instance_id: "inst".to_string(),
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: Some(ShellClientCapabilities {
-                shell: true,
-                git: true,
-                internal_posix_script: true,
-                ..Default::default()
-            }),
-            projects: Some(vec![ShellAgentProjectSummary {
-                id: "demo".to_string(),
-                name: Some("Demo".to_string()),
-                path: "/tmp/demo".to_string(),
-                allow_patch: true,
-                kind: None,
-                description: None,
-                hooks: vec![],
-                disabled: false,
-                revision: None,
-                git_branch: None,
-                git_head: None,
-                git_dirty: None,
-                updated_at: 0,
-                shell_profile: None,
-            }]),
-            agent_protocol_version: Some("polling-v1".to_string()),
-            policy: None,
-        })
+        .register(crate::test_support::current_runner_registration(
+            ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+                client_id: "mcp-client".to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                host_context: None,
+                capabilities: Some(ShellClientCapabilities {
+                    shell: true,
+                    git: true,
+                    internal_posix_script: true,
+                    ..Default::default()
+                }),
+                projects: Some(vec![ShellAgentProjectSummary {
+                    id: "demo".to_string(),
+                    name: Some("Demo".to_string()),
+                    path: "/tmp/demo".to_string(),
+                    allow_patch: true,
+                    kind: None,
+                    description: None,
+                    hooks: vec![],
+                    disabled: false,
+                    revision: None,
+                    git_branch: None,
+                    git_head: None,
+                    git_dirty: None,
+                    updated_at: 0,
+                    shell_profile: None,
+                }]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+        ))
         .await
         .unwrap();
     let project = "agent:mcp-client:demo";

@@ -52,7 +52,7 @@ fn wait_job_update(
 
 async fn register_sequenced(registry: &ShellClientRegistry, instance: &str) {
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -72,7 +72,7 @@ async fn register_sequenced(registry: &ShellClientRegistry, instance: &str) {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
 }
@@ -448,7 +448,7 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
         ..Default::default()
     };
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -465,7 +465,7 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let job = registry

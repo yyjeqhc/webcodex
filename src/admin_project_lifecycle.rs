@@ -873,111 +873,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_lifecycle_capability_gate_uses_canonical_runner_semantics() {
-        let registry = Arc::new(ShellClientRegistry::default());
-        let revision = format!("sha256:{}", "b".repeat(64));
-        let target = "agent:lifecycle-legacy:demo";
-        registry
-            .register(ShellClientRegisterRequest {
-                client_id: "lifecycle-legacy".to_string(),
-                agent_instance_id: "instance-lifecycle-legacy".to_string(),
-                display_name: None,
-                owner: Some("alice".to_string()),
-                hostname: None,
-                host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    project_lifecycle: false,
-                    ..Default::default()
-                }),
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: "demo".to_string(),
-                    name: Some("demo".to_string()),
-                    path: "/tmp/demo".to_string(),
-                    allow_patch: true,
-                    kind: None,
-                    description: None,
-                    hooks: Vec::new(),
-                    disabled: false,
-                    revision: Some(revision.clone()),
-                    git_branch: None,
-                    git_head: None,
-                    git_dirty: None,
-                    updated_at: 1,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("polling-v1".to_string()),
-                policy: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-            })
-            .await
-            .unwrap();
-
-        let runtime = ToolRuntime::new_for_tests_with_shell_clients(registry);
-        let error = AdminProjectLifecycleService::mutate_authorized_core(
-            &runtime,
-            Some(&user_auth("alice")),
-            "disable",
-            target,
-            &revision,
-            "c3b_test",
-            true,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.status, 409);
-        assert_eq!(error.body["error"]["code"], "unsupported_runner_version");
-    }
-
-    #[tokio::test]
     async fn project_unregister_rejects_cross_owner_before_active_job_fence() {
         let registry = Arc::new(ShellClientRegistry::default());
         let revision = format!("sha256:{}", "a".repeat(64));
         let target = "agent:owned-runner:demo";
         registry
-            .register(ShellClientRegisterRequest {
-                client_id: "owned-runner".to_string(),
-                agent_instance_id: "instance-owned".to_string(),
-                display_name: None,
-                owner: Some("alice".to_string()),
-                hostname: None,
-                host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    project_lifecycle: true,
-                    ..Default::default()
-                }),
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: "demo".to_string(),
-                    name: Some("demo".to_string()),
-                    path: "/tmp/demo".to_string(),
-                    allow_patch: true,
-                    kind: None,
-                    description: None,
-                    hooks: Vec::new(),
-                    disabled: false,
-                    revision: Some(revision.clone()),
-                    git_branch: None,
-                    git_head: None,
-                    git_dirty: None,
-                    updated_at: 1,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("polling-v1".to_string()),
-                policy: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-            })
+            .register(crate::test_support::current_runner_registration(
+                ShellClientRegisterRequest {
+                    client_id: "owned-runner".to_string(),
+                    agent_instance_id: "instance-owned".to_string(),
+                    display_name: None,
+                    owner: Some("alice".to_string()),
+                    hostname: None,
+                    host_context: None,
+                    capabilities: Some(ShellClientCapabilities {
+                        jobs: true,
+                        async_jobs: true,
+                        async_shell_jobs: true,
+                        project_lifecycle: true,
+                        ..Default::default()
+                    }),
+                    projects: Some(vec![ShellAgentProjectSummary {
+                        id: "demo".to_string(),
+                        name: Some("demo".to_string()),
+                        path: "/tmp/demo".to_string(),
+                        allow_patch: true,
+                        kind: None,
+                        description: None,
+                        hooks: Vec::new(),
+                        disabled: false,
+                        revision: Some(revision.clone()),
+                        git_branch: None,
+                        git_head: None,
+                        git_dirty: None,
+                        updated_at: 1,
+                        shell_profile: None,
+                    }]),
+                    agent_protocol_version: Some("polling-v1".to_string()),
+                    policy: None,
+                    process_started_at: None,
+                    build: None,
+                    job_concurrency_limit: None,
+                    job_inventory: None,
+                    coding_agent_providers: None,
+                    coding_agent_inventory: None,
+                },
+            ))
             .await
             .unwrap();
 

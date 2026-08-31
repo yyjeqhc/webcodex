@@ -68,12 +68,19 @@ authentication compatibility, so upgrade the first-party Server and Runner
 together when crossing those changes. A compatibility surface is supported only
 when the current contract explicitly retains it.
 
+Current first-party Runner registration is generation-2-only:
+`capabilities.agent_protocol_generation` must be exactly `2`. A missing value,
+generation `1`, or an unknown generation fails closed before the Runner record is
+accepted. The 22 generation-2 baseline capability booleans are protocol facts;
+omitting or contradicting one rejects registration rather than degrading it to
+unavailable. RegistrationRequired additive capabilities remain explicit and
+fail closed as unavailable when omitted.
+
 Agent protocol labels such as `polling-v1`, `websocket-v1`, `quic-v1` and their
-`v2` inventory variants remain current ingress semantics, not a promise to
-accept an arbitrary older release binary. Registration fails closed:
-`agent_protocol_version` must be present and supported. Additive capability
-fields remain fail-closed when omitted (normally `false`/unavailable), and
-project-inventory paging is sent only when support is explicitly signalled.
+`v2` inventory variants remain current ingress semantics. They select project
+inventory strategy and do not select an older protocol generation or promise to
+accept an arbitrary older release binary. `agent_protocol_version` must still be
+present and supported.
 
 QUIC upgrade note: `[quic].keepalive_interval_secs` now actively configures
 Quinn transport keepalive. The default remains 20 seconds and the accepted

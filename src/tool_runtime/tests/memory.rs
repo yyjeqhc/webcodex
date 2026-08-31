@@ -1539,24 +1539,26 @@ async fn memory_scope_missing_or_incomplete_inventory_is_unknown_until_complete(
 
     runtime
         .shell_clients
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            agent_instance_id: format!("inst-{client_id}"),
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: Some(ShellClientCapabilities::default()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
-            policy: None,
-        })
+        .register(crate::test_support::current_runner_registration(
+            ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+                client_id: client_id.to_string(),
+                agent_instance_id: format!("inst-{client_id}"),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                host_context: None,
+                capabilities: Some(ShellClientCapabilities::default()),
+                projects: None,
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+        ))
         .await
         .unwrap();
     let pending = runtime.memory_scope_list(Some(&admin), None, None).await;

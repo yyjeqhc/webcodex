@@ -14,44 +14,46 @@ async fn mcp_export_runtime_with_capabilities(
     };
     let registry = Arc::new(crate::shell_client::ShellClientRegistry::default());
     registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "exporter".to_string(),
-            agent_instance_id: "inst-export".to_string(),
-            display_name: None,
-            owner: owner.map(str::to_string),
-            hostname: None,
-            host_context: None,
-            capabilities: Some(ShellClientCapabilities {
-                file_read: true,
-                artifact_export_chunk_read: optimized_chunk,
-                artifact_export_streaming_metadata: streaming_metadata,
-                ..Default::default()
-            }),
-            projects: Some(vec![ShellAgentProjectSummary {
-                id: "demo".to_string(),
-                name: Some("Demo".to_string()),
-                path: root.to_string_lossy().to_string(),
-                allow_patch: true,
-                kind: None,
-                description: None,
-                hooks: vec![],
-                disabled: false,
-                revision: None,
-                git_branch: None,
-                git_head: None,
-                git_dirty: None,
-                updated_at: 0,
-                shell_profile: None,
-            }]),
-            agent_protocol_version: Some("polling-v1".to_string()),
-            policy: None,
-        })
+        .register(crate::test_support::current_runner_registration(
+            ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+                client_id: "exporter".to_string(),
+                agent_instance_id: "inst-export".to_string(),
+                display_name: None,
+                owner: owner.map(str::to_string),
+                hostname: None,
+                host_context: None,
+                capabilities: Some(ShellClientCapabilities {
+                    file_read: true,
+                    artifact_export_chunk_read: optimized_chunk,
+                    artifact_export_streaming_metadata: streaming_metadata,
+                    ..Default::default()
+                }),
+                projects: Some(vec![ShellAgentProjectSummary {
+                    id: "demo".to_string(),
+                    name: Some("Demo".to_string()),
+                    path: root.to_string_lossy().to_string(),
+                    allow_patch: true,
+                    kind: None,
+                    description: None,
+                    hooks: vec![],
+                    disabled: false,
+                    revision: None,
+                    git_branch: None,
+                    git_head: None,
+                    git_dirty: None,
+                    updated_at: 0,
+                    shell_profile: None,
+                }]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+        ))
         .await
         .unwrap();
     let runtime = Arc::new(
@@ -339,92 +341,6 @@ async fn complete_mcp_export_resource_read(
         {
             return;
         }
-        expected_offset = end;
-    }
-}
-
-async fn complete_mcp_export_resource_read_legacy(
-    registry: Arc<crate::shell_client::ShellClientRegistry>,
-    path: &str,
-    bytes: Vec<u8>,
-    mime_type: &str,
-    sha256: &str,
-) {
-    use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
-    complete_mcp_export_metadata_with_max(
-        registry.clone(),
-        path,
-        bytes.len(),
-        sha256,
-        mime_type,
-        MAX_PROJECT_ARTIFACT_BYTES,
-    )
-    .await;
-    let mut expected_offset = 0usize;
-    while expected_offset < bytes.len() {
-        let request = loop {
-            if let Some(request) = registry
-                .poll(ShellAgentPollRequest {
-                    client_id: "exporter".to_string(),
-                    agent_instance_id: "inst-export".to_string(),
-                    projects: None,
-                })
-                .await
-                .unwrap()
-            {
-                break request;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        };
-        assert_eq!(request.kind, "file_read_project_artifact");
-        assert!(
-            registry
-                .poll(ShellAgentPollRequest {
-                    client_id: "exporter".to_string(),
-                    agent_instance_id: "inst-export".to_string(),
-                    projects: None,
-                })
-                .await
-                .unwrap()
-                .is_none(),
-            "legacy fallback must keep at most one public artifact read in flight"
-        );
-        let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
-        assert_eq!(payload["path"], path);
-        assert_eq!(payload["max_file_bytes"], MAX_PROJECT_ARTIFACT_BYTES);
-        let offset = payload["offset"].as_u64().unwrap() as usize;
-        let length = payload["length"].as_u64().unwrap() as usize;
-        assert_eq!(offset, expected_offset);
-        let end = offset.saturating_add(length).min(bytes.len());
-        let chunk = &bytes[offset..end];
-        let eof = end == bytes.len();
-        registry
-            .complete(ShellAgentResultRequest {
-                client_id: "exporter".to_string(),
-                agent_instance_id: "inst-export".to_string(),
-                request_id: request.request_id,
-                exit_code: Some(0),
-                stdout: Some(
-                    json!({
-                        "path": path,
-                        "mime_type": mime_type,
-                        "file_bytes": bytes.len(),
-                        "sha256": sha256,
-                        "offset": offset,
-                        "bytes_returned": chunk.len(),
-                        "content_base64": general_purpose::STANDARD.encode(chunk),
-                        "next_offset": end,
-                        "truncated": !eof,
-                        "eof": eof,
-                    })
-                    .to_string(),
-                ),
-                stderr: None,
-                duration_ms: Some(1),
-                error: None,
-            })
-            .await
-            .unwrap();
         expected_offset = end;
     }
 }
@@ -957,132 +873,6 @@ async fn http_mcp_artifact_export_resources_read_streams_valid_json_blob() {
     assert_eq!(
         body["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
         "webcodex"
-    );
-}
-
-#[tokio::test]
-async fn mcp_artifact_export_old_runner_uses_safe_legacy_fallback() {
-    let tmp = tempfile::tempdir().unwrap();
-    let (runtime, registry) =
-        mcp_export_runtime_with_optimized_chunk(tmp.path(), Some("alice"), false).await;
-    let auth = mcp_export_api_auth("key-legacy", "alice");
-    let bytes = vec![0x41; 70 * 1024];
-    let sha256 = format!("{:x}", Sha256::digest(&bytes));
-    let export = issue_mcp_artifact_export_with_metadata_max(
-        runtime.clone(),
-        registry.clone(),
-        auth.clone(),
-        "paper/legacy.pdf",
-        &bytes,
-        "application/pdf",
-        MAX_PROJECT_ARTIFACT_BYTES,
-    )
-    .await;
-    let uri = export["result"]["content"][0]["uri"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let read = tokio::spawn({
-        let runtime = runtime.clone();
-        let auth = auth.clone();
-        let uri = uri.clone();
-        async move {
-            handle_mcp_request(
-                &runtime,
-                rpc(
-                    "resources/read",
-                    Some(json!(3120)),
-                    mcp_2026_params(json!({"uri": uri})),
-                ),
-                Some(&auth),
-            )
-            .await
-        }
-    });
-    complete_mcp_export_resource_read_legacy(
-        registry,
-        "paper/legacy.pdf",
-        bytes.clone(),
-        "application/pdf",
-        &sha256,
-    )
-    .await;
-    let McpOutcome::Ok(value) = read.await.unwrap() else {
-        panic!("old Runner must use the explicit legacy fallback");
-    };
-    let decoded = general_purpose::STANDARD
-        .decode(value["result"]["contents"][0]["blob"].as_str().unwrap())
-        .unwrap();
-    assert_eq!(decoded, bytes);
-}
-
-#[tokio::test]
-async fn mcp_artifact_export_previous_optimized_runner_uses_legacy_metadata_bound() {
-    use crate::shell_protocol::ShellAgentPollRequest;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let (runtime, registry) =
-        mcp_export_runtime_with_capabilities(tmp.path(), Some("alice"), true, false).await;
-    let auth = mcp_export_api_auth("key-pre-streaming-metadata", "alice");
-    let path = "paper/previous-runner-large.pdf";
-    let call = tokio::spawn({
-        let runtime = runtime.clone();
-        let auth = auth.clone();
-        let path = path.to_string();
-        async move {
-            handle_mcp_request(
-                &runtime,
-                rpc(
-                    "tools/call",
-                    Some(json!(3121)),
-                    mcp_2026_params(json!({
-                        "name": "export_project_artifact",
-                        "arguments": {
-                            "project": "agent:exporter:demo",
-                            "path": path,
-                        }
-                    })),
-                ),
-                Some(&auth),
-            )
-            .await
-        }
-    });
-
-    let request = poll_mcp_export_request(&registry).await;
-    assert_eq!(request.kind, "file_read_project_artifact_metadata");
-    let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
-    assert_eq!(payload["path"], path);
-    assert_eq!(payload["max_bytes"], MAX_PROJECT_ARTIFACT_BYTES);
-    complete_mcp_export_request(
-        &registry,
-        request,
-        json!({
-            "path": path,
-            "error": "artifact too large to inspect",
-        }),
-    )
-    .await;
-
-    let McpOutcome::Ok(value) = call.await.unwrap() else {
-        panic!("metadata rejection must remain a normal tool result");
-    };
-    assert_eq!(value["result"]["isError"], true, "result: {value:?}");
-    assert!(value["result"]["structuredContent"]["error"]
-        .as_str()
-        .unwrap()
-        .contains("too large"));
-    assert!(
-        registry
-            .poll(ShellAgentPollRequest {
-                client_id: "exporter".to_string(),
-                agent_instance_id: "inst-export".to_string(),
-                projects: None,
-            })
-            .await
-            .unwrap()
-            .is_none(),
-        "large export must fail during 10 MiB legacy metadata without queuing a chunk read"
     );
 }
 

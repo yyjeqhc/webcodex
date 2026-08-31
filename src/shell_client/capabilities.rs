@@ -1,4 +1,3 @@
-use super::protocol::{AcceptedRunnerProtocol, RunnerProtocolGeneration};
 use crate::shell_protocol::{self as wire, ShellClientCapabilities};
 use std::collections::BTreeSet;
 
@@ -410,50 +409,40 @@ pub(crate) struct RunnerFeatureSet {
 }
 
 impl RunnerFeatureSet {
-    /// Normalize one already-supported registration into canonical feature truth.
+    /// Normalize one accepted generation-2 registration into canonical feature truth.
     ///
-    /// LegacyV1 has no generation baseline and therefore preserves historical
-    /// effective wire semantics exactly. Generation 2 requires every frozen
-    /// baseline capability to remain true in the legacy bool projection during
-    /// the rolling-compatibility window; contradictions reject registration
-    /// instead of being silently ORed with the baseline. RegistrationRequired
-    /// features are never inferred from generation.
+    /// Every frozen generation-2 baseline capability must remain true in the
+    /// explicit bool projection; contradictions reject registration instead of
+    /// being silently inferred. RegistrationRequired features are never inferred
+    /// from generation.
     pub(crate) fn try_from_registration(
-        protocol: AcceptedRunnerProtocol,
         capabilities: &ShellClientCapabilities,
     ) -> Result<Self, String> {
         let mut effective_features = BTreeSet::new();
         for feature in RunnerFeature::all().iter().copied() {
             let advertised = feature.advertised_by(capabilities);
-            match protocol.generation() {
-                RunnerProtocolGeneration::LegacyV1 => {
+            match feature.inference() {
+                RunnerFeatureInference::GenerationEligible => {
+                    if !advertised {
+                        return Err(format!(
+                            "runner generation baseline capability mismatch: {}",
+                            feature.as_wire_name()
+                        ));
+                    }
+                    effective_features.insert(feature);
+                }
+                RunnerFeatureInference::RegistrationRequired => {
                     if advertised {
                         effective_features.insert(feature);
                     }
                 }
-                RunnerProtocolGeneration::V2 => match feature.inference() {
-                    RunnerFeatureInference::GenerationEligible => {
-                        if !advertised {
-                            return Err(format!(
-                                "runner generation baseline capability mismatch: {}",
-                                feature.as_wire_name()
-                            ));
-                        }
-                        effective_features.insert(feature);
-                    }
-                    RunnerFeatureInference::RegistrationRequired => {
-                        if advertised {
-                            effective_features.insert(feature);
-                        }
-                    }
-                },
             }
         }
         Ok(Self { effective_features })
     }
 
     #[cfg(test)]
-    pub(crate) fn from_legacy_wire_for_test(capabilities: &ShellClientCapabilities) -> Self {
+    pub(crate) fn from_wire_for_test(capabilities: &ShellClientCapabilities) -> Self {
         let effective_features = RunnerFeature::all()
             .iter()
             .copied()

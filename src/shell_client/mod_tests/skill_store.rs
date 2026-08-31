@@ -10,7 +10,7 @@ fn skill_store_registration(
     read: bool,
     manage: bool,
 ) -> ShellClientRegisterRequest {
-    ShellClientRegisterRequest {
+    current_runner_registration(ShellClientRegisterRequest {
         client_id: "skill-store-runner".to_string(),
         agent_instance_id: instance.to_string(),
         display_name: None,
@@ -31,7 +31,7 @@ fn skill_store_registration(
         job_inventory: None,
         coding_agent_providers: None,
         coding_agent_inventory: None,
-    }
+    })
 }
 
 fn alice() -> AuthContext {

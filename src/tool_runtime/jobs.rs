@@ -334,9 +334,9 @@ pub(crate) fn recovery_reason_text(
         }),
         (Some("lost_after_reconcile"), None) => Some("lost after reconciliation".to_string()),
         // Jobs lost without entering the reconciliation path keep their original
-        // reason code (e.g. legacy disconnect) and have recovery_state == None.
-        (_, Some("legacy_runner_disconnected")) => {
-            Some("lost: legacy runner disconnected without reconciliation support".to_string())
+        // reason code and have recovery_state == None.
+        (_, Some("runner_disconnected_without_reconciliation")) => {
+            Some("lost: runner disconnected without reconciliation support".to_string())
         }
         (_, Some("runner_transport_disconnected")) => {
             Some("lost: runner transport disconnected".to_string())
@@ -2711,11 +2711,11 @@ mod recovery_projection_tests {
     }
 
     #[test]
-    fn recovery_reason_text_legacy_runner_disconnect() {
-        let text = recovery_reason_text(None, Some("legacy_runner_disconnected"));
+    fn recovery_reason_text_runner_without_reconciliation_disconnect() {
+        let text = recovery_reason_text(None, Some("runner_disconnected_without_reconciliation"));
         assert_eq!(
             text.as_deref(),
-            Some("lost: legacy runner disconnected without reconciliation support")
+            Some("lost: runner disconnected without reconciliation support")
         );
     }
 

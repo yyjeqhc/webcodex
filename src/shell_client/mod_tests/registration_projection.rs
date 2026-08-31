@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn registration_retains_reported_job_concurrency_and_preserves_legacy_unknown() {
+async fn registration_retains_reported_job_concurrency_and_preserves_missing_limit() {
     let registry = ShellClientRegistry::default();
     for limit in [1, 4, 8, 64] {
         let client_id = format!("current-limit-{limit}");
@@ -20,15 +20,15 @@ async fn registration_retains_reported_job_concurrency_and_preserves_legacy_unkn
         );
     }
 
-    let legacy = registry
+    let without_limit = registry
         .register(runner_registration(
-            "legacy-limit",
-            "inst-legacy",
+            "missing-limit",
+            "inst-missing-limit",
             Vec::new(),
         ))
         .await
         .unwrap();
-    assert_eq!(legacy.job_concurrency_limit, None);
+    assert_eq!(without_limit.job_concurrency_limit, None);
 
     for (client_id, limit) in [("invalid-limit-zero", 0), ("invalid-limit-high", 65)] {
         let mut invalid = runner_registration(client_id, "inst-invalid", Vec::new());
@@ -44,7 +44,7 @@ async fn registration_retains_reported_job_concurrency_and_preserves_legacy_unkn
 async fn registry_registers_and_lists_client() {
     let registry = ShellClientRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -61,7 +61,7 @@ async fn registry_registers_and_lists_client() {
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
     let clients = registry.list_clients().await;

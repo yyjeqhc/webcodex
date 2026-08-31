@@ -65,57 +65,59 @@ async fn register_agent_with_lsp_capabilities(
                 owner: Some("owner".to_string()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    file_read: true,
-                    file_write: true,
-                    artifact_export_chunk_read: false,
-                    artifact_export_streaming_metadata: false,
-                    structured_file_delete: false,
-                    apply_text_edit_occurrence: false,
-                    git: true,
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    ssh_shell: false,
-                    persistent_shell: false,
-                    ssh_persistent_shell: false,
-                    structured_validation_argv: true,
-                    structured_cargo_test_count_assertion: true,
-                    structured_go_test_json: true,
-                    structured_go_test_tool: true,
-                    structured_go_test_packages: true,
-                    structured_process_argv: true,
-                    structured_script_payload: false,
-                    internal_posix_script: false,
-                    structured_execution_jobs: false,
-                    detached_process_jobs: false,
-                    lsp_read_only_navigation,
-                    lsp_call_hierarchy,
-                    sandbox_inspect_commands: false,
-                    project_lifecycle: false,
-                    project_path_registration: false,
-                    skill_store_read: false,
-                    skill_store_manage: false,
-                    computer_observe: false,
-                    computer_application_discovery: false,
-                    computer_application_launch: false,
-                    computer_display_observe: false,
-                    computer_pointer_control: false,
-                    computer_clipboard_read: false,
-                    computer_clipboard_write: false,
-                    computer_snapshot_region: false,
-                    computer_accessibility_observe: false,
-                    computer_element_state: false,
-                    computer_control: false,
-                    computer_scroll_to_element: false,
-                    computer_key_input: false,
-                    computer_window_activate: false,
-                    computer_text_input: false,
-                    job_state_reconciliation: false,
-                    coding_agent_runs: false,
-                    agent_protocol_generation: None,
-                }),
+                capabilities: Some(crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities {
+                        shell: true,
+                        file_read: true,
+                        file_write: true,
+                        artifact_export_chunk_read: false,
+                        artifact_export_streaming_metadata: false,
+                        structured_file_delete: false,
+                        apply_text_edit_occurrence: false,
+                        git: true,
+                        jobs: true,
+                        async_jobs: true,
+                        async_shell_jobs: true,
+                        ssh_shell: false,
+                        persistent_shell: false,
+                        ssh_persistent_shell: false,
+                        structured_validation_argv: true,
+                        structured_cargo_test_count_assertion: true,
+                        structured_go_test_json: true,
+                        structured_go_test_tool: true,
+                        structured_go_test_packages: true,
+                        structured_process_argv: true,
+                        structured_script_payload: false,
+                        internal_posix_script: false,
+                        structured_execution_jobs: false,
+                        detached_process_jobs: false,
+                        lsp_read_only_navigation,
+                        lsp_call_hierarchy,
+                        sandbox_inspect_commands: false,
+                        project_lifecycle: false,
+                        project_path_registration: false,
+                        skill_store_read: false,
+                        skill_store_manage: false,
+                        computer_observe: false,
+                        computer_application_discovery: false,
+                        computer_application_launch: false,
+                        computer_display_observe: false,
+                        computer_pointer_control: false,
+                        computer_clipboard_read: false,
+                        computer_clipboard_write: false,
+                        computer_snapshot_region: false,
+                        computer_accessibility_observe: false,
+                        computer_element_state: false,
+                        computer_control: false,
+                        computer_scroll_to_element: false,
+                        computer_key_input: false,
+                        computer_window_activate: false,
+                        computer_text_input: false,
+                        job_state_reconciliation: false,
+                        coding_agent_runs: false,
+                        agent_protocol_generation: None,
+                    },
+                )),
                 projects: Some(vec![ShellAgentProjectSummary {
                     id: project_id.to_string(),
                     name: Some(project_id.to_string()),
@@ -1908,35 +1910,6 @@ async fn code_navigate_preserves_non_rust_navigation_and_bounded_ledger_metadata
 }
 
 #[tokio::test]
-async fn code_navigate_fails_closed_without_runner_capability() {
-    let (_temp, connector, registry) = connector_with_lsp(false).await;
-    let task_id = start_read_only_task(&connector, "inspect semantic status").await;
-    let outcome = connector
-        .call(
-            "code_navigate",
-            json!({ "task_id": task_id, "operation": "status" }),
-            Some(&auth("u1")),
-            ConnectorTransport::Mcp,
-        )
-        .await;
-    assert!(!outcome.ok);
-    assert_eq!(outcome.body["error"]["code"], "capability_failed");
-    assert!(outcome.body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("agent_capability_unavailable"));
-    assert!(registry
-        .poll(ShellAgentPollRequest {
-            client_id: "hosted".to_string(),
-            agent_instance_id: "instance".to_string(),
-            projects: None,
-        })
-        .await
-        .unwrap()
-        .is_none());
-}
-
-#[tokio::test]
 async fn code_navigate_requires_project_read_and_rejects_foreign_or_inactive_tasks() {
     let (_temp, connector, registry) = connector_with_lsp(true).await;
     let task_id = start_read_only_task(&connector, "inspect task ownership").await;
@@ -2294,41 +2267,9 @@ async fn code_impact_is_available_in_normal_inspect_and_read_only_tasks() {
 }
 
 #[tokio::test]
-async fn code_impact_requires_distinct_capability_scope_and_active_owned_task() {
-    let (_temp, connector, registry) = connector_with_lsp_capabilities(true, false).await;
+async fn code_impact_requires_distinct_scope_and_active_owned_task() {
+    let (_temp, connector, _registry) = connector_with_lsp_capabilities(true, true).await;
     let task_id = start_read_only_task(&connector, "inspect impact policy").await;
-    let unavailable = connector
-        .call(
-            "code_impact",
-            json!({
-                "task_id": task_id,
-                "path": "src/main.rs",
-                "line": 1,
-                "column": 1
-            }),
-            Some(&auth("u1")),
-            ConnectorTransport::Mcp,
-        )
-        .await;
-    assert!(!unavailable.ok);
-    assert!(unavailable.body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("lsp_call_hierarchy"));
-    assert!(
-        !unavailable.body.to_string().contains("hosted"),
-        "agent client identity leaked: {}",
-        unavailable.body
-    );
-    assert!(registry
-        .poll(ShellAgentPollRequest {
-            client_id: "hosted".to_string(),
-            agent_instance_id: "instance".to_string(),
-            projects: None,
-        })
-        .await
-        .unwrap()
-        .is_none());
 
     let mut runtime_only = auth("u1");
     runtime_only.scopes = vec![SCOPE_RUNTIME_READ.to_string()];

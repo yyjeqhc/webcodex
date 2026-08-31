@@ -98,6 +98,41 @@ pub(crate) fn test_db() -> (tempfile::TempDir, Arc<crate::Database>) {
     (tmp, Arc::new(db))
 }
 
+/// Upgrade a server-test Runner capability fixture to the current registration
+/// contract while preserving caller-selected RegistrationRequired features.
+/// Tests that exercise registration rejection should construct their wire
+/// capabilities directly instead of using this helper.
+pub(crate) fn current_runner_capabilities(
+    capabilities: crate::shell_protocol::ShellClientCapabilities,
+) -> crate::shell_protocol::ShellClientCapabilities {
+    let mut value = serde_json::to_value(capabilities).expect("serialize Runner test capabilities");
+    let object = value
+        .as_object_mut()
+        .expect("Runner test capabilities must serialize as an object");
+    for capability in crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
+    {
+        object.insert((*capability).to_string(), serde_json::Value::Bool(true));
+    }
+    object.insert(
+        "agent_protocol_generation".to_string(),
+        serde_json::to_value(crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2)
+            .expect("serialize Runner protocol generation"),
+    );
+    serde_json::from_value(value).expect("deserialize canonical Runner test capabilities")
+}
+
+/// Canonicalize an ordinary unit-test Runner registration to the current
+/// generation-2 contract. Protocol-admission tests intentionally bypass this
+/// helper so missing/old generations remain observable failures.
+pub(crate) fn current_runner_registration(
+    mut registration: crate::shell_protocol::ShellClientRegisterRequest,
+) -> crate::shell_protocol::ShellClientRegisterRequest {
+    registration.capabilities = Some(current_runner_capabilities(
+        registration.capabilities.take().unwrap_or_default(),
+    ));
+    registration
+}
+
 /// Bootstrap helper: create a user with the given role directly via the DB
 /// so tests can mint tokens for them.
 pub(crate) fn seed_user_with_role(

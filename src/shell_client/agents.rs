@@ -257,8 +257,7 @@ impl ShellClientRegistry {
             &agent_protocol_version,
             announced_generation,
         )?;
-        let runner_features =
-            RunnerFeatureSet::try_from_registration(accepted_protocol, &capabilities)?;
+        let runner_features = RunnerFeatureSet::try_from_registration(&capabilities)?;
         let job_inventory = body.job_inventory.clone();
         let coding_agent_providers = body.coding_agent_providers.clone();
         let coding_agent_inventory = body.coding_agent_inventory.clone();
@@ -428,12 +427,6 @@ impl ShellClientRegistry {
                 client_id
             ));
         }
-        if inner.clients.get(&client_id).is_some_and(|existing| {
-            existing.agent_instance_id == agent_instance_id
-                && existing.accepted_protocol.generation() != accepted_protocol.generation()
-        }) {
-            return Err("same runner instance cannot change protocol generation".to_string());
-        }
         reject_same_instance_feature_downgrade(
             inner.clients.get(&client_id),
             &agent_instance_id,
@@ -455,36 +448,6 @@ impl ShellClientRegistry {
                     .to_string(),
             );
         }
-        // `agent_instance_id` is the Runner process identity, so a same-process
-        // reconnect that stops advertising structured_file_delete is a
-        // downgrade of process-lifetime capability: reject it before replacing
-        // the current record so a queued structured delete is never handed to a
-        // registration that cannot understand it. false -> false, false -> true
-        // and true -> true reconnects remain allowed.
-        reject_same_instance_feature_downgrade(
-            inner.clients.get(&client_id),
-            &agent_instance_id,
-            &runner_features,
-            RunnerFeature::StructuredFileDelete,
-        )?;
-        // Occurrence enforcement is effect semantics, not optional response
-        // metadata. A same-process reconnect cannot withdraw it while an
-        // occurrence-bearing edit admitted for that process may still be queued.
-        reject_same_instance_feature_downgrade(
-            inner.clients.get(&client_id),
-            &agent_instance_id,
-            &runner_features,
-            RunnerFeature::ApplyTextEditOccurrence,
-        )?;
-        // The dedicated internal-POSIX request kind is also binary support.
-        // A same-process reconnect cannot withdraw it while queued requests may
-        // still target that exact instance.
-        reject_same_instance_feature_downgrade(
-            inner.clients.get(&client_id),
-            &agent_instance_id,
-            &runner_features,
-            RunnerFeature::InternalPosixScript,
-        )?;
         if inner.clients.get(&client_id).is_some_and(|existing| {
             existing.agent_instance_id == agent_instance_id
                 && existing
@@ -500,21 +463,6 @@ impl ShellClientRegistry {
                 "same runner instance cannot change MCP gateway provider inventory".to_string(),
             );
         }
-        // This optimized export request kind is process-lifetime binary support.
-        // Reject same-instance downgrade so a request already admitted for this
-        // process is never handed to a registration claiming it cannot decode it.
-        reject_same_instance_feature_downgrade(
-            inner.clients.get(&client_id),
-            &agent_instance_id,
-            &runner_features,
-            RunnerFeature::ArtifactExportChunkRead,
-        )?;
-        reject_same_instance_feature_downgrade(
-            inner.clients.get(&client_id),
-            &agent_instance_id,
-            &runner_features,
-            RunnerFeature::ArtifactExportStreamingMetadata,
-        )?;
         // Enforce the agent instance lease. `client_id` is the unique active
         // agent identity: at most one agent process may be online for it at a
         // time.
@@ -1095,7 +1043,10 @@ impl ShellClientRegistry {
                             "agent transport disconnected before the queued request was dispatched",
                         )
                     } else {
-                        ("legacy_runner_disconnected", "agent transport disconnected")
+                        (
+                            "runner_disconnected_without_reconciliation",
+                            "agent transport disconnected without reconciliation support",
+                        )
                     };
                     mark_job_lost(job, now, reason, message);
                 }

@@ -6,7 +6,7 @@ async fn register_structured_delete_client(
     structured_file_delete: bool,
 ) {
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -26,7 +26,7 @@ async fn register_structured_delete_client(
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
 }
@@ -98,136 +98,6 @@ async fn enqueue_structured_file_delete_queues_when_capability_advertised() {
 }
 
 #[tokio::test]
-async fn enqueue_structured_file_delete_capability_false_queues_nothing() {
-    let registry = ShellClientRegistry::default();
-    register_structured_delete_client(&registry, "structured-delete-off", false).await;
-    let error = registry
-        .enqueue_structured_file_delete(
-            structured_delete_request("structured-delete-off"),
-            "tester".to_string(),
-        )
-        .await
-        .unwrap_err();
-    assert!(
-        error.starts_with("capability_unavailable:"),
-        "error must be distinguishable for the legacy fallback: {error}"
-    );
-    assert!(
-        error.contains("structured_file_delete"),
-        "error was: {error}"
-    );
-    assert_structured_delete_client_idle(&registry, "structured-delete-off").await;
-}
-
-#[tokio::test]
-async fn enqueue_structured_file_delete_missing_capability_defaults_false() {
-    let registry = ShellClientRegistry::default();
-    // The client advertises related capabilities (file_write, shell) but not
-    // structured_file_delete; the capability must default to false and must
-    // never be inferred from anything else.
-    registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "structured-delete-missing".to_string(),
-            agent_instance_id: "inst".to_string(),
-            display_name: None,
-            owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: Some(ShellClientCapabilities {
-                file_write: true,
-                shell: true,
-                ..Default::default()
-            }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
-            policy: None,
-        })
-        .await
-        .unwrap();
-    let error = registry
-        .enqueue_structured_file_delete(
-            structured_delete_request("structured-delete-missing"),
-            "tester".to_string(),
-        )
-        .await
-        .unwrap_err();
-    assert!(
-        error.starts_with("capability_unavailable:"),
-        "missing capability must fail closed: {error}"
-    );
-    assert_structured_delete_client_idle(&registry, "structured-delete-missing").await;
-}
-
-#[tokio::test]
-async fn enqueue_structured_file_delete_rechecks_capability_atomically_after_revoke() {
-    let registry = ShellClientRegistry::default();
-    register_structured_delete_instance(&registry, "structured-delete-flip", "inst-a", true)
-        .await
-        .unwrap();
-    assert!(registry
-        .client_supports(
-            "structured-delete-flip",
-            crate::shell_protocol::SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
-        )
-        .await
-        .unwrap());
-
-    // A same-instance downgrade is rejected by the monotonic capability rule,
-    // so the only way the current registration loses the capability is a
-    // replacement: the capable instance goes stale and a different instance
-    // without structured_file_delete takes over the lease.
-    registry
-        .set_last_seen_for_test(
-            "structured-delete-flip",
-            chrono::Utc::now().timestamp() - 120,
-        )
-        .await;
-    register_structured_delete_instance(&registry, "structured-delete-flip", "inst-b", false)
-        .await
-        .unwrap();
-    assert!(!registry
-        .client_supports(
-            "structured-delete-flip",
-            crate::shell_protocol::SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
-        )
-        .await
-        .unwrap());
-
-    // The authoritative enqueue must re-check under the registry lock and
-    // queue nothing for the replacement Runner.
-    let error = registry
-        .enqueue_structured_file_delete(
-            structured_delete_request("structured-delete-flip"),
-            "tester".to_string(),
-        )
-        .await
-        .unwrap_err();
-    assert!(
-        error.starts_with("capability_unavailable:"),
-        "revoked capability must fail closed: {error}"
-    );
-    assert_structured_delete_client_idle(&registry, "structured-delete-flip").await;
-    let polled = registry
-        .poll(ShellAgentPollRequest {
-            client_id: "structured-delete-flip".to_string(),
-            agent_instance_id: "inst-b".to_string(),
-            projects: None,
-        })
-        .await
-        .unwrap();
-    assert!(
-        polled.is_none(),
-        "the replacement Runner must receive no file_delete_project_files request: {polled:?}"
-    );
-}
-
-#[tokio::test]
 async fn enqueue_structured_file_delete_unknown_client_fails_closed() {
     let registry = ShellClientRegistry::default();
     let error = registry
@@ -291,60 +161,6 @@ async fn enqueue_structured_file_delete_validates_request_before_locking() {
         .unwrap_err();
     assert_eq!(error, "path cannot be empty");
     assert_structured_delete_client_idle(&registry, "structured-delete-invalid").await;
-}
-
-// ---------------------------------------------------------------------------
-// Structured delete across runner replacement: same-instance capability is
-// process-lifetime (monotonic) and a different-instance replacement never
-// inherits synchronous requests admitted for the replaced process.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn same_instance_structured_file_delete_downgrade_registration_rejected() {
-    let registry = ShellClientRegistry::default();
-    register_structured_delete_instance(&registry, "monotonic-delete", "inst-a", true)
-        .await
-        .unwrap();
-    let error = register_structured_delete_instance(&registry, "monotonic-delete", "inst-a", false)
-        .await
-        .unwrap_err();
-    assert!(
-        error.contains("cannot downgrade structured_file_delete"),
-        "error was: {error}"
-    );
-
-    // The rejected downgrade leaves the original capable registration
-    // authoritative and intact.
-    let view = registry.get_client_view("monotonic-delete").await.unwrap();
-    assert_eq!(view.agent_instance_id, "inst-a");
-    assert!(view.capabilities.structured_file_delete);
-    assert!(registry
-        .client_supports(
-            "monotonic-delete",
-            crate::shell_protocol::SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
-        )
-        .await
-        .unwrap());
-
-    // A queued structured delete is still dispatchable to the capable lease.
-    let (request_id, _rx) = registry
-        .enqueue_structured_file_delete(
-            structured_delete_request("monotonic-delete"),
-            "tester".to_string(),
-        )
-        .await
-        .expect("capable lease must remain authoritative after rejected downgrade");
-    let polled = registry
-        .poll(ShellAgentPollRequest {
-            client_id: "monotonic-delete".to_string(),
-            agent_instance_id: "inst-a".to_string(),
-            projects: None,
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(polled.request_id, request_id);
-    assert_eq!(polled.kind, "file_delete_project_files");
 }
 
 #[tokio::test]

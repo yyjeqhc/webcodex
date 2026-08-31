@@ -1,11 +1,10 @@
 use super::*;
 use crate::shell_protocol::{
-    AgentProtocolGenerationNumber, ShellCommandExecutionState, AGENT_PROTOCOL_GENERATION_LEGACY_V1,
-    AGENT_PROTOCOL_GENERATION_V2, AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
-    AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_POLLING_V2,
-    AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_QUIC_V2,
-    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
+    AgentProtocolGenerationNumber, ShellCommandExecutionState, AGENT_PROTOCOL_GENERATION_V2,
+    AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES, AGENT_PROTOCOL_VERSION_POLLING_V1,
+    AGENT_PROTOCOL_VERSION_POLLING_V2, AGENT_PROTOCOL_VERSION_QUIC_V1,
+    AGENT_PROTOCOL_VERSION_QUIC_V2, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+    AGENT_PROTOCOL_VERSION_WEBSOCKET_V2, SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
 };
 
@@ -126,22 +125,31 @@ fn runner_registration(
 
 fn v2_baseline_capabilities() -> ShellClientCapabilities {
     let mut value = serde_json::Map::new();
-    // Shell is historical true-by-default but remains RegistrationRequired in
-    // every generation, so pin it false in the baseline-only fixture.
+    // Shell remains RegistrationRequired in generation 2, so pin it false in
+    // the baseline-only fixture.
     value.insert("shell".to_string(), serde_json::Value::Bool(false));
     for capability in AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
         value.insert((*capability).to_string(), serde_json::Value::Bool(true));
     }
-    serde_json::from_value(serde_json::Value::Object(value)).unwrap()
+    let mut capabilities: ShellClientCapabilities =
+        serde_json::from_value(serde_json::Value::Object(value)).unwrap();
+    capabilities.agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
+    capabilities
+}
+
+fn current_runner_registration(
+    mut registration: ShellClientRegisterRequest,
+) -> ShellClientRegisterRequest {
+    registration.capabilities = Some(crate::test_support::current_runner_capabilities(
+        registration.capabilities.take().unwrap_or_default(),
+    ));
+    registration
 }
 
 fn async_job_capabilities() -> ShellClientCapabilities {
-    ShellClientCapabilities {
-        async_jobs: true,
-        async_shell_jobs: true,
-        jobs: true,
-        ..Default::default()
-    }
+    let mut capabilities = v2_baseline_capabilities();
+    capabilities.shell = true;
+    capabilities
 }
 
 #[path = "mod_tests/registration_projection.rs"]
@@ -243,7 +251,7 @@ async fn register_computer_test_client(
     text_input_capable: bool,
 ) {
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -269,7 +277,7 @@ async fn register_computer_test_client(
             projects: None,
             agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string()),
             policy: None,
-        })
+        }))
         .await
         .unwrap();
 }
@@ -323,7 +331,7 @@ async fn register_instance_with_capabilities(
     capabilities: ShellClientCapabilities,
 ) -> Result<ShellClientView, String> {
     registry
-        .register(ShellClientRegisterRequest {
+        .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -340,7 +348,7 @@ async fn register_instance_with_capabilities(
             projects: None,
             agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
-        })
+        }))
         .await
 }
 

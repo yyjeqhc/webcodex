@@ -35,12 +35,11 @@ fn default_transport_polling() -> String {
     "polling".to_string()
 }
 
-/// Legacy polling wire label for inline project registration. The `v1`/`v2`
-/// suffix is a rolling-compatibility projection of project inventory strategy,
-/// not the canonical agent protocol generation.
+/// Polling wire label for inline project registration. The `v1`/`v2` suffix
+/// selects project inventory strategy, not the canonical agent protocol generation.
 pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
-/// Legacy polling wire label for paged project inventory. Current Servers
-/// normalize this label at registration ingress before business logic sees it.
+/// Polling wire label for paged project inventory. Current Servers normalize
+/// this label at registration ingress before business logic sees it.
 pub const AGENT_PROTOCOL_VERSION_POLLING_V2: &str = "polling-v2";
 /// Model/user-authored raw shell command ceiling. Raw shell remains a bounded
 /// escape hatch; larger program text belongs in `run_script`, while large
@@ -116,20 +115,20 @@ pub const GO_TEST_PACKAGE_MAX_ITEMS: usize = 8;
 /// Maximum byte length of one focused `go_test` package pattern.
 pub const GO_TEST_PACKAGE_MAX_BYTES: usize = 256;
 
-/// Legacy WebSocket wire label for inline project registration. Kept in the
-/// shared protocol module so Server and Runner agree on the rolling-compatibility
-/// representation without treating the label as canonical transport semantics.
+/// WebSocket wire label for inline project registration. Kept in the shared
+/// protocol module so Server and Runner agree on project-inventory semantics
+/// without treating the label as canonical transport semantics.
 pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V1: &str = "websocket-v1";
-/// Legacy WebSocket wire label for paged project inventory. The `v2` suffix is
-/// compatibility metadata rather than a distinct canonical protocol generation.
+/// WebSocket wire label for paged project inventory. The `v2` suffix is
+/// inventory metadata rather than a distinct canonical protocol generation.
 pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V2: &str = "websocket-v2";
 
-/// Legacy QUIC wire label for inline project registration. QUIC still uses the
+/// QUIC wire label for inline project registration. QUIC still uses the
 /// shared `AgentEnvelope` grammar; the actual transport identity remains the
 /// separate `"quic"` transport state maintained by the Server connection path.
 pub const AGENT_PROTOCOL_VERSION_QUIC_V1: &str = "quic-v1";
-/// Legacy QUIC wire label for paged project inventory. The `v2` suffix is
-/// compatibility metadata rather than a distinct canonical protocol generation.
+/// QUIC wire label for paged project inventory. The `v2` suffix is inventory
+/// metadata rather than a distinct canonical protocol generation.
 pub const AGENT_PROTOCOL_VERSION_QUIC_V2: &str = "quic-v2";
 
 /// Raw additive protocol-generation advertisement carried by Runner registration.
@@ -151,16 +150,14 @@ impl AgentProtocolGenerationNumber {
     }
 }
 
-pub const AGENT_PROTOCOL_GENERATION_LEGACY_V1: AgentProtocolGenerationNumber =
-    AgentProtocolGenerationNumber::new(1);
 pub const AGENT_PROTOCOL_GENERATION_V2: AgentProtocolGenerationNumber =
     AgentProtocolGenerationNumber::new(2);
 
 /// Canonical compatibility identity for the agent request/response grammar.
 ///
-/// All six historical transport x `v1`/`v2` labels below describe the same
-/// compatibility generation. Their suffix difference only projects registration
-/// inventory strategy for rolling compatibility with older Servers.
+/// All six current transport x `v1`/`v2` labels below describe the same request/
+/// response grammar. Their suffix difference only projects registration inventory
+/// strategy; successful Runner registration separately requires protocol generation 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentProtocolCompatibility {
@@ -407,10 +404,10 @@ pub fn shell_computer_request_payload_max_bytes(kind: &str) -> usize {
 }
 pub const SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION: &str = "job_state_reconciliation";
 pub const SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS: &str = "coding_agent_runs";
-/// Capabilities guaranteed by every Runner that explicitly advertises protocol
-/// generation 2. These are protocol facts shared with the Runner so its legacy
-/// bool projection remains compatible with older Servers. Server authority still
-/// uses its typed RunnerFeature classification and verifies this list cannot drift.
+/// Capabilities guaranteed by every accepted protocol-generation-2 Runner.
+/// These explicit bools are protocol facts shared by Server and Runner. Server
+/// authority still uses its typed RunnerFeature classification and verifies this
+/// list cannot drift.
 pub const AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_FILE_READ,
     SHELL_CLIENT_CAPABILITY_FILE_WRITE,
@@ -708,17 +705,13 @@ pub struct ShellClientCapabilities {
     #[serde(default, skip_serializing_if = "is_false")]
     pub job_state_reconciliation: bool,
     /// Runner-owned ACP coding-agent execution with closed typed Run lifecycle.
-    /// Missing on older Runners is false and is never inferred from shell/MCP.
+    /// Optional and never inferred from shell/MCP.
     #[serde(default, skip_serializing_if = "is_false")]
     pub coding_agent_runs: bool,
-    /// Registration-only compatibility envelope for explicit protocol generation.
+    /// Registration-only explicit protocol generation marker.
     ///
-    /// This is deliberately nested under the historically additive capabilities
-    /// object so the current -> latest-stable compatibility contract keeps the
-    /// top-level registration shape unchanged. Stable v0.3.8 itself also ignores
-    /// unknown top-level struct fields, so nesting is a conservative compatibility
-    /// policy rather than a parser requirement. It is not a RunnerFeature and
-    /// Server ingress removes it before retaining the legacy capability projection.
+    /// Current Server ingress requires generation 2 and removes this marker before
+    /// retaining the ordinary capability projection. It is not a RunnerFeature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_protocol_generation: Option<AgentProtocolGenerationNumber>,
 }
@@ -1377,9 +1370,9 @@ pub const DETACHED_IDEMPOTENCY_KEY_MAX_BYTES: usize = 128;
 pub const STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS: u64 = 1;
 pub const STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS: u64 = 3_600;
 pub const STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS: u64 = 60;
-/// Compatibility ceiling for the pre-Phase-C direct synchronous Runner wire.
+/// Ceiling for direct synchronous structured Runner requests.
 /// Durable typed Jobs use `STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS` instead.
-pub const STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS: u64 = 120;
+pub const STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS: u64 = 120;
 pub const PROCESS_TIMEOUT_MAX_SECS: u64 = STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS;
 
 pub const SCRIPT_MIN_BYTES: usize = 1;

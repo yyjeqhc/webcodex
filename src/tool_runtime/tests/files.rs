@@ -412,13 +412,7 @@ async fn delete_project_files_timeout_before_dispatch_reports_not_started() {
     // and the dispatch-aware cancellation proves the request was never
     // dispatched.
     let result = runtime
-        .delete_project_files_structured_agent(
-            &proj,
-            client_id,
-            vec!["tmp.txt".to_string()],
-            project,
-            1,
-        )
+        .delete_project_files_structured_agent(&proj, client_id, vec!["tmp.txt".to_string()], 1)
         .await;
 
     assert!(!result.success, "{:?}", result.error);
@@ -457,7 +451,6 @@ async fn delete_project_files_timeout_after_dispatch_reports_outcome_unknown() {
     let client_id = proj.agent_client_id().unwrap().to_string();
     let task = tokio::spawn({
         let runtime = runtime.clone();
-        let project = project.clone();
         let client_id = client_id.clone();
         async move {
             runtime
@@ -465,7 +458,6 @@ async fn delete_project_files_timeout_after_dispatch_reports_outcome_unknown() {
                     &proj,
                     client_id,
                     vec!["tmp.txt".to_string()],
-                    project,
                     1,
                 )
                 .await
@@ -515,7 +507,6 @@ async fn delete_project_files_waiter_dropped_without_undispatch_proof_reports_ou
     let client_id = proj.agent_client_id().unwrap().to_string();
     let task = tokio::spawn({
         let runtime = runtime.clone();
-        let project = project.clone();
         let client_id = client_id.clone();
         async move {
             runtime
@@ -523,7 +514,6 @@ async fn delete_project_files_waiter_dropped_without_undispatch_proof_reports_ou
                     &proj,
                     client_id,
                     vec!["tmp.txt".to_string()],
-                    project,
                     30,
                 )
                 .await

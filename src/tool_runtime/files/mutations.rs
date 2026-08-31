@@ -598,7 +598,7 @@ impl ToolRuntime {
                 Err(error) => return ToolResult::err(error),
             };
             return self
-                .delete_project_files_structured_agent(&proj, client_id, paths, project, 30)
+                .delete_project_files_structured_agent(&proj, client_id, paths, 30)
                 .await;
         }
 
@@ -651,7 +651,6 @@ impl ToolRuntime {
         proj: &ProjectConfig,
         client_id: String,
         paths: Vec<String>,
-        _project: String,
         wait_timeout_secs: u64,
     ) -> ToolResult {
         let payload = match serde_json::to_string(&json!({"paths": paths})) {

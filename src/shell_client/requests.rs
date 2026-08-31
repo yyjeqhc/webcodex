@@ -978,7 +978,7 @@ impl ShellClientRegistry {
     /// Enqueue one WebCodex-generated POSIX program through the dedicated
     /// Runner runtime. This is not a caller shell escape hatch: the server
     /// selects the language and request kind, arguments are unavailable, and
-    /// older Runners fail closed through an explicit capability fence.
+    /// enqueue retains an atomic generation-2 baseline invariant check.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn enqueue_internal_posix_script(
         &self,

@@ -1,10 +1,8 @@
 use super::*;
 
-async fn mcp_export_runtime_with_capabilities(
+async fn mcp_export_runtime(
     root: &std::path::Path,
     owner: Option<&str>,
-    optimized_chunk: bool,
-    streaming_metadata: bool,
 ) -> (
     Arc<ToolRuntime>,
     Arc<crate::shell_client::ShellClientRegistry>,
@@ -28,12 +26,7 @@ async fn mcp_export_runtime_with_capabilities(
                 owner: owner.map(str::to_string),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
-                    file_read: true,
-                    artifact_export_chunk_read: optimized_chunk,
-                    artifact_export_streaming_metadata: streaming_metadata,
-                    ..Default::default()
-                }),
+                capabilities: Some(ShellClientCapabilities::default()),
                 projects: Some(vec![ShellAgentProjectSummary {
                     id: "demo".to_string(),
                     name: Some("Demo".to_string()),
@@ -61,27 +54,6 @@ async fn mcp_export_runtime_with_capabilities(
             .with_model_surface(ModelSurface::FullOperatorRuntime),
     );
     (runtime, registry)
-}
-
-async fn mcp_export_runtime_with_optimized_chunk(
-    root: &std::path::Path,
-    owner: Option<&str>,
-    optimized_chunk: bool,
-) -> (
-    Arc<ToolRuntime>,
-    Arc<crate::shell_client::ShellClientRegistry>,
-) {
-    mcp_export_runtime_with_capabilities(root, owner, optimized_chunk, optimized_chunk).await
-}
-
-async fn mcp_export_runtime(
-    root: &std::path::Path,
-    owner: Option<&str>,
-) -> (
-    Arc<ToolRuntime>,
-    Arc<crate::shell_client::ShellClientRegistry>,
-) {
-    mcp_export_runtime_with_optimized_chunk(root, owner, true).await
 }
 
 async fn poll_mcp_export_request(

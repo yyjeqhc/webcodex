@@ -705,12 +705,16 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(source, /Refresh failed · showing previous data/);
   assert.match(source, /runtimeCollaborationNeedsRefreshRecovery/);
   assert.match(source, /signature === renderedCollaborationSignature/);
-  const communicationRefreshStart = source.indexOf("async function refreshCommunication");
+  const communicationRefreshStart = source.indexOf("async function performCommunicationRefresh");
   const communicationRefreshEnd = source.indexOf("async function createCommunicationAgent", communicationRefreshStart);
   const communicationRefresh = source.slice(communicationRefreshStart, communicationRefreshEnd);
   assert.match(communicationRefresh, /!includeData \|\| communicationReadAvailable === false/);
   assert.match(communicationRefresh, /fetchCommunicationAgents\(generation, false\)/);
+  assert.match(communicationRefresh, /fetchCommunicationConversations\(generation, false\)/);
   assert.match(communicationRefresh, /fetchCommunicationConversation\(generation, false\)/);
+  assert.match(communicationRefresh, /fetchCommunicationInbox\(generation, false\)/);
+  assert.match(communicationRefresh, /communicationRefreshCoordinator\.refresh\(includeData\)/);
+  assert.doesNotMatch(source, /communicationRefreshInFlight/);
   assert.match(source, /operations && token\) void refreshCommunication\(true\)/);
   assert.match(source, /visibilitychange/);
   const renderProjectsStart = source.indexOf("function renderProjectSelectors");
@@ -784,6 +788,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   const refreshStart = source.indexOf("async function refreshAll");
   const refreshEnd = source.indexOf("function refreshAutoSurfaces", refreshStart);
   assert.equal((source.slice(refreshStart, refreshEnd).match(/fetchOverview\(/g) || []).length, 1);
+  assert.match(source.slice(refreshStart, refreshEnd), /refreshCommunication\(\)/);
   const runnerFilterStart = source.indexOf('el("runtime-device-select")?.addEventListener("change"');
   const runnerFilterEnd = source.indexOf('el("runtime-project-search")', runnerFilterStart);
   const runnerFilter = source.slice(runnerFilterStart, runnerFilterEnd);

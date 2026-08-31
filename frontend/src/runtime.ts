@@ -14,6 +14,7 @@ import {
   runtimeProjectIdentityText,
   preferredRuntimeProjectSelection,
   runtimeCommunicationTranscriptAfterSeq,
+  RuntimeCommunicationRefreshCoordinator,
   runtimeWorkflowSessionSummaryChanged,
   invalidateRuntimeCredential,
   beginRuntimeCredential,
@@ -494,8 +495,8 @@ let selectedCommunicationAgentId = "";
 let selectedCommunicationConversationId = "";
 let communicationReadAvailable: boolean | null = null;
 let communicationManageAvailable: boolean | null = null;
-let communicationRefreshInFlight = false;
 let communicationGeneration = 0;
+const communicationRefreshCoordinator = new RuntimeCommunicationRefreshCoordinator(performCommunicationRefresh);
 const communicationEndpoints = new Map<string, RuntimeCommunicationEndpoint>();
 const pendingEndpointAttach = new Map<string, { key: string; attachmentId: string }>();
 let pendingAgentCreate: { fingerprint: string; key: string } | null = null;
@@ -2918,7 +2919,7 @@ function resetCommunicationSurface(): void {
   selectedCommunicationConversationId = "";
   communicationReadAvailable = null;
   communicationManageAvailable = null;
-  communicationRefreshInFlight = false;
+  communicationRefreshCoordinator.reset();
   communicationEndpoints.clear();
   pendingEndpointAttach.clear();
   pendingAgentCreate = null;
@@ -3411,36 +3412,36 @@ async function renewCommunicationEndpoints(generation: number): Promise<boolean>
   return true;
 }
 
-async function refreshCommunication(includeData = true): Promise<boolean> {
-  if (!token || communicationRefreshInFlight) return true;
-  communicationRefreshInFlight = true;
+async function performCommunicationRefresh(includeData: boolean): Promise<boolean> {
+  if (!token) return true;
   const generation = ++communicationGeneration;
   if (includeData && communicationReadAvailable !== false) {
     setText("runtime-communication-status", tr("Refreshing durable communication…"));
   }
-  try {
-    const endpointsOk = await renewCommunicationEndpoints(generation);
-    if (generation !== communicationGeneration) return false;
-    if (!includeData || communicationReadAvailable === false) return endpointsOk;
-    const agentsOk = await fetchCommunicationAgents(generation, false);
-    if (generation !== communicationGeneration || !agentsOk || communicationReadAvailable !== true) {
-      renderCommunicationSurface();
-      return endpointsOk && agentsOk;
-    }
-    const conversationsOk = await fetchCommunicationConversations(generation, false);
-    if (generation !== communicationGeneration || !conversationsOk || communicationReadAvailable !== true) {
-      renderCommunicationSurface();
-      return endpointsOk && agentsOk && conversationsOk;
-    }
-    const [conversationOk, inboxOk] = await Promise.all([
-      fetchCommunicationConversation(generation, false),
-      fetchCommunicationInbox(generation, false),
-    ]);
+  const endpointsOk = await renewCommunicationEndpoints(generation);
+  if (generation !== communicationGeneration) return false;
+  if (!includeData || communicationReadAvailable === false) return endpointsOk;
+  const agentsOk = await fetchCommunicationAgents(generation, false);
+  if (generation !== communicationGeneration || !agentsOk || communicationReadAvailable !== true) {
     renderCommunicationSurface();
-    return endpointsOk && agentsOk && conversationsOk && conversationOk && inboxOk;
-  } finally {
-    if (generation === communicationGeneration) communicationRefreshInFlight = false;
+    return endpointsOk && agentsOk;
   }
+  const conversationsOk = await fetchCommunicationConversations(generation, false);
+  if (generation !== communicationGeneration || !conversationsOk || communicationReadAvailable !== true) {
+    renderCommunicationSurface();
+    return endpointsOk && agentsOk && conversationsOk;
+  }
+  const [conversationOk, inboxOk] = await Promise.all([
+    fetchCommunicationConversation(generation, false),
+    fetchCommunicationInbox(generation, false),
+  ]);
+  renderCommunicationSurface();
+  return endpointsOk && agentsOk && conversationsOk && conversationOk && inboxOk;
+}
+
+function refreshCommunication(includeData = true): Promise<boolean> {
+  if (!token) return Promise.resolve(true);
+  return communicationRefreshCoordinator.refresh(includeData);
 }
 
 async function createCommunicationAgent(event: Event): Promise<void> {

@@ -250,6 +250,35 @@ function shouldFollowWorkflowSessionLatest(state) {
 function compareText(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
+class RuntimeCommunicationRefreshCoordinator {
+    constructor(runRefresh) {
+        this.runRefresh = runRefresh;
+        this.generation = 0;
+        this.inFlight = null;
+    }
+    refresh(includeData = true) {
+        const generation = this.generation;
+        const current = this.inFlight;
+        if (current && current.generation === generation) {
+            if (!includeData || current.includeData)
+                return current.promise;
+            return current.promise.then(() => this.generation === generation ? this.refresh(true) : false, () => this.generation === generation ? this.refresh(true) : false);
+        }
+        const promise = Promise.resolve().then(() => this.runRefresh(includeData));
+        const started = { includeData, generation, promise };
+        this.inFlight = started;
+        const clear = () => {
+            if (this.inFlight === started)
+                this.inFlight = null;
+        };
+        void promise.then(clear, clear);
+        return promise;
+    }
+    reset() {
+        this.generation += 1;
+        this.inFlight = null;
+    }
+}
 function runtimeCommunicationTranscriptAfterSeq(lastSeq, limit = 100) {
     const normalizedLastSeq = typeof lastSeq === "number" && Number.isSafeInteger(lastSeq)
         ? Math.max(0, lastSeq)
@@ -1139,8 +1168,8 @@ let selectedCommunicationAgentId = "";
 let selectedCommunicationConversationId = "";
 let communicationReadAvailable = null;
 let communicationManageAvailable = null;
-let communicationRefreshInFlight = false;
 let communicationGeneration = 0;
+const communicationRefreshCoordinator = new RuntimeCommunicationRefreshCoordinator(performCommunicationRefresh);
 const communicationEndpoints = new Map();
 const pendingEndpointAttach = new Map();
 let pendingAgentCreate = null;
@@ -3871,7 +3900,7 @@ function resetCommunicationSurface() {
     selectedCommunicationConversationId = "";
     communicationReadAvailable = null;
     communicationManageAvailable = null;
-    communicationRefreshInFlight = false;
+    communicationRefreshCoordinator.reset();
     communicationEndpoints.clear();
     pendingEndpointAttach.clear();
     pendingAgentCreate = null;
@@ -4389,41 +4418,39 @@ async function renewCommunicationEndpoints(generation) {
     }
     return true;
 }
-async function refreshCommunication(includeData = true) {
-    if (!token || communicationRefreshInFlight)
+async function performCommunicationRefresh(includeData) {
+    if (!token)
         return true;
-    communicationRefreshInFlight = true;
     const generation = ++communicationGeneration;
     if (includeData && communicationReadAvailable !== false) {
         setText("runtime-communication-status", tr("Refreshing durable communication…"));
     }
-    try {
-        const endpointsOk = await renewCommunicationEndpoints(generation);
-        if (generation !== communicationGeneration)
-            return false;
-        if (!includeData || communicationReadAvailable === false)
-            return endpointsOk;
-        const agentsOk = await fetchCommunicationAgents(generation, false);
-        if (generation !== communicationGeneration || !agentsOk || communicationReadAvailable !== true) {
-            renderCommunicationSurface();
-            return endpointsOk && agentsOk;
-        }
-        const conversationsOk = await fetchCommunicationConversations(generation, false);
-        if (generation !== communicationGeneration || !conversationsOk || communicationReadAvailable !== true) {
-            renderCommunicationSurface();
-            return endpointsOk && agentsOk && conversationsOk;
-        }
-        const [conversationOk, inboxOk] = await Promise.all([
-            fetchCommunicationConversation(generation, false),
-            fetchCommunicationInbox(generation, false),
-        ]);
+    const endpointsOk = await renewCommunicationEndpoints(generation);
+    if (generation !== communicationGeneration)
+        return false;
+    if (!includeData || communicationReadAvailable === false)
+        return endpointsOk;
+    const agentsOk = await fetchCommunicationAgents(generation, false);
+    if (generation !== communicationGeneration || !agentsOk || communicationReadAvailable !== true) {
         renderCommunicationSurface();
-        return endpointsOk && agentsOk && conversationsOk && conversationOk && inboxOk;
+        return endpointsOk && agentsOk;
     }
-    finally {
-        if (generation === communicationGeneration)
-            communicationRefreshInFlight = false;
+    const conversationsOk = await fetchCommunicationConversations(generation, false);
+    if (generation !== communicationGeneration || !conversationsOk || communicationReadAvailable !== true) {
+        renderCommunicationSurface();
+        return endpointsOk && agentsOk && conversationsOk;
     }
+    const [conversationOk, inboxOk] = await Promise.all([
+        fetchCommunicationConversation(generation, false),
+        fetchCommunicationInbox(generation, false),
+    ]);
+    renderCommunicationSurface();
+    return endpointsOk && agentsOk && conversationsOk && conversationOk && inboxOk;
+}
+function refreshCommunication(includeData = true) {
+    if (!token)
+        return Promise.resolve(true);
+    return communicationRefreshCoordinator.refresh(includeData);
 }
 async function createCommunicationAgent(event) {
     event.preventDefault();

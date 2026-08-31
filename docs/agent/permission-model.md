@@ -35,8 +35,10 @@ WEBCODEX_AUTHORITY_MODE = trusted_agent | restricted
 | Unknown non-empty value | Invalid configuration → consequential tools **fail closed** with reason `invalid_authority_mode:{value}` |
 | `WEBCODEX_PERMISSION_MODE` set (any value) | **Invalid configuration.** The legacy permission-mode env is removed. Consequential tools fail closed with reason `invalid_authority_mode:...` and source `rejected_legacy_env:WEBCODEX_PERMISSION_MODE`. There is no alias and no migration. |
 
-The resolved mode and source are projected on `runtime_status` and
-`start_coding_task` as the `authority` object:
+The resolved mode and source are projected on `runtime_status` and on internal
+full startup diagnostics as the `authority` object. The canonical external
+`work_on_project` response intentionally keeps that full diagnostic block out of
+its sparse model-facing projection:
 
 ```json
 {

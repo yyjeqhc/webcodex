@@ -76,7 +76,6 @@ impl ToolRuntime {
         let lightweight_auth_available =
             self.model_surface() != crate::model_surface::ModelSurface::CanonicalConnector;
         json!({
-            "action_compact_responses": crate::config::action_compact_responses_enabled(),
             "auth": {
                 "shared_key_enabled": lightweight_auth_available
                     && self.runtime_info.auth_enabled

@@ -25,8 +25,8 @@ When adding or renaming a runtime tool, update **all** of:
 Runtime parser/metadata/OAuth policy must stay synchronized for every known tool.
 The **model-visible** registry, MCP `tools/list`, `tool_manifest`, and GPT Actions
 `ToolCallRequest` selector/flattened fields must separately stay synchronized with
-`registered_tool_specs()`. Hidden direct/API compatibility specs must not leak
-names or start-only fields into the model-facing Action schema.
+`registered_tool_specs()`. Internal or retired runtime names must not leak names
+or implementation-only fields into the model-facing Action schema.
 
 ---
 
@@ -106,10 +106,10 @@ failures. `policy_rejected` means policy blocked the request before a write.
   must expose **every** flattened field that GPT Actions need (including nested
   object/list payload fields such as `edits`, `validation`, `labels`,
   `checkpoint_id`, `confirm`, `dry_run`, `include_untracked`, and
-  `include_diff_stat`). Hidden direct/API compatibility tools remain out-of-band
-  parser/dispatch contracts and must not contribute flattened model fields;
-  explicit direct callers should use the canonical `params` envelope, while any
-  retained historical flattened form stays a runtime compatibility detail only.
+  `include_diff_stat`). Internal implementation primitives and retired tool names
+  must not contribute flattened model fields. A retired wire name fails closed;
+  supported direct callers use the canonical model-visible tool contract and
+  `params` envelope rather than an out-of-band compatibility schema.
 - Add/update tests that fail when flattened Action fields are missing.
 - Do **not** loosen `additionalProperties` to `true` as a workaround — list the
   needed flattened fields explicitly.

@@ -217,8 +217,8 @@ See also [`TESTING.md`](../TESTING.md).
 - `validation_summary` is a read of existing ledger evidence; it does not
   re-run Cargo/shell or replace `finish_coding_task`. Handoff and finish reuse
   this projection instead of building independent validation truth.
-- `continuation_feedback` (surfaced by `start_coding_task`,
-  `finish_coding_task`, `session_handoff_summary`; its `validation_delta` part
+- `continuation_feedback` (surfaced by `finish_coding_task` and
+  `session_handoff_summary`; its `validation_delta` part
   also by `validation_summary`) is a deterministic, read-only projection of
   the prior attempt over existing ledger/evidence/Job/message-board state. It
   is never an LLM summary, never a new verdict, never a second attempt state
@@ -266,7 +266,7 @@ canonical authority mode.
 | `restricted` | Runtime tools deny (`restricted_requires_human_authorization`); connector `commands_run` keeps the one-time human approval loop |
 | Legacy env set | Invalid configuration; consequential tools fail closed with `invalid_authority_mode:...` and source `rejected_legacy_env:WEBCODEX_PERMISSION_MODE`. No alias, no migration |
 | Shared surfaces | Both modes share the same tool implementations, schemas, session model, evidence, and audit records |
-| Projection | `runtime_status` / `start_coding_task` report one canonical `authority` object; the old `permissions` profile object is deleted |
+| Projection | `runtime_status` and internal full startup diagnostics report one canonical `authority` object; the sparse external `work_on_project` projection omits it. The old `permissions` profile object is deleted |
 | Connector | Under `trusted_agent`, `commands_run` records a durable `authority_auto_authorized` task event instead of approval records or `approval_required` interruptions |
 
 Hard boundaries are never relaxed by authority mode: OAuth scopes, project
@@ -287,28 +287,30 @@ it never infers readiness from configuration.
 | Layer envelope | Every layer carries `{status, observed_at, source, age_secs, stale_after_secs, reason_code}` plus layer facts |
 | No config-inferred readiness | `connector_endpoint` readiness comes only from readiness probes or successful connector requests; configuration presence never implies `ready`. `runner_process` never fakes "running"; a stale registration is never presented as callable |
 | Explicit Workflow targeting | Full-runtime Workflow Sessions have no process-local or durable window binding. `runtime_status` exposes no Workflow binding layer. Ordinary project tools without an explicit business Session or authorized wrapper recorder execute unlinked to Workflow Session state. This remains separate from Connector-owned window/project/task continuity |
-| Full-runtime start/continue | `start_coding_task(resume_session_id=<id>)` continues exactly that authorized Active same-project Session; omission always creates a fresh Workflow Session. `work_on_project(session_id=<id>)` follows the same exact-resume rule, while omission creates fresh. Stable window or credential identity never selects a Workflow Session |
-| Canonical model coding bootstrap | `work_on_project` is the only ordinary model-discovered coding bootstrap. `registered_tool_specs` defines the canonical runtime model-visible universe used by runtime discovery and generic ToolCall dispatch. A startup-selected model surface may project that universe more narrowly: `local_coding` lists its focused typed set, `adaptive_runtime` lists a smaller typed core plus one long-tail gateway, and `full_operator_runtime` expands the runtime universe. Hidden direct/API compatibility specs such as the advanced coding start may validate parser/dispatch calls but never contribute generic Action selector names or flattened model fields |
+| Full-runtime start/continue | `work_on_project(session_id=<id>)` continues exactly that authorized Active same-project Session; omission creates a fresh Workflow Session. Stable window or credential identity never selects a Workflow Session. The internal `StartCodingTask` primitive is implementation plumbing, not a wire/API continuation entry |
+| Canonical model coding bootstrap | `work_on_project` is the external runtime coding bootstrap. `registered_tool_specs` defines the canonical model-visible runtime universe used by discovery and generic ToolCall admission. A startup-selected model surface may project that universe more narrowly: `local_coding` lists its focused typed set, `adaptive_runtime` lists a smaller typed core plus one long-tail gateway, and `full_operator_runtime` expands the runtime universe. Retired wire names such as `start_coding_task` fail closed before dispatch and never contribute selector names or flattened model fields |
 | Model surface selection | Complete `WEBCODEX_CONNECTOR_SURFACE=task-v1` configuration selects `canonical_connector`. Without it, an unset `WEBCODEX_MCP_MODEL_SURFACE` selects the focused `local_coding` surface; `local-coding-v1`, `adaptive-runtime-v1`, and `full-operator-v1` select `local_coding`, `adaptive_runtime`, and `full_operator_runtime` explicitly. `adaptive_runtime` exposes a small high-frequency typed core plus one bounded long-tail runtime gateway; gateway calls keep the target tool's existing scope, authority, permission, argument, effect, and Session/ACK semantics. A Connector + `WEBCODEX_MCP_MODEL_SURFACE` conflict, an unsupported value, or partial Connector configuration fails startup. MCP GET/initialize, `runtime_status.model_surface`, and the startup log all report the same selection |
 | Meaningful-activity rule | `last_successful_tool_call` records only successful meaningful calls, scoped by principal/project/surface/session/tool. `runtime_status`, `list_tools`, `list_agents`, `list_projects`, and `tool_manifest` never refresh it. Bounded in-memory store; no arguments, outputs, or secrets |
 | Independence | Layers degrade independently; `not_observed` on one layer must not be collapsed into a global offline verdict |
 
 ---
 
-## 8. Startup projection is detail-only (hard cut)
+## 8. Canonical external startup projection (hard cut)
 
-`start_coding_task` accepts exactly one projection control:
-`detail=minimal|standard|full`.
+`work_on_project` is the only external runtime coding bootstrap. The retired
+`start_coding_task` wire/API name and its advanced input schema are not accepted.
+The internal `StartCodingTask` primitive may still use
+`detail=minimal|standard|full` to build bounded startup projections for shared
+implementation paths; that control is not a public tool argument.
 
 | Decision | Choice |
 |---|---|
-| Removed | `compact_startup`, `include_runtime_status`, `include_git`, `include_recent_commits`, `include_rules`, `include_tool_manifest`, `tool_manifest_intent`, `tool_manifest_categories`, `tool_manifest_limit` — removed from the wire and internals |
-| Shared core | MCP, REST, and the GPT Actions wrapper carry one deterministic startup-brief projection; transports do not reconstruct its fields |
-| `standard` | Default bounded Coding brief: strict session/project/workspace, incremental repository instructions, bounded continuation evidence, semantic-navigation summary, blockers/warnings, and concrete next actions; no runtime/connection/authority diagnostics or absolute execution path |
-| `minimal` | Same strict core contract with instruction bodies and bulk continuation lists omitted; keeps Session identity, workspace blockers, and the first next action |
-| `full` | Preserves full runtime/connection/authority/binding diagnostics, recent commits, rules summary, tool manifest, and recommended flow, and embeds the shared core as `startup_brief` |
+| Retired wire entry | `start_coding_task` and its direct/API compatibility schema fail closed; callers migrate to `work_on_project` |
+| External projection | `work_on_project` returns one deterministic sparse startup projection and does not expose full runtime/connection/authority diagnostics |
+| Internal `standard` | Default bounded Coding brief used by shared startup plumbing: strict session/project/workspace, incremental repository instructions, bounded continuation evidence, semantic-navigation summary, blockers/warnings, and concrete next actions |
+| Internal `minimal` / `full` | Retained only as implementation-level projection modes for internal callers/tests; they are not generic HTTP/MCP tool inputs |
 | Rule snapshot lifecycle | Fresh sessions load bounded content; unchanged same-process continuations reuse the in-memory fingerprint snapshot without repeating content; source additions/deletions/content/truncation changes return new bounded content; explicit or restart-restored Sessions reload because durable storage never contains rule bodies |
-| Unknown/legacy fields | Strict unknown-field error; no silent acceptance |
+| Unknown/retired external fields | The retired tool name fails closed before legacy argument interpretation; `work_on_project` keeps its own strict schema |
 
 No alias or dual shape is kept for the removed flags (consistent with §2).
 

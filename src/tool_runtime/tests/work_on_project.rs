@@ -1263,15 +1263,15 @@ async fn path_source_auto_registers_reuses_and_supports_both_coding_entries() {
     );
     assert_eq!(instruction_events(&runtime, &session_id).len(), 2);
 
-    let advanced = ToolCall::from_tool_name(
-        "start_coding_task",
-        json!({
+    let advanced: ToolCall = serde_json::from_value(json!({
+        "tool": "start_coding_task",
+        "params": {
             "client_id": client_id,
             "path": project_path,
-            "title": "advanced path entry",
-            "detail": "standard",
-        }),
-    )
+            "title": "internal path entry",
+            "detail": "standard"
+        }
+    }))
     .unwrap();
     let advanced = dispatch_with_path_runner(
         &runtime,
@@ -1395,15 +1395,15 @@ async fn path_source_explicit_session_mismatch_fails_before_registration() {
     );
     assert_eq!(instruction_events(&runtime, session_id).len(), 1);
 
-    let advanced_mismatch = ToolCall::from_tool_name(
-        "start_coding_task",
-        json!({
+    let advanced_mismatch: ToolCall = serde_json::from_value(json!({
+        "tool": "start_coding_task",
+        "params": {
             "client_id": client_id,
             "path": second_path,
             "resume_session_id": session_id,
             "detail": "standard"
-        }),
-    )
+        }
+    }))
     .unwrap();
     let advanced_mismatch = dispatch_with_path_runner(
         &runtime,

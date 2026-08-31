@@ -1355,29 +1355,13 @@ fn mcp_tools_list_default_retains_output_schema() {
 }
 
 #[test]
-fn explicit_resume_advanced_compatibility_schema_and_metadata_are_retained() {
-    // Ordinary MCP discovery must hide the advanced compatibility bootstrap.
+fn retired_start_coding_task_is_absent_from_mcp_discovery() {
     let payload = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
     assert!(payload["tools"]
         .as_array()
         .unwrap()
         .iter()
         .all(|tool| tool["name"] != "start_coding_task"));
-
-    let spec = crate::tool_runtime::start_coding_task_compatibility_spec();
-    let property = &spec.input_schema["properties"]["resume_session_id"];
-    assert_eq!(property["type"], "string");
-    assert_eq!(property["pattern"], "^wc_sess_[A-Za-z0-9_]+$");
-    let description = property["description"].as_str().unwrap();
-    assert!(description.contains("failure never creates a replacement"));
-    assert!(description.contains("recording_session_id"));
-    let properties = spec.input_schema["properties"].as_object().unwrap();
-    assert!(!properties.contains_key("bind_current"));
-    assert!(!properties.contains_key("new_session"));
-    assert!(spec.description.contains("resume_session_id"));
-    assert!(spec
-        .description
-        .contains("Advanced coding-session bootstrap"));
 }
 
 #[test]

@@ -29,16 +29,6 @@ use serde_json::{json, Value};
 #[test]
 fn continuation_feedback_output_schemas_are_synchronized() {
     let specs = registered_tool_specs();
-    let start = crate::tool_runtime::start_coding_task_compatibility_spec();
-    let start_props = start_full_output_schema(&start)
-        .get("properties")
-        .expect("full startup properties");
-    assert!(
-        start_props
-            .as_object()
-            .is_some_and(|p| p.contains_key("continuation_feedback")),
-        "advanced start_coding_task output schema should expose continuation_feedback"
-    );
     for name in ["finish_coding_task", "session_handoff_summary"] {
         let spec = spec_named(&specs, name);
         let props = &spec.output_schema["properties"]["output"]["properties"];
@@ -61,21 +51,8 @@ fn continuation_feedback_output_schemas_are_synchronized() {
 
 /// Locate the `continuation_feedback` strict sub-schema inside a tool output.
 fn continuation_feedback_subschema(specs: &[ToolSpec], tool: &str) -> Value {
-    if tool == "start_coding_task" {
-        let spec = crate::tool_runtime::start_coding_task_compatibility_spec();
-        return start_full_output_schema(&spec)["properties"]["continuation_feedback"].clone();
-    }
     let spec = spec_named(specs, tool);
     spec.output_schema["properties"]["output"]["properties"]["continuation_feedback"].clone()
-}
-
-fn start_full_output_schema(spec: &ToolSpec) -> &Value {
-    spec.output_schema["properties"]["output"]["oneOf"]
-        .as_array()
-        .expect("start_coding_task detail variants")
-        .iter()
-        .find(|variant| variant["properties"]["detail"]["const"] == "full")
-        .expect("full startup output schema")
 }
 
 /// Walk every object node reachable from `schema` and assert it carries
@@ -113,7 +90,7 @@ fn assert_all_objects_strict(schema: &Value, path: &str, open_boundaries: &[&str
 #[test]
 fn continuation_feedback_schema_is_strict_on_core_objects() {
     let specs = registered_tool_specs();
-    let schema = continuation_feedback_subschema(&specs, "start_coding_task");
+    let schema = continuation_feedback_subschema(&specs, "finish_coding_task");
     // The root continuation_feedback object and every documented core
     // sub-object (attempt, boundary, instruction, event_range, activity,
     // changes, validation, jobs, guidance, outcome, validation_delta,
@@ -135,7 +112,7 @@ fn continuation_feedback_schema_is_strict_on_core_objects() {
 #[test]
 fn continuation_feedback_schema_enums_and_signed_ints_are_stable() {
     let specs = registered_tool_specs();
-    let schema = continuation_feedback_subschema(&specs, "start_coding_task");
+    let schema = continuation_feedback_subschema(&specs, "finish_coding_task");
 
     let status_enum = schema["properties"]["status"]["enum"]
         .as_array()
@@ -258,7 +235,7 @@ fn continuation_feedback_output_conforms_to_strict_schema_shape() {
     );
     let summary = runtime.sessions.summary(&session, Some(200)).unwrap();
     let feedback = feedback_for(&runtime, &summary, "continued");
-    let schema = continuation_feedback_subschema(&registered_tool_specs(), "start_coding_task");
+    let schema = continuation_feedback_subschema(&registered_tool_specs(), "finish_coding_task");
 
     // Every field present in the serialized output must be declared in the
     // strict schema's properties for its parent object (no drift fields).

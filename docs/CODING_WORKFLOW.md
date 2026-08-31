@@ -37,12 +37,11 @@ role selector.
   path/fingerprint identity; false/null/empty body-projection fields are omitted.
   Positive warnings, blockers, truncation, non-default resolution, and noteworthy
   Job state remain explicit.
-- `start_coding_task` remains an advanced/direct compatibility bootstrap for callers
-  that explicitly need managed temporary projects, Session mode/guards, execution
-  context, startup detail, or exact resume. `resume_session_id` continues exactly
-  that Session; omission always creates a fresh Workflow Session. It is intentionally
-  absent from ordinary MCP/OpenAPI model discovery and generic Action flattened fields.
-  Ordinary model coding/review should use `work_on_project`.
+- `work_on_project` is the canonical external coding bootstrap and continuation
+  entry. The retired `start_coding_task` wire/API tool name now fails closed with
+  guidance to use `work_on_project`; its advanced startup fields are not a public
+  compatibility surface. An internal `StartCodingTask` primitive remains only as
+  shared implementation plumbing for the canonical workflow.
 - Choose behavioral roles in the **task instruction**. For implementation work,
   explicitly say to use `implementation_owner` guidance. For a separate review,
   explicitly say to use `independent_review` guidance.
@@ -79,7 +78,7 @@ whether the change is acceptable.
 ```
 
 The role names belong in the instruction text. Do not look for a role parameter
-on `work_on_project`; advanced `start_coding_task` does not add one either.
+on `work_on_project`.
 
 ## Manual multi-window collaboration
 

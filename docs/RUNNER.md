@@ -120,13 +120,14 @@ allow_cwd_anywhere = false
 allowed_roots = ["/root/git"]
 ```
 
-### Temporary projects
+### Temporary-project root
 
-Set `temporary_projects_root` in `agent.toml` to let `start_coding_task`
-create a project from a `client_id` instead of an existing `project`. The
-Runner creates only a new direct child of that root and persists a normal
-`projects.d` record with `kind = "managed_temporary"`. The root must already
-exist and must be allowed by the policy. There is no automatic expiration.
+`temporary_projects_root` remains the bounded root used by WebCodex's internal
+managed-temporary startup primitive. The retired `start_coding_task` wire/API
+entry no longer exposes managed-temporary creation directly. For current
+external workflows, register an existing directory with `work_on_project` path
+input / `register_project`, or create one explicitly with `create_project`. The
+configured root must already exist and be allowed by policy.
 
 ### Registering projects at runtime
 

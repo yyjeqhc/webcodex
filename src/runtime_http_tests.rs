@@ -750,7 +750,7 @@ async fn flattened_tool_manifest_audit_intent_survives_null_params_wrapper() {
 }
 
 #[tokio::test]
-async fn http_start_coding_task_rejects_removed_flattened_startup_params() {
+async fn http_start_coding_task_retirement_precedes_flattened_legacy_params() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
@@ -777,333 +777,30 @@ async fn http_start_coding_task_rejects_removed_flattened_startup_params() {
     let body: Value = resp.take_json().await.unwrap();
     assert_eq!(body["status"], 400);
     let error = body["error"].as_str().unwrap_or_default();
-    assert!(
-        error.contains("invalid arguments for tool 'start_coding_task'")
-            && error.contains("unknown field(s)"),
-        "removed flattened startup params must fail strict validation: {body}"
-    );
-    assert!(
-        error.contains("tool_manifest_intent"),
-        "rejection should name the removed field: {error}"
-    );
+    assert!(error.contains("no longer supported"), "{body}");
+    assert!(error.contains("work_on_project"), "{body}");
 }
 
 // =========================================================================
-// GPT Action compact response experiment (WEBCODEX_ACTION_COMPACT_RESPONSES)
+// Retired compatibility tool entry
 // =========================================================================
 
-/// Serialize access to `WEBCODEX_ACTION_COMPACT_RESPONSES` and restore the
-/// previous process value when dropped.
-struct ActionCompactEnvGuard {
-    _lock: std::sync::MutexGuard<'static, ()>,
-    previous: Option<String>,
-}
-
-impl ActionCompactEnvGuard {
-    fn set(enabled: bool) -> Self {
-        let lock = crate::admin_cli::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous = std::env::var("WEBCODEX_ACTION_COMPACT_RESPONSES").ok();
-        if enabled {
-            std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "true");
-        } else {
-            std::env::remove_var("WEBCODEX_ACTION_COMPACT_RESPONSES");
-        }
-        Self {
-            _lock: lock,
-            previous,
-        }
-    }
-
-    fn enabled() -> Self {
-        Self::set(true)
-    }
-
-    fn disabled() -> Self {
-        Self::set(false)
-    }
-}
-
-impl Drop for ActionCompactEnvGuard {
-    fn drop(&mut self) {
-        match &self.previous {
-            Some(value) => std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", value),
-            None => std::env::remove_var("WEBCODEX_ACTION_COMPACT_RESPONSES"),
-        }
-    }
-}
-
-fn standard_start_coding_task_call_body(project: &str) -> Value {
-    json!({
-        "tool": "start_coding_task",
-        "project": project,
-        "detail": "standard",
-    })
-}
-
 #[tokio::test]
-async fn http_start_coding_task_default_response_is_standard() {
-    let _compact = ActionCompactEnvGuard::disabled();
-
-    let config = test_config(Some("secret"));
-    let (_tmp, db) = test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let (runtime, registry) = register_import_agent_with_capabilities(
-        tmp_proj.path(),
-        Some(crate::shell_protocol::ShellClientCapabilities {
-            shell: true,
-            file_read: true,
-            file_write: true,
-            git: true,
-            ..Default::default()
-        }),
-    )
-    .await;
-    let executor = spawn_startup_agent_executor(registry);
-    let service = Service::new(build_projects_router(config, db, runtime));
-
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({
-            "tool": "start_coding_task",
-            "project": "agent:importer:demo"
-        }))
-        .send(&service)
-        .await;
-
-    assert_eq!(effective_status(&resp), StatusCode::OK);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], true);
-    assert!(body["output"].get("compact").is_none());
-    let session_id = body["output"]["session"]["session_id"]
-        .as_str()
-        .expect("standard response keeps nested session.session_id");
-    assert!(session_id.starts_with("wc_sess_"));
-    assert_eq!(body["output"]["detail"], "standard");
-    assert!(body["output"].get("tool_manifest").is_none());
-    assert!(body["output"].get("recommended_flow").is_none());
-    assert!(body["output"].get("rules").is_none());
-    assert!(body["output"].get("runtime_status").is_none());
-    assert!(body["output"]["instructions"].is_object());
-    assert_eq!(
-        body["output"]["workflow"]["contract"],
-        "webcodex.coding_workflow"
-    );
-    assert_eq!(
-        body["output"]["workflow"]["authority"],
-        "model_guidance_only"
-    );
-    assert!(body["output"]["continuation"].is_object());
-    assert!(body["output"]["workspace"].is_object());
-    assert!(body["output"]["startup_verdict"].is_object());
-    executor.abort();
-}
-
-#[tokio::test]
-async fn http_hidden_start_coding_task_uses_only_canonical_params_envelope() {
-    let _compact = ActionCompactEnvGuard::disabled();
-    let config = test_config(Some("secret"));
-    let (_tmp, db) = test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let (runtime, registry) = register_import_agent_with_capabilities(
-        tmp_proj.path(),
-        Some(crate::shell_protocol::ShellClientCapabilities {
-            shell: true,
-            file_read: true,
-            file_write: true,
-            git: true,
-            ..Default::default()
-        }),
-    )
-    .await;
-    let executor = spawn_startup_agent_executor(registry);
-    let service = Service::new(build_projects_router(config, db, runtime));
-    let advanced = json!({
-        "project": "agent:importer:demo",
-        "mode": "read_only",
-        "detail": "minimal"
-    });
-
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({"tool": "start_coding_task", "params": advanced.clone()}))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::OK);
-    let output: Value = resp.take_json().await.unwrap();
-    assert_eq!(output["success"], true, "{output}");
-    assert_eq!(output["output"]["detail"], "minimal");
-    assert_eq!(output["output"]["session"]["mode"], "read_only");
-    assert!(output["output"]["session"]["session_id"]
-        .as_str()
-        .is_some_and(|id| id.starts_with("wc_sess_")));
-
-    let mut rejected = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({"tool": "start_coding_task", "arguments": advanced}))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&rejected), StatusCode::BAD_REQUEST);
-    let rejected: Value = rejected.take_json().await.unwrap();
-    let error = rejected["error"].as_str().unwrap();
-    assert!(error.contains("arguments"));
-    assert!(error.contains("no longer supported"));
-    assert!(error.contains("params"));
-    executor.abort();
-}
-
-#[tokio::test]
-async fn http_start_coding_task_action_compact_wraps_the_shared_core_brief() {
-    let _compact = ActionCompactEnvGuard::enabled();
-
-    let config = test_config(Some("secret"));
-    let (_tmp, db) = test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let (runtime, registry) = register_import_agent_with_capabilities(
-        tmp_proj.path(),
-        Some(crate::shell_protocol::ShellClientCapabilities {
-            shell: true,
-            file_read: true,
-            file_write: true,
-            git: true,
-            ..Default::default()
-        }),
-    )
-    .await;
-    let executor = spawn_startup_agent_executor(registry);
-    let service = Service::new(build_projects_router(config, db, runtime));
-
-    // REST without the Actions wrapper returns the shared core directly.
-    std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "false");
-    let mut standard_resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&standard_start_coding_task_call_body("agent:importer:demo"))
-        .send(&service)
-        .await;
-    let standard_status = effective_status(&standard_resp);
-    let standard_body: Value = standard_resp.take_json().await.unwrap();
-    assert_eq!(standard_status, StatusCode::OK, "{standard_body}");
-    let standard_session = standard_body["output"]["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert_eq!(standard_body["output"]["detail"], "standard");
-    assert!(standard_body["output"].get("runtime_status").is_none());
-
-    std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "true");
-    let mut compact_resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&standard_start_coding_task_call_body("agent:importer:demo"))
-        .send(&service)
-        .await;
-    let compact_status = effective_status(&compact_resp);
-    let compact_body: Value = compact_resp.take_json().await.unwrap();
-    assert_eq!(compact_status, StatusCode::OK, "{compact_body}");
-    let compact_bytes = serde_json::to_vec(&compact_body).unwrap().len();
-
-    assert_eq!(compact_body["success"], true);
-    assert_eq!(compact_body["output"]["compact"], true);
-    let core = &compact_body["output"]["startup_brief"];
-    let compact_session = core["session"]["session_id"]
-        .as_str()
-        .expect("Actions wrapper must retain core session identity");
-    assert!(compact_session.starts_with("wc_sess_"));
-    assert_eq!(core["detail"], "standard");
-    assert!(core["instructions"].is_object());
-    assert_eq!(core["workflow"]["contract"], "webcodex.coding_workflow");
-    assert_eq!(core["workflow"]["authority"], "model_guidance_only");
-    assert!(core["continuation"].is_object());
-    assert!(core["workspace"].is_object());
-    assert!(core["startup_verdict"]["suggested_next_actions"].is_array());
-    assert!(core.get("runtime_status").is_none());
-    for field in [
-        "detail",
-        "project",
-        "workspace",
-        "workflow",
-        "instructions",
-        "continuation",
-        "semantic_navigation",
-        "blockers",
-        "warnings",
-        "startup_verdict",
-        "deterministic",
-        "llm_summary",
-    ] {
-        assert_eq!(
-            core[field], standard_body["output"][field],
-            "REST and GPT Actions must carry the same shared core field {field}"
-        );
-    }
-    let mut rest_session = standard_body["output"]["session"].clone();
-    let mut action_session = core["session"].clone();
-    rest_session.as_object_mut().unwrap().remove("session_id");
-    action_session.as_object_mut().unwrap().remove("session_id");
-    assert_eq!(action_session, rest_session);
-    assert!(compact_body["output"].get("tool_manifest").is_none());
-    assert!(compact_body["output"].get("recommended_flow").is_none());
-    assert!(
-        compact_bytes < 32 * 1024,
-        "Actions-wrapped standard startup must remain below 32 KiB: {compact_bytes}"
-    );
-    // Both modes create real sessions (execution unchanged).
-    assert_ne!(compact_session, standard_session);
-    executor.abort();
-}
-
-#[tokio::test]
-async fn http_start_coding_task_compact_mode_preserves_error_payload() {
-    let _compact = ActionCompactEnvGuard::enabled();
-
-    let config = test_config(Some("secret"));
-    let (_tmp, db) = test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let (runtime, _registry) = register_import_agent(tmp_proj.path()).await;
-    let service = Service::new(build_projects_router(config, db, runtime));
-
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({
-            "tool": "start_coding_task",
-            "project": "agent:importer:does-not-exist",
-            "detail": "minimal",
-        }))
-        .send(&service)
-        .await;
-
-    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], false);
-    assert!(
-        body["error"].as_str().is_some_and(|e| !e.is_empty()),
-        "compact mode must not drop error text: {body}"
-    );
-    assert!(
-        body.get("output").is_some(),
-        "error ToolResult still carries output field"
-    );
-    assert!(
-        body["output"].get("compact").is_none(),
-        "errors must not be rewritten into compact success shape"
-    );
-}
-
-#[tokio::test]
-async fn http_tools_call_compact_mode_does_not_change_list_tools() {
-    let _compact = ActionCompactEnvGuard::enabled();
-
+async fn http_start_coding_task_is_retired() {
     let (_tmp, service) = phase2_service();
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
-        .json(&json!({"tool": "list_tools"}))
+        .json(&json!({
+            "tool": "start_coding_task",
+            "params": {"project": "agent:importer:demo"}
+        }))
         .send(&service)
         .await;
-    assert_eq!(effective_status(&resp), StatusCode::OK);
+    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
     let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], true);
-    assert!(body["output"]["tools"].is_array());
-    assert!(body["output"].get("compact").is_none());
+    let error = body["error"].as_str().unwrap();
+    assert!(error.contains("no longer supported"), "{error}");
+    assert!(error.contains("work_on_project"), "{error}");
 }
 
 #[test]

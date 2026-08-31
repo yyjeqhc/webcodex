@@ -1,19 +1,6 @@
-use super::super::input_schemas::{
-    finish_coding_task_input_schema, start_coding_task_input_schema, work_on_project_input_schema,
-};
+use super::super::input_schemas::{finish_coding_task_input_schema, work_on_project_input_schema};
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
-
-/// Non-model-facing contract retained for direct/API compatibility. This is
-/// intentionally not returned by `tool_specs()` or ordinary MCP discovery.
-#[allow(dead_code)]
-pub(super) fn start_coding_task_compatibility_spec() -> ToolSpec {
-    tool_spec(
-        "start_coding_task",
-        "Advanced coding-session bootstrap for direct/API compatibility. Prefer work_on_project for ordinary model coding/review; use this entry for managed temporary projects, mode/guards, execution context, startup detail, or exact resume_session_id.",
-        start_coding_task_input_schema(),
-    )
-}
 
 pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![

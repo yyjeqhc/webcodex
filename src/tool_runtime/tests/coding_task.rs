@@ -56,11 +56,10 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         crate::tool_runtime::tool_definition::lookup_tool_definition("start_coding_task").unwrap();
     assert!(start_definition.visibility.is_model_hidden());
 
-    let start_compat = crate::tool_runtime::start_coding_task_compatibility_spec();
-    assert!(start_compat
-        .description
-        .contains("Advanced coding-session bootstrap"));
-    assert!(start_compat.description.contains("Prefer work_on_project"));
+    let retired = ToolCall::from_tool_name("start_coding_task", json!({"project": "demo"}))
+        .expect_err("retired start_coding_task wire entry must fail closed");
+    assert!(retired.contains("no longer supported"));
+    assert!(retired.contains("work_on_project"));
     let finish = specs
         .iter()
         .find(|spec| spec.name == "finish_coding_task")
@@ -71,31 +70,6 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     assert!(finish_session_description.contains("current coding task"));
     assert!(finish_session_description.contains("compatible Session bootstrap"));
     assert!(!finish_session_description.contains("work_on_project"));
-    let start_schema = start_compat.input_schema;
-    assert!(start_schema["required"].as_array().unwrap().is_empty());
-    let start_props = start_schema["properties"].as_object().unwrap();
-    for field in [
-        "project",
-        "client_id",
-        "path",
-        "temporary_project_name",
-        "title",
-        "mode",
-        "deny_write_tools",
-        "deny_shell_tools",
-        "execution_context",
-        "detail",
-        "resume_session_id",
-    ] {
-        assert!(start_props.contains_key(field), "missing {field}");
-    }
-    assert_eq!(start_schema["oneOf"].as_array().unwrap().len(), 3);
-    for removed in ["bind_current", "new_session"] {
-        assert!(
-            !start_props.contains_key(removed),
-            "removed field leaked into start schema: {removed}"
-        );
-    }
     let work = spec_named(&specs, "work_on_project");
     let work_props = work.input_schema["properties"].as_object().unwrap();
     for advanced in [
@@ -112,22 +86,6 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         assert!(
             !work_props.contains_key(advanced),
             "work_on_project must not grow advanced start knob {advanced}"
-        );
-    }
-    for removed in [
-        "include_runtime_status",
-        "compact_startup",
-        "include_git",
-        "include_recent_commits",
-        "include_rules",
-        "include_tool_manifest",
-        "tool_manifest_intent",
-        "tool_manifest_categories",
-        "tool_manifest_limit",
-    ] {
-        assert!(
-            !start_props.contains_key(removed),
-            "start_coding_task must expose detail instead of legacy {removed}"
         );
     }
     let start_output = crate::tool_runtime::registry::output_schema_for_tool("start_coding_task");
@@ -270,11 +228,8 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         .sum();
     assert_eq!(operation_count, 23, "no dedicated OpenAPI operations added");
 
-    let call = ToolCall::from_tool_name(
-        "start_coding_task",
-        json!({"project": "agent:test:demo", "detail": "full"}),
-    )
-    .expect("detail should deserialize through ToolCall");
+    let call =
+        internal_start_coding_task_call(json!({"project": "agent:test:demo", "detail": "full"}));
     assert_eq!(
         call.session_log_arguments()["detail"],
         "full",
@@ -283,7 +238,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
 }
 
 #[tokio::test]
-async fn hidden_start_coding_task_keeps_direct_advanced_parse_and_dispatch() {
+async fn hidden_start_coding_task_keeps_internal_advanced_dispatch() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
     let runtime = test_runtime();
@@ -297,16 +252,10 @@ async fn hidden_start_coding_task_keeps_direct_advanced_parse_and_dispatch() {
         "detail": "minimal"
     });
 
-    let parsed = ToolCall::from_tool_name("start_coding_task", params.clone())
-        .expect("hidden advanced bootstrap must remain parser-known");
-    for removed_field in ["bind_current", "new_session"] {
-        let mut removed = params.clone();
-        removed[removed_field] = json!(true);
-        assert!(
-            ToolCall::from_tool_name("start_coding_task", removed).is_err(),
-            "removed {removed_field} must be rejected"
-        );
-    }
+    let wire_error = ToolCall::from_tool_name("start_coding_task", params.clone())
+        .expect_err("retired wire entry must reject the internal advanced primitive");
+    assert!(wire_error.contains("work_on_project"));
+    let parsed = internal_start_coding_task_call(params.clone());
     match parsed {
         ToolCall::StartCodingTask { mode, detail, .. } => {
             assert_eq!(mode, SessionMode::ReadOnly);
@@ -874,13 +823,9 @@ async fn start_coding_task_with_git_inspection(
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::from_tool_name(
-                        "start_coding_task",
-                        json!({
-                            "project": project,
-                        }),
-                    )
-                    .unwrap(),
+                    internal_start_coding_task_call(json!({
+                        "project": project,
+                    })),
                     Some(&auth),
                 )
                 .await
@@ -888,6 +833,11 @@ async fn start_coding_task_with_git_inspection(
     });
     service_agent_task_until_finished(runtime, client_id, &task, "start_coding_task").await;
     task.await.unwrap()
+}
+
+fn internal_start_coding_task_call(params: Value) -> ToolCall {
+    serde_json::from_value(json!({"tool": "start_coding_task", "params": params}))
+        .expect("internal StartCodingTask primitive")
 }
 
 /// Shared helper: dispatch start_coding_task and service every startup agent
@@ -903,10 +853,7 @@ async fn start_coding_task_serviced(
         let auth = auth.clone();
         async move {
             runtime
-                .dispatch_with_auth(
-                    ToolCall::from_tool_name("start_coding_task", params).unwrap(),
-                    Some(&auth),
-                )
+                .dispatch_with_auth(internal_start_coding_task_call(params), Some(&auth))
                 .await
         }
     });
@@ -1183,13 +1130,9 @@ async fn start_coding_task_unknown_project_still_fails() {
     let auth = auth_context(None, true);
     let result = runtime
         .dispatch_with_auth(
-            ToolCall::from_tool_name(
-                "start_coding_task",
-                json!({
-                    "project": "agent:missing:does-not-exist"
-                }),
-            )
-            .unwrap(),
+            internal_start_coding_task_call(json!({
+                "project": "agent:missing:does-not-exist"
+            })),
             Some(&auth),
         )
         .await;
@@ -1247,13 +1190,9 @@ async fn start_coding_task_agent_offline_is_still_blocking() {
     let auth = auth_context(None, true);
     let result = runtime
         .dispatch_with_auth(
-            ToolCall::from_tool_name(
-                "start_coding_task",
-                json!({
-                    "project": project
-                }),
-            )
-            .unwrap(),
+            internal_start_coding_task_call(json!({
+                "project": project
+            })),
             Some(&auth),
         )
         .await;
@@ -1279,32 +1218,15 @@ async fn start_coding_task_agent_offline_is_still_blocking() {
     }
 }
 
-#[tokio::test]
-async fn start_coding_task_rejects_removed_startup_and_manifest_params() {
-    for (field, value) in [
-        ("include_runtime_status", json!(false)),
-        ("compact_startup", json!(true)),
-        ("include_git", json!(false)),
-        ("include_recent_commits", json!(false)),
-        ("include_rules", json!(false)),
-        ("include_tool_manifest", json!(true)),
-        ("tool_manifest_intent", json!("coding")),
-        ("tool_manifest_categories", json!(["workflow", "session"])),
-        ("tool_manifest_limit", json!(2)),
-    ] {
-        let mut params = json!({ "project": "agent:demo:demo", "detail": "standard" });
-        params[field] = value;
-        let error = ToolCall::from_tool_name("start_coding_task", params)
-            .expect_err("removed startup param must be rejected");
-        assert!(
-            error.starts_with("invalid arguments for tool 'start_coding_task': unknown field(s)"),
-            "unexpected rejection error for removed field {field}: {error}"
-        );
-        assert!(
-            error.contains(field),
-            "rejection must name the unknown field {field}: {error}"
-        );
-    }
+#[test]
+fn start_coding_task_rejection_precedes_legacy_argument_validation() {
+    let error = ToolCall::from_tool_name(
+        "start_coding_task",
+        json!({"project": "agent:demo:demo", "include_runtime_status": false}),
+    )
+    .expect_err("retired entry must reject before legacy argument handling");
+    assert!(error.contains("no longer supported"), "{error}");
+    assert!(error.contains("work_on_project"), "{error}");
 }
 
 #[tokio::test]
@@ -3512,14 +3434,10 @@ async fn start_coding_task_standard_omits_repeated_manifest_and_recommended_flow
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::from_tool_name(
-                        "start_coding_task",
-                        json!({
-                            "project": project,
-                            "detail": "standard"
-                        }),
-                    )
-                    .unwrap(),
+                    internal_start_coding_task_call(json!({
+                        "project": project,
+                        "detail": "standard"
+                    })),
                     Some(&auth),
                 )
                 .await

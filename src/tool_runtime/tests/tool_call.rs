@@ -639,14 +639,14 @@ fn from_tool_name_parses_runtime_status() {
 }
 
 #[test]
-fn start_coding_task_parses_managed_temporary_project_request_without_project() {
-    let call = ToolCall::from_tool_name(
-        "start_coding_task",
-        json!({
+fn internal_start_coding_task_deserializes_managed_temporary_project_request() {
+    let call: ToolCall = serde_json::from_value(json!({
+        "tool": "start_coding_task",
+        "params": {
             "client_id": "runner-1",
             "temporary_project_name": "Scratch task"
-        }),
-    )
+        }
+    }))
     .unwrap();
 
     match &call {
@@ -666,33 +666,7 @@ fn start_coding_task_parses_managed_temporary_project_request_without_project() 
 }
 
 #[test]
-fn coding_task_entries_parse_path_source_and_reject_ambiguous_sources() {
-    let start = ToolCall::from_tool_name(
-        "start_coding_task",
-        json!({
-            "client_id": "runner-1",
-            "path": "/root/git/example"
-        }),
-    )
-    .unwrap();
-    match &start {
-        ToolCall::StartCodingTask {
-            project,
-            client_id,
-            path,
-            ..
-        } => {
-            assert!(project.is_empty());
-            assert_eq!(client_id.as_deref(), Some("runner-1"));
-            assert_eq!(path.as_deref(), Some("/root/git/example"));
-        }
-        _ => panic!("expected start_coding_task"),
-    }
-    let start_audit = start.session_log_arguments();
-    assert_eq!(start_audit["path_source_requested"], true);
-    assert!(start_audit.get("path").is_none());
-    assert!(!start_audit.to_string().contains("/root/git/example"));
-
+fn work_on_project_parses_path_source_and_rejects_ambiguous_sources() {
     let work = ToolCall::from_tool_name(
         "work_on_project",
         json!({
@@ -715,11 +689,6 @@ fn coding_task_entries_parse_path_source_and_reject_ambiguous_sources() {
         r"\\server\share\repo",
     ] {
         ToolCall::from_tool_name(
-            "start_coding_task",
-            json!({"client_id": "runner-1", "path": path}),
-        )
-        .unwrap_or_else(|error| panic!("start_coding_task rejected {path:?}: {error}"));
-        ToolCall::from_tool_name(
             "work_on_project",
             json!({"client_id": "runner-1", "path": path, "instruction": "implement it"}),
         )
@@ -727,24 +696,6 @@ fn coding_task_entries_parse_path_source_and_reject_ambiguous_sources() {
     }
 
     for (tool, arguments) in [
-        (
-            "start_coding_task",
-            json!({"project": "agent:x:y", "client_id": "x", "path": "/tmp/y"}),
-        ),
-        ("start_coding_task", json!({"path": "/tmp/y"})),
-        (
-            "start_coding_task",
-            json!({"client_id": "x", "path": "/tmp/y", "temporary_project_name": "tmp"}),
-        ),
-        (
-            "start_coding_task",
-            json!({"client_id": "x", "path": "relative/repo"}),
-        ),
-        (
-            "start_coding_task",
-            json!({"client_id": "x", "path": r"C:repo"}),
-        ),
-        ("start_coding_task", json!({"client_id": "x", "path": ""})),
         (
             "work_on_project",
             json!({"project": "agent:x:y", "path": "/tmp/y", "instruction": "x"}),
@@ -779,16 +730,16 @@ fn coding_task_entries_parse_path_source_and_reject_ambiguous_sources() {
 
 #[test]
 fn session_execution_context_parses_as_strongly_typed_replacement() {
-    let call = ToolCall::from_tool_name(
-        "start_coding_task",
-        json!({
+    let call: ToolCall = serde_json::from_value(json!({
+        "tool": "start_coding_task",
+        "params": {
             "project": "agent:oe:demo",
             "execution_context": {
                 "default_cwd": "frontend",
                 "default_shell": "bash"
             }
-        }),
-    )
+        }
+    }))
     .unwrap();
     assert!(matches!(
         call,
@@ -1305,12 +1256,9 @@ fn from_tool_name_parses_project_management_tools() {
 }
 
 #[test]
-fn start_coding_task_defaults_to_fresh_create_without_resume() {
-    let call = ToolCall::from_tool_name("start_coding_task", json!({"project": "demo"})).unwrap();
-    match call {
-        ToolCall::StartCodingTask {
-            resume_session_id, ..
-        } => assert!(resume_session_id.is_none()),
-        other => panic!("unexpected tool call: {other:?}"),
-    }
+fn retired_start_coding_task_wire_name_is_rejected() {
+    let error = ToolCall::from_tool_name("start_coding_task", json!({"project": "demo"}))
+        .expect_err("retired start_coding_task entry must fail closed");
+    assert!(error.contains("no longer supported"), "{error}");
+    assert!(error.contains("work_on_project"), "{error}");
 }

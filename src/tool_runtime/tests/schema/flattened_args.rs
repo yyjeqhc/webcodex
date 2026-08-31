@@ -2,9 +2,7 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn flattened_compatibility_specs() -> Vec<ToolSpec> {
-    let mut specs = registered_tool_specs();
-    specs.push(crate::tool_runtime::start_coding_task_compatibility_spec());
-    specs
+    registered_tool_specs()
 }
 
 #[test]
@@ -72,12 +70,7 @@ fn call_runtime_tool_flattened_args_exclude_testing_and_debug_metadata() {
         );
     }
 
-    for field in [
-        "summary_only",
-        "include_command_preview",
-        "detail",
-        "compact",
-    ] {
+    for field in ["summary_only", "include_command_preview", "compact"] {
         assert!(
             accepted_fields.contains(field),
             "critical callRuntimeTool flattened arg {field} must remain accepted"
@@ -134,18 +127,6 @@ fn accepted_flattened_args_cover_each_tool_spec_input_property() {
                 );
             }
         }
-    }
-
-    let hidden = crate::tool_runtime::start_coding_task_compatibility_spec();
-    let hidden_properties = hidden.input_schema["properties"].as_object().unwrap();
-    let hidden_accepted = crate::tool_runtime::registry::accepted_flattened_args_for_spec(&hidden)
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    for field in hidden_properties.keys() {
-        assert!(
-            hidden_accepted.contains(field),
-            "hidden compatibility input {field} must remain accepted by its direct runtime contract"
-        );
     }
 }
 

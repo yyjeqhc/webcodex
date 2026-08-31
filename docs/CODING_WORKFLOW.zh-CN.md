@@ -32,11 +32,10 @@ instructions；它不是 role selector。
   为空。Instruction source 始终保留 path/fingerprint identity；false/null/empty 的正文投影
   字段会省略。真实 warning、blocker、truncation、非默认 project resolution 和值得报告的
   Job state 仍会显式返回。
-- `start_coding_task` 保留为 advanced/direct compatibility bootstrap，只供明确需要 managed
-  temporary project、Session mode/guards、execution context、startup detail 或精确 resume
-  的 caller 使用。`resume_session_id` 显式继续 exact Session；省略时始终创建新的 Workflow
-  Session。它不会进入普通 MCP/OpenAPI model discovery 或 generic Action flattened fields；
-  普通模型 coding/review 使用 `work_on_project`。
+- `work_on_project` 是唯一 canonical 的外部 coding bootstrap / continuation 入口。
+  `start_coding_task` 这一旧 wire/API tool name 已退休，调用会 fail closed 并提示改用
+  `work_on_project`；其 advanced startup fields 不再构成公共兼容面。内部仍保留
+  `StartCodingTask` primitive，仅作为 canonical workflow 的共享实现细节。
 - behavioral role 由 **task instruction** 显式选择。实现任务明确写使用
   `implementation_owner` guidance；独立评审明确写使用 `independent_review` guidance。
 - 返回的 role guidance 永远只是 model guidance。它不会创建 authority、permission、
@@ -67,8 +66,7 @@ guidance。沿现有架构实现 <任务>，运行聚焦的 structured validatio
 该改动是否可接受。
 ```
 
-role 名称应写在 instruction 文本中，不要在 `work_on_project` 上寻找 role 参数；advanced
-`start_coding_task` 同样没有 role 参数。
+role 名称应写在 instruction 文本中，不要在 `work_on_project` 上寻找 role 参数。
 
 ## 手动多窗口协作
 

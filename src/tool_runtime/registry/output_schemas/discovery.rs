@@ -30,10 +30,6 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "description": "Safe allowlisted effective configuration of the running Server. This is distinct from runtime_status compact=true response shaping and from health or transport state.",
                     "additionalProperties": false,
                     "properties": {
-                        "action_compact_responses": {
-                            "type": "boolean",
-                            "description": "Whether the GPT Action/API adapter returns its compact response projection."
-                        },
                         "auth": {
                             "type": "object",
                             "additionalProperties": false,
@@ -51,7 +47,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                             "description": "Effective bounded tool-request trace mode; no trace paths, request bodies, headers, or environment values are exposed."
                         }
                     },
-                    "required": ["action_compact_responses", "auth", "tool_request_trace_mode"]
+                    "required": ["auth", "tool_request_trace_mode"]
                 }),
             ),
             ("version", schema_type("string", "Runtime version.")),

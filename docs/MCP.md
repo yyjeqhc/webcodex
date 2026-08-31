@@ -425,7 +425,7 @@ supporting ChatGPT host without a model manually carrying their Base64.
 
 When a broader model coding surface exposes `work_on_project`, use the
 [Coding Workflow](CODING_WORKFLOW.md) for the canonical bootstrap, behavioral-role
-mental model, and validation/closeout guidance. `start_coding_task` remains an
-advanced direct/API compatibility entry rather than a peer model bootstrap; it is
-not advertised by MCP discovery or the GPT Actions generic model schema. See
-[Architecture](ARCHITECTURE.md) and the `webcodex` CLI for operator tooling.
+mental model, and validation/closeout guidance. The retired `start_coding_task`
+wire/API tool name is neither discovered nor directly callable; external callers
+use `work_on_project`. See [Architecture](ARCHITECTURE.md) and the `webcodex` CLI
+for operator tooling.

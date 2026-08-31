@@ -94,7 +94,7 @@ handoff, and finish can reason about the same unit of work.
 |---|---|
 | ID form | `wc_sess_*` (`SESSION_ID_PREFIX`) |
 | Business field | `session_id` on tools that take a workflow session as input |
-| Coding resume field | `resume_session_id` on `start_coding_task`; distinct from ordinary project-tool `session_id` |
+| Coding resume field | `session_id` on canonical external `work_on_project`; the internal startup primitive's `resume_session_id` is not a wire/API field |
 | Recorder field | `recording_session_id` on generic wrappers, including the stateless MCP 2026 tool-argument projection (metadata only; stripped before concrete tool dispatch) |
 
 ### Storage and ownership
@@ -108,7 +108,7 @@ Stateless MCP 2026 also projects optional `ack_session_message_ids` wrapper meta
 A required Guidance message may persist `first_ack_observed_at` for observability. Only the first accepted ACK advances message-observation revision; repeated echoes do not create revision churn. This field means only that the Server once observed an explicit ACK echo. It is not a delivery/read receipt and does not change `status=open`. `resolve_session_message` remains the durable processed-state transition; resolved messages no longer participate in hints or urgent redelivery.
 
 
-Workflow Session targeting is explicit in 0.4. `start_coding_task` and `work_on_project` create a fresh Workflow Session when no resume id is supplied; continuation requires the exact existing `wc_sess_*` id. Ordinary project tools do not infer a Workflow Session from caller identity, window identity, project identity, or prior calls. To record a call in a Workflow Session, pass an explicitly authorized `recording_session_id`; when a tool has its own Session business input, that explicit id is authorized independently.
+Workflow Session targeting is explicit in 0.4. Canonical external `work_on_project` creates a fresh Workflow Session when `session_id` is omitted and continues only the exact existing `wc_sess_*` when it is supplied. The retired `start_coding_task` wire/API name is not a second continuation path. Ordinary project tools do not infer a Workflow Session from caller identity, window identity, project identity, or prior calls. To record a call in a Workflow Session, pass an explicitly authorized `recording_session_id`; when a tool has its own Session business input, that explicit id is authorized independently.
 
 Project scope is fail-closed. An explicit project-scoped business Session or recorder must match the canonical resolved request project before business execution or Session mutation. There is no cross-project warning/escape mode. `complete_session_message` records an answer author only from an explicitly authorized recorder; without one, author Session provenance is absent rather than inferred.
 
@@ -318,12 +318,12 @@ the audit ledger.
 
 ### Full-runtime coding continuity
 
-`start_coding_task` is the advanced/direct start-or-continue aggregate retained
-for full-runtime compatibility. It is not an ordinary model-discovered MCP or
-GPT Actions bootstrap: model-facing discovery and generic Action flattened fields
-use `work_on_project` as the canonical coding entry. The advanced schema remains
-available only to explicit direct/API compatibility callers. With a stable
-transport window, `start_coding_task`'s default behavior is:
+`work_on_project` is the canonical external full-runtime start-or-continue
+aggregate. The former `start_coding_task` tool name and advanced direct/API
+schema are retired and fail closed before dispatch. The Rust
+`ToolCall::StartCodingTask` variant remains internal implementation plumbing for
+shared startup behavior and tests; it is not an external Session-selection or
+compatibility surface.
 
 `work_on_project` deliberately does not use Workflow Session identity, transport
 identity, a client-window key, credentials, project identity, or Server lifetime
@@ -371,8 +371,9 @@ guard failures) apply only to Workflow Sessions.
 ### Continuation feedback (`continuation_feedback`)
 
 `continuation_feedback` is a **deterministic, read-only projection** surfaced
-by `start_coding_task`, `finish_coding_task`, `session_handoff_summary`, and
-(as `validation_delta`) `validation_summary`. It is derived only from existing
+by `finish_coding_task`, `session_handoff_summary`, and (as `validation_delta`)
+`validation_summary`. The internal coding-startup implementation also consumes
+this projection while building canonical `work_on_project` startup state. It is derived only from existing
 persistent state — the Workflow Session ledger, validation evidence, bounded
 Job metadata, and the session message board — and it is never a substitute for
 a `finish_coding_task` verdict.
@@ -380,14 +381,14 @@ a `finish_coding_task` verdict.
 - **Read-only projection contract:** building it directly never executes shell,
   reads project files, enqueues Agent/Runner requests, mutates the ledger,
   refreshes activity, consumes or auto-resolves guidance, or calls an LLM.
-  `start_coding_task` still appends its legitimate new `task_instruction`.
+  Canonical coding startup still appends its legitimate new `task_instruction`.
   Public MCP, REST, or runtime dispatch also records the enclosing tool's
   uniform `tool_call_started` / `tool_call_finished` telemetry, so
   `events_total`, `updated_at`, and activity telemetry are not required to stay
   unchanged across a public call. Those recorder facts are separate from the
   projection's business semantics.
 - **Startup describes the previous attempt:** for reused, explicitly resumed,
-  and restored-after-restart sessions, `start_coding_task` snapshots the
+  and restored-after-restart sessions, canonical `work_on_project` startup snapshots the
   pre-instruction state *before* appending the new instruction, so
   `continuation_feedback.attempt` describes the *previous* attempt's bounded,
   redacted instruction excerpt, activity, changes, current unresolved failure
@@ -475,7 +476,7 @@ workspace, validation, Job, guidance, exploration, and suggested-action
 snapshots that its caller already obtained. It performs no shell, Git, file,
 search, LSP, Agent, or Runner request; does not refresh activity, consume
 guidance, append a ledger event, or call an LLM; and stores no new Session
-data. `start_coding_task` intentionally does not return `handoff_brief`, so the
+data. `work_on_project` intentionally does not return `handoff_brief`, so the
 standard startup core's worst-case size does not grow.
 
 A direct internal `session_handoff_summary(...)` call does not add business
@@ -722,7 +723,7 @@ This lifecycle is **orthogonal** to Workflow Session start/finish tools.
 ### What it is not
 
 - Not a coding / workflow session
-- Not a substitute for `start_coding_task` evidence
+- Not a substitute for canonical coding-startup / `work_on_project` evidence
 - Not an input to `session_summary`, message board, or `finish_coding_task`
 - Not automatically correlated to any `wc_sess_*`
 
@@ -815,8 +816,8 @@ renamed without an explicit compatibility migration:
 - GPT Action OpenAPI operation ids and schemas that mention workflow
   `session_id` / `recording_session_id`
 - MCP tool input schemas for session tools
-- Runtime tool names (`start_session`, `start_coding_task`,
-  `session_summary`, …)
+- Runtime tool names (`start_session`, `work_on_project`,
+  `session_summary`, …); retired wire names are not part of this external surface
 
 ### Internal vs external naming
 

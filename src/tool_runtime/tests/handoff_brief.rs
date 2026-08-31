@@ -1008,7 +1008,7 @@ fn handoff_brief_schema_is_shared_strict_and_absent_from_startup() {
     let specs = registered_tool_specs();
     let finish = spec_named(&specs, "finish_coding_task");
     let handoff = spec_named(&specs, "session_handoff_summary");
-    let start = crate::tool_runtime::start_coding_task_compatibility_spec();
+    let work = spec_named(&specs, "work_on_project");
     let finish_schema =
         &finish.output_schema["properties"]["output"]["properties"]["handoff_brief"];
     let handoff_schema =
@@ -1026,7 +1026,7 @@ fn handoff_brief_schema_is_shared_strict_and_absent_from_startup() {
         .unwrap();
     assert!(truncated_description.contains("600-character"));
     assert!(truncated_description.contains("credential redaction"));
-    assert!(start
+    assert!(work
         .output_schema
         .to_string()
         .find("\"handoff_brief\"")

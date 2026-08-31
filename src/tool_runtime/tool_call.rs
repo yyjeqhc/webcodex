@@ -1997,44 +1997,6 @@ pub enum ToolCall {
     },
 }
 
-/// Strict argument validation for `start_coding_task`: the removed legacy
-/// startup flags must fail loudly instead of being silently ignored by serde.
-fn reject_unknown_start_coding_task_fields(arguments: &Value) -> Result<(), String> {
-    const ALLOWED: &[&str] = &[
-        "project",
-        "client_id",
-        "path",
-        "temporary_project_name",
-        "title",
-        "mode",
-        "deny_write_tools",
-        "deny_shell_tools",
-        "detail",
-        "resume_session_id",
-        "execution_context",
-        // Wrapper/session metadata that transports may leave in params.
-        "session_id",
-        "recording_session_id",
-    ];
-    let Some(object) = arguments.as_object() else {
-        return Ok(());
-    };
-    let unknown: Vec<&str> = object
-        .keys()
-        .map(String::as_str)
-        .filter(|key| !ALLOWED.contains(key))
-        .collect();
-    if unknown.is_empty() {
-        return Ok(());
-    }
-    Err(format!(
-        "invalid arguments for tool 'start_coding_task': unknown field(s) {}. \
-         Startup projection is controlled solely by detail=minimal|standard|full; \
-         the legacy startup flags were removed.",
-        unknown.join(", ")
-    ))
-}
-
 fn validate_coding_project_source_shape(
     tool_name: &str,
     arguments: &Value,
@@ -2307,6 +2269,12 @@ impl ToolCall {
         name: &str,
         arguments: Value,
     ) -> Result<(Self, ToolCallRecorderMetadata), String> {
+        if name == "start_coding_task" {
+            return Err(
+                "tool 'start_coding_task' is no longer supported; use 'work_on_project'"
+                    .to_string(),
+            );
+        }
         // Reject unknown tool names up front with a helpful message that lists
         // every accepted tool and points the caller at listRuntimeTools. This
         // avoids leaking a raw serde "unknown variant" error and gives custom
@@ -2332,10 +2300,6 @@ impl ToolCall {
                 "invalid arguments for tool 'read_project_artifact': field 'max_bytes' is no longer supported; use 'length'"
                     .to_string(),
             );
-        }
-        if name == "start_coding_task" {
-            reject_unknown_start_coding_task_fields(&arguments)?;
-            validate_coding_project_source_shape(name, &arguments, true)?;
         }
         if name == "work_on_project" {
             validate_coding_project_source_shape(name, &arguments, false)?;

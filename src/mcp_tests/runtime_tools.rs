@@ -32,7 +32,7 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
     };
     assert!(
         tools.iter().all(|tool| tool["name"] != "start_coding_task"),
-        "advanced compatibility bootstrap must stay out of MCP tools/list"
+        "retired start_coding_task must stay out of MCP tools/list"
     );
     let description = tool("work_on_project")["description"].as_str().unwrap();
     assert!(
@@ -108,25 +108,6 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
             .any(|field| field.as_str() == Some("include_workspace")),
         "include_workspace must not be required in MCP schema"
     );
-
-    let start_compat = crate::tool_runtime::start_coding_task_compatibility_spec();
-    let start_props = start_compat.input_schema["properties"]
-        .as_object()
-        .expect("advanced start_coding_task compatibility properties");
-    assert_eq!(start_props["detail"]["type"], "string");
-    assert_eq!(
-        start_props["detail"]["enum"],
-        json!(["minimal", "standard", "full"])
-    );
-    assert_eq!(
-        start_props["execution_context"]["properties"]["default_shell"]["enum"],
-        json!(["sh", "bash"])
-    );
-    assert_eq!(
-        start_props["execution_context"]["additionalProperties"],
-        false
-    );
-    assert!(!start_props.contains_key("tool_manifest_intent"));
 
     let update = tool("update_session_context");
     assert_eq!(

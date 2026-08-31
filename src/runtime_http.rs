@@ -16,7 +16,6 @@ use salvo::prelude::*;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-mod action_compact;
 mod import_http;
 mod jobs;
 mod project_files;
@@ -141,19 +140,14 @@ fn render_result(
 
 /// Return the durable ActionAudit projection for one tool result.
 ///
-/// Most tools retain the historical full output. Privacy-sensitive computer
-/// observation tools use the same bounded metadata-only projection as the
-/// Workflow Session ledger, so screenshots and complete window lists never
-/// enter ActionAudit. Coding startup rule prose keeps its existing redaction.
+/// Privacy-sensitive computer observation tools use the same bounded
+/// metadata-only projection as the Workflow Session ledger, so screenshots and
+/// complete window lists never enter ActionAudit.
 fn action_audit_output_for_tool(tool: &str, output: &Value) -> Value {
-    if tool == "start_coding_task" {
-        crate::tool_runtime::startup_brief::startup_output_for_audit(output)
-    } else {
-        crate::tool_runtime::audit_safe_result_for_tool(tool, output)
-    }
+    crate::tool_runtime::audit_safe_result_for_tool(tool, output)
 }
 
-/// Audit the pre-compact tool result, then optionally compact the client-facing body.
+/// Audit and return the canonical tool result.
 fn prepare_action_tools_call_response(
     audit: &ActionAudit,
     tool: &str,
@@ -167,11 +161,7 @@ fn prepare_action_tools_call_response(
         StatusCode::BAD_REQUEST
     };
     let audit_output = action_audit_output_for_tool(tool, &result.output);
-    let response = if crate::config::action_compact_responses_enabled() {
-        action_compact::compact_action_tool_result(tool, result)
-    } else {
-        result
-    };
+    let response = result;
     let mut summary = json!({"output": audit_output});
     if let Some(telemetry) = model_ergonomics
         .and_then(|completion| completion.record_for_tool_result(&response))

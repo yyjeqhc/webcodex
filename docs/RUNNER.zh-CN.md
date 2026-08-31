@@ -106,12 +106,13 @@ allow_cwd_anywhere = false
 allowed_roots = ["/root/git"]
 ```
 
-### 临时项目
+### 临时项目根目录
 
-在 `agent.toml` 中设置 `temporary_projects_root`，可让 `start_coding_task`
-通过 `client_id` 而非已有 `project` 来创建项目。Runner 只在该根目录下创建新的
-直接子目录，并写入一条 `kind = "managed_temporary"` 的 `projects.d` 记录。
-该根目录必须已存在且被 policy 允许。没有自动过期机制。
+`temporary_projects_root` 继续作为 WebCodex 内部 managed-temporary startup primitive
+的有界根目录。旧的 `start_coding_task` wire/API 入口已经退休，不再直接暴露 managed
+temporary 创建。当前外部工作流应通过 `work_on_project` 的 path 输入 / `register_project`
+注册已有目录，或显式使用 `create_project` 创建项目。配置的根目录必须已存在且被 policy
+允许。
 
 ### 运行时注册项目
 

@@ -37,9 +37,7 @@ pub(super) use cleanup::{
     delete_project_files_input_schema, discard_untracked_input_schema,
     git_restore_paths_input_schema,
 };
-pub(super) use coding::{
-    finish_coding_task_input_schema, start_coding_task_input_schema, work_on_project_input_schema,
-};
+pub(super) use coding::{finish_coding_task_input_schema, work_on_project_input_schema};
 pub(crate) use coding_agents::{
     coding_agent_cancel_input_schema, coding_agent_observe_input_schema,
     coding_agent_start_input_schema,

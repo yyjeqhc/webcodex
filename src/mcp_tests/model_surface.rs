@@ -429,7 +429,6 @@ async fn full_operator_explicit_surface_lists_full_runtime_and_dispatches() {
     assert!(names.iter().any(|name| name == "read_files"));
     assert!(names.iter().any(|name| name == "search_project_texts"));
 
-    // start_coding_task (a non-local_coding tool) dispatches on full operator.
     let called = handle_mcp_request(
         &runtime,
         rpc(
@@ -440,10 +439,12 @@ async fn full_operator_explicit_surface_lists_full_runtime_and_dispatches() {
         None,
     )
     .await;
-    assert!(
-        !matches!(&called, McpOutcome::BadRequest(value) if value["error"]["message"].as_str().unwrap().contains("local_coding")),
-        "start_coding_task must not be rejected by the local_coding boundary"
-    );
+    let McpOutcome::BadRequest(value) = called else {
+        panic!("retired start_coding_task must fail closed");
+    };
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(message.contains("no longer supported"), "{message}");
+    assert!(message.contains("work_on_project"), "{message}");
 }
 
 #[tokio::test]

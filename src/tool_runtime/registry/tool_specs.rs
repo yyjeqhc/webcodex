@@ -81,11 +81,6 @@ pub(crate) fn skill_management_tool_specs() -> Vec<ToolSpec> {
         .collect()
 }
 
-#[allow(dead_code)]
-pub(crate) fn start_coding_task_compatibility_spec() -> ToolSpec {
-    coding_tasks::start_coding_task_compatibility_spec()
-}
-
 fn resolve_tool_specs<'a>(
     definitions: impl IntoIterator<Item = &'a ToolDefinition>,
     mut separate_declarations_by_name: BTreeMap<String, ToolSpec>,

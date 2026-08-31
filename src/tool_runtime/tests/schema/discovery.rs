@@ -1347,7 +1347,7 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
         }
         assert!(
             !names.contains(&"start_coding_task"),
-            "{intent} must not expose the advanced compatibility bootstrap: {names:?}"
+            "{intent} must not expose retired start_coding_task: {names:?}"
         );
         if intent == "audit" {
             for required in [

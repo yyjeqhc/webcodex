@@ -1670,7 +1670,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
     let tools = result.output["tools"].as_array().unwrap();
     assert!(
         tools.iter().all(|tool| tool["name"] != "start_coding_task"),
-        "advanced compatibility bootstrap must stay out of the model manifest"
+        "retired start_coding_task must stay out of the model manifest"
     );
     for tool in tools {
         assert!(
@@ -1727,31 +1727,6 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
     }
     for field in ["compact", "summary_only"] {
         assert!(accepted("runtime_status").contains(&field.to_string()));
-    }
-    let start = crate::tool_runtime::start_coding_task_compatibility_spec();
-    let start_accepted = crate::tool_runtime::registry::accepted_flattened_args_for_spec(&start);
-    for field in [
-        "project",
-        "client_id",
-        "path",
-        "temporary_project_name",
-        "title",
-        "mode",
-        "deny_write_tools",
-        "deny_shell_tools",
-        "execution_context",
-        "detail",
-        "resume_session_id",
-        "session_id",
-        TOOL_CALL_RECORDING_SESSION_ID_FIELD,
-    ] {
-        assert!(
-            start_accepted.contains(&field.to_string()),
-            "advanced start_coding_task compatibility spec missing {field}"
-        );
-    }
-    for removed in ["bind_current", "new_session"] {
-        assert!(!start_accepted.contains(&removed.to_string()));
     }
     for field in [
         "project",
@@ -1882,11 +1857,6 @@ async fn tool_manifest_model_fields_and_hidden_start_compatibility_stay_separate
         }
     }
 
-    let start = crate::tool_runtime::start_coding_task_compatibility_spec();
-    let compatibility_fields =
-        crate::tool_runtime::registry::accepted_flattened_args_for_spec(&start)
-            .into_iter()
-            .collect::<BTreeSet<_>>();
     for field in [
         "temporary_project_name",
         "mode",
@@ -1894,23 +1864,18 @@ async fn tool_manifest_model_fields_and_hidden_start_compatibility_stay_separate
         "deny_shell_tools",
         "detail",
         "resume_session_id",
+        "bind_current",
+        "new_session",
     ] {
-        assert!(compatibility_fields.contains(field));
         assert!(
             !accepted_fields.contains(field),
-            "{field} is start-only and must not be owned by the model-visible manifest"
+            "retired start-only field {field} must not be owned by the model-visible manifest"
         );
         assert!(
             !properties.contains_key(field),
-            "start-only flattened arg {field} must remain direct/API-only"
+            "retired start-only flattened arg {field} must not remain in ToolCallRequest"
         );
     }
-    for removed in ["bind_current", "new_session"] {
-        assert!(!compatibility_fields.contains(removed));
-        assert!(!accepted_fields.contains(removed));
-        assert!(!properties.contains_key(removed));
-    }
-    assert!(compatibility_fields.contains("execution_context"));
     assert!(accepted_fields.contains("execution_context"));
     assert!(properties.contains_key("execution_context"));
 
@@ -2164,7 +2129,6 @@ async fn runtime_status_includes_build_metadata() {
 #[tokio::test]
 async fn runtime_status_preserves_allowlisted_effective_config_across_projections() {
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_ACTION_COMPACT_RESPONSES", "true");
     env.set("WEBCODEX_SHARED_KEY_ENABLED", "true");
     env.set("WEBCODEX_ALLOW_ANONYMOUS", "true");
     env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
@@ -2190,10 +2154,9 @@ async fn runtime_status_preserves_allowlisted_effective_config_across_projection
     let config_object = config.as_object().expect("effective_config object");
     assert_eq!(
         config_object.len(),
-        3,
+        2,
         "effective_config must stay allowlisted"
     );
-    assert_eq!(config["action_compact_responses"], true);
     assert_eq!(config["tool_request_trace_mode"], "full");
     let auth = config["auth"].as_object().expect("effective auth object");
     assert_eq!(auth.len(), 4, "effective auth facts must stay allowlisted");

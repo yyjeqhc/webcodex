@@ -382,7 +382,6 @@ DOCX/PPTX/XLSX 等 Office artifact 与 PDF 复用同一 artifact transport，因
 
 更宽的 model coding surface 暴露 `work_on_project` 时，请阅读
 [Coding 工作流](CODING_WORKFLOW.zh-CN.md)，使用 canonical bootstrap / behavioral role
-心智模型，并遵循其中的 validation/closeout guidance。`start_coding_task` 保留为 advanced
-direct/API compatibility 入口，不再作为平级 model bootstrap，也不会由 MCP discovery 或
-GPT Actions generic model schema 宣传。运维工具见
-[架构](ARCHITECTURE.md)与 `webcodex` CLI。
+心智模型，并遵循其中的 validation/closeout guidance。旧的 `start_coding_task` wire/API
+tool name 已退休：既不会 discovery，也不能直接调用；外部 caller 统一使用
+`work_on_project`。运维工具见[架构](ARCHITECTURE.md)与 `webcodex` CLI。

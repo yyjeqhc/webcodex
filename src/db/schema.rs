@@ -803,15 +803,56 @@ fn table_schema_sql(conn: &Connection, table: &str) -> anyhow::Result<String> {
 }
 
 fn normalize_table_schema_sql(sql: &str) -> String {
-    let mut normalized = sql
-        .chars()
-        .filter(|ch| !ch.is_ascii_whitespace())
-        .collect::<String>()
-        .to_ascii_lowercase();
+    let mut normalized = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    let mut in_single_quote = false;
+
+    while let Some(ch) = chars.next() {
+        if in_single_quote {
+            normalized.push(ch);
+            if ch == '\'' {
+                if chars.peek() == Some(&'\'') {
+                    normalized.push(chars.next().expect("peeked escaped single quote"));
+                } else {
+                    in_single_quote = false;
+                }
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' => {
+                in_single_quote = true;
+                normalized.push(ch);
+            }
+            ch if ch.is_ascii_whitespace() => {}
+            ch => normalized.push(ch.to_ascii_lowercase()),
+        }
+    }
+
     while normalized.ends_with(';') {
         normalized.pop();
     }
     normalized
+}
+
+#[cfg(test)]
+mod schema_normalization_tests {
+    use super::normalize_table_schema_sql;
+
+    #[test]
+    fn normalization_preserves_single_quoted_literal_semantics() {
+        assert_eq!(
+            normalize_table_schema_sql(
+                "CREATE TABLE T (V TEXT CHECK(V = 'Keep Case  And  Space''s'));"
+            ),
+            "createtablet(vtextcheck(v='Keep Case  And  Space''s'))"
+        );
+        assert_ne!(
+            normalize_table_schema_sql("CHECK(identity_state = 'attributed')"),
+            normalize_table_schema_sql("CHECK(identity_state = 'ATTRIBUTED')")
+        );
+    }
 }
 
 #[cfg(test)]

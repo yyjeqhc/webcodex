@@ -1032,6 +1032,57 @@ fn post_v039_legacy_memory_constraints_fail_closed_at_open() {
 }
 
 #[test]
+fn memory_schema_literal_case_mismatch_fails_closed_at_open() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("memory-literal-case-mismatch.db");
+    let raw = Connection::open(&path).unwrap();
+    raw.execute_batch(
+        "CREATE TABLE project_memories (
+            memory_id TEXT PRIMARY KEY,
+            memory_scope_id TEXT NOT NULL,
+            memory_key TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            body TEXT NOT NULL,
+            priority TEXT NOT NULL CHECK(priority IN ('high', 'normal', 'low')),
+            bootstrap INTEGER NOT NULL CHECK(bootstrap IN (0, 1)),
+            tags_json TEXT NOT NULL,
+            definition_hash TEXT NOT NULL,
+            generation INTEGER NOT NULL CHECK(generation >= 1),
+            revision TEXT NOT NULL,
+            created_at_unix_ms INTEGER NOT NULL,
+            updated_at_unix_ms INTEGER NOT NULL,
+            created_by_kind TEXT NOT NULL,
+            created_by_principal_digest TEXT NOT NULL,
+            updated_by_kind TEXT NOT NULL,
+            updated_by_principal_digest TEXT NOT NULL,
+            UNIQUE(memory_scope_id, memory_key)
+         );
+         CREATE TABLE project_memory_scopes (
+            memory_scope_id TEXT PRIMARY KEY,
+            identity_state TEXT NOT NULL CHECK(identity_state = 'ATTRIBUTED'),
+            project_runtime_id TEXT NOT NULL,
+            runner_client_id TEXT NOT NULL,
+            root_fingerprint TEXT NOT NULL,
+            created_at_unix_ms INTEGER NOT NULL,
+            last_mutated_at_unix_ms INTEGER NOT NULL
+         );",
+    )
+    .unwrap();
+    drop(raw);
+
+    let error = match Database::open(&path) {
+        Ok(_) => {
+            panic!("literal-case mismatch must not be accepted as the canonical Memory schema")
+        }
+        Err(error) => error,
+    };
+    assert!(
+        format!("{error:#}").contains("unsupported project Memory schema shape"),
+        "unexpected error: {error:#}"
+    );
+}
+
+#[test]
 fn memory_schema_initialization_preserves_unrelated_database_data() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("existing.db");

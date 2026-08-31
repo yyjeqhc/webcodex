@@ -298,6 +298,7 @@ async fn stateless_full_trace_preserves_raw_context_ack_and_records_effective_in
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["result"]["isError"], false, "{body}");
+    crate::tool_request_trace::flush_full_trace_writer();
 
     let trace_dir = full_trace_dir_with_payload(trace_root.path(), "raw_arguments", &arguments);
     let events = std::fs::read_to_string(trace_dir.join("events.jsonl")).unwrap();

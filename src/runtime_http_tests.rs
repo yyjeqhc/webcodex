@@ -655,6 +655,7 @@ async fn http_tools_call_full_trace_captures_raw_effective_and_final_payloads() 
     let (status, response) = http_tool_call(&service, request.clone()).await;
     assert_eq!(status, StatusCode::OK, "{response}");
     assert_eq!(response["success"], true);
+    crate::tool_request_trace::flush_full_trace_writer();
 
     let trace_dir = full_trace_dir_with_payload(trace_root.path(), "raw_request_body", &request);
     let events = std::fs::read_to_string(trace_dir.join("events.jsonl")).unwrap();
@@ -710,6 +711,7 @@ async fn http_tools_call_full_trace_captures_pre_dispatch_error_response() {
     assert!(response["error"]
         .as_str()
         .is_some_and(|error| error.contains("tool")));
+    crate::tool_request_trace::flush_full_trace_writer();
 
     let trace_dir = full_trace_dir_with_payload(trace_root.path(), "final_response", &response);
     let events = std::fs::read_to_string(trace_dir.join("events.jsonl")).unwrap();

@@ -4,15 +4,18 @@
 //! metadata-only behavior. `WEBCODEX_TOOL_REQUEST_TRACE=full` additionally
 //! persists semantic JSON request/argument/result payloads on the Server host.
 //! Full payloads are zstd-compressed files under a bounded trace directory; they
-//! are deliberately not stored in the canonical runtime database.
+//! are deliberately not stored in the canonical runtime database. Compression,
+//! filesystem persistence, reconciliation, and pruning run on a bounded dedicated
+//! writer thread so diagnostic trace maintenance never blocks tool request workers.
 //!
 //! Full tracing is an explicit self-hosted operator diagnostic mode. It may
 //! contain file contents, command input/output, user messages, or other tool
 //! payload data. The trace path never reads WebCodex ingress HTTP Authorization
 //! headers; credential-like values that are themselves part of a tool/Runner
 //! payload are captured like any other payload field. Trace persistence is
-//! fail-open: storage, compression, pruning, or correlation failures never change
-//! tool execution correctness.
+//! fail-open: storage, compression, pruning, correlation failures, or writer
+//! saturation never change tool execution correctness; saturated queues drop
+//! diagnostic records instead of backpressuring tool execution.
 //!
 //! `*_tool_handler_returned` means the handler constructed a response and handed
 //! it to the HTTP framework. It does **not** prove the client received the body;
@@ -29,7 +32,8 @@ use std::future::Future;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{mpsc, Mutex, OnceLock};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 #[cfg(unix)]
 use std::{os::unix::fs::OpenOptionsExt, os::unix::fs::PermissionsExt};
@@ -41,10 +45,14 @@ tokio::task_local! {
 
 const TRACE_CORRELATION_TTL_SECS: i64 = 24 * 60 * 60;
 const MAX_TRACE_CORRELATIONS: usize = 8_192;
-const TRACE_STORE_RECONCILE_INTERVAL: Duration = Duration::from_secs(60);
+// Ordinary writes update accounting incrementally. A full recursive scan exists
+// only to discover out-of-process drift, so keep it deliberately low-frequency.
+const TRACE_STORE_RECONCILE_INTERVAL: Duration = Duration::from_secs(15 * 60);
+const TRACE_WRITER_QUEUE_CAPACITY: usize = 64;
 
 static TRACE_IO_STATE: OnceLock<Mutex<TraceStoreAccounting>> = OnceLock::new();
 static TRACE_CORRELATIONS: OnceLock<Mutex<TraceCorrelations>> = OnceLock::new();
+static TRACE_WRITER: OnceLock<Option<TraceWriter>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 struct TraceCorrelation {
@@ -73,6 +81,30 @@ struct TraceStoreConfig {
     root: PathBuf,
     retention: Duration,
     budget: u64,
+}
+
+#[derive(Debug)]
+enum TraceWrite {
+    Metadata {
+        trace_id: String,
+        phase: String,
+        event: Value,
+        config: TraceStoreConfig,
+    },
+    Payload {
+        trace_id: String,
+        phase: String,
+        value: Value,
+        event: Value,
+        config: TraceStoreConfig,
+    },
+    #[cfg(test)]
+    Flush(mpsc::Sender<()>),
+}
+
+#[derive(Debug)]
+struct TraceWriter {
+    sender: mpsc::SyncSender<TraceWrite>,
 }
 
 #[derive(Debug)]
@@ -244,6 +276,155 @@ fn trace_store_config() -> TraceStoreConfig {
 
 fn trace_io_state() -> &'static Mutex<TraceStoreAccounting> {
     TRACE_IO_STATE.get_or_init(|| Mutex::new(TraceStoreAccounting::default()))
+}
+
+impl TraceWriter {
+    fn start() -> io::Result<Self> {
+        let (sender, receiver) = mpsc::sync_channel(TRACE_WRITER_QUEUE_CAPACITY);
+        thread::Builder::new()
+            .name("webcodex-tool-trace-writer".to_string())
+            .spawn(move || trace_writer_loop(receiver))?;
+        Ok(Self { sender })
+    }
+}
+
+fn trace_writer() -> Option<&'static TraceWriter> {
+    TRACE_WRITER
+        .get_or_init(|| match TraceWriter::start() {
+            Ok(writer) => Some(writer),
+            Err(error) => {
+                tracing::warn!(
+                    event = "tool_trace_writer_unavailable",
+                    error = %error,
+                    "tool_trace_writer_unavailable"
+                );
+                None
+            }
+        })
+        .as_ref()
+}
+
+fn trace_writer_loop(receiver: mpsc::Receiver<TraceWrite>) {
+    while let Ok(write) = receiver.recv() {
+        match write {
+            TraceWrite::Metadata {
+                trace_id,
+                phase,
+                event,
+                config,
+            } => match persist_metadata_event_with_config(&trace_id, event, &config) {
+                Ok(true) => {}
+                Ok(false) => tracing::warn!(
+                    event = "tool_trace_capture_omitted",
+                    server_trace_id = %trace_id,
+                    phase = %phase,
+                    reason = "trace_disk_budget_exceeded",
+                    "tool_trace_capture_omitted"
+                ),
+                Err(error) => tracing::warn!(
+                    event = "tool_trace_capture_failed",
+                    server_trace_id = %trace_id,
+                    phase = %phase,
+                    error = %error,
+                    "tool_trace_capture_failed"
+                ),
+            },
+            TraceWrite::Payload {
+                trace_id,
+                phase,
+                value,
+                event,
+                config,
+            } => match persist_payload_with_config(&trace_id, &phase, &value, event, &config) {
+                Ok(Some((payload_bytes, compressed_bytes, digest, path))) => tracing::info!(
+                    event = "tool_trace_payload_persisted",
+                    server_trace_id = %trace_id,
+                    phase = %phase,
+                    payload_bytes = payload_bytes as u64,
+                    compressed_bytes = compressed_bytes as u64,
+                    payload_sha256 = %digest,
+                    payload_path = %path,
+                    "tool_trace_payload_persisted"
+                ),
+                Ok(None) => tracing::warn!(
+                    event = "tool_trace_capture_omitted",
+                    server_trace_id = %trace_id,
+                    phase = %phase,
+                    reason = "trace_disk_budget_exceeded",
+                    "tool_trace_capture_omitted"
+                ),
+                Err(error) => tracing::warn!(
+                    event = "tool_trace_capture_failed",
+                    server_trace_id = %trace_id,
+                    phase = %phase,
+                    error = %error,
+                    "tool_trace_capture_failed"
+                ),
+            },
+            #[cfg(test)]
+            TraceWrite::Flush(done) => {
+                let _ = done.send(());
+            }
+        }
+    }
+}
+
+fn enqueue_trace_write(write: TraceWrite, trace_id: &str, phase: &str) {
+    let Some(writer) = trace_writer() else {
+        tracing::warn!(
+            event = "tool_trace_capture_failed",
+            server_trace_id = %trace_id,
+            phase = phase,
+            error = "trace writer unavailable",
+            "tool_trace_capture_failed"
+        );
+        return;
+    };
+    match writer.sender.try_send(write) {
+        Ok(()) => {}
+        Err(mpsc::TrySendError::Full(_)) => tracing::warn!(
+            event = "tool_trace_capture_omitted",
+            server_trace_id = %trace_id,
+            phase = phase,
+            reason = "trace_writer_queue_full",
+            "tool_trace_capture_omitted"
+        ),
+        Err(mpsc::TrySendError::Disconnected(_)) => tracing::warn!(
+            event = "tool_trace_capture_failed",
+            server_trace_id = %trace_id,
+            phase = phase,
+            error = "trace writer disconnected",
+            "tool_trace_capture_failed"
+        ),
+    }
+}
+
+fn enqueue_metadata_event(trace_id: &str, phase: &str, event: Value) {
+    enqueue_trace_write(
+        TraceWrite::Metadata {
+            trace_id: trace_id.to_string(),
+            phase: phase.to_string(),
+            event,
+            config: trace_store_config(),
+        },
+        trace_id,
+        phase,
+    );
+}
+
+#[cfg(test)]
+pub(crate) fn flush_full_trace_writer() {
+    let Some(writer) = trace_writer() else {
+        panic!("full trace writer unavailable");
+    };
+    let (done_tx, done_rx) = mpsc::channel();
+    writer
+        .sender
+        .send(TraceWrite::Flush(done_tx))
+        .expect("full trace writer disconnected before flush");
+    done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("full trace writer flush timed out");
 }
 
 fn directory_stats(path: &Path) -> io::Result<(u64, SystemTime)> {
@@ -605,25 +786,34 @@ fn append_event_locked(
     Ok(true)
 }
 
-fn persist_metadata_event(trace_id: &str, event: Value) -> io::Result<bool> {
+fn persist_metadata_event_with_config(
+    trace_id: &str,
+    event: Value,
+    config: &TraceStoreConfig,
+) -> io::Result<bool> {
     let mut accounting = trace_io_state()
         .lock()
         .map_err(|_| io::Error::other("tool trace I/O lock poisoned"))?;
-    let config = trace_store_config();
-    append_event_locked(&mut accounting, &config, trace_id, &event)
+    append_event_locked(&mut accounting, config, trace_id, &event)
 }
 
-fn persist_payload(
+fn persist_metadata_event(trace_id: &str, event: Value) -> io::Result<bool> {
+    let config = trace_store_config();
+    persist_metadata_event_with_config(trace_id, event, &config)
+}
+
+fn persist_payload_with_config(
     trace_id: &str,
     phase: &str,
     value: &Value,
+    mut event: Value,
+    config: &TraceStoreConfig,
 ) -> io::Result<Option<(usize, usize, String, String)>> {
     let raw = serde_json::to_vec(value).map_err(io::Error::other)?;
     let digest = sha256_hex(&raw);
     let compressed = zstd::stream::encode_all(&raw[..], 3)?;
     let file_name = format!("{}-{}.json.zst", Uuid::new_v4(), safe_phase(phase));
     let relative_path = format!("payloads/{file_name}");
-    let mut event = base_event(trace_id, "tool_trace_payload_captured");
     merge_event_fields(
         &mut event,
         json!({
@@ -642,8 +832,7 @@ fn persist_payload(
     let mut accounting = trace_io_state()
         .lock()
         .map_err(|_| io::Error::other("tool trace I/O lock poisoned"))?;
-    let config = trace_store_config();
-    if !reserve_trace_capacity(&mut accounting, &config, trace_id, incoming)? {
+    if !reserve_trace_capacity(&mut accounting, config, trace_id, incoming)? {
         return Ok(None);
     }
     let trace_dir = config.root.join(trace_id);
@@ -705,40 +894,40 @@ fn persist_payload(
         return Err(error);
     }
 
-    commit_trace_write(&mut accounting, &config, trace_id, incoming);
+    commit_trace_write(&mut accounting, config, trace_id, incoming);
     Ok(Some((raw.len(), compressed.len(), digest, relative_path)))
+}
+
+fn persist_payload(
+    trace_id: &str,
+    phase: &str,
+    value: &Value,
+) -> io::Result<Option<(usize, usize, String, String)>> {
+    let config = trace_store_config();
+    persist_payload_with_config(
+        trace_id,
+        phase,
+        value,
+        base_event(trace_id, "tool_trace_payload_captured"),
+        &config,
+    )
 }
 
 fn capture_payload_for_trace(trace_id: &str, phase: &str, value: &Value) {
     if !full_trace_enabled() {
         return;
     }
-    match persist_payload(trace_id, phase, value) {
-        Ok(Some((payload_bytes, compressed_bytes, digest, path))) => tracing::info!(
-            event = "tool_trace_payload_persisted",
-            server_trace_id = %trace_id,
-            phase = phase,
-            payload_bytes = payload_bytes as u64,
-            compressed_bytes = compressed_bytes as u64,
-            payload_sha256 = %digest,
-            payload_path = %path,
-            "tool_trace_payload_persisted"
-        ),
-        Ok(None) => tracing::warn!(
-            event = "tool_trace_capture_omitted",
-            server_trace_id = %trace_id,
-            phase = phase,
-            reason = "trace_disk_budget_exceeded",
-            "tool_trace_capture_omitted"
-        ),
-        Err(error) => tracing::warn!(
-            event = "tool_trace_capture_failed",
-            server_trace_id = %trace_id,
-            phase = phase,
-            error = %error,
-            "tool_trace_capture_failed"
-        ),
-    }
+    enqueue_trace_write(
+        TraceWrite::Payload {
+            trace_id: trace_id.to_string(),
+            phase: phase.to_string(),
+            value: value.clone(),
+            event: base_event(trace_id, "tool_trace_payload_captured"),
+            config: trace_store_config(),
+        },
+        trace_id,
+        phase,
+    );
 }
 
 fn correlations() -> &'static Mutex<TraceCorrelations> {
@@ -852,15 +1041,7 @@ pub(crate) fn record_runner_request_enqueued<T: Serialize>(
                 "runner_git_commit": runner_git_commit,
             }),
         );
-        if let Err(error) = persist_metadata_event(&trace_id, event) {
-            tracing::warn!(
-                event = "tool_trace_capture_failed",
-                server_trace_id = %trace_id,
-                phase = "runner_request_enqueued",
-                error = %error,
-                "tool_trace_capture_failed"
-            );
-        }
+        enqueue_metadata_event(&trace_id, "runner_request_enqueued", event);
     }
 }
 
@@ -1062,15 +1243,7 @@ impl ToolRequestLifecycle {
                     "category": category,
                 }),
             );
-            if let Err(error) = persist_metadata_event(&self.trace_id, stored) {
-                tracing::warn!(
-                    event = "tool_trace_capture_failed",
-                    server_trace_id = %self.trace_id,
-                    phase = %event,
-                    error = %error,
-                    "tool_trace_capture_failed"
-                );
-            }
+            enqueue_metadata_event(&self.trace_id, &event, stored);
         }
     }
 
@@ -1182,6 +1355,7 @@ mod tests {
     }
 
     fn reset_trace_store_accounting() {
+        flush_full_trace_writer();
         *trace_io_state().lock().unwrap() = TraceStoreAccounting::default();
     }
 
@@ -1261,6 +1435,8 @@ mod tests {
             "content": "large-body-".repeat(100_000),
         });
         guard.capture_payload("raw_arguments", &payload);
+        drop(guard);
+        flush_full_trace_writer();
         let files = payload_files(temp.path(), "trace-full");
         assert_eq!(files.len(), 1);
         let compressed = fs::read(&files[0]).unwrap();
@@ -1269,6 +1445,45 @@ mod tests {
         let events = fs::read_to_string(temp.path().join("trace-full/events.jsonl")).unwrap();
         assert!(events.contains("raw_arguments"));
         assert!(events.contains("payload_sha256"));
+    }
+
+    #[test]
+    fn full_mode_capture_does_not_wait_for_trace_io_lock() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+
+        let io_guard = trace_io_state().lock().unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        let capture = thread::spawn(move || {
+            let guard = ToolRequestLifecycle::new(
+                "mcp",
+                "trace-background-writer".into(),
+                "none",
+                "tools/call",
+                Some("read_file".into()),
+            );
+            guard.capture_payload("raw_arguments", &json!({"path": "README.md"}));
+            let _ = done_tx.send(());
+        });
+        let returned_without_io = done_rx.recv_timeout(Duration::from_millis(250)).is_ok();
+        drop(io_guard);
+        capture.join().unwrap();
+        assert!(
+            returned_without_io,
+            "full trace capture must enqueue without waiting for trace-store I/O"
+        );
+        flush_full_trace_writer();
+        assert_eq!(
+            payload_files(temp.path(), "trace-background-writer").len(),
+            1
+        );
     }
 
     #[test]
@@ -1290,6 +1505,8 @@ mod tests {
             Some("read_file".into()),
         );
         guard.capture_payload("raw_arguments", &json!({"path": "README.md"}));
+        drop(guard);
+        flush_full_trace_writer();
         assert_eq!(fs::read(&not_a_directory).unwrap(), b"occupied");
     }
 
@@ -1311,6 +1528,8 @@ mod tests {
             Some("write_project_file".into()),
         );
         guard.capture_payload("raw_arguments", &json!({"content": "must-not-truncate"}));
+        drop(guard);
+        flush_full_trace_writer();
         assert!(payload_files(temp.path(), "trace-budget").is_empty());
     }
 
@@ -1624,6 +1843,8 @@ mod tests {
             Some("list_tools".into()),
         );
         guard.capture_payload("raw_arguments", &json!({"probe": true}));
+        drop(guard);
+        flush_full_trace_writer();
 
         assert!(unrelated.join("keep.bin").exists());
         assert_eq!(payload_files(temp.path(), &trace_id).len(), 1);
@@ -1649,6 +1870,8 @@ mod tests {
             Some("write_project_file".into()),
         );
         guard.capture_payload("raw_arguments", &json!({"content": "private"}));
+        drop(guard);
+        flush_full_trace_writer();
 
         let trace_dir = temp.path().join(&trace_id);
         let payload_dir = trace_dir.join("payloads");
@@ -1694,6 +1917,8 @@ mod tests {
         })
         .await;
         capture_runner_result("request-1", &json!({"exit_code": 0, "stdout": "ok"}));
+        drop(guard);
+        flush_full_trace_writer();
         let events = fs::read_to_string(temp.path().join("trace-runner/events.jsonl")).unwrap();
         assert!(events.contains("tool_runner_request_enqueued"));
         let events = events

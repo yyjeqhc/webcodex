@@ -15,6 +15,7 @@ use std::sync::Mutex;
 #[derive(Clone)]
 struct Fixture {
     owner: CommunicationPrincipal,
+    #[allow(dead_code)]
     sender_agent_id: String,
     receiver_agent_id: String,
     conversation_id: String,

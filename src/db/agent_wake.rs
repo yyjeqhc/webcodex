@@ -74,6 +74,7 @@ pub(crate) enum AgentWakeAttemptState {
 }
 
 impl AgentWakeAttemptState {
+    #[allow(dead_code)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Claimed => "claimed",

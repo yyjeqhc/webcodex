@@ -24,6 +24,7 @@ mod task_kernel;
 
 pub use self::activity::WorkspaceActivityStore;
 pub(crate) use self::admin_project_lifecycle::AdminProjectAudit;
+#[allow(unused_imports)]
 pub(crate) use self::agent_wake::{
     AgentWakeClaim, AgentWakeConsumeResult, AgentWakeEnvelope, AgentWakePrepared, AgentWakeRecord,
     AgentWakeState, AGENT_WAKE_CONSUME_TOKEN_PREFIX, AGENT_WAKE_ID_PREFIX,

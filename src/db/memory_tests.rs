@@ -949,6 +949,89 @@ fn unsupported_memory_schema_fails_closed_without_partial_indexes() {
 }
 
 #[test]
+fn post_v039_legacy_memory_constraints_fail_closed_at_open() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("legacy-memory-constraints.db");
+    let raw = Connection::open(&path).unwrap();
+    raw.execute_batch(
+        "CREATE TABLE project_memories (
+            memory_id TEXT PRIMARY KEY,
+            memory_scope_id TEXT NOT NULL,
+            memory_key TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            body TEXT NOT NULL,
+            priority TEXT NOT NULL CHECK(priority IN ('high', 'normal', 'low')),
+            bootstrap INTEGER NOT NULL CHECK(bootstrap IN (0, 1)),
+            tags_json TEXT NOT NULL,
+            definition_hash TEXT NOT NULL,
+            generation INTEGER NOT NULL CHECK(generation >= 1),
+            revision TEXT NOT NULL,
+            created_at_unix_ms INTEGER NOT NULL,
+            updated_at_unix_ms INTEGER NOT NULL,
+            created_by_kind TEXT NOT NULL,
+            created_by_principal_digest TEXT,
+            updated_by_kind TEXT NOT NULL,
+            updated_by_principal_digest TEXT,
+            UNIQUE(memory_scope_id, memory_key)
+         );
+         CREATE TABLE project_memory_scopes (
+            memory_scope_id TEXT PRIMARY KEY,
+            identity_state TEXT NOT NULL CHECK(identity_state IN ('attributed', 'legacy_unattributed')),
+            project_runtime_id TEXT,
+            runner_client_id TEXT,
+            root_fingerprint TEXT,
+            created_at_unix_ms INTEGER NOT NULL,
+            last_mutated_at_unix_ms INTEGER NOT NULL,
+            CHECK(
+                (identity_state = 'legacy_unattributed'
+                    AND project_runtime_id IS NULL
+                    AND runner_client_id IS NULL
+                    AND root_fingerprint IS NULL)
+                OR
+                (identity_state = 'attributed'
+                    AND project_runtime_id IS NOT NULL
+                    AND runner_client_id IS NOT NULL
+                    AND root_fingerprint IS NOT NULL)
+            )
+         );
+         CREATE TABLE sentinel (value TEXT NOT NULL);
+         INSERT INTO sentinel VALUES ('keep-me');",
+    )
+    .unwrap();
+    drop(raw);
+
+    let error = match Database::open(&path) {
+        Ok(_) => panic!("legacy post-v0.3.9 Memory constraints must be rejected at open"),
+        Err(error) => error,
+    };
+    assert!(
+        format!("{error:#}").contains("unsupported project Memory schema shape"),
+        "unexpected error: {error:#}"
+    );
+
+    let raw = Connection::open(&path).unwrap();
+    let sentinel: String = raw
+        .query_row("SELECT value FROM sentinel", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(sentinel, "keep-me");
+    let index_count: i64 = raw
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type='index' AND name IN (
+                 'idx_project_memories_scope_key',
+                 'idx_project_memories_scope_bootstrap'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        index_count, 0,
+        "rejected development schema must not leave partial Memory indexes"
+    );
+}
+
+#[test]
 fn memory_schema_initialization_preserves_unrelated_database_data() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("existing.db");

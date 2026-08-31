@@ -617,35 +617,7 @@ impl Database {
     }
 
     fn ensure_project_memory_schema(conn: &mut Connection) -> anyhow::Result<()> {
-        const MEMORY_COLUMNS: &[&str] = &[
-            "memory_id",
-            "memory_scope_id",
-            "memory_key",
-            "summary",
-            "body",
-            "priority",
-            "bootstrap",
-            "tags_json",
-            "definition_hash",
-            "generation",
-            "revision",
-            "created_at_unix_ms",
-            "updated_at_unix_ms",
-            "created_by_kind",
-            "created_by_principal_digest",
-            "updated_by_kind",
-            "updated_by_principal_digest",
-        ];
-        const SCOPE_COLUMNS: &[&str] = &[
-            "memory_scope_id",
-            "identity_state",
-            "project_runtime_id",
-            "runner_client_id",
-            "root_fingerprint",
-            "created_at_unix_ms",
-            "last_mutated_at_unix_ms",
-        ];
-        const CREATE_TABLES: &str = "
+        const CREATE_MEMORY_TABLE: &str = "
             CREATE TABLE project_memories (
                 memory_id TEXT PRIMARY KEY,
                 memory_scope_id TEXT NOT NULL,
@@ -665,7 +637,8 @@ impl Database {
                 updated_by_kind TEXT NOT NULL,
                 updated_by_principal_digest TEXT NOT NULL,
                 UNIQUE(memory_scope_id, memory_key)
-            );
+            );";
+        const CREATE_SCOPE_TABLE: &str = "
             CREATE TABLE project_memory_scopes (
                 memory_scope_id TEXT PRIMARY KEY,
                 identity_state TEXT NOT NULL CHECK(identity_state = 'attributed'),
@@ -691,17 +664,22 @@ impl Database {
 
         if memory_absent && scope_absent {
             transaction
-                .execute_batch(CREATE_TABLES)
-                .context("create current project Memory schema")?;
+                .execute_batch(CREATE_MEMORY_TABLE)
+                .context("create current project Memory table")?;
+            transaction
+                .execute_batch(CREATE_SCOPE_TABLE)
+                .context("create current project Memory scope table")?;
+        } else if memory_absent || scope_absent {
+            anyhow::bail!(
+                "unsupported project Memory schema shape; recreate post-v0.3.9 development state"
+            );
         } else {
-            let memory_shape_matches = memory_columns
-                .iter()
-                .map(String::as_str)
-                .eq(MEMORY_COLUMNS.iter().copied());
-            let scope_shape_matches = scope_columns
-                .iter()
-                .map(String::as_str)
-                .eq(SCOPE_COLUMNS.iter().copied());
+            let memory_schema = table_schema_sql(&transaction, "project_memories")?;
+            let scope_schema = table_schema_sql(&transaction, "project_memory_scopes")?;
+            let memory_shape_matches = normalize_table_schema_sql(&memory_schema)
+                == normalize_table_schema_sql(CREATE_MEMORY_TABLE);
+            let scope_shape_matches = normalize_table_schema_sql(&scope_schema)
+                == normalize_table_schema_sql(CREATE_SCOPE_TABLE);
             if !memory_shape_matches || !scope_shape_matches {
                 anyhow::bail!(
                     "unsupported project Memory schema shape; recreate post-v0.3.9 development state"
@@ -813,6 +791,27 @@ fn table_columns(conn: &Connection, table: &str) -> anyhow::Result<Vec<String>> 
         cols.push(row?);
     }
     Ok(cols)
+}
+
+fn table_schema_sql(conn: &Connection, table: &str) -> anyhow::Result<String> {
+    conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [table],
+        |row| row.get(0),
+    )
+    .with_context(|| format!("read schema for table {table}"))
+}
+
+fn normalize_table_schema_sql(sql: &str) -> String {
+    let mut normalized = sql
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    while normalized.ends_with(';') {
+        normalized.pop();
+    }
+    normalized
 }
 
 #[cfg(test)]

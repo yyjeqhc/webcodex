@@ -1382,7 +1382,7 @@ impl ToolRuntime {
                 timeout_secs,
                 recording_session_id,
             } => {
-                self.coding_agent_start(
+                Box::pin(self.coding_agent_start(
                     project,
                     provider_id,
                     idempotency_key,
@@ -1391,7 +1391,7 @@ impl ToolRuntime {
                     timeout_secs,
                     recording_session_id,
                     auth,
-                )
+                ))
                 .await
             }
             ToolCall::CodingAgentObserve {
@@ -1616,7 +1616,9 @@ impl ToolRuntime {
                 config,
                 timeout_secs,
             } => {
-                self.start_agent_task_coding_run(
+                // Keep this relatively large orchestration future off the shared dispatch
+                // future's inline state so unrelated tool calls do not inherit its stack cost.
+                Box::pin(self.start_agent_task_coding_run(
                     auth,
                     project,
                     task_id,
@@ -1627,17 +1629,14 @@ impl ToolRuntime {
                     provider_id,
                     config,
                     timeout_secs,
-                )
+                ))
                 .await
             }
 
             ToolCall::ReconcileAgentTaskCodingRun {
                 task_id,
                 attempt_id,
-            } => {
-                self.reconcile_agent_task_coding_run(auth, task_id, attempt_id)
-                    .await
-            }
+            } => Box::pin(self.reconcile_agent_task_coding_run(auth, task_id, attempt_id)).await,
 
             ToolCall::HeartbeatAgentTaskAttempt {
                 task_id,

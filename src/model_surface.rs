@@ -32,21 +32,16 @@ pub(crate) const MCP_MODEL_SURFACE_FULL_OPERATOR_V1: &str = "full-operator-v1";
 /// through the adaptive MCP gateway without expanding their schemas into tools/list.
 pub(crate) const ADAPTIVE_RUNTIME_CORE_TOOL_NAMES: &[&str] = &[
     "work_on_project",
-    "list_projects",
     "runtime_status",
     "tool_manifest",
-    "project_overview",
     "search_project_texts",
     "read_files",
     "apply_text_edits",
     "run_process",
-    "run_script",
     "observe_jobs",
     "cargo_check",
     "cargo_test",
     "go_test",
-    "validation_summary",
-    "git_status",
     "git_review_summary",
     "show_changes",
     "workspace_hygiene_check",
@@ -181,7 +176,7 @@ mod tests {
     fn adaptive_runtime_core_is_small_unique_and_fully_registered() {
         assert_eq!(
             ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.len(),
-            20,
+            15,
             "adaptive core size is an intentional model-admission budget"
         );
         let mut seen = std::collections::HashSet::new();

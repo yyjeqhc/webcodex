@@ -84,7 +84,9 @@ surface；没有 Connector 配置时默认是更宽的 `local_coding`。operator
 `WEBCODEX_MCP_MODEL_SURFACE=adaptive-runtime-v1` 显式选择 `adaptive_runtime`，或通过
 `WEBCODEX_MCP_MODEL_SURFACE=full-operator-v1` 选择 `full_operator_runtime`。`adaptive_runtime`
 只把高频 coding core 直接放进 `tools/list`，低频 runtime tool 则通过
-`call_runtime_tool` gateway 调用；gateway 只改变 model-facing schema admission，不改变
+`call_runtime_tool` gateway 调用。`read_files`、`run_process`、`observe_jobs` 这类反复出现在
+coding loop 中的原语保持 direct；`list_projects`、`project_overview`、`run_script`、
+`validation_summary`、`git_status` 这类低频便利工具放在 gateway 后面。gateway 只改变 model-facing schema admission，不改变
 目标 tool 原有的 OAuth scope、project authority、permission gate、参数校验、effect 或
 Session/ACK 语义。这些名称描述 protocol/tool contract；第一次用户不需要先做选择。
 

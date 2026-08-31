@@ -265,8 +265,13 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
     );
     for long_tail in [
         "list_tools",
+        "list_projects",
+        "project_overview",
         "read_file",
+        "run_script",
         "run_shell",
+        "validation_summary",
+        "git_status",
         "goto_definition",
         "computer_list_windows",
         "post_session_message",

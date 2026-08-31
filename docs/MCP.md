@@ -92,7 +92,10 @@ explicitly select `adaptive_runtime` with
 `WEBCODEX_MCP_MODEL_SURFACE=adaptive-runtime-v1`, or `full_operator_runtime` with
 `WEBCODEX_MCP_MODEL_SURFACE=full-operator-v1`. `adaptive_runtime` keeps a small
 high-frequency coding core directly typed in `tools/list` and exposes one
-`call_runtime_tool` gateway for discovered long-tail runtime tools. The gateway
+`call_runtime_tool` gateway for discovered long-tail runtime tools. Repeated-loop
+primitives such as `read_files`, `run_process`, and `observe_jobs` stay direct;
+less frequent convenience tools such as `list_projects`, `project_overview`,
+`run_script`, `validation_summary`, and `git_status` stay behind the gateway. The gateway
 only changes model-facing schema admission: the selected target still uses its
 normal OAuth scope, project authority, permission gate, argument validation,
 effect semantics, and explicit Session/ACK handling. These names describe

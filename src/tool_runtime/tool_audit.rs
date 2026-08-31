@@ -498,6 +498,112 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 out.insert("instruction_present".to_string(), Value::Bool(true));
             }
         }
+        "create_agent_task" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "assignee_agent_id",
+                    "source_conversation_id",
+                    "source_message_id",
+                    "referenced_project_id",
+                ],
+            );
+            out.insert(
+                "title_chars".to_string(),
+                Value::from(
+                    obj.get("title")
+                        .and_then(Value::as_str)
+                        .map(str::chars)
+                        .map(Iterator::count)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "instruction_bytes".to_string(),
+                Value::from(
+                    obj.get("instruction")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+        "list_agent_tasks" => {
+            copy_keys(obj, &mut out, &["assignee_agent_id", "offset", "limit"]);
+        }
+        "read_agent_task" => {
+            copy_keys(obj, &mut out, &["task_id"]);
+        }
+        "assign_agent_task" => {
+            copy_keys(obj, &mut out, &["task_id", "assignee_agent_id"]);
+        }
+        "start_agent_task_attempt" => {
+            copy_keys(obj, &mut out, &["task_id", "assignee_agent_id"]);
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+        "heartbeat_agent_task_attempt" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "task_id",
+                    "attempt_id",
+                    "assignee_agent_id",
+                    "attempt_controller_generation",
+                ],
+            );
+            out.insert(
+                "attempt_fence_present".to_string(),
+                Value::Bool(obj.get("attempt_fence").and_then(Value::as_str).is_some()),
+            );
+        }
+        "complete_agent_task_attempt" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "task_id",
+                    "attempt_id",
+                    "assignee_agent_id",
+                    "attempt_controller_generation",
+                    "outcome",
+                ],
+            );
+            out.insert(
+                "attempt_fence_present".to_string(),
+                Value::Bool(obj.get("attempt_fence").and_then(Value::as_str).is_some()),
+            );
+            out.insert(
+                "terminal_result_bytes".to_string(),
+                Value::from(
+                    obj.get("terminal_result")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "terminal_reason_bytes".to_string(),
+                Value::from(
+                    obj.get("terminal_reason")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "completion_key_present".to_string(),
+                Value::Bool(obj.get("completion_key").and_then(Value::as_str).is_some()),
+            );
+        }
         "create_agent_identity" => {
             out.insert(
                 "handle_chars".to_string(),
@@ -1463,6 +1569,55 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "recent_answer_count": output.get("recent_answers").and_then(Value::as_array).map(Vec::len),
             "recent_completion_count": output.get("recent_completions").and_then(Value::as_array).map(Vec::len),
             "summary_only": output.get("summary_only").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "create_agent_task" | "assign_agent_task" => serde_json::json!({
+            "task_id": output.pointer("/task/summary/task_id").cloned().unwrap_or(Value::Null),
+            "state": output.pointer("/task/summary/state").cloned().unwrap_or(Value::Null),
+            "assignee_agent_id": output.pointer("/task/summary/assignee_agent_id").cloned().unwrap_or(Value::Null),
+            "created": output.get("created").cloned().unwrap_or(Value::Null),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "list_agent_tasks" => serde_json::json!({
+            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
+            "returned_count": output.get("tasks").and_then(Value::as_array).map(Vec::len),
+            "offset": output.get("offset").cloned().unwrap_or(Value::Null),
+            "next_offset": output.get("next_offset").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "read_agent_task" => serde_json::json!({
+            "task_id": output.pointer("/task/summary/task_id").cloned().unwrap_or(Value::Null),
+            "state": output.pointer("/task/summary/state").cloned().unwrap_or(Value::Null),
+            "assignee_agent_id": output.pointer("/task/summary/assignee_agent_id").cloned().unwrap_or(Value::Null),
+            "latest_attempt_id": output.pointer("/task/summary/latest_attempt/attempt_id").cloned().unwrap_or(Value::Null),
+            "latest_attempt_state": output.pointer("/task/summary/latest_attempt/state").cloned().unwrap_or(Value::Null),
+            "latest_attempt_number": output.pointer("/task/summary/latest_attempt/attempt_number").cloned().unwrap_or(Value::Null),
+            "controller_generation": output.pointer("/task/summary/latest_attempt/attempt_controller_generation").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "start_agent_task_attempt" => serde_json::json!({
+            "task_id": output.pointer("/task/task_id").cloned().unwrap_or(Value::Null),
+            "task_state": output.pointer("/task/state").cloned().unwrap_or(Value::Null),
+            "attempt_id": output.pointer("/attempt/attempt_id").cloned().unwrap_or(Value::Null),
+            "attempt_number": output.pointer("/attempt/attempt_number").cloned().unwrap_or(Value::Null),
+            "attempt_state": output.pointer("/attempt/state").cloned().unwrap_or(Value::Null),
+            "controller_generation": output.pointer("/attempt/attempt_controller_generation").cloned().unwrap_or(Value::Null),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
+        "heartbeat_agent_task_attempt" | "complete_agent_task_attempt" => serde_json::json!({
+            "task_id": output.pointer("/task/task_id").cloned().unwrap_or(Value::Null),
+            "task_state": output.pointer("/task/state").cloned().unwrap_or(Value::Null),
+            "attempt_id": output.pointer("/attempt/attempt_id").cloned().unwrap_or(Value::Null),
+            "attempt_number": output.pointer("/attempt/attempt_number").cloned().unwrap_or(Value::Null),
+            "attempt_state": output.pointer("/attempt/state").cloned().unwrap_or(Value::Null),
+            "controller_generation": output.pointer("/attempt/attempt_controller_generation").cloned().unwrap_or(Value::Null),
+            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
             "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
         }),
         "create_agent_identity" | "update_agent_identity" => serde_json::json!({
@@ -4244,6 +4399,104 @@ impl ToolCall {
                 "items": items,
                 "with_line_numbers": with_line_numbers,
             }),
+            Self::CreateAgentTask {
+                title,
+                instruction,
+                assignee_agent_id,
+                source_conversation_id,
+                source_message_id,
+                referenced_project_id,
+                idempotency_key,
+            } => session_log_arguments_for_tool_request(
+                "create_agent_task",
+                &serde_json::json!({
+                    "title": title,
+                    "instruction": instruction,
+                    "assignee_agent_id": assignee_agent_id,
+                    "source_conversation_id": source_conversation_id,
+                    "source_message_id": source_message_id,
+                    "referenced_project_id": referenced_project_id,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+            Self::ListAgentTasks {
+                assignee_agent_id,
+                offset,
+                limit,
+            } => session_log_arguments_for_tool_request(
+                "list_agent_tasks",
+                &serde_json::json!({
+                    "assignee_agent_id": assignee_agent_id,
+                    "offset": offset,
+                    "limit": limit,
+                }),
+            ),
+            Self::ReadAgentTask { task_id } => session_log_arguments_for_tool_request(
+                "read_agent_task",
+                &serde_json::json!({"task_id": task_id}),
+            ),
+            Self::AssignAgentTask {
+                task_id,
+                assignee_agent_id,
+            } => session_log_arguments_for_tool_request(
+                "assign_agent_task",
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "assignee_agent_id": assignee_agent_id,
+                }),
+            ),
+            Self::StartAgentTaskAttempt {
+                task_id,
+                assignee_agent_id,
+                idempotency_key,
+            } => session_log_arguments_for_tool_request(
+                "start_agent_task_attempt",
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "assignee_agent_id": assignee_agent_id,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+            Self::HeartbeatAgentTaskAttempt {
+                task_id,
+                attempt_id,
+                assignee_agent_id,
+                attempt_fence,
+                attempt_controller_generation,
+            } => session_log_arguments_for_tool_request(
+                "heartbeat_agent_task_attempt",
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "attempt_id": attempt_id,
+                    "assignee_agent_id": assignee_agent_id,
+                    "attempt_fence": attempt_fence,
+                    "attempt_controller_generation": attempt_controller_generation,
+                }),
+            ),
+            Self::CompleteAgentTaskAttempt {
+                task_id,
+                attempt_id,
+                assignee_agent_id,
+                attempt_fence,
+                attempt_controller_generation,
+                outcome,
+                terminal_result,
+                terminal_reason,
+                completion_key,
+            } => session_log_arguments_for_tool_request(
+                "complete_agent_task_attempt",
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "attempt_id": attempt_id,
+                    "assignee_agent_id": assignee_agent_id,
+                    "attempt_fence": attempt_fence,
+                    "attempt_controller_generation": attempt_controller_generation,
+                    "outcome": outcome,
+                    "terminal_result": terminal_result,
+                    "terminal_reason": terminal_reason,
+                    "completion_key": completion_key,
+                }),
+            ),
             Self::CreateAgentIdentity {
                 handle,
                 display_name,

@@ -1002,6 +1002,73 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Create explicit durable Agent work independent from communication messages and execution backends.
+    CreateAgentTask {
+        title: String,
+        instruction: String,
+        #[serde(default)]
+        assignee_agent_id: Option<String>,
+        #[serde(default)]
+        source_conversation_id: Option<String>,
+        #[serde(default)]
+        source_message_id: Option<String>,
+        #[serde(default)]
+        referenced_project_id: Option<String>,
+        idempotency_key: String,
+    },
+
+    /// List durable AgentTasks owned by the current communication principal.
+    ListAgentTasks {
+        #[serde(default)]
+        assignee_agent_id: Option<String>,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Read one exact owned durable AgentTask and latest Attempt metadata.
+    ReadAgentTask {
+        task_id: String,
+    },
+
+    /// Explicitly assign or reassign an AgentTask to an owned durable Agent.
+    AssignAgentTask {
+        task_id: String,
+        assignee_agent_id: String,
+    },
+
+    /// Atomically create one fenced leased Attempt for the current assignee.
+    StartAgentTaskAttempt {
+        task_id: String,
+        assignee_agent_id: String,
+        idempotency_key: String,
+    },
+
+    /// Renew only the exact latest unexpired fenced AgentTaskAttempt.
+    HeartbeatAgentTaskAttempt {
+        task_id: String,
+        attempt_id: String,
+        assignee_agent_id: String,
+        attempt_fence: String,
+        attempt_controller_generation: i64,
+    },
+
+    /// Commit exact fenced terminal AgentTaskAttempt truth with independent keyed replay.
+    CompleteAgentTaskAttempt {
+        task_id: String,
+        attempt_id: String,
+        assignee_agent_id: String,
+        attempt_fence: String,
+        attempt_controller_generation: i64,
+        outcome: String,
+        #[serde(default)]
+        terminal_result: Option<String>,
+        #[serde(default)]
+        terminal_reason: Option<String>,
+        completion_key: String,
+    },
+
     /// Create a durable Server-owned Agent identity and mutable self-description card.
     CreateAgentIdentity {
         handle: String,
@@ -2445,6 +2512,13 @@ impl ToolCall {
             Self::SkillInstall { .. } => "skill_install",
             Self::SkillActivate { .. } => "skill_activate",
             Self::SkillRemoveRevision { .. } => "skill_remove_revision",
+            Self::CreateAgentTask { .. } => "create_agent_task",
+            Self::ListAgentTasks { .. } => "list_agent_tasks",
+            Self::ReadAgentTask { .. } => "read_agent_task",
+            Self::AssignAgentTask { .. } => "assign_agent_task",
+            Self::StartAgentTaskAttempt { .. } => "start_agent_task_attempt",
+            Self::HeartbeatAgentTaskAttempt { .. } => "heartbeat_agent_task_attempt",
+            Self::CompleteAgentTaskAttempt { .. } => "complete_agent_task_attempt",
             Self::CreateAgentIdentity { .. } => "create_agent_identity",
             Self::ListAgentIdentities { .. } => "list_agent_identities",
             Self::UpdateAgentIdentity { .. } => "update_agent_identity",

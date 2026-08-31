@@ -1,5 +1,6 @@
 use serde_json::Value;
 
+mod agent_tasks;
 mod artifacts;
 mod checkpoints;
 mod coding_agents;
@@ -23,6 +24,9 @@ mod testing;
 use common::default_output_schema;
 
 pub(crate) fn output_schema_for_tool(name: &str) -> Value {
+    if let Some(schema) = agent_tasks::output_schema_for_tool(name) {
+        return schema;
+    }
     if let Some(schema) = coding_agents::output_schema_for_tool(name) {
         return schema;
     }

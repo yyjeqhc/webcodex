@@ -5,6 +5,7 @@
 //! and agent capability. Non-runtime route metadata fallbacks remain in `metadata.rs`
 //! while the registry migration proceeds in small steps.
 
+mod agent_tasks;
 mod artifacts;
 mod checkpoints;
 mod coding_agents;
@@ -277,6 +278,7 @@ pub(crate) struct ToolDefinition {
     pub(crate) agent_capability: Option<AgentCapability>,
 }
 
+pub(crate) const TOOL_CATEGORY_AGENT_TASK: &str = "agent_task";
 pub(crate) const TOOL_CATEGORY_ARTIFACT: &str = "artifact";
 pub(crate) const TOOL_CATEGORY_CHECKPOINT: &str = "checkpoint";
 pub(crate) const TOOL_CATEGORY_CODING_AGENT: &str = "coding_agent";
@@ -492,6 +494,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     TOOL_DEFINITION_HEAD,
     sessions::DEFINITIONS,
     communication::DEFINITIONS,
+    agent_tasks::DEFINITIONS,
     memory::DEFINITIONS,
     skills::DEFINITIONS,
     hygiene::DEFINITIONS,

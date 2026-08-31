@@ -1,3 +1,4 @@
+mod agent_tasks;
 mod artifacts;
 mod checkpoints;
 mod cleanup;
@@ -21,6 +22,12 @@ mod skills;
 mod text_edits;
 mod validation;
 
+pub(crate) use agent_tasks::{
+    assign_agent_task_input_schema, complete_agent_task_attempt_input_schema,
+    create_agent_task_input_schema, heartbeat_agent_task_attempt_input_schema,
+    list_agent_tasks_input_schema, read_agent_task_input_schema,
+    start_agent_task_attempt_input_schema,
+};
 pub(crate) use artifacts::{
     artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
     artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,

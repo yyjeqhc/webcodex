@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 const DEFAULT_COMMUNICATION_LIST_LIMIT: usize = 50;
 
-fn communication_principal(
+pub(super) fn communication_principal(
     auth: Option<&AuthContext>,
 ) -> Result<CommunicationPrincipal, ToolResult> {
     let (kind, subject) = match auth {

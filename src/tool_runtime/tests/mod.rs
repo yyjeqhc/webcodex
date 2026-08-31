@@ -2,6 +2,7 @@
 
 mod support;
 
+mod agent_tasks;
 mod apply_text_edits;
 mod assignment_fence;
 mod checkpoint;

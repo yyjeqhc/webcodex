@@ -6,6 +6,7 @@ pub(crate) const TOOL_DISCOVERY_GROUP_CHECKPOINT: &str = "checkpoint";
 pub(crate) const TOOL_DISCOVERY_GROUP_CLEANUP: &str = "cleanup";
 pub(crate) const TOOL_DISCOVERY_GROUP_CODING_AGENT: &str = "coding_agent";
 pub(crate) const TOOL_DISCOVERY_GROUP_COMMUNICATION: &str = "communication";
+pub(crate) const TOOL_DISCOVERY_GROUP_AGENT_TASK: &str = "agent_task";
 pub(crate) const TOOL_DISCOVERY_GROUP_EDIT: &str = "edit";
 pub(crate) const TOOL_DISCOVERY_GROUP_GIT: &str = "git";
 pub(crate) const TOOL_DISCOVERY_GROUP_INSPECT: &str = "inspect";
@@ -74,6 +75,18 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "computer_snapshot",
             "computer_snapshot_display",
             "computer_save_snapshot",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_AGENT_TASK,
+        tools: &[
+            "create_agent_task",
+            "list_agent_tasks",
+            "read_agent_task",
+            "assign_agent_task",
+            "start_agent_task_attempt",
+            "heartbeat_agent_task_attempt",
+            "complete_agent_task_attempt",
         ],
     },
     ToolDiscoveryGroup {

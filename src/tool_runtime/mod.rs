@@ -5,6 +5,7 @@
 
 pub mod activity;
 mod agent_authorization;
+mod agent_task;
 mod cargo;
 mod cargo_tools;
 mod checkpoint;

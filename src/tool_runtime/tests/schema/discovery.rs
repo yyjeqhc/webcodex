@@ -272,6 +272,7 @@ fn allowed_tool_definition_categories_for_discovery_group(group: &str) -> &'stat
         "checkpoint" => &["checkpoint"],
         "cleanup" => &["checkpoint", "cleanup"],
         "coding_agent" => &["coding_agent"],
+        "agent_task" => &["agent_task"],
         "communication" => &["communication"],
         "edit" => &["artifact", "edit", "patch"],
         "git" => &["checkpoint", "cleanup", "file", "git"],

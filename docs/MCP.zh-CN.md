@@ -86,8 +86,10 @@ surface；没有 Connector 配置时默认是更宽的 `local_coding`。operator
 只把高频 coding core 直接放进 `tools/list`，低频 runtime tool 则通过
 `call_runtime_tool` gateway 调用。`read_files`、`run_process`、`observe_jobs` 这类反复出现在
 coding loop 中的原语保持 direct；`list_projects`、`project_overview`、`run_script`、
-`validation_summary`、`git_status` 这类低频便利工具放在 gateway 后面。gateway 只改变 model-facing schema admission，不改变
-目标 tool 原有的 OAuth scope、project authority、permission gate、参数校验、effect 或
+`validation_summary`、`git_status` 这类低频便利工具放在 gateway 后面。compact discovery 后可用
+`tool_manifest(tool_name="<exact-name>")` 只读取一个工具的 description、input schema 和
+annotations，不展开庞大的 output schema；随后把该名称交给 `call_runtime_tool`。gateway 只改变
+model-facing schema admission，不改变目标 tool 原有的 OAuth scope、project authority、permission gate、参数校验、effect 或
 Session/ACK 语义。这些名称描述 protocol/tool contract；第一次用户不需要先做选择。
 
 Hosted client 需要公网 HTTPS：`share` 默认提供临时 Cloudflare Quick Tunnel，`connect` 使用

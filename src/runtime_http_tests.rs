@@ -752,6 +752,29 @@ async fn flattened_tool_manifest_audit_intent_survives_null_params_wrapper() {
 }
 
 #[tokio::test]
+async fn flattened_tool_manifest_exact_name_survives_null_params_wrapper() {
+    let (tool, params) = extract_tool_call(&json!({
+        "tool": "tool_manifest",
+        "params": null,
+        "tool_name": "cargo_test",
+        "include_recommended_flows": false,
+        "include_risk_summary": false,
+    }))
+    .unwrap();
+    let call = ToolCall::from_tool_name(&tool, params).unwrap();
+    let tmp_proj = tempfile::tempdir().unwrap();
+    let runtime = runtime_with_local_project(tmp_proj.path(), "demo");
+
+    let result = runtime.dispatch(call).await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["tool_name"], "cargo_test");
+    assert_eq!(result.output["contract"]["name"], "cargo_test");
+    assert_eq!(result.output["contract"]["input_schema"]["type"], "object");
+    assert!(result.output["contract"].get("output_schema").is_none());
+}
+
+#[tokio::test]
 async fn http_start_coding_task_retirement_precedes_flattened_legacy_params() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();

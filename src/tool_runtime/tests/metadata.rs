@@ -1644,6 +1644,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: None,
             intent: None,
             include_recommended_flows: true,
@@ -1803,6 +1804,7 @@ async fn tool_manifest_model_fields_and_hidden_start_compatibility_stay_separate
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: None,
             intent: None,
             include_recommended_flows: false,
@@ -1953,6 +1955,7 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: None,
             intent: None,
             include_recommended_flows: true,

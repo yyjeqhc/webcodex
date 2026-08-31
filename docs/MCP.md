@@ -95,7 +95,10 @@ high-frequency coding core directly typed in `tools/list` and exposes one
 `call_runtime_tool` gateway for discovered long-tail runtime tools. Repeated-loop
 primitives such as `read_files`, `run_process`, and `observe_jobs` stay direct;
 less frequent convenience tools such as `list_projects`, `project_overview`,
-`run_script`, `validation_summary`, and `git_status` stay behind the gateway. The gateway
+`run_script`, `validation_summary`, and `git_status` stay behind the gateway. After
+compact discovery, `tool_manifest(tool_name="<exact-name>")` returns exactly one
+tool's description, input schema, and annotations without expanding its output
+schema; the selected name can then be passed to `call_runtime_tool`. The gateway
 only changes model-facing schema admission: the selected target still uses its
 normal OAuth scope, project authority, permission gate, argument validation,
 effect semantics, and explicit Session/ACK handling. These names describe

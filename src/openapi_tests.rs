@@ -1032,6 +1032,7 @@ fn openapi_call_runtime_tool_exposes_only_canonical_params_envelope() {
 
 #[test]
 fn openapi_call_runtime_tool_declares_flattened_action_fields() {
+    // `tool_name` is a tool_manifest argument, distinct from the outer `tool` selector.
     let spec = build_openapi_spec();
     let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
     let properties = tool_call["properties"].as_object().unwrap();
@@ -1055,6 +1056,7 @@ fn openapi_call_runtime_tool_declares_flattened_action_fields() {
 
     assert!(properties.contains_key(TOOL_CALL_PARAMS_FIELD));
     assert!(!properties.contains_key("arguments"));
+    assert_eq!(properties["tool_name"]["type"], "string");
     assert!(
         !properties.contains_key("allow_cross_project_session"),
         "ToolCallRequest must not publish the cross-project debug escape as a flattened Action field"

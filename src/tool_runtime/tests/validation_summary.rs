@@ -682,6 +682,7 @@ async fn validation_summary_is_present_in_validation_tool_manifest_without_new_a
     let runtime = test_runtime();
     let manifest = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: Some("validation".to_string()),
             intent: None,
             include_recommended_flows: true,

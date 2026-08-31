@@ -1983,6 +1983,9 @@ pub enum ToolCall {
     /// runtime introspection; never exposes schemas, tokens, secrets, or
     /// internal paths.
     ToolManifest {
+        /// Optional exact model-visible runtime tool name for one-tool contract discovery.
+        #[serde(default)]
+        tool_name: Option<String>,
         #[serde(default)]
         category: Option<String>,
         /// Optional task intent view such as coding, audit, exploration,

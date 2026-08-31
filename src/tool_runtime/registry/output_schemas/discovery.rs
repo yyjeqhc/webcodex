@@ -231,6 +231,30 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
             (
+                "tool_name",
+                nullable_schema("string", "Exact requested tool name in one-tool contract mode, or null."),
+            ),
+            (
+                "contract",
+                json!({
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "description": "Exact one-tool contract containing name, description, input_schema, and annotations. output_schema is intentionally omitted.",
+                            "additionalProperties": false,
+                            "properties": {
+                                "name": {"type": "string"},
+                                "description": {"type": "string"},
+                                "input_schema": {"type": "object", "additionalProperties": true},
+                                "annotations": {"type": "object", "additionalProperties": true}
+                            },
+                            "required": ["name", "description", "input_schema", "annotations"]
+                        },
+                        {"type": "null"}
+                    ]
+                }),
+            ),
+            (
                 "category",
                 nullable_schema(
                     "string",

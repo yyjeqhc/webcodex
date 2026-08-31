@@ -49,12 +49,14 @@ impl ToolRuntime {
                     .await
             }
             ToolCall::ToolManifest {
+                tool_name,
                 category,
                 intent,
                 include_recommended_flows,
                 include_risk_summary,
             } => {
                 self.tool_manifest(
+                    tool_name,
                     category,
                     intent,
                     include_recommended_flows,

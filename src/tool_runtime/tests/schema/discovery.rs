@@ -876,6 +876,7 @@ async fn tool_manifest_omits_recommended_flows_when_disabled() {
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: None,
             intent: None,
             include_recommended_flows: false,
@@ -1175,6 +1176,7 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: None,
             intent: Some("coding".to_string()),
             include_recommended_flows: false,
@@ -1222,6 +1224,7 @@ async fn tool_manifest_accepts_hyphenated_intent_alias() {
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: None,
             intent: Some("Discovery".to_string()),
             include_recommended_flows: false,
@@ -1285,6 +1288,7 @@ async fn tool_manifest_intent_can_combine_with_category_filter() {
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: Some("validation".to_string()),
             intent: Some("coding".to_string()),
             include_recommended_flows: false,
@@ -1319,6 +1323,7 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
         let runtime = test_runtime();
         let result = runtime
             .dispatch(ToolCall::ToolManifest {
+                tool_name: None,
                 category: None,
                 intent: Some(intent.to_string()),
                 include_recommended_flows: false,
@@ -1389,6 +1394,7 @@ async fn release_intent_includes_list_jobs_but_not_run_shell_or_run_job() {
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: None,
             intent: Some("release".to_string()),
             include_recommended_flows: false,
@@ -1508,6 +1514,7 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
     // intent=coding
     let coding = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: None,
             intent: Some("coding".to_string()),
             include_recommended_flows: true,
@@ -1539,6 +1546,7 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
     // single category filter
     let file_only = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: Some("file".to_string()),
             intent: None,
             include_recommended_flows: true,
@@ -1629,12 +1637,71 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
 }
 
 #[tokio::test]
+async fn tool_manifest_exact_tool_returns_input_contract_without_output_schema() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            tool_name: Some("cargo_test".to_string()),
+            category: None,
+            intent: None,
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["tool_name"], "cargo_test");
+    assert_eq!(result.output["count"], 1);
+    assert_eq!(result.output["returned_count"], 1);
+    let categories = result.output["categories"].as_object().unwrap();
+    assert_eq!(categories.len(), 1);
+    assert_eq!(categories["validation"], json!(["cargo_test"]));
+    let contract = &result.output["contract"];
+    assert_eq!(contract["name"], "cargo_test");
+    assert!(contract["description"].as_str().is_some());
+    assert_eq!(contract["input_schema"]["type"], "object");
+    assert!(contract["input_schema"]["properties"]["package"].is_object());
+    assert!(contract["annotations"].is_object());
+    assert!(contract.get("output_schema").is_none());
+    assert_eq!(result.output["tools"][0]["name"], "cargo_test");
+    assert!(result.output["tools"][0].get("input_schema").is_none());
+}
+
+#[tokio::test]
+async fn tool_manifest_exact_tool_fails_closed_for_unknown_or_mixed_filters() {
+    let runtime = test_runtime();
+    let unknown = runtime
+        .dispatch(ToolCall::ToolManifest {
+            tool_name: Some("not_a_real_webcodex_tool".to_string()),
+            category: None,
+            intent: None,
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(!unknown.success);
+    assert_eq!(unknown.output["code"], "unknown_tool_manifest_tool");
+
+    let mixed = runtime
+        .dispatch(ToolCall::ToolManifest {
+            tool_name: Some("cargo_test".to_string()),
+            category: Some("validation".to_string()),
+            intent: None,
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(!mixed.success);
+    assert_eq!(mixed.output["code"], "tool_manifest_exact_filter_conflict");
+}
+
+#[tokio::test]
 async fn unfiltered_tool_manifest_keeps_full_recommended_flows() {
     use crate::tool_runtime::tool_definition::TOOL_RECOMMENDED_FLOWS;
 
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
+            tool_name: None,
             category: None,
             intent: None,
             include_recommended_flows: true,

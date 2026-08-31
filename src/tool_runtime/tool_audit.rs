@@ -5211,11 +5211,13 @@ impl ToolCall {
                 "session_id_present": session_id.is_some(),
             }),
             Self::ToolManifest {
+                tool_name,
                 category,
                 intent,
                 include_recommended_flows,
                 include_risk_summary,
             } => serde_json::json!({
+                "tool_name": tool_name,
                 "category": category,
                 "intent": intent,
                 "include_recommended_flows": include_recommended_flows,

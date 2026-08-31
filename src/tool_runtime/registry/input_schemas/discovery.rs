@@ -37,6 +37,12 @@ pub(crate) fn tool_manifest_input_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
+            "tool_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "Optional exact model-visible runtime tool name. Returns one precise contract with description, input_schema, and annotations, without the output schema. Cannot be combined with category or intent."
+            },
             "category": {
                 "type": "string",
                 "description": "Optional category filter (e.g. session, edit, git, checkpoint, runtime, job, validation). Distinct from intent."

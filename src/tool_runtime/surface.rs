@@ -132,11 +132,25 @@ impl ToolRuntime {
     /// schemas cause ResponseTooLargeError.
     pub(super) async fn tool_manifest(
         &self,
+        tool_name: Option<String>,
         category: Option<String>,
         intent: Option<String>,
         include_recommended_flows: bool,
         include_risk_summary: bool,
     ) -> ToolResult {
+        if let Some(tool_name) = tool_name {
+            if category.is_some() || intent.is_some() {
+                return tool_manifest_exact_filter_conflict_result();
+            }
+            return match self.tool_manifest_exact_payload(
+                &tool_name,
+                include_recommended_flows,
+                include_risk_summary,
+            ) {
+                Ok(payload) => ToolResult::ok(payload),
+                Err(result) => result,
+            };
+        }
         match self.tool_manifest_payload(
             category,
             intent,
@@ -146,6 +160,63 @@ impl ToolRuntime {
             Ok(payload) => ToolResult::ok(payload),
             Err(result) => result,
         }
+    }
+
+    fn tool_manifest_exact_payload(
+        &self,
+        raw_tool_name: &str,
+        include_recommended_flows: bool,
+        include_risk_summary: bool,
+    ) -> Result<Value, ToolResult> {
+        let tool_name = raw_tool_name.trim();
+        if tool_name.is_empty() {
+            return Err(unknown_tool_manifest_tool_result(tool_name));
+        }
+        let specs = registered_tool_specs();
+        let tool_count = specs.len();
+        let Some(spec) = specs.iter().find(|spec| spec.name == tool_name) else {
+            return Err(unknown_tool_manifest_tool_result(tool_name));
+        };
+        let category = runtime_tool_category(spec.name.as_str());
+        let mut exact_categories = serde_json::Map::new();
+        exact_categories.insert(category.to_string(), json!([spec.name]));
+        let mut output = json!({
+            "schema_version": 1,
+            "tool_count": tool_count,
+            "count": 1,
+            "returned_count": 1,
+            "total_count": tool_count,
+            "filtered_count": 1,
+            "tool_name": spec.name,
+            "contract": {
+                "name": spec.name,
+                "description": spec.description,
+                "input_schema": spec.input_schema,
+                "annotations": spec.annotations,
+            },
+            "category": category,
+            "intent": Value::Null,
+            "available_intents": available_tool_manifest_intent_names(),
+            "filtered": true,
+            "categories_requested": Value::Null,
+            "limit": Value::Null,
+            "truncated": false,
+            "truncation_reason": Value::Null,
+            "limit_applied": false,
+            "requested_limit": Value::Null,
+            "categories": Value::Object(exact_categories),
+            "tools": [compact_manifest_tool_entry(spec)],
+        });
+        if include_risk_summary {
+            output["risk_summary"] = build_risk_summary(&[spec]);
+        }
+        if include_recommended_flows {
+            output["recommended_flows"] =
+                Value::Array(tool_manifest_recommended_flows_for_visible_tools([spec
+                    .name
+                    .as_str()]));
+        }
+        Ok(output)
     }
 
     pub(crate) fn compact_tool_manifest_payload(&self) -> Value {
@@ -239,6 +310,8 @@ impl ToolRuntime {
             "returned_count": tools.len(),
             "total_count": tool_count,
             "filtered_count": filtered_count,
+            "tool_name": Value::Null,
+            "contract": Value::Null,
             "category": category,
             "intent": intent_name,
             "available_intents": available_intents,
@@ -319,6 +392,27 @@ fn unknown_tool_manifest_intent_result(unknown: &str) -> ToolResult {
                 unknown,
                 available_intents.join(", ")
             ),
+        }),
+    )
+}
+
+fn unknown_tool_manifest_tool_result(tool_name: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        format!("unknown tool_manifest tool_name '{tool_name}'"),
+        json!({
+            "code": "unknown_tool_manifest_tool",
+            "tool_name": tool_name,
+            "message": format!("unknown model-visible runtime tool '{tool_name}'; use category or intent discovery to find a valid name"),
+        }),
+    )
+}
+
+fn tool_manifest_exact_filter_conflict_result() -> ToolResult {
+    ToolResult::err_with_output(
+        "tool_manifest tool_name cannot be combined with category or intent",
+        json!({
+            "code": "tool_manifest_exact_filter_conflict",
+            "message": "tool_name selects one exact contract; omit category and intent",
         }),
     )
 }

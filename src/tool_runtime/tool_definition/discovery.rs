@@ -128,7 +128,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             false,
         ),
-        "Return a compact, bounded tool manifest with categories, flattened args, risk, flows, and optional coding/audit/exploration/release/discovery intent views. Intents only filter and rank discovery; they do not change behavior, policy, permissions, execution, or verdicts. Read-only.",
+        "Return compact runtime discovery. Filter by category/intent, or pass exact tool_name for one contract with description + input schema and no output schema. Discovery never changes behavior, authority, permissions, execution, or verdicts.",
         tool_manifest_input_schema,
     ),
 ];

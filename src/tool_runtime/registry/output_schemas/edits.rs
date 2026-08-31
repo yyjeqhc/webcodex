@@ -11,11 +11,13 @@ fn edit_conflict_recovery_schema() -> Value {
             "schema_version": {"type": "integer", "const": 1},
             "conflict_kind": {"type": "string", "enum": [
                 "multiple_matches", "match_not_found", "occurrence_out_of_range",
-                "overlapping_edits", "sha256_mismatch"
+                "occurrence_outside_line_scope", "overlapping_edits", "sha256_mismatch"
             ]},
             "recovery_action": {"type": "string", "enum": [
                 "select_occurrence_or_refine_match", "reread_or_refine_match",
-                "choose_valid_occurrence_or_refine_match", "refine_edit_batch", "reread_file"
+                "choose_valid_occurrence_or_refine_match", "narrow_line_scope_or_select_occurrence",
+                "adjust_line_scope_or_refine_match", "align_occurrence_with_line_scope",
+                "refine_edit_batch", "reread_file"
             ]},
             "occurrence_selector_supported": {"type": "boolean"},
             "direct_retry_safe": {
@@ -38,6 +40,16 @@ fn edit_conflict_recovery_schema() -> Value {
             },
             "match_count": {"type": "integer", "minimum": 0},
             "requested_occurrence": {"type": "integer", "minimum": 1},
+            "line_scope": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "start_line": {"type": "integer", "minimum": 1},
+                    "end_line": {"type": "integer", "minimum": 1}
+                },
+                "required": ["start_line", "end_line"]
+            },
+            "line_scope_match_count": {"type": "integer", "minimum": 0},
             "candidate_ranges": {
                 "type": "array", "maxItems": 8,
                 "items": {

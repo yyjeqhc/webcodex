@@ -208,6 +208,9 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // Exact occurrence selectors are a running-binary capability; the
             // running Runner advertises the canonical registration baseline.
             apply_text_edit_occurrence: false,
+            // Scoped exact matching is likewise runtime-only and must not be
+            // inferred from generated config or occurrence support.
+            apply_text_edit_line_scope: false,
             git: true,
             jobs: true,
             async_jobs: true,

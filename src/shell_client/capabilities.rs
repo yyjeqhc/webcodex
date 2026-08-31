@@ -16,6 +16,7 @@ pub(crate) enum RunnerFeature {
     ArtifactExportStreamingMetadata,
     StructuredFileDelete,
     ApplyTextEditOccurrence,
+    ApplyTextEditLineScope,
     Git,
     Jobs,
     AsyncJobs,
@@ -59,7 +60,7 @@ pub(crate) enum RunnerFeature {
     ComputerTextInput,
 }
 
-const ALL_RUNNER_FEATURES: [RunnerFeature; 48] = [
+const ALL_RUNNER_FEATURES: [RunnerFeature; 49] = [
     RunnerFeature::Shell,
     RunnerFeature::FileRead,
     RunnerFeature::FileWrite,
@@ -67,6 +68,7 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 48] = [
     RunnerFeature::ArtifactExportStreamingMetadata,
     RunnerFeature::StructuredFileDelete,
     RunnerFeature::ApplyTextEditOccurrence,
+    RunnerFeature::ApplyTextEditLineScope,
     RunnerFeature::Git,
     RunnerFeature::Jobs,
     RunnerFeature::AsyncJobs,
@@ -141,6 +143,9 @@ impl RunnerFeature {
             Self::StructuredFileDelete => wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
             Self::ApplyTextEditOccurrence => {
                 wire::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE
+            }
+            Self::ApplyTextEditLineScope => {
+                wire::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE
             }
             Self::Git => wire::SHELL_CLIENT_CAPABILITY_GIT,
             Self::Jobs => wire::SHELL_CLIENT_CAPABILITY_JOBS,
@@ -220,6 +225,9 @@ impl RunnerFeature {
             wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE => Self::StructuredFileDelete,
             wire::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE => {
                 Self::ApplyTextEditOccurrence
+            }
+            wire::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE => {
+                Self::ApplyTextEditLineScope
             }
             wire::SHELL_CLIENT_CAPABILITY_GIT => Self::Git,
             wire::SHELL_CLIENT_CAPABILITY_JOBS => Self::Jobs,
@@ -312,6 +320,7 @@ impl RunnerFeature {
             | Self::ProjectPathRegistration => RunnerFeatureInference::GenerationEligible,
             Self::Shell
             | Self::Git
+            | Self::ApplyTextEditLineScope
             | Self::SshShell
             | Self::PersistentShell
             | Self::SshPersistentShell
@@ -350,6 +359,7 @@ impl RunnerFeature {
             }
             Self::StructuredFileDelete => capabilities.structured_file_delete,
             Self::ApplyTextEditOccurrence => capabilities.apply_text_edit_occurrence,
+            Self::ApplyTextEditLineScope => capabilities.apply_text_edit_line_scope,
             Self::Git => capabilities.git,
             Self::Jobs => capabilities.jobs,
             Self::AsyncJobs => capabilities.async_jobs,

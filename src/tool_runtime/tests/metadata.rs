@@ -371,6 +371,7 @@ async fn register_agent_projects_for_auth(
                         artifact_export_streaming_metadata: false,
                         structured_file_delete: false,
                         apply_text_edit_occurrence: false,
+                        apply_text_edit_line_scope: false,
                         git: true,
                         jobs: true,
                         async_jobs: true,

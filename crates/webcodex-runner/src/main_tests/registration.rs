@@ -144,6 +144,11 @@ fn current_runner_registration_advertises_v2_and_complete_generation_baseline() 
         AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES.len(),
         22
     );
+    assert!(
+        !AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
+            .contains(&"apply_text_edit_line_scope"),
+        "line scope is additive and must not become a generation-2 registration baseline"
+    );
     for capability in AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
         assert_eq!(
             capabilities
@@ -190,6 +195,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         assert!(caps.structured_go_test_packages, "{expected_str}");
         assert!(caps.structured_file_delete, "{expected_str}");
         assert!(caps.apply_text_edit_occurrence, "{expected_str}");
+        assert!(caps.apply_text_edit_line_scope, "{expected_str}");
         assert_eq!(body.agent_instance_id, "inst-1");
         assert_eq!(
             body.agent_protocol_version.as_deref(),
@@ -220,6 +226,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     assert!(caps.artifact_export_streaming_metadata);
     assert!(caps.structured_file_delete);
     assert!(caps.apply_text_edit_occurrence);
+    assert!(caps.apply_text_edit_line_scope);
     assert!(caps.async_jobs);
     assert!(caps.async_shell_jobs);
     assert_eq!(

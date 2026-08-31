@@ -260,6 +260,7 @@ pub(in crate::tool_runtime::tests) fn text_edit(
         new_text: new_text.map(str::to_string),
         anchor_text: anchor_text.map(str::to_string),
         occurrence: None,
+        line_scope: None,
     }
 }
 

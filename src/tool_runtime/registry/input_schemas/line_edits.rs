@@ -2,6 +2,19 @@ use serde_json::{json, Value};
 
 use super::common::OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION;
 
+fn line_scope_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Optional 1-based inclusive source-line safety fence against original batch content. The complete exact match or anchor must be contained. occurrence remains the global source-order exact occurrence and is never renumbered within the scope.",
+        "properties": {
+            "start_line": {"type": "integer", "minimum": 1},
+            "end_line": {"type": "integer", "minimum": 1}
+        },
+        "required": ["start_line", "end_line"]
+    })
+}
+
 fn apply_text_edit_schema() -> Value {
     json!({
         "oneOf": [
@@ -22,8 +35,9 @@ fn apply_text_edit_schema() -> Value {
                     "occurrence": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "Optional 1-based exact occurrence selector. Use direct retry only when conflict_recovery advertises selector support; expected_sha256 remains authoritative."
-                    }
+                        "description": "Optional 1-based global source-order exact occurrence selector. line_scope never renumbers occurrence; expected_sha256 remains authoritative."
+                    },
+                    "line_scope": line_scope_schema()
                 },
                 "required": ["kind", "old_text"]
             },
@@ -40,8 +54,9 @@ fn apply_text_edit_schema() -> Value {
                     "occurrence": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "Optional 1-based exact occurrence selector. Use direct retry only when conflict_recovery advertises selector support; expected_sha256 remains authoritative."
-                    }
+                        "description": "Optional 1-based global source-order exact occurrence selector. line_scope never renumbers occurrence; expected_sha256 remains authoritative."
+                    },
+                    "line_scope": line_scope_schema()
                 },
                 "required": ["kind", "old_text"]
             },
@@ -63,8 +78,9 @@ fn apply_text_edit_schema() -> Value {
                     "occurrence": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "Optional 1-based exact occurrence selector. Use direct retry only when conflict_recovery advertises selector support; expected_sha256 remains authoritative."
-                    }
+                        "description": "Optional 1-based global source-order exact occurrence selector. line_scope never renumbers occurrence; expected_sha256 remains authoritative."
+                    },
+                    "line_scope": line_scope_schema()
                 },
                 "required": ["kind", "anchor_text", "new_text"]
             },
@@ -86,8 +102,9 @@ fn apply_text_edit_schema() -> Value {
                     "occurrence": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "Optional 1-based exact occurrence selector. Use direct retry only when conflict_recovery advertises selector support; expected_sha256 remains authoritative."
-                    }
+                        "description": "Optional 1-based global source-order exact occurrence selector. line_scope never renumbers occurrence; expected_sha256 remains authoritative."
+                    },
+                    "line_scope": line_scope_schema()
                 },
                 "required": ["kind", "anchor_text", "new_text"]
             }

@@ -88,6 +88,8 @@ pub(crate) const MODEL_TOOL_DESCRIPTION_MAX_CHARS: usize = 600;
 
 // Re-export the public API so `crate::tool_runtime::ToolCall` etc. still work.
 #[cfg(test)]
+pub use crate::apply_edits_shared::ApplyTextLineScope;
+#[cfg(test)]
 pub(crate) use agent_authorization::required_agent_capability;
 #[cfg(test)]
 pub(crate) use files::MAX_PROJECT_ARTIFACT_BYTES;

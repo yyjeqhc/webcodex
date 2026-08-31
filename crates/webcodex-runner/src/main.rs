@@ -1875,6 +1875,9 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> ShellClientCapabilities {
     // This binary enforces ApplyTextEditInput.occurrence exactly. Older binaries
     // omit this additive effect-semantics capability and must not receive selectors.
     capabilities.apply_text_edit_occurrence = true;
+    // Line scopes are an additive rolling-upgrade fence: advertise only because
+    // this binary resolves full-match containment before any mutation.
+    capabilities.apply_text_edit_line_scope = true;
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;
     // SSH support intentionally depends on the local OpenSSH executable.

@@ -29,6 +29,22 @@ fn apply_text_edit_occurrence_capability_rejection(reason: impl AsRef<str>) -> T
     )
 }
 
+fn apply_text_edit_line_scope_capability_rejection(reason: impl AsRef<str>) -> ToolResult {
+    let reason = reason.as_ref();
+    ToolResult::err_with_output(
+        format!(
+            "Rejected before write: {reason}.\nNo files were modified.\nRetry guidance: reconnect a Runner that explicitly supports apply_text_edit_line_scope, or remove line_scope only if an unscoped exact edit is safe."
+        ),
+        json!({
+            "state_changed": false,
+            "error_kind": "agent_capability_unavailable",
+            "failure_kind": "capability_unavailable",
+            "capability": crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+            "retry_guidance": "reconnect a Runner with apply_text_edit_line_scope support; never silently downgrade a scoped edit to an unscoped edit"
+        }),
+    )
+}
+
 /// Maximum decoded size for whole-payload/model-facing artifact operations.
 /// These paths aggregate content or return it as base64/JSON, so they remain at
 /// 10 MiB even though data-plane upload/export paths admit larger files.
@@ -94,6 +110,14 @@ fn validate_apply_text_edit(
             "change {change_index} edit {edit_index} ({}): occurrence must be at least 1",
             edit.kind.as_str()
         ));
+    }
+    if let Some(line_scope) = edit.line_scope {
+        if let Err(reason) = line_scope.validate() {
+            return Err(format!(
+                "change {change_index} edit {edit_index} ({}): {reason}",
+                edit.kind.as_str()
+            ));
+        }
     }
     match edit.kind {
         ApplyTextEditKind::ReplaceExact => {
@@ -408,6 +432,11 @@ pub(crate) fn apply_text_edits_to_string(
                 "occurrence must be at least 1",
             ));
         }
+        if let Some(line_scope) = edit.line_scope {
+            line_scope
+                .validate()
+                .map_err(|reason| edit_field_error(index, kind, reason))?;
+        }
         let (needle, replacement): (&str, String) = match kind {
             ApplyTextEditKind::ReplaceExact => {
                 let old = edit
@@ -462,26 +491,42 @@ pub(crate) fn apply_text_edits_to_string(
             .map_err(|error| edit_field_error(index, kind, error))?
             .into_owned();
         let needle = needle.as_ref();
-        let (start, end) =
-            crate::apply_edits_shared::resolve_apply_text_match(original, needle, edit.occurrence)
-                .map_err(|conflict| {
-                    use crate::apply_edits_shared::ApplyTextMatchConflictKind;
-                    let message = match conflict.kind {
-                        ApplyTextMatchConflictKind::MatchNotFound => {
-                            "match text was not found".to_string()
-                        }
-                        ApplyTextMatchConflictKind::MultipleMatches => format!(
-                            "match text matched {} times; refusing ambiguous edit",
-                            conflict.match_count
-                        ),
-                        ApplyTextMatchConflictKind::OccurrenceOutOfRange => format!(
-                            "requested occurrence {} is out of range for {} exact matches",
-                            conflict.requested_occurrence.unwrap_or(0),
-                            conflict.match_count
-                        ),
-                    };
-                    edit_match_error(index, kind, &message)
-                })?;
+        let (start, end) = crate::apply_edits_shared::resolve_apply_text_match(
+            original,
+            needle,
+            edit.occurrence,
+            edit.line_scope.as_ref(),
+        )
+        .map_err(|conflict| {
+            use crate::apply_edits_shared::ApplyTextMatchConflictKind;
+            let message = match conflict.kind {
+                ApplyTextMatchConflictKind::MatchNotFound if conflict.line_scope.is_some() => {
+                    "match text was not found within line_scope".to_string()
+                }
+                ApplyTextMatchConflictKind::MatchNotFound => "match text was not found".to_string(),
+                ApplyTextMatchConflictKind::MultipleMatches => format!(
+                    "match text matched {} times{}; refusing ambiguous edit",
+                    conflict
+                        .line_scope_match_count
+                        .unwrap_or(conflict.match_count),
+                    if conflict.line_scope.is_some() {
+                        " within line_scope"
+                    } else {
+                        ""
+                    }
+                ),
+                ApplyTextMatchConflictKind::OccurrenceOutOfRange => format!(
+                    "requested occurrence {} is out of range for {} exact matches",
+                    conflict.requested_occurrence.unwrap_or(0),
+                    conflict.match_count
+                ),
+                ApplyTextMatchConflictKind::OccurrenceOutsideLineScope => format!(
+                    "requested occurrence {} is outside line_scope",
+                    conflict.requested_occurrence.unwrap_or(0)
+                ),
+            };
+            edit_match_error(index, kind, &message)
+        })?;
         let (range_start, range_end) = match kind {
             ApplyTextEditKind::InsertBefore => (start, start),
             ApplyTextEditKind::InsertAfter => (end, end),
@@ -1055,6 +1100,10 @@ impl ToolRuntime {
             .iter()
             .flat_map(|change| change.edits.iter())
             .any(|edit| edit.occurrence.is_some());
+        let requires_line_scope_capability = changes
+            .iter()
+            .flat_map(|change| change.edits.iter())
+            .any(|edit| edit.line_scope.is_some());
 
         let payload = json!({
             "changes": changes,
@@ -1127,7 +1176,15 @@ impl ToolRuntime {
             create_dirs: false,
             wait_timeout_secs: wait_timeout,
         };
-        let enqueue_result = if requires_occurrence_capability {
+        let enqueue_result = if requires_line_scope_capability {
+            self.shell_clients
+                .enqueue_apply_text_edits_with_line_scope(
+                    request,
+                    "tool_runtime".to_string(),
+                    requires_occurrence_capability,
+                )
+                .await
+        } else if requires_occurrence_capability {
             self.shell_clients
                 .enqueue_apply_text_edits_with_occurrence(request, "tool_runtime".to_string())
                 .await
@@ -1139,7 +1196,18 @@ impl ToolRuntime {
         let (request_id, rx) = match enqueue_result {
             Ok(r) => r,
             Err(e)
-                if requires_occurrence_capability && e.starts_with("capability_unavailable:") =>
+                if e.starts_with("capability_unavailable:")
+                    && e.contains(
+                        crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+                    ) =>
+            {
+                return apply_text_edit_line_scope_capability_rejection(e)
+            }
+            Err(e)
+                if e.starts_with("capability_unavailable:")
+                    && e.contains(
+                        crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
+                    ) =>
             {
                 return apply_text_edit_occurrence_capability_rejection(e)
             }

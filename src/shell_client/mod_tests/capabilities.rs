@@ -84,6 +84,7 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
     for feature in [
         RunnerFeature::Shell,
         RunnerFeature::Git,
+        RunnerFeature::ApplyTextEditLineScope,
         RunnerFeature::SshShell,
         RunnerFeature::PersistentShell,
         RunnerFeature::SshPersistentShell,

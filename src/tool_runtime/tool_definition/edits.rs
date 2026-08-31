@@ -52,7 +52,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             false,
         ),
-        "Canonical transactional file-change preferred for ordinary local edit/create/delete/rename on current worktree, not HEAD. Whole batch uses per-file hashes, dry_run; prefer over whole-file. Unique exact by default; bounded conflicts may advertise 1-based occurrence. SHA conflict requires reread.",
+        "Canonical transactional file-change editing on the current worktree. Uses per-file SHA guards and dry_run. Exact edits are unique by default; optional 1-based inclusive line_scope fences full matches while occurrence remains global source order. SHA conflict requires reread.",
         apply_text_edits_input_schema,
     ),
 ];

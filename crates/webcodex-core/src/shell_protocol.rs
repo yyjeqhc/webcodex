@@ -250,6 +250,11 @@ pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE: &str = "structured_fil
 /// selector in ApplyTextEditInput. Missing on older Runners is false and is
 /// never inferred from other file capabilities, protocol, build, transport, or OS.
 pub const SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE: &str = "apply_text_edit_occurrence";
+/// The Runner understands and enforces ApplyTextEditInput.line_scope as a
+/// 1-based inclusive full-match containment fence. Missing on older Runners is
+/// false and is never inferred from occurrence, protocol generation, file_write,
+/// version, transport, OS, or build identity.
+pub const SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE: &str = "apply_text_edit_line_scope";
 pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
 pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
@@ -443,6 +448,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
+    SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
     SHELL_CLIENT_CAPABILITY_GIT,
     SHELL_CLIENT_CAPABILITY_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
@@ -549,6 +555,10 @@ pub struct ShellClientCapabilities {
     /// Runners is false and is never inferred from another capability.
     #[serde(default, skip_serializing_if = "is_false")]
     pub apply_text_edit_occurrence: bool,
+    /// Correct enforcement of ApplyTextEditInput.line_scope. Missing on older
+    /// Runners is false and is never inferred from occurrence or generation.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub apply_text_edit_line_scope: bool,
     #[serde(default)]
     pub git: bool,
     #[serde(default)]
@@ -752,6 +762,7 @@ impl Default for ShellClientCapabilities {
             artifact_export_streaming_metadata: false,
             structured_file_delete: false,
             apply_text_edit_occurrence: false,
+            apply_text_edit_line_scope: false,
             git: false,
             jobs: false,
             async_jobs: false,
@@ -3344,6 +3355,7 @@ mod envelope_tests {
                 artifact_export_streaming_metadata: false,
                 structured_file_delete: false,
                 apply_text_edit_occurrence: false,
+                apply_text_edit_line_scope: false,
                 git: false,
                 jobs: true,
                 async_jobs: true,

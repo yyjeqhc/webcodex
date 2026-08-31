@@ -98,6 +98,34 @@ impl ApplyTextEditKind {
     }
 }
 
+/// Optional source-line safety fence for one exact edit. Lines are 1-based and
+/// inclusive against the canonicalized original file content for the batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyTextLineScope {
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+impl ApplyTextLineScope {
+    pub fn validate(self) -> Result<(), &'static str> {
+        if self.start_line == 0 {
+            return Err("line_scope.start_line must be at least 1");
+        }
+        if self.end_line == 0 {
+            return Err("line_scope.end_line must be at least 1");
+        }
+        if self.end_line < self.start_line {
+            return Err("line_scope.end_line must be greater than or equal to start_line");
+        }
+        Ok(())
+    }
+
+    fn contains(self, candidate: ApplyTextMatchCandidate) -> bool {
+        candidate.start_line >= self.start_line && candidate.end_line <= self.end_line
+    }
+}
+
 /// A single atomic text edit against one file. Only the fields relevant to the
 /// `kind` are required; the runtime validates presence before dispatch.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -111,13 +139,15 @@ pub struct ApplyTextEditInput {
     pub anchor_text: Option<String>,
     #[serde(default)]
     pub occurrence: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_scope: Option<ApplyTextLineScope>,
 }
 
 /// Maximum number of source-order exact-match candidates returned for one
 /// recoverable edit conflict. The full match count remains available.
 pub const MAX_APPLY_TEXT_CONFLICT_CANDIDATES: usize = 8;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ApplyTextMatchCandidate {
     pub occurrence: usize,
     pub start_line: usize,
@@ -129,6 +159,7 @@ pub enum ApplyTextMatchConflictKind {
     MatchNotFound,
     MultipleMatches,
     OccurrenceOutOfRange,
+    OccurrenceOutsideLineScope,
 }
 
 impl ApplyTextMatchConflictKind {
@@ -137,6 +168,7 @@ impl ApplyTextMatchConflictKind {
             Self::MatchNotFound => "match_not_found",
             Self::MultipleMatches => "multiple_matches",
             Self::OccurrenceOutOfRange => "occurrence_out_of_range",
+            Self::OccurrenceOutsideLineScope => "occurrence_outside_line_scope",
         }
     }
 }
@@ -144,61 +176,85 @@ impl ApplyTextMatchConflictKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplyTextMatchConflict {
     pub kind: ApplyTextMatchConflictKind,
+    /// Total exact matches in the whole file. This remains the identity space for
+    /// `occurrence` even when a line scope is present.
     pub match_count: usize,
     pub requested_occurrence: Option<usize>,
+    pub line_scope: Option<ApplyTextLineScope>,
+    /// Exact matches fully contained by `line_scope`; absent for unscoped edits.
+    pub line_scope_match_count: Option<usize>,
+    /// Bounded eligible candidates. Their occurrence values always use global
+    /// source-order numbering, never scope-relative numbering.
     pub candidate_ranges: Vec<ApplyTextMatchCandidate>,
     pub candidates_truncated: bool,
 }
 
-/// Resolve an optional 1-based exact occurrence against canonicalized file
-/// content. Matches are deterministic, non-overlapping, and in source order.
+/// Resolve an optional global 1-based exact occurrence and optional inclusive
+/// line safety fence against canonicalized file content. Matches are
+/// deterministic, non-overlapping, and numbered in whole-file source order.
 pub fn resolve_apply_text_match(
     original: &str,
     needle: &str,
     occurrence: Option<usize>,
+    line_scope: Option<&ApplyTextLineScope>,
 ) -> Result<(usize, usize), ApplyTextMatchConflict> {
     debug_assert!(!needle.is_empty());
+    debug_assert!(line_scope.is_none_or(|scope| scope.validate().is_ok()));
     let needle_newlines = needle.bytes().filter(|byte| *byte == b'\n').count();
     let needle_ends_with_newline = needle.as_bytes().last() == Some(&b'\n');
     let mut candidate_ranges = Vec::with_capacity(MAX_APPLY_TEXT_CONFLICT_CANDIDATES);
     let mut match_count = 0usize;
-    let mut selected = None;
+    let mut line_scope_match_count = 0usize;
+    let mut selected_occurrence = None;
+    let mut selected_eligible = None;
     let mut line_cursor = 0usize;
     let mut current_line = 1usize;
 
     for (start, _) in original.match_indices(needle) {
+        current_line = current_line.saturating_add(
+            original.as_bytes()[line_cursor..start]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count(),
+        );
+        line_cursor = start;
         match_count = match_count.saturating_add(1);
-        if candidate_ranges.len() < MAX_APPLY_TEXT_CONFLICT_CANDIDATES {
-            current_line = current_line.saturating_add(
-                original.as_bytes()[line_cursor..start]
-                    .iter()
-                    .filter(|byte| **byte == b'\n')
-                    .count(),
-            );
-            line_cursor = start;
-            let end_line = if needle_ends_with_newline {
-                current_line.saturating_add(needle_newlines.saturating_sub(1))
-            } else {
-                current_line.saturating_add(needle_newlines)
-            };
-            candidate_ranges.push(ApplyTextMatchCandidate {
-                occurrence: match_count,
-                start_line: current_line,
-                end_line: end_line.max(current_line),
-            });
+        let end_line = if needle_ends_with_newline {
+            current_line.saturating_add(needle_newlines.saturating_sub(1))
+        } else {
+            current_line.saturating_add(needle_newlines)
+        };
+        let candidate = ApplyTextMatchCandidate {
+            occurrence: match_count,
+            start_line: current_line,
+            end_line: end_line.max(current_line),
+        };
+        let eligible = line_scope.is_none_or(|scope| scope.contains(candidate));
+        if eligible {
+            line_scope_match_count = line_scope_match_count.saturating_add(1);
+            selected_eligible = Some((start, start + needle.len()));
+            if candidate_ranges.len() < MAX_APPLY_TEXT_CONFLICT_CANDIDATES {
+                candidate_ranges.push(candidate);
+            }
         }
         if occurrence == Some(match_count) {
-            selected = Some((start, start + needle.len()));
+            selected_occurrence = Some((start, start + needle.len(), candidate));
         }
     }
+
+    let scoped_match_count = line_scope.map(|_| line_scope_match_count);
+    let eligible_match_count = scoped_match_count.unwrap_or(match_count);
+    let candidates_truncated = eligible_match_count > MAX_APPLY_TEXT_CONFLICT_CANDIDATES;
 
     if match_count == 0 {
         return Err(ApplyTextMatchConflict {
             kind: ApplyTextMatchConflictKind::MatchNotFound,
             match_count,
             requested_occurrence: occurrence,
+            line_scope: line_scope.copied(),
+            line_scope_match_count: scoped_match_count,
             candidate_ranges,
-            candidates_truncated: false,
+            candidates_truncated,
         });
     }
     if let Some(requested) = occurrence {
@@ -207,25 +263,50 @@ pub fn resolve_apply_text_match(
                 kind: ApplyTextMatchConflictKind::OccurrenceOutOfRange,
                 match_count,
                 requested_occurrence: Some(requested),
-                candidates_truncated: match_count > MAX_APPLY_TEXT_CONFLICT_CANDIDATES,
+                line_scope: line_scope.copied(),
+                line_scope_match_count: scoped_match_count,
                 candidate_ranges,
+                candidates_truncated,
             });
         }
-        return Ok(selected.expect("requested exact occurrence counted above"));
+        let (start, end, candidate) =
+            selected_occurrence.expect("requested exact occurrence counted above");
+        if line_scope.is_some_and(|scope| !scope.contains(candidate)) {
+            return Err(ApplyTextMatchConflict {
+                kind: ApplyTextMatchConflictKind::OccurrenceOutsideLineScope,
+                match_count,
+                requested_occurrence: Some(requested),
+                line_scope: line_scope.copied(),
+                line_scope_match_count: scoped_match_count,
+                candidate_ranges,
+                candidates_truncated,
+            });
+        }
+        return Ok((start, end));
     }
-    if match_count > 1 {
+    if eligible_match_count == 0 {
+        return Err(ApplyTextMatchConflict {
+            kind: ApplyTextMatchConflictKind::MatchNotFound,
+            match_count,
+            requested_occurrence: None,
+            line_scope: line_scope.copied(),
+            line_scope_match_count: scoped_match_count,
+            candidate_ranges,
+            candidates_truncated,
+        });
+    }
+    if eligible_match_count > 1 {
         return Err(ApplyTextMatchConflict {
             kind: ApplyTextMatchConflictKind::MultipleMatches,
             match_count,
             requested_occurrence: None,
-            candidates_truncated: match_count > MAX_APPLY_TEXT_CONFLICT_CANDIDATES,
+            line_scope: line_scope.copied(),
+            line_scope_match_count: scoped_match_count,
             candidate_ranges,
+            candidates_truncated,
         });
     }
-    let start = original
-        .find(needle)
-        .expect("unique exact match counted above");
-    Ok((start, start + needle.len()))
+    Ok(selected_eligible.expect("unique eligible exact match counted above"))
 }
 
 /// Kind of project-file change performed by one transactional
@@ -296,14 +377,22 @@ pub fn is_sensitive_edit_path(path: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn scope(start_line: usize, end_line: usize) -> ApplyTextLineScope {
+        ApplyTextLineScope {
+            start_line,
+            end_line,
+        }
+    }
+
     #[test]
     fn apply_text_edits_exact_occurrence_resolution_is_bounded_and_ordered() {
         let source = (1..=10)
             .map(|index| format!("prefix-{index}\nneedle\n"))
             .collect::<String>();
-        let conflict = resolve_apply_text_match(&source, "needle\n", None).unwrap_err();
+        let conflict = resolve_apply_text_match(&source, "needle\n", None, None).unwrap_err();
         assert_eq!(conflict.kind, ApplyTextMatchConflictKind::MultipleMatches);
         assert_eq!(conflict.match_count, 10);
+        assert_eq!(conflict.line_scope_match_count, None);
         assert_eq!(
             conflict.candidate_ranges.len(),
             MAX_APPLY_TEXT_CONFLICT_CANDIDATES
@@ -312,18 +401,83 @@ mod tests {
         assert_eq!(conflict.candidate_ranges[0].occurrence, 1);
         assert_eq!(conflict.candidate_ranges[0].start_line, 2);
         assert_eq!(conflict.candidate_ranges[7].occurrence, 8);
-        let second = resolve_apply_text_match(&source, "needle\n", Some(2)).unwrap();
+        let second = resolve_apply_text_match(&source, "needle\n", Some(2), None).unwrap();
         assert_eq!(&source[second.0..second.1], "needle\n");
         assert!(second.0 > source.find("needle\n").unwrap());
     }
 
     #[test]
-    fn apply_text_edits_multiline_candidate_ranges_are_inclusive_source_lines() {
-        let source = "head\na\nb\nmid\na\nb\n";
-        let conflict = resolve_apply_text_match(source, "a\nb\n", None).unwrap_err();
+    fn apply_text_edits_line_scope_isolates_global_candidate_without_renumbering() {
+        let source = "head\ndup\nmid\ndup\ntail\n";
+        let second_scope = scope(4, 4);
+        let selected = resolve_apply_text_match(source, "dup", None, Some(&second_scope)).unwrap();
+        assert_eq!(selected.0, source.rfind("dup").unwrap());
+
+        let both_scope = scope(1, 5);
+        let conflict =
+            resolve_apply_text_match(source, "dup", None, Some(&both_scope)).unwrap_err();
+        assert_eq!(conflict.kind, ApplyTextMatchConflictKind::MultipleMatches);
+        assert_eq!(conflict.match_count, 2);
+        assert_eq!(conflict.line_scope_match_count, Some(2));
+        assert_eq!(conflict.candidate_ranges[0].occurrence, 1);
+        assert_eq!(conflict.candidate_ranges[1].occurrence, 2);
+
+        let empty_scope = scope(5, 5);
+        let conflict =
+            resolve_apply_text_match(source, "dup", None, Some(&empty_scope)).unwrap_err();
+        assert_eq!(conflict.kind, ApplyTextMatchConflictKind::MatchNotFound);
+        assert_eq!(conflict.match_count, 2);
+        assert_eq!(conflict.line_scope_match_count, Some(0));
+        assert!(conflict.candidate_ranges.is_empty());
+    }
+
+    #[test]
+    fn apply_text_edits_occurrence_and_line_scope_must_agree_globally() {
+        let source = "head\ndup\nmid\ndup\ntail\n";
+        let first_scope = scope(2, 2);
+        let second_scope = scope(4, 4);
+        let second = resolve_apply_text_match(source, "dup", Some(2), Some(&second_scope)).unwrap();
+        assert_eq!(second.0, source.rfind("dup").unwrap());
+
+        for (occurrence, line_scope) in [(1, second_scope), (2, first_scope)] {
+            let conflict =
+                resolve_apply_text_match(source, "dup", Some(occurrence), Some(&line_scope))
+                    .unwrap_err();
+            assert_eq!(
+                conflict.kind,
+                ApplyTextMatchConflictKind::OccurrenceOutsideLineScope
+            );
+            assert_eq!(conflict.requested_occurrence, Some(occurrence));
+            assert_eq!(conflict.match_count, 2);
+        }
+    }
+
+    #[test]
+    fn apply_text_edits_multiline_scope_requires_full_inclusive_containment() {
+        let source = "head\na\nb\nmid\na\nb\ntail\n";
+        let conflict = resolve_apply_text_match(source, "a\nb\n", None, None).unwrap_err();
         assert_eq!(conflict.candidate_ranges[0].start_line, 2);
         assert_eq!(conflict.candidate_ranges[0].end_line, 3);
         assert_eq!(conflict.candidate_ranges[1].start_line, 5);
         assert_eq!(conflict.candidate_ranges[1].end_line, 6);
+
+        let exact = scope(5, 6);
+        let selected = resolve_apply_text_match(source, "a\nb\n", None, Some(&exact)).unwrap();
+        assert_eq!(selected.0, source.rfind("a\nb\n").unwrap());
+
+        for partial in [scope(5, 5), scope(6, 6), scope(4, 5)] {
+            let conflict =
+                resolve_apply_text_match(source, "a\nb\n", None, Some(&partial)).unwrap_err();
+            assert_eq!(conflict.kind, ApplyTextMatchConflictKind::MatchNotFound);
+            assert_eq!(conflict.line_scope_match_count, Some(0));
+        }
+    }
+
+    #[test]
+    fn apply_text_line_scope_validation_rejects_zero_and_reversed_ranges() {
+        assert!(scope(0, 1).validate().is_err());
+        assert!(scope(1, 0).validate().is_err());
+        assert!(scope(3, 2).validate().is_err());
+        assert!(scope(3, 3).validate().is_ok());
     }
 }

@@ -7,6 +7,18 @@ use crate::shell_protocol::{
 };
 use serde_json::Value;
 
+fn scoped_text_edit(
+    mut edit: ApplyTextEditInput,
+    start_line: usize,
+    end_line: usize,
+) -> ApplyTextEditInput {
+    edit.line_scope = Some(ApplyTextLineScope {
+        start_line,
+        end_line,
+    });
+    edit
+}
+
 #[test]
 fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     let specs = registered_tool_specs();
@@ -19,6 +31,15 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     for variant in edit_variants {
         assert_eq!(variant["properties"]["occurrence"]["type"], "integer");
         assert_eq!(variant["properties"]["occurrence"]["minimum"], 1);
+        let line_scope = &variant["properties"]["line_scope"];
+        assert_eq!(line_scope["type"], "object");
+        assert_eq!(line_scope["additionalProperties"], false);
+        assert_eq!(
+            line_scope["required"],
+            serde_json::json!(["start_line", "end_line"])
+        );
+        assert_eq!(line_scope["properties"]["start_line"]["minimum"], 1);
+        assert_eq!(line_scope["properties"]["end_line"]["minimum"], 1);
         assert!(!variant["required"]
             .as_array()
             .unwrap()
@@ -75,12 +96,47 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     )
     .unwrap_or_else(|error| panic!("sha conflict recovery must match output schema: {error}"));
 
+    let scoped_conflict = serde_json::json!({
+        "success": false,
+        "output": {
+            "state_changed": false,
+            "error_kind": "edit_conflict",
+            "change_index": 0,
+            "edit_index": 0,
+            "kind": "replace_exact",
+            "path": "src/lib.rs",
+            "retry_guidance": "align the global occurrence with line_scope",
+            "conflict_recovery": {
+                "schema_version": 1,
+                "conflict_kind": "occurrence_outside_line_scope",
+                "occurrence_selector_supported": true,
+                "direct_retry_safe": true,
+                "reread_required": false,
+                "match_count": 2,
+                "requested_occurrence": 1,
+                "line_scope": {"start_line": 40, "end_line": 60},
+                "line_scope_match_count": 1,
+                "candidate_ranges": [{"occurrence": 2, "start_line": 50, "end_line": 50}],
+                "candidates_truncated": false,
+                "recovery_action": "align_occurrence_with_line_scope"
+            }
+        },
+        "error": "occurrence and line_scope disagree"
+    });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+        &scoped_conflict,
+        &spec.output_schema,
+    )
+    .unwrap_or_else(|error| panic!("scoped conflict recovery must match output schema: {error}"));
+
     let openapi = crate::openapi::build_openapi_spec();
     let occurrence = &openapi["components"]["schemas"]["ToolCallRequest"]["properties"]["changes"]
         ["items"]["properties"]["edits"]["items"]["properties"]["occurrence"];
     assert_eq!(occurrence["type"], "integer");
     assert_eq!(occurrence["minimum"], 1);
     assert!(spec.description.contains("occurrence"));
+    assert!(spec.description.contains("line_scope"));
+    assert!(spec.description.contains("global source order"));
     assert!(
         spec.description.chars().count() <= crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS
     );
@@ -167,6 +223,98 @@ fn apply_text_edits_rejects_ambiguous_match() {
         files::apply_text_edits_to_string(original, "src/x.rs", &edits, None, false).unwrap_err();
     assert!(err.contains("matched 2 times"));
     assert!(err.contains("ambiguous"));
+}
+
+#[test]
+fn apply_text_edits_line_scope_fences_all_exact_edit_kinds() {
+    let original = "head\ndup\nmid\ndup\ntail\n";
+    let cases = [
+        (
+            scoped_text_edit(
+                text_edit(
+                    ApplyTextEditKind::ReplaceExact,
+                    Some("dup"),
+                    Some("SECOND"),
+                    None,
+                ),
+                4,
+                4,
+            ),
+            "head\ndup\nmid\nSECOND\ntail\n",
+        ),
+        (
+            scoped_text_edit(
+                text_edit(ApplyTextEditKind::DeleteExact, Some("dup\n"), None, None),
+                4,
+                4,
+            ),
+            "head\ndup\nmid\ntail\n",
+        ),
+        (
+            scoped_text_edit(
+                text_edit(
+                    ApplyTextEditKind::InsertBefore,
+                    None,
+                    Some("BEFORE\n"),
+                    Some("dup\n"),
+                ),
+                4,
+                4,
+            ),
+            "head\ndup\nmid\nBEFORE\ndup\ntail\n",
+        ),
+        (
+            scoped_text_edit(
+                text_edit(
+                    ApplyTextEditKind::InsertAfter,
+                    None,
+                    Some("AFTER\n"),
+                    Some("dup\n"),
+                ),
+                4,
+                4,
+            ),
+            "head\ndup\nmid\ndup\nAFTER\ntail\n",
+        ),
+    ];
+    for (edit, expected) in cases {
+        let (updated, _) =
+            files::apply_text_edits_to_string(original, "src/x.rs", &[edit], None, false).unwrap();
+        assert_eq!(updated, expected);
+    }
+}
+
+#[test]
+fn apply_text_edits_line_scope_never_renumbers_occurrence_and_rejects_invalid_range() {
+    let original = "head\ndup\nmid\ndup\ntail\n";
+    let mut mismatch = scoped_text_edit(
+        text_edit(
+            ApplyTextEditKind::ReplaceExact,
+            Some("dup"),
+            Some("x"),
+            None,
+        ),
+        4,
+        4,
+    );
+    mismatch.occurrence = Some(1);
+    let err = files::apply_text_edits_to_string(original, "src/x.rs", &[mismatch], None, false)
+        .unwrap_err();
+    assert!(err.contains("occurrence 1 is outside line_scope"));
+
+    let reversed = scoped_text_edit(
+        text_edit(
+            ApplyTextEditKind::ReplaceExact,
+            Some("dup"),
+            Some("x"),
+            None,
+        ),
+        4,
+        3,
+    );
+    let err = files::apply_text_edits_to_string(original, "src/x.rs", &[reversed], None, false)
+        .unwrap_err();
+    assert!(err.contains("end_line must be greater than or equal to start_line"));
 }
 
 #[test]
@@ -833,6 +981,9 @@ async fn apply_text_edits_dry_run_does_not_write() {
     assert_eq!(payload["dry_run"], true);
     assert_eq!(payload["changes"][0]["kind"], "edit");
     assert_eq!(payload["changes"][0]["edits"][0]["kind"], "replace_exact");
+    assert!(payload["changes"][0]["edits"][0]
+        .get("line_scope")
+        .is_none());
 
     runtime
         .shell_clients
@@ -858,6 +1009,63 @@ async fn apply_text_edits_dry_run_does_not_write() {
     assert_eq!(result.output["dry_run"], true);
     assert_eq!(result.output["would_change"], true);
     assert_eq!(result.output["changed"], false);
+}
+
+#[tokio::test]
+async fn apply_text_edits_scoped_request_fails_closed_before_enqueue_without_capability() {
+    let runtime = runtime_with_agent_project("ate-scope-off");
+    register_agent(
+        &runtime,
+        "ate-scope-off",
+        None,
+        ShellClientCapabilities {
+            file_write: true,
+            apply_text_edit_occurrence: true,
+            apply_text_edit_line_scope: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("ate-scope-off");
+    let result = runtime
+        .apply_text_edits(
+            project,
+            vec![edit_change(
+                "src/lib.rs",
+                &"a".repeat(64),
+                vec![scoped_text_edit(
+                    text_edit(
+                        ApplyTextEditKind::ReplaceExact,
+                        Some("dup"),
+                        Some("x"),
+                        None,
+                    ),
+                    40,
+                    60,
+                )],
+            )],
+            None,
+        )
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["state_changed"], false);
+    assert_eq!(result.output["failure_kind"], "capability_unavailable");
+    assert_eq!(result.output["capability"], "apply_text_edit_line_scope");
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("No files were modified"));
+    assert!(runtime
+        .shell_clients
+        .poll(ShellAgentPollRequest {
+            client_id: "ate-scope-off".to_string(),
+            agent_instance_id: "inst".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]

@@ -359,6 +359,11 @@ fn edit_plan(
                 "occurrence must be at least 1",
             ));
         }
+        if let Some(line_scope) = edit.line_scope {
+            line_scope
+                .validate()
+                .map_err(|reason| EditPlanError::plain(index, kind.as_str(), reason))?;
+        }
         let (needle, replacement): (&str, String) = match kind {
             ApplyTextEditKind::ReplaceExact => {
                 let old = edit
@@ -442,19 +447,42 @@ fn edit_plan(
             .into_owned();
         let needle = needle.as_ref();
         let (start, end) =
-            resolve_apply_text_match(original, needle, edit.occurrence).map_err(|conflict| {
+            resolve_apply_text_match(original, needle, edit.occurrence, edit.line_scope.as_ref())
+                .map_err(|conflict| {
                 let message = match conflict.kind {
+                    ApplyTextMatchConflictKind::MatchNotFound if conflict.line_scope.is_some() => {
+                        "match text was not found within line_scope".to_string()
+                    }
                     ApplyTextMatchConflictKind::MatchNotFound => {
                         "match text was not found".to_string()
                     }
-                    ApplyTextMatchConflictKind::MultipleMatches => {
-                        format!("match text matched {} times", conflict.match_count)
-                    }
+                    ApplyTextMatchConflictKind::MultipleMatches => format!(
+                        "match text matched {} times{}",
+                        conflict
+                            .line_scope_match_count
+                            .unwrap_or(conflict.match_count),
+                        if conflict.line_scope.is_some() {
+                            " within line_scope"
+                        } else {
+                            ""
+                        }
+                    ),
                     ApplyTextMatchConflictKind::OccurrenceOutOfRange => format!(
                         "requested occurrence {} is out of range for {} exact matches",
                         conflict.requested_occurrence.unwrap_or(0),
                         conflict.match_count
                     ),
+                    ApplyTextMatchConflictKind::OccurrenceOutsideLineScope => {
+                        let scope = conflict
+                            .line_scope
+                            .expect("outside-scope conflict always carries line_scope");
+                        format!(
+                            "requested occurrence {} is outside line_scope {}..={}",
+                            conflict.requested_occurrence.unwrap_or(0),
+                            scope.start_line,
+                            scope.end_line
+                        )
+                    }
                 };
                 EditPlanError {
                     edit_index: index,
@@ -515,14 +543,27 @@ fn edit_plan(
 fn edit_conflict_recovery(error: &EditPlanError) -> Option<serde_json::Value> {
     match error.conflict.as_ref()? {
         EditPlanConflict::Match(conflict) => {
+            let scoped = conflict.line_scope.is_some();
             let (selector_supported, recovery_action, direct_retry_safe, reread_required) =
                 match conflict.kind {
+                    ApplyTextMatchConflictKind::MultipleMatches if scoped => {
+                        (true, "narrow_line_scope_or_select_occurrence", true, false)
+                    }
                     ApplyTextMatchConflictKind::MultipleMatches => {
                         (true, "select_occurrence_or_refine_match", true, false)
                     }
                     ApplyTextMatchConflictKind::OccurrenceOutOfRange => {
                         (true, "choose_valid_occurrence_or_refine_match", true, false)
                     }
+                    ApplyTextMatchConflictKind::OccurrenceOutsideLineScope => {
+                        (true, "align_occurrence_with_line_scope", true, false)
+                    }
+                    ApplyTextMatchConflictKind::MatchNotFound if scoped => (
+                        conflict.match_count > 0,
+                        "adjust_line_scope_or_refine_match",
+                        true,
+                        false,
+                    ),
                     ApplyTextMatchConflictKind::MatchNotFound => {
                         (false, "reread_or_refine_match", false, true)
                     }
@@ -540,6 +581,12 @@ fn edit_conflict_recovery(error: &EditPlanError) -> Option<serde_json::Value> {
             });
             if let Some(requested) = conflict.requested_occurrence {
                 recovery["requested_occurrence"] = serde_json::json!(requested);
+            }
+            if let Some(line_scope) = conflict.line_scope {
+                recovery["line_scope"] = serde_json::json!(line_scope);
+            }
+            if let Some(line_scope_match_count) = conflict.line_scope_match_count {
+                recovery["line_scope_match_count"] = serde_json::json!(line_scope_match_count);
             }
             Some(recovery)
         }
@@ -568,6 +615,15 @@ fn edit_conflict_retry_guidance(recovery: Option<&serde_json::Value>) -> &'stati
         }
         Some("choose_valid_occurrence_or_refine_match") => {
             "choose a valid advertised occurrence or refine the exact match; reuse the same expected_sha256 unless you reread or observe a changed file."
+        }
+        Some("narrow_line_scope_or_select_occurrence") => {
+            "narrow line_scope or choose an advertised global occurrence that is fully contained by it; reuse the same expected_sha256 unless the file changed."
+        }
+        Some("adjust_line_scope_or_refine_match") => {
+            "adjust line_scope or refine the exact match; reuse the same expected_sha256 unless the file changed."
+        }
+        Some("align_occurrence_with_line_scope") => {
+            "use the intended global occurrence with a line_scope that fully contains it, or correct either fence; reuse the same expected_sha256 unless the file changed."
         }
         Some("reread_or_refine_match") => {
             "reread this file or refine the exact match; if you reread, retry with the newly observed expected_sha256."

@@ -310,8 +310,8 @@ fn apply_text_edits_capability_requirements(body: &ShellFileOpRequest) -> (bool,
         .filter_map(|change| change.get("edits").and_then(serde_json::Value::as_array))
         .flatten()
     {
-        requires_occurrence |= edit.get("occurrence").is_some();
-        requires_line_scope |= edit.get("line_scope").is_some();
+        requires_occurrence |= edit.get("occurrence").is_some_and(|value| !value.is_null());
+        requires_line_scope |= edit.get("line_scope").is_some_and(|value| !value.is_null());
         if requires_occurrence && requires_line_scope {
             break;
         }

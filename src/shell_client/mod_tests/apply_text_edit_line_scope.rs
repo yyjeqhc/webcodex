@@ -170,6 +170,36 @@ async fn generic_file_enqueue_preserves_unscoped_edit_without_line_scope_capabil
 }
 
 #[tokio::test]
+async fn generic_file_enqueue_treats_null_optional_fences_as_absent() {
+    let registry = ShellClientRegistry::default();
+    register_line_scope_instance(&registry, "generic-null-fences", false).await;
+
+    let mut request = line_scope_request("generic-null-fences", None);
+    let mut payload: serde_json::Value =
+        serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+    let edit = payload["changes"][0]["edits"][0].as_object_mut().unwrap();
+    edit.insert("line_scope".to_string(), serde_json::Value::Null);
+    edit.insert("occurrence".to_string(), serde_json::Value::Null);
+    request.content = Some(payload.to_string());
+
+    let (request_id, _rx) = registry
+        .enqueue_file_op(request, "rest-like-caller".to_string())
+        .await
+        .unwrap();
+    let queued = registry
+        .poll(ShellAgentPollRequest {
+            client_id: "generic-null-fences".to_string(),
+            agent_instance_id: "inst".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(queued.request_id, request_id);
+    assert_eq!(queued.kind, "file_apply_text_edits");
+}
+
+#[tokio::test]
 async fn generic_file_enqueue_scoped_edit_uses_capability_fenced_path() {
     let registry = ShellClientRegistry::default();
     register_line_scope_instance(&registry, "generic-scope-on", true).await;

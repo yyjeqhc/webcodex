@@ -609,10 +609,10 @@ impl Database {
         // supported; development-only intermediate shapes are rejected.
         Self::ensure_project_memory_schema(&mut conn)?;
 
-        // wc_executions already existed in v0.3.9. Preserve exactly that public
-        // upgrade boundary for fields added after the release; older or partial
-        // development shapes are unsupported.
-        Self::migrate_v039_execution_columns(&conn)?;
+        // Development database shapes are not migration inputs. Fresh databases
+        // are created above with the current execution schema; any pre-current
+        // persisted shape must be recreated instead of being altered in place.
+        Self::ensure_current_execution_schema(&conn)?;
         Ok(())
     }
 
@@ -696,8 +696,8 @@ impl Database {
         Ok(())
     }
 
-    fn migrate_v039_execution_columns(conn: &Connection) -> anyhow::Result<()> {
-        const V039_REQUIRED_COLUMNS: &[&str] = &[
+    fn ensure_current_execution_schema(conn: &Connection) -> anyhow::Result<()> {
+        const CURRENT_EXECUTION_COLUMNS: &[&str] = &[
             "id",
             "kind",
             "task_id",
@@ -729,8 +729,6 @@ impl Database {
             "validated_workspace_sha256",
             "failed_check",
             "assertion_evidence_json",
-        ];
-        const POST_V039_COLUMNS: &[&str] = &[
             "terminal_continuation_intent",
             "terminal_continuation_armed_at",
             "terminal_continuation_delivery_state",
@@ -741,44 +739,16 @@ impl Database {
         ];
 
         let columns = table_columns(conn, "wc_executions")?;
-        let v039_shape = V039_REQUIRED_COLUMNS
+        let current_shape = CURRENT_EXECUTION_COLUMNS
             .iter()
             .copied()
             .map(str::to_string)
             .collect::<Vec<_>>();
-        let current_shape = V039_REQUIRED_COLUMNS
-            .iter()
-            .chain(POST_V039_COLUMNS.iter())
-            .copied()
-            .map(str::to_string)
-            .collect::<Vec<_>>();
-        if columns == current_shape {
-            return Ok(());
-        }
-        if columns != v039_shape {
+        if columns != current_shape {
             anyhow::bail!(
-                "unsupported wc_executions schema; only v0.3.9 or the current shape is accepted"
+                "unsupported wc_executions schema shape; recreate post-v0.3.9 development state"
             );
         }
-
-        conn.execute_batch(
-            "ALTER TABLE wc_executions
-                 ADD COLUMN terminal_continuation_intent TEXT NOT NULL DEFAULT 'none'
-                 CHECK(terminal_continuation_intent IN ('none', 'armed_for_terminal'));
-             ALTER TABLE wc_executions
-                 ADD COLUMN terminal_continuation_armed_at INTEGER;
-             ALTER TABLE wc_executions
-                 ADD COLUMN terminal_continuation_delivery_state TEXT NOT NULL DEFAULT 'unclaimed'
-                 CHECK(terminal_continuation_delivery_state IN
-                     ('unclaimed', 'claimed', 'dispatching', 'delivered', 'delivery_unknown'));
-             ALTER TABLE wc_executions
-                 ADD COLUMN terminal_continuation_claim_fence TEXT
-                 CHECK(terminal_continuation_claim_fence IS NULL OR
-                     (length(terminal_continuation_claim_fence) BETWEEN 1 AND 80));
-             ALTER TABLE wc_executions ADD COLUMN mcp_task_materialized_at INTEGER;
-             ALTER TABLE wc_executions ADD COLUMN mcp_task_result_finalized_at INTEGER;
-             ALTER TABLE wc_executions ADD COLUMN mcp_task_output_tail_json TEXT;",
-        )?;
         Ok(())
     }
 }
@@ -903,57 +873,22 @@ mod connector_execution_column_tests {
     }
 
     #[test]
-    fn v039_execution_rows_migrate_to_current_terminal_continuation_shape() {
+    fn v039_execution_schema_is_rejected_without_migration() {
         let conn = Connection::open_in_memory().unwrap();
         create_v039_execution_schema(&conn);
+        let before = table_columns(&conn, "wc_executions").unwrap();
 
-        Database::migrate_v039_execution_columns(&conn).unwrap();
-        Database::migrate_v039_execution_columns(&conn).unwrap();
-
-        let restored: (
-            String,
-            Option<i64>,
-            String,
-            String,
-            Option<String>,
-            Option<i64>,
-            Option<i64>,
-            Option<String>,
-        ) = conn
+        let error = Database::ensure_current_execution_schema(&conn).unwrap_err();
+        assert!(format!("{error:#}").contains("recreate post-v0.3.9 development state"));
+        assert_eq!(table_columns(&conn, "wc_executions").unwrap(), before);
+        let state: String = conn
             .query_row(
-                "SELECT terminal_continuation_intent, terminal_continuation_armed_at, state,
-                        terminal_continuation_delivery_state, terminal_continuation_claim_fence,
-                        mcp_task_materialized_at, mcp_task_result_finalized_at,
-                        mcp_task_output_tail_json
-                 FROM wc_executions WHERE id = 'released'",
+                "SELECT state FROM wc_executions WHERE id = 'released'",
                 [],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                        row.get(7)?,
-                    ))
-                },
+                |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(
-            restored,
-            (
-                "none".to_string(),
-                None,
-                "succeeded".to_string(),
-                "unclaimed".to_string(),
-                None,
-                None,
-                None,
-                None,
-            )
-        );
+        assert_eq!(state, "succeeded");
     }
 
     #[test]
@@ -966,7 +901,7 @@ mod connector_execution_column_tests {
         )
         .unwrap();
 
-        let error = Database::migrate_v039_execution_columns(&conn).unwrap_err();
-        assert!(format!("{error:#}").contains("only v0.3.9 or the current shape"));
+        let error = Database::ensure_current_execution_schema(&conn).unwrap_err();
+        assert!(format!("{error:#}").contains("recreate post-v0.3.9 development state"));
     }
 }

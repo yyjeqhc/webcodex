@@ -10,7 +10,6 @@ use serde_json::Value;
 
 use super::super::helpers::is_safe_job_id;
 use super::super::project_instructions::ProjectInstructionsSummarySnapshot;
-use super::super::tool_inputs::SessionMode;
 use super::assignment::is_valid_assignment_fence_fingerprint;
 use super::events::{
     context_result_summary_for_tool_result, exploration_tool_kind, is_valid_session_id,
@@ -19,12 +18,11 @@ use super::events::{
     sanitize_tool_execution_state, session_input_summary_for_tool,
 };
 use super::model::{
-    ColdSessionRecord, PersistedSessionLedger, PersistedSessionRecord, SessionEvent,
-    SessionExecutionContext, SessionGuards, SessionLifecycle, SessionMessage, SessionRecord,
-    StoredSession, DEFAULT_MAX_MESSAGES_PER_SESSION, EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS,
-    MAX_INPUT_ARRAY_ITEMS, MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_MESSAGE_CHARS,
-    MAX_MESSAGE_RESOLUTION_CHARS, MESSAGE_ID_PREFIX, SESSION_LEDGER_V1_VERSION,
-    SESSION_LEDGER_VERSION,
+    ColdSessionRecord, PersistedSessionLedger, PersistedSessionRecord, SessionEvent, SessionGuards,
+    SessionMessage, SessionRecord, StoredSession, DEFAULT_MAX_MESSAGES_PER_SESSION,
+    EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS,
+    MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_MESSAGE_CHARS, MAX_MESSAGE_RESOLUTION_CHARS,
+    MESSAGE_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::query::{is_valid_completion_id, validate_message_tags};
 use super::util::{
@@ -41,70 +39,6 @@ struct SessionLedgerVersionProbe {
 struct LoadedSessionLedgerV2 {
     version: u32,
     sessions: Vec<Value>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LoadedSessionLedgerV1 {
-    version: u32,
-    sessions: Vec<Value>,
-    /// v0.3.9 always serialized this now-retired index. Its entries no longer
-    /// carry authority, so the v1 upgrade validates only the canonical array
-    /// envelope and intentionally discards the contents.
-    durable_current_bindings: Vec<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PersistedSessionRecordV1 {
-    session_id: String,
-    project: Option<String>,
-    owner_authority_fingerprint: Option<String>,
-    title: Option<String>,
-    mode: SessionMode,
-    guards: SessionGuards,
-    execution_context: SessionExecutionContext,
-    lifecycle: SessionLifecycle,
-    created_at: i64,
-    updated_at: i64,
-    events: Vec<Value>,
-    messages: Vec<Arc<SessionMessage>>,
-    message_observation_revision: u64,
-    message_observation_floor: u64,
-    message_observation_revisions: BTreeMap<String, u64>,
-    events_observed: u64,
-    context_revision: u64,
-    #[serde(default)]
-    materialized_validation_job_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PersistedLedgerSource {
-    V039V1,
-    CurrentV2,
-}
-
-fn upgrade_v039_session_events(values: Vec<Value>) -> Option<Vec<Arc<SessionEvent>>> {
-    values
-        .into_iter()
-        .map(|mut value| {
-            let object = value.as_object_mut()?;
-            // These two audit-only fields existed in the canonical v0.3.9 event
-            // shape and were removed later. They never carried Session authority.
-            object.remove("allow_cross_project_session_required");
-            object.remove("allow_cross_project_session");
-            // v0.3.9 predates logical invocation correlation. Reject a v2 event
-            // mislabeled as v1 instead of treating the version as an alias.
-            if object.contains_key("logical_invocation_id")
-                || object.contains_key("logical_invocation_role")
-            {
-                return None;
-            }
-            serde_json::from_value::<SessionEvent>(value)
-                .ok()
-                .map(Arc::new)
-        })
-        .collect()
 }
 
 fn v2_record_has_canonical_logical_invocation_shape(value: &Value) -> bool {
@@ -128,37 +62,6 @@ fn v2_record_has_canonical_logical_invocation_shape(value: &Value) -> bool {
                 })
             })
         })
-}
-
-impl PersistedSessionRecordV1 {
-    fn upgrade(self) -> Option<PersistedSessionRecord> {
-        Some(PersistedSessionRecord {
-            session_id: self.session_id,
-            project: self.project,
-            owner_authority_fingerprint: sanitize_owner_authority_fingerprint(
-                self.owner_authority_fingerprint?,
-            )?,
-            title: self.title,
-            mode: self.mode,
-            guards: self.guards,
-            execution_context: self.execution_context,
-            lifecycle: self.lifecycle,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-            events: upgrade_v039_session_events(self.events)?,
-            messages: self.messages,
-            message_observation_revision: self.message_observation_revision,
-            message_observation_floor: self.message_observation_floor,
-            message_observation_revisions: self.message_observation_revisions,
-            assignment_history_floors: BTreeMap::new(),
-            assignment_history_tracking_complete: false,
-            completion_assignment_fence_fingerprints: BTreeMap::new(),
-            completion_assignment_fence_tracking_complete: false,
-            events_observed: self.events_observed,
-            context_revision: self.context_revision,
-            materialized_validation_job_ids: self.materialized_validation_job_ids,
-        })
-    }
 }
 
 impl PersistedSessionRecord {
@@ -272,18 +175,13 @@ impl PersistedSessionRecord {
                 .all(|(snapshot, live)| Arc::ptr_eq(snapshot, live))
     }
 
-    fn into_record(
-        self,
-        max_events_per_session: usize,
-        source: PersistedLedgerSource,
-    ) -> Option<SessionRecord> {
+    fn into_record(self, max_events_per_session: usize) -> Option<SessionRecord> {
         let session_id = self.session_id.trim().to_string();
         if !is_valid_session_id(&session_id) {
             return None;
         }
         // Canonical authority and lifecycle are required before any restored row
-        // can enter the in-memory Session store. v2 structural omissions never
-        // reach this point; v1 still fails closed on missing/malformed authority.
+        // can enter the in-memory Session store.
         let owner_authority_fingerprint =
             sanitize_owner_authority_fingerprint(self.owner_authority_fingerprint)?;
         let lifecycle = self.lifecycle;
@@ -326,9 +224,6 @@ impl PersistedSessionRecord {
         let duplicate_retained_message_ids = !duplicate_message_ids.is_empty();
         let all_persisted_messages_restored =
             !duplicate_retained_message_ids && messages.len() == persisted_message_count;
-        let v1_no_eviction_proven = source == PersistedLedgerSource::V039V1
-            && all_persisted_messages_restored
-            && persisted_message_count < DEFAULT_MAX_MESSAGES_PER_SESSION;
         if duplicate_retained_message_ids {
             messages.retain(|message| !duplicate_message_ids.contains(&message.message_id));
         }
@@ -417,18 +312,10 @@ impl PersistedSessionRecord {
                 }
                 assignment_history_floors.insert(todo_id, revision);
             }
-            let source_tracking_complete = match source {
-                PersistedLedgerSource::V039V1 => observation_floor == 0 && v1_no_eviction_proven,
-                PersistedLedgerSource::CurrentV2 => self.assignment_history_tracking_complete,
-            };
             assignment_history_tracking_complete = all_persisted_messages_restored
                 && !assignment_metadata_inconsistent
-                && source_tracking_complete;
+                && self.assignment_history_tracking_complete;
         } else {
-            // v0.3.9 ledgers never persisted assignment-history metadata. Their
-            // retained messages form a safe revision-zero baseline only when the
-            // released v1 bounds prove that no message was evicted. v2 never
-            // infers completeness from a missing/zero revision.
             observation_revisions.extend(
                 retained_message_ids
                     .iter()
@@ -436,15 +323,9 @@ impl PersistedSessionRecord {
                     .map(|message_id| (message_id, 0)),
             );
             observation_floor = 0;
-            assignment_history_tracking_complete = match source {
-                PersistedLedgerSource::V039V1 => v1_no_eviction_proven,
-                PersistedLedgerSource::CurrentV2 => {
-                    all_persisted_messages_restored && self.assignment_history_tracking_complete
-                }
-            };
+            assignment_history_tracking_complete =
+                all_persisted_messages_restored && self.assignment_history_tracking_complete;
         }
-        // v0.3.9 predates durable completion-fence metadata. Its explicit upgrade
-        // keeps tracking incomplete. v2 carries only canonical non-null fingerprints.
         let retained_completed_todo_ids = messages
             .iter()
             .filter(|message| {
@@ -466,8 +347,8 @@ impl PersistedSessionRecord {
             }
             completion_assignment_fence_fingerprints.insert(todo_id, Some(fingerprint));
         }
-        let persisted_completion_tracking_complete = source == PersistedLedgerSource::CurrentV2
-            && self.completion_assignment_fence_tracking_complete;
+        let persisted_completion_tracking_complete =
+            self.completion_assignment_fence_tracking_complete;
         if persisted_completion_tracking_complete
             && retained_completed_todo_ids
                 .iter()
@@ -481,8 +362,7 @@ impl PersistedSessionRecord {
         let materialized_validation_job_ids =
             sanitize_materialized_validation_job_ids(self.materialized_validation_job_ids);
         // On restore, `events_observed` is at least the count of events we just
-        // retained, so a freshly-restored legacy ledger does not falsely report
-        // eviction. A live ledger that exceeded the cap has the true cumulative
+        // retained. A live ledger that exceeded the cap has the true cumulative
         // count persisted.
         let retained_events = events.len() as u64;
         let retained_context_revision = events
@@ -597,7 +477,7 @@ pub(super) fn materialize_cold_session(
 ) -> Option<SessionRecord> {
     serde_json::from_str::<PersistedSessionRecord>(record.raw.get())
         .ok()?
-        .into_record(max_events_per_session, PersistedLedgerSource::CurrentV2)
+        .into_record(max_events_per_session)
 }
 
 pub(super) struct RestoredSessionLedger {
@@ -666,32 +546,7 @@ pub(super) fn load_persisted_ledger(
                                 return None;
                             }
                         };
-                        record.into_record(max_events_per_session, PersistedLedgerSource::CurrentV2)
-                    })
-                    .collect()
-            }),
-        SESSION_LEDGER_V1_VERSION => serde_json::from_str::<LoadedSessionLedgerV1>(&content)
-            .map_err(|err| format!("invalid v0.3.9 session ledger v1: {err}"))
-            .map(|ledger| {
-                debug_assert_eq!(ledger.version, SESSION_LEDGER_V1_VERSION);
-                let _retired_binding_count = ledger.durable_current_bindings.len();
-                ledger
-                    .sessions
-                    .into_iter()
-                    .filter_map(|value| {
-                        let record = match serde_json::from_value::<PersistedSessionRecordV1>(value)
-                        {
-                            Ok(record) => record,
-                            Err(err) => {
-                                tracing::warn!(
-                                    "discarding non-canonical v0.3.9 Session row: {err}"
-                                );
-                                return None;
-                            }
-                        };
-                        record
-                            .upgrade()?
-                            .into_record(max_events_per_session, PersistedLedgerSource::V039V1)
+                        record.into_record(max_events_per_session)
                     })
                     .collect()
             }),

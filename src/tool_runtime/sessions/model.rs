@@ -40,7 +40,6 @@ pub(crate) const MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS: usize =
 pub(super) const MAX_INPUT_OBJECT_KEYS: usize = 16;
 pub(super) const MAX_INPUT_ARRAY_ITEMS: usize = 8;
 pub(crate) const MAX_VALIDATION_EXCERPT_CHARS: usize = 800;
-pub(super) const SESSION_LEDGER_V1_VERSION: u32 = 1;
 pub(super) const SESSION_LEDGER_VERSION: u32 = 2;
 pub(crate) const MESSAGE_ID_PREFIX: &str = "wc_msg_";
 pub(crate) const DEFAULT_MAX_MESSAGES_PER_SESSION: usize = 200;
@@ -606,18 +605,16 @@ pub(super) struct PersistedSessionRecord {
     pub(super) message_observation_revision: u64,
     pub(super) message_observation_floor: u64,
     pub(super) message_observation_revisions: BTreeMap<String, u64>,
-    /// v2 requires exact per-todo retention metadata. Compatibility inference is
-    /// isolated to the explicit v0.3.9 ledger-v1 upgrade path.
+    /// Exact per-todo retention metadata required by the current ledger format.
     pub(super) assignment_history_floors: BTreeMap<String, u64>,
     pub(super) assignment_history_tracking_complete: bool,
-    /// Raw assignment fences are never persisted. v2 stores only canonical
-    /// SHA-256 fingerprints; v1 no-fence history upgrades to an empty map with
-    /// incomplete tracking rather than encoding a synthetic/null fence.
+    /// Raw assignment fences are never persisted. Only canonical SHA-256
+    /// fingerprints are stored.
     pub(super) completion_assignment_fence_fingerprints: BTreeMap<String, String>,
     pub(super) completion_assignment_fence_tracking_complete: bool,
     pub(super) events_observed: u64,
     pub(super) context_revision: u64,
-    /// v0.3.9 and v2 both omit this bounded list when empty.
+    /// Omit this bounded list when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) materialized_validation_job_ids: Vec<String>,
 }

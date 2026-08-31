@@ -1,7 +1,7 @@
 use super::messages::encode_observation_token;
 use super::model::{
     SessionMessageObservationOutcome, DEFAULT_MAX_MESSAGES_PER_SESSION,
-    MESSAGE_COMPLETION_FINGERPRINT_HEX_CHARS, SESSION_LEDGER_V1_VERSION,
+    MESSAGE_COMPLETION_FINGERPRINT_HEX_CHARS,
 };
 use super::*;
 use serde_json::Value;
@@ -331,106 +331,6 @@ async fn observe_session_messages_retention_reports_history_loss_for_protected_t
         .messages
         .iter()
         .all(|message| message.message_id != filler_ids[0]));
-}
-
-#[tokio::test]
-async fn observe_session_messages_token_survives_restart_and_v039_upgrade() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("sessions.json");
-    let store = SessionStore::with_persistence(&ledger, 10, 50);
-    let session = store.start_session(Some("proj".to_string()), None);
-    post(
-        &store,
-        &session.session_id,
-        SessionMessageKind::Note,
-        "before baseline",
-        SessionMessagePriority::Normal,
-    );
-    let before_restart = baseline(&store, &session.session_id).await;
-    // Observation-token issuance fences the current message-observation revision
-    // itself. A fresh store opened while the first store is still alive must
-    // therefore accept the token without relying on graceful Drop/test flush.
-    let restored = SessionStore::with_persistence(&ledger, 10, 50);
-    let unchanged = restored
-        .observe_messages(
-            &session.session_id,
-            Some(&before_restart.observation_token),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    assert!(!unchanged.changed);
-    assert!(unchanged.messages.is_empty());
-    let new_message = post(
-        &restored,
-        &session.session_id,
-        SessionMessageKind::Progress,
-        "after restart",
-        SessionMessagePriority::Normal,
-    );
-    let after_restart = restored
-        .observe_messages(
-            &session.session_id,
-            Some(&before_restart.observation_token),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    assert_eq!(after_restart.messages.len(), 1);
-    assert_eq!(after_restart.messages[0].message_id, new_message.message_id);
-
-    restored.flush_persistence();
-    drop(restored);
-    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
-    raw["version"] = Value::from(SESSION_LEDGER_V1_VERSION);
-    raw.as_object_mut().unwrap().insert(
-        "durable_current_bindings".to_string(),
-        serde_json::json!([]),
-    );
-    let record = raw["sessions"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|record| record["session_id"] == session.session_id)
-        .unwrap()
-        .as_object_mut()
-        .unwrap();
-    for field in [
-        "assignment_history_floors",
-        "assignment_history_tracking_complete",
-        "completion_assignment_fence_fingerprints",
-        "completion_assignment_fence_tracking_complete",
-    ] {
-        record.remove(field);
-    }
-    std::fs::write(&ledger, serde_json::to_vec(&raw).unwrap()).unwrap();
-    let v039 = SessionStore::with_persistence(&ledger, 10, 50);
-    let v039_baseline = baseline(&v039, &session.session_id).await;
-    assert!(v039_baseline.messages.is_empty());
-    assert!(!v039_baseline.changed);
-    let post_upgrade = post(
-        &v039,
-        &session.session_id,
-        SessionMessageKind::Note,
-        "after v0.3.9 upgrade",
-        SessionMessagePriority::Normal,
-    );
-    let upgraded_delta = v039
-        .observe_messages(
-            &session.session_id,
-            Some(&v039_baseline.observation_token),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    assert_eq!(upgraded_delta.messages.len(), 1);
-    assert_eq!(
-        upgraded_delta.messages[0].message_id,
-        post_upgrade.message_id
-    );
 }
 
 #[tokio::test]
@@ -959,98 +859,6 @@ fn collaboration_session_message_exact_lookup_finds_old_retained_todo() {
         )
         .unwrap();
     assert!(missing.is_empty());
-}
-
-#[test]
-fn collaboration_session_message_completion_replays_after_restart_and_v039_upgrade() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("sessions.json");
-    let store = SessionStore::with_persistence(&ledger, 10, 50);
-    let coordinator = store.start_session(Some("proj".to_string()), None);
-    let worker = store.start_session(Some("proj".to_string()), None);
-    let todo = post(
-        &store,
-        &coordinator.session_id,
-        SessionMessageKind::Todo,
-        "persist completion",
-        SessionMessagePriority::Normal,
-    );
-    let input = CompleteSessionMessageInput {
-        session_id: coordinator.session_id.clone(),
-        message_id: todo.message_id.clone(),
-        answer: "persisted answer".to_string(),
-        tags: vec!["done".to_string()],
-        priority: SessionMessagePriority::Normal,
-        completion_id: completion_id('d'),
-        author_session_id: Some(worker.session_id.clone()),
-        expected_assignment_fence: assignment_fence(
-            &store,
-            &coordinator.session_id,
-            &todo.message_id,
-        ),
-    };
-    let first = store.complete_message(input.clone()).unwrap();
-    // Completion success itself fences the async writer, so a fresh store can
-    // replay it without a test-only flush or graceful Drop of the first store.
-    let restored = SessionStore::with_persistence(&ledger, 10, 50);
-    let replay = restored.complete_message(input.clone()).unwrap();
-    assert!(replay.replayed);
-    assert_eq!(replay.answer.message_id, first.answer.message_id);
-    assert_eq!(
-        restored
-            .list_messages(
-                &coordinator.session_id,
-                ListSessionMessagesFilter {
-                    reply_to: Some(todo.message_id.clone()),
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .len(),
-        1
-    );
-
-    restored.flush_persistence();
-    drop(restored);
-    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
-    raw["version"] = Value::from(SESSION_LEDGER_V1_VERSION);
-    raw.as_object_mut().unwrap().insert(
-        "durable_current_bindings".to_string(),
-        serde_json::json!([]),
-    );
-    for record in raw["sessions"].as_array_mut().unwrap() {
-        let record = record.as_object_mut().unwrap();
-        for field in [
-            "assignment_history_floors",
-            "assignment_history_tracking_complete",
-            "completion_assignment_fence_fingerprints",
-            "completion_assignment_fence_tracking_complete",
-        ] {
-            record.remove(field);
-        }
-    }
-    std::fs::write(&ledger, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
-    let v039 = SessionStore::with_persistence(&ledger, 10, 50);
-    let v039_answer = v039
-        .list_messages(
-            &coordinator.session_id,
-            ListSessionMessagesFilter {
-                message_id: Some(first.answer.message_id.clone()),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .pop()
-        .unwrap();
-    assert_eq!(
-        v039_answer.author_session_id,
-        first.answer.author_session_id
-    );
-    assert_eq!(
-        v039_answer.resolved_by_message_id,
-        first.answer.resolved_by_message_id
-    );
-    assert_eq!(v039_answer.completion_id, first.answer.completion_id);
 }
 
 #[test]

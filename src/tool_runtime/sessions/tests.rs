@@ -6,8 +6,7 @@ use super::events::{
 };
 use super::model::{
     PersistedSessionLedger, SessionLifecycle, MAX_OBSERVED_PATHS_PER_EVENT,
-    MAX_VALIDATION_EXCERPT_CHARS, MESSAGE_ID_PREFIX, SESSION_LEDGER_V1_VERSION,
-    SESSION_LEDGER_VERSION,
+    MAX_VALIDATION_EXCERPT_CHARS, MESSAGE_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::persistence::write_ledger_atomic;
 use super::*;
@@ -1500,110 +1499,6 @@ fn legacy_session_events_without_call_id_restore() {
     assert_eq!(detail.activity.len(), 1);
     assert_eq!(detail.activity[0].state, "succeeded");
     assert!(!detail.running_call);
-}
-
-#[test]
-fn v039_session_events_upgrade_without_inventing_logical_correlation() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger.clone());
-    let session = store.start_session(
-        Some("agent:eval:demo".to_string()),
-        Some("v0.3.9 logical invocation boundary".to_string()),
-    );
-    let arguments = json!({"project": "agent:eval:demo", "path": "src/v039.rs"});
-    let mut metadata = ToolCallRecorderMetadata::default();
-    metadata.assign_logical_invocation();
-    let start = store.record_tool_call_started_with_metadata(
-        Some(&session.session_id),
-        SessionTransport::Api,
-        "read_file",
-        &arguments,
-        Some("agent:eval:demo".to_string()),
-        metadata,
-    );
-    store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
-    store.flush_persistence();
-    drop(store);
-
-    let mut ledger_value: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
-    ledger_value["version"] = json!(SESSION_LEDGER_V1_VERSION);
-    ledger_value
-        .as_object_mut()
-        .unwrap()
-        .insert("durable_current_bindings".to_string(), json!([]));
-    let record = ledger_value["sessions"][0].as_object_mut().unwrap();
-    for field in [
-        "assignment_history_floors",
-        "assignment_history_tracking_complete",
-        "completion_assignment_fence_fingerprints",
-        "completion_assignment_fence_tracking_complete",
-    ] {
-        record.remove(field);
-    }
-    let events = record.get_mut("events").unwrap().as_array_mut().unwrap();
-    assert!(events.iter().all(|event| {
-        event.get("logical_invocation_id").is_some()
-            && event.get("logical_invocation_role").is_some()
-    }));
-    for (index, event) in events.iter_mut().enumerate() {
-        let object = event.as_object_mut().unwrap();
-        object.remove("logical_invocation_id");
-        object.remove("logical_invocation_role");
-        if index == 0 {
-            object.insert(
-                "allow_cross_project_session_required".to_string(),
-                Value::Bool(true),
-            );
-            object.insert(
-                "allow_cross_project_session".to_string(),
-                Value::Bool(false),
-            );
-        }
-    }
-    std::fs::write(&ledger, serde_json::to_vec_pretty(&ledger_value).unwrap()).unwrap();
-
-    let restored = SessionStore::with_persistence(ledger.clone(), 10, 20);
-    let summary = restored.summary(&session.session_id, Some(20)).unwrap();
-    assert_eq!(summary.counts.tool_calls, 1);
-    assert!(summary
-        .events
-        .iter()
-        .all(|event| event.logical_invocation_id.is_none()));
-    assert!(summary
-        .events
-        .iter()
-        .all(|event| event.logical_invocation_role.is_none()));
-    let canonical = super::events::canonical_tool_call_finished_events(&summary.events);
-    assert_eq!(
-        canonical.len(),
-        1,
-        "v0.3.9 uncorrelated facts remain conservative per-event evidence"
-    );
-
-    restored
-        .post_message(PostSessionMessageInput {
-            session_id: session.session_id.clone(),
-            kind: SessionMessageKind::Note,
-            message: "force canonical v2 rewrite".to_string(),
-            tags: Vec::new(),
-            reply_to: None,
-            priority: SessionMessagePriority::Normal,
-        })
-        .unwrap();
-    restored.flush_persistence();
-    let rewritten: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
-    assert_eq!(rewritten["version"], SESSION_LEDGER_VERSION);
-    assert!(rewritten.get("durable_current_bindings").is_none());
-    let rewritten_events = rewritten["sessions"][0]["events"].as_array().unwrap();
-    assert!(rewritten_events.iter().all(|event| {
-        event.get("logical_invocation_id").is_none()
-            && event.get("logical_invocation_role").is_none()
-            && event.get("allow_cross_project_session_required").is_none()
-            && event.get("allow_cross_project_session").is_none()
-    }));
 }
 
 #[test]
@@ -3992,77 +3887,29 @@ fn persisted_ledger_writes_and_reads_lifecycle_active() {
 }
 
 #[test]
-fn v039_ledger_v1_upgrades_to_canonical_v2_on_next_write() {
+fn pre_current_ledger_version_is_rejected_without_rewrite() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("sessions.json");
     let store = persistent_store(ledger_path.clone());
-    let session = store.start_session(Some("proj".to_string()), Some("v0.3.9".to_string()));
+    let session = store.start_session(Some("proj".to_string()), Some("current".to_string()));
     store.flush_persistence();
     drop(store);
 
     let mut ledger: Value =
         serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
-    ledger["version"] = json!(SESSION_LEDGER_V1_VERSION);
-    ledger
-        .as_object_mut()
-        .unwrap()
-        .insert("durable_current_bindings".to_string(), json!([]));
-    let record = ledger["sessions"][0].as_object_mut().unwrap();
-    for field in [
-        "assignment_history_floors",
-        "assignment_history_tracking_complete",
-        "completion_assignment_fence_fingerprints",
-        "completion_assignment_fence_tracking_complete",
-    ] {
-        record.remove(field);
-    }
+    ledger["version"] = json!(1);
     std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+    let before = std::fs::read(&ledger_path).unwrap();
 
     let restored = persistent_store(ledger_path.clone());
-    assert_eq!(restored.status().restored_sessions, 1);
-    assert!(restored.summary(&session.session_id, None).is_some());
-    restored.close_session(&session.session_id).unwrap();
-    restored.flush_persistence();
-
-    let rewritten: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
-    assert_eq!(rewritten["version"], SESSION_LEDGER_VERSION);
-    assert!(rewritten.get("durable_current_bindings").is_none());
-    let record = &rewritten["sessions"][0];
-    assert_eq!(record["assignment_history_floors"], json!({}));
-    assert_eq!(record["assignment_history_tracking_complete"], true);
-    assert_eq!(
-        record["completion_assignment_fence_fingerprints"],
-        json!({})
-    );
-    assert_eq!(
-        record["completion_assignment_fence_tracking_complete"],
-        false
-    );
-}
-
-#[test]
-fn v1_rejects_v2_only_record_metadata() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger_path = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger_path.clone());
-    let session = store.start_session(Some("proj".to_string()), Some("v2-only".to_string()));
-    store.flush_persistence();
-    drop(store);
-
-    let mut ledger: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
-    ledger["version"] = json!(SESSION_LEDGER_V1_VERSION);
-    ledger
-        .as_object_mut()
-        .unwrap()
-        .insert("durable_current_bindings".to_string(), json!([]));
-    std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
-
-    let restored = persistent_store(ledger_path);
     assert_eq!(restored.status().restored_sessions, 0);
     assert!(restored.summary(&session.session_id, None).is_none());
-    assert_eq!(restored.status().last_persist_error, None);
+    assert!(restored
+        .status()
+        .last_persist_error
+        .as_deref()
+        .is_some_and(|error| error.contains("unsupported session ledger version 1")));
+    assert_eq!(std::fs::read(&ledger_path).unwrap(), before);
 }
 
 #[test]
@@ -4184,7 +4031,10 @@ fn v2_event_and_message_shape_corruption_discards_only_affected_rows() {
     message_record["messages"][0]
         .as_object_mut()
         .unwrap()
-        .insert("post_v039_development_field".to_string(), Value::Bool(true));
+        .insert(
+            "unsupported_development_field".to_string(),
+            Value::Bool(true),
+        );
 
     std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
     let restored = persistent_store(ledger_path);
@@ -4200,53 +4050,7 @@ fn v2_event_and_message_shape_corruption_discards_only_affected_rows() {
 }
 
 #[test]
-fn v1_rejects_v2_only_event_correlation_metadata() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger_path = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger_path.clone());
-    let session = store.start_session(Some("proj".to_string()), Some("v2 event".to_string()));
-    let mut metadata = ToolCallRecorderMetadata::default();
-    metadata.assign_logical_invocation();
-    let start = store.record_tool_call_started_with_metadata(
-        Some(&session.session_id),
-        SessionTransport::Api,
-        "read_file",
-        &json!({"project": "proj", "path": "src/lib.rs"}),
-        Some("proj".to_string()),
-        metadata,
-    );
-    store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
-    store.flush_persistence();
-    drop(store);
-
-    let mut ledger: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
-    ledger["version"] = json!(SESSION_LEDGER_V1_VERSION);
-    ledger
-        .as_object_mut()
-        .unwrap()
-        .insert("durable_current_bindings".to_string(), json!([]));
-    let record = ledger["sessions"][0].as_object_mut().unwrap();
-    for field in [
-        "assignment_history_floors",
-        "assignment_history_tracking_complete",
-        "completion_assignment_fence_fingerprints",
-        "completion_assignment_fence_tracking_complete",
-    ] {
-        record.remove(field);
-    }
-    assert!(record["events"][0].get("logical_invocation_id").is_some());
-    assert!(record["events"][0].get("logical_invocation_role").is_some());
-    std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
-
-    let restored = persistent_store(ledger_path);
-    assert_eq!(restored.status().restored_sessions, 0);
-    assert!(restored.summary(&session.session_id, None).is_none());
-    assert_eq!(restored.status().last_persist_error, None);
-}
-
-#[test]
-fn v2_rejects_v1_only_top_level_binding_member() {
+fn current_ledger_rejects_retired_top_level_binding_member() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("sessions.json");
     let store = persistent_store(ledger_path.clone());

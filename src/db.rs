@@ -12,6 +12,7 @@ use std::sync::Mutex;
 mod accounts;
 mod activity;
 mod admin_project_lifecycle;
+mod agent_task;
 mod agent_wake;
 mod audit;
 mod communication;
@@ -24,6 +25,7 @@ mod task_kernel;
 
 pub use self::activity::WorkspaceActivityStore;
 pub(crate) use self::admin_project_lifecycle::AdminProjectAudit;
+pub(crate) use self::agent_task::{AgentTaskState, NewAgentTask, MAX_AGENT_TASK_LIST_LIMIT};
 #[allow(unused_imports)]
 pub(crate) use self::agent_wake::{
     AgentWakeClaim, AgentWakeConsumeResult, AgentWakeEnvelope, AgentWakePrepared, AgentWakeRecord,
@@ -65,9 +67,9 @@ pub(crate) use self::task_kernel::{
 pub struct Database {
     conn: Mutex<Connection>,
     state_path: PathBuf,
-    /// Ephemeral navigation only. Durable work stays in wc_tasks and
-    /// wc_window_project_contexts; restarting never guesses a window's current
-    /// project.
+    /// Ephemeral navigation only. Connector work stays in wc_tasks and
+    /// wc_window_project_contexts; AgentTask owns separate durable tables, and
+    /// restarting never guesses a window's current project.
     window_projects: Mutex<HashMap<(String, String), String>>,
 }
 
@@ -94,6 +96,10 @@ impl Database {
         self.conn.lock().unwrap()
     }
 }
+
+#[cfg(test)]
+#[path = "db/agent_task_tests.rs"]
+mod agent_task_tests;
 
 #[cfg(test)]
 #[path = "db/agent_wake_tests.rs"]

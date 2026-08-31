@@ -605,6 +605,11 @@ impl Database {
         // all stable references are enforceable by foreign keys.
         Self::ensure_agent_wake_schema(&mut conn)?;
 
+        // AgentTask and AgentTaskAttempt are an independent durable work-ownership
+        // domain. They reference durable Agents/Conversations for correlation only
+        // and deliberately do not bind any execution backend in A3.
+        Self::ensure_agent_task_schema(&mut conn)?;
+
         // Project Memory was introduced after v0.3.9. Only the current schema is
         // supported; development-only intermediate shapes are rejected.
         Self::ensure_project_memory_schema(&mut conn)?;

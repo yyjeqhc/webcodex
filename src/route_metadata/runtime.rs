@@ -18,7 +18,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ToolsCall,
@@ -29,7 +28,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Command,
         AuthMiddleware,
-        false,
     ),
     route(
         ArtifactsImport,
@@ -40,7 +38,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Artifact,
         AuthMiddleware,
-        false,
     ),
     route(
         JobsStatus,
@@ -51,7 +48,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Job,
         AuthMiddleware,
-        false,
     ),
     route(
         JobsLog,
@@ -62,7 +58,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Job,
         AuthMiddleware,
-        false,
     ),
     route(
         JobsStop,
@@ -73,7 +68,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         JobsList,
@@ -84,7 +78,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         JobsTail,
@@ -95,7 +88,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Job,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsList,
@@ -106,7 +98,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Context,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsRegister,
@@ -117,7 +108,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsCreate,
@@ -128,7 +118,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsUnregister,
@@ -139,7 +128,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsReadFile,
@@ -150,7 +138,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Context,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsGitStatus,
@@ -161,7 +148,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Git,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsGitDiff,
@@ -172,7 +158,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Git,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsGitDiffSummary,
@@ -183,7 +168,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Git,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsListFiles,
@@ -194,7 +178,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Context,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsSearchText,
@@ -205,7 +188,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Context,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsApplyUnifiedDiff,
@@ -216,7 +198,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Edit,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsRunShell,
@@ -227,7 +208,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Shell,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsDeleteFiles,
@@ -238,7 +218,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Artifact,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsGitRestorePaths,
@@ -249,7 +228,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Artifact,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsDiscardUntracked,
@@ -260,7 +238,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Artifact,
         AuthMiddleware,
-        false,
     ),
     route(
         ProjectsRunJob,
@@ -271,7 +248,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Job,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeStatus,
@@ -282,7 +258,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         PublicActions,
         Report,
         AuthMiddleware,
-        false,
     ),
 ];
 
@@ -296,7 +271,6 @@ pub(super) const SHELL_ROUTES: &[RouteSpec] = &[
         Hidden,
         Shell,
         AuthMiddleware,
-        false,
     ),
     route(
         ShellFile,
@@ -307,7 +281,6 @@ pub(super) const SHELL_ROUTES: &[RouteSpec] = &[
         Hidden,
         Shell,
         AuthMiddleware,
-        false,
     ),
     route(
         ShellJob,
@@ -318,7 +291,6 @@ pub(super) const SHELL_ROUTES: &[RouteSpec] = &[
         Hidden,
         Shell,
         AuthMiddleware,
-        false,
     ),
     route(
         ShellJobsStatus,
@@ -329,7 +301,6 @@ pub(super) const SHELL_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ShellJobsLog,
@@ -340,7 +311,6 @@ pub(super) const SHELL_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ShellJobsStop,
@@ -351,7 +321,6 @@ pub(super) const SHELL_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ShellJobsList,
@@ -362,6 +331,5 @@ pub(super) const SHELL_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
 ];

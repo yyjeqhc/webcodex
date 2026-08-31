@@ -15,7 +15,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         McpPost,
@@ -26,6 +25,5 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
 ];

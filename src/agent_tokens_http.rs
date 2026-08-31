@@ -8,7 +8,8 @@
 //! client, not a GPT. Their canonical `RouteSpec` entries are `Hidden`, and
 //! OpenAPI tests derive the exclusion invariant from that metadata. All endpoints
 //! sit behind the shared `AuthMiddleware` (Bearer auth) and resolve the caller's
-//! [`AuthContext`] to enforce the admin/bootstrap-or-self boundary.
+//! [`AuthContext`] to enforce the admin/bootstrap-or-self boundary. Personal
+//! API tokens must also carry explicit `account:manage` authority.
 //!
 //! Security properties:
 //! - Agent token plaintext is returned **only once** at creation time.

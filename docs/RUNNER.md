@@ -55,37 +55,25 @@ The Runner authenticates with its agent token (or the direct shared key in
 hosted quick-start mode). The token is a Runner transport credential only; it
 is not used for MCP, REST, or GPT Actions.
 
-For WebSocket, the first-party Runner uses `Authorization: Bearer <token>`.
-The Server still accepts the deprecated `/api/agents/ws?token=...` form only
-for the compatibility contract documented by v0.1.0; do not put new
-credentials in URLs. This fallback can be removed when that legacy transport
-support window is explicitly retired. Polling uses the bearer header. QUIC
-keeps its credential in the transport-specific v1 first-register frame while
-the shared agent envelope remains credential-free.
+WebSocket and polling authenticate the first-party Runner with
+`Authorization: Bearer <token>`; query-string Runner credentials are not
+accepted. QUIC keeps its credential in the transport-specific v1 first-register
+frame while the shared agent envelope remains credential-free.
 
-### Rolling Server/Runner compatibility
+### Server/Runner compatibility
 
-The guaranteed rolling-upgrade window is **current development Server/Runner ↔
-the latest stable Server/Runner release**. "Latest stable" means the project's
-most recent non-prerelease versioned Server/Runner release; when this contract
-was introduced that release is v0.3.8 (`477c1f754e8b5c7d9f0e8b1c073487532a749101`).
-Older releases are best-effort unless a compatibility surface is explicitly
-retained.
+WebCodex does not guarantee rolling compatibility with v0.3.9 or older
+Server/Runner binaries. Post-v0.3.9 changes may intentionally retire old wire or
+authentication compatibility, so upgrade the first-party Server and Runner
+together when crossing those changes. A compatibility surface is supported only
+when the current contract explicitly retains it.
 
 Agent protocol labels such as `polling-v1`, `websocket-v1`, `quic-v1` and their
-`v2` inventory variants are rolling-compatibility ingress adapters, not claims
-of independent canonical protocol generations. Registration still fails closed:
-`agent_protocol_version` must be present and supported. Official v0.1.0
-first-party Runners already sent the v1 labels, so pre-release omission is not
-part of the supported window. Additive capability fields remain fail-closed when
-an older peer omits them (normally `false`/unavailable), and project-inventory
-paging is not sent to an older Server until support is explicitly signalled.
-
-The deprecated `/api/agents/ws?token=...` handshake is a separately documented
-historical exception because v0.1.0 published it; the first-party Runner uses
-`Authorization: Bearer` and the exception remains only until that legacy window
-is explicitly retired. Any future removal or intentional break in rolling
-Server/Runner compatibility must be called out in the applicable release notes.
+`v2` inventory variants remain current ingress semantics, not a promise to
+accept an arbitrary older release binary. Registration fails closed:
+`agent_protocol_version` must be present and supported. Additive capability
+fields remain fail-closed when omitted (normally `false`/unavailable), and
+project-inventory paging is sent only when support is explicitly signalled.
 
 QUIC upgrade note: `[quic].keepalive_interval_secs` now actively configures
 Quinn transport keepalive. The default remains 20 seconds and the accepted

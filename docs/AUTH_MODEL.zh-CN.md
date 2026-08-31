@@ -110,6 +110,7 @@ agent 连接 token。
 `runtime:read`、`project:read`、`project:write`、`job:run`；只有需要 post、resolve、
 complete、replace、withdraw 或 close Workflow Session 协作状态时才额外授予
 `session:collaborate`。仅有 `runtime:read` 对这类协作状态保持只读观察能力。
+PAT 调用 account 或 token-management 路由时还必须显式持有 `account:manage`；只有通过这一 scope gate 后才进入 handler 的 admin/self 身份检查。该 scope 不会授予跨用户权限：普通用户 PAT 仍只能管理自己的资源，bootstrap/admin 保留显式 superuser 角色。Account credential 继续只受限于 account-control surface。
 
 Managed user 的 discovery 按 owner 隔离。普通 PAT 或 managed OAuth token 若属于
 `alice`，只能发现 owner 为 `alice` 的 Runner、项目、Jobs 与派生 runtime 元数据；

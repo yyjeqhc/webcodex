@@ -14,7 +14,6 @@ pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[route(
     Hidden,
     Other,
     RouteAuth::Public,
-    false,
 )];
 
 // Admin handlers impose their own admin identity check. Production route
@@ -30,7 +29,6 @@ pub(super) const ADMIN_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         AdminProjectsRegister,
@@ -41,7 +39,6 @@ pub(super) const ADMIN_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         AdminProjectsCreate,
@@ -52,7 +49,6 @@ pub(super) const ADMIN_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         AdminProjectsEnable,
@@ -63,7 +59,6 @@ pub(super) const ADMIN_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         AdminProjectsDisable,
@@ -74,7 +69,6 @@ pub(super) const ADMIN_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         AdminProjectsUnregister,
@@ -85,7 +79,6 @@ pub(super) const ADMIN_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
 ];
 
@@ -99,7 +92,6 @@ pub(super) const AUDIT_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         AuditSession,
@@ -110,7 +102,6 @@ pub(super) const AUDIT_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         AuditStats,
@@ -121,6 +112,5 @@ pub(super) const AUDIT_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
 ];

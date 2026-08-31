@@ -22,7 +22,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorTaskStart,
@@ -33,7 +32,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorTaskList,
@@ -44,7 +42,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorTaskResume,
@@ -55,7 +52,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorFilesList,
@@ -66,7 +62,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorFilesRead,
@@ -77,7 +72,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorFilesSearch,
@@ -88,7 +82,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorCodeNavigate,
@@ -99,7 +92,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorCodeImpact,
@@ -110,7 +102,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorEditsApply,
@@ -121,7 +112,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorChecksRun,
@@ -132,7 +122,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorCommandsRun,
@@ -143,7 +132,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorTaskReview,
@@ -154,7 +142,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorTaskCancel,
@@ -165,7 +152,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ConnectorTaskFinish,
@@ -176,6 +162,5 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ConnectorActions,
         Other,
         AuthMiddleware,
-        false,
     ),
 ];

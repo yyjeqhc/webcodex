@@ -16,7 +16,6 @@ pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         WellKnownAuthorizationServer,
@@ -27,7 +26,6 @@ pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         OAuthToken,
@@ -38,7 +36,6 @@ pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         OAuthRevoke,
@@ -49,7 +46,6 @@ pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         OAuthAuthorize,
@@ -60,7 +56,6 @@ pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         HandlerManaged,
-        false,
     ),
     route(
         OAuthAuthorizeLogin,
@@ -71,7 +66,6 @@ pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         HandlerManaged,
-        false,
     ),
     route(
         OAuthAuthorizeConsent,
@@ -82,7 +76,6 @@ pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         HandlerManaged,
-        false,
     ),
     route(
         OAuthAuthorizeBridge,
@@ -93,7 +86,6 @@ pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         HandlerManaged,
-        false,
     ),
     route(
         OAuthAuthorizeProject,
@@ -104,7 +96,6 @@ pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         HandlerManaged,
-        false,
     ),
 ];
 
@@ -118,7 +109,6 @@ pub(super) const MANAGEMENT_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         OAuthClientsList,
@@ -129,7 +119,6 @@ pub(super) const MANAGEMENT_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         OAuthClientsUpdateScopes,
@@ -140,7 +129,6 @@ pub(super) const MANAGEMENT_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         OAuthClientsRevoke,
@@ -151,7 +139,6 @@ pub(super) const MANAGEMENT_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         OAuthSharedKeyClientProvision,
@@ -162,6 +149,5 @@ pub(super) const MANAGEMENT_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
 ];

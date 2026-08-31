@@ -14,7 +14,6 @@ pub(super) const ENROLLMENT_ROUTES: &[RouteSpec] = &[route(
     Hidden,
     Other,
     HandlerManaged,
-    false,
 )];
 
 pub(super) const ROUTES: &[RouteSpec] = &[
@@ -27,7 +26,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
     route(
         UsersList,
@@ -38,7 +36,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
     route(
         UsersMe,
@@ -49,7 +46,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
     route(
         TokensCreate,
@@ -60,7 +56,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
     route(
         TokensRegisterHash,
@@ -71,7 +66,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
     route(
         TokensList,
@@ -82,7 +76,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
     route(
         TokensRevoke,
@@ -93,7 +86,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
     route(
         AgentTokensCreate,
@@ -104,7 +96,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
     route(
         AgentTokensRegisterHash,
@@ -115,7 +106,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
     route(
         AgentTokensList,
@@ -126,7 +116,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
     route(
         AgentTokensRevoke,
@@ -137,7 +126,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
     route(
         PairingCreate,
@@ -148,6 +136,5 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        true,
     ),
 ];

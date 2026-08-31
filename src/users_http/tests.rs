@@ -72,7 +72,7 @@ async fn http_users_create_rejects_non_admin_token() {
     let service = Service::new(build_router(config.clone(), db.clone()));
     let mut resp = TestClient::post("http://localhost/api/tokens/create")
         .bearer_auth("secret")
-        .json(&json!({"username": "alice", "scopes": ["runtime:read"]}))
+        .json(&json!({"username": "alice", "scopes": ["runtime:read", "account:manage"]}))
         .send(&service)
         .await;
     let body: Value = resp.take_json().await.unwrap();
@@ -237,7 +237,7 @@ async fn http_users_list_requires_admin() {
     // Normal user cannot list.
     let mut resp = TestClient::post("http://localhost/api/tokens/create")
         .bearer_auth("secret")
-        .json(&json!({"username": "alice", "scopes": ["runtime:read"]}))
+        .json(&json!({"username": "alice", "scopes": ["runtime:read", "account:manage"]}))
         .send(&service)
         .await;
     let alice_token = resp.take_json::<Value>().await.unwrap()["token"]
@@ -268,7 +268,7 @@ async fn http_tokens_create_returns_plaintext_once_and_authenticates() {
         .json(&json!({
             "username": "alice",
             "name": "laptop",
-            "scopes": ["runtime:read", "project:read", "project:write", "job:run"],
+            "scopes": ["runtime:read", "project:read", "project:write", "job:run", "account:manage"],
         }))
         .send(&service)
         .await;
@@ -293,7 +293,13 @@ async fn http_tokens_create_returns_plaintext_once_and_authenticates() {
             .iter()
             .map(|v| v.as_str().unwrap())
             .collect::<Vec<_>>(),
-        vec!["runtime:read", "project:read", "project:write", "job:run"]
+        vec![
+            "runtime:read",
+            "project:read",
+            "project:write",
+            "job:run",
+            "account:manage"
+        ]
     );
 
     // The DB must store the hash, not the plaintext token.
@@ -356,7 +362,7 @@ async fn http_tokens_create_non_admin_cannot_target_other_user() {
     // Mint a token for alice.
     let mut resp = TestClient::post("http://localhost/api/tokens/create")
         .bearer_auth("secret")
-        .json(&json!({"username": "alice", "scopes": ["runtime:read"]}))
+        .json(&json!({"username": "alice", "scopes": ["runtime:read", "account:manage"]}))
         .send(&service)
         .await;
     let alice_token = resp.take_json::<Value>().await.unwrap()["token"]
@@ -380,7 +386,7 @@ async fn http_tokens_create_non_admin_cannot_grant_admin_scope() {
     let service = Service::new(build_router(config.clone(), db));
     let mut resp = TestClient::post("http://localhost/api/tokens/create")
         .bearer_auth("secret")
-        .json(&json!({"username": "alice", "scopes": ["runtime:read"]}))
+        .json(&json!({"username": "alice", "scopes": ["runtime:read", "account:manage"]}))
         .send(&service)
         .await;
     let alice_token = resp.take_json::<Value>().await.unwrap()["token"]
@@ -677,7 +683,7 @@ async fn http_tokens_revoke_works_and_token_no_longer_authenticates() {
 
     let mut resp = TestClient::post("http://localhost/api/tokens/create")
         .bearer_auth("secret")
-        .json(&json!({"username": "alice", "scopes": ["runtime:read"]}))
+        .json(&json!({"username": "alice", "scopes": ["runtime:read", "account:manage"]}))
         .send(&service)
         .await;
     let body: Value = resp.take_json().await.unwrap();
@@ -743,7 +749,7 @@ async fn http_tokens_revoke_user_cannot_revoke_others_token() {
     // Mint a token for alice.
     let mut resp = TestClient::post("http://localhost/api/tokens/create")
         .bearer_auth("secret")
-        .json(&json!({"username": "alice", "scopes": ["runtime:read"]}))
+        .json(&json!({"username": "alice", "scopes": ["runtime:read", "account:manage"]}))
         .send(&service)
         .await;
     let alice_token = resp.take_json::<Value>().await.unwrap()["token"]

@@ -15,7 +15,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ShellAgentPoll,
@@ -26,7 +25,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ShellAgentResult,
@@ -37,7 +35,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ShellAgentPersistentShellResult,
@@ -48,7 +45,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         ShellAgentJobUpdate,
@@ -59,7 +55,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         AgentsWs,
@@ -70,6 +65,5 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
 ];

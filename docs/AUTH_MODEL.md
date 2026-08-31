@@ -229,10 +229,11 @@ Agent-transport-only, account credentials remain account-control-only, OAuth
 access tokens cannot use Agent transport, and project credentials remain bounded
 to the Connector/project surface and its operation-level authorization.
 
-`account:manage` remains a delegated OAuth/account-credential permission, while
-first-party PAT account self-service keeps the existing handler-level identity
-and role checks rather than requiring that scope merely to manage the PAT's own
-account resources.
+`account:manage` is required for a PAT before any account or token-management
+route reaches its handler-level identity checks. The scope does not grant
+cross-user authority: a normal user PAT remains self-only, while bootstrap/admin
+retains its explicit superuser role. Account credentials remain account-control-only
+under their credential-specific boundary.
 
 The direct shared-key quick-start profile includes `computer:read` and
 `computer:control` so existing Computer observation/control remains available through

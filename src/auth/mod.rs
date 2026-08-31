@@ -85,15 +85,14 @@ pub use scopes::{SCOPE_ACCOUNT_MANAGE, SCOPE_JOB_DETACH};
 
 pub(crate) use scopes::{is_agent_scope, scopes_to_string, validate_agent_scopes, validate_scopes};
 
-#[cfg(test)]
-pub(crate) use middleware::{
-    allow_query_token_for_path, enforce_token_surface, is_account_control_path,
-    is_agent_transport_path,
-};
 pub(crate) use middleware::{
     bearer_token, get_config, get_db, json_error, oauth_insufficient_scope_challenge,
     render_scope_forbidden, require_json_same_origin, require_same_origin, scope_forbidden_body,
     AuthMiddleware,
+};
+#[cfg(test)]
+pub(crate) use middleware::{
+    enforce_token_surface, is_account_control_path, is_agent_transport_path,
 };
 
 pub(crate) use pat::{

@@ -35,12 +35,9 @@ const WS_MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
 /// handshake. Prevents half-open connections from holding registry state.
 const REGISTER_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// WebSocket agent endpoint: `GET /api/agents/ws` (also mounted at
-/// `/api/agents/ws`). Requires auth via the shared `AuthMiddleware`, exactly
-/// like the polling endpoints. The supported path is `Authorization: Bearer
-/// <token>`. The Server temporarily retains the exact `/api/agents/ws?token=`
-/// v0.1.0 compatibility surface; it is deprecated, never emitted by the
-/// first-party Runner, and must not expand to other endpoints.
+/// WebSocket agent endpoint: `GET /api/agents/ws`. Requires auth via the shared
+/// `AuthMiddleware`, exactly like the polling endpoints. Authentication is
+/// `Authorization: Bearer <token>`; query-string credentials are not accepted.
 #[handler]
 pub async fn agent_ws(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = depot.obtain::<Arc<ShellClientRegistry>>().ok().cloned() else {

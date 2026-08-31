@@ -18,7 +18,6 @@ pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         ConsoleWebAppJs,
@@ -29,7 +28,6 @@ pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         ConsoleWebStylesCss,
@@ -40,7 +38,6 @@ pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         RuntimeWebRoot,
@@ -51,7 +48,6 @@ pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         RuntimeWebAppJs,
@@ -62,7 +58,6 @@ pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         RuntimeWebStylesCss,
@@ -73,7 +68,6 @@ pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         AdminWebRoot,
@@ -84,7 +78,6 @@ pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         AdminWebAppJs,
@@ -95,7 +88,6 @@ pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
     route(
         AdminWebStylesCss,
@@ -106,7 +98,6 @@ pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         RouteAuth::Public,
-        false,
     ),
 ];
 
@@ -123,7 +114,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleTasks,
@@ -134,7 +124,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleActivity,
@@ -145,7 +134,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleWorkflowSessions,
@@ -156,7 +144,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleWorkflowSession,
@@ -167,7 +154,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleTaskReview,
@@ -178,7 +164,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleTaskCancel,
@@ -189,7 +174,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleTaskGuide,
@@ -200,7 +184,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleApprovals,
@@ -211,7 +194,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleApprovalDecide,
@@ -222,7 +204,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleDevices,
@@ -233,7 +214,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleResultAccept,
@@ -244,7 +224,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleResultReject,
@@ -255,7 +234,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         HostConsoleConnect,
@@ -266,7 +244,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleOverview,
@@ -277,7 +254,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleRunner,
@@ -288,7 +264,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleProjects,
@@ -299,7 +274,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleWorkflowSessions,
@@ -310,7 +284,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleWorkflowSession,
@@ -321,7 +294,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleWorkflowSessionMessages,
@@ -332,7 +304,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleWorkflowSessionObserve,
@@ -343,7 +314,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleWorkflowSessionPostMessage,
@@ -354,7 +324,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleWorkflowSessionWithdrawMessage,
@@ -365,7 +334,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleWorkflowSessionReplaceMessage,
@@ -376,7 +344,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationAgents,
@@ -387,7 +354,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationAgentCreate,
@@ -398,7 +364,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationAgentUpdate,
@@ -409,7 +374,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationEndpointAttach,
@@ -420,7 +384,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationEndpointRenew,
@@ -431,7 +394,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationEndpointDetach,
@@ -442,7 +404,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationConversations,
@@ -453,7 +414,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationConversationCreate,
@@ -464,7 +424,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationConversation,
@@ -475,7 +434,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationMessagePost,
@@ -486,7 +444,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationInbox,
@@ -497,7 +454,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
     route(
         RuntimeConsoleCommunicationInboxConsume,
@@ -508,6 +464,5 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Hidden,
         Other,
         AuthMiddleware,
-        false,
     ),
 ];

@@ -234,9 +234,6 @@ pub(crate) struct RouteSpec {
     pub(crate) openapi_visibility: OpenApiVisibility,
     pub(crate) audit_class: AuditClass,
     pub(crate) auth: RouteAuth,
-    /// Preserve the exact legacy PAT compatibility exception for account:manage
-    /// routes without maintaining a second method/path allowlist.
-    pub(crate) pat_account_manage_compat: bool,
 }
 
 const fn route(
@@ -248,7 +245,6 @@ const fn route(
     openapi_visibility: OpenApiVisibility,
     audit_class: AuditClass,
     auth: RouteAuth,
-    pat_account_manage_compat: bool,
 ) -> RouteSpec {
     RouteSpec {
         id,
@@ -259,7 +255,6 @@ const fn route(
         openapi_visibility,
         audit_class,
         auth,
-        pat_account_manage_compat,
     }
 }
 
@@ -529,7 +524,6 @@ mod tests {
             assert_eq!(route.auth, RouteAuth::Public, "{:?}", route.id);
             assert_eq!(route.openapi_visibility, Hidden, "{:?}", route.id);
             assert_eq!(route.audit_class, Other, "{:?}", route.id);
-            assert!(!route.pat_account_manage_compat, "{:?}", route.id);
         }
         assert_eq!(direct_child_path(ConsoleWebRoot, ConsoleWebAppJs), "app.js");
         assert_eq!(

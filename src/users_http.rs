@@ -6,7 +6,8 @@
 //! canonical `RouteSpec` entries are `Hidden`, and OpenAPI tests derive the
 //! exclusion invariant from that metadata. All endpoints sit behind `AuthMiddleware`
 //! (Bearer auth) and resolve the caller's [`AuthContext`] to enforce the
-//! admin/bootstrap-or-self boundary.
+//! admin/bootstrap-or-self boundary. Personal API tokens must also carry the
+//! explicit `account:manage` scope before those handler-level checks run.
 //!
 //! Security properties:
 //! - Plaintext tokens are returned **only once** at creation time.

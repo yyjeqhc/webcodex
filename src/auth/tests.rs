@@ -92,14 +92,6 @@ fn is_agent_transport_path_allows_only_the_six_exact_paths() {
     assert!(!is_agent_transport_path(""));
 }
 
-#[test]
-fn query_token_is_allowed_only_for_agent_websocket_path() {
-    assert!(allow_query_token_for_path("/api/agents/ws"));
-    assert!(!allow_query_token_for_path("/api/runtime/status"));
-    assert!(!allow_query_token_for_path("/api/shell/agent/register"));
-    assert!(!allow_query_token_for_path("/api/agents/ws/extra"));
-}
-
 // -----------------------------------------------------------------------
 // HTTP-level central gate tests
 // -----------------------------------------------------------------------
@@ -502,22 +494,26 @@ async fn gate_disabled_user_account_credential_is_rejected() {
 }
 
 #[tokio::test]
-async fn gate_query_token_compatibility_is_websocket_only_and_bearer_has_precedence() {
+async fn gate_websocket_query_token_is_rejected_and_bearer_remains_authoritative() {
     let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = gate_test_config(Some("secret"));
     let (_tmp, db) = gate_test_db();
     let service = Service::new(gate_router(config, db));
 
-    // Query credentials remain an exact WS-only v0.1.0 compatibility surface.
-    let (status, body) = gate_send(&service, "/api/runtime/status?token=secret", None).await;
-    assert_eq!(status, salvo::http::StatusCode::UNAUTHORIZED);
-    assert_eq!(body["error"], "Unauthorized");
+    for path in [
+        "/api/runtime/status?token=secret",
+        "/api/agents/ws?token=secret",
+    ] {
+        let (status, body) = gate_send(&service, path, None).await;
+        assert_eq!(
+            status,
+            salvo::http::StatusCode::UNAUTHORIZED,
+            "{path}: {body:?}"
+        );
+        assert_eq!(body["error"], "Unauthorized");
+    }
 
-    let (status, body) = gate_send(&service, "/api/agents/ws?token=secret", None).await;
-    assert_eq!(status, salvo::http::StatusCode::OK, "body: {body:?}");
-    assert_eq!(body["ok"], true);
-
-    // Header authority wins even when a query token is also present.
+    // Query text is inert when a valid Bearer credential is present.
     let (status, body) = gate_send(
         &service,
         "/api/agents/ws?token=wrong-query-token",
@@ -2057,6 +2053,11 @@ async fn api_token_obeys_declared_scope_and_unknown_route_policy() {
     let user = gate_seed_user(&db, "alice");
     let user_token = gate_mint_user_token(&db, &user);
     let runtime_only_token = gate_mint_user_token_with_scopes(&db, &user, SCOPE_RUNTIME_READ);
+    let account_token = gate_mint_user_token_with_scopes(
+        &db,
+        &user,
+        &format!("{SCOPE_RUNTIME_READ} {SCOPE_ACCOUNT_MANAGE}"),
+    );
     let service = Service::new(gate_router(config, db));
 
     for path in [
@@ -2082,7 +2083,14 @@ async fn api_token_obeys_declared_scope_and_unknown_route_policy() {
         .contains(SCOPE_PROJECT_READ));
 
     let (status, body) = gate_send(&service, "/api/users/me", Some(&runtime_only_token)).await;
-    assert_eq!(status, StatusCode::OK, "PAT self-service body: {body:?}");
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body:?}");
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains(SCOPE_ACCOUNT_MANAGE));
+
+    let (status, body) = gate_send(&service, "/api/users/me", Some(&account_token)).await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
 
     let (status, body) = gate_send(
         &service,

@@ -220,10 +220,6 @@ pub(crate) fn required_oauth_scope_for_path_method(
     }
 }
 
-fn pat_account_manage_compatibility_route(method: &str, path: &str) -> bool {
-    crate::route_metadata::lookup(method, path).is_some_and(|spec| spec.pat_account_manage_compat)
-}
-
 pub(crate) fn enforce_route_scope(
     ctx: &AuthContext,
     method: &str,
@@ -232,15 +228,7 @@ pub(crate) fn enforce_route_scope(
     match oauth_route_scope_policy_for_path_method(method, path) {
         OAuthRouteScopePolicy::Public | OAuthRouteScopePolicy::BodyAware(_) => Ok(()),
         OAuthRouteScopePolicy::Require(scope) => {
-            // A narrow set of account-management routes predates delegated
-            // scopes and already enforces admin/self or admin-only identity in
-            // its handler. Preserve PAT compatibility only for those exact
-            // routes; other account:manage surfaces (notably global audit
-            // reads) must carry the scope explicitly.
-            let first_party_pat_account_route = scope == SCOPE_ACCOUNT_MANAGE
-                && matches!(ctx.kind, super::context::AuthKind::ApiToken)
-                && pat_account_manage_compatibility_route(method, path);
-            if first_party_pat_account_route || ctx.has_scope(scope) {
+            if ctx.has_scope(scope) {
                 Ok(())
             } else {
                 Err((Some(scope), format!("missing required scope: {}", scope)))
@@ -547,11 +535,10 @@ mod tests {
     }
 
     #[test]
-    fn pat_account_manage_compatibility_is_route_bounded() {
+    fn api_token_account_manage_routes_require_explicit_scope() {
         let mut pat = AuthContext::new(super::super::context::AuthKind::ApiToken);
         pat.scopes = vec![SCOPE_RUNTIME_READ.to_string()];
-
-        for path in [
+        let paths = [
             "/api/users/create",
             "/api/users/list",
             "/api/users/me",
@@ -564,25 +551,27 @@ mod tests {
             "/api/agent-tokens/list",
             "/api/agent-tokens/revoke",
             "/api/pairing/create",
-        ] {
-            assert!(
-                enforce_route_scope(&pat, "POST", path).is_ok(),
-                "legacy PAT account compatibility should remain on {path}"
-            );
-        }
-
-        for path in [
             "/api/audit/sessions",
             "/api/audit/session",
             "/api/audit/stats",
-        ] {
+        ];
+
+        for path in paths {
             assert_eq!(
                 enforce_route_scope(&pat, "POST", path),
                 Err((
                     Some(SCOPE_ACCOUNT_MANAGE),
                     "missing required scope: account:manage".to_string()
                 )),
-                "PAT audit access must require account:manage on {path}"
+                "PAT must carry account:manage on {path}"
+            );
+        }
+
+        pat.scopes.push(SCOPE_ACCOUNT_MANAGE.to_string());
+        for path in paths {
+            assert!(
+                enforce_route_scope(&pat, "POST", path).is_ok(),
+                "explicit account:manage must admit {path}"
             );
         }
     }

@@ -8,19 +8,18 @@ set -euo pipefail
 #   1. Boots a real `webcodex-server` and `webcodex-runner` (WebSocket).
 #   2. Verifies the layered connection observations (runner_process /
 #      server_transport / server_registration / project_registry /
-#      connector_endpoint / session_binding / last_successful_tool_call)
-#      carry the full observation contract, plus version_compatibility and
-#      the runner-reported shell profile dialect.
+#      connector_endpoint / last_successful_tool_call) carry the full
+#      observation contract, plus version_compatibility and the runner-reported
+#      shell profile dialect.
 #   3. Creates a durable coding-task session.
 #   4. Kills the runner: layers must degrade independently (stale
-#      registration is never reported ready) and a running job must land in
-#      a queryable terminal "lost" state, not a fake success.
+#      registration is never reported ready) and a reconciliation-capable
+#      running job must enter queryable `recovering`, not fake success/loss.
 #   5. Restarts the runner: a NEW connection instance must replace the old
-#      one, the project must re-register, and calls must recover WITHOUT a
-#      server restart.
-#   6. Restarts the server: the runner must auto-reconnect, the durable
-#      session must remain resumable via its explicit session_id, and the
-#      exact binding must restore for the same stable HTTP window.
+#      one, fence the old job to `lost` with `runner_instance_replaced`, the
+#      project must re-register, and calls must recover WITHOUT a server restart.
+#   6. Restarts the server: the runner must auto-reconnect and the durable
+#      session must remain resumable only through its explicit session_id.
 #   7. Post-deploy smoke facts: server version/commit, authority mode,
 #      version_compatibility status.
 #
@@ -289,9 +288,6 @@ assert_eq "project_registry registered" \
     "$(json_get "$BODY" ${LAYERS_PREFIX}.project_registry.status)" "registered"
 assert_eq "connector_endpoint honest not_configured" \
     "$(json_get "$BODY" ${LAYERS_PREFIX}.connector_endpoint.status)" "not_configured"
-assert_nonempty "session_binding reason code" \
-    "$(json_get "$BODY" ${LAYERS_PREFIX}.session_binding.reason_code)"
-
 assert_eq "version_compatibility compatible" \
     "$(json_get "$BODY" output.version_compatibility.status)" "compatible"
 assert_nonempty "server build version reported" \
@@ -306,11 +302,11 @@ assert_nonempty "runner-reported shell default_dialect" "$SHELL_DIALECT"
 # ----------------------------------------------------------------------------
 # Phase 2: durable session + a running job, then runner crash
 # ----------------------------------------------------------------------------
-START_BODY="$(api_post /api/tools/call "{\"tool\":\"start_coding_task\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"title\":\"reconnect continuity\",\"bind_current\":true}}")"
-SESSION_ID="$(json_get "$START_BODY" output.session.session_id)"
+START_BODY="$(api_post /api/tools/call "{\"tool\":\"work_on_project\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"instruction\":\"reconnect continuity\"}}")"
+SESSION_ID="$(json_get "$START_BODY" output.session_id)"
 assert_nonempty "durable session created" "$SESSION_ID"
-assert_eq "session binding bound at start" \
-    "$(json_get "$START_BODY" output.connection_state.session_binding.status)" "bound"
+assert_eq "work_on_project created explicit task session" \
+    "$(json_get "$START_BODY" output.continuation)" "created"
 
 JOB_BODY="$(api_post /api/tools/call "{\"tool\":\"run_job\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"command\":\"sleep 300\",\"timeout_secs\":600}}")"
 JOB_ID="$(json_get "$JOB_BODY" output.job_id)"
@@ -338,7 +334,7 @@ done
 JOBS_BODY="$(api_post /api/tools/call "{\"tool\":\"job_status\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"job_id\":\"${JOB_ID}\"}}")"
 JOB_STATE="$(json_get "$JOBS_BODY" output.status)"
 if [ -z "$JOB_STATE" ]; then JOB_STATE="$(json_get "$JOBS_BODY" output.job.status)"; fi
-assert_eq "in-flight job has queryable terminal state after crash" "$JOB_STATE" "lost"
+assert_eq "in-flight reconciliation-capable job is recovering after crash" "$JOB_STATE" "recovering"
 
 # ----------------------------------------------------------------------------
 # Phase 3: runner restart — new instance, no server restart
@@ -356,12 +352,19 @@ fi
 assert_eq "project re-registered after runner restart" \
     "$(json_get "$BODY" ${LAYERS_PREFIX}.project_registry.status)" "registered"
 
+JOBS_BODY="$(api_post /api/tools/call "{\"tool\":\"job_status\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"job_id\":\"${JOB_ID}\"}}")"
+JOB_STATE="$(json_get "$JOBS_BODY" output.status)"
+if [ -z "$JOB_STATE" ]; then JOB_STATE="$(json_get "$JOBS_BODY" output.job.status)"; fi
+assert_eq "replacement instance fences old recovering job to lost" "$JOB_STATE" "lost"
+assert_eq "replacement loss reason is runner_instance_replaced" \
+    "$(json_get "$JOBS_BODY" output.recovery_reason_code)" "runner_instance_replaced"
+
 READ_BODY="$(api_post /api/tools/call "{\"tool\":\"read_file\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"path\":\"README.md\"}}")"
 assert_eq "calls recover after runner restart (no server restart)" \
     "$(json_get "$READ_BODY" success)" "True"
 
 # ----------------------------------------------------------------------------
-# Phase 4: server restart — durable session and exact binding restore
+# Phase 4: server restart — durable session and explicit continuation
 # ----------------------------------------------------------------------------
 log "restarting server"
 kill "$SERVER_PID" 2>/dev/null || true
@@ -377,11 +380,13 @@ SUMMARY_BODY="$(api_post /api/tools/call "{\"tool\":\"session_summary\",\"params
 assert_eq "durable session resumable via explicit session_id" \
     "$(json_get "$SUMMARY_BODY" success)" "True"
 
-RESTART_START="$(api_post /api/tools/call "{\"tool\":\"start_coding_task\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"title\":\"post restart\"}}")"
-assert_eq "exact binding restored after server restart" \
-    "$(json_get "$RESTART_START" output.connection_state.session_binding.status)" "bound"
-assert_eq "restored binding continues the original session" \
-    "$(json_get "$RESTART_START" output.session.session_id)" "$SESSION_ID"
+RESTART_START="$(api_post /api/tools/call "{\"tool\":\"work_on_project\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"instruction\":\"post restart\",\"session_id\":\"${SESSION_ID}\"}}")"
+assert_eq "explicit continuation succeeds after server restart" \
+    "$(json_get "$RESTART_START" success)" "True"
+assert_eq "explicit continuation keeps the original session" \
+    "$(json_get "$RESTART_START" output.session_id)" "$SESSION_ID"
+assert_eq "explicit continuation is reported as resumed" \
+    "$(json_get "$RESTART_START" output.continuation)" "resumed_explicitly"
 
 # ----------------------------------------------------------------------------
 # Phase 5: post-deploy smoke facts

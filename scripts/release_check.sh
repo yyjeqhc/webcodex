@@ -220,15 +220,15 @@ if grep -En -- '--bin webcodex([[:space:]]|`|$)|target/debug/webcodex([^/-]|$)|i
 else
     ok "test harnesses use current server target and startup fields"
 fi
-if grep -En -- 'binding loss|lost process-local binding|lost_after_restart=true|binding_is_process_local_and_principal_scoped' \
+if grep -En -- 'session_binding|current_binding|bind_current|exact binding|binding restore|binding restoration' \
+    scripts/e2e_zero_config_ws.sh \
     scripts/e2e_reconnect_ws.sh \
-    docs/ARCHITECTURE.md \
-    docs/RUNNER.md \
+    scripts/eval_coding_loop.sh \
     docs/TESTING.md \
-    docs/agent/architecture-decisions.md; then
-    die "stale current-session binding durability guidance"
+    docs/RELEASE_CHECKLIST.md; then
+    die "stale current-session binding contract in active harness guidance"
 else
-    ok "binding guidance reflects durable exact restoration"
+    ok "workflow harnesses use explicit Session targeting without retired binding state"
 fi
 
 # ----------------------------------------------------------------------------

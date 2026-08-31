@@ -694,7 +694,7 @@ elif [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
 else
     # full_operator_runtime: the complete operator tool surface.
     mcp_operator_present=1
-    for tname in list_tools start_coding_task work_on_project finish_coding_task \
+    for tname in list_tools work_on_project finish_coding_task \
         git_diff_summary apply_unified_diff read_file read_files \
         search_project_texts run_shell run_job job_status job_log list_jobs show_changes; do
         if mcp_tool_present "$tname"; then
@@ -707,12 +707,12 @@ else
     if [ "$mcp_operator_present" = "1" ]; then
         pass "MCP tools/list exposes the full-operator tool surface"
     fi
-    # ModelHidden tools must still never appear in MCP tools/list.
+    # ModelHidden and retired tools must never appear in MCP tools/list.
     # write_project_file is ModelVisible and is part of the full-operator
-    # surface, so it is not asserted absent here. replace_in_file was removed
-    # entirely and is not a known tool on any surface.
+    # surface, so it is not asserted absent here. replace_in_file and the
+    # external start_coding_task compatibility entry were retired entirely.
     mcp_hidden_absent=1
-    for tname in job_tail; do
+    for tname in job_tail start_coding_task; do
         if mcp_tool_present "$tname"; then
             mcp_hidden_absent=0
             fail "MCP tools/list must not expose ModelHidden tool $tname"
@@ -1006,10 +1006,9 @@ tool_desc = (
     .get("tool", {})
     .get("description", "")
 )
-# The generic GPT Action advertises only model-facing runtime tools. The hidden
-# start_coding_task bootstrap remains callable by the operator runtime but is not
-# part of this description contract.
-for runtime_tool in ["finish_coding_task"]:
+# The generic GPT Action advertises only current model-facing runtime tools.
+# work_on_project is the canonical external task bootstrap; start_coding_task is retired.
+for runtime_tool in ["work_on_project", "finish_coding_task"]:
     if runtime_tool not in tool_desc:
         errors.append(f"ToolCallRequest.tool description missing {runtime_tool}")
 
@@ -1253,10 +1252,11 @@ if not isinstance(count, int):
 elif isinstance(tools, list) and count != len(tools):
     errors.append(f"count {count} does not match tools length {len(tools)}")
 if isinstance(names, list):
-    # /api/tools/list exposes the current operator-visible surface. Hidden
-    # bootstrap helpers such as start_coding_task are intentionally omitted;
-    # git_diff_summary remains the canonical summary tool.
+    # /api/tools/list exposes the current operator-visible surface. The retired
+    # start_coding_task compatibility entry is intentionally omitted;
+    # work_on_project is the canonical task bootstrap.
     missing = sorted({
+        "work_on_project",
         "finish_coding_task",
         "git_diff_summary",
         "list_tools",
@@ -1296,7 +1296,7 @@ fi
 
 # callRuntimeTool: retired arguments envelope is rejected; use params or flattened fields.
 body="$(api_post /api/tools/call '{"tool":"list_tools","arguments":null}')"
-if printf '%s' "$body" | python3 -c 'import json,sys; body=json.load(sys.stdin); err=str(body.get("error", "")); sys.exit(0 if body.get("success") is False and "arguments" in err and "no longer supported" in err else 1)'; then
+if printf '%s' "$body" | python3 -c 'import json,sys; body=json.load(sys.stdin); err=str(body.get("error", "")); sys.exit(0 if body.get("status") == 400 and "arguments" in err and "no longer supported" in err else 1)'; then
     pass "callRuntimeTool(list_tools) rejects retired arguments envelope"
 else
     fail "callRuntimeTool(list_tools) accepted retired arguments envelope (body: ${body:0:300})"
@@ -1326,7 +1326,7 @@ fi
 log "---- Deterministic workflow tool smoke ----"
 
 workflow_session_id=""
-body="$(api_post /api/tools/call "{\"tool\":\"start_coding_task\",\"project\":\"$RUNTIME_PROJECT_ID\",\"title\":\"e2e deterministic coding task smoke\",\"mode\":\"normal\",\"detail\":\"full\",\"bind_current\":false}")"
+body="$(api_post /api/tools/call "{\"tool\":\"work_on_project\",\"project\":\"$RUNTIME_PROJECT_ID\",\"instruction\":\"e2e deterministic coding task smoke\"}")"
 if workflow_session_id="$(python3 - "$body" <<'PY'
 import json, sys
 
@@ -1339,41 +1339,29 @@ except Exception as exc:
 errors = []
 output = data.get("output") if isinstance(data, dict) else None
 output = output if isinstance(output, dict) else {}
-session = output.get("session") if isinstance(output.get("session"), dict) else {}
-binding = session.get("current_binding") if isinstance(session.get("current_binding"), dict) else {}
-flow = output.get("recommended_flow") if isinstance(output.get("recommended_flow"), dict) else {}
-inspect = flow.get("inspect")
-edit = flow.get("edit")
-session_id = session.get("session_id")
+session_id = output.get("session_id")
 
 if data.get("success") is not True:
     errors.append("success must be true")
-if output.get("deterministic") is not True:
-    errors.append("output.deterministic must be true")
-if output.get("llm_summary") is not False:
-    errors.append("output.llm_summary must be false")
 if not isinstance(session_id, str) or not session_id.startswith("wc_sess_"):
-    errors.append("output.session.session_id must start with wc_sess_")
-if session.get("explicit_session_id_recommended") is not True:
-    errors.append("output.session.explicit_session_id_recommended must be true")
-if binding.get("bound") is not False:
-    errors.append("output.session.current_binding.bound must be false")
-for field in [
-    "process_local_cache",
-    "durable_exact_binding",
-    "restored_after_restart",
+    errors.append("output.session_id must start with wc_sess_")
+if output.get("continuation") != "created":
+    errors.append("output.continuation must be created")
+for field in ["workspace", "workflow", "instructions", "semantic_navigation"]:
+    if not isinstance(output.get(field), dict):
+        errors.append(f"output.{field} must be an object")
+if "readiness" in output and not isinstance(output.get("readiness"), dict):
+    errors.append("output.readiness must be an object when present")
+for retired in [
+    "runtime_status",
+    "connection_state",
+    "authority",
+    "recommended_flow",
+    "deterministic",
+    "llm_summary",
 ]:
-    if binding.get(field) is not True:
-        errors.append(f"output.session.current_binding.{field} must be true")
-for name in ["read_file", "search_project_text", "show_changes"]:
-    if not isinstance(inspect, list) or name not in inspect:
-        errors.append(f"output.recommended_flow.inspect missing {name}")
-for name in [
-    "apply_text_edits",
-    "apply_unified_diff",
-]:
-    if not isinstance(edit, list) or name not in edit:
-        errors.append(f"output.recommended_flow.edit missing {name}")
+    if retired in output:
+        errors.append(f"compact work_on_project output must omit {retired}")
 
 if errors:
     print("; ".join(errors), file=sys.stderr)
@@ -1381,10 +1369,10 @@ if errors:
 print(session_id)
 PY
 )"; then
-    pass "callRuntimeTool(start_coding_task) returns deterministic workflow startup"
+    pass "callRuntimeTool(work_on_project) returns compact workflow startup"
 else
     workflow_session_id=""
-    fail "callRuntimeTool(start_coding_task) workflow assertions failed (body: ${body:0:300})"
+    fail "callRuntimeTool(work_on_project) workflow assertions failed (body: ${body:0:300})"
 fi
 
 if [ -n "$workflow_session_id" ]; then
@@ -1421,7 +1409,7 @@ PY
         fail "callRuntimeTool(show_changes) explicit session smoke failed (body: ${body:0:300})"
     fi
 else
-    fail "callRuntimeTool(show_changes) skipped: start_coding_task did not return a session_id"
+    fail "callRuntimeTool(show_changes) skipped: work_on_project did not return a session_id"
 fi
 
 if [ -n "$workflow_session_id" ]; then
@@ -1473,7 +1461,7 @@ PY
         fail "callRuntimeTool(finish_coding_task) workflow assertions failed (body: ${body:0:300})"
     fi
 else
-    fail "callRuntimeTool(finish_coding_task) skipped: start_coding_task did not return a session_id"
+    fail "callRuntimeTool(finish_coding_task) skipped: work_on_project did not return a session_id"
 fi
 
 body="$(api_post /api/tools/call "{\"tool\":\"finish_coding_task\",\"project\":\"$RUNTIME_PROJECT_ID\"}")"

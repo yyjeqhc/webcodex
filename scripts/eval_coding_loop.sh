@@ -335,18 +335,15 @@ print(json.dumps({"tool": tool, "params": params}, separators=(",", ":")))
 PY
 }
 
-params_start_task() {
-    local title="$1"
-    python3 - "$RUNTIME_PROJECT_ID" "$title" <<'PY'
+params_work_on_project() {
+    local instruction="$1"
+    python3 - "$RUNTIME_PROJECT_ID" "$instruction" <<'PY'
 import json
 import sys
 
 print(json.dumps({
     "project": sys.argv[1],
-    "title": sys.argv[2],
-    "mode": "normal",
-    "detail": "minimal",
-    "bind_current": False,
+    "instruction": sys.argv[2],
 }, separators=(",", ":")))
 PY
 }
@@ -666,9 +663,9 @@ start_case_session() {
     local params
 
     if [ "$flow_kind" = "guided" ]; then
-        params="$(params_start_task "$title")"
-        call_tool "start_coding_task" "$params"
-        assert_session_created "start_coding_task" "$LAST_BODY" "output.session.session_id"
+        params="$(params_work_on_project "$title")"
+        call_tool "work_on_project" "$params"
+        assert_session_created "work_on_project" "$LAST_BODY" "output.session_id"
     else
         params="$(params_start_session "$title")"
         call_tool "start_session" "$params"

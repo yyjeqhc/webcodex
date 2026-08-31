@@ -83,6 +83,757 @@ fn start(
         .unwrap()
 }
 
+fn coding_binding_intent(label: &str) -> AgentTaskCodingRunBindingIntent {
+    AgentTaskCodingRunBindingIntent {
+        run_id: format!("wc_agent_run_{label}"),
+        runtime_project_id: "agent:special:reference-only".to_string(),
+        provider_id: "codex".to_string(),
+        provider_instance_id: format!("provider-instance-{label}"),
+        authority_fingerprint: format!("authority-{label}"),
+        coding_agent_intent_fingerprint: format!("coding-intent-{label}"),
+        binding_intent_fingerprint: format!("binding-intent-{label}"),
+    }
+}
+
+fn coding_observation(
+    intent: &AgentTaskCodingRunBindingIntent,
+    run_state: &str,
+    execution_state: &str,
+    revision: i64,
+) -> AgentTaskCodingRunObservation {
+    AgentTaskCodingRunObservation {
+        run_id: intent.run_id.clone(),
+        runtime_project_id: intent.runtime_project_id.clone(),
+        provider_id: intent.provider_id.clone(),
+        provider_instance_id: intent.provider_instance_id.clone(),
+        authority_fingerprint: intent.authority_fingerprint.clone(),
+        coding_agent_intent_fingerprint: intent.coding_agent_intent_fingerprint.clone(),
+        run_state: run_state.to_string(),
+        execution_state: execution_state.to_string(),
+        observation_revision: revision,
+        terminal_stop_reason: matches!(run_state, "completed" | "failed" | "cancelled")
+            .then(|| format!("stop-{run_state}")),
+        terminal_error_code: (run_state == "failed").then(|| "provider_failed".to_string()),
+        terminal_message: matches!(run_state, "completed" | "failed" | "cancelled")
+            .then(|| format!("terminal-{run_state}")),
+        completed_at_unix: matches!(run_state, "completed" | "failed" | "cancelled")
+            .then_some(1234),
+    }
+}
+
+fn prepare_coding_binding(
+    db: &Database,
+    owner: &CommunicationPrincipal,
+    task_id: &str,
+    assignee: &str,
+    started: &AgentTaskAttemptStartMutation,
+    intent: &AgentTaskCodingRunBindingIntent,
+    now: i64,
+) -> AgentTaskCodingRunPrepared {
+    db.prepare_agent_task_coding_run_at(
+        owner,
+        "agent:special:reference-only",
+        task_id,
+        &started.attempt.attempt_id,
+        assignee,
+        &started.attempt_fence,
+        started.attempt.attempt_controller_generation,
+        intent,
+        now,
+    )
+    .unwrap()
+}
+
+#[test]
+fn coding_run_binding_is_unique_replayable_and_fenced_before_dispatch() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-coding-binding.db")).unwrap();
+    let owner = principal('1');
+    let assignee = agent(&db, &owner, "coding-binding-agent");
+    let task_id = create_assigned_task(&db, &owner, &assignee, "coding-binding-task");
+    let now = wall_now_ms();
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &assignee,
+        "coding-binding-start",
+        now,
+    );
+
+    let context = db
+        .agent_task_coding_run_start_context_at(
+            &owner,
+            "agent:special:reference-only",
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            now + 1,
+        )
+        .unwrap();
+    assert_eq!(
+        context.task.instruction,
+        task_input(None, "ignored").instruction
+    );
+    assert_eq!(context.attempt.attempt_id, started.attempt.attempt_id);
+    let project_error = db
+        .agent_task_coding_run_start_context_at(
+            &owner,
+            "agent:special:wrong-project",
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            now + 1,
+        )
+        .unwrap_err();
+    assert_eq!(project_error.code(), "agent_task_project_mismatch");
+
+    let intent = coding_binding_intent("binding-one");
+    let prepared =
+        prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 2);
+    assert_eq!(
+        prepared.binding.dispatch_state,
+        AgentTaskCodingRunDispatchState::Prepared
+    );
+    assert!(!prepared.replayed);
+
+    let replay =
+        prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 3);
+    assert!(replay.replayed);
+    assert_eq!(replay.binding.run_id, intent.run_id);
+
+    let mut changed = intent.clone();
+    changed.provider_id = "other-provider".to_string();
+    changed.binding_intent_fingerprint = "binding-intent-changed".to_string();
+    let conflict = db
+        .prepare_agent_task_coding_run_at(
+            &owner,
+            "agent:special:reference-only",
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            &changed,
+            now + 4,
+        )
+        .unwrap_err();
+    assert_eq!(conflict.code(), "agent_task_coding_run_binding_conflict");
+
+    let first_claim = db
+        .claim_agent_task_coding_run_dispatch(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            &intent.binding_intent_fingerprint,
+        )
+        .unwrap();
+    assert!(first_claim.may_dispatch);
+    assert_eq!(
+        first_claim.binding.dispatch_state,
+        AgentTaskCodingRunDispatchState::OutcomeUnknown
+    );
+    let retry_claim = db
+        .claim_agent_task_coding_run_dispatch(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            &intent.binding_intent_fingerprint,
+        )
+        .unwrap();
+    assert!(!retry_claim.may_dispatch);
+    assert_eq!(retry_claim.binding.run_id, intent.run_id);
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row(
+                "SELECT COUNT(*) FROM wc_agent_task_coding_runs",
+                [],
+                |row| { row.get::<_, i64>(0) }
+            )
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn definitive_not_started_releases_backend_fence_after_lease_expiry() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-coding-not-started.db")).unwrap();
+    let owner = principal('2');
+    let agent_a = agent(&db, &owner, "coding-not-started-a");
+    let agent_b = agent(&db, &owner, "coding-not-started-b");
+    let now = wall_now_ms();
+
+    let task_id = create_assigned_task(&db, &owner, &agent_a, "coding-not-started-task");
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &agent_a,
+        "coding-not-started-start",
+        now,
+    );
+    let intent = coding_binding_intent("not-started-one");
+    prepare_coding_binding(&db, &owner, &task_id, &agent_a, &started, &intent, now + 1);
+    db.claim_agent_task_coding_run_dispatch(
+        &owner,
+        &task_id,
+        &started.attempt.attempt_id,
+        &agent_a,
+        &started.attempt_fence,
+        1,
+        &intent.binding_intent_fingerprint,
+    )
+    .unwrap();
+    let not_started = db
+        .record_agent_task_coding_run_not_started(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &intent.run_id,
+        )
+        .unwrap();
+    assert_eq!(
+        not_started.dispatch_state,
+        AgentTaskCodingRunDispatchState::NotStarted
+    );
+    let second = db
+        .start_agent_task_attempt_at(
+            &owner,
+            &task_id,
+            &agent_a,
+            "coding-not-started-second",
+            started.attempt.lease_expires_at_unix_ms,
+        )
+        .unwrap();
+    assert_eq!(second.attempt.attempt_number, 2);
+
+    let reassign_task =
+        create_assigned_task(&db, &owner, &agent_a, "coding-not-started-reassign-task");
+    let reassign_started = start(
+        &db,
+        &owner,
+        &reassign_task,
+        &agent_a,
+        "coding-not-started-reassign-start",
+        now + 10,
+    );
+    let reassign_intent = coding_binding_intent("not-started-reassign");
+    prepare_coding_binding(
+        &db,
+        &owner,
+        &reassign_task,
+        &agent_a,
+        &reassign_started,
+        &reassign_intent,
+        now + 11,
+    );
+    db.claim_agent_task_coding_run_dispatch(
+        &owner,
+        &reassign_task,
+        &reassign_started.attempt.attempt_id,
+        &agent_a,
+        &reassign_started.attempt_fence,
+        1,
+        &reassign_intent.binding_intent_fingerprint,
+    )
+    .unwrap();
+    db.record_agent_task_coding_run_not_started(
+        &owner,
+        &reassign_task,
+        &reassign_started.attempt.attempt_id,
+        &reassign_intent.run_id,
+    )
+    .unwrap();
+    let reassigned = db
+        .assign_agent_task_at(
+            &owner,
+            &reassign_task,
+            &agent_b,
+            reassign_started.attempt.lease_expires_at_unix_ms,
+        )
+        .unwrap();
+    assert_eq!(
+        reassigned.task.summary.assignee_agent_id.as_deref(),
+        Some(agent_b.as_str())
+    );
+}
+
+#[test]
+fn unresolved_coding_execution_blocks_replacement_and_reassignment_after_lease_expiry() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-coding-blocking.db")).unwrap();
+    let owner = principal('3');
+    let agent_a = agent(&db, &owner, "coding-block-a");
+    let agent_b = agent(&db, &owner, "coding-block-b");
+    let now = wall_now_ms();
+
+    for (index, run_state, execution_state, expected_error) in [
+        (0_i64, None, None, "agent_task_execution_outcome_unknown"),
+        (
+            1,
+            Some("running"),
+            Some("started"),
+            "agent_task_execution_active",
+        ),
+        (
+            2,
+            Some("waiting_permission"),
+            Some("started"),
+            "agent_task_execution_active",
+        ),
+        (
+            3,
+            Some("lost"),
+            Some("outcome_unknown"),
+            "agent_task_execution_outcome_unknown",
+        ),
+    ] {
+        let task_id =
+            create_assigned_task(&db, &owner, &agent_a, &format!("coding-block-task-{index}"));
+        let started = start(
+            &db,
+            &owner,
+            &task_id,
+            &agent_a,
+            &format!("coding-block-start-{index}"),
+            now + index * 20,
+        );
+        let intent = coding_binding_intent(&format!("blocking-{index}"));
+        prepare_coding_binding(
+            &db,
+            &owner,
+            &task_id,
+            &agent_a,
+            &started,
+            &intent,
+            now + index * 20 + 1,
+        );
+        db.claim_agent_task_coding_run_dispatch(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &agent_a,
+            &started.attempt_fence,
+            1,
+            &intent.binding_intent_fingerprint,
+        )
+        .unwrap();
+        if let (Some(run_state), Some(execution_state)) = (run_state, execution_state) {
+            db.record_agent_task_coding_run_observation(
+                &owner,
+                &task_id,
+                &started.attempt.attempt_id,
+                &coding_observation(&intent, run_state, execution_state, 1),
+            )
+            .unwrap();
+        }
+        let replacement = db
+            .start_agent_task_attempt_at(
+                &owner,
+                &task_id,
+                &agent_a,
+                &format!("coding-block-replacement-{index}"),
+                started.attempt.lease_expires_at_unix_ms,
+            )
+            .unwrap_err();
+        assert_eq!(replacement.code(), expected_error, "case {index}");
+        let reassignment = db
+            .assign_agent_task_at(
+                &owner,
+                &task_id,
+                &agent_b,
+                started.attempt.lease_expires_at_unix_ms + 1,
+            )
+            .unwrap_err();
+        assert_eq!(reassignment.code(), expected_error, "case {index}");
+        let task = db
+            .read_agent_task_at(
+                &owner,
+                &task_id,
+                started.attempt.lease_expires_at_unix_ms + 2,
+            )
+            .unwrap();
+        assert_eq!(task.summary.state, AgentTaskState::Active);
+        assert!(task.summary.execution_bound);
+    }
+}
+
+#[test]
+fn backend_terminal_truth_reconciles_exact_attempt_after_ordinary_lease_expiry() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-coding-terminal.db")).unwrap();
+    let owner = principal('4');
+    let assignee = agent(&db, &owner, "coding-terminal-agent");
+    let now = wall_now_ms();
+    let task_id = create_assigned_task(&db, &owner, &assignee, "coding-terminal-task");
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &assignee,
+        "coding-terminal-start",
+        now,
+    );
+    let intent = coding_binding_intent("terminal-completed");
+    prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
+    db.claim_agent_task_coding_run_dispatch(
+        &owner,
+        &task_id,
+        &started.attempt.attempt_id,
+        &assignee,
+        &started.attempt_fence,
+        1,
+        &intent.binding_intent_fingerprint,
+    )
+    .unwrap();
+    let completed = coding_observation(&intent, "completed", "completed", 7);
+    db.record_agent_task_coding_run_observation(
+        &owner,
+        &task_id,
+        &started.attempt.attempt_id,
+        &completed,
+    )
+    .unwrap();
+
+    let stale_generic = db
+        .complete_agent_task_attempt_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            AgentTaskState::Succeeded,
+            Some("stale browser completion"),
+            None,
+            "stale-generic-completion",
+            started.attempt.lease_expires_at_unix_ms,
+        )
+        .unwrap_err();
+    assert_eq!(stale_generic.code(), "agent_task_attempt_stale");
+
+    let reconciled = db
+        .terminalize_agent_task_coding_run(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &completed,
+            Some("bounded coding result"),
+            Some("coding_agent_completed"),
+        )
+        .unwrap();
+    assert!(reconciled.state_changed);
+    assert_eq!(reconciled.task.state, AgentTaskState::Succeeded);
+    assert_eq!(reconciled.attempt.state, AgentTaskAttemptState::Succeeded);
+    assert_eq!(
+        reconciled.binding.dispatch_state,
+        AgentTaskCodingRunDispatchState::Terminal
+    );
+
+    let replay_observation = db
+        .record_agent_task_coding_run_observation(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &completed,
+        )
+        .unwrap();
+    assert_eq!(
+        replay_observation.dispatch_state,
+        AgentTaskCodingRunDispatchState::Terminal
+    );
+    let replay = db
+        .terminalize_agent_task_coding_run(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &completed,
+            Some("bounded coding result"),
+            Some("coding_agent_completed"),
+        )
+        .unwrap();
+    assert!(!replay.state_changed);
+}
+
+#[test]
+fn failed_cancelled_and_lost_have_bounded_exact_terminal_semantics() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-coding-terminal-states.db")).unwrap();
+    let owner = principal('5');
+    let assignee = agent(&db, &owner, "coding-terminal-states-agent");
+    let now = wall_now_ms();
+
+    for (index, run_state, reason) in [
+        (0_i64, "failed", "provider_failed"),
+        (1_i64, "cancelled", "coding_agent_cancelled"),
+    ] {
+        let task_id = create_assigned_task(
+            &db,
+            &owner,
+            &assignee,
+            &format!("coding-terminal-state-task-{index}"),
+        );
+        let started = start(
+            &db,
+            &owner,
+            &task_id,
+            &assignee,
+            &format!("coding-terminal-state-start-{index}"),
+            now + index * 20,
+        );
+        let intent = coding_binding_intent(&format!("terminal-state-{index}"));
+        prepare_coding_binding(
+            &db,
+            &owner,
+            &task_id,
+            &assignee,
+            &started,
+            &intent,
+            now + index * 20 + 1,
+        );
+        db.claim_agent_task_coding_run_dispatch(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            &intent.binding_intent_fingerprint,
+        )
+        .unwrap();
+        let observation = coding_observation(&intent, run_state, "completed", 3);
+        db.record_agent_task_coding_run_observation(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &observation,
+        )
+        .unwrap();
+        let mutation = db
+            .terminalize_agent_task_coding_run(
+                &owner,
+                &task_id,
+                &started.attempt.attempt_id,
+                &observation,
+                Some("bounded terminal result"),
+                Some(reason),
+            )
+            .unwrap();
+        assert_eq!(mutation.task.state, AgentTaskState::Failed);
+        assert_eq!(mutation.attempt.state, AgentTaskAttemptState::Failed);
+        assert_eq!(mutation.attempt.terminal_reason.as_deref(), Some(reason));
+    }
+
+    let lost_task = create_assigned_task(&db, &owner, &assignee, "coding-lost-task");
+    let lost_started = start(
+        &db,
+        &owner,
+        &lost_task,
+        &assignee,
+        "coding-lost-start",
+        now + 50,
+    );
+    let lost_intent = coding_binding_intent("lost-terminal-state");
+    prepare_coding_binding(
+        &db,
+        &owner,
+        &lost_task,
+        &assignee,
+        &lost_started,
+        &lost_intent,
+        now + 51,
+    );
+    db.claim_agent_task_coding_run_dispatch(
+        &owner,
+        &lost_task,
+        &lost_started.attempt.attempt_id,
+        &assignee,
+        &lost_started.attempt_fence,
+        1,
+        &lost_intent.binding_intent_fingerprint,
+    )
+    .unwrap();
+    let lost = coding_observation(&lost_intent, "lost", "outcome_unknown", 4);
+    let binding = db
+        .record_agent_task_coding_run_observation(
+            &owner,
+            &lost_task,
+            &lost_started.attempt.attempt_id,
+            &lost,
+        )
+        .unwrap();
+    assert_eq!(
+        binding.dispatch_state,
+        AgentTaskCodingRunDispatchState::OutcomeUnknown
+    );
+    let terminal_error = db
+        .terminalize_agent_task_coding_run(
+            &owner,
+            &lost_task,
+            &lost_started.attempt.attempt_id,
+            &lost,
+            Some("must not commit"),
+            Some("must not commit"),
+        )
+        .unwrap_err();
+    assert_eq!(terminal_error.code(), "agent_task_coding_run_not_terminal");
+    assert_eq!(
+        db.read_agent_task(&owner, &lost_task)
+            .unwrap()
+            .summary
+            .state,
+        AgentTaskState::Active
+    );
+}
+
+#[test]
+fn old_coding_run_cannot_terminalize_task_after_later_attempt_exists() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-coding-later-attempt.db")).unwrap();
+    let owner = principal('6');
+    let assignee = agent(&db, &owner, "coding-later-agent");
+    let now = wall_now_ms();
+    let task_id = create_assigned_task(&db, &owner, &assignee, "coding-later-task");
+    let first = start(&db, &owner, &task_id, &assignee, "coding-later-first", now);
+    let intent = coding_binding_intent("later-attempt-old-run");
+    prepare_coding_binding(&db, &owner, &task_id, &assignee, &first, &intent, now + 1);
+    db.claim_agent_task_coding_run_dispatch(
+        &owner,
+        &task_id,
+        &first.attempt.attempt_id,
+        &assignee,
+        &first.attempt_fence,
+        1,
+        &intent.binding_intent_fingerprint,
+    )
+    .unwrap();
+    db.record_agent_task_coding_run_not_started(
+        &owner,
+        &task_id,
+        &first.attempt.attempt_id,
+        &intent.run_id,
+    )
+    .unwrap();
+    let second = db
+        .start_agent_task_attempt_at(
+            &owner,
+            &task_id,
+            &assignee,
+            "coding-later-second",
+            first.attempt.lease_expires_at_unix_ms,
+        )
+        .unwrap();
+    assert_eq!(second.attempt.attempt_number, 2);
+
+    let old_terminal = coding_observation(&intent, "completed", "completed", 9);
+    db.record_agent_task_coding_run_observation(
+        &owner,
+        &task_id,
+        &first.attempt.attempt_id,
+        &old_terminal,
+    )
+    .unwrap();
+    let stale = db
+        .terminalize_agent_task_coding_run(
+            &owner,
+            &task_id,
+            &first.attempt.attempt_id,
+            &old_terminal,
+            Some("old result"),
+            Some("coding_agent_completed"),
+        )
+        .unwrap_err();
+    assert_eq!(stale.code(), "agent_task_attempt_stale");
+    let task = db.read_agent_task(&owner, &task_id).unwrap();
+    assert_eq!(task.summary.state, AgentTaskState::Active);
+    assert_eq!(
+        task.summary.latest_attempt.unwrap().attempt_id,
+        second.attempt.attempt_id
+    );
+}
+
+#[test]
+fn coding_run_binding_survives_restart_without_endpoint_or_window_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("agent-task-coding-restart.db");
+    let owner = principal('7');
+    let foreign = principal('8');
+    let now = wall_now_ms();
+    let (task_id, attempt_id, run_id) = {
+        let db = Database::open(&path).unwrap();
+        let assignee = agent(&db, &owner, "coding-restart-agent");
+        let task_id = create_assigned_task(&db, &owner, &assignee, "coding-restart-task");
+        let started = start(
+            &db,
+            &owner,
+            &task_id,
+            &assignee,
+            "coding-restart-start",
+            now,
+        );
+        let intent = coding_binding_intent("restart-run");
+        prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
+        db.claim_agent_task_coding_run_dispatch(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            &intent.binding_intent_fingerprint,
+        )
+        .unwrap();
+        db.record_agent_task_coding_run_observation(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &coding_observation(&intent, "running", "started", 11),
+        )
+        .unwrap();
+        (task_id, started.attempt.attempt_id, intent.run_id)
+    };
+
+    let reopened = Database::open(&path).unwrap();
+    let binding = reopened
+        .read_agent_task_coding_run_binding(&owner, &task_id, &attempt_id)
+        .unwrap();
+    assert_eq!(binding.run_id, run_id);
+    assert_eq!(binding.runtime_project_id, "agent:special:reference-only");
+    assert_eq!(binding.provider_id, "codex");
+    assert_eq!(
+        binding.dispatch_state,
+        AgentTaskCodingRunDispatchState::Bound
+    );
+    assert_eq!(binding.last_observed_run_state.as_deref(), Some("running"));
+    assert_eq!(binding.last_observation_revision, Some(11));
+    let task = reopened.read_agent_task(&owner, &task_id).unwrap();
+    assert!(task.summary.execution_bound);
+    assert_eq!(
+        task.summary.execution_status,
+        Some(AgentTaskExecutionStatus::Active)
+    );
+    assert_eq!(
+        task.summary.recovery_kind,
+        AgentTaskExecutionRecoveryKind::Observe
+    );
+
+    let foreign_error = reopened
+        .read_agent_task_coding_run_binding(&foreign, &task_id, &attempt_id)
+        .unwrap_err();
+    assert_eq!(foreign_error.code(), "agent_task_not_found");
+}
+
 #[test]
 fn agent_task_create_is_keyed_bounded_and_restart_durable() {
     let temp = tempfile::tempdir().unwrap();

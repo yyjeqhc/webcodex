@@ -25,7 +25,11 @@ mod task_kernel;
 
 pub use self::activity::WorkspaceActivityStore;
 pub(crate) use self::admin_project_lifecycle::AdminProjectAudit;
-pub(crate) use self::agent_task::{AgentTaskState, NewAgentTask, MAX_AGENT_TASK_LIST_LIMIT};
+pub(crate) use self::agent_task::{
+    AgentTaskCodingRunBindingIntent, AgentTaskCodingRunBindingRecord,
+    AgentTaskCodingRunDispatchState, AgentTaskCodingRunObservation, AgentTaskState, NewAgentTask,
+    MAX_AGENT_TASK_LIST_LIMIT, MAX_AGENT_TASK_TERMINAL_TEXT_BYTES,
+};
 #[allow(unused_imports)]
 pub(crate) use self::agent_wake::{
     AgentWakeClaim, AgentWakeConsumeResult, AgentWakeEnvelope, AgentWakePrepared, AgentWakeRecord,

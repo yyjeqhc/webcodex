@@ -109,6 +109,183 @@ impl AgentTaskAttemptState {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentTaskCodingRunDispatchState {
+    Prepared,
+    NotStarted,
+    OutcomeUnknown,
+    Bound,
+    Terminal,
+}
+
+impl AgentTaskCodingRunDispatchState {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Prepared => "prepared",
+            Self::NotStarted => "not_started",
+            Self::OutcomeUnknown => "outcome_unknown",
+            Self::Bound => "bound",
+            Self::Terminal => "terminal",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "prepared" => Ok(Self::Prepared),
+            "not_started" => Ok(Self::NotStarted),
+            "outcome_unknown" => Ok(Self::OutcomeUnknown),
+            "bound" => Ok(Self::Bound),
+            "terminal" => Ok(Self::Terminal),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported AgentTask CodingAgent dispatch state: {other}").into(),
+            )),
+        }
+    }
+
+    const fn blocks_replacement(self) -> bool {
+        matches!(self, Self::OutcomeUnknown | Self::Bound)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentTaskExecutionStatus {
+    NotStarted,
+    Active,
+    WaitingPermission,
+    OutcomeUnknown,
+    Terminal,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentTaskExecutionRecoveryKind {
+    None,
+    Observe,
+    Reconcile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentTaskCodingRunBindingIntent {
+    pub(crate) run_id: String,
+    pub(crate) runtime_project_id: String,
+    pub(crate) provider_id: String,
+    pub(crate) provider_instance_id: String,
+    pub(crate) authority_fingerprint: String,
+    pub(crate) coding_agent_intent_fingerprint: String,
+    pub(crate) binding_intent_fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentTaskCodingRunObservation {
+    pub(crate) run_id: String,
+    pub(crate) runtime_project_id: String,
+    pub(crate) provider_id: String,
+    pub(crate) provider_instance_id: String,
+    pub(crate) authority_fingerprint: String,
+    pub(crate) coding_agent_intent_fingerprint: String,
+    pub(crate) run_state: String,
+    pub(crate) execution_state: String,
+    pub(crate) observation_revision: i64,
+    pub(crate) terminal_stop_reason: Option<String>,
+    pub(crate) terminal_error_code: Option<String>,
+    pub(crate) terminal_message: Option<String>,
+    pub(crate) completed_at_unix: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentTaskCodingRunBindingRecord {
+    pub(crate) task_id: String,
+    pub(crate) attempt_id: String,
+    pub(crate) run_id: String,
+    pub(crate) runtime_project_id: String,
+    pub(crate) provider_id: String,
+    pub(crate) provider_instance_id: String,
+    pub(crate) authority_fingerprint: String,
+    pub(crate) coding_agent_intent_fingerprint: String,
+    pub(crate) binding_intent_fingerprint: String,
+    pub(crate) dispatch_state: AgentTaskCodingRunDispatchState,
+    pub(crate) last_observed_run_state: Option<String>,
+    pub(crate) last_observed_execution_state: Option<String>,
+    pub(crate) last_observation_revision: Option<i64>,
+    pub(crate) terminal_stop_reason: Option<String>,
+    pub(crate) terminal_error_code: Option<String>,
+    pub(crate) terminal_message: Option<String>,
+    pub(crate) completed_at_unix: Option<i64>,
+    pub(crate) created_at_unix_ms: i64,
+    pub(crate) updated_at_unix_ms: i64,
+    pub(crate) terminal_at_unix_ms: Option<i64>,
+}
+
+impl AgentTaskCodingRunBindingRecord {
+    fn execution_status(&self) -> AgentTaskExecutionStatus {
+        match self.dispatch_state {
+            AgentTaskCodingRunDispatchState::Prepared
+            | AgentTaskCodingRunDispatchState::NotStarted => AgentTaskExecutionStatus::NotStarted,
+            AgentTaskCodingRunDispatchState::OutcomeUnknown => {
+                AgentTaskExecutionStatus::OutcomeUnknown
+            }
+            AgentTaskCodingRunDispatchState::Terminal => AgentTaskExecutionStatus::Terminal,
+            AgentTaskCodingRunDispatchState::Bound => match self.last_observed_run_state.as_deref()
+            {
+                Some("waiting_permission") => AgentTaskExecutionStatus::WaitingPermission,
+                Some("lost") => AgentTaskExecutionStatus::OutcomeUnknown,
+                Some("completed" | "failed" | "cancelled") => AgentTaskExecutionStatus::Terminal,
+                _ => AgentTaskExecutionStatus::Active,
+            },
+        }
+    }
+
+    fn recovery_kind(&self) -> AgentTaskExecutionRecoveryKind {
+        match self.dispatch_state {
+            AgentTaskCodingRunDispatchState::Prepared
+            | AgentTaskCodingRunDispatchState::NotStarted
+            | AgentTaskCodingRunDispatchState::Terminal => AgentTaskExecutionRecoveryKind::None,
+            AgentTaskCodingRunDispatchState::OutcomeUnknown => {
+                AgentTaskExecutionRecoveryKind::Reconcile
+            }
+            AgentTaskCodingRunDispatchState::Bound => match self.execution_status() {
+                AgentTaskExecutionStatus::Active | AgentTaskExecutionStatus::WaitingPermission => {
+                    AgentTaskExecutionRecoveryKind::Observe
+                }
+                AgentTaskExecutionStatus::OutcomeUnknown | AgentTaskExecutionStatus::Terminal => {
+                    AgentTaskExecutionRecoveryKind::Reconcile
+                }
+                AgentTaskExecutionStatus::NotStarted => AgentTaskExecutionRecoveryKind::None,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentTaskCodingRunStartContext {
+    pub(crate) task: AgentTaskDetail,
+    pub(crate) attempt: AgentTaskAttemptRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentTaskCodingRunPrepared {
+    pub(crate) binding: AgentTaskCodingRunBindingRecord,
+    pub(crate) replayed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentTaskCodingRunDispatchClaim {
+    pub(crate) binding: AgentTaskCodingRunBindingRecord,
+    pub(crate) may_dispatch: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentTaskCodingRunReconcileMutation {
+    pub(crate) task: AgentTaskSummary,
+    pub(crate) attempt: AgentTaskAttemptRecord,
+    pub(crate) binding: AgentTaskCodingRunBindingRecord,
+    pub(crate) state_changed: bool,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct AgentTaskAttemptRecord {
     pub(crate) attempt_id: String,
@@ -139,6 +316,9 @@ pub(crate) struct AgentTaskSummary {
     pub(crate) updated_at_unix_ms: i64,
     pub(crate) terminal_at_unix_ms: Option<i64>,
     pub(crate) latest_attempt: Option<AgentTaskAttemptRecord>,
+    pub(crate) execution_bound: bool,
+    pub(crate) execution_status: Option<AgentTaskExecutionStatus>,
+    pub(crate) recovery_kind: AgentTaskExecutionRecoveryKind,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -250,6 +430,7 @@ struct StoredTask {
     updated_at_unix_ms: i64,
     terminal_at_unix_ms: Option<i64>,
     latest_attempt: Option<StoredAttempt>,
+    latest_coding_run: Option<AgentTaskCodingRunBindingRecord>,
 }
 
 impl StoredTask {
@@ -258,6 +439,10 @@ impl StoredTask {
             && self.latest_attempt.as_ref().is_some_and(|attempt| {
                 attempt.effective_state(now) == AgentTaskAttemptState::Expired
             })
+            && !self
+                .latest_coding_run
+                .as_ref()
+                .is_some_and(|binding| binding.dispatch_state.blocks_replacement())
         {
             AgentTaskState::Ready
         } else {
@@ -281,6 +466,16 @@ impl StoredTask {
                 .latest_attempt
                 .as_ref()
                 .map(|attempt| attempt.record(now)),
+            execution_bound: self.latest_coding_run.is_some(),
+            execution_status: self
+                .latest_coding_run
+                .as_ref()
+                .map(AgentTaskCodingRunBindingRecord::execution_status),
+            recovery_kind: self
+                .latest_coding_run
+                .as_ref()
+                .map(AgentTaskCodingRunBindingRecord::recovery_kind)
+                .unwrap_or(AgentTaskExecutionRecoveryKind::None),
         }
     }
 
@@ -347,6 +542,33 @@ impl Database {
                 FOREIGN KEY(task_id) REFERENCES wc_agent_tasks(task_id),
                 FOREIGN KEY(assignee_agent_id) REFERENCES wc_agent_identities(agent_id)
             );
+            CREATE TABLE IF NOT EXISTS wc_agent_task_coding_runs (
+                task_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL UNIQUE,
+                run_id TEXT NOT NULL UNIQUE,
+                runtime_project_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                provider_instance_id TEXT NOT NULL,
+                authority_fingerprint TEXT NOT NULL,
+                coding_agent_intent_fingerprint TEXT NOT NULL,
+                binding_intent_fingerprint TEXT NOT NULL,
+                dispatch_state TEXT NOT NULL CHECK(dispatch_state IN ('prepared', 'not_started', 'outcome_unknown', 'bound', 'terminal')),
+                last_observed_run_state TEXT,
+                last_observed_execution_state TEXT,
+                last_observation_revision INTEGER,
+                terminal_stop_reason TEXT,
+                terminal_error_code TEXT,
+                terminal_message TEXT,
+                completed_at_unix INTEGER,
+                created_at_unix_ms INTEGER NOT NULL,
+                updated_at_unix_ms INTEGER NOT NULL,
+                terminal_at_unix_ms INTEGER,
+                FOREIGN KEY(task_id) REFERENCES wc_agent_tasks(task_id),
+                FOREIGN KEY(attempt_id) REFERENCES wc_agent_task_attempts(attempt_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wc_agent_task_coding_runs_task
+                ON wc_agent_task_coding_runs(task_id, updated_at_unix_ms DESC);
+
             CREATE UNIQUE INDEX IF NOT EXISTS idx_wc_agent_task_attempts_one_active
                 ON wc_agent_task_attempts(task_id) WHERE state = 'active';
             CREATE INDEX IF NOT EXISTS idx_wc_agent_task_attempts_task_number
@@ -655,6 +877,11 @@ impl Database {
         }
         require_owned_agent(&transaction, principal, assignee_agent_id)?;
         materialize_expired_latest_attempt(&transaction, &mut task, now)?;
+        if task.assignee_agent_id.as_deref() != Some(assignee_agent_id) {
+            if let Some(error) = blocking_execution_error(task.latest_coding_run.as_ref()) {
+                return Err(error);
+            }
+        }
         if task
             .latest_attempt
             .as_ref()
@@ -805,6 +1032,9 @@ impl Database {
         }
         require_owned_agent(&transaction, principal, assignee_agent_id)?;
         materialize_expired_latest_attempt(&transaction, &mut task, now)?;
+        if let Some(error) = blocking_execution_error(task.latest_coding_run.as_ref()) {
+            return Err(error);
+        }
         if task
             .latest_attempt
             .as_ref()
@@ -1261,6 +1491,803 @@ impl Database {
             state_changed: true,
         })
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn agent_task_coding_run_start_context(
+        &self,
+        principal: &CommunicationPrincipal,
+        project: &str,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+    ) -> Result<AgentTaskCodingRunStartContext, CommunicationStoreError> {
+        self.agent_task_coding_run_start_context_with_now(
+            principal,
+            project,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            now_unix_ms(),
+        )
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn agent_task_coding_run_start_context_at(
+        &self,
+        principal: &CommunicationPrincipal,
+        project: &str,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+        now: i64,
+    ) -> Result<AgentTaskCodingRunStartContext, CommunicationStoreError> {
+        self.agent_task_coding_run_start_context_with_now(
+            principal,
+            project,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            now,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn agent_task_coding_run_start_context_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        project: &str,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+        now: i64,
+    ) -> Result<AgentTaskCodingRunStartContext, CommunicationStoreError> {
+        validate_attempt_mutation_inputs(
+            principal,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+        )?;
+        let conn = self.conn.lock().unwrap();
+        let task = load_owned_task(&conn, principal, task_id, now)?;
+        let referenced_project = task.referenced_project_id.as_deref().ok_or_else(|| {
+            CommunicationStoreError::new(
+                "agent_task_project_required",
+                "AgentTask has no referenced_project_id and cannot dispatch a CodingAgentRun",
+            )
+        })?;
+        if project != referenced_project {
+            return Err(CommunicationStoreError::new(
+                "agent_task_project_mismatch",
+                "Requested Project does not match AgentTask referenced_project_id",
+            ));
+        }
+        let attempt = require_current_attempt(
+            &conn,
+            &task,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            now,
+        )?;
+        Ok(AgentTaskCodingRunStartContext {
+            task: task.detail(now),
+            attempt: attempt.record(now),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_agent_task_coding_run(
+        &self,
+        principal: &CommunicationPrincipal,
+        project: &str,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+        intent: &AgentTaskCodingRunBindingIntent,
+    ) -> Result<AgentTaskCodingRunPrepared, CommunicationStoreError> {
+        self.prepare_agent_task_coding_run_with_now(
+            principal,
+            project,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            intent,
+            now_unix_ms(),
+        )
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_agent_task_coding_run_at(
+        &self,
+        principal: &CommunicationPrincipal,
+        project: &str,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+        intent: &AgentTaskCodingRunBindingIntent,
+        now: i64,
+    ) -> Result<AgentTaskCodingRunPrepared, CommunicationStoreError> {
+        self.prepare_agent_task_coding_run_with_now(
+            principal,
+            project,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            intent,
+            now,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_agent_task_coding_run_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        project: &str,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+        intent: &AgentTaskCodingRunBindingIntent,
+        now: i64,
+    ) -> Result<AgentTaskCodingRunPrepared, CommunicationStoreError> {
+        validate_attempt_mutation_inputs(
+            principal,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+        )?;
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        let task = load_owned_task(&transaction, principal, task_id, now)?;
+        let referenced_project = task.referenced_project_id.as_deref().ok_or_else(|| {
+            CommunicationStoreError::new(
+                "agent_task_project_required",
+                "AgentTask has no referenced_project_id and cannot dispatch a CodingAgentRun",
+            )
+        })?;
+        if project != referenced_project || intent.runtime_project_id != referenced_project {
+            return Err(CommunicationStoreError::new(
+                "agent_task_project_mismatch",
+                "CodingAgentRun Project does not match AgentTask referenced_project_id",
+            ));
+        }
+        let _attempt = require_current_attempt(
+            &transaction,
+            &task,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            now,
+        )?;
+        if let Some(mut existing) =
+            load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+        {
+            let same_intent = existing.run_id == intent.run_id
+                && existing.runtime_project_id == intent.runtime_project_id
+                && existing.provider_id == intent.provider_id
+                && existing.authority_fingerprint == intent.authority_fingerprint
+                && existing.coding_agent_intent_fingerprint
+                    == intent.coding_agent_intent_fingerprint
+                && existing.binding_intent_fingerprint == intent.binding_intent_fingerprint;
+            if !same_intent {
+                return Err(CommunicationStoreError::new(
+                    "agent_task_coding_run_binding_conflict",
+                    "AgentTaskAttempt is already bound to a different CodingAgentRun intent",
+                ));
+            }
+            if existing.provider_instance_id != intent.provider_instance_id {
+                if matches!(
+                    existing.dispatch_state,
+                    AgentTaskCodingRunDispatchState::Prepared
+                        | AgentTaskCodingRunDispatchState::NotStarted
+                ) {
+                    transaction
+                        .execute(
+                            "UPDATE wc_agent_task_coding_runs
+                             SET provider_instance_id = ?3, updated_at_unix_ms = MAX(updated_at_unix_ms, ?4)
+                             WHERE task_id = ?1 AND attempt_id = ?2",
+                            params![task_id, attempt_id, intent.provider_instance_id, now],
+                        )
+                        .map_err(store_error)?;
+                    existing =
+                        load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+                            .ok_or_else(|| {
+                                CommunicationStoreError::new(
+                                    "agent_task_storage_invariant",
+                                    "AgentTask CodingAgent binding disappeared during replay",
+                                )
+                            })?;
+                } else {
+                    return Err(CommunicationStoreError::new(
+                        "agent_task_coding_run_binding_conflict",
+                        "AgentTaskAttempt CodingAgent provider instance cannot change after dispatch may have started",
+                    ));
+                }
+            }
+            transaction.commit().map_err(store_error)?;
+            return Ok(AgentTaskCodingRunPrepared {
+                binding: existing,
+                replayed: true,
+            });
+        }
+        let conflicting_attempt = transaction
+            .query_row(
+                "SELECT attempt_id FROM wc_agent_task_coding_runs WHERE run_id = ?1",
+                [intent.run_id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(store_error)?;
+        if conflicting_attempt.is_some() {
+            return Err(CommunicationStoreError::new(
+                "agent_task_coding_run_binding_conflict",
+                "CodingAgentRun is already bound to another AgentTaskAttempt",
+            ));
+        }
+        transaction
+            .execute(
+                "INSERT INTO wc_agent_task_coding_runs (
+                    task_id, attempt_id, run_id, runtime_project_id, provider_id,
+                    provider_instance_id, authority_fingerprint, coding_agent_intent_fingerprint,
+                    binding_intent_fingerprint, dispatch_state, created_at_unix_ms,
+                    updated_at_unix_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'prepared', ?10, ?10)",
+                params![
+                    task_id,
+                    attempt_id,
+                    intent.run_id,
+                    intent.runtime_project_id,
+                    intent.provider_id,
+                    intent.provider_instance_id,
+                    intent.authority_fingerprint,
+                    intent.coding_agent_intent_fingerprint,
+                    intent.binding_intent_fingerprint,
+                    now,
+                ],
+            )
+            .map_err(store_error)?;
+        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_storage_invariant",
+                    "AgentTask CodingAgent binding disappeared after prepare",
+                )
+            })?;
+        transaction.commit().map_err(store_error)?;
+        Ok(AgentTaskCodingRunPrepared {
+            binding,
+            replayed: false,
+        })
+    }
+
+    pub(crate) fn read_agent_task_coding_run_binding(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        attempt_id: &str,
+    ) -> Result<AgentTaskCodingRunBindingRecord, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        validate_id(task_id, AGENT_TASK_ID_PREFIX, "invalid_agent_task_id")?;
+        validate_id(
+            attempt_id,
+            AGENT_TASK_ATTEMPT_ID_PREFIX,
+            "invalid_agent_task_attempt_id",
+        )?;
+        let conn = self.conn.lock().unwrap();
+        let task = load_owned_task(&conn, principal, task_id, now_unix_ms())?;
+        load_attempt_for_task(&conn, task_id, attempt_id, now_unix_ms())?.ok_or_else(|| {
+            CommunicationStoreError::new(
+                "agent_task_attempt_not_found",
+                "AgentTaskAttempt does not exist",
+            )
+        })?;
+        load_coding_run_binding_for_attempt(&conn, &task.task_id, attempt_id)?.ok_or_else(|| {
+            CommunicationStoreError::new(
+                "agent_task_coding_run_not_found",
+                "AgentTaskAttempt has no bound CodingAgentRun",
+            )
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn claim_agent_task_coding_run_dispatch(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+        binding_intent_fingerprint: &str,
+    ) -> Result<AgentTaskCodingRunDispatchClaim, CommunicationStoreError> {
+        let now = now_unix_ms();
+        validate_attempt_mutation_inputs(
+            principal,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+        )?;
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        let task = load_owned_task(&transaction, principal, task_id, now)?;
+        let _attempt = require_current_attempt(
+            &transaction,
+            &task,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            now,
+        )?;
+        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_coding_run_not_found",
+                    "AgentTaskAttempt has no prepared CodingAgentRun binding",
+                )
+            })?;
+        if binding.binding_intent_fingerprint != binding_intent_fingerprint {
+            return Err(CommunicationStoreError::new(
+                "agent_task_coding_run_binding_conflict",
+                "CodingAgentRun binding intent does not match the durable Attempt binding",
+            ));
+        }
+        let may_dispatch = matches!(
+            binding.dispatch_state,
+            AgentTaskCodingRunDispatchState::Prepared | AgentTaskCodingRunDispatchState::NotStarted
+        );
+        if may_dispatch {
+            transaction
+                .execute(
+                    "UPDATE wc_agent_task_coding_runs
+                     SET dispatch_state = 'outcome_unknown', updated_at_unix_ms = MAX(updated_at_unix_ms, ?3)
+                     WHERE task_id = ?1 AND attempt_id = ?2
+                       AND dispatch_state IN ('prepared', 'not_started')",
+                    params![task_id, attempt_id, now],
+                )
+                .map_err(store_error)?;
+        }
+        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_storage_invariant",
+                    "AgentTask CodingAgent binding disappeared during dispatch fencing",
+                )
+            })?;
+        transaction.commit().map_err(store_error)?;
+        Ok(AgentTaskCodingRunDispatchClaim {
+            binding,
+            may_dispatch,
+        })
+    }
+
+    pub(crate) fn record_agent_task_coding_run_not_started(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        attempt_id: &str,
+        run_id: &str,
+    ) -> Result<AgentTaskCodingRunBindingRecord, CommunicationStoreError> {
+        let now = now_unix_ms();
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        let _task = load_owned_task(&transaction, principal, task_id, now)?;
+        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_coding_run_not_found",
+                    "AgentTaskAttempt has no bound CodingAgentRun",
+                )
+            })?;
+        if binding.run_id != run_id {
+            return Err(CommunicationStoreError::new(
+                "agent_task_coding_run_identity_mismatch",
+                "CodingAgentRun does not match the durable AgentTaskAttempt binding",
+            ));
+        }
+        if binding.dispatch_state == AgentTaskCodingRunDispatchState::OutcomeUnknown {
+            transaction
+                .execute(
+                    "UPDATE wc_agent_task_coding_runs
+                     SET dispatch_state = 'not_started', updated_at_unix_ms = MAX(updated_at_unix_ms, ?3)
+                     WHERE task_id = ?1 AND attempt_id = ?2 AND dispatch_state = 'outcome_unknown'",
+                    params![task_id, attempt_id, now],
+                )
+                .map_err(store_error)?;
+        }
+        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_storage_invariant",
+                    "AgentTask CodingAgent binding disappeared after NotStarted observation",
+                )
+            })?;
+        transaction.commit().map_err(store_error)?;
+        Ok(binding)
+    }
+
+    pub(crate) fn record_agent_task_coding_run_observation(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        attempt_id: &str,
+        observation: &AgentTaskCodingRunObservation,
+    ) -> Result<AgentTaskCodingRunBindingRecord, CommunicationStoreError> {
+        let now = now_unix_ms();
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        let _task = load_owned_task(&transaction, principal, task_id, now)?;
+        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_coding_run_not_found",
+                    "AgentTaskAttempt has no bound CodingAgentRun",
+                )
+            })?;
+        require_coding_run_observation_identity(&binding, observation)?;
+        validate_coding_run_observation(observation)?;
+        let dispatch_state = if binding.dispatch_state == AgentTaskCodingRunDispatchState::Terminal
+        {
+            AgentTaskCodingRunDispatchState::Terminal
+        } else if observation.run_state == "lost"
+            || observation.execution_state == "outcome_unknown"
+        {
+            AgentTaskCodingRunDispatchState::OutcomeUnknown
+        } else {
+            AgentTaskCodingRunDispatchState::Bound
+        };
+        transaction
+            .execute(
+                "UPDATE wc_agent_task_coding_runs
+                 SET dispatch_state = ?3,
+                     last_observed_run_state = ?4,
+                     last_observed_execution_state = ?5,
+                     last_observation_revision = ?6,
+                     terminal_stop_reason = ?7,
+                     terminal_error_code = ?8,
+                     terminal_message = ?9,
+                     completed_at_unix = ?10,
+                     updated_at_unix_ms = MAX(updated_at_unix_ms, ?11)
+                 WHERE task_id = ?1 AND attempt_id = ?2",
+                params![
+                    task_id,
+                    attempt_id,
+                    dispatch_state.as_str(),
+                    observation.run_state,
+                    observation.execution_state,
+                    observation.observation_revision,
+                    observation.terminal_stop_reason,
+                    observation.terminal_error_code,
+                    observation.terminal_message,
+                    observation.completed_at_unix,
+                    now,
+                ],
+            )
+            .map_err(store_error)?;
+        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_storage_invariant",
+                    "AgentTask CodingAgent binding disappeared after observation",
+                )
+            })?;
+        transaction.commit().map_err(store_error)?;
+        Ok(binding)
+    }
+
+    pub(crate) fn mark_agent_task_coding_run_reconcile_unavailable(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        attempt_id: &str,
+    ) -> Result<AgentTaskCodingRunBindingRecord, CommunicationStoreError> {
+        let now = now_unix_ms();
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        let _task = load_owned_task(&transaction, principal, task_id, now)?;
+        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_coding_run_not_found",
+                    "AgentTaskAttempt has no bound CodingAgentRun",
+                )
+            })?;
+        if binding.dispatch_state == AgentTaskCodingRunDispatchState::Bound {
+            transaction
+                .execute(
+                    "UPDATE wc_agent_task_coding_runs
+                     SET dispatch_state = 'outcome_unknown', updated_at_unix_ms = MAX(updated_at_unix_ms, ?3)
+                     WHERE task_id = ?1 AND attempt_id = ?2 AND dispatch_state = 'bound'",
+                    params![task_id, attempt_id, now],
+                )
+                .map_err(store_error)?;
+        }
+        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_storage_invariant",
+                    "AgentTask CodingAgent binding disappeared during reconciliation",
+                )
+            })?;
+        transaction.commit().map_err(store_error)?;
+        Ok(binding)
+    }
+
+    pub(crate) fn terminalize_agent_task_coding_run(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        attempt_id: &str,
+        observation: &AgentTaskCodingRunObservation,
+        terminal_result: Option<&str>,
+        terminal_reason: Option<&str>,
+    ) -> Result<AgentTaskCodingRunReconcileMutation, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        let terminal_result = validate_optional_terminal_text(terminal_result, "terminal_result")?;
+        let terminal_reason = validate_optional_terminal_text(terminal_reason, "terminal_reason")?;
+        let desired_task_state = match observation.run_state.as_str() {
+            "completed" => AgentTaskState::Succeeded,
+            "failed" | "cancelled" => AgentTaskState::Failed,
+            _ => {
+                return Err(CommunicationStoreError::new(
+                    "agent_task_coding_run_not_terminal",
+                    "CodingAgentRun is not an authoritative terminal result for AgentTask reconciliation",
+                ))
+            }
+        };
+        validate_coding_run_observation(observation)?;
+        let now = now_unix_ms();
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        let task = load_owned_task(&transaction, principal, task_id, now)?;
+        if task
+            .latest_attempt
+            .as_ref()
+            .map(|attempt| attempt.attempt_id.as_str())
+            != Some(attempt_id)
+        {
+            return Err(CommunicationStoreError::new(
+                "agent_task_attempt_stale",
+                "Bound CodingAgentRun no longer belongs to the latest authoritative AgentTaskAttempt",
+            ));
+        }
+        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_coding_run_not_found",
+                    "AgentTaskAttempt has no bound CodingAgentRun",
+                )
+            })?;
+        require_coding_run_observation_identity(&binding, observation)?;
+        let attempt =
+            load_attempt_for_task(&transaction, task_id, attempt_id, now)?.ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_attempt_not_found",
+                    "AgentTaskAttempt does not exist",
+                )
+            })?;
+        if task.stored_state.terminal() {
+            let terminal_attempt_id = transaction
+                .query_row(
+                    "SELECT terminal_attempt_id FROM wc_agent_tasks WHERE task_id = ?1",
+                    [task_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .map_err(store_error)?;
+            if terminal_attempt_id.as_deref() != Some(attempt_id)
+                || task.stored_state != desired_task_state
+            {
+                return Err(CommunicationStoreError::new(
+                    "agent_task_attempt_stale",
+                    "AgentTask is already terminal from a different authoritative result",
+                ));
+            }
+            let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+                .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_storage_invariant",
+                    "Terminal AgentTask lost its CodingAgent binding",
+                )
+            })?;
+            transaction.commit().map_err(store_error)?;
+            return Ok(AgentTaskCodingRunReconcileMutation {
+                task: task.summary(now),
+                attempt: attempt.record(now),
+                binding,
+                state_changed: false,
+            });
+        }
+        let attempt_state = match desired_task_state {
+            AgentTaskState::Succeeded => AgentTaskAttemptState::Succeeded,
+            AgentTaskState::Failed => AgentTaskAttemptState::Failed,
+            AgentTaskState::Ready | AgentTaskState::Active => unreachable!(),
+        };
+        transaction
+            .execute(
+                "UPDATE wc_agent_task_attempts
+                 SET state = ?2, terminal_at_unix_ms = ?3,
+                     terminal_result = ?4, terminal_reason = ?5
+                 WHERE attempt_id = ?1",
+                params![
+                    attempt_id,
+                    attempt_state.as_str(),
+                    now,
+                    terminal_result,
+                    terminal_reason,
+                ],
+            )
+            .map_err(store_error)?;
+        transaction
+            .execute(
+                "UPDATE wc_agent_tasks
+                 SET state = ?2, terminal_attempt_id = ?3, terminal_at_unix_ms = ?4,
+                     updated_at_unix_ms = MAX(updated_at_unix_ms, ?4)
+                 WHERE task_id = ?1",
+                params![task_id, desired_task_state.as_str(), attempt_id, now],
+            )
+            .map_err(store_error)?;
+        transaction
+            .execute(
+                "UPDATE wc_agent_task_coding_runs
+                 SET dispatch_state = 'terminal',
+                     last_observed_run_state = ?3,
+                     last_observed_execution_state = ?4,
+                     last_observation_revision = ?5,
+                     terminal_stop_reason = ?6,
+                     terminal_error_code = ?7,
+                     terminal_message = ?8,
+                     completed_at_unix = ?9,
+                     terminal_at_unix_ms = ?10,
+                     updated_at_unix_ms = MAX(updated_at_unix_ms, ?10)
+                 WHERE task_id = ?1 AND attempt_id = ?2",
+                params![
+                    task_id,
+                    attempt_id,
+                    observation.run_state,
+                    observation.execution_state,
+                    observation.observation_revision,
+                    observation.terminal_stop_reason,
+                    observation.terminal_error_code,
+                    observation.terminal_message,
+                    observation.completed_at_unix,
+                    now,
+                ],
+            )
+            .map_err(store_error)?;
+        let task = load_owned_task(&transaction, principal, task_id, now)?;
+        let attempt =
+            load_attempt_for_task(&transaction, task_id, attempt_id, now)?.ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_attempt_not_found",
+                    "AgentTaskAttempt disappeared after backend reconciliation",
+                )
+            })?;
+        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_storage_invariant",
+                    "AgentTask CodingAgent binding disappeared after terminal reconciliation",
+                )
+            })?;
+        transaction.commit().map_err(store_error)?;
+        Ok(AgentTaskCodingRunReconcileMutation {
+            task: task.summary(now),
+            attempt: attempt.record(now),
+            binding,
+            state_changed: true,
+        })
+    }
+}
+
+fn require_coding_run_observation_identity(
+    binding: &AgentTaskCodingRunBindingRecord,
+    observation: &AgentTaskCodingRunObservation,
+) -> Result<(), CommunicationStoreError> {
+    if binding.run_id != observation.run_id
+        || binding.runtime_project_id != observation.runtime_project_id
+        || binding.provider_id != observation.provider_id
+        || binding.provider_instance_id != observation.provider_instance_id
+        || binding.authority_fingerprint != observation.authority_fingerprint
+        || binding.coding_agent_intent_fingerprint != observation.coding_agent_intent_fingerprint
+    {
+        return Err(CommunicationStoreError::new(
+            "agent_task_coding_run_identity_mismatch",
+            "CodingAgentRun snapshot does not match the exact durable AgentTaskAttempt binding",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_coding_run_observation(
+    observation: &AgentTaskCodingRunObservation,
+) -> Result<(), CommunicationStoreError> {
+    if !matches!(
+        observation.run_state.as_str(),
+        "starting"
+            | "running"
+            | "waiting_permission"
+            | "completed"
+            | "failed"
+            | "cancelled"
+            | "lost"
+    ) {
+        return Err(CommunicationStoreError::new(
+            "invalid_agent_task_coding_run_observation",
+            "CodingAgentRun snapshot contains an unsupported run state",
+        ));
+    }
+    if !matches!(
+        observation.execution_state.as_str(),
+        "not_started" | "started" | "outcome_unknown" | "completed"
+    ) || observation.observation_revision < 0
+    {
+        return Err(CommunicationStoreError::new(
+            "invalid_agent_task_coding_run_observation",
+            "CodingAgentRun snapshot contains an unsupported execution state or revision",
+        ));
+    }
+    for (label, value) in [
+        (
+            "terminal_stop_reason",
+            observation.terminal_stop_reason.as_deref(),
+        ),
+        (
+            "terminal_error_code",
+            observation.terminal_error_code.as_deref(),
+        ),
+        ("terminal_message", observation.terminal_message.as_deref()),
+    ] {
+        if let Some(value) = value {
+            if value.len() > MAX_AGENT_TASK_TERMINAL_TEXT_BYTES {
+                return Err(CommunicationStoreError::new(
+                    "invalid_agent_task_coding_run_observation",
+                    format!("{label} exceeds the AgentTask bounded terminal text limit"),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn task_request_hash(value: &serde_json::Value) -> String {
@@ -1461,9 +2488,12 @@ fn load_owned_task(
                 updated_at_unix_ms: row.10,
                 terminal_at_unix_ms: row.11,
                 latest_attempt: None,
+                latest_coding_run: None,
             })
         }
     };
+    let latest_coding_run =
+        load_coding_run_binding_for_attempt(conn, task_id, &latest_attempt.attempt_id)?;
     Ok(StoredTask {
         task_id: row.0,
         assignee_agent_id: row.1,
@@ -1477,6 +2507,7 @@ fn load_owned_task(
         updated_at_unix_ms: row.10,
         terminal_at_unix_ms: row.11,
         latest_attempt: Some(latest_attempt),
+        latest_coding_run,
     })
 }
 
@@ -1521,6 +2552,72 @@ fn load_attempt_for_task(
     .map_err(store_error)
 }
 
+fn load_coding_run_binding_for_attempt(
+    conn: &Connection,
+    task_id: &str,
+    attempt_id: &str,
+) -> Result<Option<AgentTaskCodingRunBindingRecord>, CommunicationStoreError> {
+    conn.query_row(
+        "SELECT task_id, attempt_id, run_id, runtime_project_id, provider_id,
+                provider_instance_id, authority_fingerprint, coding_agent_intent_fingerprint,
+                binding_intent_fingerprint, dispatch_state, last_observed_run_state,
+                last_observed_execution_state, last_observation_revision,
+                terminal_stop_reason, terminal_error_code, terminal_message,
+                completed_at_unix, created_at_unix_ms, updated_at_unix_ms, terminal_at_unix_ms
+         FROM wc_agent_task_coding_runs
+         WHERE task_id = ?1 AND attempt_id = ?2",
+        params![task_id, attempt_id],
+        |row| {
+            Ok(AgentTaskCodingRunBindingRecord {
+                task_id: row.get(0)?,
+                attempt_id: row.get(1)?,
+                run_id: row.get(2)?,
+                runtime_project_id: row.get(3)?,
+                provider_id: row.get(4)?,
+                provider_instance_id: row.get(5)?,
+                authority_fingerprint: row.get(6)?,
+                coding_agent_intent_fingerprint: row.get(7)?,
+                binding_intent_fingerprint: row.get(8)?,
+                dispatch_state: AgentTaskCodingRunDispatchState::from_db(
+                    &row.get::<_, String>(9)?,
+                    9,
+                )?,
+                last_observed_run_state: row.get(10)?,
+                last_observed_execution_state: row.get(11)?,
+                last_observation_revision: row.get(12)?,
+                terminal_stop_reason: row.get(13)?,
+                terminal_error_code: row.get(14)?,
+                terminal_message: row.get(15)?,
+                completed_at_unix: row.get(16)?,
+                created_at_unix_ms: row.get(17)?,
+                updated_at_unix_ms: row.get(18)?,
+                terminal_at_unix_ms: row.get(19)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(store_error)
+}
+
+fn blocking_execution_error(
+    binding: Option<&AgentTaskCodingRunBindingRecord>,
+) -> Option<CommunicationStoreError> {
+    let binding = binding.filter(|binding| binding.dispatch_state.blocks_replacement())?;
+    if binding.dispatch_state == AgentTaskCodingRunDispatchState::OutcomeUnknown
+        || binding.last_observed_run_state.as_deref() == Some("lost")
+    {
+        Some(CommunicationStoreError::new(
+            "agent_task_execution_outcome_unknown",
+            "AgentTask has a CodingAgent execution whose outcome is unresolved; reconcile the exact bound Run before replacement",
+        ))
+    } else {
+        Some(CommunicationStoreError::new(
+            "agent_task_execution_active",
+            "AgentTask has a bound CodingAgent execution that must be reconciled before replacement",
+        ))
+    }
+}
+
 fn materialize_expired_latest_attempt(
     transaction: &Transaction<'_>,
     task: &mut StoredTask,
@@ -1542,17 +2639,23 @@ fn materialize_expired_latest_attempt(
             params![attempt.attempt_id, now],
         )
         .map_err(store_error)?;
-    transaction
-        .execute(
-            "UPDATE wc_agent_tasks
-             SET state = 'ready', updated_at_unix_ms = MAX(updated_at_unix_ms, ?2)
-             WHERE task_id = ?1 AND state = 'active'",
-            params![task.task_id, now],
-        )
-        .map_err(store_error)?;
+    let execution_blocks_replacement = task
+        .latest_coding_run
+        .as_ref()
+        .is_some_and(|binding| binding.dispatch_state.blocks_replacement());
+    if !execution_blocks_replacement {
+        transaction
+            .execute(
+                "UPDATE wc_agent_tasks
+                 SET state = 'ready', updated_at_unix_ms = MAX(updated_at_unix_ms, ?2)
+                 WHERE task_id = ?1 AND state = 'active'",
+                params![task.task_id, now],
+            )
+            .map_err(store_error)?;
+        task.stored_state = AgentTaskState::Ready;
+    }
     attempt.stored_state = AgentTaskAttemptState::Expired;
     attempt.terminal_at_unix_ms = Some(now);
-    task.stored_state = AgentTaskState::Ready;
     task.updated_at_unix_ms = task.updated_at_unix_ms.max(now);
     Ok(())
 }

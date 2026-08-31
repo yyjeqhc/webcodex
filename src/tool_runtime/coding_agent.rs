@@ -59,6 +59,57 @@ pub(crate) struct CodingAgentServerState {
     runs: Mutex<HashMap<String, ServerRunBinding>>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct CodingAgentPreparedStart {
+    pub(crate) run_id: String,
+    pub(crate) authority_fingerprint: String,
+    pub(crate) runtime_project_id: String,
+    pub(crate) provider_id: String,
+    pub(crate) provider_instance_id: String,
+    pub(crate) intent_fingerprint: String,
+    client: crate::shell_protocol::ShellClientView,
+    project_root: String,
+    instruction: String,
+    config: BTreeMap<String, CodingAgentConfigValue>,
+    timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CodingAgentStartCertainty {
+    NotStarted,
+    OutcomeUnknown,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CodingAgentStartFailure {
+    pub(crate) kind: String,
+    pub(crate) message: String,
+    pub(crate) certainty: CodingAgentStartCertainty,
+    pub(crate) recovery: RecoveryKind,
+    pub(crate) run_id: String,
+}
+
+impl CodingAgentStartFailure {
+    fn into_tool_result(self) -> ToolResult {
+        coding_agent_error(
+            &self.kind,
+            self.message,
+            match self.certainty {
+                CodingAgentStartCertainty::NotStarted => "not_started",
+                CodingAgentStartCertainty::OutcomeUnknown => "outcome_unknown",
+            },
+            self.recovery,
+            Some(&self.run_id),
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum CodingAgentTypedStartOutcome {
+    Run(CodingAgentRunSnapshot),
+    Failure(CodingAgentStartFailure),
+}
+
 fn prune_server_runs_locked(runs: &mut HashMap<String, ServerRunBinding>, now: i64) {
     let cutoff = now.saturating_sub(SERVER_TERMINAL_RETENTION_SECS);
     runs.retain(|_, binding| {
@@ -214,6 +265,44 @@ impl ToolRuntime {
         recording_session_id: Option<String>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        let prepared = match self
+            .prepare_coding_agent_start(
+                project,
+                provider_id,
+                idempotency_key,
+                instruction,
+                config,
+                timeout_secs,
+                auth,
+            )
+            .await
+        {
+            Ok(prepared) => prepared,
+            Err(error) => return error,
+        };
+        let run_id = prepared.run_id.clone();
+        match self
+            .dispatch_prepared_coding_agent_start(prepared, recording_session_id, auth)
+            .await
+        {
+            CodingAgentTypedStartOutcome::Run(run) => ToolResult::ok(start_projection(
+                &run,
+                self.coding_agent_runs.observation_token(&run_id, 0),
+            )),
+            CodingAgentTypedStartOutcome::Failure(error) => error.into_tool_result(),
+        }
+    }
+
+    pub(crate) async fn prepare_coding_agent_start(
+        &self,
+        project: String,
+        provider_id: String,
+        idempotency_key: String,
+        instruction: String,
+        config: Option<BTreeMap<String, CodingAgentConfigValue>>,
+        timeout_secs: Option<u64>,
+        auth: Option<&AuthContext>,
+    ) -> Result<CodingAgentPreparedStart, ToolResult> {
         if let Err(error) = validate_start_input(
             &provider_id,
             &idempotency_key,
@@ -221,87 +310,83 @@ impl ToolRuntime {
             config.as_ref(),
             timeout_secs,
         ) {
-            return coding_agent_error(
+            return Err(coding_agent_error(
                 "invalid_coding_agent_start",
                 error,
                 "not_started",
                 RecoveryKind::FixInput,
                 None,
-            );
+            ));
         }
-        let principal = match stable_principal(auth) {
-            Ok(principal) => principal,
-            Err(error) => {
-                return coding_agent_error(
-                    "coding_agent_identity_unavailable",
-                    error,
-                    "not_started",
-                    RecoveryKind::FixInput,
-                    None,
-                )
-            }
-        };
+        let principal = stable_principal(auth).map_err(|error| {
+            coding_agent_error(
+                "coding_agent_identity_unavailable",
+                error,
+                "not_started",
+                RecoveryKind::FixInput,
+                None,
+            )
+        })?;
         let authority_fingerprint = authority_fingerprint(&principal);
         let run_id = deterministic_run_id(&principal, &idempotency_key);
-        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
-            Ok(resolved) => resolved,
-            Err(error) => return error.into_tool_result(),
-        };
+        let resolved = self
+            .resolve_project_input_for_auth(&project, auth)
+            .await
+            .map_err(|error| error.into_tool_result())?;
         if !resolved.config.allow_patch {
-            return coding_agent_project_not_writable_result(&run_id);
+            return Err(coding_agent_project_not_writable_result(&run_id));
         }
-        let client_id = match resolved.config.agent_client_id() {
-            Ok(value) => value.to_string(),
-            Err(error) => {
-                return coding_agent_error(
-                    "invalid_project",
-                    error,
-                    "not_started",
-                    RecoveryKind::FixInput,
-                    Some(&run_id),
-                )
-            }
-        };
+        let client_id = resolved.config.agent_client_id().map_err(|error| {
+            coding_agent_error(
+                "invalid_project",
+                error,
+                "not_started",
+                RecoveryKind::FixInput,
+                Some(&run_id),
+            )
+        })?;
         let client = match self
             .shell_clients
-            .get_client_semantic_view_for_auth(&client_id, auth)
+            .get_client_semantic_view_for_auth(client_id, auth)
             .await
         {
             Some(client) if client.view.connected => client,
             _ => {
-                return coding_agent_error(
+                return Err(coding_agent_error(
                     "coding_agent_runner_unavailable",
                     "exact Project Runner is offline or unauthorized",
                     "not_started",
                     RecoveryKind::Wait,
                     Some(&run_id),
-                )
+                ))
             }
         };
         if !client.supports(RunnerFeature::CodingAgentRuns) {
-            return coding_agent_error(
+            return Err(coding_agent_error(
                 "coding_agent_unsupported",
                 "exact Project Runner does not advertise CodingAgentRun",
                 "not_started",
                 RecoveryKind::Reobserve,
                 Some(&run_id),
-            );
+            ));
         }
         let client = client.view;
-        let providers = client.coding_agent_providers.as_deref().unwrap_or(&[]);
-        let provider = match providers
+        let provider_instance_id = match client
+            .coding_agent_providers
+            .as_deref()
+            .unwrap_or(&[])
             .iter()
             .find(|provider| provider.provider_id == provider_id)
         {
-            Some(provider) => provider,
+            Some(provider) => provider.provider_instance_id.clone(),
             None => {
-                return coding_agent_error(
+                return Err(coding_agent_error(
                     "coding_agent_provider_unavailable",
                     "logical ACP provider is not advertised by the exact Project Runner",
                     "not_started",
                     RecoveryKind::Reobserve,
                     Some(&run_id),
-                )
+                ))
             }
         };
         let timeout_secs = timeout_secs.unwrap_or(DEFAULT_RUN_TIMEOUT_SECS);
@@ -313,73 +398,86 @@ impl ToolRuntime {
             &config,
             timeout_secs,
         );
-
-        if let Some(existing) = self
-            .reconcile_run(&run_id, &authority_fingerprint, auth)
-            .await
-        {
-            if existing.snapshot.intent_fingerprint != intent_fingerprint {
-                return coding_agent_error(
-                    "idempotency_conflict",
-                    "idempotency_key is already bound to a different CodingAgentRun intent",
-                    "not_started",
-                    RecoveryKind::FixInput,
-                    Some(&run_id),
-                );
-            }
-            if existing.runtime_project_id != resolved.resolved_id {
-                return coding_agent_error(
-                    "idempotency_conflict",
-                    "idempotency_key is already bound to another Project",
-                    "not_started",
-                    RecoveryKind::FixInput,
-                    Some(&run_id),
-                );
-            }
-            self.coding_agent_runs
-                .attach_recorder(&run_id, recording_session_id.clone())
-                .await;
-            self.record_coding_agent_lifecycle_if_needed(&run_id).await;
-            return ToolResult::ok(start_projection(
-                &existing.snapshot,
-                self.coding_agent_runs.observation_token(&run_id, 0),
-            ));
-        }
-
-        let operation = CodingAgentRequest::Start(CodingAgentStartRequest {
-            run_id: run_id.clone(),
-            intent_fingerprint: intent_fingerprint.clone(),
-            authority_fingerprint: authority_fingerprint.clone(),
-            runtime_project_id: resolved.resolved_id.clone(),
-            project_root: resolved.config.path.clone(),
-            provider_id: provider_id.clone(),
-            provider_instance_id: provider.provider_instance_id.clone(),
+        Ok(CodingAgentPreparedStart {
+            run_id,
+            authority_fingerprint,
+            runtime_project_id: resolved.resolved_id,
+            provider_id,
+            provider_instance_id,
+            intent_fingerprint,
+            client,
+            project_root: resolved.config.path,
             instruction,
             config,
             timeout_secs,
+        })
+    }
+
+    pub(crate) async fn dispatch_prepared_coding_agent_start(
+        &self,
+        prepared: CodingAgentPreparedStart,
+        recording_session_id: Option<String>,
+        auth: Option<&AuthContext>,
+    ) -> CodingAgentTypedStartOutcome {
+        if let Some(existing) = self
+            .reconcile_run(&prepared.run_id, &prepared.authority_fingerprint, auth)
+            .await
+        {
+            if existing.snapshot.intent_fingerprint != prepared.intent_fingerprint
+                || existing.runtime_project_id != prepared.runtime_project_id
+            {
+                return CodingAgentTypedStartOutcome::Failure(CodingAgentStartFailure {
+                    kind: "idempotency_conflict".to_string(),
+                    message:
+                        "idempotency_key is already bound to a different CodingAgentRun intent"
+                            .to_string(),
+                    certainty: CodingAgentStartCertainty::NotStarted,
+                    recovery: RecoveryKind::FixInput,
+                    run_id: prepared.run_id,
+                });
+            }
+            self.coding_agent_runs
+                .attach_recorder(&prepared.run_id, recording_session_id)
+                .await;
+            self.record_coding_agent_lifecycle_if_needed(&prepared.run_id)
+                .await;
+            return CodingAgentTypedStartOutcome::Run(existing.snapshot);
+        }
+
+        let operation = CodingAgentRequest::Start(CodingAgentStartRequest {
+            run_id: prepared.run_id.clone(),
+            intent_fingerprint: prepared.intent_fingerprint.clone(),
+            authority_fingerprint: prepared.authority_fingerprint.clone(),
+            runtime_project_id: prepared.runtime_project_id.clone(),
+            project_root: prepared.project_root.clone(),
+            provider_id: prepared.provider_id.clone(),
+            provider_instance_id: prepared.provider_instance_id.clone(),
+            instruction: prepared.instruction.clone(),
+            config: prepared.config.clone(),
+            timeout_secs: prepared.timeout_secs,
         });
         let (request_id, receiver) = match self
             .shell_clients
             .enqueue_coding_agent(
-                &client.client_id,
-                &client.agent_instance_id,
-                &provider_id,
-                &provider.provider_instance_id,
+                &prepared.client.client_id,
+                &prepared.client.agent_instance_id,
+                &prepared.provider_id,
+                &prepared.provider_instance_id,
                 operation,
                 auth,
-                authority_fingerprint.clone(),
+                prepared.authority_fingerprint.clone(),
             )
             .await
         {
             Ok(value) => value,
             Err(error) => {
-                return coding_agent_error(
-                    "coding_agent_dispatch_rejected",
-                    error,
-                    "not_started",
-                    RecoveryKind::Reobserve,
-                    Some(&run_id),
-                )
+                return CodingAgentTypedStartOutcome::Failure(CodingAgentStartFailure {
+                    kind: "coding_agent_dispatch_rejected".to_string(),
+                    message: error,
+                    certainty: CodingAgentStartCertainty::NotStarted,
+                    recovery: RecoveryKind::Reobserve,
+                    run_id: prepared.run_id,
+                })
             }
         };
         let response =
@@ -389,11 +487,11 @@ impl ToolRuntime {
                 Ok(Ok(response)) => response,
                 Ok(Err(_)) | Err(_) => {
                     return self
-                        .start_waiter_lost(
+                        .start_waiter_lost_typed(
                             &request_id,
-                            &run_id,
-                            &authority_fingerprint,
-                            recording_session_id.clone(),
+                            &prepared.run_id,
+                            &prepared.authority_fingerprint,
+                            recording_session_id,
                             auth,
                         )
                         .await;
@@ -401,31 +499,54 @@ impl ToolRuntime {
             };
         match response.payload {
             Some(CodingAgentResponsePayload::Start { run }) => {
-                if run.authority_fingerprint != authority_fingerprint
-                    || run.intent_fingerprint != intent_fingerprint
-                    || run.runtime_project_id != resolved.resolved_id
-                    || run.provider_id != provider_id
-                    || run.provider_instance_id != provider.provider_instance_id
+                if run.authority_fingerprint != prepared.authority_fingerprint
+                    || run.intent_fingerprint != prepared.intent_fingerprint
+                    || run.runtime_project_id != prepared.runtime_project_id
+                    || run.provider_id != prepared.provider_id
+                    || run.provider_instance_id != prepared.provider_instance_id
                 {
-                    return coding_agent_error(
-                        "invalid_runner_response",
-                        "Runner returned mismatched CodingAgentRun identity",
-                        "outcome_unknown",
-                        RecoveryKind::Reconcile,
-                        Some(&run_id),
-                    );
+                    return CodingAgentTypedStartOutcome::Failure(CodingAgentStartFailure {
+                        kind: "invalid_runner_response".to_string(),
+                        message: "Runner returned mismatched CodingAgentRun identity".to_string(),
+                        certainty: CodingAgentStartCertainty::OutcomeUnknown,
+                        recovery: RecoveryKind::Reconcile,
+                        run_id: prepared.run_id,
+                    });
                 }
                 self.coding_agent_runs
-                    .bind(&client, run.clone(), recording_session_id)
+                    .bind(&prepared.client, run.clone(), recording_session_id)
                     .await;
-                self.record_coding_agent_lifecycle_if_needed(&run_id).await;
-                ToolResult::ok(start_projection(
-                    &run,
-                    self.coding_agent_runs.observation_token(&run_id, 0),
-                ))
+                self.record_coding_agent_lifecycle_if_needed(&prepared.run_id)
+                    .await;
+                CodingAgentTypedStartOutcome::Run(run)
             }
-            _ => response_to_tool_error(response, Some(&run_id)),
+            _ => CodingAgentTypedStartOutcome::Failure(coding_agent_start_failure_from_response(
+                response,
+                &prepared.run_id,
+            )),
         }
+    }
+
+    pub(crate) async fn reconcile_coding_agent_run_snapshot(
+        &self,
+        run_id: &str,
+        auth: Option<&AuthContext>,
+    ) -> Result<Option<CodingAgentRunSnapshot>, ToolResult> {
+        let principal = stable_principal(auth).map_err(|error| {
+            coding_agent_error(
+                "coding_agent_identity_unavailable",
+                error,
+                "not_started",
+                RecoveryKind::FixInput,
+                Some(run_id),
+            )
+        })?;
+        let authority = authority_fingerprint(&principal);
+        Ok(self
+            .reconcile_run(run_id, &authority, auth)
+            .await
+            .filter(|binding| binding.authority_fingerprint == authority)
+            .map(|binding| binding.snapshot))
     }
 
     pub(crate) async fn coding_agent_observe(
@@ -745,14 +866,14 @@ impl ToolRuntime {
         }
     }
 
-    async fn start_waiter_lost(
+    async fn start_waiter_lost_typed(
         &self,
         request_id: &str,
         run_id: &str,
         authority: &str,
         recording_session_id: Option<String>,
         auth: Option<&AuthContext>,
-    ) -> ToolResult {
+    ) -> CodingAgentTypedStartOutcome {
         let dispatched = self
             .shell_clients
             .cancel_request_dispatch_state(request_id)
@@ -762,14 +883,23 @@ impl ToolRuntime {
                 .attach_recorder(run_id, recording_session_id)
                 .await;
             self.record_coding_agent_lifecycle_if_needed(run_id).await;
-            return ToolResult::ok(start_projection(
-                &binding.snapshot,
-                self.coding_agent_runs.observation_token(run_id, 0),
-            ));
+            return CodingAgentTypedStartOutcome::Run(binding.snapshot);
         }
         match dispatched {
-            Some(false) => coding_agent_error("coding_agent_start_timeout", "Run admission timed out before Runner dispatch", "not_started", RecoveryKind::RetrySame, Some(run_id)),
-            Some(true) | None => coding_agent_error("coding_agent_start_outcome_unknown", "Run dispatch may have reached the Runner; do not use a new idempotency key, reobserve/retry the same initiation", "outcome_unknown", RecoveryKind::Reconcile, Some(run_id)),
+            Some(false) => CodingAgentTypedStartOutcome::Failure(CodingAgentStartFailure {
+                kind: "coding_agent_start_timeout".to_string(),
+                message: "Run admission timed out before Runner dispatch".to_string(),
+                certainty: CodingAgentStartCertainty::NotStarted,
+                recovery: RecoveryKind::RetrySame,
+                run_id: run_id.to_string(),
+            }),
+            Some(true) | None => CodingAgentTypedStartOutcome::Failure(CodingAgentStartFailure {
+                kind: "coding_agent_start_outcome_unknown".to_string(),
+                message: "Run dispatch may have reached the Runner; do not use a new idempotency key, reobserve/retry the same initiation".to_string(),
+                certainty: CodingAgentStartCertainty::OutcomeUnknown,
+                recovery: RecoveryKind::Reconcile,
+                run_id: run_id.to_string(),
+            }),
         }
     }
 
@@ -1398,6 +1528,43 @@ fn coding_agent_error(
         }),
     )
     .with_recovery(recovery, None)
+}
+
+fn coding_agent_start_failure_from_response(
+    response: CodingAgentResponse,
+    run_id: &str,
+) -> CodingAgentStartFailure {
+    let dispatch = response.dispatch_state;
+    let certainty = if dispatch == CodingAgentDispatchState::NotStarted {
+        CodingAgentStartCertainty::NotStarted
+    } else {
+        CodingAgentStartCertainty::OutcomeUnknown
+    };
+    let Some(error) = response.error else {
+        return CodingAgentStartFailure {
+            kind: "invalid_runner_response".to_string(),
+            message: "Runner CodingAgentRun response contained no result".to_string(),
+            certainty,
+            recovery: RecoveryKind::Reobserve,
+            run_id: run_id.to_string(),
+        };
+    };
+    let recovery = match error.recovery_kind.as_deref() {
+        Some("fix_input") => RecoveryKind::FixInput,
+        Some("retry_same") => RecoveryKind::RetrySame,
+        Some("reconcile") => RecoveryKind::Reconcile,
+        Some("wait") => RecoveryKind::Wait,
+        Some("user_action") => RecoveryKind::UserAction,
+        Some("none") => RecoveryKind::NoAction,
+        _ => RecoveryKind::Reobserve,
+    };
+    CodingAgentStartFailure {
+        kind: error.code,
+        message: error.message,
+        certainty,
+        recovery,
+        run_id: run_id.to_string(),
+    }
 }
 
 fn response_to_tool_error(response: CodingAgentResponse, run_id: Option<&str>) -> ToolResult {

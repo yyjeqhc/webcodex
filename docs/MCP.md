@@ -97,11 +97,13 @@ primitives such as `read_files`, `run_process`, and `observe_jobs` stay direct;
 less frequent convenience tools such as `list_projects`, `project_overview`,
 `run_script`, `validation_summary`, and `git_status` stay behind the gateway. After
 compact discovery, `tool_manifest(tool_name="<exact-name>")` returns exactly one
-tool's description, input schema, and annotations without expanding its output
-schema; the selected name can then be passed to `call_runtime_tool`. The gateway
-only changes model-facing schema admission: the selected target still uses its
-normal OAuth scope, project authority, permission gate, argument validation,
-effect semantics, and explicit Session/ACK handling. These names describe
+tool's description, input schema, annotations, and current MCP surface routing
+without expanding its output schema. `availability` is `direct`, `gateway`, or
+`unavailable`; `gateway_tool` is `call_runtime_tool` only for the gateway case.
+These fields describe invocation routing, not authorization or feature readiness.
+The selected target still uses its normal OAuth scope, project authority,
+permission gate, argument validation, effect semantics, and explicit Session/ACK
+handling. These names describe
 protocol/tool contracts; a first-time user does not need to choose among them.
 
 Model-facing failures may add a small recovery-control vocabulary without replacing existing subsystem fields. `error_kind` identifies what failed. `failure_kind`, when present, retains execution/effect/validation semantics such as `not_started`, `timeout`, or `outcome_unknown`. `recovery_kind` is the closed class of the next safe action: `fix_input`, `retry_same`, `reobserve`, `reconcile`, `wait`, `user_action`, or `none`. `recovery_tool`, when present, is a bounded public WebCodex tool for an explicit re-observation or reconciliation step; it never grants authority or triggers execution. `outcome_unknown` is not retry permission. `retry_same` is reserved for an exact idempotent replay contract and must not be interpreted as an ordinary repeat of an effect.

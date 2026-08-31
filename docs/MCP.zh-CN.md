@@ -87,10 +87,11 @@ surface；没有 Connector 配置时默认是更宽的 `local_coding`。operator
 `call_runtime_tool` gateway 调用。`read_files`、`run_process`、`observe_jobs` 这类反复出现在
 coding loop 中的原语保持 direct；`list_projects`、`project_overview`、`run_script`、
 `validation_summary`、`git_status` 这类低频便利工具放在 gateway 后面。compact discovery 后可用
-`tool_manifest(tool_name="<exact-name>")` 只读取一个工具的 description、input schema 和
-annotations，不展开庞大的 output schema；随后把该名称交给 `call_runtime_tool`。gateway 只改变
-model-facing schema admission，不改变目标 tool 原有的 OAuth scope、project authority、permission gate、参数校验、effect 或
-Session/ACK 语义。这些名称描述 protocol/tool contract；第一次用户不需要先做选择。
+`tool_manifest(tool_name="<exact-name>")` 只读取一个工具的 description、input schema、
+annotations 与当前 MCP surface routing，不展开庞大的 output schema。`availability` 明确为
+`direct`、`gateway` 或 `unavailable`；只有 `gateway` 时 `gateway_tool` 才是
+`call_runtime_tool`。这些字段只描述调用路由，不代表授权或 feature readiness；目标 tool 原有的
+OAuth scope、project authority、permission gate、参数校验、effect 与 Session/ACK 语义保持不变。这些名称描述 protocol/tool contract；第一次用户不需要先做选择。
 
 Hosted client 需要公网 HTTPS：`share` 默认提供临时 Cloudflare Quick Tunnel，`connect` 使用
 已有 hosted Server，自托管部署则提供自己的稳定 HTTPS origin。不要把 bootstrap/admin token、

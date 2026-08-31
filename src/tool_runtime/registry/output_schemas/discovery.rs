@@ -240,15 +240,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "anyOf": [
                         {
                             "type": "object",
-                            "description": "Exact one-tool contract containing name, description, input_schema, and annotations. output_schema is intentionally omitted.",
+                            "description": "Exact one-tool contract containing name, description, input_schema, annotations, and current MCP model-surface invocation routing. output_schema is intentionally omitted.",
                             "additionalProperties": false,
                             "properties": {
                                 "name": {"type": "string"},
                                 "description": {"type": "string"},
                                 "input_schema": {"type": "object", "additionalProperties": true},
-                                "annotations": {"type": "object", "additionalProperties": true}
+                                "annotations": {"type": "object", "additionalProperties": true},
+                                "availability": {
+                                    "type": "string",
+                                    "enum": ["direct", "gateway", "unavailable"],
+                                    "description": "Invocation route on the current MCP ModelSurface only; authorization, feature gates, and project authority are checked separately."
+                                },
+                                "gateway_tool": {
+                                    "anyOf": [
+                                        {"type": "string", "const": "call_runtime_tool"},
+                                        {"type": "null"}
+                                    ],
+                                    "description": "call_runtime_tool only when availability=gateway; otherwise null."
+                                }
                             },
-                            "required": ["name", "description", "input_schema", "annotations"]
+                            "required": ["name", "description", "input_schema", "annotations", "availability", "gateway_tool"]
                         },
                         {"type": "null"}
                     ]
@@ -318,7 +330,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "tools",
                 array_schema(
                     open_object_schema(
-                        "Compact tool entry: name, category, accepted_flattened_args, deprecated_or_unsupported_args, provider, risk, read_only, requires_project, path_hint, destructive, shell_like, oauth_scope.",
+                        "Compact tool entry: name, category, accepted_flattened_args, deprecated_or_unsupported_args, provider, risk, read_only, requires_project, path_hint, destructive, shell_like, oauth_scope, availability, gateway_tool. availability is MCP ModelSurface routing only, not authorization."
                     ),
                     "Compact tool entries without input/output schemas.",
                 ),

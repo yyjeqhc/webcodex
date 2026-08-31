@@ -417,6 +417,16 @@ async fn adaptive_runtime_tool_manifest_describes_one_long_tail_contract_without
     let output = &value["result"]["structuredContent"]["output"];
     assert_eq!(output["tool_name"], "run_script");
     assert_eq!(output["contract"]["name"], "run_script");
+    assert_eq!(output["contract"]["availability"], "gateway");
+    assert_eq!(
+        output["contract"]["gateway_tool"],
+        crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
+    assert_eq!(output["tools"][0]["availability"], "gateway");
+    assert_eq!(
+        output["tools"][0]["gateway_tool"],
+        crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
     assert_eq!(output["contract"]["input_schema"]["type"], "object");
     assert!(output["contract"]["input_schema"]["properties"]["script"].is_object());
     assert!(output["contract"].get("output_schema").is_none());

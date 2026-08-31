@@ -1661,9 +1661,72 @@ async fn tool_manifest_exact_tool_returns_input_contract_without_output_schema()
     assert_eq!(contract["input_schema"]["type"], "object");
     assert!(contract["input_schema"]["properties"]["package"].is_object());
     assert!(contract["annotations"].is_object());
+    assert_eq!(contract["availability"], "direct");
+    assert!(contract["gateway_tool"].is_null());
     assert!(contract.get("output_schema").is_none());
     assert_eq!(result.output["tools"][0]["name"], "cargo_test");
+    assert_eq!(result.output["tools"][0]["availability"], "direct");
+    assert!(result.output["tools"][0]["gateway_tool"].is_null());
     assert!(result.output["tools"][0].get("input_schema").is_none());
+}
+
+#[tokio::test]
+async fn tool_manifest_surface_routing_metadata_tracks_current_model_surface() {
+    use crate::model_surface::ModelSurface;
+
+    for (surface, tool_name, availability, gateway_tool) in [
+        (
+            ModelSurface::LocalCoding,
+            "computer_snapshot",
+            "unavailable",
+            None,
+        ),
+        (ModelSurface::AdaptiveRuntime, "run_process", "direct", None),
+        (
+            ModelSurface::AdaptiveRuntime,
+            "run_script",
+            "gateway",
+            Some("call_runtime_tool"),
+        ),
+        (
+            ModelSurface::FullOperatorRuntime,
+            "run_script",
+            "direct",
+            None,
+        ),
+        (
+            ModelSurface::CanonicalConnector,
+            "run_process",
+            "unavailable",
+            None,
+        ),
+    ] {
+        let runtime = test_runtime().with_model_surface(surface);
+        let result = runtime
+            .dispatch(ToolCall::ToolManifest {
+                tool_name: Some(tool_name.to_string()),
+                category: None,
+                intent: None,
+                include_recommended_flows: false,
+                include_risk_summary: false,
+            })
+            .await;
+        assert!(
+            result.success,
+            "{surface:?} {tool_name}: {:?}",
+            result.error
+        );
+        assert_eq!(result.output["contract"]["availability"], availability);
+        assert_eq!(
+            result.output["contract"]["gateway_tool"],
+            gateway_tool.map_or(Value::Null, |name| json!(name))
+        );
+        assert_eq!(result.output["tools"][0]["availability"], availability);
+        assert_eq!(
+            result.output["tools"][0]["gateway_tool"],
+            gateway_tool.map_or(Value::Null, |name| json!(name))
+        );
+    }
 }
 
 #[tokio::test]

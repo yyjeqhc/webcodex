@@ -178,6 +178,9 @@ impl ToolRuntime {
             return Err(unknown_tool_manifest_tool_result(tool_name));
         };
         let category = runtime_tool_category(spec.name.as_str());
+        let (availability, gateway_tool) = self
+            .model_surface()
+            .runtime_tool_invocation_route(spec.name.as_str());
         let mut exact_categories = serde_json::Map::new();
         exact_categories.insert(category.to_string(), json!([spec.name]));
         let mut output = json!({
@@ -193,6 +196,8 @@ impl ToolRuntime {
                 "description": spec.description,
                 "input_schema": spec.input_schema,
                 "annotations": spec.annotations,
+                "availability": availability,
+                "gateway_tool": gateway_tool,
             },
             "category": category,
             "intent": Value::Null,
@@ -205,7 +210,7 @@ impl ToolRuntime {
             "limit_applied": false,
             "requested_limit": Value::Null,
             "categories": Value::Object(exact_categories),
-            "tools": [compact_manifest_tool_entry(spec)],
+            "tools": [compact_manifest_tool_entry(spec, self.model_surface())],
         });
         if include_risk_summary {
             output["risk_summary"] = build_risk_summary(&[spec]);
@@ -298,9 +303,10 @@ impl ToolRuntime {
             None => filtered_specs,
         };
         let risk_summary = include_risk_summary.then(|| build_risk_summary(&returned_specs));
+        let model_surface = self.model_surface();
         let tools: Vec<Value> = returned_specs
             .iter()
-            .map(|spec| compact_manifest_tool_entry(spec))
+            .map(|spec| compact_manifest_tool_entry(spec, model_surface))
             .collect();
 
         let mut output = json!({
@@ -474,9 +480,13 @@ pub(super) fn build_list_tools_summary_entries(specs: &[ToolSpec]) -> Vec<Value>
         .collect()
 }
 
-pub(super) fn compact_manifest_tool_entry(spec: &ToolSpec) -> Value {
+pub(super) fn compact_manifest_tool_entry(
+    spec: &ToolSpec,
+    model_surface: crate::model_surface::ModelSurface,
+) -> Value {
     let name = spec.name.as_str();
     let m = runtime_tool_metadata(name);
+    let (availability, gateway_tool) = model_surface.runtime_tool_invocation_route(name);
     json!({
         "name": name,
         "category": runtime_tool_category(name),
@@ -490,6 +500,8 @@ pub(super) fn compact_manifest_tool_entry(spec: &ToolSpec) -> Value {
         "destructive": m.destructive,
         "shell_like": m.shell_like,
         "oauth_scope": m.legacy_oauth_scope_hint,
+        "availability": availability,
+        "gateway_tool": gateway_tool,
     })
 }
 

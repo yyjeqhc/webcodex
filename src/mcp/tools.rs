@@ -7,6 +7,7 @@ use super::tasks;
 use super::{require_mcp_scope, scope_forbidden, McpOutcome};
 use crate::auth::AuthContext;
 use crate::connector_runtime::{ConnectorRuntime, ConnectorTransport};
+pub(super) use crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME;
 use crate::model_surface::{ModelSurface, ADAPTIVE_RUNTIME_CORE_TOOL_NAMES};
 use crate::tool_request_trace::ToolRequestLifecycle;
 use crate::tool_runtime::kernel::{
@@ -22,8 +23,6 @@ use crate::tool_runtime::ToolResult;
 use crate::tool_runtime::{registered_tool_specs, ToolRuntime, ToolSpec};
 use serde::Deserialize;
 use serde_json::{json, Value};
-
-pub(super) const ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME: &str = "call_runtime_tool";
 
 fn filter_specs_for_oauth(mut specs: Vec<ToolSpec>, auth: Option<&AuthContext>) -> Vec<ToolSpec> {
     if auth.is_some_and(AuthContext::is_oauth_token) {

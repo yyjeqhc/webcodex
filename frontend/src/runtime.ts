@@ -14,6 +14,7 @@ import {
   runtimeProjectIdentityText,
   preferredRuntimeProjectSelection,
   runtimeCommunicationTranscriptAfterSeq,
+  runtimeWorkflowSessionSummaryChanged,
   invalidateRuntimeCredential,
   beginRuntimeCredential,
   refreshRuntimeOverview,
@@ -51,7 +52,7 @@ import {
 } from "./runtime_console_state.js";
 
 const API_BASE = "/api/runtime-console/";
-const REFRESH_MS = 8000;
+const REFRESH_MS = 30000;
 const COLLABORATION_WAIT_SECS = 25;
 const PROJECT_SEARCH_DEBOUNCE_MS = 200;
 const RUNTIME_CREDENTIAL_SESSION_KEY = "webcodex.runtime.credential.v1";
@@ -195,7 +196,7 @@ const RUNTIME_ZH_TEXT: Record<string, string> = {
   "No caller-visible Runners.": "没有调用方可见的运行器。",
   "Runtime-wide Runner facts require runtime:read.": "运行时全局运行器信息需要 runtime:read。",
   "Durable Agent Chat": "持久 Agent 对话",
-  "Durable Conversation transcript, recipient-specific Inbox, and coalesced Wake Intent state. The Console polls and renews its bounded Endpoint lease every 8 seconds; polling, renewal, refresh, or unload cleanup does not invoke or wake a model.": "展示持久对话记录、收件人专属收件箱与合并后的唤醒意图状态。控制台每 8 秒轮询并续期有界端点租约；轮询、续期、刷新或卸载清理都不会调用或唤醒模型。",
+  "Durable Conversation transcript, recipient-specific Inbox, and coalesced Wake Intent state. While Runtime & Agents is visible, the Console refreshes communication every 30 seconds; attached Endpoint leases are renewed every 30 seconds even outside that view. Polling, renewal, refresh, or unload cleanup does not invoke or wake a model.": "展示持久对话记录、收件人专属收件箱与合并后的唤醒意图状态。显示“运行时与 Agent”时，控制台每 30 秒刷新通信数据；即使离开该视图，已附加端点的租约仍每 30 秒续期。轮询、续期、刷新或卸载清理都不会调用或唤醒模型。",
   "Choose “Continue as this Agent” to bind this browser window to one durable Agent. The Console can poll and renew that bounded Endpoint lease, but it has no production model-resume adapter: pending Wake Intents remain durable until an explicit Host/model activation.": "选择“以此 Agent 继续”可将当前浏览器窗口绑定到一个持久 Agent。控制台可以轮询并续期该有界端点租约，但没有生产模型恢复适配器；待处理的唤醒意图会一直持久保留，直到主机或模型被明确激活。",
   "Durable Agent Chat requires communication:read. Project and Workflow Session access remain independent.": "持久 Agent 对话需要 communication:read；项目与工作流会话访问彼此独立。",
   "Agents": "Agent",
@@ -465,6 +466,12 @@ let knownProjectDevices: string[] = [];
 let selectedProjectSnapshot: any | null = null;
 let sessionRows: any[] = [];
 const state = initialRuntimeConsoleState();
+let renderedProjectSelectorsSignature = "";
+let renderedRunnerFleetSignature = "";
+let renderedRecentSessionsSignature = "";
+let renderedSessionListSignature = "";
+let renderedCollaborationSignature = "";
+let renderedCommunicationSurfaceSignature = "";
 
 type RuntimeCommunicationEndpoint = {
   endpoint_id: string;
@@ -672,6 +679,7 @@ function applyWorkspaceView(view: RuntimeWorkspaceView, persist = true): void {
     const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
     if (inspector) inspector.open = false;
   }
+  if (operations && token) void refreshCommunication(true);
   renderWorkspaceHeading();
   syncResponsiveNavigation();
   setMobileNavigationOpen(false, false);
@@ -804,6 +812,11 @@ function visibleFocusableElements(container: HTMLElement): HTMLElement[] {
 
 function clearNode(node: any): void {
   while (node && node.firstChild) node.removeChild(node.firstChild);
+}
+
+function renderFingerprint(value: unknown): string {
+  try { return JSON.stringify(value) || ""; }
+  catch { return ""; }
 }
 
 type RuntimeIconName = "folder" | "monitor" | "message" | "reply" | "edit" | "trash" | "copy";
@@ -1192,6 +1205,7 @@ function hideDetail(): void {
   setText("runtime-session-workspace", "");
   clearNode(el("runtime-collaboration-board"));
   renderedCollaborationMessageIds = new Set<string>();
+  renderedCollaborationSignature = "";
   collaborationFollowLatest = true;
   collaborationPendingMessages = 0;
   syncNewMessageIndicator();
@@ -1201,6 +1215,8 @@ function hideDetail(): void {
 function clearSessionSurface(): void {
   saveCurrentDraft();
   sessionRows = [];
+  renderedSessionListSignature = "";
+  renderedCollaborationSignature = "";
   clearNode(el("runtime-session-list"));
   show("runtime-sessions-empty", false);
   clearRuntimeWorkflowSession(state);
@@ -1240,6 +1256,9 @@ function lock(message = "", clearRemembered = true): void {
   resetCommunicationSurface();
   const projectList = el("runtime-project-list");
   const sessionsPanel = el("runtime-workflow-sessions-panel");
+  renderedProjectSelectorsSignature = "";
+  renderedRunnerFleetSignature = "";
+  renderedRecentSessionsSignature = "";
   sessionsPanel?.remove();
   clearNode(projectList);
   if (projectList && sessionsPanel) {
@@ -1543,6 +1562,21 @@ function renderProjectSelectors(projects: any[], truncated: boolean): void {
   const deviceSelect = el("runtime-device-select") as HTMLSelectElement | null;
   const projectList = el("runtime-project-list");
   if (!deviceSelect || !projectList) return;
+  const effective = effectiveProjects(projects);
+  const signature = renderFingerprint({
+    language: runtimeLanguage,
+    selectedDevice: state.selectedDevice,
+    selectedProject: state.selectedProject,
+    projectDeviceFilter,
+    projectSearch,
+    truncated,
+    projectRowsTotal,
+    knownProjectDevices,
+    projects: effective,
+    runners: runnerRows.map((runner) => [runner?.client_id, runner?.connected, runner?.status]),
+  });
+  if (signature === renderedProjectSelectorsSignature) return;
+  renderedProjectSelectorsSignature = signature;
   const sessionsPanel = el("runtime-workflow-sessions-panel");
   sessionsPanel?.remove();
   const devices = projectSelectorDevices(projects);
@@ -1558,7 +1592,6 @@ function renderProjectSelectors(projects: any[], truncated: boolean): void {
     deviceSelect.appendChild(option);
   }
   deviceSelect.value = projectDeviceFilter;
-  const effective = effectiveProjects(projects);
   const rows = filterAndSortRuntimeProjects(
     effective,
     projectDeviceFilter,
@@ -1739,6 +1772,9 @@ function runnerAttentionCount(runner: any): number {
 function renderRunnerFleet(runners: any[]): void {
   const node = el("runtime-runner-list");
   if (!node) return;
+  const signature = renderFingerprint([runtimeLanguage, state.selectedDevice, runners]);
+  if (signature === renderedRunnerFleetSignature) return;
+  renderedRunnerFleetSignature = signature;
   clearNode(node);
   show("runtime-runners-empty", runners.length === 0 && !!el("runtime-runner-unavailable")?.hidden);
   for (const runner of runners) {
@@ -1805,6 +1841,15 @@ function renderRunnerFleet(runners: any[]): void {
 function renderRecentSessions(sessions: any[], meta: any): void {
   const node = el("runtime-recent-session-list");
   if (!node) return;
+  const signature = renderFingerprint([
+    runtimeLanguage,
+    state.selectedProject,
+    state.workflow.selectedSessionId,
+    sessions,
+    meta,
+  ]);
+  if (signature === renderedRecentSessionsSignature) return;
+  renderedRecentSessionsSignature = signature;
   clearNode(node);
   show("runtime-recent-empty", sessions.length === 0 && !!el("runtime-recent-unavailable")?.hidden);
   for (const session of sessions) {
@@ -1887,13 +1932,21 @@ async function fetchSessions(request: any): Promise<void> {
   if (response.status === 401) return lock("Credential rejected.");
   if (response.status === 403 || response.status === 404) { showError("Selected project is no longer available."); return; }
   if (!response.ok || !response.data) { showError("Could not refresh Workflow Sessions."); return; }
+  const selected = String(state.workflow.selectedSessionId || "");
+  const previousSelected = selected
+    ? sessionRows.find((row) => String(row?.session_id || "") === selected)
+    : null;
   sessionRows = Array.isArray(response.data.sessions) ? response.data.sessions : [];
   renderSessionList(sessionRows, response.data);
   showError("");
-  const selected = String(state.workflow.selectedSessionId || "");
-  if (selected && sessionRows.some((row) => String(row.session_id || "") === selected)) {
-    const detailRequest = refreshRuntimeWorkflowSession(state);
-    if (detailRequest) void fetchSessionDetail(detailRequest);
+  const nextSelected = selected
+    ? sessionRows.find((row) => String(row?.session_id || "") === selected)
+    : null;
+  if (selected && nextSelected) {
+    if (!state.workflow.snapshot || runtimeWorkflowSessionSummaryChanged(previousSelected, nextSelected)) {
+      const detailRequest = refreshRuntimeWorkflowSession(state);
+      if (detailRequest) void fetchSessionDetail(detailRequest);
+    }
   } else if (selected) {
     abortCollaboration();
     clearRuntimeWorkflowSession(state);
@@ -2011,10 +2064,13 @@ function appendPreview(parent: HTMLElement, label: string, activity: any): void 
 function renderSessionList(sessions: any[], payload: any): void {
   const node = el("runtime-session-list");
   if (!node) return;
-  clearNode(node); show("runtime-sessions-empty", sessions.length === 0);
   const total = typeof payload.total === "number" ? payload.total : sessions.length;
-  setText("runtime-sessions-count", total ? sessions.length + (payload.truncated ? " of " + total : "") : "0");
   const selected = String(state.workflow.selectedSessionId || "");
+  const signature = renderFingerprint([runtimeLanguage, selected, total, !!payload.truncated, sessions]);
+  if (signature === renderedSessionListSignature) return;
+  renderedSessionListSignature = signature;
+  clearNode(node); show("runtime-sessions-empty", sessions.length === 0);
+  setText("runtime-sessions-count", total ? sessions.length + (payload.truncated ? " of " + total : "") : "0");
   for (const session of sessions) {
     const id = String(session && session.session_id || "");
     if (!id) continue;
@@ -2304,10 +2360,29 @@ function renderCollaboration(statusText?: string, consumeMutationNotice = true):
     ? (runtimeLanguage === "zh-CN" ? "协作：" : "Collaboration: ") + collaborationPhaseLabel() + " · " + countLabel(messages.length, "retained message") + (localizedStatusText ? " · " + localizedStatusText : "")
     : (runtimeLanguage === "zh-CN" ? "runtime:read 不可用" : "runtime:read unavailable");
   setText("runtime-collaboration-status", status);
-  const node = el("runtime-collaboration-board"); clearNode(node);
+  const node = el("runtime-collaboration-board");
   syncCollaborationComposer();
   if (!available) setHumanJoinSendEnabled(false);
-  if (!node || !available) {
+  const signature = renderFingerprint({
+    language: runtimeLanguage,
+    sessionId: state.collaboration.sessionId,
+    available,
+    phase: state.collaboration.phase,
+    uncertainMutation: state.collaboration.uncertainMutation,
+    locallyAuthored: Array.from(locallyAuthoredCollaborationMessageIds).sort(),
+    messages,
+  });
+  if (!node) {
+    renderedCollaborationMessageIds = nextRenderedMessageIds;
+    return;
+  }
+  if (signature === renderedCollaborationSignature) {
+    renderedCollaborationMessageIds = nextRenderedMessageIds;
+    return;
+  }
+  renderedCollaborationSignature = signature;
+  clearNode(node);
+  if (!available) {
     renderedCollaborationMessageIds = nextRenderedMessageIds;
     return;
   }
@@ -2834,6 +2909,7 @@ function idempotencyKeyFor(
 
 function resetCommunicationSurface(): void {
   communicationGeneration += 1;
+  renderedCommunicationSurfaceSignature = "";
   communicationAgents = [];
   communicationConversations = [];
   communicationDetail = null;
@@ -2884,7 +2960,7 @@ function renderCommunicationAvailability(): void {
     : available
       ? "communication:read" + (communicationManageAvailable === false
         ? (runtimeLanguage === "zh-CN" ? " · 只读" : " · read only")
-        : (runtimeLanguage === "zh-CN" ? " · 每 8 秒轮询并续租" : " · polling + lease renewal every 8s"))
+        : (runtimeLanguage === "zh-CN" ? " · 当前视图每 30 秒刷新 · 端点租约每 30 秒续期" : " · 30s refresh while visible · 30s endpoint lease renewal"))
       : (runtimeLanguage === "zh-CN" ? "communication:read 不可用" : "communication:read unavailable");
   setText("runtime-communication-status", access);
 }
@@ -3170,6 +3246,20 @@ function renderCommunicationInbox(): void {
 
 function renderCommunicationSurface(): void {
   renderCommunicationAvailability();
+  const signature = renderFingerprint({
+    language: runtimeLanguage,
+    read: communicationReadAvailable,
+    manage: communicationManageAvailable,
+    selectedAgent: selectedCommunicationAgentId,
+    selectedConversation: selectedCommunicationConversationId,
+    endpoints: Array.from(communicationEndpoints.entries()).sort(([left], [right]) => left.localeCompare(right)),
+    agents: communicationAgents,
+    conversations: communicationConversations,
+    detail: communicationDetail,
+    inbox: communicationInbox,
+  });
+  if (signature === renderedCommunicationSurfaceSignature) return;
+  renderedCommunicationSurfaceSignature = signature;
   renderCommunicationAgents();
   renderCommunicationAgentCard();
   renderCommunicationConversations();
@@ -3177,7 +3267,7 @@ function renderCommunicationSurface(): void {
   renderCommunicationInbox();
 }
 
-async function fetchCommunicationAgents(generation: number): Promise<boolean> {
+async function fetchCommunicationAgents(generation: number, render = true): Promise<boolean> {
   const response = await api("communication/agents", { offset: 0, limit: 100 });
   if (generation !== communicationGeneration || !response) return false;
   if (response.status === 401) { lock("Credential rejected."); return false; }
@@ -3187,7 +3277,7 @@ async function fetchCommunicationAgents(generation: number): Promise<boolean> {
     communicationConversations = [];
     communicationDetail = null;
     communicationInbox = [];
-    renderCommunicationSurface();
+    if (render) renderCommunicationSurface();
     return true;
   }
   if (!response.ok || !response.data) return false;
@@ -3197,18 +3287,20 @@ async function fetchCommunicationAgents(generation: number): Promise<boolean> {
     selectedCommunicationAgentId = String(communicationAgents[0]?.agent_id || "");
     communicationInbox = [];
   }
-  renderCommunicationAgents();
-  renderCommunicationAgentCard();
+  if (render) {
+    renderCommunicationAgents();
+    renderCommunicationAgentCard();
+  }
   return true;
 }
 
-async function fetchCommunicationConversations(generation: number): Promise<boolean> {
+async function fetchCommunicationConversations(generation: number, render = true): Promise<boolean> {
   const response = await api("communication/conversations", { offset: 0, limit: 100 });
   if (generation !== communicationGeneration || !response) return false;
   if (response.status === 401) { lock("Credential rejected."); return false; }
   if (response.status === 403) {
     communicationReadAvailable = false;
-    renderCommunicationSurface();
+    if (render) renderCommunicationSurface();
     return true;
   }
   if (!response.ok || !response.data) return false;
@@ -3218,15 +3310,15 @@ async function fetchCommunicationConversations(generation: number): Promise<bool
     selectedCommunicationConversationId = String(communicationConversations[0]?.conversation_id || "");
     communicationDetail = null;
   }
-  renderCommunicationConversations();
+  if (render) renderCommunicationConversations();
   return true;
 }
 
-async function fetchCommunicationConversation(generation: number): Promise<boolean> {
+async function fetchCommunicationConversation(generation: number, render = true): Promise<boolean> {
   const conversationId = selectedCommunicationConversationId;
   if (!conversationId) {
     communicationDetail = null;
-    renderCommunicationConversation();
+    if (render) renderCommunicationConversation();
     return true;
   }
   const afterSeq = runtimeCommunicationTranscriptAfterSeq(selectedCommunicationConversation()?.last_seq, 100);
@@ -3239,28 +3331,28 @@ async function fetchCommunicationConversation(generation: number): Promise<boole
   if (response.status === 401) { lock("Credential rejected."); return false; }
   if (response.status === 403) {
     communicationReadAvailable = false;
-    renderCommunicationSurface();
+    if (render) renderCommunicationSurface();
     return true;
   }
   if (response.status === 404) {
     communicationDetail = null;
     selectedCommunicationConversationId = "";
-    renderCommunicationConversation();
+    if (render) renderCommunicationConversation();
     return false;
   }
   if (!response.ok || !response.data) return false;
   communicationDetail = response.data;
-  renderCommunicationConversation();
+  if (render) renderCommunicationConversation();
   return true;
 }
 
-async function fetchCommunicationInbox(generation: number): Promise<boolean> {
+async function fetchCommunicationInbox(generation: number, render = true): Promise<boolean> {
   const agentId = selectedCommunicationAgentId;
   const endpoint = communicationEndpoint(agentId);
   const endpointId = endpoint?.endpoint_id || "";
   if (!agentId || !endpoint) {
     communicationInbox = [];
-    renderCommunicationInbox();
+    if (render) renderCommunicationInbox();
     return true;
   }
   const response = await api("communication/inbox", {
@@ -3274,19 +3366,21 @@ async function fetchCommunicationInbox(generation: number): Promise<boolean> {
   if (response.status === 401) { lock("Credential rejected."); return false; }
   if (response.status === 403) {
     communicationReadAvailable = false;
-    renderCommunicationSurface();
+    if (render) renderCommunicationSurface();
     return true;
   }
   if (response.status === 404 || response.status === 400) {
     communicationEndpoints.delete(agentId);
     communicationInbox = [];
-    renderCommunicationAgentCard();
-    renderCommunicationInbox();
+    if (render) {
+      renderCommunicationAgentCard();
+      renderCommunicationInbox();
+    }
     return false;
   }
   if (!response.ok || !response.data) return false;
   communicationInbox = Array.isArray(response.data.deliveries) ? response.data.deliveries : [];
-  renderCommunicationInbox();
+  if (render) renderCommunicationInbox();
   return true;
 }
 
@@ -3317,21 +3411,30 @@ async function renewCommunicationEndpoints(generation: number): Promise<boolean>
   return true;
 }
 
-async function refreshCommunication(): Promise<boolean> {
+async function refreshCommunication(includeData = true): Promise<boolean> {
   if (!token || communicationRefreshInFlight) return true;
   communicationRefreshInFlight = true;
   const generation = ++communicationGeneration;
-  setText("runtime-communication-status", tr("Refreshing durable communication…"));
+  if (includeData && communicationReadAvailable !== false) {
+    setText("runtime-communication-status", tr("Refreshing durable communication…"));
+  }
   try {
     const endpointsOk = await renewCommunicationEndpoints(generation);
     if (generation !== communicationGeneration) return false;
-    const agentsOk = await fetchCommunicationAgents(generation);
-    if (generation !== communicationGeneration || !agentsOk || communicationReadAvailable !== true) return endpointsOk && agentsOk;
-    const conversationsOk = await fetchCommunicationConversations(generation);
-    if (generation !== communicationGeneration || !conversationsOk || communicationReadAvailable !== true) return endpointsOk && agentsOk && conversationsOk;
+    if (!includeData || communicationReadAvailable === false) return endpointsOk;
+    const agentsOk = await fetchCommunicationAgents(generation, false);
+    if (generation !== communicationGeneration || !agentsOk || communicationReadAvailable !== true) {
+      renderCommunicationSurface();
+      return endpointsOk && agentsOk;
+    }
+    const conversationsOk = await fetchCommunicationConversations(generation, false);
+    if (generation !== communicationGeneration || !conversationsOk || communicationReadAvailable !== true) {
+      renderCommunicationSurface();
+      return endpointsOk && agentsOk && conversationsOk;
+    }
     const [conversationOk, inboxOk] = await Promise.all([
-      fetchCommunicationConversation(generation),
-      fetchCommunicationInbox(generation),
+      fetchCommunicationConversation(generation, false),
+      fetchCommunicationInbox(generation, false),
     ]);
     renderCommunicationSurface();
     return endpointsOk && agentsOk && conversationsOk && conversationOk && inboxOk;
@@ -3679,14 +3782,21 @@ async function refreshAll(): Promise<void> {
   }
 }
 
+function refreshAutoSurfaces(): void {
+  if (!token) return;
+  if (document.hidden) {
+    void refreshCommunication(false);
+    return;
+  }
+  void fetchOverview(refreshRuntimeOverview(state));
+  const request = refreshRuntimeSessionList(state);
+  if (request) void fetchSessions(request);
+  void refreshCommunication(workspaceView === "operations");
+}
+
 function startAuto(): void {
   stopAuto();
-  timer = window.setInterval(() => {
-    if (!token) return;
-    void fetchOverview(refreshRuntimeOverview(state));
-    const request = refreshRuntimeSessionList(state); if (request) void fetchSessions(request);
-    void refreshCommunication();
-  }, REFRESH_MS);
+  timer = window.setInterval(refreshAutoSurfaces, REFRESH_MS);
 }
 function stopAuto(): void { if (timer) window.clearInterval(timer); timer = 0; }
 
@@ -3699,7 +3809,7 @@ function connectRuntimeCredential(nextToken: string, rememberForTab: boolean): v
   const request = beginRuntimeCredential(state);
   void fetchOverview(refreshRuntimeOverview(state));
   void fetchProjects(request, true);
-  void refreshCommunication();
+  void refreshCommunication(workspaceView === "operations");
 }
 
 el("runtime-token-form")?.addEventListener("submit", (event) => {
@@ -3875,6 +3985,9 @@ document.addEventListener("keydown", (event) => {
   }
 });
 window.addEventListener("resize", syncResponsiveNavigation, { passive: true });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && token) refreshAutoSurfaces();
+});
 const syncSystemAppearance = () => {
   if (appearancePreference(document.documentElement.dataset.theme) === "system") applyAppearance("system", false);
 };

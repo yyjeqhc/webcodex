@@ -21,6 +21,27 @@ export function runtimeCommunicationTranscriptAfterSeq(lastSeq: unknown, limit =
   return Math.max(0, normalizedLastSeq - normalizedLimit);
 }
 
+export function runtimeWorkflowSessionSummaryRevision(session: any): string {
+  if (!session) return "";
+  return JSON.stringify([
+    String(session.session_id || ""),
+    String(session.title || ""),
+    String(session.lifecycle || ""),
+    String(session.mode || ""),
+    typeof session.updated_at === "number" ? session.updated_at : null,
+    !!session.running_call,
+    typeof session.running_jobs === "number" ? session.running_jobs : null,
+    session.running_jobs_complete === true,
+    session.current_activity ?? null,
+    session.last_activity ?? null,
+    session.overview ?? null,
+  ]);
+}
+
+export function runtimeWorkflowSessionSummaryChanged(previous: any, next: any): boolean {
+  return runtimeWorkflowSessionSummaryRevision(previous) !== runtimeWorkflowSessionSummaryRevision(next);
+}
+
 function emptyCollaborationState(): any {
   return {
     generation: 0,

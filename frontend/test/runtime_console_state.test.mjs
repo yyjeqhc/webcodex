@@ -9,6 +9,8 @@ import {
   runtimeProjectIdentityText,
   preferredRuntimeProjectSelection,
   runtimeCommunicationTranscriptAfterSeq,
+  runtimeWorkflowSessionSummaryRevision,
+  runtimeWorkflowSessionSummaryChanged,
   beginRuntimeCredential,
   refreshRuntimeOverview,
   isCurrentRuntimeOverviewRequest,
@@ -53,6 +55,33 @@ test("communication transcript window follows the latest bounded page", () => {
   assert.equal(runtimeCommunicationTranscriptAfterSeq(250, 50), 200);
   assert.equal(runtimeCommunicationTranscriptAfterSeq(-1), 0);
   assert.equal(runtimeCommunicationTranscriptAfterSeq(Number.NaN), 0);
+});
+
+test("Workflow Session summary revision changes only for detail-relevant list state", () => {
+  const base = {
+    session_id: "wc_sess_a",
+    title: "Work",
+    lifecycle: "active",
+    mode: "normal",
+    updated_at: 100,
+    running_call: false,
+    running_jobs: 0,
+    running_jobs_complete: true,
+    current_activity: null,
+    last_activity: { kind: "Edited", summary: "file" },
+    overview: { attention: { open_todos: 0 } },
+  };
+  assert.equal(runtimeWorkflowSessionSummaryRevision(null), "");
+  assert.equal(runtimeWorkflowSessionSummaryChanged(base, { ...base }), false);
+  assert.equal(runtimeWorkflowSessionSummaryChanged(base, { ...base, updated_at: 101 }), true);
+  assert.equal(runtimeWorkflowSessionSummaryChanged(base, { ...base, running_jobs: 1 }), true);
+  assert.equal(
+    runtimeWorkflowSessionSummaryChanged(base, {
+      ...base,
+      overview: { attention: { open_todos: 1 } },
+    }),
+    true
+  );
 });
 
 test("runtime credential and project generations fence stale project responses", () => {
@@ -631,6 +660,14 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.doesNotMatch(recentRender, /\.sort\(/);
   assert.match(source, /applyRunnerFilter\(select\.value\)/);
   assert.match(source, /void fetchOverview\(refreshRuntimeOverview\(state\)\)/);
+  assert.match(source, /const REFRESH_MS = 30000;/);
+  assert.doesNotMatch(source, /every 8 seconds|每 8 秒|REFRESH_MS = 8000/);
+  const autoRefreshStart = source.indexOf("function refreshAutoSurfaces");
+  const autoRefreshEnd = source.indexOf("function connectRuntimeCredential", autoRefreshStart);
+  const autoRefresh = source.slice(autoRefreshStart, autoRefreshEnd);
+  assert.match(autoRefresh, /document\.hidden[\s\S]*refreshCommunication\(false\)/);
+  assert.match(autoRefresh, /refreshCommunication\(workspaceView === "operations"\)/);
+  assert.match(autoRefresh, /window\.setInterval\(refreshAutoSurfaces, REFRESH_MS\)/);
   assert.match(source, /appendRichMessage\(bubble, message\?\.message\)/);
   assert.match(source, /action === "reload"[\s\S]*loadRetainedCollaboration/);
   assert.match(source, /action === "drain"/);
@@ -667,10 +704,20 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.doesNotMatch(source, /Delivered|Read by model|Currently acknowledged/);
   assert.match(source, /Refresh failed · showing previous data/);
   assert.match(source, /runtimeCollaborationNeedsRefreshRecovery/);
+  assert.match(source, /signature === renderedCollaborationSignature/);
+  const communicationRefreshStart = source.indexOf("async function refreshCommunication");
+  const communicationRefreshEnd = source.indexOf("async function createCommunicationAgent", communicationRefreshStart);
+  const communicationRefresh = source.slice(communicationRefreshStart, communicationRefreshEnd);
+  assert.match(communicationRefresh, /!includeData \|\| communicationReadAvailable === false/);
+  assert.match(communicationRefresh, /fetchCommunicationAgents\(generation, false\)/);
+  assert.match(communicationRefresh, /fetchCommunicationConversation\(generation, false\)/);
+  assert.match(source, /operations && token\) void refreshCommunication\(true\)/);
+  assert.match(source, /visibilitychange/);
   const renderProjectsStart = source.indexOf("function renderProjectSelectors");
   const renderProjectsEnd = source.indexOf("function switchProject", renderProjectsStart);
   const renderProjects = source.slice(renderProjectsStart, renderProjectsEnd);
   assert.match(renderProjects, /document\.createElement\("button"\)/);
+  assert.match(renderProjects, /signature === renderedProjectSelectorsSignature/);
   assert.match(renderProjects, /row\.type = "button"/);
   assert.doesNotMatch(renderProjects, /addEventListener\("keydown"/);
   assert.match(renderProjects, /all\.textContent = tr\("All Runners"\)/);
@@ -702,6 +749,11 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.doesNotMatch(source.slice(fetchProjectsStart, fetchProjectsEnd), /fetchOverview\(/);
   const fetchProjects = source.slice(fetchProjectsStart, fetchProjectsEnd);
   assert.match(fetchProjects, /payload\.client_id = clientId/);
+  const fetchSessionsStart = source.indexOf("async function fetchSessions");
+  const fetchSessionsEnd = source.indexOf("function updatedLabel", fetchSessionsStart);
+  const fetchSessions = source.slice(fetchSessionsStart, fetchSessionsEnd);
+  assert.match(fetchSessions, /runtimeWorkflowSessionSummaryChanged\(previousSelected, nextSelected\)/);
+  assert.match(fetchSessions, /!state\.workflow\.snapshot \|\| runtimeWorkflowSessionSummaryChanged/);
   assert.match(fetchProjects, /payload\.query = query/);
   assert.match(fetchProjects, /if \(query\) \{[\s\S]*renderProjectSelectors\(projectRows, projectRowsTruncated\);[\s\S]*return true;/);
   assert.match(fetchProjects, /currentProject && projectRowsTruncated/);
@@ -730,7 +782,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(post, /Send outcome unknown\. Refresh and review retained messages before retrying\./);
   assert.match(post, /abortCollaboration\(\)[\s\S]*setRuntimeCollaborationPhase\(state, request, "paused"\)/);
   const refreshStart = source.indexOf("async function refreshAll");
-  const refreshEnd = source.indexOf("function startAuto", refreshStart);
+  const refreshEnd = source.indexOf("function refreshAutoSurfaces", refreshStart);
   assert.equal((source.slice(refreshStart, refreshEnd).match(/fetchOverview\(/g) || []).length, 1);
   const runnerFilterStart = source.indexOf('el("runtime-device-select")?.addEventListener("change"');
   const runnerFilterEnd = source.indexOf('el("runtime-project-search")', runnerFilterStart);

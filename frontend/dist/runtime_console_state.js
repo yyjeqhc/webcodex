@@ -9,6 +9,26 @@ export function runtimeCommunicationTranscriptAfterSeq(lastSeq, limit = 100) {
     const normalizedLimit = Number.isSafeInteger(limit) && limit > 0 ? limit : 100;
     return Math.max(0, normalizedLastSeq - normalizedLimit);
 }
+export function runtimeWorkflowSessionSummaryRevision(session) {
+    if (!session)
+        return "";
+    return JSON.stringify([
+        String(session.session_id || ""),
+        String(session.title || ""),
+        String(session.lifecycle || ""),
+        String(session.mode || ""),
+        typeof session.updated_at === "number" ? session.updated_at : null,
+        !!session.running_call,
+        typeof session.running_jobs === "number" ? session.running_jobs : null,
+        session.running_jobs_complete === true,
+        session.current_activity ?? null,
+        session.last_activity ?? null,
+        session.overview ?? null,
+    ]);
+}
+export function runtimeWorkflowSessionSummaryChanged(previous, next) {
+    return runtimeWorkflowSessionSummaryRevision(previous) !== runtimeWorkflowSessionSummaryRevision(next);
+}
 function emptyCollaborationState() {
     return {
         generation: 0,

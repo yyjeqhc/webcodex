@@ -48,8 +48,8 @@ domains and must remain explicit in code, schemas, documentation, and reviews.
 | Agent Delivery | Recipient-specific Inbox state for one Message | model invocation or accepted work |
 | Wake Intent | Durable logical processing opportunity for an Agent | Message, Delivery, Agent Task, execution lease |
 | Connector Task | Existing project-bound `task_start` / `task_resume` continuity domain | Agent Task |
-| Agent Task | Planned durable unit of accepted asynchronous Agent work | Connector Task, Session todo, Conversation Message |
-| Agent TaskAttempt | Planned exact execution/ownership attempt for one Agent Task | Endpoint, Workflow Session, CodingAgentRun |
+| Agent Task | Durable unit of explicitly created/accepted asynchronous Agent work | Connector Task, Session todo, Conversation Message |
+| Agent TaskAttempt | Durable exact execution-ownership attempt for one Agent Task | Endpoint, Workflow Session, CodingAgentRun |
 | Workflow Session | Existing execution/provenance/validation/handoff evidence context | Agent, Conversation, Agent Task |
 | Job | Concrete long-running process/validation execution | Agent Task or TaskAttempt |
 | CodingAgentRun | Existing ACP delegated coding execution | Agent Task itself |
@@ -64,7 +64,7 @@ be ambiguous.
 
 ## Implemented durable Agent foundation
 
-The current implementation already establishes these boundaries and the A2.5 natural-conversation path:
+The current implementation already establishes these boundaries, the A2.5 natural-conversation path, and the A3 durable AgentTask/TaskAttempt ownership substrate:
 
 ```text
 Durable Agent
@@ -77,8 +77,12 @@ Durable Agent
     |     +-- recipient Deliveries / Inbox
     |
     +-- Wake Intents
-          +-- Endpoint/generation-bound Wake Delivery Attempts
-          +-- bounded event-driven continuation scheduling
+    |     +-- Endpoint/generation-bound Wake Delivery Attempts
+    |     +-- bounded event-driven continuation scheduling
+    |
+    +-- Agent Tasks
+          +-- explicit durable assignee
+          +-- fenced, leased TaskAttempts + Attempt-local controller generation
 ```
 
 Important current invariants:
@@ -108,6 +112,19 @@ Important current invariants:
 - automatically resumed replies can derive stable replay identity from exact Wake
   plus a bounded operation index, closing the reply-committed/response-lost window
   without merging Wake and Delivery consumption.
+- Agent Tasks are independent durable work truth with explicit assignment; Conversation
+  Message/source references and Project references are correlation only.
+- each execution-ownership retry creates a durable TaskAttempt with a distinct opaque
+  Attempt fence; lease expiry never transfers assignment and cannot be revived by the
+  same Agent.
+- carrier replacement within one TaskAttempt increments an Attempt-local controller
+  generation without creating another Attempt; older generations are stale.
+- AgentTask creation, Attempt start, and terminal completion use durable keyed replay
+  in the same authoritative SQLite transaction as their effects, and Task/Attempt,
+  fence, generation, lease, terminal result, and accepted replay identity survive
+  database reopen/Server restart.
+- A3 does not bind or dispatch an execution backend: starting a TaskAttempt does not
+  create a CodingAgentRun, Job, Workflow Session, Wake, or Host callback.
 - process-local Host bindings are empty after restart; offline Messages, Deliveries,
   and the same logical Wake remain durable until a new exact Endpoint generation
   registers a callable adapter.
@@ -120,8 +137,8 @@ is reused as a fictional arbitrary model-turn callback. Runtime Console is an
 explicit selection/attachment and polling surface only. The controller boundary and
 fake adapter tests prove dispatch semantics, not production Host wake delivery.
 
-These invariants and the natural-conversation slice are prerequisites for
-asynchronous Agent work, not a scheduler.
+These invariants, the natural-conversation slice, and the durable A3 ownership
+substrate support asynchronous Agent work without introducing a scheduler.
 
 ## Asynchronous Agent work
 
@@ -432,7 +449,7 @@ Use concrete backends first.
 
 ### A3 — Agent Task + fenced TaskAttempt
 
-Establish durable Agent Task and TaskAttempt semantics only:
+The current A3 implementation establishes durable Agent Task and TaskAttempt semantics only:
 
 - explicit work creation;
 - explicit assignment/acceptance and atomic Attempt start/claim by that assignee;
@@ -445,6 +462,10 @@ Establish durable Agent Task and TaskAttempt semantics only:
 
 A3 does **not** automatically choose an assignee, spawn workers, operate a global
 claimable queue, or choose execution capacity.
+
+A4a is intentionally not implemented in this foundation: `start_agent_task_attempt`
+creates durable ownership/fencing truth only and does not start a CodingAgentRun or
+any other execution backend.
 
 ### A4a — TaskAttempt -> existing CodingAgentRun
 

@@ -74,7 +74,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
             false,
             false,
         ),
-        "Default inspect/review tool before final response. Read-only worktree plus optional session summary; reports status, warnings, next actions, and bounded hunks without modifying files.",
+        "Default inspect/review tool before final response. Read-only worktree overview with status, warnings, next actions, and bounded hunks. If hunks truncate, diff_review_handoff points to git_diff_hunks for focused/paged review.",
         show_changes_input_schema,
     ))),
 ];
@@ -143,7 +143,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
             false,
             false,
         ),
-        "Return producer-bounded structured git diff hunks for worktree/cached state or an exact committed base/head range, with scope-bound opaque continuation. Continuation calls must replay the original scope and paging inputs unchanged. Read-only.",
+        "Targeted/paged diff review for worktree/cached or exact base/head ranges, with paths and scope-bound opaque continuation. Replay scope and paging inputs unchanged. Continuation pages later records; hunk_line_limit needs a fresh call with larger max_hunk_lines and/or narrower paths. Read-only.",
         git_diff_hunks_input_schema,
     ))),
     git_like(model_spec(

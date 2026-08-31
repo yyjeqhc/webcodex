@@ -2162,24 +2162,75 @@ fn set_show_changes_verdict(output: &mut Value) {
         push_unique_reason(&mut warning_reasons, "review_warnings_present");
     }
 
-    if output
+    let hunks_truncated = output
         .get("hunks_truncated")
         .and_then(Value::as_bool)
-        .unwrap_or(false)
-        || output
-            .get("untracked_previews_truncated")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    if hunks_truncated {
+        actions.retain(|action| action != "review workspace changes with show_changes");
+        let diff_truncation_reasons = output
+            .get("truncation_reasons")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|reason| match reason.as_str() {
+                Some("diff_hunk_count_limit") => Some("diff_hunk_count_limit"),
+                Some("diff_hunk_line_limit") => Some("diff_hunk_line_limit"),
+                Some("diff_byte_budget") => Some("diff_byte_budget"),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let page_truncated = diff_truncation_reasons
+            .iter()
+            .any(|reason| matches!(*reason, "diff_hunk_count_limit" | "diff_byte_budget"));
+        let hunk_line_truncated = diff_truncation_reasons
+            .iter()
+            .any(|reason| *reason == "diff_hunk_line_limit");
+        output["diff_review_handoff"] = json!({
+            "tool": "git_diff_hunks",
+            "scope": "worktree",
+            "reason": "show_changes_diff_truncated",
+            "truncation_reasons": diff_truncation_reasons,
+        });
         push_unique_reason(&mut warning_reasons, "truncated_by_limit");
         push_unique_action(
             &mut actions,
-            "review bounded diff output or rerun with a narrower path set",
+            "continue the diff review with git_diff_hunks; use paths to narrow scope when useful",
+        );
+        if page_truncated {
+            push_unique_action(
+                &mut actions,
+                "follow git_diff_hunks.next_continuation while has_more=true",
+            );
+        }
+        if hunk_line_truncated {
+            push_unique_action(
+                &mut actions,
+                "increase git_diff_hunks.max_hunk_lines and/or narrow paths; continuation alone does not recover omitted lines from the same hunk",
+            );
+        }
+    } else if let Some(object) = output.as_object_mut() {
+        object.remove("diff_review_handoff");
+    }
+
+    let untracked_previews_truncated = output
+        .get("untracked_previews_truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if untracked_previews_truncated {
+        actions.retain(|action| action != "review workspace changes with show_changes");
+        push_unique_reason(&mut warning_reasons, "truncated_by_limit");
+        push_unique_action(
+            &mut actions,
+            "inspect the relevant untracked files separately",
         );
     }
 
     if actions.is_empty() {
         actions.push("no action needed".to_string());
+    }
+    if hunks_truncated || untracked_previews_truncated {
+        output["suggested_next_actions"] = json!(actions.clone());
     }
     let status = if blocking_reasons.is_empty() {
         if warning_reasons.is_empty() {

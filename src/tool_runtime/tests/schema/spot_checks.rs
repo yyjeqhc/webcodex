@@ -91,6 +91,7 @@ fn tool_specs_show_changes_schema() {
             "counts",
             "files",
             "diff_stat",
+            "diff_review_handoff",
             "untracked_previews",
             "untracked_previews_truncated",
             "warnings",

@@ -362,7 +362,7 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "review",
-        summary: "Review: use show_changes / git_diff_hunks / workspace_hygiene_check before final response; for committed ranges, map with git_review_summary, inspect targeted exact-range git_diff_hunks, then read_file as needed.",
+        summary: "Review: start with show_changes for the bounded worktree overview; if hunks truncate, continue/focus with git_diff_hunks. For committed ranges, map with git_review_summary then inspect exact-range git_diff_hunks; use workspace_hygiene_check before final response.",
         manifest_purpose: "Map committed review ranges, inspect targeted diffs, and check workspace hygiene before the final response.",
         tools: &[
             "git_review_summary",

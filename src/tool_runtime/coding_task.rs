@@ -2922,7 +2922,15 @@ fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
         .and_then(Value::as_bool)
         == Some(false)
     {
-        push(&mut actions, "review workspace changes with show_changes");
+        if output
+            .pointer("/changes/show_changes/diff_review_handoff/tool")
+            .and_then(Value::as_str)
+            == Some("git_diff_hunks")
+        {
+            push(&mut actions, "continue the diff review with git_diff_hunks");
+        } else {
+            push(&mut actions, "review workspace changes with show_changes");
+        }
     }
     if output
         .get("jobs")
@@ -3013,6 +3021,28 @@ fn append_hygiene_warnings(hygiene: &Value, warnings: &mut Vec<Value>) {
 mod startup_runner_tests {
     use super::*;
     use crate::projects::ProjectConfig;
+
+    #[test]
+    fn finish_actions_use_git_diff_hunks_when_nested_show_changes_hands_off() {
+        let output = json!({
+            "workspace": {"clean": false},
+            "changes": {
+                "show_changes": {
+                    "diff_review_handoff": {"tool": "git_diff_hunks"}
+                }
+            },
+            "jobs": {"blocking_active_count": 0},
+            "validation": {},
+            "tool_failures": {},
+        });
+        let actions = finish_suggested_next_actions(&output);
+        assert!(actions
+            .iter()
+            .any(|action| action == "continue the diff review with git_diff_hunks"));
+        assert!(!actions
+            .iter()
+            .any(|action| action == "review workspace changes with show_changes"));
+    }
 
     fn resolved_agent(client_id: &str) -> ResolvedProject {
         ResolvedProject {

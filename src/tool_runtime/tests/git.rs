@@ -2802,6 +2802,27 @@ fn show_changes_include_diff_false_omits_diff_and_metadata() {
     );
     assert!(output.get("hunk_count").is_none());
     assert!(output.get("hunks_truncated").is_none());
+    assert!(output.get("diff_review_handoff").is_none());
+}
+
+#[test]
+fn show_changes_complete_diff_does_not_handoff_to_git_diff_hunks() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    std::fs::write(tmp.path().join("README.md"), "hello\nchanged\n").unwrap();
+
+    let output = bounded_show_changes_output(tmp.path(), true, 20, 80);
+    assert_eq!(output["hunks_truncated"], false);
+    assert!(output.get("diff_review_handoff").is_none());
+    assert!(!output["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action
+            .as_str()
+            .is_some_and(|action| action.contains("git_diff_hunks"))));
+    assert_show_changes_envelope_value_matches_schema(&output, "complete diff handoff");
 }
 
 #[test]
@@ -2828,6 +2849,29 @@ fn show_changes_diff_respects_max_hunks() {
     assert!(reasons.iter().any(|r| r == "diff_hunk_count_limit"));
     assert!(!reasons.iter().any(|r| r == "diff_hunk_line_limit"));
     assert!(!reasons.iter().any(|r| r == "diff_byte_budget"));
+    assert_eq!(output["diff_review_handoff"]["tool"], "git_diff_hunks");
+    assert_eq!(output["diff_review_handoff"]["scope"], "worktree");
+    assert_eq!(
+        output["diff_review_handoff"]["reason"],
+        "show_changes_diff_truncated"
+    );
+    assert_eq!(
+        output["diff_review_handoff"]["truncation_reasons"],
+        json!(["diff_hunk_count_limit"])
+    );
+    let actions = output["suggested_next_actions"].as_array().unwrap();
+    assert!(!actions
+        .iter()
+        .any(|action| action == "review workspace changes with show_changes"));
+    assert!(actions.iter().any(|action| action
+        == "continue the diff review with git_diff_hunks; use paths to narrow scope when useful"));
+    assert!(actions
+        .iter()
+        .any(|action| action == "follow git_diff_hunks.next_continuation while has_more=true"));
+    assert!(!actions.iter().any(|action| action
+        .as_str()
+        .is_some_and(|action| action.contains("continuation alone does not recover"))));
+    assert_show_changes_envelope_value_matches_schema(&output, "hunk count handoff");
 }
 
 #[test]
@@ -2855,6 +2899,94 @@ fn show_changes_diff_respects_max_hunk_lines() {
     assert!(reasons.iter().any(|r| r == "diff_hunk_line_limit"));
     assert!(!reasons.iter().any(|r| r == "diff_hunk_count_limit"));
     assert!(!reasons.iter().any(|r| r == "diff_byte_budget"));
+    assert_eq!(output["diff_review_handoff"]["tool"], "git_diff_hunks");
+    assert_eq!(
+        output["diff_review_handoff"]["truncation_reasons"],
+        json!(["diff_hunk_line_limit"])
+    );
+    let actions = output["suggested_next_actions"].as_array().unwrap();
+    assert!(actions.iter().any(|action| action
+        == "increase git_diff_hunks.max_hunk_lines and/or narrow paths; continuation alone does not recover omitted lines from the same hunk"));
+    assert!(!actions
+        .iter()
+        .any(|action| action == "follow git_diff_hunks.next_continuation while has_more=true"));
+    assert_show_changes_envelope_value_matches_schema(&output, "hunk line handoff");
+}
+
+#[test]
+fn show_changes_combined_hunk_count_and_line_truncation_keeps_both_guidance_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let original = (0..20).map(|i| format!("line-{i}\n")).collect::<String>();
+    for name in ["a.txt", "b.txt"] {
+        commit_file(tmp.path(), name, &original, "initial");
+        let changed = (0..20)
+            .map(|i| format!("changed-{name}-{i}\n"))
+            .collect::<String>();
+        std::fs::write(tmp.path().join(name), changed).unwrap();
+    }
+
+    let output = bounded_show_changes_output(tmp.path(), true, 1, 3);
+    assert_eq!(output["hunks_truncated"], true);
+    let reasons = output["truncation_reasons"].as_array().unwrap();
+    assert!(reasons
+        .iter()
+        .any(|reason| reason == "diff_hunk_count_limit"));
+    assert!(reasons
+        .iter()
+        .any(|reason| reason == "diff_hunk_line_limit"));
+    let handoff_reasons = output["diff_review_handoff"]["truncation_reasons"]
+        .as_array()
+        .unwrap();
+    assert!(handoff_reasons
+        .iter()
+        .any(|reason| reason == "diff_hunk_count_limit"));
+    assert!(handoff_reasons
+        .iter()
+        .any(|reason| reason == "diff_hunk_line_limit"));
+    let actions = output["suggested_next_actions"].as_array().unwrap();
+    assert!(actions
+        .iter()
+        .any(|action| action == "follow git_diff_hunks.next_continuation while has_more=true"));
+    assert!(actions.iter().any(|action| action
+        .as_str()
+        .is_some_and(|action| action.contains("continuation alone does not recover"))));
+    assert_show_changes_envelope_value_matches_schema(&output, "combined diff handoff");
+}
+
+#[tokio::test]
+async fn show_changes_untracked_preview_truncation_does_not_create_diff_handoff() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    for i in 0..6 {
+        std::fs::write(
+            tmp.path().join(format!("untracked-{i}.txt")),
+            format!("u{i}\n"),
+        )
+        .unwrap();
+    }
+
+    let runtime = test_runtime();
+    let client_id = "show-untracked-handoff";
+    let project = register_agent_project_at_path(&runtime, client_id, "repo", tmp.path()).await;
+    let result = run_show_changes_via_agent(&runtime, client_id, project, None, true).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_show_changes_envelope_matches_schema("untracked-only truncation", &result);
+    let output = &result.output;
+    assert_eq!(output["hunks_truncated"], false);
+    assert_eq!(output["untracked_previews_truncated"], true);
+    assert!(output.get("diff_review_handoff").is_none());
+    let actions = output["suggested_next_actions"].as_array().unwrap();
+    assert!(!actions
+        .iter()
+        .any(|action| action == "review workspace changes with show_changes"));
+    assert!(actions
+        .iter()
+        .any(|action| action == "inspect the relevant untracked files separately"));
+    assert!(!actions.iter().any(|action| action
+        .as_str()
+        .is_some_and(|action| action.contains("git_diff_hunks"))));
 }
 
 #[test]
@@ -2901,12 +3033,34 @@ fn show_changes_schema_covers_truncation_and_transport_fields() {
         "output_budget_bytes",
         "output_truncated",
         "truncation_reasons",
+        "diff_review_handoff",
     ] {
         assert!(
             properties.contains_key(field),
             "missing truncation/transport field {field}"
         );
     }
+    let handoff = &properties["diff_review_handoff"];
+    assert_eq!(handoff["type"], "object");
+    assert_eq!(handoff["additionalProperties"], false);
+    assert_eq!(handoff["properties"]["tool"]["const"], "git_diff_hunks");
+    assert_eq!(handoff["properties"]["scope"]["const"], "worktree");
+    assert_eq!(
+        handoff["properties"]["reason"]["const"],
+        "show_changes_diff_truncated"
+    );
+    assert_eq!(
+        handoff["properties"]["truncation_reasons"]["items"]["enum"],
+        json!([
+            "diff_hunk_count_limit",
+            "diff_hunk_line_limit",
+            "diff_byte_budget"
+        ])
+    );
+    assert_eq!(
+        handoff["required"],
+        json!(["tool", "scope", "reason", "truncation_reasons"])
+    );
 }
 
 #[tokio::test]
@@ -5518,6 +5672,18 @@ fn show_changes_long_path_diff_budgets_complete_preambles_and_bytes() {
     );
     assert!(!reasons.iter().any(|r| r == "diff_hunk_count_limit"));
     assert!(!reasons.iter().any(|r| r == "diff_hunk_line_limit"));
+
+    assert_eq!(output["hunks_truncated"], true);
+    assert_eq!(output["diff_review_handoff"]["tool"], "git_diff_hunks");
+    assert_eq!(
+        output["diff_review_handoff"]["truncation_reasons"],
+        json!(["diff_byte_budget"])
+    );
+    let actions = output["suggested_next_actions"].as_array().unwrap();
+    assert!(actions
+        .iter()
+        .any(|action| action == "follow git_diff_hunks.next_continuation while has_more=true"));
+    assert_show_changes_envelope_value_matches_schema(&output, "diff byte handoff");
 
     let mut rejected_seen = false;
     for (i, path) in paths.iter().enumerate() {

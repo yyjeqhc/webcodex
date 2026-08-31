@@ -993,7 +993,8 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "validate: use cargo_check / cargo_test / go_test",
         "raw run_shell is a bounded escape hatch",
         "not the primary validation path",
-        "review: use show_changes / git_diff_hunks / workspace_hygiene_check",
+        "review: start with show_changes for the bounded worktree overview",
+        "if hunks truncate, continue/focus with git_diff_hunks",
         "handoff: use session_summary / session_handoff_summary",
     ] {
         assert!(

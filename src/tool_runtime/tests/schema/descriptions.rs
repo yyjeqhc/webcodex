@@ -40,6 +40,8 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "default inspect/review tool",
         "before final response",
         "bounded hunks",
+        "diff_review_handoff",
+        "git_diff_hunks",
     ] {
         assert!(
             show_changes_desc.contains(phrase),
@@ -49,7 +51,17 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let git_diff_hunks = spec_named(&specs, "git_diff_hunks");
     let git_diff_hunks_desc = git_diff_hunks.description.to_lowercase();
-    for phrase in ["scope-bound", "replay", "scope", "paging inputs"] {
+    for phrase in [
+        "targeted/paged",
+        "scope-bound",
+        "replay",
+        "scope",
+        "paging inputs",
+        "later records",
+        "hunk_line_limit",
+        "larger max_hunk_lines",
+        "narrower paths",
+    ] {
         assert!(
             git_diff_hunks_desc.contains(phrase),
             "git_diff_hunks description should mention {phrase}: {git_diff_hunks_desc}"

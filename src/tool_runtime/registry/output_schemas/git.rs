@@ -422,6 +422,41 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("boolean", "Whether diff hunks were truncated by limits."),
             ),
             (
+                "diff_review_handoff",
+                json!({
+                    "type": "object",
+                    "description": "Present only when bounded show_changes diff hunks are incomplete; identifies the canonical focused/paged review tool without starting it or inventing a continuation.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "tool": {
+                            "type": "string",
+                            "const": "git_diff_hunks"
+                        },
+                        "scope": {
+                            "type": "string",
+                            "const": "worktree"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "const": "show_changes_diff_truncated"
+                        },
+                        "truncation_reasons": {
+                            "type": "array",
+                            "description": "Actual show_changes diff bounds that caused this handoff.",
+                            "items": {
+                                "type": "string",
+                                "enum": [
+                                    "diff_hunk_count_limit",
+                                    "diff_hunk_line_limit",
+                                    "diff_byte_budget"
+                                ]
+                            }
+                        }
+                    },
+                    "required": ["tool", "scope", "reason", "truncation_reasons"]
+                }),
+            ),
+            (
                 "untracked_previews",
                 array_schema(
                     open_object_schema("Bounded untracked file preview or skip reason."),

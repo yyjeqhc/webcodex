@@ -23,8 +23,7 @@ async fn enqueue_internal_posix_script_is_typed_and_capability_fenced() {
             script.to_string(),
             30,
             32,
-            "tester".to_string(),
-            None,
+            "test".to_string(),
         )
         .await
         .expect("capable client should accept internal POSIX work");
@@ -73,8 +72,7 @@ async fn enqueue_internal_posix_script_preserves_generated_command_wire_bound() 
             "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES + 1),
             30,
             32,
-            "tester".to_string(),
-            None,
+            "test".to_string(),
         )
         .await
         .unwrap_err();

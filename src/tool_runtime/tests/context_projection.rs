@@ -25,12 +25,11 @@ async fn dispatch_with_context_and_local_agent(
         let runtime = runtime.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
                     call,
                     Some(&auth),
                     SessionTransport::Mcp,
                     ToolCallRecorderMetadata::default(),
-                    None,
                     None,
                     true,
                     context_request,
@@ -71,12 +70,11 @@ async fn context_projection_is_explicit_deduped_open_ended_and_nonfatal() {
     let runtime = ToolRuntime::new_for_tests();
     let call = ToolCall::from_tool_name("list_tools", json!({})).unwrap();
     let without = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+        .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
             call,
             None,
             SessionTransport::Mcp,
             Default::default(),
-            None,
             None,
             true,
             Vec::new(),
@@ -88,12 +86,11 @@ async fn context_projection_is_explicit_deduped_open_ended_and_nonfatal() {
 
     let call = ToolCall::from_tool_name("list_tools", json!({})).unwrap();
     let result = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+        .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
             call,
             None,
             SessionTransport::Mcp,
             Default::default(),
-            None,
             None,
             true,
             vec![
@@ -226,7 +223,7 @@ async fn project_instructions_context_projection_is_authorized_scoped_and_bounde
         .start_session(Some(alpha), Some("cross-project sidecar fence".to_string()));
     let auth = auth_context(None, true);
     let cross_project = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+        .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
             ToolCall::RunShell {
                 project: bravo,
                 command: "pwd".to_string(),
@@ -239,7 +236,6 @@ async fn project_instructions_context_projection_is_authorized_scoped_and_bounde
             Some(&auth),
             SessionTransport::Mcp,
             Default::default(),
-            None,
             None,
             true,
             vec!["project.instructions".to_string()],
@@ -266,7 +262,7 @@ async fn project_instructions_context_projection_is_authorized_scoped_and_bounde
 
     let auth = auth_context(None, true);
     let wrong_project = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+        .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
             ToolCall::GitStatus {
                 project: "agent:context-bravo:missing".to_string(),
                 session_id: None,
@@ -274,7 +270,6 @@ async fn project_instructions_context_projection_is_authorized_scoped_and_bounde
             Some(&auth),
             SessionTransport::Mcp,
             Default::default(),
-            None,
             None,
             true,
             vec!["project.instructions".to_string()],
@@ -313,7 +308,7 @@ async fn unavailable_project_instructions_provider_does_not_change_main_success(
         let runtime = runtime.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
                     ToolCall::GitStatus {
                         project,
                         session_id: None,
@@ -321,7 +316,6 @@ async fn unavailable_project_instructions_provider_does_not_change_main_success(
                     Some(&auth),
                     SessionTransport::Mcp,
                     Default::default(),
-                    None,
                     None,
                     true,
                     vec!["project.instructions".to_string()],
@@ -412,7 +406,7 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
         let project = project.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
                     ToolCall::WriteProjectFile {
                         project,
                         path: "written.txt".to_string(),
@@ -425,7 +419,6 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
                     Some(&auth),
                     SessionTransport::Mcp,
                     Default::default(),
-                    None,
                     None,
                     true,
                     vec!["project.instructions".to_string()],

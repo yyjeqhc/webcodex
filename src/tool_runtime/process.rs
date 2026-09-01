@@ -5,7 +5,7 @@ use super::helpers::{
     bounded_tail, command_failed_message, command_outcome_unknown_message,
     command_rejected_message, command_timeout_message, looks_like_command_timeout,
     project_relative_agent_cwd, project_relative_cwd, resolve_agent_cwd, resolve_local_cwd,
-    run_process_sync_bounded_with_sandbox, LocalRunFailure, COMMAND_STDIO_TAIL_CHARS,
+    run_process_sync_bounded, LocalRunFailure, COMMAND_STDIO_TAIL_CHARS,
 };
 use super::shell::{
     agent_command_lifecycle, command_execution_state_name, dispatch_uncertainty_lifecycle,
@@ -317,7 +317,7 @@ fn decorate(
 
 impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn run_process_with_contract_in_sandbox(
+    pub(crate) async fn run_process_with_contract_for_resource(
         &self,
         project: String,
         executable: String,
@@ -327,7 +327,6 @@ impl ToolRuntime {
         sync_wait_secs: Option<u64>,
         cwd: Option<String>,
         purpose: Option<ExecutionPurpose>,
-        sandbox: Option<&str>,
         ssh_resource: Option<&str>,
         session_id: Option<String>,
         validation_assertion_name: Option<&str>,
@@ -342,7 +341,6 @@ impl ToolRuntime {
             sync_wait_secs,
             cwd,
             purpose,
-            sandbox,
             ssh_resource,
             session_id,
             auth,
@@ -366,7 +364,6 @@ impl ToolRuntime {
         timeout_secs: Option<u64>,
         cwd: Option<String>,
         purpose: Option<ExecutionPurpose>,
-        sandbox: Option<&str>,
         ssh_resource: Option<&str>,
         session_id: Option<String>,
         auth: Option<&AuthContext>,
@@ -393,16 +390,6 @@ impl ToolRuntime {
                     "correct the structured process fields and retry; detached execution accepts native argv only.",
                 ),
                 "invalid_arguments",
-                ShellCommandExecutionState::NotStarted,
-            );
-        }
-        if sandbox.is_some() {
-            return process_tool_failure_result(
-                command_rejected_message(
-                    "detached process Jobs do not support inspect sandbox inheritance",
-                    "use run_process for sandboxed synchronous work, or start the detached process from a normal execution Session.",
-                ),
-                "unsupported_sandbox",
                 ShellCommandExecutionState::NotStarted,
             );
         }
@@ -606,7 +593,6 @@ impl ToolRuntime {
             None,
             None,
             None,
-            None,
             false,
         )
         .await
@@ -623,7 +609,6 @@ impl ToolRuntime {
         sync_wait_secs: Option<u64>,
         cwd: Option<String>,
         purpose: Option<ExecutionPurpose>,
-        sandbox: Option<&str>,
         ssh_resource: Option<&str>,
         session_id: Option<String>,
         auth: Option<&AuthContext>,
@@ -777,7 +762,6 @@ impl ToolRuntime {
                             purpose: Some(declared_purpose.as_str().to_string()),
                             shell: Some("direct_argv".to_string()),
                             visibility: ShellJobVisibility::HiddenUntilHandoff,
-                            sandbox: sandbox.map(str::to_string),
                             structured_execution: Some(StructuredJobExecution::Process(process)),
                             validation_identity: validation_identity
                                 .as_ref()
@@ -895,7 +879,7 @@ impl ToolRuntime {
             let wait_timeout = timeout;
             let (request_id, receiver) = match self
                 .shell_clients
-                .enqueue_process_with_sandbox(
+                .enqueue_process(
                     client_id,
                     Some(effective_cwd),
                     process,
@@ -903,7 +887,6 @@ impl ToolRuntime {
                     timeout,
                     wait_timeout,
                     "tool_runtime".to_string(),
-                    sandbox.map(str::to_string),
                 )
                 .await
             {
@@ -1069,13 +1052,12 @@ impl ToolRuntime {
             };
             let resolved_cwd =
                 project_relative_cwd(&proj, &cwd_path).unwrap_or_else(|_| ".".to_string());
-            let mut result = match run_process_sync_bounded_with_sandbox(
+            let mut result = match run_process_sync_bounded(
                 process.executable,
                 process.args,
                 stdin,
                 cwd_path,
                 timeout,
-                sandbox.map(str::to_string),
             )
             .await
             {
@@ -1085,7 +1067,7 @@ impl ToolRuntime {
                             process_tool_failure_result(
                                 command_rejected_message(
                                     &stderr,
-                                    "correct the executable, cwd, or sandbox configuration, then retry.",
+                                    "correct the executable or cwd, then retry.",
                                 ),
                                 classify_process_failure(&stderr),
                                 ShellCommandExecutionState::NotStarted,

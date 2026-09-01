@@ -89,7 +89,6 @@ jobs:
               -p webcodex-core
               -p webcodex-cli
               -p webcodex-persistent-shell
-              -p webcodex-sandbox
               -p webcodex-workspace
               -p webcodex-process
     steps:

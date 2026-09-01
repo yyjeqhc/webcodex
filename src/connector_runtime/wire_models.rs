@@ -73,7 +73,6 @@ pub(super) struct TaskStartInput {
 pub(super) enum ConnectorTaskMode {
     #[default]
     Normal,
-    Inspect,
     ReadOnly,
 }
 
@@ -81,7 +80,6 @@ impl ConnectorTaskMode {
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Inspect => "inspect",
             Self::ReadOnly => "read_only",
         }
     }

@@ -325,8 +325,6 @@ pub const SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION: &str = "lsp_read_onl
 /// Bounded typed call-hierarchy traversal. Missing on older Runners and false;
 /// never inferred from general LSP navigation or protocol version.
 pub const SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY: &str = "lsp_call_hierarchy";
-/// Linux Landlock ABI v3 inspect-command write sandbox.
-pub const SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS: &str = "sandbox_inspect_commands";
 pub const SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE: &str = "project_lifecycle";
 /// Resolve an absolute canonical project path to an existing registration or
 /// atomically persist a new projects.d entry. Missing on older runners and
@@ -468,7 +466,6 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
     SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
     SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
     SHELL_CLIENT_CAPABILITY_SKILL_STORE_READ,
@@ -633,10 +630,6 @@ pub struct ShellClientCapabilities {
     /// The Runner implements the bounded typed call-hierarchy operation.
     #[serde(default)]
     pub lsp_call_hierarchy: bool,
-    /// The runner can fail-closed enforce the Linux Landlock ABI v3 write
-    /// sandbox used by inspect commands.
-    #[serde(default)]
-    pub sandbox_inspect_commands: bool,
     /// Structured project enable/disable/unregister requests. Missing on older
     /// runners and therefore fail-closed.
     #[serde(default)]
@@ -782,7 +775,6 @@ impl Default for ShellClientCapabilities {
             detached_process_jobs: false,
             lsp_read_only_navigation: false,
             lsp_call_hierarchy: false,
-            sandbox_inspect_commands: false,
             project_lifecycle: false,
             project_path_registration: false,
             skill_store_read: false,
@@ -1688,11 +1680,6 @@ pub struct ShellAgentShellRequest {
     /// Defaults to `None` so older request bodies continue to deserialize.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lsp: Option<crate::lsp_bridge::AgentLspPayload>,
-    /// Optional kernel sandbox mode (`"inspect"`). Agents fail closed for
-    /// unsupported, partial, or unknown modes and never run them unconfined.
-    /// Absent on the wire when unset so older agents continue to deserialize.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sandbox: Option<String>,
     /// Server-derived safe execution metadata. Async jobs retain it for
     /// same-process recovery; Session-bound SSH shell requests use only the
     /// workflow session/resource fields. It never contains raw command text,
@@ -3375,7 +3362,6 @@ mod envelope_tests {
                 detached_process_jobs: true,
                 lsp_read_only_navigation: false,
                 lsp_call_hierarchy: false,
-                sandbox_inspect_commands: false,
                 project_lifecycle: false,
                 project_path_registration: false,
                 skill_store_read: false,

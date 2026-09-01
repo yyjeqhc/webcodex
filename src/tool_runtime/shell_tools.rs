@@ -7,7 +7,6 @@ impl ToolRuntime {
     pub(crate) async fn dispatch_shell_tool(
         &self,
         call: ToolCall,
-        sandbox: Option<&str>,
         ssh_resource: Option<&str>,
         validation_assertion_name: Option<&str>,
         auth: Option<&AuthContext>,
@@ -24,7 +23,7 @@ impl ToolRuntime {
                 cwd,
                 purpose,
             } => {
-                self.run_process_with_contract_in_sandbox(
+                self.run_process_with_contract_for_resource(
                     project,
                     executable,
                     args,
@@ -33,7 +32,6 @@ impl ToolRuntime {
                     sync_wait_secs,
                     cwd,
                     purpose,
-                    sandbox,
                     ssh_resource,
                     session_id,
                     validation_assertion_name,
@@ -61,7 +59,6 @@ impl ToolRuntime {
                     timeout_secs,
                     cwd,
                     purpose,
-                    sandbox,
                     ssh_resource,
                     session_id,
                     auth,
@@ -80,7 +77,7 @@ impl ToolRuntime {
                 cwd,
                 purpose,
             } => {
-                self.run_script_with_contract_in_sandbox(
+                self.run_script_with_contract_for_resource(
                     project,
                     language,
                     script,
@@ -90,7 +87,6 @@ impl ToolRuntime {
                     sync_wait_secs,
                     cwd,
                     purpose,
-                    sandbox,
                     ssh_resource,
                     session_id,
                     validation_assertion_name,
@@ -107,14 +103,13 @@ impl ToolRuntime {
                 purpose,
                 shell,
             } => {
-                self.run_shell_with_contract_in_sandbox(
+                self.run_shell_with_contract_for_resource(
                     project,
                     command,
                     timeout_secs,
                     cwd,
                     purpose,
                     shell,
-                    sandbox,
                     ssh_resource,
                     session_id.as_deref(),
                     auth,

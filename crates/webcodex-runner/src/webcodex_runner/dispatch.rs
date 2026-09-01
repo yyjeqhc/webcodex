@@ -6,12 +6,11 @@ use super::{
     handle_computer_request, handle_project_lifecycle_op,
     handle_project_op_with_temporary_projects_root, handle_resolve_or_register_project,
     handle_skill_store_request, is_computer_request_kind,
-    run_internal_posix_script_with_profiles_in_sandbox_and_execution_state,
-    run_internal_search_script_with_profiles_in_sandbox_and_execution_state,
-    run_process_with_profiles_in_sandbox_and_execution_state,
-    run_script_with_profiles_in_sandbox_and_execution_state,
-    run_shell_with_profiles_in_sandbox_and_execution_state, run_ssh_shell_with_execution_state,
-    CommandResult, HotRunnerConfig, PersistentShellManager, ReloadableRunnerConfig, RunnerSink,
+    run_internal_posix_script_with_profiles_and_execution_state,
+    run_internal_search_script_with_profiles_and_execution_state,
+    run_process_with_profiles_and_execution_state, run_script_with_profiles_and_execution_state,
+    run_shell_with_profiles_and_execution_state, run_ssh_shell_with_execution_state, CommandResult,
+    HotRunnerConfig, PersistentShellManager, ReloadableRunnerConfig, RunnerSink,
     ShellCommandResult, SubmitResultError,
 };
 use crate::shell_protocol::{
@@ -63,7 +62,7 @@ fn run_native_shell_or_internal_search(
                 ),
             });
         };
-        return run_internal_search_script_with_profiles_in_sandbox_and_execution_state(
+        return run_internal_search_script_with_profiles_and_execution_state(
             config.generation,
             &config.policy,
             &config.shell,
@@ -73,10 +72,9 @@ fn run_native_shell_or_internal_search(
             script,
             request.timeout_secs,
             Some(runtime.shutdown_flag()),
-            request.sandbox.as_deref(),
         );
     }
-    run_shell_with_profiles_in_sandbox_and_execution_state(
+    run_shell_with_profiles_and_execution_state(
         config.generation,
         &config.policy,
         &config.shell,
@@ -87,7 +85,6 @@ fn run_native_shell_or_internal_search(
         request.stdin.as_deref(),
         request.timeout_secs,
         Some(runtime.shutdown_flag()),
-        request.sandbox.as_deref(),
     )
 }
 
@@ -280,7 +277,7 @@ pub(crate) fn dispatch_request(
             })
         } else {
             match validate_run_process_request(&request) {
-                Ok(process) => run_process_with_profiles_in_sandbox_and_execution_state(
+                Ok(process) => run_process_with_profiles_and_execution_state(
                     config.generation,
                     policy,
                     shell,
@@ -292,7 +289,6 @@ pub(crate) fn dispatch_request(
                     request.stdin.as_deref(),
                     request.timeout_secs,
                     Some(runtime.shutdown_flag()),
-                    request.sandbox.as_deref(),
                 ),
                 Err(error) => ShellCommandResult::not_started(CommandResult {
                     exit_code: None,
@@ -324,7 +320,7 @@ pub(crate) fn dispatch_request(
             })
         } else {
             match validate_run_script_request(&request) {
-                Ok(script) => run_script_with_profiles_in_sandbox_and_execution_state(
+                Ok(script) => run_script_with_profiles_and_execution_state(
                     config.generation,
                     policy,
                     shell,
@@ -335,7 +331,6 @@ pub(crate) fn dispatch_request(
                     request.stdin.as_deref(),
                     request.timeout_secs,
                     Some(runtime.shutdown_flag()),
-                    request.sandbox.as_deref(),
                 ),
                 Err(error) => ShellCommandResult::not_started(CommandResult {
                     exit_code: None,
@@ -367,20 +362,17 @@ pub(crate) fn dispatch_request(
             })
         } else {
             match validate_internal_posix_script_request(&request) {
-                Ok(script) => {
-                    run_internal_posix_script_with_profiles_in_sandbox_and_execution_state(
-                        config.generation,
-                        policy,
-                        shell,
-                        projects_dir,
-                        &jobs.prepared_profiles,
-                        request.cwd.as_deref(),
-                        script,
-                        request.timeout_secs,
-                        Some(runtime.shutdown_flag()),
-                        request.sandbox.as_deref(),
-                    )
-                }
+                Ok(script) => run_internal_posix_script_with_profiles_and_execution_state(
+                    config.generation,
+                    policy,
+                    shell,
+                    projects_dir,
+                    &jobs.prepared_profiles,
+                    request.cwd.as_deref(),
+                    script,
+                    request.timeout_secs,
+                    Some(runtime.shutdown_flag()),
+                ),
                 Err(error) => ShellCommandResult::not_started(CommandResult {
                     exit_code: None,
                     stdout: None,
@@ -437,9 +429,6 @@ pub(crate) fn dispatch_request(
         }
     }
 
-    // Inspect requests must stay on the native execution path where Landlock
-    // is applied in pre_exec. External providers are not an equivalent local
-    // filesystem write boundary.
     if ssh_resource.is_some()
         && !matches!(
             request.kind.as_str(),
@@ -463,7 +452,7 @@ pub(crate) fn dispatch_request(
             .submit_result_with_metadata(request.request_id, result, config, runtime)
             .map(|_| true);
     }
-    let external_route = if request.sandbox.is_some() || ssh_resource.is_some() {
+    let external_route = if ssh_resource.is_some() {
         ExternalRoute::Native
     } else {
         external_tools.route_with_shutdown(policy, &request, Some(runtime.shutdown_flag()))
@@ -597,8 +586,7 @@ pub(crate) fn dispatch_request(
                     request.stdin.as_deref(),
                     request.timeout_secs,
                     Some(runtime.shutdown_flag()),
-                    request.sandbox.as_deref(),
-                ),
+                        ),
                 (Some(_), None) => ShellCommandResult::not_started(CommandResult {
                     exit_code: None,
                     stdout: None,

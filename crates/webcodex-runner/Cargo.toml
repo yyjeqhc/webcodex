@@ -11,7 +11,6 @@ webcodex-runner-config = { path = "../webcodex-runner-config" }
 webcodex-core = { path = "../webcodex-core" }
 webcodex-persistent-shell = { path = "../webcodex-persistent-shell" }
 webcodex-process = { path = "../webcodex-process" }
-webcodex-sandbox = { path = "../webcodex-sandbox" }
 webcodex-workspace = { path = "../webcodex-workspace" }
 base64 = "0.22"
 chrono = "0.4"

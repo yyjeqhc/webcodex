@@ -102,12 +102,11 @@ async fn dispatch_with_context_and_local_agent(
         let runtime = runtime.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
                     call,
                     Some(&auth),
                     SessionTransport::Mcp,
                     recorder_metadata,
-                    None,
                     None,
                     true,
                     context_request,

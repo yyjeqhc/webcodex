@@ -2470,7 +2470,6 @@ async fn structured_progress_rejects_invalid_order_and_preserves_fail_fast_plan(
             })
             .collect(),
         validation: None,
-        sandbox: None,
         visibility: crate::shell_client::ShellJobVisibility::Public,
         validation_identity: None,
         validation_tool: None,
@@ -3413,22 +3412,38 @@ async fn failed_cancelled_workspace_release_can_be_retried() {
         .executions
         .release_cancelled_workspace(bad_task)
         .await;
-    let occupied = workspace::WorkspaceManager::resource_status(
-        Path::new(&fixture.connector.context.runs_root),
-        fixture._temp.path().join("cargo-target").as_path(),
-    );
-    assert_eq!(occupied.slot_state, "occupied");
-
-    fixture
-        .connector
-        .executions
-        .release_cancelled_workspace(good_task)
-        .await;
     let released = workspace::WorkspaceManager::resource_status(
         Path::new(&fixture.connector.context.runs_root),
         fixture._temp.path().join("cargo-target").as_path(),
     );
-    assert_eq!(released.slot_state, "idle");
+    assert_eq!(
+        released.slot_state, "idle",
+        "a reset failure must not retain the writable-slot lease"
+    );
+
+    let retried = fixture
+        .connector
+        .workspace
+        .prepare(
+            &fixture.connector.context,
+            "wc_task_retry_cancelled_workspace",
+            "wc_run_retry_cancelled_workspace",
+            false,
+        )
+        .expect("the verified managed slot must be reusable by the next task");
+    assert_eq!(retried.execution_root, good_task.execution_root);
+    assert_eq!(
+        fixture
+            .connector
+            .workspace
+            .discard_prepared(&fixture.connector.context.executor_root, &retried,),
+        None
+    );
+    let idle = workspace::WorkspaceManager::resource_status(
+        Path::new(&fixture.connector.context.runs_root),
+        fixture._temp.path().join("cargo-target").as_path(),
+    );
+    assert_eq!(idle.slot_state, "idle");
 }
 
 #[tokio::test]
@@ -3735,16 +3750,99 @@ async fn files_list_rejects_out_of_range_input_without_reaching_the_agent() {
     );
 }
 
+#[tokio::test]
+async fn persisted_legacy_inspect_task_is_observable_but_never_executable() {
+    let fixture = fixture(20).await;
+    fixture
+        .connector
+        .db
+        .conn_for_tests()
+        .execute(
+            "UPDATE wc_tasks SET mode = 'inspect' WHERE id = ?1",
+            [&fixture.task_id],
+        )
+        .unwrap();
+    assert_eq!(task(&fixture).mode, "inspect");
+
+    let listed = fixture.call("task_list", json!({})).await;
+    assert!(listed.ok, "{}", listed.body);
+    let listed_json = serde_json::to_string(&listed.body).unwrap();
+    assert!(listed_json.contains(&fixture.task_id));
+
+    let reviewed = fixture
+        .call(
+            "task_review",
+            json!({ "task_id": fixture.task_id, "include_diff": false }),
+        )
+        .await;
+    assert!(reviewed.ok, "{}", reviewed.body);
+    assert_eq!(reviewed.body["data"]["mode"], "inspect");
+
+    let denied = [
+        (
+            "edits_apply",
+            json!({
+                "task_id": fixture.task_id,
+                "operation_id": "legacy-inspect-edit",
+                "changes": [{
+                    "kind": "create",
+                    "path": "legacy-inspect.txt",
+                    "content": "must not be created"
+                }]
+            }),
+        ),
+        (
+            "commands_run",
+            json!({
+                "task_id": fixture.task_id,
+                "operation_id": "legacy-inspect-command",
+                "command": "echo must-not-run",
+                "timeout_secs": 30
+            }),
+        ),
+        (
+            "checks_run",
+            json!({
+                "task_id": fixture.task_id,
+                "operation_id": "legacy-inspect-check",
+                "checks": ["check"],
+                "timeout_secs": 30
+            }),
+        ),
+        ("task_resume", json!({ "task_id": fixture.task_id })),
+    ];
+    for (capability, arguments) in denied {
+        let outcome = fixture.call(capability, arguments).await;
+        assert!(
+            !outcome.ok,
+            "{capability} unexpectedly succeeded: {}",
+            outcome.body
+        );
+        assert_eq!(outcome.http_status, 409, "{capability}: {}", outcome.body);
+        assert_eq!(
+            outcome.body["error"]["code"], "inspect_mode_retired",
+            "{capability}: {}",
+            outcome.body
+        );
+    }
+
+    assert!(
+        poll(&fixture.registry).await.is_none(),
+        "a persisted inspect task must not dispatch work to the Runner"
+    );
+    assert!(!Path::new(&task(&fixture).execution_root)
+        .join("legacy-inspect.txt")
+        .exists());
+    assert_eq!(task(&fixture).mode, "inspect");
+}
+
 /// A read_only task must refuse commands before any durable trace exists.
 ///
-/// The sandbox route made this conditional on an agent capability, which meant
-/// an agent could re-open unapproved arbitrary shell by advertising a flag. The
-/// denial is now unconditional: a filesystem write filter is one access class,
-/// and read_only promises no consequential execution at all.
+/// read_only promises no consequential command execution regardless of the
+/// Runner's ordinary shell capability.
 #[tokio::test]
-async fn read_only_commands_run_is_denied_even_when_agent_advertises_sandbox() {
+async fn read_only_commands_run_is_denied_even_when_agent_supports_shell() {
     let fixture = fixture(20).await;
-    // The agent claims full sandbox support; it must not matter.
     fixture
         .registry
         .register_with_auth(
@@ -3764,7 +3862,6 @@ async fn read_only_commands_run_is_denied_even_when_agent_advertises_sandbox() {
                 capabilities: Some(crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         shell: true,
-                        sandbox_inspect_commands: true,
                         project_lifecycle: false,
                         project_path_registration: false,
                         internal_posix_script: true,
@@ -3806,190 +3903,6 @@ async fn read_only_commands_run_is_denied_even_when_agent_advertises_sandbox() {
     assert_eq!(outcome.http_status, 403);
     assert_eq!(outcome.body["error"]["code"], "read_only_task");
 }
-
-async fn enable_inspect_sandbox(fixture: &Fixture) {
-    fixture
-        .registry
-        .register_with_auth(
-            ShellClientRegisterRequest {
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: "hosted".into(),
-                agent_instance_id: "instance".into(),
-                display_name: None,
-                owner: Some("owner".into()),
-                hostname: None,
-                host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
-                    ShellClientCapabilities {
-                        shell: true,
-                        file_read: true,
-                        file_write: true,
-                        jobs: true,
-                        async_jobs: true,
-                        async_shell_jobs: true,
-                        structured_validation_argv: true,
-                        sandbox_inspect_commands: true,
-                        project_lifecycle: false,
-                        project_path_registration: false,
-                        internal_posix_script: true,
-                        ..Default::default()
-                    },
-                )),
-                projects: Some(vec![project_summary(
-                    "project",
-                    Path::new(&fixture.connector.context.executor_root),
-                )]),
-                agent_protocol_version: Some("polling-v1".into()),
-                policy: None,
-            },
-            Some(&fixture.owner),
-        )
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-async fn inspect_blocks_structured_edits_but_landlocks_commands_run() {
-    let fixture = fixture(20).await;
-    enable_inspect_sandbox(&fixture).await;
-    let started = fixture
-        .call(
-            "task_start",
-            json!({ "goal": "inspect safely", "mode": "inspect" }),
-        )
-        .await;
-    assert!(started.ok, "{}", started.body);
-    assert_eq!(started.body["data"]["mode"], "inspect");
-    let task_id = started.body["task_id"].as_str().unwrap().to_string();
-
-    let denied = fixture
-        .call(
-            "edits_apply",
-            json!({
-                "task_id": task_id,
-                "operation_id": "inspect-write",
-                "changes": [{
-                    "kind": "create",
-                    "path": "blocked.txt",
-                    "content": "blocked"
-                }]
-            }),
-        )
-        .await;
-    assert_eq!(denied.http_status, 403);
-    assert_eq!(denied.body["error"]["code"], "inspect_task");
-
-    let outcome = fixture
-        .call(
-            "commands_run",
-            json!({
-                "task_id": task_id,
-                "operation_id": "inspect-command",
-                "command": "rg inspect .",
-                "timeout_secs": 30
-            }),
-        )
-        .await;
-    assert!(outcome.ok, "{}", outcome.body);
-    let request = next_request(&fixture.registry).await;
-    assert_eq!(request.kind, "start_job");
-    assert_eq!(
-        request.sandbox.as_deref(),
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE)
-    );
-    update_job(
-        &fixture.registry,
-        request.job_id.as_deref().unwrap(),
-        "completed",
-        None,
-        Some(0),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn inspect_checks_run_uses_the_same_landlock_job_path() {
-    let fixture = fixture(20).await;
-    enable_inspect_sandbox(&fixture).await;
-    let started = fixture
-        .call(
-            "task_start",
-            json!({ "goal": "check safely", "mode": "inspect" }),
-        )
-        .await;
-    let task_id = started.body["task_id"].as_str().unwrap().to_string();
-    let outcome = fixture
-        .call(
-            "checks_run",
-            json!({
-                "task_id": task_id,
-                "operation_id": "inspect-check",
-                "checks": ["check"],
-                "recipe": "rust",
-                "timeout_secs": 30
-            }),
-        )
-        .await;
-    assert!(outcome.ok, "{}", outcome.body);
-    let request = next_request(&fixture.registry).await;
-    assert_eq!(request.kind, "start_validation_job");
-    assert_eq!(
-        request.sandbox.as_deref(),
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE)
-    );
-    update_validation_job(
-        &fixture.registry,
-        request.job_id.as_deref().unwrap(),
-        "completed",
-        None,
-        Some(0),
-        check_progress(1, None, None),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn inspect_fails_closed_before_reservation_when_runner_lacks_landlock() {
-    let fixture = fixture(20).await;
-    let started = fixture
-        .call(
-            "task_start",
-            json!({ "goal": "inspect safely", "mode": "inspect" }),
-        )
-        .await;
-    let task_id = started.body["task_id"].as_str().unwrap().to_string();
-    let outcome = fixture
-        .call(
-            "commands_run",
-            json!({
-                "task_id": task_id,
-                "operation_id": "inspect-unavailable",
-                "command": "git status",
-                "timeout_secs": 30
-            }),
-        )
-        .await;
-    assert_eq!(outcome.http_status, 409);
-    assert_eq!(outcome.body["error"]["code"], "inspect_sandbox_unavailable");
-    assert!(poll(&fixture.registry).await.is_none());
-    let execution = fixture
-        .connector
-        .db
-        .latest_connector_execution(
-            &task_id,
-            &fixture.connector.context.project_id,
-            &super::stable_subject_id(&fixture.owner).unwrap(),
-            Some("inspect-unavailable"),
-        )
-        .unwrap();
-    assert!(execution.is_none());
-}
-
 /// The denial has to happen before anything is created — an approval, a
 /// reservation, or an agent request would each be a durable trace of work that
 /// read_only said would not happen.

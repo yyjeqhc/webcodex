@@ -3061,96 +3061,6 @@ fn structured_script_job_drains_large_output_without_log_observation_and_runs_on
         "structured script Job was redispatched"
     );
 }
-
-#[cfg(target_os = "linux")]
-#[test]
-fn structured_process_and_script_jobs_preserve_the_inspect_sandbox() {
-    if crate::command_sandbox::inspect_sandbox_available().is_err() {
-        return;
-    }
-    let temp = tempfile::tempdir().unwrap();
-    let project = temp.path().join("project");
-    std::fs::create_dir(&project).unwrap();
-    let blocked = project.join("blocked");
-    let touch = if Path::new("/usr/bin/touch").exists() {
-        PathBuf::from("/usr/bin/touch")
-    } else {
-        PathBuf::from("/bin/touch")
-    };
-    let (sink, mut process_rx) = structured_test_sink("structured-agent", "structured-instance");
-    let process_manager = JobManager::new(1);
-    enqueue_structured_process_job(
-        &process_manager,
-        sink,
-        &project,
-        "inspect-structured-process",
-        &touch,
-        vec![blocked.to_string_lossy().into_owned()],
-        None,
-        30,
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE),
-    );
-    let process_updates = collect_job_updates(&mut process_rx, Duration::from_secs(10));
-    let process_final = process_updates.last().unwrap();
-    assert_eq!(
-        process_final.command_execution_state,
-        Some(ShellCommandExecutionState::Completed)
-    );
-    assert_eq!(process_final.status, "failed");
-    assert!(!blocked.exists());
-
-    let script = "set -eu\ntest -f \"$0\"\nprintf proof > \"$TMPDIR/proof\"\nsleep 1\ntest -f \"$0\"\ntest \"$(cat \"$TMPDIR/proof\")\" = proof\n";
-    let context = structured_script_context(
-        &project,
-        shell_protocol::ShellScriptLanguage::Sh,
-        script.len(),
-        0,
-        false,
-    );
-    let (sink, mut script_rx) = structured_test_sink("structured-agent", "structured-instance");
-    let script_manager = JobManager::new(1);
-    script_manager.enqueue(
-        sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
-                allow_cwd_anywhere: true,
-                ..RunnerPolicy::default()
-            },
-            shell: ShellConfig::default(),
-            ssh: SshConfig::default(),
-            projects_dir: temp.path().join("projects.d"),
-            request: serde_json::from_value(json!({
-                "request_id": "request-inspect-structured-script",
-                "client_id": "structured-agent",
-                "kind": "start_script_job",
-                "job_id": "inspect-structured-script",
-                "cwd": project,
-                "command": "",
-                "script": {
-                    "language": "sh",
-                    "script": script,
-                    "args": [],
-                },
-                "timeout_secs": 5,
-                "requested_by": "test",
-                "created_at": chrono::Utc::now().timestamp(),
-                "sandbox": crate::command_sandbox::INSPECT_SANDBOX_MODE,
-                "job_context": context,
-            }))
-            .unwrap(),
-        },
-    );
-    let script_updates = collect_job_updates(&mut script_rx, Duration::from_secs(10));
-    let script_final = script_updates.last().unwrap();
-    assert_eq!(script_final.status, "completed", "{script_final:?}");
-    assert_eq!(
-        script_final.command_execution_state,
-        Some(ShellCommandExecutionState::Completed)
-    );
-    assert!(!project.join("proof").exists());
-}
-
 #[test]
 fn structured_job_snapshot_preserves_post_spawn_outcome_unknown() {
     let manager = JobManager::new(1);
@@ -3202,63 +3112,6 @@ fn structured_job_snapshot_preserves_post_spawn_outcome_unknown() {
     );
     assert!(retained.started_at.is_some());
 }
-
-#[cfg(target_os = "linux")]
-#[test]
-fn inspect_job_manager_path_landlocks_commands_and_descendants() {
-    if crate::command_sandbox::inspect_sandbox_available().is_err() {
-        return;
-    }
-    let temp = tempfile::tempdir().unwrap();
-    let project = temp.path().join("project");
-    std::fs::create_dir(&project).unwrap();
-    let tracked = project.join("tracked.txt");
-    std::fs::write(&tracked, "original\n").unwrap();
-    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-    let sink = RunnerSink::WebSocket {
-        tx,
-        client_id: "inspect-agent".into(),
-        agent_instance_id: "inspect-instance".into(),
-    };
-    let manager = JobManager::new(1);
-    manager.enqueue(
-        sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
-                allow_cwd_anywhere: true,
-                ..RunnerPolicy::default()
-            },
-            shell: ShellConfig::default(),
-            ssh: SshConfig::default(),
-            projects_dir: temp.path().join("projects.d"),
-            request: serde_json::from_value(json!({
-                "request_id": "inspect-job-request",
-                "client_id": "inspect-agent",
-                "kind": "start_job",
-                "job_id": "inspect-job",
-                "cwd": project,
-                "command": "set -eu; cat tracked.txt; printf ok > \"$TMPDIR/proof\"; test \"$(cat \"$TMPDIR/proof\")\" = ok; ! touch created.txt; ! truncate -s 0 tracked.txt; ! sh -c 'printf child > child.txt'",
-                "timeout_secs": 30,
-                "requested_by": "test",
-                "created_at": 1,
-                "sandbox": crate::command_sandbox::INSPECT_SANDBOX_MODE,
-                "job_context": test_job_context(&project, Vec::new())
-            }))
-            .unwrap(),
-        },
-    );
-
-    let updates = collect_job_updates(&mut rx, Duration::from_secs(30));
-    let final_update = updates.last().expect("inspect job should finish");
-    assert!(final_update.finished, "{final_update:?}");
-    assert_eq!(final_update.status, "completed", "{final_update:?}");
-    assert_eq!(final_update.exit_code, Some(0), "{final_update:?}");
-    assert_eq!(std::fs::read_to_string(&tracked).unwrap(), "original\n");
-    assert!(!project.join("created.txt").exists());
-    assert!(!project.join("child.txt").exists());
-}
-
 /// The outcome the executor emits when a step could not be spawned at all.
 ///
 /// This is a modeled result, not a bug — `validation_spawn_failure_is_
@@ -3709,25 +3562,9 @@ fn python_module_probe_reports_tool_unavailable_without_running_recipe() {
         temp.path(),
         &step,
         None,
-        None,
     ));
     assert_eq!(std::fs::read_to_string(&probe_output).unwrap(), "unittest");
     assert!(!temp.path().join("recipe-ran").exists());
-
-    std::fs::remove_file(&probe_output).unwrap();
-    let scratch = crate::command_sandbox::InspectScratch::create().unwrap();
-    assert!(!validation_module_available(
-        &shell,
-        None,
-        temp.path(),
-        &step,
-        Some(&scratch),
-        None,
-    ));
-    assert!(
-        !probe_output.exists(),
-        "the inspect validation probe must not write outside scratch"
-    );
 }
 
 /// Platform-native liveness probe for job descendants, so the tree tests never

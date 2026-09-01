@@ -8,7 +8,6 @@ impl ToolRuntime {
         &self,
         call: ToolCall,
         auth: Option<&AuthContext>,
-        sandbox: Option<&str>,
         ssh_resource: Option<&str>,
     ) -> ToolResult {
         match call {
@@ -28,7 +27,6 @@ impl ToolRuntime {
                     timeout_secs,
                     cwd,
                     Vec::new(),
-                    sandbox.map(str::to_string),
                     auth,
                     purpose,
                     shell,

@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use super::helpers::{
     command_rejected_message, looks_like_command_timeout, project_relative_agent_cwd,
-    project_relative_cwd, resolve_agent_cwd, resolve_local_cwd,
-    run_script_sync_bounded_with_sandbox, LocalRunFailure,
+    project_relative_cwd, resolve_agent_cwd, resolve_local_cwd, run_script_sync_bounded,
+    LocalRunFailure,
 };
 use super::process::{
     add_structured_continuation_facts, classify_process_failure, command_failure_result,
@@ -44,7 +44,7 @@ fn decorate(
 
 impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn run_script_with_contract_in_sandbox(
+    pub(crate) async fn run_script_with_contract_for_resource(
         &self,
         project: String,
         language: ShellScriptLanguage,
@@ -55,7 +55,6 @@ impl ToolRuntime {
         sync_wait_secs: Option<u64>,
         cwd: Option<String>,
         purpose: Option<ExecutionPurpose>,
-        sandbox: Option<&str>,
         ssh_resource: Option<&str>,
         session_id: Option<String>,
         validation_assertion_name: Option<&str>,
@@ -188,7 +187,6 @@ impl ToolRuntime {
                             purpose: Some(declared_purpose.as_str().to_string()),
                             shell: Some(language.as_str().to_string()),
                             visibility: ShellJobVisibility::HiddenUntilHandoff,
-                            sandbox: sandbox.map(str::to_string),
                             structured_execution: Some(StructuredJobExecution::Script(payload)),
                             validation_identity: validation_identity
                                 .as_ref()
@@ -308,7 +306,7 @@ impl ToolRuntime {
             let wait_timeout = timeout;
             let (request_id, receiver) = match self
                 .shell_clients
-                .enqueue_script_with_sandbox(
+                .enqueue_script(
                     client_id,
                     Some(effective_cwd),
                     payload,
@@ -316,7 +314,6 @@ impl ToolRuntime {
                     timeout,
                     wait_timeout,
                     "tool_runtime".to_string(),
-                    sandbox.map(str::to_string),
                 )
                 .await
             {
@@ -490,14 +487,7 @@ impl ToolRuntime {
             };
             let resolved_cwd =
                 project_relative_cwd(&proj, &cwd_path).unwrap_or_else(|_| ".".to_string());
-            let mut result = match run_script_sync_bounded_with_sandbox(
-                payload,
-                stdin,
-                cwd_path,
-                timeout,
-                sandbox.map(str::to_string),
-            )
-            .await
+            let mut result = match run_script_sync_bounded(payload, stdin, cwd_path, timeout).await
             {
                 Ok((exit_code, stdout, stderr, duration_ms)) => {
                     match local_error_state(exit_code, &stderr) {
@@ -505,7 +495,7 @@ impl ToolRuntime {
                             process_tool_failure_result(
                                 command_rejected_message(
                                     &stderr,
-                                    "correct the language, cwd, interpreter availability, or sandbox configuration, then retry.",
+                                    "correct the language, cwd, or interpreter availability, then retry.",
                                 ),
                                 classify_process_failure(&stderr),
                                 ShellCommandExecutionState::NotStarted,

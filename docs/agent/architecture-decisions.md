@@ -25,7 +25,7 @@ Full naming, lifecycle, compatibility, and non-goals:
 | Purpose | Coding-task workflow: start/finish coding task, tool events, validation evidence, handoff |
 | Storage | In-memory ledger with durable JSON-oriented session records (product surface for MCP / runtime tools) |
 | Identity rules | Existing Workflow Session effects require an explicit business `session_id` or authorized wrapper `recording_session_id`; unknown ids fail closed and omission never infers a Session |
-| Mutation policy | `inspect` denies structured writes and Landlocks shell/jobs; `read_only` denies write-like and shell/job-like tools; guard denial before mutation |
+| Mutation policy | `normal` uses ordinary authority/permission rules; `read_only` denies write-like and shell/job-like tools; guard denial before mutation. The pre-0.4 `inspect` Session mode is retired and malformed persisted v2 rows remain row-closed rather than becoming Normal. |
 
 Do **not** change `wc_sess_*` ID format, ledger event shape, or lifecycle
 semantics casually. Session / guard / explicit-targeting work must preserve the
@@ -101,6 +101,14 @@ project switch/restore, read-only-to-write workspace upgrade after scope
 checks, and selective context-fingerprint refresh. This mapping is neither a Workflow
 Session nor an Action Audit Session, and it must not dual-write either ledger.
 Raw transport identifiers are never persisted or exposed as tool fields.
+
+Connector execution mode is intentionally binary: `normal` means writable work
+inside the managed isolated Git worktree, with stable-result handoff and
+host-local human accept/reject; `read_only` means analysis without project
+writes, commands, or checks. Pre-0.4 `inspect` is retired with no alias or
+OS-specific restricted-shell successor. A durable legacy inspect Connector Task
+keeps its historical row for review/reject/diagnosis but fails closed on any
+execution, mutation, continuation upgrade, or accept path.
 
 ### Correlation decision (standing)
 

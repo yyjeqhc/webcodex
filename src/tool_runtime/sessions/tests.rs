@@ -3825,16 +3825,6 @@ fn read_only_guards_block_write_and_shell_classifications() {
         SessionMode::ReadOnly,
         SessionGuards::default(),
     );
-    let inspect = store.start_session_with_guards(
-        None,
-        None,
-        SessionMode::Inspect,
-        SessionGuards {
-            deny_write_tools: false,
-            deny_shell_tools: true,
-        },
-    );
-
     assert!(store
         .guard_denial(&normal.session_id, "write_project_file")
         .is_none());
@@ -3857,16 +3847,6 @@ fn read_only_guards_block_write_and_shell_classifications() {
     assert!(store
         .guard_denial(&read_only.session_id, "read_file")
         .is_none());
-    assert_eq!(
-        store
-            .guard_denial(&inspect.session_id, "write_project_file")
-            .expect("inspect write denied")
-            .guard,
-        "deny_write_tools"
-    );
-    assert!(store
-        .guard_denial(&inspect.session_id, "run_shell")
-        .is_none());
 }
 
 #[test]
@@ -3877,7 +3857,7 @@ fn ledger_round_trip_preserves_session_state_events_and_messages() {
     let session = store.start_session_with_guards(
         Some("proj".to_string()),
         Some("persist".to_string()),
-        SessionMode::Inspect,
+        SessionMode::ReadOnly,
         SessionGuards::default(),
     );
     let start = store
@@ -3907,9 +3887,9 @@ fn ledger_round_trip_preserves_session_state_events_and_messages() {
     let summary = restored.summary(&session.session_id, Some(20)).unwrap();
     assert_eq!(summary.project.as_deref(), Some("proj"));
     assert_eq!(summary.title.as_deref(), Some("persist"));
-    assert_eq!(summary.mode, SessionMode::Inspect);
+    assert_eq!(summary.mode, SessionMode::ReadOnly);
     assert!(summary.guards.deny_write_tools);
-    assert!(!summary.guards.deny_shell_tools);
+    assert!(summary.guards.deny_shell_tools);
     assert_eq!(summary.lifecycle, SessionLifecycle::Active);
     assert_eq!(summary.counts.tool_calls, 1);
     assert_eq!(summary.counts.succeeded, 1);
@@ -3992,6 +3972,35 @@ fn pre_current_ledger_version_is_rejected_without_rewrite() {
         .as_deref()
         .is_some_and(|error| error.contains("unsupported session ledger version 1")));
     assert_eq!(std::fs::read(&ledger_path).unwrap(), before);
+}
+
+#[test]
+fn legacy_inspect_v2_row_is_discarded_without_affecting_valid_rows() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger_path = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger_path.clone());
+    let retired = store.start_session(Some("proj".to_string()), Some("legacy inspect".to_string()));
+    let valid = store.start_session(Some("proj".to_string()), Some("normal".to_string()));
+    store.flush_persistence();
+    drop(store);
+
+    let mut ledger: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+    let retired_record = ledger["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|record| record["session_id"] == retired.session_id)
+        .unwrap();
+    retired_record["mode"] = json!("inspect");
+    std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+
+    let restored = persistent_store(ledger_path);
+    assert_eq!(restored.status().restored_sessions, 1);
+    assert!(restored.summary(&retired.session_id, None).is_none());
+    let valid_summary = restored.summary(&valid.session_id, None).unwrap();
+    assert_eq!(valid_summary.mode, SessionMode::Normal);
+    assert_eq!(restored.status().last_persist_error, None);
 }
 
 #[test]

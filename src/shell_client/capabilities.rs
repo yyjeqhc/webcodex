@@ -36,7 +36,6 @@ pub(crate) enum RunnerFeature {
     DetachedProcessJobs,
     LspReadOnlyNavigation,
     LspCallHierarchy,
-    SandboxInspectCommands,
     ProjectLifecycle,
     ProjectPathRegistration,
     SkillStoreRead,
@@ -60,7 +59,7 @@ pub(crate) enum RunnerFeature {
     ComputerTextInput,
 }
 
-const ALL_RUNNER_FEATURES: [RunnerFeature; 49] = [
+const ALL_RUNNER_FEATURES: [RunnerFeature; 48] = [
     RunnerFeature::Shell,
     RunnerFeature::FileRead,
     RunnerFeature::FileWrite,
@@ -88,7 +87,6 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 49] = [
     RunnerFeature::DetachedProcessJobs,
     RunnerFeature::LspReadOnlyNavigation,
     RunnerFeature::LspCallHierarchy,
-    RunnerFeature::SandboxInspectCommands,
     RunnerFeature::ProjectLifecycle,
     RunnerFeature::ProjectPathRegistration,
     RunnerFeature::SkillStoreRead,
@@ -176,7 +174,6 @@ impl RunnerFeature {
             Self::DetachedProcessJobs => wire::SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS,
             Self::LspReadOnlyNavigation => wire::SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
             Self::LspCallHierarchy => wire::SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-            Self::SandboxInspectCommands => wire::SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
             Self::ProjectLifecycle => wire::SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
             Self::ProjectPathRegistration => {
                 wire::SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION
@@ -258,7 +255,6 @@ impl RunnerFeature {
             wire::SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS => Self::DetachedProcessJobs,
             wire::SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION => Self::LspReadOnlyNavigation,
             wire::SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY => Self::LspCallHierarchy,
-            wire::SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS => Self::SandboxInspectCommands,
             wire::SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE => Self::ProjectLifecycle,
             wire::SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION => {
                 Self::ProjectPathRegistration
@@ -325,7 +321,6 @@ impl RunnerFeature {
             | Self::PersistentShell
             | Self::SshPersistentShell
             | Self::DetachedProcessJobs
-            | Self::SandboxInspectCommands
             | Self::SkillStoreRead
             | Self::SkillStoreManage
             | Self::ComputerObserve
@@ -381,7 +376,6 @@ impl RunnerFeature {
             Self::DetachedProcessJobs => capabilities.detached_process_jobs,
             Self::LspReadOnlyNavigation => capabilities.lsp_read_only_navigation,
             Self::LspCallHierarchy => capabilities.lsp_call_hierarchy,
-            Self::SandboxInspectCommands => capabilities.sandbox_inspect_commands,
             Self::ProjectLifecycle => capabilities.project_lifecycle,
             Self::ProjectPathRegistration => capabilities.project_path_registration,
             Self::SkillStoreRead => capabilities.skill_store_read,

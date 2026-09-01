@@ -101,7 +101,6 @@ pub(crate) fn is_checkpoint_validation_status(value: &str) -> bool {
 pub enum SessionMode {
     #[default]
     Normal,
-    Inspect,
     ReadOnly,
 }
 
@@ -109,7 +108,6 @@ impl SessionMode {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Inspect => "inspect",
             Self::ReadOnly => "read_only",
         }
     }

@@ -262,8 +262,8 @@ Windows owns one direct long-lived `ssh.exe` channel while the remote shell rema
 `sh`/`bash`. No PTY/ConPTY or terminal-control protocol is implied. The process
 manager also has a Server-owned executor branch for a hosting surface
 that supplies a Server-local project, although the current built-in public
-project registry advertises Agent projects only. `inspect` and `read_only`
-Sessions cannot open or execute a persistent shell.
+project registry advertises Agent projects only. `read_only` Sessions cannot
+open or execute a persistent shell. The pre-0.4 `inspect` Session mode is retired.
 
 Local open resolution is explicit `cwd`/`shell`, then the exact Session's
 `default_cwd`/`default_shell`, then the project/Runner defaults. The explicit
@@ -416,8 +416,8 @@ a `finish_coding_task` verdict.
   same attempt boundary; when that boundary was evicted,
   `exploration.complete = false` as well.
 - **Continuation reuse, not execution:** automatic continuation, explicit
-  resume, inspect/read-only to normal mode upgrades, and ledger restoration
-  reuse the prior attempt's workset. Startup returns at most 3 paths in
+  resume, read-only to normal mode upgrades, and ledger restoration reuse the
+  prior attempt's workset. Startup returns at most 3 paths in
   `minimal` and 12 in `standard` (including the core embedded by `full`); full
   continuation feedback returns at most 100 with the real total and
   truncation state. This is a hint for model judgment only: startup never
@@ -808,7 +808,9 @@ renamed without an explicit compatibility migration:
 - Audit event views (without principal attribution fields) and stats aggregates,
   including coverage plus credential-kind/OAuth-client usage summaries
 - Workflow tool fields: `session_id`, `recording_session_id`, session mode
-  values such as `normal` / `inspect` / `read_only`
+  values `normal` / `read_only`. A pre-0.4 persisted v2 row containing
+  `mode = "inspect"` is malformed under the current enum and is discarded
+  row-closed without reinterpreting it as `normal`.
 - Error kinds such as `unknown_session_id`
 
 ### OpenAPI / MCP / runtime tool surface

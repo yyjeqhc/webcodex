@@ -56,14 +56,12 @@ async fn register_script_agent(
     client_id: &str,
     root: &std::path::Path,
     structured_script_payload: bool,
-    sandbox_inspect_commands: bool,
 ) -> String {
     let capabilities = ShellClientCapabilities {
         shell: true,
         structured_validation_argv: true,
         structured_process_argv: true,
         structured_script_payload,
-        sandbox_inspect_commands,
         ..Default::default()
     };
     register_agent_with_projects(
@@ -185,15 +183,9 @@ async fn server_local_compatibility_executes_a_temporary_script_file_directly() 
         ],
     };
     let (exit_code, stdout, stderr, _) =
-        super::super::helpers::run_script_sync_bounded_with_sandbox(
-            payload,
-            None,
-            cwd.path().to_path_buf(),
-            10,
-            None,
-        )
-        .await
-        .unwrap_or_else(|_| panic!("local compatibility script execution should return"));
+        super::super::helpers::run_script_sync_bounded(payload, None, cwd.path().to_path_buf(), 10)
+            .await
+            .unwrap_or_else(|_| panic!("local compatibility script execution should return"));
 
     assert_eq!(exit_code, 0, "{stderr}");
     assert_eq!(stdout, "<temporary-script>\n; touch marker\n");
@@ -214,7 +206,7 @@ async fn server_local_compatibility_executes_a_temporary_script_file_directly() 
 async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_kib() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let project = register_script_agent(&runtime, "script-wire", temp.path(), true, false).await;
+    let project = register_script_agent(&runtime, "script-wire", temp.path(), true).await;
     let mut large_script = "# typed script payload\n".repeat(1_800);
     large_script.push_str("printf 'done\\n'\n");
     assert!(large_script.len() > 32 * 1024);
@@ -702,8 +694,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
 async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_truthful() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let project =
-        register_script_agent(&runtime, "script-lifecycle", temp.path(), true, false).await;
+    let project = register_script_agent(&runtime, "script-lifecycle", temp.path(), true).await;
 
     let nonzero_task = tokio::spawn({
         let runtime = runtime.clone();
@@ -799,14 +790,8 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
         .contains("Do not automatically retry"));
 
     let missing_runtime = test_runtime();
-    let missing_project = register_script_agent(
-        &missing_runtime,
-        "script-interpreter",
-        temp.path(),
-        true,
-        false,
-    )
-    .await;
+    let missing_project =
+        register_script_agent(&missing_runtime, "script-interpreter", temp.path(), true).await;
     let missing_task = tokio::spawn({
         let runtime = missing_runtime.clone();
         async move {
@@ -866,7 +851,7 @@ async fn run_script_session_defaults_and_evidence_are_body_and_stdin_free() {
     std::fs::create_dir_all(&frontend).unwrap();
     let recorder = Arc::new(CapturingActivity::default());
     let runtime = test_runtime().with_activity_recorder(recorder.clone());
-    let project = register_script_agent(&runtime, "script-context", &root, true, false).await;
+    let project = register_script_agent(&runtime, "script-context", &root, true).await;
     let session = runtime
         .sessions
         .start_session_with_options(
@@ -960,16 +945,16 @@ async fn run_script_session_defaults_and_evidence_are_body_and_stdin_free() {
 }
 
 #[tokio::test]
-async fn run_script_ssh_read_only_closed_and_inspect_session_boundaries_fail_closed() {
+async fn run_script_ssh_read_only_and_closed_session_boundaries_fail_closed() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("project");
     std::fs::create_dir_all(&root).unwrap();
     let runtime = test_runtime();
-    let project = register_script_agent(&runtime, "script-guards", &root, true, true).await;
+    let project = register_script_agent(&runtime, "script-guards", &root, true).await;
     let other_root = temp.path().join("other-project");
     std::fs::create_dir_all(&other_root).unwrap();
     let other_project =
-        register_script_agent(&runtime, "script-guards-other", &other_root, true, true).await;
+        register_script_agent(&runtime, "script-guards-other", &other_root, true).await;
 
     let ssh = runtime
         .sessions
@@ -1079,50 +1064,13 @@ async fn run_script_ssh_read_only_closed_and_inspect_session_boundaries_fail_clo
     assert_eq!(closed_result.output["command_started"], false);
     assert_eq!(closed_result.output["command_completed"], false);
     assert_eq!(closed_result.output["failure_kind"], "session_closed");
-
-    let inspect = runtime.sessions.start_session_with_guards(
-        Some(project.clone()),
-        Some("inspect script".to_string()),
-        SessionMode::Inspect,
-        sessions::SessionGuards::default(),
-    );
-    let inspect_task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let session_id = inspect.session_id.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    script_sync_call(project, Some(session_id), ShellScriptLanguage::Sh, "true"),
-                    Some(&auth_context(None, true)),
-                )
-                .await
-        }
-    });
-    let request = wait_for_patch_agent_request(&runtime, "script-guards").await;
-    assert_eq!(
-        request.sandbox.as_deref(),
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE)
-    );
-    complete_script_lifecycle(
-        &runtime,
-        "script-guards",
-        request.request_id,
-        ShellCommandExecutionState::Completed,
-        Some(0),
-        "",
-        "",
-        None,
-    )
-    .await;
-    assert!(inspect_task.await.unwrap().success);
 }
 
 #[tokio::test]
 async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let project = register_script_agent(&runtime, "script-bounds", temp.path(), true, false).await;
+    let project = register_script_agent(&runtime, "script-bounds", temp.path(), true).await;
     let invalid_calls = [
         ToolCall::RunScript {
             project: project.clone(),
@@ -1260,7 +1208,7 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
 async fn model_facing_run_script_session_denials_keep_phase_a_tuple() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let project = register_script_agent(&runtime, "script-kernel", temp.path(), true, false).await;
+    let project = register_script_agent(&runtime, "script-kernel", temp.path(), true).await;
     let read_only = runtime.sessions.start_session_with_guards(
         Some(project.clone()),
         Some("read-only model script".to_string()),

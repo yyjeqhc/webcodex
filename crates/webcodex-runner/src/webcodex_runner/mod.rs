@@ -72,22 +72,16 @@ pub(crate) use projects::{
 pub(crate) use shell::{
     configured_prepared_shell_job_command, configured_shell_job_command,
     configured_validation_job_command, cwd_allowed, prepare_detached_process_launch,
-    resolve_prepared_shell_profile,
-    run_internal_posix_script_with_profiles_in_sandbox_and_execution_state,
-    run_internal_search_script_with_profiles_in_sandbox_and_execution_state,
-    run_process_with_profiles_in_sandbox_and_execution_state,
-    run_process_with_profiles_in_sandbox_and_execution_state_with_start_hook,
-    run_script_with_profiles_in_sandbox_and_execution_state,
-    run_script_with_profiles_in_sandbox_and_execution_state_with_start_hook,
-    run_shell_with_profiles_in_sandbox_and_execution_state, PreparedShellProfile,
-    PreparedShellProfileCache,
+    resolve_prepared_shell_profile, run_internal_posix_script_with_profiles_and_execution_state,
+    run_internal_search_script_with_profiles_and_execution_state,
+    run_process_with_profiles_and_execution_state,
+    run_process_with_profiles_and_execution_state_with_start_hook,
+    run_script_with_profiles_and_execution_state,
+    run_script_with_profiles_and_execution_state_with_start_hook,
+    run_shell_with_profiles_and_execution_state, PreparedShellProfile, PreparedShellProfileCache,
 };
 #[cfg(test)]
 pub(crate) use shell::{run_shell, run_shell_with_profiles};
-// Only the Linux inspect-sandbox smoke test consumes the sandboxed profile
-// runner directly; keep the re-export gated to its consumer.
-#[cfg(all(test, target_os = "linux"))]
-pub(crate) use shell::run_shell_with_profiles_in_sandbox;
 pub(crate) use skill_store::handle_skill_store_request;
 pub(crate) use ssh::{is_transport_failure, run_ssh_shell_with_execution_state, SshConnectionPool};
 #[cfg(test)]

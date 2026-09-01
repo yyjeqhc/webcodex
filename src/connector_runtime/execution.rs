@@ -192,7 +192,6 @@ impl ExecutionService {
         timeout_secs: u64,
         auth: AuthContext,
         validation_steps: Vec<ShellJobValidationStep>,
-        sandbox: Option<String>,
     ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
         let execution = match reservation {
             ConnectorExecutionReservation::Existing(execution) => {
@@ -222,7 +221,6 @@ impl ExecutionService {
                 Some(timeout_secs as i64),
                 cwd,
                 validation_steps,
-                sandbox,
                 Some(&auth),
             )
             .await;

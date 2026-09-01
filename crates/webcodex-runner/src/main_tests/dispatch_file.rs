@@ -213,7 +213,6 @@ fn dispatch_request_edit_routes_to_file_handler() {
         created_at: 0,
         validation: None,
         lsp: None,
-        sandbox: None,
         job_context: None,
         mcp_gateway: None,
         coding_agent: None,

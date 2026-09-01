@@ -292,6 +292,22 @@ task_start
 → task_review
 ```
 
+`task_start` has two execution modes:
+
+- `normal` (default) is writable coding. WebCodex prepares a managed isolated Git
+  worktree outside the target checkout, runs edits/commands/checks there, and
+  `task_finish` captures a stable result. The target checkout changes only after
+  the project owner accepts that result locally. If isolation cannot be prepared
+  or verified, `normal` fails closed; it never falls back to writing the target.
+- `read_only` is analysis only. Reads, search, LSP navigation, and impact analysis
+  remain available; structured writes, commands, and checks are rejected.
+
+The pre-0.4 `inspect` mode is retired. There is no executable alias and no
+OS-specific restricted-shell replacement. Existing durable pre-0.4 inspect tasks
+remain reviewable/rejectable but cannot execute or mutate; start a new `read_only`
+or `normal` task instead. This contract is the same on Linux, macOS, and Windows.
+
+
 - `files_list` answers "what is in this project" from the Git index, so
   ignored directories never appear. Call it before guessing paths.
 - `code_navigate` provides read-only language-server status, document/workspace
@@ -301,13 +317,13 @@ task_start
   `status` takes no extras; document symbols and diagnostics take `path`;
   workspace symbols takes `query`; definition, references, and hover take
   `path` + `line` + `column`. Unsupported fields are rejected. It is available
-  in normal, inspect, and read-only tasks.
+  in normal and read-only tasks.
 - `code_impact` performs one bounded call-hierarchy operation from a
   project-relative source position. It accepts `incoming`, `outgoing`, or
   `both`, breadth-first depth 1 or 2, and a global edge limit of 1..100. It
   returns only normalized project-local roots, edges, and bounded call-site
   ranges; unsupported language servers fail explicitly with no grep or AST
-  fallback. It is available in normal, inspect, and read-only tasks.
+  fallback. It is available in normal and read-only tasks.
 - `edits_apply` is the guarded edit tool; `commands_run` is the bounded escape
   hatch for commands that need a shell.
 - `checks_run` validates. Use a stable `operation_id` so an exact retry reuses

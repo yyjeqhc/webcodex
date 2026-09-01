@@ -68,6 +68,12 @@ not call `listProjects`, `runtime_status`, `tool_manifest`, `start_session`,
 or Agent listing before normal coding, and the prompt must not contain an
 Agent client ID or runtime project ID.
 
+`task_start` accepts only `normal` (default) and `read_only`. `normal` performs
+writable work in a managed isolated Git worktree and fails closed if that
+workspace cannot be prepared; the model never writes the target checkout or
+accepts its own result. `read_only` permits analysis but rejects edits, commands,
+and checks. The pre-0.4 `inspect` mode is retired with no restricted-shell alias.
+
 ## Suggested GPT instructions
 
 ```text

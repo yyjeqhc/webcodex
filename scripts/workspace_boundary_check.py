@@ -20,22 +20,19 @@ REQUIRED_PACKAGES = frozenset(
         "webcodex-cli",
         "webcodex-core",
         "webcodex-runner",
-        "webcodex-sandbox",
         "webcodex-workspace",
     }
 )
 
 FORBIDDEN_DIRECT_DEPENDENCIES = {
-    "webcodex-core": frozenset({"salvo", "rusqlite", "quinn", "landlock"}),
+    "webcodex-core": frozenset({"salvo", "rusqlite", "quinn"}),
     "webcodex-runner": frozenset({"salvo", "rusqlite"}),
     "webcodex-cli": frozenset(
         {
             "salvo",
             "rusqlite",
             "quinn",
-            "landlock",
             "webcodex-runner",
-            "webcodex-sandbox",
             "webcodex-workspace",
         }
     ),

@@ -742,16 +742,12 @@ impl ToolRuntime {
         // Permission is evaluated once inside dispatch (pre-exec gate). Kernel
         // only reuses the attached decision for the outer recording session —
         // never re-evaluate (no second request id / inconsistent outcome).
-        // Do not derive an execution sandbox from the outer recorder. Dispatch
-        // derives inspect sandboxing and execution defaults exclusively from an
-        // explicit concrete business Session id.
         let mut result = self
-            .dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+            .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
                 call,
                 context.auth,
                 context.transport.into(),
                 recorder_metadata.clone(),
-                None,
                 context.window,
                 context.session_id.is_none(),
                 context_request,

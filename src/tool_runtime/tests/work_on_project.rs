@@ -107,12 +107,11 @@ async fn dispatch_recording_startup_requests(
         async move {
             let window = crate::client_window::ClientWindow::for_test(&window_id);
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
+                .dispatch_with_auth_transport_options_and_metadata_with_window(
                     call,
                     auth.as_ref(),
                     crate::tool_runtime::sessions::SessionTransport::Mcp,
                     Default::default(),
-                    None,
                     Some(&window),
                 )
                 .await
@@ -169,12 +168,11 @@ async fn dispatch_startup_without_window(
         let auth = auth.cloned();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
+                .dispatch_with_auth_transport_options_and_metadata_with_window(
                     call,
                     auth.as_ref(),
                     crate::tool_runtime::sessions::SessionTransport::Mcp,
                     Default::default(),
-                    None,
                     None,
                 )
                 .await
@@ -2556,7 +2554,7 @@ async fn start_coding_task_standard_repository_overview_timeout_is_nonblocking()
         async move {
             let window = crate::client_window::ClientWindow::for_test("wop-timeout-window");
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
+                .dispatch_with_auth_transport_options_and_metadata_with_window(
                     start_coding_task_call(
                         &project,
                         "start despite overview timeout",
@@ -2565,7 +2563,6 @@ async fn start_coding_task_standard_repository_overview_timeout_is_nonblocking()
                     Some(&auth),
                     crate::tool_runtime::sessions::SessionTransport::Mcp,
                     Default::default(),
-                    None,
                     Some(&window),
                 )
                 .await
@@ -2665,12 +2662,11 @@ async fn dispatch_start_coding_task_with_overview_stdout(
         async move {
             let window = ClientWindow::for_test("overview-window");
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
+                .dispatch_with_auth_transport_options_and_metadata_with_window(
                     call,
                     auth.as_ref(),
                     SessionTransport::Mcp,
                     Default::default(),
-                    None,
                     Some(&window),
                 )
                 .await

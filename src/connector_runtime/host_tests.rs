@@ -627,6 +627,37 @@ fn interrupted_no_result_reject_is_the_only_identity_exception() {
 }
 
 #[test]
+fn legacy_inspect_interrupted_task_can_be_rejected_but_never_accepted() {
+    let fx = fixture(false);
+    fx.db
+        .conn_for_tests()
+        .execute(
+            "UPDATE wc_tasks SET mode = 'inspect' WHERE id = ?1",
+            [TASK_ID],
+        )
+        .unwrap();
+    fx.db
+        .reconcile_connector_executions(&fx.context.project_id, 4)
+        .unwrap();
+
+    assert_decision_error(
+        fx.decide(None, LocalResultDecision::Accept, 5),
+        "inspect_mode_retired",
+    );
+    let rejected = fx
+        .decide(None, LocalResultDecision::Reject, 6)
+        .expect("legacy inspect cleanup must remain rejectable");
+    assert_eq!(rejected.decision_status, "rejected");
+    let task = fx
+        .db
+        .local_connector_task(TASK_ID, &fx.context.project_id)
+        .unwrap();
+    assert_eq!(task.mode, "inspect");
+    assert_eq!(task.task_status, "rejected");
+    assert_eq!(fs::read_to_string(target(&fx.context)).unwrap(), "before\n");
+}
+
+#[test]
 fn rejected_cleanup_can_be_retried() {
     let fx = fixture(true);
     let lease = Path::new(&fx.context.runs_root).join(".write-slot-01.lease.json");

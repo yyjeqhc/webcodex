@@ -89,7 +89,6 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
         RunnerFeature::PersistentShell,
         RunnerFeature::SshPersistentShell,
         RunnerFeature::DetachedProcessJobs,
-        RunnerFeature::SandboxInspectCommands,
         RunnerFeature::ComputerObserve,
         RunnerFeature::ComputerControl,
         RunnerFeature::ComputerTextInput,
@@ -202,7 +201,6 @@ fn v2_registration_required_features_are_never_inferred_from_generation() {
 
     for feature in [
         RunnerFeature::SshShell,
-        RunnerFeature::SandboxInspectCommands,
         RunnerFeature::ComputerObserve,
         RunnerFeature::ComputerControl,
         RunnerFeature::ComputerTextInput,
@@ -243,7 +241,6 @@ async fn current_protocol_generation_never_infers_registration_required_host_fea
 
     for feature in [
         RunnerFeature::SshShell,
-        RunnerFeature::SandboxInspectCommands,
         RunnerFeature::ComputerObserve,
         RunnerFeature::ComputerControl,
         RunnerFeature::ComputerTextInput,

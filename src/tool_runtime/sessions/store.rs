@@ -946,11 +946,6 @@ impl SessionStore {
             .map(StoredSession::context_revision)
     }
 
-    pub(crate) fn session_mode(&self, session_id: &str) -> Option<SessionMode> {
-        let inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.guard_state(session_id).map(|(mode, _)| mode)
-    }
-
     pub(crate) fn session_project(&self, session_id: &str) -> Option<Option<String>> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.session_project(session_id)
@@ -1118,14 +1113,6 @@ impl SessionStore {
     ) -> Option<SessionGuardDenial> {
         let (mode, guards) = self.guard_state(session_id)?;
         let classification = SessionToolClassification::for_tool(tool_name);
-        if mode == SessionMode::Inspect
-            && matches!(tool_name, "open_session_shell" | "session_shell_exec")
-        {
-            return Some(SessionGuardDenial {
-                mode,
-                guard: "persistent_shell_mode_unsupported",
-            });
-        }
         if guards.deny_write_tools && classification.write_like {
             return Some(SessionGuardDenial {
                 mode,

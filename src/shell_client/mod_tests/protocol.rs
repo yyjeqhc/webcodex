@@ -850,7 +850,6 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 detached_process_jobs: true,
                 lsp_read_only_navigation: true,
                 lsp_call_hierarchy: true,
-                sandbox_inspect_commands: true,
                 project_lifecycle: true,
                 project_path_registration: true,
                 skill_store_read: true,

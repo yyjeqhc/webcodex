@@ -27,8 +27,8 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA, SHELL_CLIENT_CAPABILITY_FILE_READ,
     SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT,
-    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
-    SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
+    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
@@ -395,7 +395,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -455,7 +454,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -529,7 +527,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -622,7 +619,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -711,7 +707,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -799,7 +794,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -879,7 +873,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -915,12 +908,12 @@ impl ShellClientRegistry {
         body: ShellRunRequest,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        self.enqueue_run_with_sandbox(body, requested_by, None)
+        self.enqueue_run_with_ssh(body, requested_by, None, None)
             .await
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn enqueue_process_with_sandbox(
+    pub(crate) async fn enqueue_process(
         &self,
         client_id: String,
         cwd: Option<String>,
@@ -929,7 +922,6 @@ impl ShellClientRegistry {
         timeout_secs: u64,
         wait_timeout_secs: u64,
         requested_by: String,
-        sandbox: Option<String>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_process_request(
             &client_id,
@@ -965,7 +957,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: sandbox.clone(),
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -983,20 +974,6 @@ impl ShellClientRegistry {
                 "capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV}"
             ));
         }
-        if let Some(mode) = sandbox.as_deref() {
-            if mode != crate::command_sandbox::INSPECT_SANDBOX_MODE {
-                return Err(format!("unknown sandbox mode '{mode}'"));
-            }
-            if !client
-                .runner_features
-                .supports(RunnerFeature::SandboxInspectCommands)
-            {
-                return Err(format!(
-                    "{}: agent client {} cannot enforce the inspect sandbox",
-                    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, client_id
-                ));
-            }
-        }
         enqueue_pending_request_locked(
             &mut inner,
             &client_id,
@@ -1010,7 +987,7 @@ impl ShellClientRegistry {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn enqueue_script_with_sandbox(
+    pub(crate) async fn enqueue_script(
         &self,
         client_id: String,
         cwd: Option<String>,
@@ -1019,7 +996,6 @@ impl ShellClientRegistry {
         timeout_secs: u64,
         wait_timeout_secs: u64,
         requested_by: String,
-        sandbox: Option<String>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_script_enqueue_request(
             &client_id,
@@ -1055,7 +1031,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: sandbox.clone(),
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -1072,20 +1047,6 @@ impl ShellClientRegistry {
             return Err(format!(
                 "capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD}"
             ));
-        }
-        if let Some(mode) = sandbox.as_deref() {
-            if mode != crate::command_sandbox::INSPECT_SANDBOX_MODE {
-                return Err(format!("unknown sandbox mode '{mode}'"));
-            }
-            if !client
-                .runner_features
-                .supports(RunnerFeature::SandboxInspectCommands)
-            {
-                return Err(format!(
-                    "{}: agent client {} cannot enforce the inspect sandbox",
-                    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, client_id
-                ));
-            }
         }
         enqueue_pending_request_locked(
             &mut inner,
@@ -1112,7 +1073,6 @@ impl ShellClientRegistry {
         timeout_secs: u64,
         wait_timeout_secs: u64,
         requested_by: String,
-        sandbox: Option<String>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         crate::shell_protocol::validate_raw_shell_wire_command(&script)?;
         let script = ShellScriptPayload {
@@ -1154,7 +1114,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: sandbox.clone(),
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -1172,20 +1131,6 @@ impl ShellClientRegistry {
                 "capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT}"
             ));
         }
-        if let Some(mode) = sandbox.as_deref() {
-            if mode != crate::command_sandbox::INSPECT_SANDBOX_MODE {
-                return Err(format!("unknown sandbox mode '{mode}'"));
-            }
-            if !client
-                .runner_features
-                .supports(RunnerFeature::SandboxInspectCommands)
-            {
-                return Err(format!(
-                    "{}: agent client {} cannot enforce the inspect sandbox",
-                    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, client_id
-                ));
-            }
-        }
         enqueue_pending_request_locked(
             &mut inner,
             &client_id,
@@ -1198,23 +1143,12 @@ impl ShellClientRegistry {
         Ok((request_id, rx))
     }
 
-    pub(crate) async fn enqueue_run_with_sandbox(
-        &self,
-        body: ShellRunRequest,
-        requested_by: String,
-        sandbox: Option<String>,
-    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        self.enqueue_run_with_sandbox_and_ssh(body, requested_by, sandbox, None, None)
-            .await
-    }
-
     /// Internal Session execution context for a named Runner-local SSH
     /// resource. Public shell endpoints do not accept this field directly.
-    pub(crate) async fn enqueue_run_with_sandbox_and_ssh(
+    pub(crate) async fn enqueue_run_with_ssh(
         &self,
         body: ShellRunRequest,
         requested_by: String,
-        sandbox: Option<String>,
         ssh_resource: Option<String>,
         ssh_session_id: Option<String>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
@@ -1268,7 +1202,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: sandbox.clone(),
             job_context: ssh_context,
             mcp_gateway: None,
             coding_agent: None,
@@ -1287,23 +1220,6 @@ impl ShellClientRegistry {
                 return Err(format!(
                     "agent_capability_unavailable: agent client {} does not support ssh_shell",
                     body.client_id
-                ));
-            }
-        }
-        if let Some(mode) = sandbox.as_deref() {
-            if mode != crate::command_sandbox::INSPECT_SANDBOX_MODE {
-                return Err(format!("unknown sandbox mode '{mode}'"));
-            }
-            let Some(client) = inner.clients.get(&body.client_id) else {
-                return Err(format!("unknown shell client: {}", body.client_id));
-            };
-            if !client
-                .runner_features
-                .supports(RunnerFeature::SandboxInspectCommands)
-            {
-                return Err(format!(
-                    "{}: agent client {} cannot enforce the inspect sandbox",
-                    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, body.client_id
                 ));
             }
         }
@@ -1419,7 +1335,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             persistent_shell: None,
             mcp_gateway: None,
@@ -1514,7 +1429,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             persistent_shell: None,
             mcp_gateway: Some(operation),
@@ -1617,7 +1531,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             persistent_shell: None,
             mcp_gateway: None,
@@ -1743,7 +1656,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: job_context.clone(),
             mcp_gateway: None,
             coding_agent: None,
@@ -1850,7 +1762,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -1951,7 +1862,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: None,
-            sandbox: None,
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,
@@ -2032,7 +1942,6 @@ impl ShellClientRegistry {
             created_at: now_ts(),
             validation: None,
             lsp: Some(payload),
-            sandbox: None,
             job_context: None,
             mcp_gateway: None,
             coding_agent: None,

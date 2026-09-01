@@ -614,20 +614,14 @@ fn script_setup_error(action: &str, error: &std::io::Error) -> String {
 
 fn create_temporary_script(
     payload: &ShellScriptPayload,
-    inspect_scratch: Option<&crate::command_sandbox::InspectScratch>,
 ) -> Result<(tempfile::TempPath, PathBuf, PathBuf), String> {
     let mut builder = tempfile::Builder::new();
     builder
         .prefix("webcodex-script-")
         .suffix(payload.language.file_extension());
-    let mut file = match inspect_scratch {
-        Some(scratch) => builder
-            .tempfile_in(scratch.path())
-            .map_err(|error| script_setup_error("create", &error))?,
-        None => builder
-            .tempfile()
-            .map_err(|error| script_setup_error("create", &error))?,
-    };
+    let mut file = builder
+        .tempfile()
+        .map_err(|error| script_setup_error("create", &error))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1750,7 +1744,7 @@ fn restore_utf16_bom(tail: &mut Vec<u8>, total_bytes: usize, little_endian: bool
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state(
+pub(crate) fn run_process_with_profiles_and_execution_state(
     generation: u64,
     policy: &RunnerPolicy,
     shell: &ShellConfig,
@@ -1762,9 +1756,8 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state(
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
 ) -> ShellCommandResult {
-    run_process_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+    run_process_with_profiles_and_execution_state_with_start_hook(
         generation,
         policy,
         shell,
@@ -1776,7 +1769,6 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state(
         stdin,
         timeout_secs,
         stop_requested,
-        sandbox,
         None,
     )
 }
@@ -1841,7 +1833,7 @@ pub(crate) fn prepare_detached_process_launch(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+pub(crate) fn run_process_with_profiles_and_execution_state_with_start_hook(
     generation: u64,
     policy: &RunnerPolicy,
     shell: &ShellConfig,
@@ -1853,7 +1845,6 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state_with_star
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
     on_started: Option<&dyn Fn()>,
 ) -> ShellCommandResult {
     // Structured execution intentionally receives the same policy treatment
@@ -1881,60 +1872,25 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state_with_star
     }
     let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
     let start = Instant::now();
-    let inspect_scratch = match sandbox {
-        None => None,
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
-            match crate::command_sandbox::InspectScratch::create() {
-                Ok(scratch) => Some(scratch),
-                Err(error) => {
-                    return ShellCommandResult::not_started(CommandResult {
-                        exit_code: None,
-                        stdout: None,
-                        stderr: None,
-                        duration_ms: Some(start.elapsed().as_millis() as u64),
-                        error: Some(format!("inspect sandbox unavailable: {error}")),
-                    })
-                }
-            }
-        }
-        Some(other) => {
+    let profile = match resolve_prepared_shell_profile(
+        generation,
+        shell,
+        projects_dir,
+        &cwd_path,
+        cwd.is_some(),
+        cache,
+        stop_requested,
+    ) {
+        Ok(profile) => profile,
+        Err(error) => {
             return ShellCommandResult::not_started(CommandResult {
                 exit_code: None,
                 stdout: None,
                 stderr: None,
                 duration_ms: Some(start.elapsed().as_millis() as u64),
-                error: Some(format!("unknown sandbox mode '{other}'")),
+                error: Some(error),
             })
         }
-    };
-
-    // Preparing a configured profile can execute its Runner-owned init
-    // script. Inspect requests must not do that outside the sandbox, so they
-    // use only the configured base environment. In either case the requested
-    // executable and argv never pass through a shell parser.
-    let profile = if inspect_scratch.is_none() {
-        match resolve_prepared_shell_profile(
-            generation,
-            shell,
-            projects_dir,
-            &cwd_path,
-            cwd.is_some(),
-            cache,
-            stop_requested,
-        ) {
-            Ok(profile) => profile,
-            Err(error) => {
-                return ShellCommandResult::not_started(CommandResult {
-                    exit_code: None,
-                    stdout: None,
-                    stderr: None,
-                    duration_ms: Some(start.elapsed().as_millis() as u64),
-                    error: Some(error),
-                })
-            }
-        }
-    } else {
-        None
     };
     let cmd = match configured_process_command(
         shell,
@@ -1961,7 +1917,6 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state_with_star
         stdin,
         timeout_secs,
         stop_requested,
-        inspect_scratch.as_ref(),
         start,
         "failed to spawn structured process",
         on_started,
@@ -1969,7 +1924,7 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state_with_star
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_internal_search_script_with_profiles_in_sandbox_and_execution_state(
+pub(crate) fn run_internal_search_script_with_profiles_and_execution_state(
     generation: u64,
     policy: &RunnerPolicy,
     shell: &ShellConfig,
@@ -1979,7 +1934,6 @@ pub(crate) fn run_internal_search_script_with_profiles_in_sandbox_and_execution_
     script: &str,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
 ) -> ShellCommandResult {
     run_internal_posix_script_impl(
         generation,
@@ -1991,13 +1945,12 @@ pub(crate) fn run_internal_search_script_with_profiles_in_sandbox_and_execution_
         script,
         timeout_secs,
         stop_requested,
-        sandbox,
         true,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_internal_posix_script_with_profiles_in_sandbox_and_execution_state(
+pub(crate) fn run_internal_posix_script_with_profiles_and_execution_state(
     generation: u64,
     policy: &RunnerPolicy,
     shell: &ShellConfig,
@@ -2007,7 +1960,6 @@ pub(crate) fn run_internal_posix_script_with_profiles_in_sandbox_and_execution_s
     script: &str,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
 ) -> ShellCommandResult {
     run_internal_posix_script_impl(
         generation,
@@ -2019,7 +1971,6 @@ pub(crate) fn run_internal_posix_script_with_profiles_in_sandbox_and_execution_s
         script,
         timeout_secs,
         stop_requested,
-        sandbox,
         false,
     )
 }
@@ -2035,7 +1986,6 @@ fn run_internal_posix_script_impl(
     script: &str,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
     search_compat: bool,
 ) -> ShellCommandResult {
     #[cfg(not(windows))]
@@ -2047,7 +1997,7 @@ fn run_internal_posix_script_impl(
             script: script.to_string(),
             args: Vec::new(),
         };
-        return run_script_with_profiles_in_sandbox_and_execution_state(
+        return run_script_with_profiles_and_execution_state(
             generation,
             policy,
             shell,
@@ -2058,7 +2008,6 @@ fn run_internal_posix_script_impl(
             None,
             timeout_secs,
             stop_requested,
-            sandbox,
         );
     }
 
@@ -2112,55 +2061,25 @@ fn run_internal_posix_script_impl(
         }
         let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
         let start = Instant::now();
-        let inspect_scratch = match sandbox {
-            None => None,
-            Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
-                match crate::command_sandbox::InspectScratch::create() {
-                    Ok(scratch) => Some(scratch),
-                    Err(error) => {
-                        return ShellCommandResult::not_started(CommandResult {
-                            exit_code: None,
-                            stdout: None,
-                            stderr: None,
-                            duration_ms: Some(start.elapsed().as_millis() as u64),
-                            error: Some(format!("inspect sandbox unavailable: {error}")),
-                        })
-                    }
-                }
-            }
-            Some(other) => {
+        let profile = match resolve_prepared_shell_profile(
+            generation,
+            shell,
+            projects_dir,
+            &cwd_path,
+            cwd.is_some(),
+            cache,
+            stop_requested,
+        ) {
+            Ok(profile) => profile,
+            Err(error) => {
                 return ShellCommandResult::not_started(CommandResult {
                     exit_code: None,
                     stdout: None,
                     stderr: None,
                     duration_ms: Some(start.elapsed().as_millis() as u64),
-                    error: Some(format!("unknown sandbox mode '{other}'")),
+                    error: Some(error),
                 })
             }
-        };
-        let profile = if inspect_scratch.is_none() {
-            match resolve_prepared_shell_profile(
-                generation,
-                shell,
-                projects_dir,
-                &cwd_path,
-                cwd.is_some(),
-                cache,
-                stop_requested,
-            ) {
-                Ok(profile) => profile,
-                Err(error) => {
-                    return ShellCommandResult::not_started(CommandResult {
-                        exit_code: None,
-                        stdout: None,
-                        stderr: None,
-                        duration_ms: Some(start.elapsed().as_millis() as u64),
-                        error: Some(error),
-                    })
-                }
-            }
-        } else {
-            None
         };
         let interpreter =
             match resolve_windows_internal_posix_interpreter(shell, profile.as_deref()) {
@@ -2216,7 +2135,6 @@ fn run_internal_posix_script_impl(
             Some(&script),
             timeout_secs,
             stop_requested,
-            inspect_scratch.as_ref(),
             start,
             spawn_error,
             None,
@@ -2225,7 +2143,7 @@ fn run_internal_posix_script_impl(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state(
+pub(crate) fn run_script_with_profiles_and_execution_state(
     generation: u64,
     policy: &RunnerPolicy,
     shell: &ShellConfig,
@@ -2236,9 +2154,8 @@ pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state(
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
 ) -> ShellCommandResult {
-    run_script_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+    run_script_with_profiles_and_execution_state_with_start_hook(
         generation,
         policy,
         shell,
@@ -2249,13 +2166,12 @@ pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state(
         stdin,
         timeout_secs,
         stop_requested,
-        sandbox,
         None,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+pub(crate) fn run_script_with_profiles_and_execution_state_with_start_hook(
     generation: u64,
     policy: &RunnerPolicy,
     shell: &ShellConfig,
@@ -2266,7 +2182,6 @@ pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state_with_start
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
     on_started: Option<&dyn Fn()>,
 ) -> ShellCommandResult {
     // Typed script execution is consequential and receives the same Runner
@@ -2294,59 +2209,25 @@ pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state_with_start
     }
     let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
     let start = Instant::now();
-    let inspect_scratch = match sandbox {
-        None => None,
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
-            match crate::command_sandbox::InspectScratch::create() {
-                Ok(scratch) => Some(scratch),
-                Err(error) => {
-                    return ShellCommandResult::not_started(CommandResult {
-                        exit_code: None,
-                        stdout: None,
-                        stderr: None,
-                        duration_ms: Some(start.elapsed().as_millis() as u64),
-                        error: Some(format!("inspect sandbox unavailable: {error}")),
-                    })
-                }
-            }
-        }
-        Some(other) => {
+    let profile = match resolve_prepared_shell_profile(
+        generation,
+        shell,
+        projects_dir,
+        &cwd_path,
+        cwd.is_some(),
+        cache,
+        stop_requested,
+    ) {
+        Ok(profile) => profile,
+        Err(error) => {
             return ShellCommandResult::not_started(CommandResult {
                 exit_code: None,
                 stdout: None,
                 stderr: None,
                 duration_ms: Some(start.elapsed().as_millis() as u64),
-                error: Some(format!("unknown sandbox mode '{other}'")),
+                error: Some(error),
             })
         }
-    };
-
-    // Inspect mode cannot execute profile preparation outside Landlock. It
-    // uses the base configured environment and places the script itself in
-    // the same sandbox-visible private scratch that remains writable.
-    let profile = if inspect_scratch.is_none() {
-        match resolve_prepared_shell_profile(
-            generation,
-            shell,
-            projects_dir,
-            &cwd_path,
-            cwd.is_some(),
-            cache,
-            stop_requested,
-        ) {
-            Ok(profile) => profile,
-            Err(error) => {
-                return ShellCommandResult::not_started(CommandResult {
-                    exit_code: None,
-                    stdout: None,
-                    stderr: None,
-                    duration_ms: Some(start.elapsed().as_millis() as u64),
-                    error: Some(error),
-                })
-            }
-        }
-    } else {
-        None
     };
     // Resolve the semantic interpreter before creating the payload file. A
     // missing interpreter is therefore a definite pre-start rejection with
@@ -2364,19 +2245,18 @@ pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state_with_start
                 })
             }
         };
-    let (temporary_path, original_path, absolute_path) =
-        match create_temporary_script(payload, inspect_scratch.as_ref()) {
-            Ok(temporary) => temporary,
-            Err(error) => {
-                return ShellCommandResult::not_started(CommandResult {
-                    exit_code: None,
-                    stdout: None,
-                    stderr: None,
-                    duration_ms: Some(start.elapsed().as_millis() as u64),
-                    error: Some(error),
-                })
-            }
-        };
+    let (temporary_path, original_path, absolute_path) = match create_temporary_script(payload) {
+        Ok(temporary) => temporary,
+        Err(error) => {
+            return ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(error),
+            })
+        }
+    };
     let mut command =
         build_script_command(interpreter, payload.language, &absolute_path, &payload.args);
     match profile.as_deref() {
@@ -2400,7 +2280,6 @@ pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state_with_start
         stdin,
         timeout_secs,
         stop_requested,
-        inspect_scratch.as_ref(),
         start,
         "failed to spawn script interpreter",
         on_started,
@@ -2439,12 +2318,12 @@ pub(crate) fn run_shell(
         stdin,
         timeout_secs,
         stop_requested,
-        None,
     )
     .result
 }
 
 #[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_shell_with_profiles(
     generation: u64,
     policy: &RunnerPolicy,
@@ -2457,7 +2336,7 @@ pub(crate) fn run_shell_with_profiles(
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
 ) -> CommandResult {
-    run_shell_with_profiles_in_sandbox(
+    run_shell_with_profiles_and_execution_state(
         generation,
         policy,
         shell,
@@ -2468,43 +2347,12 @@ pub(crate) fn run_shell_with_profiles(
         stdin,
         timeout_secs,
         stop_requested,
-        None,
-    )
-}
-
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_shell_with_profiles_in_sandbox(
-    generation: u64,
-    policy: &RunnerPolicy,
-    shell: &ShellConfig,
-    projects_dir: &Path,
-    cache: &PreparedShellProfileCache,
-    cwd: Option<&str>,
-    command: &str,
-    stdin: Option<&str>,
-    timeout_secs: u64,
-    stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
-) -> CommandResult {
-    run_shell_with_profiles_in_sandbox_and_execution_state(
-        generation,
-        policy,
-        shell,
-        projects_dir,
-        cache,
-        cwd,
-        command,
-        stdin,
-        timeout_secs,
-        stop_requested,
-        sandbox,
     )
     .result
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_shell_with_profiles_in_sandbox_and_execution_state(
+pub(crate) fn run_shell_with_profiles_and_execution_state(
     generation: u64,
     policy: &RunnerPolicy,
     shell: &ShellConfig,
@@ -2515,7 +2363,6 @@ pub(crate) fn run_shell_with_profiles_in_sandbox_and_execution_state(
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
 ) -> ShellCommandResult {
     run_shell_impl(
         policy,
@@ -2526,7 +2373,6 @@ pub(crate) fn run_shell_with_profiles_in_sandbox_and_execution_state(
         stdin,
         timeout_secs,
         stop_requested,
-        sandbox,
     )
 }
 
@@ -2539,7 +2385,6 @@ fn run_shell_impl(
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
 ) -> ShellCommandResult {
     if !policy.allow_raw_shell {
         return ShellCommandResult::not_started(CommandResult {
@@ -2564,77 +2409,37 @@ fn run_shell_impl(
     }
     let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
     let start = Instant::now();
-    let inspect_scratch = match sandbox {
-        None => None,
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
-            match crate::command_sandbox::InspectScratch::create() {
-                Ok(scratch) => Some(scratch),
-                Err(error) => {
+    let mut prepared_profile_name = None;
+    let cmd = match profiles {
+        Some((generation, projects_dir, cache)) => match resolve_prepared_shell_profile(
+            generation,
+            shell,
+            projects_dir,
+            &cwd_path,
+            cwd.is_some(),
+            cache,
+            stop_requested,
+        ) {
+            Ok(Some(profile)) => match configured_prepared_shell_command(&profile, command) {
+                Ok(cmd) => {
+                    prepared_profile_name = Some(profile.profile_name.clone());
+                    cmd
+                }
+                Err(e) => {
                     return ShellCommandResult::not_started(CommandResult {
                         exit_code: None,
                         stdout: None,
                         stderr: None,
                         duration_ms: Some(start.elapsed().as_millis() as u64),
-                        error: Some(format!("inspect sandbox unavailable: {error}")),
+                        error: Some(format!(
+                            "failed to configure shell profile '{}': {}",
+                            profile.profile_name, e
+                        )),
                     })
                 }
-            }
-        }
-        Some(other) => {
-            return ShellCommandResult::not_started(CommandResult {
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                duration_ms: Some(start.elapsed().as_millis() as u64),
-                error: Some(format!("unknown sandbox mode '{other}'")),
-            })
-        }
-    };
-    let mut prepared_profile_name = None;
-    // Preparing a profile executes its init script. In inspect mode that
-    // preparation must not happen outside Landlock, so use the base configured
-    // shell and run its optional init script as part of the sandboxed command.
-    let cmd = match profiles.filter(|_| inspect_scratch.is_none()) {
-        Some((generation, projects_dir, cache)) => {
-            match resolve_prepared_shell_profile(
-                generation,
-                shell,
-                projects_dir,
-                &cwd_path,
-                cwd.is_some(),
-                cache,
-                stop_requested,
-            ) {
-                Ok(Some(profile)) => match configured_prepared_shell_command(&profile, command) {
-                    Ok(cmd) => {
-                        prepared_profile_name = Some(profile.profile_name.clone());
-                        cmd
-                    }
-                    Err(e) => {
-                        return ShellCommandResult::not_started(CommandResult {
-                            exit_code: None,
-                            stdout: None,
-                            stderr: None,
-                            duration_ms: Some(start.elapsed().as_millis() as u64),
-                            error: Some(format!(
-                                "failed to configure shell profile '{}': {}",
-                                profile.profile_name, e
-                            )),
-                        });
-                    }
-                },
-                Ok(None) => match configured_shell_command(shell, command) {
-                    Ok(cmd) => cmd,
-                    Err(e) => {
-                        return ShellCommandResult::not_started(CommandResult {
-                            exit_code: None,
-                            stdout: None,
-                            stderr: None,
-                            duration_ms: Some(start.elapsed().as_millis() as u64),
-                            error: Some(e),
-                        });
-                    }
-                },
+            },
+            Ok(None) => match configured_shell_command(shell, command) {
+                Ok(cmd) => cmd,
                 Err(e) => {
                     return ShellCommandResult::not_started(CommandResult {
                         exit_code: None,
@@ -2642,10 +2447,19 @@ fn run_shell_impl(
                         stderr: None,
                         duration_ms: Some(start.elapsed().as_millis() as u64),
                         error: Some(e),
-                    });
+                    })
                 }
+            },
+            Err(e) => {
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(e),
+                })
             }
-        }
+        },
         None => match configured_shell_command(shell, command) {
             Ok(cmd) => cmd,
             Err(e) => {
@@ -2655,7 +2469,7 @@ fn run_shell_impl(
                     stderr: None,
                     duration_ms: Some(start.elapsed().as_millis() as u64),
                     error: Some(e),
-                });
+                })
             }
         },
     };
@@ -2670,7 +2484,6 @@ fn run_shell_impl(
         stdin,
         timeout_secs,
         stop_requested,
-        inspect_scratch.as_ref(),
         start,
         &spawn_error_prefix,
         None,
@@ -2685,7 +2498,6 @@ fn execute_configured_command(
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    inspect_scratch: Option<&crate::command_sandbox::InspectScratch>,
     start: Instant,
     spawn_error_prefix: &str,
     on_started: Option<&dyn Fn()>,
@@ -2695,17 +2507,6 @@ fn execute_configured_command(
         .stderr(Stdio::piped());
     if stdin.is_some() {
         cmd.stdin(Stdio::piped());
-    }
-    if let Some(scratch) = inspect_scratch {
-        if let Err(error) = crate::command_sandbox::sandbox_command_inspect(&mut cmd, scratch) {
-            return ShellCommandResult::not_started(CommandResult {
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                duration_ms: Some(start.elapsed().as_millis() as u64),
-                error: Some(format!("inspect sandbox unavailable: {error}")),
-            });
-        }
     }
     // ManagedChild owns the whole process tree: a private process group on
     // Unix, a kill-on-close Job Object on Windows. `child_mut()` below only

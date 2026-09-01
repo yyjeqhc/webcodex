@@ -2503,19 +2503,6 @@ async fn terminal_validation_result_fields_are_consistent_between_executors() {
     assert_eq!(result.output["execution_state"], "completed");
     assert_eq!(result.output["passed"], true);
 }
-
-#[test]
-fn local_inspect_validation_stays_on_synchronous_sandbox_path() {
-    assert!(!super::super::cargo::local_validation_should_handoff(
-        180,
-        90,
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE),
-    ));
-    assert!(super::super::cargo::local_validation_should_handoff(
-        180, 90, None,
-    ));
-}
-
 #[cfg(unix)]
 #[tokio::test]
 async fn local_fast_fmt_check_returns_terminal_without_public_job() {

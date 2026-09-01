@@ -440,7 +440,6 @@ pub(crate) struct ShellJobStartMetadata {
     pub(crate) validation_steps: Vec<ShellJobValidationStep>,
     pub(crate) validation: Option<ShellJobValidationMetadata>,
     pub(crate) visibility: ShellJobVisibility,
-    pub(crate) sandbox: Option<String>,
     pub(crate) validation_identity: Option<String>,
     pub(crate) validation_tool: Option<String>,
     pub(crate) assertion_name: Option<String>,
@@ -601,7 +600,6 @@ impl ShellClientRegistry {
         }) {
             return Err("ssh_resource_invalid: resource name is invalid".to_string());
         }
-        let sandbox = metadata.sandbox;
         let validation_steps = metadata.validation_steps;
         let validation = metadata.validation;
         let validation_identity = metadata.validation_identity.clone();
@@ -851,7 +849,6 @@ impl ShellClientRegistry {
             created_at,
             validation: None,
             lsp: None,
-            sandbox,
             job_context: Some(job_context),
             mcp_gateway: None,
             coding_agent: None,
@@ -905,21 +902,6 @@ impl ShellClientRegistry {
                 "agent_capability_unavailable: agent client {} does not support ssh_shell",
                 client_id
             ));
-        }
-        if let Some(mode) = request.sandbox.as_deref() {
-            if mode != crate::command_sandbox::INSPECT_SANDBOX_MODE {
-                return Err(format!("unknown sandbox mode '{mode}'"));
-            }
-            if !client
-                .runner_features
-                .supports(RunnerFeature::SandboxInspectCommands)
-            {
-                return Err(format!(
-                    "{}: agent client {} cannot enforce the inspect sandbox",
-                    crate::shell_protocol::SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
-                    client_id
-                ));
-            }
         }
         if !validation_steps.is_empty()
             && !client
@@ -1270,7 +1252,6 @@ impl ShellClientRegistry {
                 created_at: now_ts(),
                 validation: None,
                 lsp: None,
-                sandbox: None,
                 job_context: None,
                 mcp_gateway: None,
                 coding_agent: None,
@@ -1807,8 +1788,7 @@ impl ShellClientRegistry {
                     created_at: now_ts(),
                     validation: None,
                     lsp: None,
-                    sandbox: None,
-                    job_context: None,
+                        job_context: None,
                     mcp_gateway: None,
                     coding_agent: None,
                     persistent_shell: None,

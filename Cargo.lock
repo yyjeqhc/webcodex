@@ -2077,17 +2077,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
-name = "landlock"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa9b598524037d06d8466ec364866121281a2398c343ae8640b28bbe7be50cdb"
-dependencies = [
- "enumflags2",
- "libc",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5150,7 +5139,6 @@ dependencies = [
  "webcodex-core",
  "webcodex-persistent-shell",
  "webcodex-runner-config",
- "webcodex-sandbox",
  "webcodex-workspace",
  "windows-sys 0.61.2",
  "zip",
@@ -5275,7 +5263,6 @@ dependencies = [
  "webcodex-persistent-shell",
  "webcodex-process",
  "webcodex-runner-config",
- "webcodex-sandbox",
  "webcodex-workspace",
  "webpki-roots 0.26.11",
  "windows-sys 0.61.2",
@@ -5290,16 +5277,6 @@ dependencies = [
  "serde",
  "toml 0.8.23",
  "webcodex-core",
-]
-
-[[package]]
-name = "webcodex-sandbox"
-version = "0.3.9"
-dependencies = [
- "landlock",
- "tempfile",
- "tracing",
- "uuid",
 ]
 
 [[package]]

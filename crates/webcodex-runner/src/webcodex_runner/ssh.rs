@@ -683,7 +683,6 @@ pub(crate) fn run_ssh_shell(
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
 ) -> CommandResult {
     run_ssh_shell_with_execution_state(
         pool,
@@ -697,7 +696,6 @@ pub(crate) fn run_ssh_shell(
         stdin,
         timeout_secs,
         stop_requested,
-        sandbox,
     )
     .result
 }
@@ -715,19 +713,12 @@ pub(crate) fn run_ssh_shell_with_execution_state(
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    sandbox: Option<&str>,
 ) -> ShellCommandResult {
     let start = Instant::now();
     if !policy.allow_raw_shell {
         return ShellCommandResult::not_started(command_error(
             start,
             "raw shell is disabled by local Runner policy".to_string(),
-        ));
-    }
-    if sandbox.is_some() {
-        return ShellCommandResult::not_started(command_error(
-            start,
-            "ssh_sandbox_unavailable: SSH resources cannot run in the local inspect sandbox; command was not started".to_string(),
         ));
     }
     let prepared =
@@ -1669,7 +1660,6 @@ mod tests {
             None,
             10,
             None,
-            None,
         )
     }
 
@@ -2131,7 +2121,6 @@ mod tests {
             "printf new-generation",
             None,
             10,
-            None,
             None,
         );
         assert_eq!(next.exit_code, Some(0), "{next:?}");

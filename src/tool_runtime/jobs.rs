@@ -7,8 +7,8 @@ use super::helpers::{
     resolve_local_cwd, shell_escape_simple, validate_raw_shell_command_length, MAX_LOCAL_LOG_LINES,
 };
 use super::local_jobs::{
-    retain_inspect_job_until_terminal, LocalJobKiller, LocalJobLogSnapshot, LocalJobRecord,
-    TerminateOutcome, ACTIVE_JOB_STATUSES, ACTIVE_LOCAL_STATUSES,
+    LocalJobKiller, LocalJobLogSnapshot, LocalJobRecord, TerminateOutcome, ACTIVE_JOB_STATUSES,
+    ACTIVE_LOCAL_STATUSES,
 };
 use super::tool_result::{RecoveryKind, RecoveryTool, ToolResult};
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
@@ -1356,7 +1356,6 @@ impl ToolRuntime {
         timeout_secs: Option<i64>,
         cwd: Option<String>,
         validation_steps: Vec<ShellJobValidationStep>,
-        sandbox: Option<String>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         self.run_job_for_auth_with_contract(
@@ -1366,7 +1365,6 @@ impl ToolRuntime {
             timeout_secs,
             cwd,
             validation_steps,
-            sandbox,
             auth,
             None,
             None,
@@ -1383,7 +1381,6 @@ impl ToolRuntime {
         timeout_secs: Option<i64>,
         cwd: Option<String>,
         validation_steps: Vec<ShellJobValidationStep>,
-        sandbox: Option<String>,
         auth: Option<&AuthContext>,
         purpose: Option<ExecutionPurpose>,
         shell: Option<ExecutionShell>,
@@ -1395,7 +1392,6 @@ impl ToolRuntime {
             timeout_secs,
             cwd,
             validation_steps,
-            sandbox,
             auth,
             purpose,
             shell,
@@ -1413,7 +1409,6 @@ impl ToolRuntime {
         timeout_secs: Option<i64>,
         cwd: Option<String>,
         validation_steps: Vec<ShellJobValidationStep>,
-        sandbox: Option<String>,
         auth: Option<&AuthContext>,
         purpose: Option<ExecutionPurpose>,
         shell: Option<ExecutionShell>,
@@ -1540,7 +1535,6 @@ impl ToolRuntime {
                         validation_steps,
                         validation: None,
                         visibility: crate::shell_client::ShellJobVisibility::Public,
-                        sandbox,
                         validation_identity: None,
                         validation_tool: None,
                         assertion_name: None,
@@ -1602,22 +1596,7 @@ impl ToolRuntime {
             // when omitted; explicit sh/bash selects the requested language.
             let actual_shell = shell.map(ExecutionShell::as_str).unwrap_or("bash");
             let job_id = uuid::Uuid::new_v4().to_string();
-            let inspect_scratch = match sandbox.as_deref() {
-                None => None,
-                Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
-                    match crate::command_sandbox::InspectScratch::create() {
-                        Ok(scratch) => Some(scratch),
-                        Err(error) => {
-                            return ToolResult::err(format!("inspect sandbox unavailable: {error}"))
-                        }
-                    }
-                }
-                Some(other) => return ToolResult::err(format!("unknown sandbox mode '{other}'")),
-            };
-            let dir = inspect_scratch
-                .as_ref()
-                .map(|scratch| scratch.path().join("job"))
-                .unwrap_or_else(|| root.join(format!(".codex/jobs/{}", job_id)));
+            let dir = root.join(format!(".codex/jobs/{}", job_id));
             if let Err(e) = std::fs::create_dir_all(&dir) {
                 return ToolResult::err(format!("Failed to create job dir: {}", e));
             }
@@ -1668,7 +1647,6 @@ impl ToolRuntime {
                 Ok(token) => token,
                 Err(error) => return ToolResult::err(error),
             };
-            let terminal_snapshot = record.terminal_snapshot_handle();
             let dir_s = dir.to_string_lossy().to_string();
             let wrapper = format!(
                 "{1} {0}/command.sh > {0}/stdout.log 2> {0}/stderr.log; code=$?; echo $code > {0}/exit_code; finished=$(date +%s); echo $finished > {0}/finished_at; if [ $code -eq 0 ]; then echo completed > {0}/status; else echo failed > {0}/status; fi",
@@ -1684,13 +1662,6 @@ impl ToolRuntime {
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null());
-            if let Some(scratch) = inspect_scratch.as_ref() {
-                if let Err(error) =
-                    crate::command_sandbox::sandbox_command_inspect(&mut job_command, scratch)
-                {
-                    return ToolResult::err(format!("inspect sandbox unavailable: {error}"));
-                }
-            }
             match job_command.spawn() {
                 Ok(child) => {
                     // `setsid` makes the child a session + process-group
@@ -1717,9 +1688,6 @@ impl ToolRuntime {
                         );
                     }
                     self.local_jobs.lock().await.insert(job_id.clone(), record);
-                    if let Some(scratch) = inspect_scratch {
-                        retain_inspect_job_until_terminal(dir, terminal_snapshot, scratch, child);
-                    }
                     ToolResult::ok(json!({
                         "job_id": job_id,
                         "kind": "shell",

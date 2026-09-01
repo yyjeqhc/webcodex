@@ -298,24 +298,6 @@ pub(crate) fn readiness_with_probe(
         ));
     }
     findings.push(gitignore_hygiene_fact(&options.root));
-    // Report whether this host can enforce inspect command writes. read_only
-    // remains shell-free regardless of this result.
-    findings.push(match crate::command_sandbox::inspect_sandbox_available() {
-        Ok(()) => ReadinessFact::pass(
-            "Command sandbox",
-            "inspect_command_sandbox_available",
-            "Linux Landlock ABI v3 inspect write sandbox is available. inspect commands may \
-                 write only to private scratch; read_only tasks still refuse commands.",
-        ),
-        Err(reason) => ReadinessFact::pass(
-            "Command sandbox",
-            "inspect_command_sandbox_unavailable",
-            format!(
-                "The inspect command sandbox is unavailable on this host ({reason}). inspect \
-                     command execution will fail closed; read_only tasks still refuse commands."
-            ),
-        ),
-    });
     let ready = local_complete
         && connection == "connected"
         && runner_status == "online"

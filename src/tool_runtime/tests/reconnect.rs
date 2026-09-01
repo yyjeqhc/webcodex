@@ -877,12 +877,11 @@ async fn dispatch_start_coding_task_in_window_with_transport(
         async move {
             let window = ClientWindow::for_test(&window_id);
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_sandbox(
+                .dispatch_with_auth_transport_options_and_metadata_with_window(
                     call,
                     auth.as_ref(),
                     transport,
                     Default::default(),
-                    None,
                     Some(&window),
                 )
                 .await
@@ -1111,7 +1110,7 @@ async fn failed_project_start_does_not_create_or_mutate_workflow_session() {
 }
 
 #[tokio::test]
-async fn start_coding_task_mode_upgrade_is_atomic_and_permission_checked() {
+async fn start_coding_task_read_only_upgrade_is_atomic_and_permission_checked() {
     let dir = tempfile::tempdir().unwrap();
     init_git_repo(dir.path());
     commit_file(
@@ -1151,16 +1150,16 @@ async fn start_coding_task_mode_upgrade_is_atomic_and_permission_checked() {
         &read_auth,
     )
     .await;
-    let inspected = dispatch_start_coding_task_in_window(
+    let read_only_started = dispatch_start_coding_task_in_window(
         &runtime,
         "oauth-client",
-        coding_start_call(&project, "inspect first", SessionMode::Inspect),
+        coding_start_call(&project, "read only first", SessionMode::ReadOnly),
         Some(&read_auth),
         "upgrade-window",
     )
     .await;
-    assert!(inspected.success, "{:?}", inspected.error);
-    let session_id = inspected.output["session"]["session_id"]
+    assert!(read_only_started.success, "{:?}", read_only_started.error);
+    let session_id = read_only_started.output["session"]["session_id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -1195,9 +1194,9 @@ async fn start_coding_task_mode_upgrade_is_atomic_and_permission_checked() {
         "session_capability_upgrade_denied"
     );
     let unchanged = runtime.sessions.summary(&session_id, Some(20)).unwrap();
-    assert_eq!(unchanged.mode, SessionMode::Inspect);
+    assert_eq!(unchanged.mode, SessionMode::ReadOnly);
     assert!(unchanged.guards.deny_write_tools);
-    assert!(!unchanged.guards.deny_shell_tools);
+    assert!(unchanged.guards.deny_shell_tools);
     assert_eq!(
         unchanged
             .events
@@ -1241,7 +1240,7 @@ async fn start_coding_task_mode_upgrade_is_atomic_and_permission_checked() {
         .rev()
         .find(|event| event.kind == "task_instruction")
         .unwrap();
-    assert_eq!(transition.previous_mode.as_deref(), Some("inspect"));
+    assert_eq!(transition.previous_mode.as_deref(), Some("read_only"));
     assert_eq!(transition.requested_mode.as_deref(), Some("normal"));
     assert_eq!(transition.capability_changed, Some(true));
     assert_eq!(

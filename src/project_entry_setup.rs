@@ -4,6 +4,7 @@ use super::{
     runner_runtime_available, LocalTaskState, ProductError, ProjectCommandOptions, ReadinessFact,
     SetupReport,
 };
+use crate::connector_runtime::workspace::{WorkspaceManager, WritableWorkspaceReadinessStatus};
 use crate::runner_config::{
     generated_runner_config_toml, RunnerInitOptions, DEFAULT_POLL_INTERVAL_MS, TRANSPORT_WEBSOCKET,
 };
@@ -473,6 +474,36 @@ fn configured_readiness(config: ProjectConfig, paths: ProjectPaths) -> LocalRead
     .into_iter()
     .map(|(name, code, summary)| ReadinessFact::pass(name, code, summary))
     .collect::<Vec<_>>();
+    let writable_workspace = WorkspaceManager::writable_readiness(
+        &config.root,
+        &paths.runs,
+        &paths.results,
+        &paths.projects,
+    );
+    findings.push(match writable_workspace.status {
+        WritableWorkspaceReadinessStatus::Uninitialized
+        | WritableWorkspaceReadinessStatus::Reusable => ReadinessFact::pass(
+            "Writable workspace",
+            writable_workspace.reason_code,
+            writable_workspace.summary,
+        ),
+        WritableWorkspaceReadinessStatus::Occupied => ReadinessFact::warn(
+            "Writable workspace",
+            writable_workspace.reason_code,
+            writable_workspace.summary,
+            writable_workspace.next_action.unwrap_or(
+                "Finish, resume, or reject the current writable task before starting another normal task.",
+            ),
+        ),
+        WritableWorkspaceReadinessStatus::NotReady => ReadinessFact::fail(
+            "Writable workspace",
+            writable_workspace.reason_code,
+            writable_workspace.summary,
+            writable_workspace.next_action.unwrap_or(
+                "Resolve the Git/private-state issue before starting a normal task.",
+            ),
+        ),
+    });
     if runner_runtime_available() {
         findings.push(ReadinessFact::pass(
             "Runner runtime",

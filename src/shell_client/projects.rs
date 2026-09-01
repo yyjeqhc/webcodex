@@ -66,8 +66,7 @@ impl ShellClientRegistry {
     /// `structured_go_test_tool`,
     /// `structured_process_argv`, `structured_script_payload`,
     /// `internal_posix_script`, `structured_execution_jobs`,
-    /// `lsp_read_only_navigation`, `lsp_call_hierarchy`,
-    /// `sandbox_inspect_commands`, `project_lifecycle`,
+    /// `lsp_read_only_navigation`, `lsp_call_hierarchy`, `project_lifecycle`,
     /// `project_path_registration`, `job_state_reconciliation`, `coding_agent_runs`,
     /// `computer_observe`. Unknown capability names return `false`.
     #[cfg(test)]

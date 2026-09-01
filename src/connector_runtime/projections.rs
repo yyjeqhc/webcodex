@@ -123,6 +123,37 @@ impl ConnectorCallOutcome {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(crate) fn error_with_data(
+        http_status: u16,
+        code: impl Into<String>,
+        message: impl Into<String>,
+        retryable: bool,
+        user_action_required: bool,
+        suggested_action: Option<&str>,
+        data: Value,
+        required_scope: Option<&'static str>,
+        protocol_error: bool,
+    ) -> Self {
+        Self {
+            ok: false,
+            body: error_envelope(
+                None,
+                None,
+                None,
+                data,
+                code,
+                message,
+                retryable,
+                user_action_required,
+                suggested_action,
+            ),
+            http_status,
+            required_scope,
+            protocol_error,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn error_for_task(
         http_status: u16,
         code: impl Into<String>,

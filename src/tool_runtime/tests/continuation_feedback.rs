@@ -480,7 +480,7 @@ fn exploration_workset_is_attempt_scoped_deduped_and_newest_first() {
         &runtime,
         &session,
         "inspect the implementation",
-        SessionMode::Inspect,
+        SessionMode::Normal,
     );
 
     record_exploration_event(
@@ -614,7 +614,7 @@ fn exploration_workset_reports_real_total_at_under_equal_and_over_limit() {
     ] {
         let runtime = test_runtime();
         let session = create_session(&runtime, &format!("exploration limit {count}"));
-        add_instruction(&runtime, &session, "search", SessionMode::Inspect);
+        add_instruction(&runtime, &session, "search", SessionMode::Normal);
         record_exploration_event(
             &runtime,
             &session,
@@ -651,7 +651,7 @@ fn exploration_workset_reports_real_total_at_under_equal_and_over_limit() {
 fn exploration_is_segmented_by_the_latest_attempt_instruction() {
     let runtime = test_runtime();
     let session = create_session(&runtime, "exploration attempts");
-    add_instruction(&runtime, &session, "attempt A", SessionMode::Inspect);
+    add_instruction(&runtime, &session, "attempt A", SessionMode::Normal);
     record_exploration_event(
         &runtime,
         &session,
@@ -693,7 +693,7 @@ fn exploration_continuity_suggestion_is_lower_priority_than_blocking_evidence() 
     };
     let seed_read = |runtime: &ToolRuntime, title: &str| {
         let session = create_session(runtime, title);
-        add_instruction(runtime, &session, "inspect", SessionMode::Inspect);
+        add_instruction(runtime, &session, "inspect", SessionMode::Normal);
         record_exploration_event(
             runtime,
             &session,

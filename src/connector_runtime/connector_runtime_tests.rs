@@ -94,7 +94,6 @@ async fn register_agent_with_lsp_capabilities(
                         detached_process_jobs: false,
                         lsp_read_only_navigation,
                         lsp_call_hierarchy,
-                        sandbox_inspect_commands: false,
                         project_lifecycle: false,
                         project_path_registration: false,
                         skill_store_read: false,
@@ -362,6 +361,26 @@ async fn start_task_mode(connector: &ConnectorRuntime, goal: &str, mode: &str) -
         .await;
     assert!(started.ok, "{}", started.body);
     started.body["task_id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn task_start_rejects_retired_inspect_mode_with_migration_guidance() {
+    let (_temp, connector) = connector();
+    let outcome = connector
+        .call(
+            "task_start",
+            json!({ "goal": "analyze safely", "mode": "inspect" }),
+            Some(&auth("u1")),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+
+    assert!(!outcome.ok);
+    assert_eq!(outcome.http_status, 400);
+    assert_eq!(outcome.body["error"]["code"], "inspect_mode_retired");
+    let serialized = serde_json::to_string(&outcome.body).unwrap();
+    assert!(serialized.contains("read_only"));
+    assert!(serialized.contains("normal"));
 }
 
 fn connector_call_hierarchy_result(path: &str, line: usize, column: usize) -> CallHierarchyResult {
@@ -851,7 +870,7 @@ async fn context_refresh_reports_only_changed_rules_and_worktree() {
 }
 
 #[tokio::test]
-async fn inspect_to_write_keeps_task_and_rechecks_write_authority() {
+async fn read_only_to_write_keeps_task_and_rechecks_write_authority() {
     use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
 
     let temp = tempfile::tempdir().unwrap();
@@ -1384,6 +1403,161 @@ async fn writable_start_registers_and_releases_a_reusable_git_worktree() {
         "guidance is claimed exactly once: {}",
         review_again.body
     );
+}
+
+#[tokio::test]
+async fn failed_runner_project_registration_unwinds_workspace_and_allows_retry() {
+    use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
+
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    init_repo(&project);
+    let registry = Arc::new(ShellClientRegistry::default());
+    register_agent(&registry, "project", &project.to_string_lossy()).await;
+    let db = Arc::new(Database::open(&temp.path().join("connector.db")).unwrap());
+    let connector = ConnectorRuntime::new(
+        Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
+            registry.clone(),
+        )),
+        db.clone(),
+        ConnectorContext {
+            project_id: "wc_proj_registrationfail".to_string(),
+            project_name: "registration-failure".to_string(),
+            workspace_id: "wc_ws_registrationfail".to_string(),
+            executor_project: "agent:hosted:project".to_string(),
+            executor_root: project.to_string_lossy().to_string(),
+            runs_root: temp.path().join("state/runs").to_string_lossy().to_string(),
+            results_root: temp
+                .path()
+                .join("state/results")
+                .to_string_lossy()
+                .to_string(),
+            projects_dir: temp
+                .path()
+                .join("state/agent/projects.d")
+                .to_string_lossy()
+                .to_string(),
+            profile: "personal".to_string(),
+            project_grant_id: PROJECT_GRANT_ID.to_string(),
+        },
+        credential(),
+    )
+    .unwrap();
+
+    let responder_registry = registry.clone();
+    let responder = tokio::spawn(async move {
+        for attempt in 0..2 {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                if let Some(request) = responder_registry
+                    .poll(ShellAgentPollRequest {
+                        client_id: "hosted".to_string(),
+                        agent_instance_id: "instance".to_string(),
+                        projects: None,
+                    })
+                    .await
+                    .unwrap()
+                {
+                    assert_eq!(request.kind, "register_project");
+                    let payload: Value =
+                        serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
+                    let (exit_code, stdout, stderr, error) = if attempt == 0 {
+                        (
+                            Some(1),
+                            None,
+                            Some("registration rejected by test Runner".to_string()),
+                            Some("registration rejected".to_string()),
+                        )
+                    } else {
+                        (
+                            Some(0),
+                            Some(
+                                json!({
+                                    "agent_project_id": payload["id"],
+                                    "client_id": "hosted",
+                                    "name": payload["name"],
+                                    "path": payload["path"],
+                                    "allow_patch": true
+                                })
+                                .to_string(),
+                            ),
+                            Some(String::new()),
+                            None,
+                        )
+                    };
+                    responder_registry
+                        .complete(ShellAgentResultRequest {
+                            client_id: "hosted".to_string(),
+                            agent_instance_id: "instance".to_string(),
+                            request_id: request.request_id,
+                            exit_code,
+                            stdout,
+                            stderr,
+                            duration_ms: Some(1),
+                            error,
+                        })
+                        .await
+                        .unwrap();
+                    break;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "connector did not issue project registration within 10 seconds"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        }
+    });
+
+    let owner = auth("u1");
+    let failed = connector
+        .call(
+            "task_start",
+            json!({"goal": "first registration attempt", "mode": "normal"}),
+            Some(&owner),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert!(!failed.ok, "{}", failed.body);
+    assert_eq!(failed.http_status, 409);
+    assert_eq!(failed.body["error"]["code"], "workspace_preparation_failed");
+    assert_eq!(failed.body["data"]["stage"], "runner_project_registration");
+    assert_eq!(
+        failed.body["data"]["reason_code"],
+        "runner_project_registration_failed"
+    );
+    assert!(db
+        .connector_tasks_for_subject(&connector.context.project_id, PROJECT_SUBJECT_ID, 10)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        std::fs::read_to_string(project.join("README.md")).unwrap(),
+        "fixture\n"
+    );
+    let lease = temp.path().join("state/runs/.wc-slot-write-01.lease.json");
+    let registration = temp
+        .path()
+        .join("state/agent/projects.d/wc-slot-write-01.toml");
+    assert!(
+        !lease.exists(),
+        "failed registration retained the workspace lease"
+    );
+    assert!(
+        !registration.exists(),
+        "failed registration retained the temporary Runner project registration"
+    );
+
+    let retried = connector
+        .call(
+            "task_start",
+            json!({"goal": "retry after registration failure", "mode": "normal"}),
+            Some(&owner),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    responder.await.unwrap();
+    assert!(retried.ok, "{}", retried.body);
+    assert_eq!(retried.body["data"]["brief"]["workspace"]["isolated"], true);
 }
 
 #[tokio::test]
@@ -2173,8 +2347,8 @@ async fn code_impact_lifecycle_lock_blocks_task_cancel_until_read_completes() {
 }
 
 #[tokio::test]
-async fn code_impact_is_available_in_normal_inspect_and_read_only_tasks() {
-    for mode in ["normal", "inspect", "read_only"] {
+async fn code_impact_is_available_in_normal_and_read_only_tasks() {
+    for mode in ["normal", "read_only"] {
         let (_temp, connector, registry) = connector_with_lsp_capabilities(true, true).await;
         let registration = if mode == "normal" {
             let registration_registry = registry.clone();
@@ -2226,7 +2400,7 @@ async fn code_impact_is_available_in_normal_inspect_and_read_only_tasks() {
         } else {
             None
         };
-        let task_id = start_task_mode(&connector, "inspect call impact", mode).await;
+        let task_id = start_task_mode(&connector, "analyze call impact", mode).await;
         if let Some(registration) = registration {
             registration.await.unwrap();
         }

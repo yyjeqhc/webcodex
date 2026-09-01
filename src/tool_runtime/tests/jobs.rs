@@ -893,49 +893,6 @@ async fn long_run_shell_async_job_capability_does_not_bypass_shell_authority() {
 }
 
 #[tokio::test]
-async fn long_run_shell_job_start_rejection_is_not_started_and_enqueues_nothing() {
-    let client_id = "shell-long-start-reject";
-    let runtime = runtime_with_agent_project(client_id);
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        ShellClientCapabilities {
-            shell: true,
-            async_shell_jobs: true,
-            ..Default::default()
-        },
-    )
-    .await;
-    let project = agent_test_project_id(client_id);
-    let result = runtime
-        .run_shell_with_contract_in_sandbox(
-            project,
-            "printf never".to_string(),
-            Some(120),
-            None,
-            None,
-            None,
-            Some("invalid-sandbox-mode"),
-            None,
-            None,
-            None,
-        )
-        .await;
-    assert!(!result.success);
-    assert_eq!(result.output["execution_state"], "not_started");
-    assert_eq!(result.output["command_started"], false);
-    assert_eq!(result.output["command_completed"], false);
-    assert_eq!(result.output["promoted_to_job"], false);
-    assert_eq!(result.output["async_handoff_available"], true);
-    assert_run_shell_result_matches_schema(&result);
-    assert!(probe_patch_agent_request(&runtime, client_id)
-        .await
-        .is_none());
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
-}
-
-#[tokio::test]
 async fn long_run_shell_job_timeout_is_terminal_and_never_becomes_fake_outcome_unknown() {
     let client_id = "shell-long-timeout";
     let runtime = runtime_with_agent_project(client_id)
@@ -1074,7 +1031,6 @@ async fn raw_shell_tools_reject_authored_command_above_shared_bound_before_proje
             Some(30),
             None,
             Vec::new(),
-            None,
             Some(&auth_context(None, true)),
         )
         .await;
@@ -1541,7 +1497,6 @@ async fn run_job_rejects_server_configured_project_without_local_spawn() {
             Some(10),
             None,
             Vec::new(),
-            None,
             None,
         )
         .await;
@@ -2276,130 +2231,6 @@ async fn job_log_paginates_with_offset_for_in_memory_local_job() {
     assert!(out2.contains("line 501"));
     assert!(out2.contains("line 600"));
     assert_eq!(second.output["cursor"]["stdout"], 601);
-}
-
-#[tokio::test]
-async fn inspect_job_log_and_tail_use_terminal_snapshot_global_cursors() {
-    let tmp = tempfile::tempdir().unwrap();
-    let runtime = runtime_with_project(tmp.path(), "demo");
-    let scratch = crate::command_sandbox::InspectScratch::create().unwrap();
-    let scratch_path = scratch.path().to_path_buf();
-    let dir = scratch.path().join("job");
-    fs::create_dir(&dir).unwrap();
-    let stdout = (1..=700)
-        .map(|line| format!("stdout {line}\n"))
-        .collect::<String>();
-    let stderr = (1..=700)
-        .map(|line| format!("stderr {line}\n"))
-        .collect::<String>();
-    fs::write(
-        dir.join("metadata.json"),
-        serde_json::to_string(&json!({
-            "command": "echo test",
-            "cwd": ".",
-            "shell": "bash",
-            "purpose": "other"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    fs::write(dir.join("status"), "running").unwrap();
-    fs::write(dir.join("stdout.log"), b"").unwrap();
-    fs::write(dir.join("stderr.log"), b"").unwrap();
-
-    let job_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-    let (record, _) = LocalJobRecord::initialize("demo".to_string(), dir.clone()).unwrap();
-    fs::write(dir.join("stdout.log"), stdout).unwrap();
-    fs::write(dir.join("stderr.log"), stderr).unwrap();
-    fs::write(dir.join("status"), "completed").unwrap();
-    fs::write(dir.join("exit_code"), "0").unwrap();
-    fs::write(dir.join("finished_at"), "100").unwrap();
-    let snapshot = record.terminal_snapshot_handle();
-    runtime
-        .local_jobs
-        .lock()
-        .await
-        .insert(job_id.to_string(), record);
-    let child = std::process::Command::new("sh")
-        .arg("-c")
-        .arg("exit 0")
-        .spawn()
-        .unwrap();
-    super::super::local_jobs::retain_inspect_job_until_terminal(dir, snapshot, scratch, child);
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    while scratch_path.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "inspect scratch cleanup timed out"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-
-    let from_start = runtime.job_log(job_id.to_string(), Some(1), None).await;
-    assert!(from_start.success, "{:?}", from_start.error);
-    assert_eq!(from_start.output["stdout_lines"], 700);
-    assert_eq!(from_start.output["stderr_lines"], 700);
-    assert_eq!(from_start.output["stdout_truncated"], true);
-    assert_eq!(from_start.output["stderr_truncated"], true);
-    assert_eq!(from_start.output["cursor"]["stdout"], 701);
-    assert_eq!(from_start.output["cursor"]["stderr"], 701);
-    assert_eq!(
-        from_start.output["stdout_tail"]
-            .as_str()
-            .unwrap()
-            .lines()
-            .next(),
-        Some("stdout 201")
-    );
-    assert_eq!(
-        from_start.output["stderr_tail"]
-            .as_str()
-            .unwrap()
-            .lines()
-            .next(),
-        Some("stderr 201")
-    );
-
-    let tail = runtime.job_tail(job_id.to_string(), Some(5)).await;
-    assert!(tail.success, "{:?}", tail.error);
-    assert_eq!(tail.output["stdout_lines"], 700);
-    assert_eq!(tail.output["stderr_lines"], 700);
-    assert_eq!(tail.output["stdout_truncated"], true);
-    assert_eq!(tail.output["stderr_truncated"], true);
-    assert_eq!(tail.output["cursor"]["stdout"], 701);
-    assert_eq!(tail.output["cursor"]["stderr"], 701);
-    assert_eq!(
-        tail.output["stdout_tail"].as_str().unwrap(),
-        "stdout 696\nstdout 697\nstdout 698\nstdout 699\nstdout 700"
-    );
-    assert_eq!(
-        tail.output["stderr_tail"].as_str().unwrap(),
-        "stderr 696\nstderr 697\nstderr 698\nstderr 699\nstderr 700"
-    );
-    assert_eq!(tail.output["status"], "completed");
-    assert_eq!(tail.output["terminal"], true);
-    assert_eq!(tail.output["exit_code"], 0);
-    let terminal_token = tail.output["observation_token"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let again = runtime
-        .job_log_for_auth(
-            job_id.to_string(),
-            None,
-            Some(5),
-            None,
-            Some(terminal_token.clone()),
-            Some(1),
-        )
-        .await;
-    assert!(again.success, "{:?}", again.error);
-    assert_eq!(again.output["wait_outcome"], "terminal");
-    assert_eq!(again.output["observation_token"], terminal_token);
-    assert_eq!(again.output["status"], "completed");
-    assert_eq!(again.output["exit_code"], 0);
-    assert!(!scratch_path.exists());
 }
 
 async fn register_job_agent_for_auth(

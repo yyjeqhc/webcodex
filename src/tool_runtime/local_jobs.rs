@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, VecDeque};
+#[cfg(test)]
+use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -73,16 +75,9 @@ impl LocalJobObservation {
 pub(crate) struct LocalJobRecord {
     pub(crate) project: String,
     pub(crate) dir: PathBuf,
-    terminal_snapshot: Arc<Mutex<Option<LocalJobTerminalSnapshot>>>,
     observation: Arc<Mutex<Option<LocalJobObservation>>>,
     visibility: Arc<AtomicU8>,
     terminal: Arc<AtomicBool>,
-}
-#[derive(Debug, Clone)]
-pub(crate) struct LocalJobTerminalSnapshot {
-    pub(crate) observation: LocalJobObservation,
-    files: HashMap<String, String>,
-    logs: HashMap<String, LocalJobLogSnapshot>,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct LocalJobLogSnapshot {
@@ -101,7 +96,6 @@ impl LocalJobRecord {
         Self {
             project,
             dir,
-            terminal_snapshot: Arc::new(Mutex::new(None)),
             observation: Arc::new(Mutex::new(observation)),
             visibility: Arc::new(AtomicU8::new(0)),
             terminal: Arc::new(AtomicBool::new(terminal)),
@@ -125,7 +119,6 @@ impl LocalJobRecord {
         let record = Self {
             project,
             dir,
-            terminal_snapshot: Arc::new(Mutex::new(None)),
             observation: Arc::new(Mutex::new(Some(observation.clone()))),
             visibility: Arc::new(AtomicU8::new(0)),
             terminal: Arc::new(AtomicBool::new(false)),
@@ -191,37 +184,10 @@ impl LocalJobRecord {
         self.visibility.load(Ordering::Acquire) == 2
     }
 
-    pub(crate) fn terminal_snapshot_handle(&self) -> Arc<Mutex<Option<LocalJobTerminalSnapshot>>> {
-        self.terminal_snapshot.clone()
-    }
-    fn terminal_observation(&self) -> Option<LocalJobObservation> {
-        self.terminal_snapshot
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|snapshot| snapshot.observation.clone())
-    }
-
-    fn terminal_text(&self, name: &str) -> Option<String> {
-        let guard = self.terminal_snapshot.lock().unwrap();
-        let snapshot = guard.as_ref()?;
-        snapshot
-            .logs
-            .get(name)
-            .map(|log| log.retained_text.clone())
-            .or_else(|| snapshot.files.get(name).cloned())
-    }
-
     pub(crate) fn observe(&self) -> Result<LocalJobObservation, String> {
-        if let Some(observation) = self.terminal_observation() {
-            return Ok(observation);
-        }
         let status = match std::fs::read_to_string(self.dir.join("status")) {
             Ok(status) => status,
             Err(error) => {
-                if let Some(observation) = self.terminal_observation() {
-                    return Ok(observation);
-                }
                 return Err(format!(
                     "local_job_observation_read_failed: status: {error}"
                 ));
@@ -230,9 +196,6 @@ impl LocalJobRecord {
         let stdout_len = match std::fs::metadata(self.dir.join("stdout.log")) {
             Ok(metadata) => metadata.len(),
             Err(error) => {
-                if let Some(observation) = self.terminal_observation() {
-                    return Ok(observation);
-                }
                 return Err(format!(
                     "local_job_observation_read_failed: stdout.log: {error}"
                 ));
@@ -241,26 +204,17 @@ impl LocalJobRecord {
         let stderr_len = match std::fs::metadata(self.dir.join("stderr.log")) {
             Ok(metadata) => metadata.len(),
             Err(error) => {
-                if let Some(observation) = self.terminal_observation() {
-                    return Ok(observation);
-                }
                 return Err(format!(
                     "local_job_observation_read_failed: stderr.log: {error}"
                 ));
             }
         };
-        if let Some(observation) = self.terminal_observation() {
-            return Ok(observation);
-        }
 
         let mut guard = self.observation.lock().unwrap();
         if guard.is_none() {
             match read_observation(&self.dir) {
                 Ok(observation) => *guard = Some(observation),
                 Err(error) => {
-                    if let Some(observation) = self.terminal_observation() {
-                        return Ok(observation);
-                    }
                     return Err(error);
                 }
             }
@@ -283,25 +237,13 @@ impl LocalJobRecord {
             terminal_generation: 0,
         };
         if let Err(error) = persist_observation(&self.dir, &next) {
-            if let Some(observation) = self.terminal_observation() {
-                return Ok(observation);
-            }
             return Err(error);
-        }
-        if let Some(observation) = self.terminal_observation() {
-            return Ok(observation);
         }
         *guard = Some(next.clone());
         Ok(next)
     }
     pub(crate) fn read_text(&self, name: &str) -> Option<String> {
-        if let Some(value) = self.terminal_text(name) {
-            return Some(value);
-        }
-        match std::fs::read_to_string(self.dir.join(name)) {
-            Ok(value) => Some(value),
-            Err(_) => self.terminal_text(name),
-        }
+        std::fs::read_to_string(self.dir.join(name)).ok()
     }
     pub(crate) fn read_log_lines(
         &self,
@@ -332,26 +274,7 @@ impl LocalJobRecord {
         offset: Option<usize>,
         snapshot_len: u64,
     ) -> Option<LocalJobLogSnapshot> {
-        if let Some(log) = self
-            .terminal_snapshot
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|snapshot| snapshot.logs.get(name))
-            .cloned()
-        {
-            return Some(log);
-        }
-        read_bounded_log(&self.dir.join(name), offset, Some(snapshot_len))
-            .ok()
-            .or_else(|| {
-                self.terminal_snapshot
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .and_then(|snapshot| snapshot.logs.get(name))
-                    .cloned()
-            })
+        read_bounded_log(&self.dir.join(name), offset, Some(snapshot_len)).ok()
     }
     pub(crate) fn read_json(&self, name: &str) -> Value {
         self.read_text(name)
@@ -465,111 +388,6 @@ impl LocalJobLogSnapshot {
 /// Capture an inspect job's terminal files in memory, then release its only
 /// scratch owner so the private directory is removed. Active jobs keep the
 /// scratch alive; terminal status is published only after `finished_at`.
-pub(crate) fn retain_inspect_job_until_terminal(
-    dir: PathBuf,
-    snapshot: Arc<Mutex<Option<LocalJobTerminalSnapshot>>>,
-    scratch: crate::command_sandbox::InspectScratch,
-    mut child: std::process::Child,
-) {
-    std::thread::spawn(move || {
-        let exit = child.wait();
-        let status = read_file(&dir.join("status")).unwrap_or_default();
-        let finished = dir.join("finished_at").is_file();
-        if ACTIVE_LOCAL_STATUSES.contains(&status.trim()) || !finished {
-            // A signal or wrapper failure may prevent its terminal writes.
-            // The child is gone, so publish a durable fallback before
-            // snapshotting and deleting the scratch instead of leaking it.
-            if !dir.join("exit_code").is_file() {
-                if let Ok(exit) = &exit {
-                    if let Some(code) = exit.code() {
-                        if let Err(error) = std::fs::write(dir.join("exit_code"), code.to_string())
-                        {
-                            tracing::error!(error = %error, "failed to persist inspect fallback exit code");
-                            std::mem::forget(scratch);
-                            return;
-                        }
-                    }
-                }
-            }
-            if let Err(error) = std::fs::write(
-                dir.join("finished_at"),
-                chrono::Utc::now().timestamp().to_string(),
-            ) {
-                tracing::error!(error = %error, "failed to persist inspect fallback finished_at");
-                std::mem::forget(scratch);
-                return;
-            }
-            if let Err(error) = std::fs::write(dir.join("status"), "lost") {
-                tracing::error!(error = %error, "failed to persist inspect fallback status");
-                std::mem::forget(scratch);
-                return;
-            }
-        }
-
-        let mut files = HashMap::new();
-        for name in ["metadata.json", "status", "exit_code", "finished_at", "pid"] {
-            if let Some(value) = read_file(&dir.join(name)) {
-                files.insert(name.to_string(), value);
-            }
-        }
-        let mut logs = HashMap::new();
-        for name in ["stdout.log", "stderr.log"] {
-            match read_bounded_log(&dir.join(name), None, None) {
-                Ok(log) => {
-                    logs.insert(name.to_string(), log);
-                }
-                Err(error) => {
-                    tracing::error!(stream = name, error = %error, "failed to capture inspect terminal log");
-                    std::mem::forget(scratch);
-                    return;
-                }
-            }
-        }
-        let observation = match read_observation(&dir) {
-            Ok(current) => {
-                let status = files
-                    .get("status")
-                    .cloned()
-                    .unwrap_or_else(|| "lost".to_string());
-                let next = LocalJobObservation {
-                    version: 1,
-                    epoch: current.epoch,
-                    revision: current.revision.saturating_add(1),
-                    status,
-                    stdout_len: std::fs::metadata(dir.join("stdout.log"))
-                        .map(|m| m.len())
-                        .unwrap_or(current.stdout_len),
-                    stderr_len: std::fs::metadata(dir.join("stderr.log"))
-                        .map(|m| m.len())
-                        .unwrap_or(current.stderr_len),
-                    terminal_generation: current.terminal_generation.saturating_add(1),
-                };
-                if let Err(error) = persist_observation(&dir, &next) {
-                    tracing::error!(error = %error, "failed to persist inspect terminal observation");
-                    std::mem::forget(scratch);
-                    return;
-                }
-                next
-            }
-            Err(error) => {
-                tracing::error!(error = %error, "failed to read inspect terminal observation");
-                std::mem::forget(scratch);
-                return;
-            }
-        };
-        *snapshot.lock().unwrap() = Some(LocalJobTerminalSnapshot {
-            observation,
-            files,
-            logs,
-        });
-        drop(scratch);
-    });
-}
-
-fn read_file(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
-}
-
 fn read_bounded_log(
     path: &Path,
     offset: Option<usize>,
@@ -891,68 +709,10 @@ mod tests {
             .collect()
     }
 
-    fn initialize_inspect_job(
-        scratch: &crate::command_sandbox::InspectScratch,
-    ) -> (std::path::PathBuf, LocalJobRecord, LocalJobObservation) {
-        let dir = scratch.path().join("job");
-        std::fs::create_dir(&dir).unwrap();
-        std::fs::write(dir.join("metadata.json"), "{}").unwrap();
-        std::fs::write(dir.join("status"), "running").unwrap();
-        std::fs::write(dir.join("stdout.log"), b"").unwrap();
-        std::fs::write(dir.join("stderr.log"), b"").unwrap();
-        let (record, observation) =
-            LocalJobRecord::initialize("project".to_string(), dir.clone()).unwrap();
-        (dir, record, observation)
-    }
-
-    #[test]
-    fn inspect_job_child_exit_publishes_fallback_and_cleans_scratch() {
-        let scratch = crate::command_sandbox::InspectScratch::create().unwrap();
-        let scratch_path = scratch.path().to_path_buf();
-        let (dir, record, initial_observation) = initialize_inspect_job(&scratch);
-        let job_id = "inspect-fallback";
-        let initial_token = initial_observation.token(job_id).unwrap();
-        let snapshot = record.terminal_snapshot_handle();
-        let child = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("exit 7")
-            .spawn()
-            .unwrap();
-
-        retain_inspect_job_until_terminal(dir, snapshot.clone(), scratch, child);
-
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while snapshot.lock().unwrap().is_none() || scratch_path.exists() {
-            assert!(
-                Instant::now() < deadline,
-                "terminal fallback or scratch cleanup timed out"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
-        let terminal_snapshot = snapshot.lock().unwrap().as_ref().unwrap().clone();
-        assert!(terminal_snapshot.observation.terminal());
-        assert!(terminal_snapshot.observation.revision > initial_observation.revision);
-        assert_eq!(terminal_snapshot.observation.status, "lost");
-        let observed = record.observe().unwrap();
-        assert_eq!(observed, terminal_snapshot.observation);
-        assert_eq!(record.read_text("status").as_deref(), Some("lost"));
-        assert_eq!(record.read_text("exit_code").as_deref(), Some("7"));
-        assert!(record.read_text("finished_at").is_some());
-        let terminal_token = terminal_snapshot.observation.token(job_id).unwrap();
-        assert_ne!(terminal_token, initial_token);
-        assert_eq!(observed.token(job_id).unwrap(), terminal_token);
-        assert_eq!(
-            record.observe().unwrap().token(job_id).unwrap(),
-            terminal_token
-        );
-        assert!(!scratch_path.exists());
-    }
-
     #[test]
     fn active_job_logs_are_bounded_and_keep_global_line_cursors() {
-        let scratch = crate::command_sandbox::InspectScratch::create().unwrap();
-        let dir = scratch.path().join("job");
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("job");
         std::fs::create_dir(&dir).unwrap();
         let total_lines = 20_000;
         let stdout = (1..=total_lines)
@@ -1005,8 +765,8 @@ mod tests {
 
     #[test]
     fn active_job_log_lossy_truncation_keeps_offset_cursor() {
-        let scratch = crate::command_sandbox::InspectScratch::create().unwrap();
-        let dir = scratch.path().join("job");
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("job");
         std::fs::create_dir(&dir).unwrap();
         let total_lines = 540;
         std::fs::write(dir.join("stdout.log"), numbered_lossy_log(total_lines)).unwrap();
@@ -1054,8 +814,8 @@ mod tests {
 
     #[test]
     fn active_job_log_lossy_cursor_fetches_next_page_without_repeat() {
-        let scratch = crate::command_sandbox::InspectScratch::create().unwrap();
-        let dir = scratch.path().join("job");
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("job");
         std::fs::create_dir(&dir).unwrap();
         let total_lines = 540;
         std::fs::write(dir.join("stdout.log"), numbered_lossy_log(total_lines)).unwrap();
@@ -1091,8 +851,8 @@ mod tests {
 
     #[test]
     fn active_job_log_lossy_truncation_discards_partial_first_line() {
-        let scratch = crate::command_sandbox::InspectScratch::create().unwrap();
-        let dir = scratch.path().join("job");
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("job");
         std::fs::create_dir(&dir).unwrap();
         let mut stdout = vec![0xff; MAX_LOCAL_LOG_BYTES_PER_STREAM + 64 * 1024];
         stdout.extend_from_slice(
@@ -1122,8 +882,8 @@ mod tests {
 
     #[test]
     fn active_job_log_bounds_long_lossy_line_and_preserves_small_logs() {
-        let scratch = crate::command_sandbox::InspectScratch::create().unwrap();
-        let dir = scratch.path().join("job");
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("job");
         std::fs::create_dir(&dir).unwrap();
         let mut long_line = vec![0xff; 2 * MAX_LOCAL_LOG_BYTES_PER_STREAM];
         long_line.extend_from_slice(b"THE-END");
@@ -1161,8 +921,8 @@ mod tests {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::mpsc;
 
-        let scratch = crate::command_sandbox::InspectScratch::create().unwrap();
-        let dir = scratch.path().join("job");
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("job");
         std::fs::create_dir(&dir).unwrap();
         let path = dir.join("stdout.log");
         std::fs::write(&path, "start\n").unwrap();
@@ -1202,172 +962,5 @@ mod tests {
         assert!(text.len() <= MAX_LOCAL_LOG_BYTES_PER_STREAM);
         assert!(cursor <= total_lines.saturating_add(1));
         assert!(truncated);
-    }
-
-    #[test]
-    fn inspect_job_terminal_snapshot_bounds_multimegabyte_logs() {
-        let scratch = crate::command_sandbox::InspectScratch::create().unwrap();
-        let scratch_path = scratch.path().to_path_buf();
-        let (dir, record, initial_observation) = initialize_inspect_job(&scratch);
-        let job_id = "inspect-bounded-logs";
-        let initial_token = initial_observation.token(job_id).unwrap();
-
-        let stdout_lines = 20_000;
-        let stdout = (1..=stdout_lines)
-            .map(|line| format!("{line:05}:{}\n", "x".repeat(120)))
-            .collect::<String>();
-        let stderr = format!("{}THE-END", "y".repeat(2 * MAX_LOCAL_LOG_BYTES_PER_STREAM));
-        assert!(stdout.len() > 2 * MAX_LOCAL_LOG_BYTES_PER_STREAM);
-        assert!(stderr.len() > 2 * MAX_LOCAL_LOG_BYTES_PER_STREAM);
-        std::fs::write(dir.join("stdout.log"), &stdout).unwrap();
-        std::fs::write(dir.join("stderr.log"), &stderr).unwrap();
-        std::fs::write(dir.join("status"), "completed").unwrap();
-        std::fs::write(dir.join("exit_code"), "0").unwrap();
-        std::fs::write(dir.join("finished_at"), "100").unwrap();
-
-        let snapshot = record.terminal_snapshot_handle();
-        let child = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("exit 0")
-            .spawn()
-            .unwrap();
-        retain_inspect_job_until_terminal(dir, snapshot.clone(), scratch, child);
-
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while snapshot.lock().unwrap().is_none() || scratch_path.exists() {
-            assert!(
-                Instant::now() < deadline,
-                "terminal snapshot or scratch cleanup timed out"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
-        let terminal_snapshot = snapshot.lock().unwrap().as_ref().unwrap().clone();
-        assert!(terminal_snapshot.observation.terminal());
-        assert!(terminal_snapshot.observation.revision > initial_observation.revision);
-        assert_eq!(terminal_snapshot.observation.status, "completed");
-        let observed = record.observe().unwrap();
-        assert_eq!(observed, terminal_snapshot.observation);
-        assert_eq!(record.read_text("status").as_deref(), Some("completed"));
-        assert_eq!(record.read_text("exit_code").as_deref(), Some("0"));
-        let terminal_token = terminal_snapshot.observation.token(job_id).unwrap();
-        assert_ne!(terminal_token, initial_token);
-        assert_eq!(observed.token(job_id).unwrap(), terminal_token);
-        assert_eq!(
-            record.observe().unwrap().token(job_id).unwrap(),
-            terminal_token
-        );
-
-        assert!(!terminal_snapshot.files.contains_key("stdout.log"));
-        assert!(!terminal_snapshot.files.contains_key("stderr.log"));
-        let stdout_snapshot = terminal_snapshot.logs.get("stdout.log").unwrap();
-        assert!(stdout_snapshot.retained_text.len() <= MAX_LOCAL_LOG_BYTES_PER_STREAM);
-        assert!(stdout_snapshot.retained_text.lines().count() <= MAX_LOCAL_LOG_LINES);
-        assert_eq!(stdout_snapshot.total_lines, stdout_lines);
-        assert!(stdout_snapshot.first_retained_line > 1);
-        assert!(stdout_snapshot.truncated);
-        assert!(stdout_snapshot.retained_text.contains("20000:"));
-        assert!(!stdout_snapshot.retained_text.contains("00001:"));
-
-        let stderr_snapshot = terminal_snapshot.logs.get("stderr.log").unwrap();
-        assert!(stderr_snapshot.retained_text.len() <= MAX_LOCAL_LOG_BYTES_PER_STREAM);
-        assert_eq!(stderr_snapshot.total_lines, 1);
-        assert_eq!(stderr_snapshot.first_retained_line, 1);
-        assert!(stderr_snapshot.truncated);
-        assert!(stderr_snapshot.retained_text.ends_with("THE-END"));
-
-        let (stdout_tail, cursor, total, truncated) =
-            record.read_log_lines("stdout.log", Some(1), None);
-        assert_eq!(stdout_tail.lines().count(), MAX_LOCAL_LOG_LINES);
-        assert!(stdout_tail.starts_with("19501:"));
-        assert_eq!(cursor, stdout_lines + 1);
-        assert_eq!(total, stdout_lines);
-        assert!(truncated);
-
-        let (stderr_tail, cursor, total, truncated) =
-            record.read_log_lines("stderr.log", Some(1), None);
-        assert!(stderr_tail.len() <= MAX_LOCAL_LOG_BYTES_PER_STREAM);
-        assert!(stderr_tail.ends_with("THE-END"));
-        assert_eq!(cursor, 2);
-        assert_eq!(total, 1);
-        assert!(truncated);
-        assert!(!scratch_path.exists());
-    }
-
-    #[test]
-    fn inspect_job_terminal_snapshot_preserves_lossy_log_cursors() {
-        let scratch = crate::command_sandbox::InspectScratch::create().unwrap();
-        let scratch_path = scratch.path().to_path_buf();
-        let (dir, record, initial_observation) = initialize_inspect_job(&scratch);
-        let job_id = "inspect-lossy-logs";
-        let initial_token = initial_observation.token(job_id).unwrap();
-        let total_lines = 540;
-        std::fs::write(dir.join("stdout.log"), numbered_lossy_log(total_lines)).unwrap();
-        std::fs::write(dir.join("stderr.log"), b"done\n").unwrap();
-        std::fs::write(dir.join("status"), "completed").unwrap();
-        std::fs::write(dir.join("exit_code"), "0").unwrap();
-        std::fs::write(dir.join("finished_at"), "100").unwrap();
-
-        let snapshot = record.terminal_snapshot_handle();
-        let child = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("exit 0")
-            .spawn()
-            .unwrap();
-        retain_inspect_job_until_terminal(dir, snapshot.clone(), scratch, child);
-
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while snapshot.lock().unwrap().is_none() || scratch_path.exists() {
-            assert!(
-                Instant::now() < deadline,
-                "terminal snapshot or scratch cleanup timed out"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
-        let terminal_snapshot = snapshot.lock().unwrap().as_ref().unwrap().clone();
-        assert!(terminal_snapshot.observation.terminal());
-        assert!(terminal_snapshot.observation.revision > initial_observation.revision);
-        assert_eq!(terminal_snapshot.observation.status, "completed");
-        let observed = record.observe().unwrap();
-        assert_eq!(observed, terminal_snapshot.observation);
-        assert_eq!(record.read_text("status").as_deref(), Some("completed"));
-        assert_eq!(record.read_text("exit_code").as_deref(), Some("0"));
-        let terminal_token = terminal_snapshot.observation.token(job_id).unwrap();
-        assert_ne!(terminal_token, initial_token);
-        assert_eq!(observed.token(job_id).unwrap(), terminal_token);
-        assert_eq!(
-            record.observe().unwrap().token(job_id).unwrap(),
-            terminal_token
-        );
-
-        let stdout = terminal_snapshot.logs.get("stdout.log").unwrap();
-        let retained_lines = numbered_line_ids(&stdout.retained_text);
-        assert!(stdout.retained_text.len() <= MAX_LOCAL_LOG_BYTES_PER_STREAM);
-        assert!(stdout.retained_text.contains('\u{fffd}'));
-        assert_eq!(stdout.total_lines, total_lines);
-        assert_eq!(
-            stdout.first_retained_line,
-            retained_lines.first().copied().unwrap()
-        );
-        assert_eq!(retained_lines.last().copied(), Some(total_lines));
-        assert!(stdout.truncated);
-
-        let (page, next_line, observed_lines, truncated) =
-            record.read_log_lines("stdout.log", Some(1), None);
-        let returned_lines = numbered_line_ids(&page);
-        assert!(page.len() <= MAX_LOCAL_LOG_BYTES_PER_STREAM);
-        assert_eq!(observed_lines, total_lines);
-        assert!(truncated);
-        assert_eq!(next_line, returned_lines.last().unwrap() + 1);
-        assert_eq!(next_line, total_lines + 1);
-
-        let (past_eof, eof_cursor, observed_lines, truncated) =
-            record.read_log_lines("stdout.log", Some(next_line), None);
-        assert!(past_eof.is_empty());
-        assert_eq!(eof_cursor, total_lines + 1);
-        assert_eq!(observed_lines, total_lines);
-        assert!(truncated);
-        assert!(!scratch_path.exists());
     }
 }

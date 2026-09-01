@@ -4010,7 +4010,6 @@ impl ToolRuntime {
                     30,
                     32,
                     "tool_runtime".to_string(),
-                    None,
                 )
                 .await
             {

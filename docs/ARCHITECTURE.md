@@ -52,6 +52,16 @@ exposes its configured runtime surface. The project-bound Connector is the
 isolated project-first adapter used by flows such as `webcodex run` and
 `webcodex share`; it is intentionally a different, narrower execution contract.
 
+The canonical Connector has two execution modes. `normal` requires write
+authority and uses a WebCodex-managed isolated Git worktree; edits, commands, and
+validation run there until `task_finish` produces a stable result for host-local
+human accept/reject. Isolation preparation is a hard boundary: failure never
+falls back to a writable target checkout. `read_only` uses the target workspace
+for observation and semantic navigation but rejects structured writes, commands,
+and checks. The pre-0.4 `inspect` mode and its Linux-only filesystem write-filter
+restricted-shell stack are retired; no OS-specific replacement mode exists, so this mode contract
+is uniform across Linux, macOS, and Windows.
+
 ## Project registration
 
 Projects live on the Runner machine. The Runner registers allowed directories

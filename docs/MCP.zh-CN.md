@@ -260,6 +260,21 @@ task_start
 → task_review
 ```
 
+`task_start` 只有两种 execution mode：
+
+- `normal`（默认）用于可写 coding。WebCodex 在 target checkout 外准备受管理的隔离
+  Git worktree，所有 edit/command/check 都在那里执行，`task_finish` 捕获稳定结果。
+  只有项目 owner 在本地接受结果后 target checkout 才会变化。隔离 worktree 无法安全
+  创建或验证时，`normal` 会 fail closed，绝不会回退成直接写 target checkout。
+- `read_only` 只用于分析。read/search/LSP/impact analysis 仍可使用；structured write、
+  command 与 check 均会被拒绝。
+
+pre-0.4 `inspect` mode 已退休：没有 executable alias，也没有 OS-specific restricted-shell
+替代模式。已有的 durable pre-0.4 inspect task 仍可 review/reject，但不能继续执行或修改；
+需要分析请新建 `read_only` task，需要修改/执行/验证请新建 `normal` task。Linux、macOS 与
+Windows 使用相同的这套 contract。
+
+
 - `files_list` 从 Git index 回答"项目里有什么"，因此被忽略的目录不会出现。猜测
   路径前先调用它。
 - `code_navigate` 提供只读的语言服务器状态、document/workspace symbols、
@@ -267,13 +282,12 @@ task_start
   Unicode scalar 位置；Connector 负责选择已绑定的 executor project。参数按
   operation 严格区分：`status` 不带额外字段；document symbols 与 diagnostics
   使用 `path`；workspace symbols 使用 `query`；definition、references 与 hover
-  使用 `path` + `line` + `column`。无意义的字段会被拒绝。normal、inspect 和
-  read-only task 均可调用。
+  使用 `path` + `line` + `column`。无意义的字段会被拒绝。normal 与 read-only
+  task 均可调用。
 - `code_impact` 从项目相对源码位置执行一次有界 call hierarchy 操作。它支持
   `incoming`、`outgoing`、`both`，广度优先深度为 1 或 2，全局 edge 上限为
   1..100；只返回规范化的项目内 root、edge 和有界 call-site range。语言服务器
-  不支持时会显式失败，不回退到 grep 或 AST。normal、inspect、read-only task
-  均可调用。
+  不支持时会显式失败，不回退到 grep 或 AST。normal 与 read-only task 均可调用。
 - `edits_apply` 是受保护的编辑工具；`commands_run` 是需要 shell 的命令的有界
   逃生口。
 - `checks_run` 做校验。使用稳定 `operation_id`，让精确重试复用同一操作。

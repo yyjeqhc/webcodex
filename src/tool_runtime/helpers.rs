@@ -17,22 +17,11 @@ pub(crate) fn run_command_sync(
     run_command_sync_with_shell(cmd, cwd, timeout_secs, "sh")
 }
 
-#[cfg(test)]
 pub(crate) fn run_command_sync_with_shell(
     cmd: &str,
     cwd: &Path,
     timeout_secs: u64,
     shell: &str,
-) -> (i32, String, String, u64) {
-    run_command_sync_with_shell_and_sandbox(cmd, cwd, timeout_secs, shell, None)
-}
-
-pub(crate) fn run_command_sync_with_shell_and_sandbox(
-    cmd: &str,
-    cwd: &Path,
-    timeout_secs: u64,
-    shell: &str,
-    sandbox: Option<&str>,
 ) -> (i32, String, String, u64) {
     let start = Instant::now();
     let mut command = std::process::Command::new(shell);
@@ -53,41 +42,6 @@ pub(crate) fn run_command_sync_with_shell_and_sandbox(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let _scratch = match sandbox {
-        None => None,
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
-            let scratch = match crate::command_sandbox::InspectScratch::create() {
-                Ok(scratch) => scratch,
-                Err(error) => {
-                    return (
-                        -1,
-                        String::new(),
-                        format!("Failed to configure inspect sandbox: {error}"),
-                        start.elapsed().as_millis() as u64,
-                    )
-                }
-            };
-            if let Err(error) =
-                crate::command_sandbox::sandbox_command_inspect(&mut command, &scratch)
-            {
-                return (
-                    -1,
-                    String::new(),
-                    format!("Failed to configure inspect sandbox: {error}"),
-                    start.elapsed().as_millis() as u64,
-                );
-            }
-            Some(scratch)
-        }
-        Some(other) => {
-            return (
-                -1,
-                String::new(),
-                format!("Failed to configure inspect sandbox: unknown sandbox mode '{other}'"),
-                start.elapsed().as_millis() as u64,
-            )
-        }
-    };
     let mut child = match command.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -234,25 +188,9 @@ pub(crate) async fn run_command_sync_bounded_with_shell(
     timeout_secs: u64,
     shell: String,
 ) -> Result<(i32, String, String, u64), LocalRunFailure> {
-    run_command_sync_bounded_with_shell_and_sandbox(cmd, cwd, timeout_secs, shell, None).await
-}
-
-pub(crate) async fn run_command_sync_bounded_with_shell_and_sandbox(
-    cmd: String,
-    cwd: PathBuf,
-    timeout_secs: u64,
-    shell: String,
-    sandbox: Option<String>,
-) -> Result<(i32, String, String, u64), LocalRunFailure> {
     let bound_secs = timeout_secs.saturating_add(LOCAL_RUN_HARD_GRACE_SECS);
     let task = tokio::task::spawn_blocking(move || {
-        run_command_sync_with_shell_and_sandbox(
-            &cmd,
-            &cwd,
-            timeout_secs,
-            &shell,
-            sandbox.as_deref(),
-        )
+        run_command_sync_with_shell(&cmd, &cwd, timeout_secs, &shell)
     });
     match tokio::time::timeout(Duration::from_secs(bound_secs), task).await {
         Ok(Ok(result)) => Ok(result),
@@ -268,24 +206,16 @@ pub(crate) async fn run_command_sync_bounded_with_shell_and_sandbox(
 const LOCAL_PROCESS_OUTPUT_MAX_BYTES: usize = 256 * 1024;
 type LocalProcessResult = (i32, String, String, u64);
 
-pub(crate) async fn run_process_sync_bounded_with_sandbox(
+pub(crate) async fn run_process_sync_bounded(
     executable: String,
     args: Vec<String>,
     stdin: Option<String>,
     cwd: PathBuf,
     timeout_secs: u64,
-    sandbox: Option<String>,
 ) -> Result<(i32, String, String, u64), LocalRunFailure> {
     let bound_secs = timeout_secs.saturating_add(LOCAL_RUN_HARD_GRACE_SECS);
     let task = tokio::task::spawn_blocking(move || {
-        run_process_sync_with_sandbox(
-            &executable,
-            &args,
-            stdin.as_deref(),
-            &cwd,
-            timeout_secs,
-            sandbox.as_deref(),
-        )
+        run_process_sync(&executable, &args, stdin.as_deref(), &cwd, timeout_secs)
     });
     match tokio::time::timeout(Duration::from_secs(bound_secs), task).await {
         Ok(Ok(result)) => Ok(result),
@@ -294,22 +224,15 @@ pub(crate) async fn run_process_sync_bounded_with_sandbox(
     }
 }
 
-pub(crate) async fn run_script_sync_bounded_with_sandbox(
+pub(crate) async fn run_script_sync_bounded(
     payload: ShellScriptPayload,
     stdin: Option<String>,
     cwd: PathBuf,
     timeout_secs: u64,
-    sandbox: Option<String>,
 ) -> Result<LocalProcessResult, LocalRunFailure> {
     let bound_secs = timeout_secs.saturating_add(LOCAL_RUN_HARD_GRACE_SECS);
     let task = tokio::task::spawn_blocking(move || {
-        run_script_sync_with_sandbox(
-            &payload,
-            stdin.as_deref(),
-            &cwd,
-            timeout_secs,
-            sandbox.as_deref(),
-        )
+        run_script_sync(&payload, stdin.as_deref(), &cwd, timeout_secs)
     });
     match tokio::time::timeout(Duration::from_secs(bound_secs), task).await {
         Ok(Ok(result)) => Ok(result),
@@ -318,13 +241,12 @@ pub(crate) async fn run_script_sync_bounded_with_sandbox(
     }
 }
 
-fn run_process_sync_with_sandbox(
+fn run_process_sync(
     executable: &str,
     args: &[String],
     stdin: Option<&str>,
     cwd: &Path,
     timeout_secs: u64,
-    sandbox: Option<&str>,
 ) -> LocalProcessResult {
     let start = Instant::now();
     let mut command = Command::new(executable);
@@ -342,13 +264,6 @@ fn run_process_sync_with_sandbox(
     {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
-    }
-    let _scratch = match create_local_inspect_scratch(sandbox, start) {
-        Ok(scratch) => scratch,
-        Err(result) => return result,
-    };
-    if let Err(result) = sandbox_local_command(&mut command, _scratch.as_ref(), start) {
-        return result;
     }
     execute_local_process_command(command, stdin, timeout_secs, start)
 }
@@ -472,57 +387,11 @@ fn execute_local_process_command(
     }
 }
 
-fn create_local_inspect_scratch(
-    sandbox: Option<&str>,
-    start: Instant,
-) -> Result<Option<crate::command_sandbox::InspectScratch>, LocalProcessResult> {
-    match sandbox {
-        None => Ok(None),
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
-            crate::command_sandbox::InspectScratch::create()
-                .map(Some)
-                .map_err(|error| {
-                    (
-                        -1,
-                        String::new(),
-                        format!("Failed to configure inspect sandbox: {error}"),
-                        start.elapsed().as_millis() as u64,
-                    )
-                })
-        }
-        Some(other) => Err((
-            -1,
-            String::new(),
-            format!("Failed to configure inspect sandbox: unknown sandbox mode '{other}'"),
-            start.elapsed().as_millis() as u64,
-        )),
-    }
-}
-
-fn sandbox_local_command(
-    command: &mut Command,
-    scratch: Option<&crate::command_sandbox::InspectScratch>,
-    start: Instant,
-) -> Result<(), LocalProcessResult> {
-    let Some(scratch) = scratch else {
-        return Ok(());
-    };
-    crate::command_sandbox::sandbox_command_inspect(command, scratch).map_err(|error| {
-        (
-            -1,
-            String::new(),
-            format!("Failed to configure inspect sandbox: {error}"),
-            start.elapsed().as_millis() as u64,
-        )
-    })
-}
-
-fn run_script_sync_with_sandbox(
+fn run_script_sync(
     payload: &ShellScriptPayload,
     stdin: Option<&str>,
     cwd: &Path,
     timeout_secs: u64,
-    sandbox: Option<&str>,
 ) -> LocalProcessResult {
     let start = Instant::now();
     let interpreter = match find_local_script_interpreter(payload.language) {
@@ -539,18 +408,11 @@ fn run_script_sync_with_sandbox(
             )
         }
     };
-    let scratch = match create_local_inspect_scratch(sandbox, start) {
-        Ok(scratch) => scratch,
-        Err(result) => return result,
-    };
     let mut builder = tempfile::Builder::new();
     builder
         .prefix("webcodex-script-")
         .suffix(payload.language.file_extension());
-    let mut file = match match scratch.as_ref() {
-        Some(scratch) => builder.tempfile_in(scratch.path()),
-        None => builder.tempfile(),
-    } {
+    let mut file = match builder.tempfile() {
         Ok(file) => file,
         Err(error) => return local_script_setup_failure("create", &error, start),
     };
@@ -603,9 +465,6 @@ fn run_script_sync_with_sandbox(
     {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
-    }
-    if let Err(result) = sandbox_local_command(&mut command, scratch.as_ref(), start) {
-        return result;
     }
     let mut result = execute_local_process_command(command, stdin, timeout_secs, start);
     redact_local_script_paths(&mut result, &[original_path.as_path(), &absolute_path]);

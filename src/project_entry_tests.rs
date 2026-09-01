@@ -1279,6 +1279,10 @@ fn doctor_and_status_share_table_driven_readiness_facts_and_stay_read_only() {
     setup(&options).unwrap();
     let agent_path = state.join("agent/agent.toml");
     let before = fs::read(&agent_path).unwrap();
+    let managed_slot = state.join("runs/wc-slot-write-01");
+    let managed_lease = state.join("runs/.wc-slot-write-01.lease.json");
+    assert!(!managed_slot.exists());
+    assert!(!managed_lease.exists());
 
     let cases = [
         (RemoteProbe::Ready, true, "ready"),
@@ -1308,6 +1312,9 @@ fn doctor_and_status_share_table_driven_readiness_facts_and_stay_read_only() {
     for (probe, expected_ready, expected_code) in cases {
         let readiness = readiness_with_probe(&options, probe);
         assert_eq!(readiness.ready, expected_ready);
+        let writable = fact(&readiness, "writable_workspace_uninitialized");
+        assert_eq!(writable.status, ReadinessStatus::Pass);
+        assert!(writable.summary.contains("will be created"));
         assert!(readiness
             .findings
             .iter()
@@ -1321,6 +1328,16 @@ fn doctor_and_status_share_table_driven_readiness_facts_and_stay_read_only() {
         );
         assert!(status.contains(&format!("Capabilities: {}", readiness.capabilities)));
         assert!(doctor.contains(&fact(&readiness, expected_code).summary));
+        assert!(doctor.contains("Writable workspace"));
+        assert!(!doctor.contains("Command sandbox"));
+        assert!(
+            !managed_slot.exists(),
+            "doctor/status must not create a worktree"
+        );
+        assert!(
+            !managed_lease.exists(),
+            "doctor/status must not claim a write-slot lease"
+        );
         for output in [status, doctor] {
             assert!(!output.contains("agent:"));
             assert!(!output.contains("client_id"));

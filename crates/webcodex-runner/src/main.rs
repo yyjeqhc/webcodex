@@ -21,7 +21,6 @@ use webcodex_core::{
     validation_bridge,
 };
 use webcodex_runner_config as runner_config;
-use webcodex_sandbox as command_sandbox;
 use webcodex_workspace::{project_overview, workspace_checkpoint};
 
 use shell_protocol::{
@@ -65,10 +64,9 @@ use webcodex_runner::{
     default_quic_keepalive_interval_secs, default_websocket_connect_timeout_secs,
     effective_transport, handle_project_op, load_runner_project_summaries_from_dir,
     non_empty_token, parse_runner_project_toml, quic_client_bind_addr_for, resolve_quic_config,
-    resolve_quic_server_addrs, run_shell, run_shell_with_profiles, runner_project_summary,
-    server_url_to_ws, sha256_hex_bytes, validate_project_path_policy, websocket_session,
-    RunnerRuntimeState, ShellProfileConfig, CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS,
-    WS_OUTGOING_CAPACITY,
+    resolve_quic_server_addrs, run_shell, runner_project_summary, server_url_to_ws,
+    sha256_hex_bytes, validate_project_path_policy, websocket_session, RunnerRuntimeState,
+    ShellProfileConfig, CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS, WS_OUTGOING_CAPACITY,
 };
 use webcodex_runner::{
     client_profile_runner_config, configured_prepared_shell_job_command,
@@ -86,8 +84,8 @@ use webcodex_runner::{
 };
 use webcodex_runner::{is_transport_failure, SshConfig, SshConnectionPool};
 use webcodex_runner::{
-    run_process_with_profiles_in_sandbox_and_execution_state_with_start_hook,
-    run_script_with_profiles_in_sandbox_and_execution_state_with_start_hook,
+    run_process_with_profiles_and_execution_state_with_start_hook,
+    run_script_with_profiles_and_execution_state_with_start_hook,
 };
 
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
@@ -1983,11 +1981,6 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> ShellClientCapabilities {
     // Advertise the distinct capability only because this binary installs the
     // bounded typed prepare/incoming/outgoing traversal implementation.
     capabilities.lsp_call_hierarchy = true;
-    // Advertise only after a real child-process enforcement probe proves Linux
-    // Landlock ABI v3 (including TRUNCATE) works on this host. Every request
-    // still applies the policy again in pre_exec and fails closed on error.
-    capabilities.sandbox_inspect_commands =
-        crate::command_sandbox::inspect_sandbox_available().is_ok();
     capabilities
 }
 
@@ -2590,7 +2583,6 @@ fn validation_module_available(
     profile: Option<&PreparedShellProfile>,
     cwd: &Path,
     step: &ShellJobValidationStep,
-    inspect_scratch: Option<&crate::command_sandbox::InspectScratch>,
     shutdown: Option<&AtomicBool>,
 ) -> bool {
     if step.program != "python" {
@@ -2616,11 +2608,6 @@ fn validation_module_available(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if let Some(scratch) = inspect_scratch {
-        if crate::command_sandbox::sandbox_command_inspect(&mut command, scratch).is_err() {
-            return false;
-        }
-    }
     let Ok(child) = ManagedChild::spawn(&mut command) else {
         return false;
     };
@@ -3249,7 +3236,6 @@ fn validate_runner_job_context(
             if !request.command.is_empty()
                 || request.script.is_some()
                 || request.process.is_none()
-                || request.sandbox.is_some()
                 || context.ssh_resource.is_some()
             {
                 return Err("typed detached process Job request shape is invalid".to_string());
@@ -4491,7 +4477,7 @@ impl JobManager {
             let result = match request.kind.as_str() {
                 "start_process_job" => {
                     let process = request.process.as_ref().expect("validated process payload");
-                    run_process_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+                    run_process_with_profiles_and_execution_state_with_start_hook(
                         generation,
                         &policy,
                         &shell,
@@ -4503,13 +4489,12 @@ impl JobManager {
                         request.stdin.as_deref(),
                         request.timeout_secs,
                         Some(stop_requested.as_ref()),
-                        request.sandbox.as_deref(),
                         Some(&on_started),
                     )
                 }
                 "start_script_job" => {
                     let script = request.script.as_ref().expect("validated script payload");
-                    run_script_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+                    run_script_with_profiles_and_execution_state_with_start_hook(
                         generation,
                         &policy,
                         &shell,
@@ -4520,7 +4505,6 @@ impl JobManager {
                         request.stdin.as_deref(),
                         request.timeout_secs,
                         Some(stop_requested.as_ref()),
-                        request.sandbox.as_deref(),
                         Some(&on_started),
                     )
                 }
@@ -4642,47 +4626,20 @@ impl JobManager {
             );
             return;
         }
-        let sandbox_mode = request.sandbox.clone();
-        let inspect_scratch = match sandbox_mode.as_deref() {
-            None => None,
-            Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
-                match crate::command_sandbox::InspectScratch::create() {
-                    Ok(scratch) => Some(scratch),
-                    Err(error) => {
-                        self.fail_job(
-                            &request,
-                            format!("inspect sandbox unavailable: {error}"),
-                            None,
-                        );
-                        return;
-                    }
-                }
-            }
-            Some(other) => {
-                self.fail_job(&request, format!("unknown sandbox mode '{other}'"), None);
+        let prepared_profile = match resolve_prepared_shell_profile(
+            generation,
+            &shell,
+            &projects_dir,
+            &cwd_path,
+            request.cwd.is_some(),
+            &self.prepared_profiles,
+            Some(self.shutting_down.as_ref()),
+        ) {
+            Ok(profile) => profile,
+            Err(e) => {
+                self.fail_job(&request, e, None);
                 return;
             }
-        };
-        // Profile preparation runs an init script. Inspect execution bypasses
-        // that unsandboxed preparation and uses the base shell environment;
-        // the actual command (and global init script, if any) is sandboxed.
-        let prepared_profile = match inspect_scratch.as_ref() {
-            Some(_) => None,
-            None => match resolve_prepared_shell_profile(
-                generation,
-                &shell,
-                &projects_dir,
-                &cwd_path,
-                request.cwd.is_some(),
-                &self.prepared_profiles,
-                Some(self.shutting_down.as_ref()),
-            ) {
-                Ok(profile) => profile,
-                Err(e) => {
-                    self.fail_job(&request, e, None);
-                    return;
-                }
-            },
         };
         if validation
             && steps.iter().any(|step| {
@@ -4691,7 +4648,6 @@ impl JobManager {
                     prepared_profile.as_deref(),
                     &cwd_path,
                     step,
-                    inspect_scratch.as_ref(),
                     Some(self.shutting_down.as_ref()),
                 )
             })
@@ -4739,18 +4695,6 @@ impl JobManager {
                         .iter()
                         .map(|(key, value)| (key.as_str(), value.as_str())),
                 );
-            }
-            if let Some(scratch) = inspect_scratch.as_ref() {
-                if let Err(error) =
-                    crate::command_sandbox::sandbox_command_inspect(&mut command, scratch)
-                {
-                    self.fail_job(
-                        &request,
-                        format!("inspect sandbox unavailable: {error}"),
-                        None,
-                    );
-                    return;
-                }
             }
             command
                 .current_dir(&cwd_path)
@@ -4872,13 +4816,9 @@ impl JobManager {
         let lifecycle = Arc::clone(&self.lifecycle);
         let shutting_down = Arc::clone(&self.shutting_down);
         let manager = self.clone_for_worker();
-        let inspect_scratch_guard = inspect_scratch;
         let worker_guard = self.workers.enter();
         std::thread::spawn(move || {
             let _worker_guard = worker_guard;
-            // Keep the private writable directory alive for every process in
-            // the job, then clean it when the terminal update has been sent.
-            let _inspect_scratch_guard = inspect_scratch_guard;
             let timeout_secs = request.timeout_secs.min(policy.max_timeout_secs).max(1);
             let mut step_index = 0;
             let (final_status, out, err, final_progress) = loop {
@@ -5193,14 +5133,6 @@ impl JobManager {
             self.fail_job(
                 &request,
                 "ssh_resource_unsupported_for_request: SSH resources do not support structured validation jobs; command was not started".to_string(),
-                None,
-            );
-            return;
-        }
-        if request.sandbox.is_some() {
-            self.fail_job(
-                &request,
-                "ssh_sandbox_unavailable: SSH resources cannot run in the local inspect sandbox; command was not started".to_string(),
                 None,
             );
             return;

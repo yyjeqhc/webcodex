@@ -256,10 +256,6 @@ async fn outer_recorder_does_not_override_business_session_execution_context() {
         "business Session shell must win over recorder context: {}",
         request.command
     );
-    assert!(
-        request.sandbox.is_none(),
-        "read_only recorder must not inject sandbox"
-    );
     complete_patch_agent_request(&runtime, "context-recorder", &request.request_id, 0, "", "")
         .await;
     let outcome = task.await.unwrap();

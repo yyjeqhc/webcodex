@@ -61,7 +61,6 @@ pub(crate) use webcodex_core::{
     validation_bridge,
 };
 pub(crate) use webcodex_runner_config as runner_config;
-pub(crate) use webcodex_sandbox as command_sandbox;
 pub(crate) use webcodex_workspace::{project_context, project_overview, workspace_checkpoint};
 
 pub(crate) use auth::{get_db, json_error, AuthMiddleware};

@@ -504,16 +504,15 @@ impl Database {
                     "normal tasks require an isolated execution root and Git baseline".to_string(),
                 ));
             }
-            "inspect" | "read_only" if task.isolated || task.execution_root != task.target_root => {
+            "read_only" if task.isolated || task.execution_root != task.target_root => {
                 return Err(ConnectorTaskStoreError::InvalidState(
-                    "inspect and read_only tasks must use the target workspace without isolation"
-                        .to_string(),
+                    "read_only tasks must use the target workspace without isolation".to_string(),
                 ));
             }
-            "normal" | "inspect" | "read_only" => {}
+            "normal" | "read_only" => {}
             _ => {
                 return Err(ConnectorTaskStoreError::InvalidState(
-                    "task mode must be normal, inspect, or read_only".to_string(),
+                    "task mode must be normal or read_only".to_string(),
                 ))
             }
         }
@@ -622,9 +621,9 @@ impl Database {
         continuation: ConnectorTaskContinuation<'_>,
         binding: Option<ConnectorWindowBinding<'_>>,
     ) -> Result<(ConnectorTaskSnapshot, i64, String), ConnectorTaskStoreError> {
-        if !matches!(continuation.mode, "normal" | "inspect" | "read_only") {
+        if !matches!(continuation.mode, "normal" | "read_only") {
             return Err(ConnectorTaskStoreError::InvalidState(
-                "task mode must be normal, inspect, or read_only".to_string(),
+                "task mode must be normal or read_only".to_string(),
             ));
         }
         let mut conn = self.conn.lock().unwrap();
@@ -637,6 +636,12 @@ impl Database {
         )?
         .ok_or(ConnectorTaskStoreError::NotFound)?;
         require_running(&task)?;
+        if task.mode == "inspect" {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "inspect_mode_retired: this pre-0.4 inspect task can no longer execute; start a new read_only task for analysis or a new normal task for writable work"
+                    .to_string(),
+            ));
+        }
         if task.task_status != "active" {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "only an active task can continue".to_string(),
@@ -757,6 +762,12 @@ impl Database {
         let tx = conn.transaction()?;
         let task = load_task(&tx, task_id, project_id, subject_id)?
             .ok_or(ConnectorTaskStoreError::NotFound)?;
+        if task.mode == "inspect" {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "inspect_mode_retired: this pre-0.4 inspect task can no longer execute; start a new read_only task for analysis or a new normal task for writable work"
+                    .to_string(),
+            ));
+        }
         if task.run_status != "interrupted" || task.task_status != "needs_attention" {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "only an interrupted task accepts a blocked continuation instruction".to_string(),
@@ -1824,6 +1835,12 @@ impl Database {
             .ok_or(ConnectorTaskStoreError::NotFound)?;
         let task = load_task(&tx, task_id, project_id, &subject_id)?
             .ok_or(ConnectorTaskStoreError::NotFound)?;
+        if task.mode == "inspect" {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "inspect_mode_retired: this pre-0.4 inspect task can no longer execute; reject it locally and start a new read_only or normal task"
+                    .to_string(),
+            ));
+        }
         if task.run_status != "interrupted" || task.task_status != "needs_attention" {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "only an interrupted task can be resumed".to_string(),

@@ -167,7 +167,6 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     // A stale or hand-edited config cannot force capability advertisement:
     // registration replaces it with the result of the real host probe.
     cfg.capabilities = Some(ShellClientCapabilities {
-        sandbox_inspect_commands: true,
         computer_observe: true,
         computer_application_discovery: true,
         computer_application_launch: true,
@@ -326,10 +325,6 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         caps.computer_text_input,
         cfg!(any(target_os = "macos", windows)),
         "computer text input is independently advertised only by native macOS/Windows implementations"
-    );
-    assert_eq!(
-        caps.sandbox_inspect_commands,
-        crate::command_sandbox::inspect_sandbox_available().is_ok()
     );
 }
 

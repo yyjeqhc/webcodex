@@ -60,6 +60,11 @@ Connector 已经拥有确定性的项目绑定。Custom GPT 在普通 coding 前
 `listProjects`、`runtime_status`、`tool_manifest`、`start_session` 或 Agent
 listing，prompt 中也不得包含 Agent client ID 或 runtime project ID。
 
+`task_start` 只接受 `normal`（默认）和 `read_only`。`normal` 在受管理的隔离 Git
+worktree 中执行可写工作；无法安全准备 workspace 时会 fail closed，模型不会直接写
+目标 checkout，也不能接受自己的结果。`read_only` 允许分析，但拒绝 edit、command 与
+check。pre-0.4 `inspect` mode 已退休，不提供 restricted-shell alias。
+
 ## 建议的 GPT 指令
 
 ```text

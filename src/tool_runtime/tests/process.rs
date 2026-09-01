@@ -85,13 +85,11 @@ async fn register_process_agent(
     client_id: &str,
     root: &std::path::Path,
     structured_process_argv: bool,
-    sandbox_inspect_commands: bool,
 ) -> String {
     let capabilities = ShellClientCapabilities {
         shell: true,
         structured_validation_argv: true,
         structured_process_argv,
-        sandbox_inspect_commands,
         ..Default::default()
     };
     register_agent_with_projects(
@@ -288,17 +286,15 @@ async fn run_process_local_direct_executor_preserves_argv_and_stdin_without_a_sh
     ];
     let mut args = vec!["argv".to_string()];
     args.extend(values.clone());
-    let (exit_code, stdout, stderr, _) =
-        super::super::helpers::run_process_sync_bounded_with_sandbox(
-            process_argv_helper().to_string_lossy().into_owned(),
-            args,
-            None,
-            cwd.path().to_path_buf(),
-            10,
-            None,
-        )
-        .await
-        .unwrap_or_else(|_| panic!("local direct argv helper should complete"));
+    let (exit_code, stdout, stderr, _) = super::super::helpers::run_process_sync_bounded(
+        process_argv_helper().to_string_lossy().into_owned(),
+        args,
+        None,
+        cwd.path().to_path_buf(),
+        10,
+    )
+    .await
+    .unwrap_or_else(|_| panic!("local direct argv helper should complete"));
     assert_eq!(exit_code, 0);
     assert_eq!(stderr, "");
     assert!(!marker.exists());
@@ -309,17 +305,15 @@ async fn run_process_local_direct_executor_preserves_argv_and_stdin_without_a_sh
     assert_eq!(stdout, expected);
 
     let stdin = "line one\nUnicode 雪\n";
-    let (exit_code, stdout, stderr, _) =
-        super::super::helpers::run_process_sync_bounded_with_sandbox(
-            process_argv_helper().to_string_lossy().into_owned(),
-            vec!["stdin".to_string()],
-            Some(stdin.to_string()),
-            cwd.path().to_path_buf(),
-            10,
-            None,
-        )
-        .await
-        .unwrap_or_else(|_| panic!("local direct stdin helper should complete"));
+    let (exit_code, stdout, stderr, _) = super::super::helpers::run_process_sync_bounded(
+        process_argv_helper().to_string_lossy().into_owned(),
+        vec!["stdin".to_string()],
+        Some(stdin.to_string()),
+        cwd.path().to_path_buf(),
+        10,
+    )
+    .await
+    .unwrap_or_else(|_| panic!("local direct stdin helper should complete"));
     assert_eq!(exit_code, 0);
     assert_eq!(stdout, stdin);
     assert_eq!(stderr, "");
@@ -329,7 +323,7 @@ async fn run_process_local_direct_executor_preserves_argv_and_stdin_without_a_sh
 async fn run_process_enqueues_only_typed_argv_and_reports_completed_exit_codes() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let project = register_process_agent(&runtime, "process-agent", temp.path(), true, false).await;
+    let project = register_process_agent(&runtime, "process-agent", temp.path(), true).await;
     let bootstrap = auth_context(None, true);
 
     for (exit_code, expected_success) in [(0, true), (19, false)] {
@@ -1497,7 +1491,7 @@ async fn promoted_process_inherits_the_initiating_session_without_a_second_tool_
 async fn run_process_preserves_large_typed_argv_without_shell_parsing() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let project = register_process_agent(&runtime, "process-large", temp.path(), true, false).await;
+    let project = register_process_agent(&runtime, "process-large", temp.path(), true).await;
     let large_args = vec!["a".repeat(4_500), "b".repeat(4_500)];
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -1546,7 +1540,7 @@ async fn run_process_batch_rejection_from_runner_has_stable_prestart_contract() 
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_process_agent(&runtime, "process-batch-rejected", temp.path(), true, false).await;
+        register_process_agent(&runtime, "process-batch-rejected", temp.path(), true).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -1592,8 +1586,7 @@ async fn authority_denied_run_process_has_prestart_lifecycle() {
     let runtime = test_runtime().with_permission_evaluator(
         permissions::PermissionEvaluator::with_mode(permissions::AuthorityMode::Restricted),
     );
-    let project =
-        register_process_agent(&runtime, "process-authority", temp.path(), true, false).await;
+    let project = register_process_agent(&runtime, "process-authority", temp.path(), true).await;
 
     let result = runtime
         .dispatch_with_auth(process_call(project, None), Some(&auth_context(None, true)))
@@ -1613,8 +1606,7 @@ async fn authority_denied_run_process_has_prestart_lifecycle() {
 async fn run_process_transport_uncertainty_and_timeout_preserve_phase_a_truth() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let project =
-        register_process_agent(&runtime, "process-lifecycle", temp.path(), true, false).await;
+    let project = register_process_agent(&runtime, "process-lifecycle", temp.path(), true).await;
     let uncertain_task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.clone();
@@ -1644,14 +1636,8 @@ async fn run_process_transport_uncertainty_and_timeout_preserve_phase_a_truth() 
         .contains("Do not automatically retry"));
 
     let timeout_runtime = test_runtime();
-    let timeout_project = register_process_agent(
-        &timeout_runtime,
-        "process-timeout",
-        temp.path(),
-        true,
-        false,
-    )
-    .await;
+    let timeout_project =
+        register_process_agent(&timeout_runtime, "process-timeout", temp.path(), true).await;
     let timeout_task = tokio::spawn({
         let runtime = timeout_runtime.clone();
         async move {
@@ -1694,7 +1680,7 @@ async fn run_process_session_default_cwd_applies_without_default_shell() {
     let frontend = root.join("frontend");
     std::fs::create_dir_all(&frontend).unwrap();
     let runtime = test_runtime();
-    let project = register_process_agent(&runtime, "process-context", &root, true, false).await;
+    let project = register_process_agent(&runtime, "process-context", &root, true).await;
     let session = runtime
         .sessions
         .start_session_with_options(
@@ -1775,7 +1761,7 @@ async fn run_process_session_default_cwd_applies_without_default_shell() {
 async fn run_process_named_ssh_resource_fails_before_enqueue() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let project = register_process_agent(&runtime, "process-ssh", temp.path(), true, false).await;
+    let project = register_process_agent(&runtime, "process-ssh", temp.path(), true).await;
     let session = runtime
         .sessions
         .start_session_with_options(
@@ -1819,7 +1805,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
     let root = temp.path().join("project");
     std::fs::create_dir_all(&root).unwrap();
     let runtime = test_runtime();
-    let project = register_process_agent(&runtime, "process-guards", &root, true, true).await;
+    let project = register_process_agent(&runtime, "process-guards", &root, true).await;
 
     for invalid in [
         ToolCall::RunProcess {
@@ -1920,43 +1906,6 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
         assert_eq!(result.output["command_completed"], false);
         assert_eq!(result.output["failure_kind"], "invalid_arguments");
     }
-    let inspect = runtime.sessions.start_session_with_guards(
-        Some(project.clone()),
-        Some("inspect process".to_string()),
-        SessionMode::Inspect,
-        sessions::SessionGuards::default(),
-    );
-    let inspect_task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let session_id = inspect.session_id.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    process_sync_call(project, Some(session_id)),
-                    Some(&auth_context(None, true)),
-                )
-                .await
-        }
-    });
-    let request = wait_for_patch_agent_request(&runtime, "process-guards").await;
-    assert_eq!(
-        request.sandbox.as_deref(),
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE)
-    );
-    complete_process_lifecycle(
-        &runtime,
-        "process-guards",
-        request.request_id,
-        ShellCommandExecutionState::Completed,
-        Some(0),
-        "",
-        "",
-        None,
-    )
-    .await;
-    assert!(inspect_task.await.unwrap().success);
-
     let read_only = runtime.sessions.start_session_with_guards(
         Some(project.clone()),
         Some("read-only process".to_string()),
@@ -1984,8 +1933,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
 async fn closed_session_run_process_has_prestart_lifecycle() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let project =
-        register_process_agent(&runtime, "process-closed", temp.path(), true, false).await;
+    let project = register_process_agent(&runtime, "process-closed", temp.path(), true).await;
     let session = runtime.sessions.start_session_with_guards(
         Some(project.clone()),
         Some("closed process".to_string()),
@@ -2017,7 +1965,7 @@ async fn model_facing_session_denials_keep_run_process_prestart_lifecycle() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_process_agent(&runtime, "process-kernel-guards", temp.path(), true, false).await;
+        register_process_agent(&runtime, "process-kernel-guards", temp.path(), true).await;
     let read_only = runtime.sessions.start_session_with_guards(
         Some(project.clone()),
         Some("read-only model process".to_string()),

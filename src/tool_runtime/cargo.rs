@@ -158,8 +158,6 @@ fn cargo_prestart_failure_kind(error: Option<&str>) -> &'static str {
     let lower = error.unwrap_or_default().to_ascii_lowercase();
     if lower.contains("permission") || lower.contains("denied") || lower.contains("not allowed") {
         "permission_denied"
-    } else if lower.contains("sandbox") {
-        "sandbox_unavailable"
     } else if lower.contains("cwd")
         || lower.contains("working directory")
         || lower.contains("directory")
@@ -295,17 +293,8 @@ impl ToolRuntime {
         check: Option<bool>,
         timeout_secs: Option<u64>,
     ) -> ToolResult {
-        self.cargo_fmt_in_sandbox_with_context(
-            project,
-            cwd,
-            check,
-            timeout_secs,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
+        self.cargo_fmt_with_context_inner(project, cwd, check, timeout_secs, None, None, None)
+            .await
     }
 
     /// Entry used by dispatch: carries the Session/execution-context and auth
@@ -320,15 +309,13 @@ impl ToolRuntime {
         timeout_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
-        sandbox: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        self.cargo_fmt_in_sandbox_with_context(
+        self.cargo_fmt_with_context_inner(
             project,
             cwd,
             check,
             timeout_secs,
-            sandbox,
             session_id,
             ssh_resource,
             auth,
@@ -337,13 +324,12 @@ impl ToolRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn cargo_fmt_in_sandbox_with_context(
+    async fn cargo_fmt_with_context_inner(
         &self,
         project: String,
         cwd: Option<String>,
         check: Option<bool>,
         timeout_secs: Option<u64>,
-        sandbox: Option<&str>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
@@ -387,7 +373,7 @@ impl ToolRuntime {
                 })
                 .expect("cargo_fmt command builder is infallible");
             // `cargo fmt` (mutating) uses the plain sync path.
-            self.run_cargo_command_sync(project, cwd, command, timeout, adapter, sandbox)
+            self.run_cargo_command_sync(project, cwd, command, timeout, adapter)
                 .await
         } else {
             self.run_readonly_validation(
@@ -408,7 +394,6 @@ impl ToolRuntime {
                     timeout_secs,
                     session_id,
                     ssh_resource,
-                    sandbox: sandbox.map(str::to_string),
                     auth,
                 },
             )
@@ -429,7 +414,7 @@ impl ToolRuntime {
         package: Option<String>,
         timeout_secs: Option<u64>,
     ) -> ToolResult {
-        self.cargo_check_in_sandbox_with_context(
+        self.cargo_check_with_context_inner(
             project,
             cwd,
             all_targets,
@@ -438,7 +423,6 @@ impl ToolRuntime {
             features,
             package,
             timeout_secs,
-            None,
             None,
             None,
             None,
@@ -459,10 +443,9 @@ impl ToolRuntime {
         timeout_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
-        sandbox: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        self.cargo_check_in_sandbox_with_context(
+        self.cargo_check_with_context_inner(
             project,
             cwd,
             all_targets,
@@ -471,7 +454,6 @@ impl ToolRuntime {
             features,
             package,
             timeout_secs,
-            sandbox,
             session_id,
             ssh_resource,
             auth,
@@ -480,7 +462,7 @@ impl ToolRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn cargo_check_in_sandbox_with_context(
+    async fn cargo_check_with_context_inner(
         &self,
         project: String,
         cwd: Option<String>,
@@ -490,7 +472,6 @@ impl ToolRuntime {
         features: Option<String>,
         package: Option<String>,
         timeout_secs: Option<u64>,
-        sandbox: Option<&str>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
@@ -513,7 +494,6 @@ impl ToolRuntime {
                 timeout_secs,
                 session_id,
                 ssh_resource,
-                sandbox: sandbox.map(str::to_string),
                 auth,
             },
         )
@@ -535,7 +515,7 @@ impl ToolRuntime {
         no_run: Option<bool>,
         timeout_secs: Option<u64>,
     ) -> ToolResult {
-        self.cargo_test_in_sandbox_with_context(
+        self.cargo_test_with_context_inner(
             project,
             cwd,
             filter,
@@ -548,7 +528,6 @@ impl ToolRuntime {
             None,
             None,
             timeout_secs,
-            None,
             None,
             None,
             None,
@@ -573,10 +552,9 @@ impl ToolRuntime {
         timeout_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
-        sandbox: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        self.cargo_test_in_sandbox_with_context(
+        self.cargo_test_with_context_inner(
             project,
             cwd,
             filter,
@@ -589,7 +567,6 @@ impl ToolRuntime {
             require_tests,
             min_tests,
             timeout_secs,
-            sandbox,
             session_id,
             ssh_resource,
             auth,
@@ -598,7 +575,7 @@ impl ToolRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn cargo_test_in_sandbox_with_context(
+    async fn cargo_test_with_context_inner(
         &self,
         project: String,
         cwd: Option<String>,
@@ -612,7 +589,6 @@ impl ToolRuntime {
         require_tests: Option<bool>,
         min_tests: Option<u64>,
         timeout_secs: Option<u64>,
-        sandbox: Option<&str>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
@@ -639,7 +615,6 @@ impl ToolRuntime {
                 timeout_secs,
                 session_id,
                 ssh_resource,
-                sandbox: sandbox.map(str::to_string),
                 auth,
             },
         )
@@ -653,7 +628,7 @@ impl ToolRuntime {
         cwd: Option<String>,
         timeout_secs: Option<u64>,
     ) -> ToolResult {
-        self.go_test_with_context(project, cwd, None, timeout_secs, None, None, None, None)
+        self.go_test_with_context(project, cwd, None, timeout_secs, None, None, None)
             .await
     }
 
@@ -665,7 +640,6 @@ impl ToolRuntime {
         timeout_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
-        sandbox: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         self.run_readonly_validation(
@@ -686,7 +660,6 @@ impl ToolRuntime {
                 timeout_secs,
                 session_id,
                 ssh_resource,
-                sandbox: sandbox.map(str::to_string),
                 auth,
             },
         )
@@ -812,7 +785,6 @@ impl ToolRuntime {
                     validation_target_id,
                     request.minimum_tests,
                     ssh_resource.as_deref(),
-                    request.sandbox.as_deref(),
                     request.auth,
                 )
                 .await
@@ -823,12 +795,11 @@ impl ToolRuntime {
                 // path and report a real terminal timeout at the budget
                 // boundary. The command still starts exactly once.
                 let output = match self
-                    .run_project_command_capture_with_sandbox(
+                    .run_project_command_capture(
                         &request.project,
                         command.clone(),
                         timeout_secs,
                         cwd.clone(),
-                        request.sandbox.as_deref(),
                     )
                     .await
                 {
@@ -871,7 +842,6 @@ impl ToolRuntime {
                 session_id,
                 validation_target_id,
                 request.minimum_tests,
-                request.sandbox.as_deref(),
             )
             .await
         }
@@ -898,7 +868,6 @@ impl ToolRuntime {
         validation_target_id: Option<String>,
         minimum_tests: Option<u64>,
         ssh_resource: Option<&str>,
-        sandbox: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         let client_id = match config.agent_client_id() {
@@ -980,7 +949,6 @@ impl ToolRuntime {
                         minimum_tests,
                     }),
                     visibility: crate::shell_client::ShellJobVisibility::HiddenUntilHandoff,
-                    sandbox: sandbox.map(str::to_string),
                     validation_identity: None,
                     validation_tool: None,
                     assertion_name: None,
@@ -1019,10 +987,8 @@ impl ToolRuntime {
             .await
     }
 
-    /// Local-backed read-only validation. Unsandboxed long validations may hand
-    /// off to the existing local Job path. Inspect-sandbox requests stay on the
-    /// synchronous sandbox capture path because local async sandbox lifecycle is
-    /// intentionally unsupported. The command still executes exactly once.
+    /// Local-backed read-only validation. Long validations may hand off to the
+    /// existing local Job path; the command still executes exactly once.
     #[allow(clippy::too_many_arguments)]
     async fn run_readonly_validation_local(
         &self,
@@ -1039,9 +1005,8 @@ impl ToolRuntime {
         session_id: Option<String>,
         validation_target_id: Option<String>,
         minimum_tests: Option<u64>,
-        sandbox: Option<&str>,
     ) -> ToolResult {
-        if local_validation_should_handoff(timeout_secs, sync_wait_secs, sandbox) {
+        if local_validation_should_handoff(timeout_secs, sync_wait_secs) {
             return self
                 .run_readonly_validation_local_job_with_context(
                     _tool_name,
@@ -1068,12 +1033,11 @@ impl ToolRuntime {
             )),
         };
         let output = match self
-            .run_project_command_capture_with_sandbox(
+            .run_project_command_capture(
                 project,
                 command.to_string(),
                 timeout_secs,
                 cwd.map(str::to_string),
-                sandbox,
             )
             .await
         {
@@ -1898,7 +1862,7 @@ impl ToolRuntime {
                             .error
                             .as_deref()
                             .unwrap_or("the Runner rejected the structured validation command before process spawn"),
-                        "correct the project, cwd, permissions, sandbox, or Runner availability indicated by the rejection, then retry.",
+                        "correct the project, cwd, permissions, or Runner availability indicated by the rejection, then retry.",
                     )),
                 }
             }
@@ -1959,7 +1923,6 @@ impl ToolRuntime {
         command: String,
         timeout_secs: u64,
         adapter: &'static dyn ValidationAdapter,
-        sandbox: Option<&str>,
     ) -> ToolResult {
         let config = match self.resolve_project(&project).await {
             Ok(config) => config,
@@ -1971,12 +1934,11 @@ impl ToolRuntime {
             }
         };
         let output = match self
-            .run_project_command_capture_with_sandbox(
+            .run_project_command_capture(
                 &project,
                 command.clone(),
                 timeout_secs,
                 cwd.clone(),
-                sandbox,
             )
             .await
         {
@@ -2006,12 +1968,8 @@ impl ToolRuntime {
     }
 }
 
-pub(crate) fn local_validation_should_handoff(
-    timeout_secs: u64,
-    sync_wait_secs: u64,
-    sandbox: Option<&str>,
-) -> bool {
-    timeout_secs > sync_wait_secs && sandbox.is_none()
+pub(crate) fn local_validation_should_handoff(timeout_secs: u64, sync_wait_secs: u64) -> bool {
+    timeout_secs > sync_wait_secs
 }
 
 /// Structured validation request carried through the read-only tool path.
@@ -2031,7 +1989,6 @@ struct ValidationRunRequest<'a> {
     timeout_secs: Option<u64>,
     session_id: Option<String>,
     ssh_resource: Option<&'a str>,
-    sandbox: Option<String>,
     auth: Option<&'a AuthContext>,
 }
 

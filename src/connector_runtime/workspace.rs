@@ -41,6 +41,50 @@ pub(crate) struct PreparedWorkspace {
     pub git_conflict_count: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorkspacePreparationError {
+    pub stage: &'static str,
+    pub reason_code: &'static str,
+    pub message: &'static str,
+}
+
+impl WorkspacePreparationError {
+    fn new(stage: &'static str, reason_code: &'static str, message: &'static str) -> Self {
+        Self {
+            stage,
+            reason_code,
+            message,
+        }
+    }
+
+    #[cfg(test)]
+    fn contains(&self, needle: &str) -> bool {
+        self.message.contains(needle) || self.reason_code.contains(needle)
+    }
+}
+
+impl std::fmt::Display for WorkspacePreparationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WritableWorkspaceReadinessStatus {
+    Uninitialized,
+    Reusable,
+    Occupied,
+    NotReady,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WritableWorkspaceReadiness {
+    pub status: WritableWorkspaceReadinessStatus,
+    pub reason_code: &'static str,
+    pub summary: &'static str,
+    pub next_action: Option<&'static str>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct WorkspaceLease {
     schema_version: u32,
@@ -152,23 +196,23 @@ impl WorkspaceManager {
         task_id: &str,
         run_id: &str,
         non_writable: bool,
-    ) -> Result<PreparedWorkspace, String> {
-        let (client_id, _) = parse_agent_executor_ref(&context.executor_project)?;
-        let baseline_commit = git_text(
-            Path::new(&context.executor_root),
-            ["rev-parse", "--verify", "HEAD^{commit}"],
-        )
-        .ok();
-        let baseline_tree = baseline_commit.as_deref().and_then(|commit| {
-            git_text(
-                Path::new(&context.executor_root),
-                ["rev-parse", &format!("{commit}^{{tree}}")],
+    ) -> Result<PreparedWorkspace, WorkspacePreparationError> {
+        let (client_id, _) = parse_agent_executor_ref(&context.executor_project).map_err(|_| {
+            WorkspacePreparationError::new(
+                "executor_reference",
+                "executor_reference_invalid",
+                "the Connector execution target is invalid",
             )
-            .ok()
+        })?;
+        let target_root = Path::new(&context.executor_root);
+        let baseline_commit =
+            git_text(target_root, ["rev-parse", "--verify", "HEAD^{commit}"]).ok();
+        let baseline_tree = baseline_commit.as_deref().and_then(|commit| {
+            git_text(target_root, ["rev-parse", &format!("{commit}^{{tree}}")]).ok()
         });
         if non_writable {
             let (project_overview, git_dirty, git_conflict_count) =
-                project_brief_evidence(Path::new(&context.executor_root));
+                project_brief_evidence(target_root);
             return Ok(PreparedWorkspace {
                 run_id: run_id.to_string(),
                 agent_client_id: client_id,
@@ -184,16 +228,67 @@ impl WorkspaceManager {
             });
         }
         let baseline_commit = baseline_commit.ok_or_else(|| {
-            "writable tasks require a Git project with a valid HEAD commit".to_string()
+            WorkspacePreparationError::new(
+                "target_git_head",
+                "target_git_head_unavailable",
+                "writable workspace requires a Git project with a valid HEAD commit",
+            )
         })?;
-        let baseline_tree = baseline_tree
-            .ok_or_else(|| "writable tasks require a readable Git baseline tree".to_string())?;
-        create_private_dir(&self.runs_root)?;
-        create_private_dir(&self.results_root)?;
-        create_private_dir(&self.projects_dir)?;
+        let baseline_tree = baseline_tree.ok_or_else(|| {
+            WorkspacePreparationError::new(
+                "baseline_tree",
+                "baseline_tree_unavailable",
+                "writable workspace requires a readable Git baseline tree",
+            )
+        })?;
+        for (stage, reason_code, path) in [
+            (
+                "runs_directory",
+                "runs_directory_unavailable",
+                &self.runs_root,
+            ),
+            (
+                "results_directory",
+                "results_directory_unavailable",
+                &self.results_root,
+            ),
+            (
+                "projects_directory",
+                "projects_directory_unavailable",
+                &self.projects_dir,
+            ),
+        ] {
+            create_private_dir(path).map_err(|_| {
+                WorkspacePreparationError::new(
+                    stage,
+                    reason_code,
+                    "the managed writable-workspace state directory is unavailable",
+                )
+            })?;
+        }
         let execution_root = self.runs_root.join(WRITE_SLOT_NAME);
-        ensure_direct_child(&self.runs_root, &execution_root)?;
+        ensure_direct_child(&self.runs_root, &execution_root).map_err(|_| {
+            WorkspacePreparationError::new(
+                "managed_slot",
+                "managed_slot_path_invalid",
+                "the managed writable-workspace slot path is invalid",
+            )
+        })?;
         let lease_path = workspace_lease_path(&self.runs_root, WRITE_SLOT_NAME);
+        if lease_path.exists() {
+            return match read_workspace_lease(&lease_path) {
+                Ok(_) => Err(WorkspacePreparationError::new(
+                    "writable_slot_lease",
+                    "writable_slot_occupied",
+                    "the reusable writable workspace slot is occupied",
+                )),
+                Err(_) => Err(WorkspacePreparationError::new(
+                    "writable_slot_lease",
+                    "writable_slot_lease_invalid",
+                    "the reusable writable workspace lease is malformed or inconsistent",
+                )),
+            };
+        }
         claim_workspace_lease(
             &lease_path,
             &WorkspaceLease {
@@ -203,29 +298,97 @@ impl WorkspaceManager {
                 run_id: run_id.to_string(),
                 baseline_commit: baseline_commit.clone(),
             },
-        )?;
-        let preparation = (|| {
-            let target_root = Path::new(&context.executor_root);
-            let _ = git_output(target_root, [OsStr::new("worktree"), OsStr::new("prune")]);
-            if execution_root.exists() {
-                reset_managed_slot(target_root, &execution_root, &baseline_commit)
+        )
+        .map_err(|error| {
+            if error.contains("occupied") {
+                WorkspacePreparationError::new(
+                    "writable_slot_lease",
+                    "writable_slot_occupied",
+                    "the reusable writable workspace slot is occupied",
+                )
             } else {
-                let output = git_output(
-                    target_root,
-                    [
-                        OsStr::new("worktree"),
-                        OsStr::new("add"),
-                        OsStr::new("--detach"),
-                        execution_root.as_os_str(),
-                        OsStr::new(&baseline_commit),
-                    ],
-                )?;
-                require_success(output, "create reusable execution worktree")?;
-                verify_managed_slot(target_root, &execution_root)
+                WorkspacePreparationError::new(
+                    "writable_slot_lease",
+                    "writable_slot_lease_unavailable",
+                    "the reusable writable workspace lease could not be claimed",
+                )
             }
-        })();
+        })?;
+
+        let preparation = if execution_root.exists() {
+            verify_managed_slot(target_root, &execution_root)
+                .map_err(|error| {
+                    if error.contains("does not belong") {
+                        WorkspacePreparationError::new(
+                            "managed_slot_verification",
+                            "managed_slot_different_git_common_dir",
+                            "the existing managed slot belongs to a different Git repository",
+                        )
+                    } else {
+                        WorkspacePreparationError::new(
+                            "managed_slot_verification",
+                            "existing_managed_slot_invalid",
+                            "the existing managed writable-workspace slot is invalid",
+                        )
+                    }
+                })
+                .and_then(|_| {
+                    reset_managed_slot(target_root, &execution_root, &baseline_commit).map_err(|_| {
+                        WorkspacePreparationError::new(
+                            "managed_slot_reset",
+                            "reusable_slot_reset_failed",
+                            "the existing managed writable-workspace slot could not be reset safely",
+                        )
+                    })
+                })
+        } else {
+            let _ = git_output(target_root, [OsStr::new("worktree"), OsStr::new("prune")]);
+            git_output(
+                target_root,
+                [
+                    OsStr::new("worktree"),
+                    OsStr::new("add"),
+                    OsStr::new("--detach"),
+                    execution_root.as_os_str(),
+                    OsStr::new(&baseline_commit),
+                ],
+            )
+            .and_then(|output| require_success(output, "create reusable execution worktree"))
+            .map_err(|_| {
+                WorkspacePreparationError::new(
+                    "worktree_create",
+                    "git_worktree_add_failed",
+                    "Git could not create the managed isolated writable worktree",
+                )
+            })
+            .and_then(|_| {
+                verify_managed_slot(target_root, &execution_root).map_err(|error| {
+                    if error.contains("does not belong") {
+                        WorkspacePreparationError::new(
+                        "worktree_verification", "managed_slot_different_git_common_dir",
+                        "the created managed worktree does not belong to the target Git repository",
+                    )
+                    } else {
+                        WorkspacePreparationError::new(
+                            "worktree_verification",
+                            "post_create_worktree_verification_failed",
+                            "the created managed writable worktree failed verification",
+                        )
+                    }
+                })
+            })
+        };
         if let Err(error) = preparation {
-            let _ = fs::remove_file(&lease_path);
+            if let Some(cleanup) = release_workspace_slot(
+                target_root,
+                &execution_root,
+                &self.runs_root,
+                &self.projects_dir,
+                WRITE_SLOT_PROJECT_ID,
+                run_id,
+            ) {
+                tracing::warn!(cleanup = %cleanup, "workspace preparation cleanup was incomplete");
+            }
             return Err(error);
         }
         let (project_overview, git_dirty, git_conflict_count) =
@@ -243,6 +406,117 @@ impl WorkspaceManager {
             git_dirty,
             git_conflict_count,
         })
+    }
+
+    pub(crate) fn writable_readiness(
+        target_root: &Path,
+        runs_root: &Path,
+        results_root: &Path,
+        projects_dir: &Path,
+    ) -> WritableWorkspaceReadiness {
+        let not_ready = |reason_code, summary| WritableWorkspaceReadiness {
+            status: WritableWorkspaceReadinessStatus::NotReady,
+            reason_code,
+            summary,
+            next_action: Some(
+                "Resolve the reported Git/private-state issue before starting a normal task.",
+            ),
+        };
+        if git_text(target_root, ["rev-parse", "--is-inside-work-tree"])
+            .ok()
+            .as_deref()
+            != Some("true")
+        {
+            return not_ready(
+                "writable_workspace_git_invalid",
+                "The target project is not a valid Git worktree.",
+            );
+        }
+        let Some(commit) = git_text(target_root, ["rev-parse", "--verify", "HEAD^{commit}"]).ok()
+        else {
+            return not_ready(
+                "target_git_head_unavailable",
+                "The target Git worktree has no readable HEAD commit.",
+            );
+        };
+        if git_text(target_root, ["rev-parse", &format!("{commit}^{{tree}}")]).is_err() {
+            return not_ready(
+                "baseline_tree_unavailable",
+                "The target Git HEAD has no readable baseline tree.",
+            );
+        }
+        if git_output(
+            target_root,
+            [
+                OsStr::new("worktree"),
+                OsStr::new("list"),
+                OsStr::new("--porcelain"),
+            ],
+        )
+        .and_then(|output| require_success(output, "inspect Git worktree support"))
+        .is_err()
+        {
+            return not_ready(
+                "git_worktree_support_unavailable",
+                "Git worktree support is unavailable for this project.",
+            );
+        }
+        let target = lexical_normalize(target_root);
+        for path in [runs_root, results_root, projects_dir] {
+            if !path.is_absolute()
+                || path == Path::new("/")
+                || lexical_normalize(path).starts_with(&target)
+                || !path.is_dir()
+                || fs::read_dir(path).is_err()
+            {
+                return not_ready(
+                    "writable_workspace_state_unavailable",
+                    "Managed writable-workspace state is not safely accessible outside the target checkout.",
+                );
+            }
+        }
+        let slot_root = runs_root.join(WRITE_SLOT_NAME);
+        let lease_path = workspace_lease_path(runs_root, WRITE_SLOT_NAME);
+        if lease_path.exists() {
+            if read_workspace_lease(&lease_path).is_err() {
+                return not_ready(
+                    "writable_slot_lease_invalid",
+                    "The managed writable-workspace lease is malformed or inconsistent.",
+                );
+            }
+            if !slot_root.exists() || verify_managed_slot(target_root, &slot_root).is_err() {
+                return not_ready(
+                    "existing_managed_slot_invalid",
+                    "The occupied managed writable-workspace slot is invalid.",
+                );
+            }
+            return WritableWorkspaceReadiness {
+                status: WritableWorkspaceReadinessStatus::Occupied,
+                reason_code: "writable_workspace_occupied",
+                summary: "The managed writable-workspace slot is valid but currently occupied by a task.",
+                next_action: Some("Finish, resume, or reject the current writable task before starting another normal task."),
+            };
+        }
+        if slot_root.exists() {
+            if verify_managed_slot(target_root, &slot_root).is_err() {
+                return not_ready(
+                    "existing_managed_slot_invalid",
+                    "The existing managed writable-workspace slot is invalid.",
+                );
+            }
+            return WritableWorkspaceReadiness {
+                status: WritableWorkspaceReadinessStatus::Reusable,
+                reason_code: "writable_workspace_reusable",
+                summary: "The managed writable-workspace slot is valid and reusable.",
+                next_action: None,
+            };
+        }
+        WritableWorkspaceReadiness {
+            status: WritableWorkspaceReadinessStatus::Uninitialized,
+            reason_code: "writable_workspace_uninitialized",
+            summary: "Writable-workspace prerequisites are ready; the managed worktree will be created by the first normal task.",
+            next_action: None,
+        }
     }
 
     pub(crate) fn discard_prepared(
@@ -696,6 +970,9 @@ impl WorkspaceManager {
         runs_root: &Path,
         projects_dir: &Path,
     ) -> Result<(), String> {
+        if task.mode == "inspect" {
+            return Err("inspect_mode_retired: this pre-0.4 inspect task can no longer execute; reject it locally and start a new read_only or normal task".to_string());
+        }
         if task.run_status != "interrupted" || task.task_status != "needs_attention" {
             return Err("only an interrupted task can be resumed".to_string());
         }
@@ -736,6 +1013,12 @@ impl WorkspaceManager {
         now: i64,
     ) -> Result<ConnectorTaskResult, ConnectorTaskStoreError> {
         let task = local_decision_task(db, project_id, task_id, target_root)?;
+        if task.mode == "inspect" && decision == LocalResultDecision::Accept {
+            return Err(ConnectorTaskStoreError::decision(
+                "inspect_mode_retired",
+                "a pre-0.4 inspect task cannot be accepted as writable work; reject it locally and start a new task",
+            ));
+        }
         let result = db.local_connector_task_result(task_id, project_id)?;
         if result.is_none()
             && decision == LocalResultDecision::Reject
@@ -1120,23 +1403,33 @@ fn release_workspace_slot(
     if lease.run_id != expected_run_id {
         return None;
     }
-    if execution_root.exists() {
-        if let Err(error) = reset_managed_slot(target_root, execution_root, &lease.baseline_commit)
-        {
-            return Some(error);
-        }
-    }
     if !safe_agent_project_id(agent_project_id) {
         return Some("execution project registration id is invalid".to_string());
     }
+
+    let mut warnings = Vec::new();
+    if execution_root.exists() {
+        if let Err(error) = reset_managed_slot(target_root, execution_root, &lease.baseline_commit)
+        {
+            warnings.push(format!("managed workspace reset failed: {error}"));
+        }
+    }
     let config = projects_dir.join(format!("{agent_project_id}.toml"));
     if let Err(error) = remove_file_if_exists(&config) {
-        return Some(error);
+        warnings.push(format!(
+            "temporary project registration cleanup failed: {error}"
+        ));
     }
     if let Err(error) = fs::remove_file(&lease_path) {
-        return Some(format!("could not release workspace lease: {error}"));
+        warnings.push(format!("workspace lease release failed: {error}"));
     }
-    None
+    let _ = git_output(target_root, [OsStr::new("worktree"), OsStr::new("prune")]);
+
+    if warnings.is_empty() {
+        None
+    } else {
+        Some(warnings.join("; "))
+    }
 }
 
 fn reset_managed_slot(
@@ -1642,6 +1935,13 @@ mod tests {
             profile: "personal".to_string(),
             project_grant_id: "wc_pgrant_1111111111111111".to_string(),
         };
+        for path in [
+            &context.runs_root,
+            &context.results_root,
+            &context.projects_dir,
+        ] {
+            fs::create_dir_all(path).unwrap();
+        }
         let manager = WorkspaceManager::new(&context).unwrap();
         (temp, context, manager)
     }
@@ -1922,6 +2222,138 @@ mod tests {
         );
         let second_task = task(&context, &second);
         assert_eq!(manager.release_task_workspace(&second_task), None);
+    }
+
+    #[test]
+    fn writable_readiness_distinguishes_uninitialized_occupied_and_reusable() {
+        let (_temp, context, manager) = fixture();
+        let readiness = WorkspaceManager::writable_readiness(
+            Path::new(&context.executor_root),
+            &manager.runs_root,
+            &manager.results_root,
+            &manager.projects_dir,
+        );
+        assert_eq!(
+            readiness.status,
+            WritableWorkspaceReadinessStatus::Uninitialized
+        );
+        assert_eq!(readiness.reason_code, "writable_workspace_uninitialized");
+        assert!(readiness.summary.contains("will be created"));
+
+        let prepared = manager
+            .prepare(
+                &context,
+                "wc_task_a123456789abcdef0123456789abcdef",
+                "wc_run_a123456789abcdef0123456789abcdef",
+                false,
+            )
+            .unwrap();
+        let readiness = WorkspaceManager::writable_readiness(
+            Path::new(&context.executor_root),
+            &manager.runs_root,
+            &manager.results_root,
+            &manager.projects_dir,
+        );
+        assert_eq!(readiness.status, WritableWorkspaceReadinessStatus::Occupied);
+        assert_eq!(readiness.reason_code, "writable_workspace_occupied");
+
+        manager.discard_prepared(&context.executor_root, &prepared);
+        let readiness = WorkspaceManager::writable_readiness(
+            Path::new(&context.executor_root),
+            &manager.runs_root,
+            &manager.results_root,
+            &manager.projects_dir,
+        );
+        assert_eq!(readiness.status, WritableWorkspaceReadinessStatus::Reusable);
+        assert_eq!(readiness.reason_code, "writable_workspace_reusable");
+    }
+
+    #[test]
+    fn corrupted_managed_slot_fails_closed_without_cleaning_or_leaking_lease() {
+        let (_temp, context, manager) = fixture();
+        let slot = manager.runs_root.join(WRITE_SLOT_NAME);
+        fs::create_dir(&slot).unwrap();
+        fs::write(slot.join("sentinel.txt"), "do not clean").unwrap();
+        let readiness = WorkspaceManager::writable_readiness(
+            Path::new(&context.executor_root),
+            &manager.runs_root,
+            &manager.results_root,
+            &manager.projects_dir,
+        );
+        assert_eq!(readiness.status, WritableWorkspaceReadinessStatus::NotReady);
+        assert_eq!(readiness.reason_code, "existing_managed_slot_invalid");
+
+        let error = manager
+            .prepare(
+                &context,
+                "wc_task_b123456789abcdef0123456789abcdef",
+                "wc_run_b123456789abcdef0123456789abcdef",
+                false,
+            )
+            .unwrap_err();
+        assert_eq!(error.reason_code, "existing_managed_slot_invalid");
+        assert_eq!(
+            fs::read_to_string(slot.join("sentinel.txt")).unwrap(),
+            "do not clean"
+        );
+        assert!(!workspace_lease_path(&manager.runs_root, WRITE_SLOT_NAME).exists());
+    }
+
+    #[test]
+    fn malformed_workspace_lease_is_not_a_valid_occupied_slot() {
+        let (_temp, context, manager) = fixture();
+        let lease = workspace_lease_path(&manager.runs_root, WRITE_SLOT_NAME);
+        fs::write(&lease, "{not-json").unwrap();
+        let readiness = WorkspaceManager::writable_readiness(
+            Path::new(&context.executor_root),
+            &manager.runs_root,
+            &manager.results_root,
+            &manager.projects_dir,
+        );
+        assert_eq!(readiness.status, WritableWorkspaceReadinessStatus::NotReady);
+        assert_eq!(readiness.reason_code, "writable_slot_lease_invalid");
+        let error = manager
+            .prepare(
+                &context,
+                "wc_task_c123456789abcdef0123456789abcdef",
+                "wc_run_c123456789abcdef0123456789abcdef",
+                false,
+            )
+            .unwrap_err();
+        assert_eq!(error.reason_code, "writable_slot_lease_invalid");
+    }
+
+    #[test]
+    fn normal_workspace_without_git_head_fails_before_claiming_lease() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("repo");
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init"]);
+        let state = temp.path().join("state");
+        let context = ConnectorContext {
+            project_id: "wc_proj_nohead".to_string(),
+            project_name: "repo".to_string(),
+            workspace_id: "wc_ws_nohead".to_string(),
+            executor_project: "agent:local:target".to_string(),
+            executor_root: root.to_string_lossy().to_string(),
+            runs_root: state.join("runs").to_string_lossy().to_string(),
+            results_root: state.join("results").to_string_lossy().to_string(),
+            projects_dir: state.join("agent/projects.d").to_string_lossy().to_string(),
+            profile: "personal".to_string(),
+            project_grant_id: "wc_pgrant_1111111111111111".to_string(),
+        };
+        let manager = WorkspaceManager::new(&context).unwrap();
+        let error = manager
+            .prepare(
+                &context,
+                "wc_task_d123456789abcdef0123456789abcdef",
+                "wc_run_d123456789abcdef0123456789abcdef",
+                false,
+            )
+            .unwrap_err();
+        assert_eq!(error.stage, "target_git_head");
+        assert_eq!(error.reason_code, "target_git_head_unavailable");
+        assert!(!workspace_lease_path(&manager.runs_root, WRITE_SLOT_NAME).exists());
     }
 
     #[test]

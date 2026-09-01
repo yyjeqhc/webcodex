@@ -391,7 +391,6 @@ async fn register_agent_projects_for_auth(
                         detached_process_jobs: false,
                         lsp_read_only_navigation: false,
                         lsp_call_hierarchy: false,
-                        sandbox_inspect_commands: false,
                         project_lifecycle: false,
                         project_path_registration: false,
                         skill_store_read: false,

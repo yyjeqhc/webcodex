@@ -258,19 +258,19 @@ fn failed_continuation_binding_rolls_back_mode_workspace_and_instruction() {
 }
 
 #[test]
-fn inspect_task_is_persisted_without_an_isolated_workspace() {
+fn new_inspect_task_is_rejected_before_persistence() {
     let (_temp, db) = database();
     bind(&db, "user:one");
     let task_id = new_id("wc_task");
     let run_id = new_id("wc_run");
-    let task = db
+    let error = db
         .start_connector_task(NewConnectorTask {
             task_id: &task_id,
             run_id: &run_id,
             project_id: "wc_proj_demo",
             workspace_id: "wc_ws_demo",
             subject_id: "user:one",
-            goal: "inspect the parser",
+            goal: "legacy inspect request",
             mode: "inspect",
             target_executor_ref: "agent:hosted:demo",
             execution_executor_ref: "agent:hosted:demo",
@@ -281,15 +281,17 @@ fn inspect_task_is_persisted_without_an_isolated_workspace() {
             isolated: false,
             now: 101,
         })
-        .unwrap();
+        .unwrap_err();
 
-    assert_eq!(task.mode, "inspect");
-    let restored = db
-        .connector_task(&task.task_id, "wc_proj_demo", "user:one")
-        .unwrap();
-    assert_eq!(restored.mode, "inspect");
-    assert!(!restored.isolated);
-    assert_eq!(restored.execution_root, restored.target_root);
+    assert!(matches!(
+        error,
+        ConnectorTaskStoreError::InvalidState(message)
+            if message == "task mode must be normal or read_only"
+    ));
+    assert!(matches!(
+        db.connector_task(&task_id, "wc_proj_demo", "user:one"),
+        Err(ConnectorTaskStoreError::NotFound)
+    ));
 }
 
 #[test]

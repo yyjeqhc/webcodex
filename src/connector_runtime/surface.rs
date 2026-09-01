@@ -28,12 +28,12 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
     vec![
         spec(
             "task_start",
-            "Start or continue this chat window's work in the configured project. A follow-up goal is appended to the existing active task after selective Git, worktree, manifest, and repository-rule refresh; switching away and back restores that project's task. normal uses a writable workspace; inspect blocks structured writes but permits Landlock-restricted checks and commands; read_only permits no shell.",
+            "Start or continue this chat window's work in the configured project. A follow-up goal is appended to the existing active task after selective Git, worktree, manifest, and repository-rule refresh; switching away and back restores that project's task. normal uses a managed isolated writable worktree; read_only analyzes the target workspace without writes or command execution.",
             json!({
                 "type": "object",
                 "properties": {
                     "goal": { "type": "string", "minLength": 1, "maxLength": 4000, "description": "Concrete outcome requested by the user." },
-                    "mode": { "type": "string", "enum": ["normal", "inspect", "read_only"], "default": "normal" },
+                    "mode": { "type": "string", "enum": ["normal", "read_only"], "default": "normal" },
                     "target_path": {
                         "type": "string",
                         "description": "Optional project-relative file or directory relevant to this instruction. WebCodex uses it to apply nested repository rules."
@@ -291,7 +291,7 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "commands_run",
-            "Submit one bounded project command to the durable Execution Engine. inspect runs it under the fail-closed Linux Landlock local-write sandbox; read_only has no shell. Reuse operation_id only to retry the identical command/cwd/timeout request; use a new operation_id to intentionally run the same command again. The exact action needs one-time host-local approval, and the call quick-yields after about 8 seconds when work remains active. Responses may carry a `guidance` list written by the project owner; treat it as fresh instructions and adjust course before continuing.",
+            "Submit one bounded project command to the durable Execution Engine for a normal task. read_only tasks have no command execution. Reuse operation_id only to retry the identical command/cwd/timeout request; use a new operation_id to intentionally run the same command again. The exact action needs one-time host-local approval, and the call quick-yields after about 8 seconds when work remains active. Responses may carry a `guidance` list written by the project owner; treat it as fresh instructions and adjust course before continuing.",
             json!({
                 "type": "object",
                 "properties": {
@@ -598,6 +598,15 @@ mod tests {
                 .collect::<Vec<_>>(),
             CAPABILITY_NAMES
         );
+        let start = specs.iter().find(|spec| spec.name == "task_start").unwrap();
+        assert_eq!(
+            start.input_schema["properties"]["mode"]["enum"],
+            json!(["normal", "read_only"])
+        );
+        assert_eq!(
+            start.input_schema["properties"]["mode"]["default"],
+            "normal"
+        );
         for spec in specs {
             assert_eq!(
                 spec.input_schema["additionalProperties"], false,
@@ -645,6 +654,11 @@ mod tests {
         let start = &spec["paths"]["/api/connector/task/start"]["post"]["requestBody"]["content"]
             ["application/json"]["schema"];
         assert_eq!(start["properties"]["target_path"]["type"], "string");
+        assert_eq!(
+            start["properties"]["mode"]["enum"],
+            json!(["normal", "read_only"])
+        );
+        assert_eq!(start["properties"]["mode"]["default"], "normal");
         assert!(!start["required"]
             .as_array()
             .unwrap()

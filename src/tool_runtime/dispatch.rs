@@ -598,32 +598,29 @@ impl ToolRuntime {
         transport: sessions::SessionTransport,
         recorder_metadata: sessions::ToolCallRecorderMetadata,
     ) -> ToolResult {
-        self.dispatch_with_auth_transport_options_and_metadata_with_sandbox(
+        self.dispatch_with_auth_transport_options_and_metadata_with_window(
             call,
             auth,
             transport,
             recorder_metadata,
-            None,
             None,
         )
         .await
     }
 
-    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_sandbox(
+    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_window(
         &self,
         call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
         recorder_metadata: sessions::ToolCallRecorderMetadata,
-        inherited_sandbox: Option<&'static str>,
         window: Option<&crate::client_window::ClientWindow>,
     ) -> ToolResult {
-        self.dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode(
+        self.dispatch_with_auth_transport_options_and_metadata_with_recording_mode(
             call,
             auth,
             transport,
             recorder_metadata,
-            inherited_sandbox,
             window,
             true,
         )
@@ -631,22 +628,20 @@ impl ToolRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode(
+    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_recording_mode(
         &self,
         call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
         recorder_metadata: sessions::ToolCallRecorderMetadata,
-        inherited_sandbox: Option<&'static str>,
         window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
     ) -> ToolResult {
-        self.dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+        self.dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
             call,
             auth,
             transport,
             recorder_metadata,
-            inherited_sandbox,
             window,
             inner_model_facing_recording,
             Vec::new(),
@@ -656,13 +651,12 @@ impl ToolRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_sandbox_recording_mode_and_context(
+    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
         &self,
         call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
         recorder_metadata: sessions::ToolCallRecorderMetadata,
-        inherited_sandbox: Option<&'static str>,
         window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
         context_request: Vec<String>,
@@ -677,7 +671,6 @@ impl ToolRuntime {
                 auth,
                 transport,
                 recorder_metadata.clone(),
-                inherited_sandbox,
                 window,
                 inner_model_facing_recording,
                 context_request.clone(),
@@ -814,7 +807,6 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
         mut recorder_metadata: sessions::ToolCallRecorderMetadata,
-        inherited_sandbox: Option<&'static str>,
         _window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
         context_request: Vec<String>,
@@ -890,13 +882,6 @@ impl ToolRuntime {
         } else {
             None
         };
-        let execution_sandbox = inherited_sandbox.or_else(|| {
-            session_id
-                .as_deref()
-                .and_then(|session_id| self.sessions.session_mode(session_id))
-                .filter(|mode| matches!(mode, super::SessionMode::Inspect))
-                .map(|_| crate::command_sandbox::INSPECT_SANDBOX_MODE)
-        });
         let session_project_mismatch = session_id.as_deref().and_then(|session_id| {
             match (
                 self.sessions.session_project(session_id),
@@ -1173,7 +1158,6 @@ impl ToolRuntime {
                 call,
                 auth,
                 transport,
-                execution_sandbox,
                 ssh_resource.as_deref(),
                 validation_assertion_name,
                 project_resolution,
@@ -1291,7 +1275,6 @@ impl ToolRuntime {
         call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
-        execution_sandbox: Option<&'static str>,
         ssh_resource: Option<&str>,
         validation_assertion_name: Option<&str>,
         project_resolution: Option<Result<ResolvedProject, ProjectResolverError>>,
@@ -1408,14 +1391,8 @@ impl ToolRuntime {
             | ToolCall::RunDetachedProcess { .. }
             | ToolCall::RunScript { .. }
             | ToolCall::RunShell { .. }) => {
-                self.dispatch_shell_tool(
-                    call,
-                    execution_sandbox,
-                    ssh_resource,
-                    validation_assertion_name,
-                    auth,
-                )
-                .await
+                self.dispatch_shell_tool(call, ssh_resource, validation_assertion_name, auth)
+                    .await
             }
 
             call @ (ToolCall::OpenSessionShell { .. }
@@ -1984,10 +1961,7 @@ impl ToolRuntime {
             call @ (ToolCall::CargoFmt { .. }
             | ToolCall::CargoCheck { .. }
             | ToolCall::CargoTest { .. }
-            | ToolCall::GoTest { .. }) => {
-                self.dispatch_cargo_tool(call, execution_sandbox, ssh_resource, auth)
-                    .await
-            }
+            | ToolCall::GoTest { .. }) => self.dispatch_cargo_tool(call, ssh_resource, auth).await,
 
             call @ (ToolCall::RunJob { .. }
             | ToolCall::StopJob { .. }
@@ -1995,10 +1969,7 @@ impl ToolRuntime {
             | ToolCall::JobLog { .. }
             | ToolCall::ObserveJobs { .. }
             | ToolCall::ListJobs { .. }
-            | ToolCall::JobTail { .. }) => {
-                self.dispatch_job_tool(call, auth, execution_sandbox, ssh_resource)
-                    .await
-            }
+            | ToolCall::JobTail { .. }) => self.dispatch_job_tool(call, auth, ssh_resource).await,
 
             call @ ToolCall::WorkspaceHygieneCheck { .. } => self.dispatch_hygiene_tool(call).await,
 

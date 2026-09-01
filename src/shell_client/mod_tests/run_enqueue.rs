@@ -26,7 +26,7 @@ async fn registry_allows_session_scoped_run_without_ssh_resource() {
         .unwrap();
 
     let (request_id, _rx) = registry
-        .enqueue_run_with_sandbox_and_ssh(
+        .enqueue_run_with_ssh(
             ShellRunRequest {
                 client_id: "xrh".to_string(),
                 cwd: None,
@@ -37,7 +37,6 @@ async fn registry_allows_session_scoped_run_without_ssh_resource() {
             },
             "test".to_string(),
             None,
-            None,
             Some("wc_sess_local".to_string()),
         )
         .await
@@ -45,7 +44,7 @@ async fn registry_allows_session_scoped_run_without_ssh_resource() {
     assert!(!registry.cancel_request(&request_id).await);
 
     let error = registry
-        .enqueue_run_with_sandbox_and_ssh(
+        .enqueue_run_with_ssh(
             ShellRunRequest {
                 client_id: "xrh".to_string(),
                 cwd: None,
@@ -55,7 +54,6 @@ async fn registry_allows_session_scoped_run_without_ssh_resource() {
                 wait_timeout_secs: 1,
             },
             "test".to_string(),
-            None,
             Some("tmp".to_string()),
             None,
         )

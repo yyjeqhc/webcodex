@@ -734,7 +734,7 @@ async fn capability_modes_and_ssh_resource_fail_closed_without_enqueue() {
         .await
         .is_none());
 
-    for mode in [SessionMode::Inspect, SessionMode::ReadOnly] {
+    for mode in [SessionMode::ReadOnly] {
         let (runtime, project, session) = setup(temp.path(), true, mode, None).await;
         let result = {
             let auth = auth_context(None, true);

@@ -8,7 +8,6 @@ impl ToolRuntime {
     pub(crate) async fn dispatch_cargo_tool(
         &self,
         call: ToolCall,
-        sandbox: Option<&str>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
@@ -28,7 +27,6 @@ impl ToolRuntime {
                     timeout_secs,
                     session_id,
                     ssh_resource,
-                    sandbox,
                     auth,
                 )
                 .await
@@ -55,7 +53,6 @@ impl ToolRuntime {
                     timeout_secs,
                     session_id,
                     ssh_resource,
-                    sandbox,
                     auth,
                 )
                 .await
@@ -90,7 +87,6 @@ impl ToolRuntime {
                     timeout_secs,
                     session_id,
                     ssh_resource,
-                    sandbox,
                     auth,
                 )
                 .await
@@ -109,7 +105,6 @@ impl ToolRuntime {
                     timeout_secs,
                     session_id,
                     ssh_resource,
-                    sandbox,
                     auth,
                 )
                 .await

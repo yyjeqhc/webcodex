@@ -8,7 +8,6 @@ members = [
     "crates/webcodex-persistent-shell",
     "crates/webcodex-process",
     "crates/webcodex-runner",
-    "crates/webcodex-sandbox",
     "crates/webcodex-workspace",
 ]
 resolver = "2"
@@ -33,7 +32,6 @@ webcodex-admin = { path = "crates/webcodex-admin" }
 webcodex-runner-config = { path = "crates/webcodex-runner-config" }
 webcodex-core = { path = "crates/webcodex-core" }
 webcodex-persistent-shell = { path = "crates/webcodex-persistent-shell" }
-webcodex-sandbox = { path = "crates/webcodex-sandbox" }
 webcodex-workspace = { path = "crates/webcodex-workspace" }
 salvo = { version = "0.93", features = ["oapi", "cors", "affix-state", "websocket", "timeout"] }
 tokio = { version = "1", features = ["full"] }

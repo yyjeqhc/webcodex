@@ -58,7 +58,7 @@ fn run_direct_process(
     timeout_secs: u64,
 ) -> ShellCommandResult {
     let projects_dir = tempfile::tempdir().unwrap();
-    run_process_with_profiles_in_sandbox_and_execution_state(
+    run_process_with_profiles_and_execution_state(
         1,
         &unrestricted_policy(),
         &ShellConfig::default(),
@@ -70,7 +70,6 @@ fn run_direct_process(
         stdin,
         timeout_secs,
         None,
-        None,
     )
 }
 
@@ -81,10 +80,9 @@ fn run_direct_script(
     args: Vec<String>,
     stdin: Option<&str>,
     timeout_secs: u64,
-    sandbox: Option<&str>,
 ) -> ShellCommandResult {
     let projects_dir = tempfile::tempdir().unwrap();
-    run_script_with_profiles_in_sandbox_and_execution_state(
+    run_script_with_profiles_and_execution_state(
         1,
         &unrestricted_policy(),
         &ShellConfig::default(),
@@ -99,7 +97,6 @@ fn run_direct_script(
         stdin,
         timeout_secs,
         None,
-        sandbox,
     )
 }
 
@@ -207,7 +204,7 @@ fn internal_posix_runtime_uses_git_bash_stdin_with_powershell_configured() {
         .insert("PATH".to_string(), git_cmd.to_string_lossy().into_owned());
     let script =
         "n=0\nwhile [ \"$n\" -lt 1 ]; do n=$((n + 1)); done\nprintf 'internal-posix-ok\\n'\n";
-    let result = run_internal_posix_script_with_profiles_in_sandbox_and_execution_state(
+    let result = run_internal_posix_script_with_profiles_and_execution_state(
         1,
         &unrestricted_policy(),
         &shell,
@@ -216,7 +213,6 @@ fn internal_posix_runtime_uses_git_bash_stdin_with_powershell_configured() {
         Some(cwd.path().to_string_lossy().as_ref()),
         script,
         10,
-        None,
         None,
     );
 
@@ -250,7 +246,7 @@ fn internal_posix_runtime_ignores_configured_shell_on_posix_hosts() {
         ..Default::default()
     };
     let script = "printf 'internal-posix-ok\\n'\n";
-    let result = run_internal_posix_script_with_profiles_in_sandbox_and_execution_state(
+    let result = run_internal_posix_script_with_profiles_and_execution_state(
         1,
         &unrestricted_policy(),
         &shell,
@@ -259,7 +255,6 @@ fn internal_posix_runtime_ignores_configured_shell_on_posix_hosts() {
         Some(cwd.path().to_string_lossy().as_ref()),
         script,
         10,
-        None,
         None,
     );
 
@@ -505,7 +500,6 @@ fn pre_spawn_rejection_is_not_started() {
         None,
         10,
         None,
-        None,
     );
 
     assert_eq!(
@@ -525,7 +519,6 @@ fn terminal_process_result_is_completed() {
         "exit 7",
         None,
         10,
-        None,
         None,
     );
 
@@ -547,7 +540,6 @@ fn known_process_timeout_is_timed_out() {
         "sleep 2",
         None,
         1,
-        None,
         None,
     );
 
@@ -664,7 +656,7 @@ fn structured_process_continuously_drains_large_stdout_and_stderr() {
     let projects_dir = tempfile::tempdir().unwrap();
     let mut policy = unrestricted_policy();
     policy.max_output_bytes = 16 * 1024;
-    let result = run_process_with_profiles_in_sandbox_and_execution_state(
+    let result = run_process_with_profiles_and_execution_state(
         1,
         &policy,
         &ShellConfig::default(),
@@ -675,7 +667,6 @@ fn structured_process_continuously_drains_large_stdout_and_stderr() {
         &["chatty".to_string(), "512".to_string()],
         None,
         10,
-        None,
         None,
     );
 
@@ -729,7 +720,7 @@ fn structured_script_continuously_drains_large_stdout_and_stderr() {
             "out='{stdout_payload}'\nerr='{stderr_payload}'\ni=0\nwhile [ \"$i\" -lt 512 ]; do\n  printf '%s' \"$out\"\n  printf '%s' \"$err\" >&2\n  i=$((i + 1))\ndone\n"
         ),
     );
-    let result = run_script_with_profiles_in_sandbox_and_execution_state(
+    let result = run_script_with_profiles_and_execution_state(
         1,
         &policy,
         &ShellConfig::default(),
@@ -743,7 +734,6 @@ fn structured_script_continuously_drains_large_stdout_and_stderr() {
         },
         None,
         30,
-        None,
         None,
     );
 
@@ -885,7 +875,6 @@ fn structured_sh_script_exceeds_legacy_limit_uses_temp_file_and_cleans_it() {
         Vec::new(),
         None,
         10,
-        None,
     );
 
     assert_eq!(
@@ -951,7 +940,6 @@ done
         args.clone(),
         None,
         10,
-        None,
     );
 
     assert_eq!(
@@ -991,7 +979,6 @@ fn structured_script_stdin_nonzero_and_timeout_preserve_lifecycle() {
         Vec::new(),
         Some(input),
         10,
-        None,
     );
     assert_eq!(stdin_result.result.exit_code, Some(0));
     assert_eq!(stdin_result.result.stdout.as_deref(), Some(input));
@@ -1003,7 +990,6 @@ fn structured_script_stdin_nonzero_and_timeout_preserve_lifecycle() {
         Vec::new(),
         None,
         10,
-        None,
     );
     assert_eq!(language_semantics.result.exit_code, Some(0));
     assert_eq!(
@@ -1019,7 +1005,6 @@ fn structured_script_stdin_nonzero_and_timeout_preserve_lifecycle() {
         Vec::new(),
         None,
         10,
-        None,
     );
     assert_eq!(
         nonzero.execution_state,
@@ -1034,7 +1019,6 @@ fn structured_script_stdin_nonzero_and_timeout_preserve_lifecycle() {
         Vec::new(),
         None,
         1,
-        None,
     );
     assert_eq!(
         timed_out.execution_state,
@@ -1053,7 +1037,7 @@ fn missing_script_interpreter_is_prestart_and_does_not_run_script() {
         ..Default::default()
     };
     shell.env.insert("PATH".to_string(), String::new());
-    let result = run_script_with_profiles_in_sandbox_and_execution_state(
+    let result = run_script_with_profiles_and_execution_state(
         1,
         &unrestricted_policy(),
         &shell,
@@ -1067,7 +1051,6 @@ fn missing_script_interpreter_is_prestart_and_does_not_run_script() {
         },
         None,
         10,
-        None,
         None,
     );
     assert_eq!(
@@ -1104,7 +1087,7 @@ fn arbitrary_configured_shell_is_not_treated_as_a_script_language() {
         ..Default::default()
     };
     shell.env.insert("PATH".to_string(), String::new());
-    let result = run_script_with_profiles_in_sandbox_and_execution_state(
+    let result = run_script_with_profiles_and_execution_state(
         1,
         &unrestricted_policy(),
         &shell,
@@ -1118,7 +1101,6 @@ fn arbitrary_configured_shell_is_not_treated_as_a_script_language() {
         },
         None,
         10,
-        None,
         None,
     );
 
@@ -1201,46 +1183,12 @@ fn phase_f_powershell_temp_file_uses_utf8_bom_without_script_preamble() {
         script: "param([string]$Value)\nWrite-Output $Value".to_string(),
         args: Vec::new(),
     };
-    let (temporary_path, _original, absolute) = create_temporary_script(&payload, None).unwrap();
+    let (temporary_path, _original, absolute) = create_temporary_script(&payload).unwrap();
     let bytes = std::fs::read(&absolute).unwrap();
     assert_eq!(&bytes[..3], &[0xEF, 0xBB, 0xBF]);
     assert_eq!(&bytes[3..], payload.script.as_bytes());
     temporary_path.close().unwrap();
 }
-
-#[cfg(target_os = "linux")]
-#[test]
-fn inspect_script_uses_sandbox_scratch_and_cannot_write_project() {
-    if crate::command_sandbox::inspect_sandbox_available().is_err() {
-        return;
-    }
-    let cwd = tempfile::tempdir().unwrap();
-    let marker = cwd.path().join("project-marker");
-    let script = format!(
-        "if printf denied > '{}'; then exit 91; fi\nprintf scratch > \"$TMPDIR/proof\"\ntest \"$(cat \"$TMPDIR/proof\")\" = scratch\nprintf '%s\\n' \"$0\"\n",
-        marker.display()
-    );
-    let result = run_direct_script(
-        cwd.path(),
-        ShellScriptLanguage::Sh,
-        script,
-        Vec::new(),
-        None,
-        10,
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE),
-    );
-    assert_eq!(
-        result.execution_state,
-        ShellCommandExecutionState::Completed
-    );
-    assert_eq!(result.result.exit_code, Some(0), "{:?}", result.result);
-    assert!(!marker.exists());
-    assert_eq!(
-        result.result.stdout.as_deref(),
-        Some("<temporary-script>\n")
-    );
-}
-
 #[test]
 fn powershell_runtime_executes_from_file_when_available() {
     let cwd = tempfile::tempdir().unwrap();
@@ -1254,7 +1202,7 @@ fn powershell_runtime_executes_from_file_when_available() {
     {
         return;
     }
-    let result = run_script_with_profiles_in_sandbox_and_execution_state(
+    let result = run_script_with_profiles_and_execution_state(
         1,
         &unrestricted_policy(),
         &ShellConfig::default(),
@@ -1270,7 +1218,6 @@ fn powershell_runtime_executes_from_file_when_available() {
         // This smoke validates external PowerShell file execution, not timeout
         // behavior. Allow cold pwsh startup under a loaded CI runner.
         30,
-        None,
         None,
     );
     assert_eq!(
@@ -1352,7 +1299,7 @@ fn phase_f_windows_native_oem_stdout_stderr_use_active_oem_page() {
     let projects_dir = tempfile::tempdir().unwrap();
     let mut policy = unrestricted_policy();
     policy.max_output_bytes = 64;
-    let bounded = run_process_with_profiles_in_sandbox_and_execution_state(
+    let bounded = run_process_with_profiles_and_execution_state(
         1,
         &policy,
         &ShellConfig::default(),
@@ -1367,7 +1314,6 @@ fn phase_f_windows_native_oem_stdout_stderr_use_active_oem_page() {
         ],
         None,
         10,
-        None,
         None,
     );
     for output in [bounded.result.stdout, bounded.result.stderr] {
@@ -1391,9 +1337,7 @@ fn phase_f_windows_powershell_shell_and_param_script_keep_semantics() {
         "[Console]::Out.WriteLine('shell 中文 🙂'); [Console]::Error.WriteLine('error 中文 🙂'); exit 19",
         None,
         10,
-        None,
-        None,
-    );
+        None,);
     assert_eq!(
         shell_result.execution_state,
         ShellCommandExecutionState::Completed
@@ -1420,7 +1364,6 @@ fn phase_f_windows_powershell_shell_and_param_script_keep_semantics() {
         vec!["中文 🙂".to_string()],
         None,
         10,
-        None,
     );
     assert_eq!(
         script_result.execution_state,

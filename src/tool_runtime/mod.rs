@@ -124,12 +124,11 @@ pub(crate) use tool_definition::{
 };
 pub use tool_inputs::{
     default_true, ApplyFileChangeInput, ExecutionPurpose, ExecutionShell, ListToolsOptions,
-    SessionMode,
 };
 #[cfg(test)]
 pub use tool_inputs::{
     ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind, CheckpointValidationInput,
-    StartupDetail,
+    SessionMode, StartupDetail,
 };
 pub use tool_result::ToolResult;
 pub(crate) use tool_result::{

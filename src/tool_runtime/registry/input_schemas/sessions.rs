@@ -5,7 +5,7 @@ use super::common::object_schema;
 pub(crate) fn session_mode_schema(description: &str) -> Value {
     json!({
         "type": "string",
-        "enum": ["normal", "inspect", "read_only"],
+        "enum": ["normal", "read_only"],
         "description": description,
     })
 }

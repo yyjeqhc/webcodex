@@ -35,18 +35,10 @@ pub(crate) fn validate_structured_edit_runner_path(path: &str) -> Result<(), Str
     Ok(())
 }
 
-fn write_file_atomic_strict(
-    path: &Path,
-    content: &str,
-    create_dirs: bool,
-    tmp_prefix: &str,
-) -> Result<(), String> {
+fn write_file_atomic_strict(path: &Path, content: &str, tmp_prefix: &str) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "target path has no parent directory".to_string())?;
-    if create_dirs {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
     let original_permissions = std::fs::metadata(path)
         .ok()
         .map(|metadata| metadata.permissions());
@@ -93,7 +85,7 @@ fn write_file_atomic_strict(
 }
 
 fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
-    write_file_atomic_strict(path, content, false, ".pd-line")
+    write_file_atomic_strict(path, content, ".pd-line")
 }
 
 fn parse_json_payload(request: &ShellAgentShellRequest) -> Result<serde_json::Value, String> {
@@ -109,7 +101,12 @@ fn parse_bool_field(payload: &serde_json::Value, key: &str) -> Result<bool, Stri
     }
 }
 
-fn write_project_file_error(path: serde_json::Value, error: String) -> serde_json::Value {
+fn write_project_file_effect_error(
+    path: serde_json::Value,
+    error: String,
+    state_changed: bool,
+    execution_state: &'static str,
+) -> serde_json::Value {
     serde_json::json!({
         "path": path,
         "created": false,
@@ -117,10 +114,45 @@ fn write_project_file_error(path: serde_json::Value, error: String) -> serde_jso
         "bytes_written": 0,
         "sha256": serde_json::Value::Null,
         "changed": false,
-        "state_changed": false,
-        "execution_state": "not_started",
+        "state_changed": state_changed,
+        "execution_state": execution_state,
         "error": error,
     })
+}
+
+fn write_project_file_error(path: serde_json::Value, error: String) -> serde_json::Value {
+    write_project_file_effect_error(path, error, false, "not_started")
+}
+
+fn apply_write_project_file_change(
+    resolved: &Path,
+    content: &str,
+    writer: impl FnOnce(&Path, &str) -> Result<(), String>,
+) -> Result<(), ApplyChangeFailure> {
+    let created_dirs = create_parent_dirs(resolved)?;
+    if let Err(error) = writer(resolved, content) {
+        let rollback_complete = cleanup_created_dirs(&created_dirs);
+        return Err(ApplyChangeFailure::new(error, rollback_complete));
+    }
+    Ok(())
+}
+
+fn write_project_file_apply_error(
+    path: serde_json::Value,
+    failure: ApplyChangeFailure,
+) -> serde_json::Value {
+    let state_changed = !failure.rollback_complete;
+    let execution_state = if state_changed {
+        "outcome_unknown"
+    } else {
+        "completed"
+    };
+    write_project_file_effect_error(
+        path,
+        format!("write failed: {}", failure.message),
+        state_changed,
+        execution_state,
+    )
 }
 
 pub(crate) fn handle_write_project_file_request(
@@ -256,9 +288,11 @@ pub(crate) fn handle_write_project_file_request(
 
     let changed = current.as_deref() != Some(content);
     if changed {
-        if let Err(e) = write_file_atomic_strict(resolved, content, true, ".pd-write") {
+        if let Err(failure) = apply_write_project_file_change(resolved, content, |path, content| {
+            write_file_atomic_strict(path, content, ".pd-write")
+        }) {
             return line_edit_stdout(
-                write_project_file_error(serde_json::json!(path), format!("write failed: {}", e)),
+                write_project_file_apply_error(serde_json::json!(path), failure),
                 start,
             );
         }
@@ -1436,4 +1470,41 @@ pub(crate) fn handle_apply_text_edits_file_request(
         }),
         start,
     )
+}
+
+#[cfg(test)]
+mod write_project_file_effect_tests {
+    use super::*;
+
+    #[test]
+    fn parent_creation_write_failure_reports_rollback_truth() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let clean_target = temp.path().join("clean/a/file.txt");
+        let clean_failure = apply_write_project_file_change(&clean_target, "content", |_, _| {
+            Err("injected write failure".to_string())
+        })
+        .unwrap_err();
+        assert!(clean_failure.rollback_complete);
+        assert!(!temp.path().join("clean").exists());
+        let clean =
+            write_project_file_apply_error(serde_json::json!("clean/a/file.txt"), clean_failure);
+        assert_eq!(clean["changed"], false);
+        assert_eq!(clean["state_changed"], false);
+        assert_eq!(clean["execution_state"], "completed");
+
+        let dirty_target = temp.path().join("dirty/a/file.txt");
+        let dirty_failure = apply_write_project_file_change(&dirty_target, "content", |path, _| {
+            std::fs::write(path.parent().unwrap().join("leftover"), "effect").unwrap();
+            Err("injected write failure".to_string())
+        })
+        .unwrap_err();
+        assert!(!dirty_failure.rollback_complete);
+        let dirty =
+            write_project_file_apply_error(serde_json::json!("dirty/a/file.txt"), dirty_failure);
+        assert_eq!(dirty["changed"], false);
+        assert_eq!(dirty["state_changed"], true);
+        assert_eq!(dirty["execution_state"], "outcome_unknown");
+        assert!(temp.path().join("dirty/a/leftover").exists());
+    }
 }

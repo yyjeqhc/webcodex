@@ -53,6 +53,7 @@ fn structured_edit_outcome_unknown_result(
         "recovery_action",
         "recovery_kind",
         "recovery_tool",
+        "error",
     ] {
         fields.remove(key);
     }
@@ -530,16 +531,25 @@ fn write_project_file_agent_stdout_result(stdout: &str) -> ToolResult {
     if let Some(error) = obj.get("error").and_then(Value::as_str).map(str::to_string) {
         let changed = obj.get("changed").and_then(Value::as_bool);
         let state_changed = obj.get("state_changed").and_then(Value::as_bool);
-        if changed == Some(true)
-            || state_changed == Some(true)
-            || (changed != Some(false) && state_changed != Some(false))
-        {
+        let execution_state = obj.get("execution_state").and_then(Value::as_str);
+        if changed != Some(false) || state_changed != Some(false) {
             return structured_edit_outcome_unknown_result("write_project_file", error, obj);
         }
-        obj["changed"] = json!(false);
-        obj["state_changed"] = json!(false);
-        obj["execution_state"] = json!("not_started");
-        return ToolResult::err_with_output(error, obj);
+        match execution_state {
+            Some("not_started") => {
+                obj["changed"] = json!(false);
+                obj["state_changed"] = json!(false);
+                obj["execution_state"] = json!("not_started");
+                return ToolResult::err_with_output(error, obj);
+            }
+            Some("completed") => {
+                obj["changed"] = json!(false);
+                obj["state_changed"] = json!(false);
+                obj["execution_state"] = json!("completed");
+                return ToolResult::err_with_output(error, obj);
+            }
+            _ => return structured_edit_outcome_unknown_result("write_project_file", error, obj),
+        }
     }
     let Some(changed) = obj.get("changed").and_then(Value::as_bool) else {
         return structured_edit_outcome_unknown_result(
@@ -548,8 +558,15 @@ fn write_project_file_agent_stdout_result(stdout: &str) -> ToolResult {
             obj,
         );
     };
-    obj["state_changed"] = json!(changed);
-    obj["execution_state"] = json!("completed");
+    let state_changed = obj.get("state_changed").and_then(Value::as_bool);
+    let execution_state = obj.get("execution_state").and_then(Value::as_str);
+    if state_changed != Some(changed) || execution_state != Some("completed") {
+        return structured_edit_outcome_unknown_result(
+            "write_project_file",
+            "the Runner success payload omitted or contradicted authoritative write-effect fields",
+            obj,
+        );
+    }
     ToolResult::ok(obj)
 }
 
@@ -1549,10 +1566,35 @@ mod tests {
         assert_eq!(result.output["rollback_complete"], false);
         assert!(result.output.get("conflict_recovery").is_none());
         assert!(result.output.get("retry_guidance").is_none());
+        assert!(result.output.get("error").is_none());
         assert!(result.output["state_changed"].is_null());
         assert_eq!(result.output["execution_state"], "outcome_unknown");
         let error = result.error.unwrap();
         assert!(error.contains("outcome is unknown"));
         assert!(!error.contains("No files were modified"));
+    }
+
+    #[test]
+    fn write_project_file_effect_payload_requires_complete_consistent_state() {
+        for payload in [
+            r#"{"changed":false,"execution_state":"completed","error":"missing state_changed"}"#,
+            r#"{"changed":false,"state_changed":true,"execution_state":"completed","error":"contradictory effect"}"#,
+            r#"{"changed":false,"state_changed":false,"execution_state":"outcome_unknown","error":"uncertain"}"#,
+            r#"{"changed":false,"execution_state":"completed"}"#,
+        ] {
+            let result = write_project_file_agent_stdout_result(payload);
+            assert!(!result.success);
+            assert_eq!(result.output["execution_state"], "outcome_unknown");
+            assert!(result.output["state_changed"].is_null());
+            assert!(result.output.get("error").is_none());
+        }
+
+        let rolled_back = write_project_file_agent_stdout_result(
+            r#"{"changed":false,"state_changed":false,"execution_state":"completed","error":"write failed and parent creation was rolled back"}"#,
+        );
+        assert!(!rolled_back.success);
+        assert_eq!(rolled_back.output["changed"], false);
+        assert_eq!(rolled_back.output["state_changed"], false);
+        assert_eq!(rolled_back.output["execution_state"], "completed");
     }
 }

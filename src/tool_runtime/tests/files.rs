@@ -58,7 +58,7 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
         "telemetry-write",
         &req.request_id,
         0,
-        r#"{"path":"src/new.txt","bytes_written":24,"sha256":"abc","changed":true}"#,
+        r#"{"path":"src/new.txt","bytes_written":24,"sha256":"abc","changed":true,"state_changed":true,"execution_state":"completed"}"#,
         "",
     )
     .await;
